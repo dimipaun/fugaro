@@ -142,6 +142,16 @@ func (c *countingStore) PutCode(ctx context.Context, code Code) error {
 	return c.Store.PutCode(ctx, code)
 }
 
+// AppendAudit is here for the same reason as the five above it: M10's record is
+// a record this package writes, so it has to arrive through the interface like
+// every other one, and a test that drives a tool call and then compares the
+// bucket against this set would otherwise read the audit's own key as a write
+// nothing named.
+func (c *countingStore) AppendAudit(ctx context.Context, identity string, entry AuditEntry) error {
+	c.note(auditPrefix + TokenHash(identity))
+	return c.Store.AppendAudit(ctx, identity, entry)
+}
+
 func (ts *testServer) do(t *testing.T, req *http.Request) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()

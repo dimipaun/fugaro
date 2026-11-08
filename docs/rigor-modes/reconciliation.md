@@ -755,7 +755,14 @@ and the tests the plan names), moved the table's row from 105 to 106. Amended
 pin over its plan's no-price-figure constraint (S0.1), moved the table's row from
 109 to 110. Amended 2026-11-07: `internal/cli/docs_release_gate_test.go`, the subscriptions
 release gate's pin over the two release procedures' counsel sign-off and the honour-based
-release that checks no key (S0.7), moved the table's row from 110 to 111. Amended 2026-11-08: `internal/cli/docs_check111_test.go`, the setup-wizard folder's pin over the register's Check 111 section (W0.3), moved the table's row from 111 to 112.) They
+release that checks no key (S0.7), moved the table's row from 110 to 111. Amended
+2026-11-08: `internal/cli/docs_check111_test.go`, the setup-wizard folder's pin over the
+register's Check 111 section (W0.3), moved the table's row from 111 to 112. Amended
+2026-11-08: `internal/cli/docs_security_classification_test.go`, the security-classification
+folder's pin, moved the table's row from 112 to 113: it holds the folder's own claims rather
+than a claim about code — the ask is the owner's words verbatim, the twenty decision rows
+carry an empty owner's-answer cell, the number block sits above every claim the folder read,
+and every task in the plan states its files, its red step and its reviewer tier.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.

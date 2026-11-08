@@ -3,21 +3,26 @@
 This file reads [spec.md](spec.md) — the owner's ask of 2026-11-07 — against the CLI, the runner, the
 policy stack and the plugin skills **as they are on this tree**, and says for each of the ask's seven
 question groups what already exists, what would have to be built, and what a design must decide. It
-takes no task approval: the tasks are [implementation-plan.md](implementation-plan.md), and the status
-line is unchanged — **plan only; nothing implemented; no task approved**.
+decides nothing: the tasks are [implementation-plan.md](implementation-plan.md), and the status line is
+[README.md](README.md)'s — **SC1, SC4 and SC2 are in the tree and no decision is answered**.
 
 **How this was read.** Every claim below was checked by reading the named file and symbol on this tree,
 not a summary of it, and by `git grep` against `origin/main` rather than from memory. **Citations name
 a path and a symbol**, and a line number only where the line itself is the point and was read directly;
-a line number is wrong the next time the file is touched, and this folder ships **no pinning test** to
-catch a drifted one (F25). Read against **`origin/main` at `af2644fb`**, 2026-11-07, which is also this
-branch's base (`git merge-base --is-ancestor origin/main HEAD` holds).
+a line number is wrong the next time the file is touched, and the folder's one pin
+(`internal/cli/docs_security_classification_test.go`, SC2) holds **the folder's own claims** and not
+these citations into code, so a drifted line number is still uncaught (F25). Read against
+**`origin/main` at `af2644fb`**, 2026-11-07, which is also this branch's base
+(`git merge-base --is-ancestor origin/main HEAD` holds).
 
 **What could not be read here, and is therefore not claimed.** This checkout has fetched **no
 `refs/pull/*/head` ref at all** (`git for-each-ref 'refs/pull/*/head' | wc -l` is **0**), so the
 brief's "every open PR's docs" half of the number reading could not be repeated: §9 says so and reads
-only what `origin/main` and the local refs carry. The brief also names **task OD2**, **task OD1** and
-**pull request #1822**; **none of the three is in this tree** (F15), so nothing below rests on them.
+only what `origin/main` and the local refs carry. The brief also names **task OD2** and **task OD1**;
+**neither was in this tree when it was read** (F15) — and **OD1 landed the same day** (`505718ab`,
+#1882) — so nothing below rests on either task. Its third name, **pull request #1822**, is not in that
+class: the classifier it lands has been in this tree since `405dae8b`, an ancestor of the base this
+reading is against, and §2 and F1 read it as the code this design stands on.
 
 **Verdicts used here.** *Exists* — the tree already has the thing, or something that does the same job
 under another name. *Gap* — the fact or the seam is real and nothing acts on it. *Rule* — the tree
@@ -32,7 +37,7 @@ tree says.
 | **(2) Who consumes it, and when**: the runner's escalation, the launcher, O1, the skill, doctor, the console | The classifier has **zero production consumers** (F1). Review levels are resolved **once, at bootstrap**, and **no escalation path exists** (F5). The run record has **no review-level or class field** (F7). `doctor`, the launcher and the console are all real seams a line could be added to (F8, F11, F24) | **Gap** |
 | **(3) How an owner edits it**: `settings set`'s allow-list, the managed no-prompt rule, publish and the migration in `fugaro update` | The allow-list and its floor rule are real and are exactly the fence the ask names (F12). The publish path and the policy migrator are real, and `update` already runs the migrator as one of its stages (F13). **`settings set` carries no list-valued key today**, so "add it to the allow-list" is not the shape the tree uses for a list (F12) | **Exists** (the machinery) / **Gap** (the key) |
 | **(4) The merge and the semantics**: repo with no project, project with no repo, empty = the floor, pattern syntax, who may write the list | `policy.Merge` is a working tightening-only merge with **union** semantics on exactly this kind of list (`ReviewFloor`, F10, F23). `rigor.Area` is a working *named doublestar glob validated at load and bounded* (F21) — the pattern half is a shape to copy, not to invent. **Nothing reads a classification from the base branch except the review brief**, which is the precedent the ask wants (F14) | **Rule** (merge, patterns, base-read) |
-| **(5) The forced level 3, and OD1/OD2** | A task can already force **a rigor mode** (`--mode`) and carry **a whole review-levels block** (`--review-levels`, F6), so "the task forces it" is a smaller addition than the ask implies. **OD1 and OD2 do not exist in this tree** (F15), so the ask's "queued task OD2" is a fact about the owner's list and not about the repository | **Exists** (the seam) / **Wrong** (OD1/OD2, F15) |
+| **(5) The forced level 3, and OD1/OD2** | A task can already force **a rigor mode** (`--mode`) and carry **a whole review-levels block** (`--review-levels`, F6), so "the task forces it" is a smaller addition than the ask implies. **OD2 is not in this tree, and OD1 was not in it when this was read** (F15) — OD1 landed the same day — so the ask's "queued task OD2" is a fact about the owner's list and not about the repository | **Exists** (the seam) / **Wrong** (OD2, and OD1 at the reading, F15) |
 | **(6) The first slice, and what ships dormant** | The tree's own precedent is explicit: an additive, optional key ships with **no policy version bump** and the consumer follows (`orchestrator:`'s fields, F13; the classifier itself shipped unattached, F1) | **Rule** |
 | **(7) Migration, schemas, goldens, the CLI reference, docs pins, release notes** | Every one has a named home and a named test: `schemas/project-layer.schema.json` + `internal/config/schema_test.go`'s both-surfaces test, the corpus under `testdata/`, `internal/config/scope_test.go`'s golden table, `website/content/cli-reference.md`'s generator (F18), the docs census (F17), and `docs/releases/README.md`'s `### For operators` (F13) | **Rule** |
 
@@ -226,9 +231,9 @@ Twenty-six findings, each read from the named path and symbol on this tree. **Th
 | **F12** | The managed `settings set` allow-list is **exactly two scalar keys** with a **raise-only floor rule**, and a person at a terminal is not bound by it; **no list-valued key is on it** | **Exists / Gap** | `settingsManagedKeys` = `layer.defaults.agent.review_rounds`, `layer.defaults.agent.adversarial_rounds`, `settingsManagedAdmits`, `settingsAdmittedRefusal`, `settingsFloorRule`, `settingsFloorRefusal`, `settingsFloorBase` (`internal/cli/settings_managed.go`); `docs/managed-agent-converge/reconciliation.md` D1027 |
 | **F13** | `fugaro update` already runs a **policy migration stage**, and "an installation at the previous version converges" is a named test | **Exists** | `policyMigrateStage` (`internal/cli/init_policy_migrate.go`); `Migrate`, `migrators`, `tooOld`, `Change` (`internal/projectpolicy/migrate.go`); `TestUpdateConvergesFromThePreviousRelease` (`internal/cli/update_converge_test.go`); the stage order in `initStages` (`internal/cli/init_stages.go`) |
 | **F14** | Every control that governs a run is **read from the base branch, never the reviewed checkout** — the precedent the ask names | **Rule** | `readBaseConfig` (`internal/runner/followup.go`, requires `base == ref`); `readReviewCommandFromBase`, `baseInstructions` (`internal/runner/reviewmode.go`) read `fugaro.yaml`, the review command and `CLAUDE.md`/`.claude/rules` **from the base**; `docs_base_test.go` and `docs_in_job_review_test.go` pin it |
-| **F15** | **OD1, OD2 and pull request #1822 are not in this tree.** `git grep` for `OD1`/`OD2` over every ref returns nothing; `needs_owner` exists only as a failure-class field | **Wrong** | `git grep -rEn '\bOD[0-9]'` — nothing (working tree and all refs); `docs/design/failure-classes.md` and `docs/failure-classes/spec.md` hold `needs_owner` as one of a failure class's three fields |
+| **F15** | **OD2 is not in this tree, and OD1 was not in it when this was read** — `git grep` for `OD1`/`OD2` over every ref returned nothing on 2026-11-07, and `needs_owner` existed only as a failure-class field; **OD1 landed the same day** (`505718ab`, #1882: the reviewer's `needs_owner` mark on a finding, a loop that hands it to no fixer, the `owner_decision` halt and the `owner_decisions` block). **Pull request #1822 is not in that class at all**: its classifier has been in the tree since `405dae8b`, an ancestor of the reading base, and what the ask assumes about it is refuted the way F1 and F2 say — the definition lives in **four** places and the classifier is **unattached** — not by its absence | **Wrong** (OD2 absent; and the ask's picture of #1822 — four places, unattached, F1/F2) | `git grep -rEn '\bOD[0-9]'` — nothing at the reading (working tree and all refs); `docs/design/failure-classes.md` and `docs/failure-classes/spec.md` hold `needs_owner` as one of a failure class's three fields; the arrived OD1 is `Finding.NeedsOwner`, `Finding.Owner`, `fixableFindings` (`internal/runner/verdict.go`, `internal/runner/owner.go`), `HaltOwnerDecision` = `owner_decision`, `OwnerDecisions` (`internal/runstore/runstore.go`) and `docs/design/v1.md` §4.1–§4.6; #1822 is `git merge-base --is-ancestor 405dae8b af2644fb` holding, over `internal/orchestrator/sensitivity/classify.go`, the file §2 and F1 cite |
 | **F16** | Every command and flag a skill names is **checked against the live cobra tree**; the `working` skill already documents level 3 and the owner's floor, and names `fugaro review --pr N` as the independent review | **Rule** | `newCommandIndex`, `commandIndex.resolve`/`checkCommand`, `bareFlagRE`, `allFlags`, `ownerCommands`, `userRunsAllowed` (`plugin/skills_lint_test.go`); `cli.PaidCommandNames()` (`internal/cli/api.go`); `plugin/skills/working/reference/launch.md`; `plugin/skills/routing/SKILL.md` |
-| **F17** | The docs census is **101**, and adding one pin moves it — plus three census re-check tests between two other folders' pins | **Rule** | `docs/rigor-modes/reconciliation.md`'s row `ls internal/cli/docs_*_test.go \| wc -l` = 101; `TestDocsRigorModesCensusStatesItsCommands` (`docs_rigor_modes_test.go`); `TestDocsRigorModesReconciliationCountsTheConfigManagementPin` and `…TheRepoImageRemovalPin`; `TestDocsManagedAgentConvergeCensusRowMovedForItsPin` |
+| **F17** | The docs census is a **running total of the folders' pins**, moved by whichever folder writes one: **101** when this was read, **113** once SC2's pin landed (the setup-wizard's Check 111 pin took 111 → 112 first) — and the three census re-check tests between two other folders' pins re-derive the count from the row rather than needing an edit | **Rule** | `docs/rigor-modes/reconciliation.md`'s row `ls internal/cli/docs_*_test.go \| wc -l` = 101; `TestDocsRigorModesCensusStatesItsCommands` (`docs_rigor_modes_test.go`); `TestDocsRigorModesReconciliationCountsTheConfigManagementPin` and `…TheRepoImageRemovalPin`; `TestDocsManagedAgentConvergeCensusRowMovedForItsPin` |
 | **F18** | The website's CLI reference is **generated** from the command tree and pinned against drift, so a new command is a regenerated file. **The generator is `ee/clidoc`, not `internal/clidoc`**: `internal/clidoc`'s command no longer writes the reference at all (it writes `security.md` and `subscription-terms.md`), because the page describes the one **tagged** binary and that tree is the one `ee/clidoc` reaches through `ee/register`. Both commands share the renderer `internal/clidoc/cliref` | **Exists** | `cliRefPath` = `website/content/cli-reference.md`; `cliRefHeader` = `<!-- generated by go run ./ee/clidoc; do not edit -->` (`internal/cli/docs_website_cliref_test.go`), which is the file's own first line; `ee/clidoc` (`ee/clidoc/main.go`, blank-importing `ee/register`); the renderer `internal/clidoc/cliref` (`Prepare`, `Generate`); `internal/clidoc`'s own doc comment on why it stopped writing the reference (`internal/clidoc/secdoc.go`) |
 | **F19** | The number blocks on `main`: the highest **written** decision is **D1489** and **D1490–D1499** appear only as `docs/console-managed-screens`' reserve; the highest `## Check` **section** is **291** and the highest **cited** number is **360**. **No pull-request head is fetched in this checkout** | **Exists** | §9 carries the commands; `git for-each-ref 'refs/pull/*/head' \| wc -l` = 0 |
 | **F20** | This repository's **own** answer is a review brief, read from the base — the ask's "coordinator habits", and a document rather than a key | **Exists** | `.fugaro/review.md`'s "Mutation-check a security-sensitive change" names credentials, secrets, the managed settings, the gateway, Terraform/IAM, the agent's environment, git tokens, the console's spawn/IPC allow-list, a prompt, a recipe, `CLAUDE.md`, a plugin skill, `.github/`, `ee/`; `fugaro.yaml`'s `agent.review` |
@@ -398,20 +403,23 @@ The level-3 trigger has to be a **positive list**, which is exactly why the ask 
 
 ## 7. What this design does not do, and what it satisfies
 
-- **It changes no code, no schema, no config, no fixture and no workflow.** It writes nothing under
-  `internal/`, `schemas/`, `plugin/`, `console/`, `mobile/`, `ee/`, `deploy/` or `testdata/`, and no
-  file outside `docs/security-classification/`. Every command, flag, field, key and table below is a
-  proposal.
-- **It adds no pinning test, and it does not move the docs census.** There is **no registry test over
-  `docs/`** in `internal/cli` (`docs/bitbucket_credentials_test.go`, `docs_rigor_modes_test.go`,
+- **Beyond the code the two landed tasks add, it changes no code, no schema, no config, no fixture and no
+  workflow.** It writes nothing under `schemas/`, `plugin/`, `console/`, `mobile/`, `ee/`, `deploy/` or
+  `testdata/`, and no file outside `docs/` and the one Go test that pins this folder
+  (`internal/cli/docs_security_classification_test.go`, SC2). Every command, flag, field, key and table
+  below that has not landed is a proposal.
+- **It adds one pinning test, and the census moved once.** There is **no registry test over `docs/`** in
+  `internal/cli` (`docs/bitbucket_credentials_test.go`, `docs_rigor_modes_test.go`,
   `docs_in_job_review_test.go` and `docs_backlog_test.go` all say so in their own comments), so a folder
-  may be documents alone; `docs/image-env/` is the four-document precedent this folder follows. Adding
-  a pin would move `docs/rigor-modes/reconciliation.md`'s census row **101 → 102** and force edits to
-  three census re-check tests (§7, D1519, F17) — **edits to files outside this folder**, which the
-  brief's DOCS ONLY forbids. The plan's tasks therefore **name the pin each will add**, and the census
-  moves once, in the task that adds the first test.
-- **It does not build OD1, OD2, the needs_owner work, the orchestrator or the console screen.** The
-  console screen is deferred by the ask itself and by the console's own precedent (§3).
+  may be documents alone; `docs/image-env/` is the four-document precedent this folder follows. The
+  brief's DOCS ONLY left the pin to the plan's tasks, which name the one each adds: this folder's is
+  `internal/cli/docs_security_classification_test.go` (SC2, D1519), and its arrival moved
+  `docs/rigor-modes/reconciliation.md`'s census row **112 → 113**, as that row's own amendment
+  sentence records. The three census re-check tests (§7, D1519, F17) re-derive the count from the tree
+  and needed no edit.
+- **It does not build OD1, OD2, the needs_owner work, the orchestrator or the console screen.** OD1
+  landed while this folder was being read (2026-11-07, `505718ab`) and this design neither consumes nor
+  changes it; the console screen is deferred by the ask itself and by the console's own precedent (§3).
 - **It does not invent a role**, a new permission model, or a second matcher (§3, F21).
 - **It adds no dependency and proposes none.**
 
@@ -419,7 +427,7 @@ The level-3 trigger has to be a **positive list**, which is exactly why the ask 
 
 Each row is a question the ask raises, **a recommendation**, the alternative, that alternative's cost,
 and **an empty owner's-answer cell** — the ask's own word is "Do not decide anything silently", and this
-folder's status is "no task approved", so the cell stays empty until the owner fills it. A row whose
+folder's status line records no answered decision, so the cell stays empty until the owner fills it. A row whose
 recommendation needs no decision is not here; these twenty are the ones that do.
 
 | # | Question | Recommendation (and why) | Alternative | Its cost | Owner's answer |
@@ -442,7 +450,7 @@ recommendation needs no decision is not here; these twenty are the ones that do.
 | **D1515** | How does an owner edit it: the `settings set` allow-list (D1027), or the layer file? | **The layer file and `fugaro.yaml` — not `settings set`.** `settings set`'s allow-list (`settingsManagedKeys`) holds exactly two **scalar** keys and its floor rule is written for a scalar that may only be raised (F12); a pattern **list** is not that shape, and the tree's precedent for a list-valued, layer-carried, publishable key is `rigor.areas` — edited in the file, validated at load, published by `config publish`. **The managed allow-list admits nothing new** | Add a `settings set security.patterns.add` verb | A verb that pushes onto a list is a second write path with its own fence, its own floor rule and its own audit record — for an edit the file already carries, and the floor rule the allow-list exists for does not translate to a list | *(empty)* |
 | **D1516** | Who may write the list, and is it audited? | **Only through the paths that already audit themselves.** The project layer through `config publish` and, on a managed project, through `managed_gate.go`'s gate with its `AuditRecord`; the repo key through the repository's own review. **A managed project takes no prompt for it** (`internal/cli/settings_managed.go`: "a managed project takes no confirmation prompt, which is the whole point of a managed project"; `internal/initflow/loop.go`'s `ManagedGate`, `internal/initflow/stage.go`'s `PersonAtTheTerminal`/`ConfirmsByGate`) — **a person at a terminal on a managed project is never asked to type a name**, and neither is an agent's session, which may only *add* | A separate `fugaro security publish` with its own gate | A second gate for a control that already has one, and — the real cost — a second audit family that `doctor`'s `managed-audit` check does not read, so the write is invisible to the one place writes are looked for | *(empty)* |
 | **D1517** | A task that is security-sensitive by nature, touching no listed path: how does it force level 3? | **Two ways, one raise-only and one a project setting.** (a) A task field `security` with a `fugaro run --security` flag that forces the level-3 row for that run — raise-only, so it needs no fence and no allow-list, exactly as `--mode` already raises (`internal/rigor/resolve.go`'s raise-only `Request`). (b) A project-layer `security.always_level_3` for a project that wants it on every run — which is where D1503's refused `**` pattern belongs | Inferring it from the issue text or the task title | A classification decided by how a change describes itself is the one thing D1234 refuses by name ("the class must not depend on how a change describes itself") and the classifier's own `TestDescriptionCannotLowerTheClass` pins | *(empty)* |
-| **D1518** | Where is the list read from, and does it interact with OD1/OD2? | **From the run's base branch, never the reviewed checkout** (F14: `readBaseConfig`, `readReviewCommandFromBase`, `baseInstructions`), so a PR cannot supply the rule that governs its review. **On OD1/OD2**: neither exists in this tree (F15), so the design does not wait on them; the plugin-skill sentence arrives once D1512's command exists (the skill lint fails a command the tree lacks, F16), and `needs_owner` is a failure-class field with no relation to this list | Read the repository's working copy | A change that carries its own pattern list can also carry its own exemption from it — the exact exploit §5 names, and the reason the review brief is already read from the base | *(empty)* |
+| **D1518** | Where is the list read from, and does it interact with OD1/OD2? | **From the run's base branch, never the reviewed checkout** (F14: `readBaseConfig`, `readReviewCommandFromBase`, `baseInstructions`), so a PR cannot supply the rule that governs its review. **On OD1/OD2**: neither was in this tree when this was read (F15) — **OD1 landed the same day** (`505718ab`) and reads no pattern list, so nothing here waits on it or changes for it — the design does not wait on either; the plugin-skill sentence arrives once D1512's command exists (the skill lint fails a command the tree lacks, F16), and `needs_owner` is the reviewer's mark on a finding there and a failure-class field in this design, with no relation to this list | Read the repository's working copy | A change that carries its own pattern list can also carry its own exemption from it — the exact exploit §5 names, and the reason the review brief is already read from the base | *(empty)* |
 | **D1519** | The first slice, what ships dormant, and the migration burden | **The floor and the command first.** Slice 1: the floor table, the merge, `fugaro security paths --check --json` and doctor's line — **no escalation**, so nothing changes a run's cost and the whole slice is safe to ship dormant. Slice 2 adds the runner escalation and D1509's record field. Slice 3 adds the two config keys and their schemas. Then, in the same release as the first config key: `layerTopKeys`, `schemas/project-layer.schema.json`, `schemas/fugaro.schema.json`, the `testdata/` corpus, `internal/config/scope.go`'s row plus `scope_test.go`'s golden table, `docs/project-layer.md`'s scope table, `website/content/cli-reference.md`'s generator, the release note's `### For operators`, and **one** pinning test — the moment the census moves 101 → 102 (F17, F18) | One release with the keys, the escalation and the console screen together | The first release changes what runs cost before anyone has seen the list in force — and the ask's own premise is that nobody has yet written one. Shipping the reader before the actor is what makes slice 1's `--json` the thing an owner can check their list against | *(empty)* |
 
 ## 9. The number block, and how it was read
@@ -524,8 +532,11 @@ Five things this design does **not** resolve, each of which a reader should see 
    means a repository can make its own runs more expensive than its project's policy expects, and
    nothing in this design caps that. A cap (a project maximum on the repo's additions) is **not
    proposed**, and a reader who wants one should say so.
-5. **OD1 and OD2 remain unreadable from here** (F15). If either lands with a shape this design assumed
-   wrong, D1517's flag or D1519's slicing is what moves — neither is load-bearing for slices 1 and 2.
+5. **OD1 landed while this folder was being read, and OD2 remains unreadable from here** (F15). OD1's
+   shape — a finding's `needs_owner` mark, the `owner_decision` halt, the `owner_decisions` block —
+   reads and writes no pattern list, so nothing here moves for it; if OD2 lands with a shape this design
+   assumed wrong, D1517's flag or D1519's slicing is what moves — neither is load-bearing for slices 1
+   and 2.
 
 ## 11. UNVERIFIED
 
@@ -537,8 +548,12 @@ Five things this design does **not** resolve, each of which a reader should see 
 - **The number reading is `origin/main` only** (§9): no pull-request head is fetched in this checkout,
   so a number claimed in an open pull request is not in the reading. 370 is chosen above the highest
   *cited* number for exactly that reason, and not because the pull-request heads were read.
-- **OD1, OD2 and pull request #1822 are not in this tree** (F15). Nothing in this design was checked
-  against their actual text, and this folder takes no position on whether they exist at all.
+- **OD2 is not in this tree**, **OD1 was not in it when this was read** (F15) — it landed the same day
+  (`505718ab`, #1882) — and **pull request #1822 has been in it since `405dae8b`**, an ancestor of the
+  reading base: its classifier is the code §2 and F1 read, and the ask is wrong about it in F2's way
+  rather than by its absence. Nothing in this design was checked against OD1's or OD2's actual text, and
+  this folder takes no position on whether they exist at all; OD1's own text was read afterwards, and §10
+  records what it does and does not touch.
 - **`internal/orchestrator/sensitivity`'s intended consumer is not in the tree.** Its package doc names
   "O4's model setting"; `O4` (`docs/stateless-orchestrator/implementation-plan.md`) is also written as
   a plan task, and `git grep` finds no caller. Whether the class reaches a model at all today is

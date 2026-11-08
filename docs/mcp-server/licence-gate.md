@@ -4,7 +4,8 @@
 merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
 prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
 except the reading of the installation's published state its lists come from, which no task of this
-plan carries; M8–M10 are not started; this folder approves no task.**
+plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
+half and not started; M8 and M9 are not started; this folder approves no task.**
 
 **This is the gate file [reconciliation.md](reconciliation.md) §6 check 1 asks for, and §6 check 1 is
 met.** What it records is the owner's clearance of D921's licence. The owner, **Dimi Paun**, cleared

@@ -6,9 +6,11 @@
 // `projects.test.ts` asserts the model and the tree the screen builds; this file
 // asserts that the same screen draws in the console's own hardened window, with
 // the real CSP in force, and takes a golden per theme. The three things the plan
-// names for this spec are here: the panels the CLI has no command for render as
+// names for this spec are here: the panel the CLI has no command for renders as
 // not-built, the source lines and the binding scopes are drawn, and there is a
-// golden for each theme.
+// golden for each theme. **The policy panel is no longer one of those panels**
+// (the managed-project screens plan's CM10): it reads `policy.show`, so it is a
+// `read` panel here with its document's own string under it.
 //
 // **The screen reads one document and no run list** (console 0.117.0's fix,
 // owner's report of 2026-10-31: this tab "also takes about 20 s with no
@@ -156,6 +158,7 @@ const MODULES: readonly string[] = Object.freeze([
   'renderer/screens/reading.js',
   'renderer/section.js',
   'renderer/writes.js',
+  'renderer/screens/policynotes.js',
   'renderer/screens/projects.js',
 ])
 
@@ -246,6 +249,8 @@ var model = projects.buildProjectsModel({
   budget: ${JSON.stringify(budget)},
   accounts: ${JSON.stringify(accounts)},
   secrets: ${JSON.stringify(secrets)},
+  policy: ${JSON.stringify(POLICY)},
+  doctor: ${JSON.stringify(DOCTOR)},
   sentences: {}
 });
 var raw = ${JSON.stringify(models)};
@@ -554,6 +559,34 @@ const SETTINGS: JSONDoc = JSON.parse(
   readFileSync(join(consoleDir, 'test', 'fixtures', 'settings.json'), 'utf8'),
 ) as JSONDoc
 
+/** POLICY is `fugaro project policy show --json` (D1481): the `{project, policy}`
+ * object CM4's row answers with, and the document the tab's policy panel is
+ * drawn from now that CM10 flipped it out of `not-built`. The members are the
+ * ones CM7's section draws. */
+const POLICY: JSONDoc = {
+  project: 'example-project',
+  policy: {
+    version: 3,
+    base_branch: 'trunk',
+    allow_repos: ['github/example-owner/example-repo'],
+    accounts: { 'claude-ops': { allow_repos: ['github/example-owner/example-repo'] } },
+  },
+}
+
+/** DOCTOR is `fugaro doctor --json`, whose `checks` array carries the six
+ * `policy-*` checks the policy panel's body draws (D1482). Two of the six are
+ * here, one of them absent from the document on purpose -- a check the document
+ * does not carry is drawn as *not in this document* rather than dropped -- and
+ * `managed-audit`, which is doctor's and not the policy's, reaches no row. */
+const DOCTOR: JSONDoc = {
+  ok: true,
+  checks: [
+    { id: 'policy-published', ok: false, severity: 'info', problem: 'a policy is published', fix: '' },
+    { id: 'policy-vs-jobs', ok: true, severity: 'info', problem: 'the jobs read it', fix: '' },
+    { id: 'managed-audit', ok: true, severity: 'info', problem: 'the audit trail is readable', fix: '' },
+  ],
+}
+
 test.describe('the Projects screen', () => {
   // One window, one page, and the tests in order: each draws the screen it is
   // about into the same document, and the goldens are taken from what the test
@@ -614,7 +647,10 @@ test.describe('the Projects screen', () => {
     // and this task's C4), a third sibling drawn the same way -- which is what
     // these two frames gain: the settings section (D1118).
     expect(drawn.panels).toEqual([...PROJECT_PANEL_KEYS, 'models', 'settings'])
-    expect(drawn.states).toEqual(['read', 'read', 'read', 'read', 'read', 'not-built', 'not-built', 'read', 'read'])
+    // The policy panel is the sixth and it **reads** now (CM10): its own read is
+    // `policy.show`, and the document above is what it was drawn from. Only the
+    // enrollment allow-list is left with no command behind it.
+    expect(drawn.states).toEqual(['read', 'read', 'read', 'read', 'read', 'read', 'not-built', 'read', 'read'])
     // Every panel names the command it read, drawn on the panel itself: a panel
     // whose source is nowhere is a panel a reader cannot check. There is one
     // command behind the three panels that read the cap document -- `budget show`
@@ -624,31 +660,36 @@ test.describe('the Projects screen', () => {
     expect(drawn.sources).toContain('fugaro budget show --json')
     expect(drawn.sources).not.toContain('fugaro runs ls --json')
     // And every panel says its state in words, so the frame's tone is never the
-    // only channel: `read` on the six that read a document (the models panel
-    // among them), the design's `locked` on the two cards this CLI cannot read
-    // at all.
-    expect(drawn.stateWords).toEqual(['read', 'read', 'read', 'read', 'read', 'locked', 'locked', 'read', 'read'])
+    // only channel: `read` on the seven that read a document (the models panel
+    // among them), the design's `locked` on the one card this CLI cannot read at
+    // all.
+    expect(drawn.stateWords).toEqual(['read', 'read', 'read', 'read', 'read', 'read', 'locked', 'read', 'read'])
   })
 
-  test('renders the two sections with no command as not-built, and never as a zero', async () => {
+  test('renders the one section with no command as not-built, and never as a zero', async () => {
     await mount(BUDGET, ACCOUNTS, SECRETS, 'light')
     const drawn = await screen(page)
     const text = drawn.text
 
-    // `config/policy` (project-centric phase 1) and the enrollment allow-list
-    // (phase 1 and 4) have no command behind them on this tree. A `0` would be a
-    // measurement nobody made and an empty list would be "there are none", so
-    // those two panels carry no count element at all.
+    // The enrollment allow-list (project-centric phase 1 and 4) has no command
+    // behind it on this tree. A `0` would be a measurement nobody made and an
+    // empty list would be "there are none", so that panel carries no count
+    // element at all. The policy panel was the other one of these and is not any
+    // more (CM10): it reads `fugaro project policy show --json`.
     expect(drawn.titles).toContain('policy')
     expect(drawn.titles).toContain('enrollment allow-list')
-    // The two panels say *why* they have nothing, with the design's own phrase
-    // for the state: "not readable with this CLI".
+    // The panel that has nothing says *why*, with the design's own phrase for
+    // the state: "not readable with this CLI".
     expect(text).toContain('not readable with this CLI')
-    // The seven panels that read a document have a count (the models panel
-    // counts its routes and models, the settings panel its rows); the two that
-    // did not have none. This is the mechanism behind "never as a zero": there
-    // is no reading to format, so nothing can render as `0`.
-    expect(drawn.counts.length).toBe(7)
+    // And the panel that reads says what it read: the node's own string is on
+    // the screen, under the panel its own read is named on.
+    expect(text).toContain('trunk')
+    // The eight panels that read a document have a count (the models panel
+    // counts its routes and models, the settings panel its rows, the policy
+    // panel the node's own allow-list); the one that did not has none. This is
+    // the mechanism behind "never as a zero": there is no reading to format, so
+    // nothing can render as `0`.
+    expect(drawn.counts.length).toBe(8)
   })
 
   test('names the binding scope of every cap', async () => {
@@ -771,17 +812,17 @@ test.describe('the Projects screen', () => {
       'read',
       'unavailable',
       'read',
-      'not-built',
+      'read',
       'not-built',
       'read',
       'read',
     ])
     expect(drawn.text).toContain('the project could not be selected')
     // An incomplete inventory has no count: `0 accounts` would be a false
-    // statement about the project, not a missing one. The models panel and the
-    // settings panel are reads of their own and are unaffected by this document
-    // either way.
-    expect(drawn.counts.length).toBe(6)
+    // statement about the project, not a missing one. The models panel, the
+    // settings panel and the policy panel are reads of their own and are
+    // unaffected by this document either way.
+    expect(drawn.counts.length).toBe(7)
   })
 
   test('offers no link, and nothing to click', async () => {
@@ -853,9 +894,9 @@ test.describe('the Projects screen', () => {
   test('keeps its state words and its row boundary under forced colors (design section 6.4)', async () => {
     // The Projects screen's half of the forced-colors smoke (section 4.4, in the half
     // section 6.4 gives this task). This is the screen with the most states and the
-    // fewest colours: every panel carries `data-state`, the two with no command say
-    // "not readable with this CLI" in a sentence, and neither may become a colour the
-    // system takes away. The chrome's half is `entry.spec.ts`'s; a smoke, not a golden.
+    // fewest colours: every panel carries `data-state`, the one with no command says
+    // "not readable with this CLI" in a sentence, and none of it may become a colour
+    // the system takes away. The chrome's half is `entry.spec.ts`'s; a smoke, not a golden.
     await mount(BUDGET, ACCOUNTS, SECRETS, 'light')
     await page.emulateMedia({ forcedColors: 'active', colorScheme: 'light' })
     expect(await page.evaluate(() => matchMedia('(forced-colors: active)').matches)).toBe(true)
@@ -886,7 +927,7 @@ test.describe('the Projects screen', () => {
     // The state is in the DOM twice over: as the attribute a reader's tools read, and
     // as the sentence a reader reads.
     expect(forced.states).toContain('not-built')
-    expect(forced.words).toEqual(['read', 'read', 'read', 'read', 'read', 'locked', 'locked', 'read', 'read'])
+    expect(forced.words).toEqual(['read', 'read', 'read', 'read', 'read', 'read', 'locked', 'read', 'read'])
     // The switches' state words survive too, `KILLED` among them.
     expect(forced.killWords).toEqual(['live', 'live', 'KILLED'])
     expect(forced.because.join(' '), 'a panel with no document lost its reason').toContain(
