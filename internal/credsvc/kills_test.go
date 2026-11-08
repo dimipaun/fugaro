@@ -1,7 +1,8 @@
 package credsvc
 
-// RTDBKills is the operator's stop flag: budget.ReadKills, the same pair a run
-// honours (server.go, C1.11).
+// RTDBKills is the operator's stop flag: budget's own readers of the switch a
+// run honours (server.go, C1.11) — the pair for a request that names a
+// repository, the global switch alone for one that names a person.
 //
 // What this file holds is the read the person-facing routes make — the two git
 // reads and the read mint call Kills.Stop with no slug, because they name a
@@ -51,5 +52,18 @@ func TestThePersonFacingReadIsTheGlobalSwitchAlone(t *testing.T) {
 	}
 	if !on || which != "global" {
 		t.Errorf("Stop with no slug = (%v, %q), want the global switch on", on, which)
+	}
+
+	// A switch nobody can read is a stop nobody talks their way out of, and that
+	// rule has to hold on this route above all: the service reads it before the
+	// bundle, so a node at the path that is not a switch at all must still refuse
+	// every credential rather than be read as off.
+	db.Set(budget.PathKillGlobal, "stop")
+	on, _, err = kills.Stop(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !on {
+		t.Error("an unreadable node at the global path reads as off: the person-facing routes would go on issuing credentials under a stop anyone can write junk over")
 	}
 }

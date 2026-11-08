@@ -63,6 +63,19 @@ func TestReadGlobalKillIsTheGlobalSwitchAlone(t *testing.T) {
 	if on, which := kills.On(); !on || which != "global" {
 		t.Errorf("the global read is (on=%v, which=%q), want the global switch on", on, which)
 	}
+
+	// The fail-closed decode is the same rule here as in the pair's reader, and
+	// it has to be: this is the read the person-facing routes refuse on, so a
+	// node at the path that is not a switch at all must still stop them, or the
+	// stop would be one anyone can defeat by writing junk (spec §8).
+	db.Set(budget.PathKillGlobal, "stop")
+	kills, err = budget.ReadGlobalKill(ctx, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if on, _ := kills.On(); !on {
+		t.Error("a switch nobody can read at the global path reads as off through ReadGlobalKill: the person-facing routes would go on issuing credentials under a stop")
+	}
 }
 
 // TestReadKillsWithNoSlugIsAProgrammingError holds the pair's reader to its
