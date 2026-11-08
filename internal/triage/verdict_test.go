@@ -81,9 +81,10 @@ func TestDecodeRefusesUnknownVerdict(t *testing.T) {
 }
 
 // TestDecodeKeepsEveryEntry pins that the reader drops nothing it accepted:
-// two verdicts for one finding are Apply's to refuse (they block it), and an
-// entry naming a finding the round does not hold is Apply's to drop, so the
-// reader hands both on rather than deciding them here.
+// two verdicts for one finding block it, and an entry naming a finding the
+// round does not hold is dropped, but both of those are the reading of a
+// verdict against a round's findings (D1856), which this reader does not have,
+// so it hands every entry on rather than deciding them here.
 func TestDecodeKeepsEveryEntry(t *testing.T) {
 	data, err := json.Marshal(Verdict{Version: 1, Findings: []Entry{
 		{Index: 0, Key: key, Verdict: Block, Reason: "a real bug"},

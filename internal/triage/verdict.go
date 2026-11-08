@@ -8,8 +8,8 @@
 // an impact of 5 outside Hotfix, an unscored finding and one only the owner can
 // settle — is never deferred whatever a verdict says. A judge's answer is
 // untrusted data, like every other model's text a run reads: it is bounded
-// here, and applied inside the floor by Apply, which is the only caller that
-// lets it steer anything.
+// here, and only the code that applies it inside that floor (the later task
+// T-TR6) lets it steer anything.
 package triage
 
 import (
@@ -41,7 +41,8 @@ type Word string
 
 const (
 	// Block is the verdict that the finding is fixed in this patch before the
-	// merge: it is handed to the fixer and it holds the pull request a draft.
+	// merge: it is handed to the fixer and it holds the pull request as a
+	// draft.
 	Block Word = "block"
 	// Defer is the verdict that the finding is filed as a follow-up task and
 	// the merge goes ahead without it. A deferred finding never reaches the
@@ -52,8 +53,8 @@ const (
 // Verdict is one triage round's answer: the version of the format, and one
 // entry per finding of the round the judge read. The findings array is always
 // written, empty included, so an absent one is a malformed answer and not an
-// empty claim — a round with findings and no entries blocks every one of them
-// (Apply's missing-verdict rule, D1846).
+// empty claim: a missing verdict for a finding the table blocks blocks that
+// finding (D1846).
 type Verdict struct {
 	Version  int     `json:"version"`
 	Findings []Entry `json:"findings"`

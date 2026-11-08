@@ -14,7 +14,7 @@
     },
     "findings": {
       "type": "array",
-      "description": "One entry per finding of the round the judge read. It is always written, empty included, so an absent array is a malformed answer and not an empty claim: an answer with no entry for a table-blocked finding blocks it, and the run records the call as failed. The judge drops nothing — an entry naming a finding the round does not hold is dropped by the caller that applies the verdict, and two entries for one finding block it (internal/triage's Apply, D1856).",
+      "description": "One entry per finding of the round the judge read. It is always written, empty included, so an absent array is a malformed answer and not an empty claim: an answer with no entry for a table-blocked finding blocks it, and the run records the call as failed. The judge drops nothing — an entry naming a finding the round does not hold is dropped by the code that applies the verdict, and two entries for one finding block it (D1856).",
       "items": {
         "type": "object",
         "additionalProperties": false,
