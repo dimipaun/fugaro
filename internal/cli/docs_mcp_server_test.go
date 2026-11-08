@@ -111,8 +111,14 @@ const (
 	// below holds the plan to it. M7's clause is the same shape: the resource
 	// server and the tool registry are built and the tasks after it are not,
 	// and naming M7 built says nothing about a merge, for the reason M5's
-	// clause does not.
-	mcpStatus = "Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built and M8–M10 are not started; this folder approves no task."
+	// clause does not. Its clause carries an exception of its own -- the
+	// reading of the installation's published state, which is where D933's two
+	// lists come from: identity.go holds the Roster seam and no task of the
+	// plan implements it over that state, so a line saying M7 were built whole
+	// would claim a control the tree does not perform. The exception is
+	// disclosed in full in §11 of the spec and its own section of the plan,
+	// which the disclosure test below pins.
+	mcpStatus = "Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built except the reading of the installation's published state its lists come from, which no task of this plan carries; M8–M10 are not started; this folder approves no task."
 )
 
 func mcpDocs() []string { return []string{mcpReadme, mcpSpec, mcpReconciled, mcpPlan} }
@@ -387,7 +393,9 @@ func TestDocsMCPServerNamesWhatItDesigns(t *testing.T) {
 // the plan carries; the loser of a rotation race is answered inside a grace
 // window, and the endpoint refuses it instead; and the approve step is meant to
 // read an identity out of the launcher and operator lists, which M7 reads at the
-// MCP endpoint and the approve step still does not. A document that asserted any
+// MCP endpoint and the approve step still does not -- the reading of the
+// published state those lists live in being M7's own exception, disclosed in the
+// same section. A document that asserted any
 // of them as a fact would be a security
 // document promising a control the code does not perform -- so what is pinned is
 // the caveat itself, in the file a reader meets first, and the section that
@@ -405,6 +413,12 @@ func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
 		"Who owns the two bounds the open registration endpoint is accepted under",
 		"What is owed is the owner's assignment",
 		"the task that mounts this package on a binary carries both bounds and deletes `TestNoBinaryLinksTheFrontDoorYet`",
+		// And the one M7 itself leaves unbuilt: the reading of the published
+		// state its two lists come from. The seam is in the tree and the
+		// reading is not, so the section names both and names its carrier.
+		"Where the front door's own two lists are read from",
+		"no implementation of that interface over the published state is in the tree and no task of this plan carries one",
+		"the wiring task that mounts this package on a binary — the one M5b gates — owes this reading beside the two bounds above",
 		// And the two halves of the flow the review of this branch found
 		// promised: the grace window a lost rotation race is answered in, and
 		// the launcher and operator lists the approve step is supposed to read
@@ -421,7 +435,7 @@ func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
 		"that token reaches no tool",
 	} {
 		if !strings.Contains(spec, want) {
-			t.Errorf("%s does not state %q: the keyed hash and the MAC, the two bounds the open registration endpoint is accepted under, the grace window a lost rotation race is answered in and the launcher and operator lists the approve step would read an identity out of are all specified in this folder and built nowhere, so a document that dropped the caveat would read as a control the tree performs", mcpSpec, want)
+			t.Errorf("%s does not state %q: the keyed hash and the MAC, the two bounds the open registration endpoint is accepted under, the reading of the published state the front door's lists come from, the grace window a lost rotation race is answered in and the launcher and operator lists the approve step would read an identity out of are all specified in this folder and built nowhere, so a document that dropped the caveat would read as a control the tree performs", mcpSpec, want)
 		}
 	}
 
@@ -430,9 +444,12 @@ func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
 		"### The two bounds no task carries",
 		"the store hashes with a plain unkeyed sha256",
 		"raised as a finding rather than closed by an edit here",
+		// And M7's own exception, stated where §4a says what every built task
+		// still owes: the seam is merged and the reading behind it is nobody's.
+		"nothing in the tree implements it over that state, because no task of the plan carries the reading",
 	} {
 		if !strings.Contains(rec, want) {
-			t.Errorf("%s does not state %q: both gaps are raised there as findings for the owner to assign, and a reconciliation that dropped either would leave the caveat in the spec with nothing behind it", mcpReconciled, want)
+			t.Errorf("%s does not state %q: each gap is raised there as a finding for the owner to assign, and a reconciliation that dropped one would leave the caveat in the spec with nothing behind it", mcpReconciled, want)
 		}
 	}
 }
