@@ -103,12 +103,19 @@ type Config struct {
 // acts for at a door that is on the public internet (D933). Its logger is where
 // a refusal at that door is recorded (finding M-e) and is never a store: the
 // refusal is a log line and a body, and nothing else.
+//
+// M10 adds the audit: the structured line every call and every refusal leaves
+// (audit), which is a sink of its own beside the refusal line above and not the
+// same one — a reader greps one for the door's acts and the other for the door's
+// loop — and the record those calls come to, written through the store the
+// server already holds (audit_record.go).
 type Server struct {
 	cfg      Config
 	store    Store
 	verifier *Verifier
 	tools    *Registry
 	roster   Roster
+	audit    *Auditor
 	now      func() time.Time
 	logger   *slog.Logger
 }
@@ -147,6 +154,26 @@ func WithLogger(logger *slog.Logger) ServerOption {
 	return func(s *Server) { s.logger = logger }
 }
 
+// WithAuditor sets where this door's audit lines are written (audit.go), which
+// is a sink of its own rather than the logger above: M7's refusal line is one
+// line on the process log and M10's audit is the structured line the plan's §4
+// asks for, and an installation arms the second one at the place it configures
+// Cloud Logging.
+//
+// The default is the process's own log — slog.Default(), the same place the
+// refusal line goes by default — because the audit line is the durable copy of
+// what this door did (the amendment of 2026-11-04) and an installation that
+// configures nothing must not therefore keep nothing. A nil auditor sets
+// nothing, the way a nil logger sets nothing: a caller that has no auditor does
+// not get one that drops lines.
+func WithAuditor(a *Auditor) ServerOption {
+	return func(s *Server) {
+		if a != nil {
+			s.audit = a
+		}
+	}
+}
+
 // NewServer returns the authorization server for one project.
 //
 // Every argument is refused when it is missing rather than at the first call: a
@@ -168,6 +195,16 @@ func NewServer(cfg Config, store Store, verifier *Verifier, opts ...ServerOption
 	s := &Server{cfg: cfg, store: store, verifier: verifier, tools: NewRegistry(), now: time.Now, logger: slog.Default()}
 	for _, o := range opts {
 		o(s)
+	}
+	// After the options, so that a server told where its audit goes keeps that
+	// and one told nothing is armed with the process's own log (WithAuditor).
+	// slog.Default() always has a handler, so the error is unreachable here.
+	if s.audit == nil {
+		a, err := NewAuditor(slog.Default().Handler())
+		if err != nil {
+			return nil, err
+		}
+		s.audit = a
 	}
 	return s, nil
 }

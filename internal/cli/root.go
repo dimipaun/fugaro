@@ -229,14 +229,21 @@ func newCoreRoot() *cobra.Command {
 	root.PersistentFlags().BoolP(verboseFlag, "v", false, "print the run's full output as it goes, not one line per step")
 	root.AddCommand(
 		newVersionCmd(), newValidateCmd(), newConfigCmd(), newVerifyCmd(), newExecCmd(), newImageCmd(),
-		newRunCmd(), newRecipesCmd(), newRunsCmd(), newStatsCmd(), newSeatsCmd(), newArtifactsCmd(), newLogsCmd(), newDiagnoseCmd(), newCancelCmd(), newSecretsCmd(), newCredsCmd(), newAccountsCmd(), newBackendsCmd(), newSetupCmd(), newUpdateCmd(), newRetiredInitCmd(), newBudgetCmd(), newWatchCmd(), newUpdateSkillsCmd(), newUpgradeCmd(), newDoctorCmd(), newProjectCmd(), newSettingsCmd(), newAllowDeleteCmd(), newManagedCmd(), newRestoreCmd(), newPlanCmd(), newReaperCmd(), newBacklogCmd(), newPairCmd(), newUserCmd(), newModelsCmd(), newWorkspaceCmd(),
+		newRunCmd(), newRecipesCmd(), newRunsCmd(), newStatsCmd(), newSeatsCmd(), newArtifactsCmd(), newLogsCmd(), newDiagnoseCmd(), newCancelCmd(), newSecretsCmd(), newCredsCmd(), newAccountsCmd(), newBackendsCmd(), newSetupCmd(), newUpdateCmd(), newRetiredInitCmd(), newBudgetCmd(), newWatchCmd(), newUpdateSkillsCmd(), newUpgradeCmd(), newDoctorCmd(), newProjectCmd(), newSettingsCmd(), newAllowDeleteCmd(), newManagedCmd(), newRestoreCmd(), newPlanCmd(), newReaperCmd(), newBacklogCmd(), newPairCmd(), newUserCmd(), newModelsCmd(), newCraftCmd(), newWorkspaceCmd(),
 		// The independent review's own command. It is registered like any other
-		// core command, and its launch stays refused until the credentials
-		// service admits a review caller (internal/cli/review.go's
-		// checkReviewJobAdmitted): a name that answers and then refuses is a
-		// sentence a person can read, and a name the tree does not hold is a
-		// command nobody can type.
+		// core command, and its launch still refuses where one of E7's two
+		// halves is missing — an installation with no credentials service, or a
+		// binary built before the service admitted the review job's own caller
+		// (internal/cli/review.go's checkReviewJobAdmitted, true since 0.21.0)
+		// — because a name that answers and then refuses is a sentence a person
+		// can read, and a name the tree does not hold is a command nobody can
+		// type.
 		newReviewCmd(),
+		// The reader an agent calls instead of guessing what this repository
+		// treats as security-sensitive (the security-classification design's
+		// SC3, D1512). It reads a file at the base branch and nothing else: no
+		// bucket, no database and no host.
+		newSecurityCmd(),
 		// The credentials service's own entry point: hidden, and the only
 		// thing the service's image runs (credentials_serve.go, plan task
 		// C1.14). It is registered like every other command so `fugaro

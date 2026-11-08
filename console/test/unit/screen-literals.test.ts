@@ -183,7 +183,7 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     'row.dailyCapSource': '`capSourceAt` keeps a word only when it is on `CAP_SOURCES`, else `unknown`',
     'row.perRunCapSource': '`capSourceAt` keeps a word only when it is on `CAP_SOURCES`, else `unknown`',
     'panel.because':
-      'every panel constructor draws its reason through `sanitizeRefusal` (`drawnRefusal`) before it is stored, or it is one of the two console constants (`POLICY_BECAUSE`, `ENROLLMENT_BECAUSE`); a document\'s own `note` takes the `putText` branch instead (`becauseKind`)',
+      'every panel constructor draws its reason through `sanitizeRefusal` (`drawnRefusal`) before it is stored, or it is the console\'s own constant (`ENROLLMENT_BECAUSE` -- the policy panel\'s `POLICY_BECAUSE` went with its not-built state when CM10 flipped that panel to `policy.show`); a document\'s own `note` takes the `putText` branch instead (`becauseKind`)',
   },
   'managed.ts': {
     text: {
@@ -1267,6 +1267,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
       '../../shared/rigor.ts',
       '../../shared/sanitize.ts',
       '../../shared/schema.ts',
+      '../../shared/shortid.ts',
       '../../shared/stringify.ts',
       '../../shared/version.ts',
     ])

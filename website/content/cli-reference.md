@@ -36,6 +36,7 @@ Subcommands:
 - `fugaro completion` -- Generate the autocompletion script for the specified shell
 - `fugaro config` -- Work with fugaro.yaml
 - `fugaro coordinator` -- The coordinator's project view: what is in flight, and what collides
+- `fugaro craft` -- Show the model and the credential or pool each craft runs on
 - `fugaro creds` -- Set and list the credentials service's one bundle secret (the owner)
 - `fugaro diagnose` -- Explain how a run went: status, tests, review findings, the agent's last word, logs
 - `fugaro doctor` -- Check that Fugaro is set up and ready, without changing anything
@@ -57,6 +58,7 @@ Subcommands:
 - `fugaro runs` -- List and inspect runs
 - `fugaro seats` -- Estimate how many people a subscription's seat rule would count
 - `fugaro secrets` -- Store, list and withdraw a repository's secrets in Secret Manager
+- `fugaro security` -- Answer what this repository treats as security-sensitive
 - `fugaro settings` -- Show every setting, what decides it, and its default
 - `fugaro setup` -- Create a fresh GCP project and stand up its installation, or a repository's cloud resources, through Terraform
 - `fugaro stats` -- Aggregate one installation's run records into figures a page can publish
@@ -791,8 +793,8 @@ checkout belongs to, as it does for set. show takes owner/name (its empty
 --repo means no repository filter, not a checkout), and preview already
 means this checkout's repository without the flag.
 Runs in flight halt within seconds (a run in its last stage finishes pushing
-its work first) and new runs refuse. --all asks you to type the project's name
-(or pass --yes); one repository needs no confirmation.
+its work first) and new runs refuse. Nothing is asked for it: halting runs
+spends nothing, and only a resume is a raise.
 
 Usage: `fugaro budget kill (--all | --repo [owner/name]) [--reason TEXT]`
 
@@ -808,7 +810,7 @@ Flags:
 | `--reason` | string | "" | no | why (recorded, shown by budget show and watch) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | one repository, given as owner/name or a path inside its checkout (no value: this checkout's origin) |
-| `--yes` | bool | `false` | no | confirm without typing the project's name |
+| `--yes` | bool | `false` | no | accepted and ignored: this command asks nothing |
 
 Subcommands:
 
@@ -924,8 +926,9 @@ Clear a kill switch (budget admins)
 
 Clear the project's kill switch (--all) or one repository's (--repo [owner/name]),
 recording who and when. --repo with no value means the repository this checkout
-belongs to, as it does for set. Asks you to type the project's name (or pass
---yes): runs start again.
+belongs to, as it does for set. Runs start spending again, so nothing is
+asked for it and a coding agent's session is refused, exactly as a raise is
+(D1542).
 
 Usage: `fugaro budget resume (--all | --repo [owner/name]) [--reason TEXT]`
 
@@ -941,7 +944,7 @@ Flags:
 | `--reason` | string | "" | no | why (recorded, shown by budget show and watch) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | one repository, given as owner/name or a path inside its checkout (no value: this checkout's origin) |
-| `--yes` | bool | `false` | no | confirm without typing the project's name |
+| `--yes` | bool | `false` | no | accepted and ignored: this command asks nothing |
 
 Subcommands:
 
@@ -973,8 +976,10 @@ the one whose empty --repo is not the checkout (it means no repository
 filter), so it takes owner/name.
 
 Raising a cap (setting one that was unset counts), or lowering the mode to
-observe, loosens what runs may spend, so it asks you to type the project's name
-(or pass --yes). Lowering needs no confirmation.
+observe, loosens what runs may spend: nothing is asked for it, and a coding
+agent's session is refused with the command to run yourself — a raise is the
+owner's own step (D1542). --ask puts the question back where you can answer
+it. Tightening a cap asks nothing either.
 
 Usage: `fugaro budget set (--global | --defaults | --repo [owner/name]) [--daily USD] [--per-run USD] [--max-reserve USD] [--mode observe|enforce] | --clear`
 
@@ -982,6 +987,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--ask` | bool | `false` | no | ask before a raise, at a terminal that can answer |
 | `--clear` | bool | `false` | no | remove the scope's caps |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--daily` | float64 | `0` | no | the daily cap, in US dollars |
@@ -995,7 +1001,7 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | one repository's caps, given as owner/name or a path inside its checkout (no value: this checkout's origin) |
-| `--yes` | bool | `false` | no | confirm a raise without typing the project's name |
+| `--yes` | bool | `false` | no | accepted and ignored: this command asks nothing |
 
 Subcommands:
 
@@ -1682,6 +1688,61 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | the repository to read (owner/name; default: the local config's, when it lists one) |
 | `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro craft`
+
+Show the model and the credential or pool each craft runs on
+
+Show the four crafts: the coder, the first-line review, the senior review
+and the security review.
+
+Each craft runs a model and sends its calls out on a credential or a pool, and
+the two halves inherit separately: the first-line review follows the coder and
+the security review follows the senior review, so a craft that sets only one
+half keeps the other half it follows. A craft that sets no access anywhere
+resolves to the project's default credential.
+
+Every half names where it came from: the layer that wrote it (repo, local or
+project), the craft it was inherited from, or default when nothing set it. A
+pool holding two or more Claude OAuth credentials serves nothing until the
+project's subscription-spread switch is on, and the row says so.
+
+The read is offline: it reads this checkout's fugaro.yaml, the installation's
+own config and the project layer file the last cloud read cached, and reaches
+no bucket, no database and no host.
+
+Usage: `fugaro craft`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for craft |
+
+Subcommands:
+
+- `fugaro craft ls` -- Show each craft's effective model and access, and where each came from
+
+## `fugaro craft ls`
+
+Show each craft's effective model and access, and where each came from
+
+Usage: `fugaro craft ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print the versioned document |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -4581,8 +4642,9 @@ already holds in workflow_secrets (that block can hold no reserved name),
 and --repo cannot be combined with either flag: the entry is the project's
 own and no repository owns it. --proxy is refused for a workflow secret,
 because no workflow_secrets entry holds the switch. Adding a repository to
-the list, or turning proxy on, is a widening, so it takes the project's own
-name at a terminal — or --yes outside a coding agent's session. --dry-run
+the list, or turning proxy on, is a widening: it is the owner's own step,
+asked nothing at your own terminal, and a coding agent's session is refused
+it with the command to run yourself (D1552). --dry-run
 says what the write would do and writes nothing, and --json prints that as
 the settings-write document.
 
@@ -4611,6 +4673,70 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | work on one repository's own copy, given as owner/name or a path inside its checkout (no value: this checkout's origin); without it, a name that has a project-wide meaning is stored and listed project-wide |
 | `--yes` | bool | `false` | no | confirm the policy write without a prompt (outside a coding agent's session) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro security`
+
+Answer what this repository treats as security-sensitive
+
+Answer what this repository's runs treat as security-sensitive.
+
+The list in force is a positive one: the trees, files and file classes a change
+has to touch to be reviewed as a security-sensitive change, one named row each.
+It is read at the base branch, so a change can never carry the list that governs
+its own review.
+
+Every read this command makes is offline: it opens no bucket, no database and no
+host, and it reads a file at a ref only out of the checkout's own object
+database.
+
+Usage: `fugaro security`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for security |
+
+Subcommands:
+
+- `fugaro security paths` -- Print the pattern list in force, and answer a path against it
+
+## `fugaro security paths`
+
+Print the pattern list in force, and answer a path against it
+
+Print the list of paths this repository's runs treat as security-sensitive.
+
+Without --check the whole list in force is printed, each row with the layer it
+came from. With --check, each named path is answered against that list instead:
+whether the list treats it as security-sensitive, and the row that decided. The
+list is a positive one, so a path no row matches is answered not sensitive —
+except a path the reader cannot place at all (absolute, escaping, uncleaned,
+outside ASCII, or naming no path in the checkout at all: . and ..): that one is
+answered sensitive, never routine, because a spelling that means more than one
+path, or none, is one no list can speak about.
+
+The list is read at the base branch — the ref the next run from this checkout is
+cut from — and never from the working copy, so a change cannot carry the rule
+that governs its own review. The ref's name is resolved from this checkout's own
+fugaro.yaml and the local config, and the published policy's base_branch is not
+consulted: it is a database read, and every read this command makes is offline.
+A project whose default base branch lives only in the published policy therefore
+reads as main here.
+
+Usage: `fugaro security paths`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--check` | stringArray | `[]` | no | answer a repository-relative path against the list in force instead of printing it (repeatable) |
+| `-h`, `--help` | bool | `false` | no | help for paths |
+| `--json` | bool | `false` | no | print the document as JSON |
 
 Subcommands:
 
@@ -4717,10 +4843,11 @@ unset to remove the key.
 
 Loosening a ceiling key (budget.*, governance.*, the agent caps
 agent.max_budget_usd and agent.max_run_tokens with the layer's own spellings),
-adding a name to a followup.* list or turning one of those keys on, is
-confirmed by the project's name typed at a terminal, or by --yes. Writing
-outside a repository is refused in a coding agent's session, --yes included,
-and so is the typed form at any layer: --yes never lifts that fence.
+adding a name to a followup.* list or turning one of those keys on, is a
+widening, and a widening is the owner's own step: nothing is asked for it at
+your own terminal, and a coding agent's session is refused it with the command
+to run yourself (D1552). Writing outside a repository is refused in a coding
+agent's session, --yes included: --yes never lifts that fence.
 
 --dry-run says what the edit would do — the key, the layer, the file, the old
 and the new value, and whether it raises a limit — and writes nothing: no
@@ -4740,7 +4867,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--add` | string | "" | no | add an item to a string-list key |
 | `--add-entry` | stringArray | `[]` | no | add one entry to a map or an object list (field=value, once per member the entry has) |
-| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmations this write would otherwise get (the y/N, or the typed project name for a widening direction) instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the questions back. Refused where nobody can answer them (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get (the y/N) instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back — a widening is the owner's own step and is asked nothing with or without it (D1552). Refused where nobody can answer them (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dry-run` | bool | `false` | no | print what the edit would do and write nothing |
 | `-h`, `--help` | bool | `false` | no | help for set |
@@ -4767,8 +4894,9 @@ indistinguishable from a deliberate pin and silently wrong the day the built-in
 changes. Nothing to remove is a no-op with a sentence and exit 0, so an
 idempotent script does not fail.
 
-Removing a ceiling key is confirmed by the project's name typed at a terminal,
-or by --yes outside a coding agent's session.
+Removing a ceiling key is the owner's own step: nothing is asked for it at your
+own terminal, and a coding agent's session is refused it, with the command to
+run yourself (D1552).
 
 --dry-run says what the removal would do — the key, the layer, the file, the
 value it takes away, and whether it raises a limit — and writes nothing: no

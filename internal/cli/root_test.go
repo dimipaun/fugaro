@@ -43,13 +43,14 @@ func TestNoGCPCommand(t *testing.T) {
 // subcommand are names the released binary answers to, each with the flags a
 // user types at it. The command family, its refusal and its reader were written
 // and tested on a tree that added the constructor by hand (review_test.go's
-// reviewCLI), so until newCoreRoot's AddCommand list carries it the whole file
-// is dead code: no tree the CLI builds reaches it, and the refusal the design
-// leans on is a sentence nothing can print.
+// reviewCLI), so until newCoreRoot's AddCommand list carried it the whole file
+// was dead code: no tree the CLI builds reached it, and the refusal the design
+// leans on was a sentence nothing could print.
 //
-// Registering the name changes nothing else: the launch is refused exactly as
-// it is until the credentials service admits a review caller (reviewJobAdmitted,
-// E7's second half), which is CSR11's constant and not this registration's.
+// Registering the name changes nothing else. The refusal it can still print is
+// E7's installation half — a project with no published credentials service —
+// and the binary half that used to join it is the flip this command family's
+// own file carries now (reviewJobAdmitted, true since 0.21.0).
 func TestReviewIsRegisteredInTheCoreRoot(t *testing.T) {
 	root := NewRootCmd()
 	for _, c := range []struct {
