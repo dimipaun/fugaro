@@ -691,6 +691,39 @@ func TestThePolicyStagesConfirmationIsNeverDrawnOver(t *testing.T) {
 	step.Done("")
 }
 
+// TestTheWorkspaceStagesConfirmationIsNeverDrawnOver is the same finding on the
+// update door's second stage that asks a confirmation of its own: the workspace
+// publish prints its diff and asks the shared confirmation (confirmRemoval,
+// confirmTypedStrict), and asked through the command's own writer with no
+// question in flight it landed on the line the spinner had drawn, with the
+// redraw painting the frame over the CONFIRM block and over the project's name
+// typed under it (G1). The write this test confirms is a removal — the published
+// node lists a member the record no longer declares — so the question is the
+// ordinary y/N one and the person types the project's name at it.
+func TestTheWorkspaceStagesConfirmationIsNeverDrawnOver(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	fakeTerminal(t)
+	writerAsTerminal(t)
+	// The workspace's own project is the one the shared confirmation helper
+	// types the name of (initProjectName), so this home is the workspace-alpha
+	// one's installation with the owner's table under that name: the record this
+	// stage publishes is named after the project that declares it.
+	h := newWSUpdateHome(t, "")
+	h.add(t, initProjectName, "aurora-gcp", wsOwnerTable)
+	h.selectProject(t, initProjectName)
+	wsPublishedNode(t, h.project(t, initProjectName), initProjectName,
+		[]any{wsPublishedMember("member-b", "owner/repo-a", "owner/repo-b"), wsPublishedMember("member-c", "owner/repo-c")}, 0)
+	r := newWSUpdateRig(t, h)
+	run := r.s.e.r
+	run.rep = report.New(report.Options{Out: r.out, Getenv: os.Getenv, IsTerminal: writerIsTerminal})
+	step := run.rep.Step(initflow.Workspace)
+	answerAQuestionMidStage(t, run, r.out, "⚠ CONFIRM (project "+initProjectName+"): ", func() error {
+		_, err := r.s.Apply(context.Background(), initflow.Env{Interactive: true})
+		return err
+	})
+	step.Done("")
+}
+
 // answerAQuestionMidStage drives ask — the stage's call, which asks one question
 // of the person — from another goroutine and asserts what the screen shows. The
 // answer is on a pipe, so the test decides when the person has read the block

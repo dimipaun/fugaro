@@ -338,8 +338,10 @@ a dependency's status without changing the dependency.** `docs/mcp-server/` (D92
 **#1487 on 2026-11-04**, the same day as this design's answers; **none of its code is written** — it
 is a design folder with this folder's own status line. So W4's host exists as a *design* and not as
 code, and [implementation-plan.md](implementation-plan.md) §2 and §5 and §7's V2 are updated to say
-that rather than "still open". Nothing else moves: D921's licence is still unconfirmed there, and
-that design still recommends a slot of its own for its code.
+that rather than "still open". Nothing else moves: D921's licence was still unconfirmed there when
+that was written — the owner cleared it on 2026-11-07, recorded in
+[licence-gate.md](../mcp-server/licence-gate.md) — and that design still recommends a slot of its own
+for its code.
 
 **F31 — The third security re-read, 2026-11-04, at `abc8e09c`. — Four statements the folder made
 were not consistent with its own sections, and each was the same kind of miss: a sentence that read

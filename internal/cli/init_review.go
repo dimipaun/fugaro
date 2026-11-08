@@ -137,20 +137,54 @@ func (r *initRun) declinedRun() error {
 // own typed confirmation. imports are the import blocks the root's discovery
 // wrote: an import that is not one of them is not covered.
 func (r *initRun) notCovered(p *tf.Plan, imports []tf.ImportKey) string {
+	return coverSentence(r.coverReasons(p, imports))
+}
+
+// coverReasons is why a plan is not covered by the run's one confirmation, in
+// the cover's own items — one per change, "<address> (<why>)" (tf.Cover's own
+// shape) — and the empty list when it is.
+//
+// It is the same answer notCovered gives, unwrapped, and the two are asked
+// apart on purpose: what a prompt shows is one line about the plan, while the
+// gate's refusal is per address (managed.Refusal, and the record's rules are
+// those refusals), so a gate handed the sentence carried "the plan is outside
+// what the review announced" as if it were the address of the change that
+// refused — and a reader asking a verdict which changes were refused could not
+// tell a removal from anything else the cover refused.
+func (r *initRun) coverReasons(p *tf.Plan, imports []tf.ImportKey) []string {
 	if r.review == nil || r.review.cover == nil {
+		return nil
+	}
+	return r.review.cover().NotCovered(p, imports)
+}
+
+// coverSentence is the cover's items as the line a prompt shows them in, ""
+// when there are none.
+func coverSentence(items []string) string {
+	if len(items) == 0 {
 		return ""
 	}
-	b := r.review.cover().NotCovered(p, imports)
-	if len(b) == 0 {
-		return ""
-	}
-	return "the plan is outside what the review announced (" + strings.Join(b, "; ") + ")"
+	return "the plan is outside what the review announced (" + strings.Join(items, "; ") + ")"
 }
 
 // askOrdinary is ask for an ordinary step: covered by the run's one
 // confirmation when it applies, else the step's own. notCovered, when set, is
 // why this step is not covered (shown), so it asks its own typed
 // confirmation.
+//
+// The owner's own terminal on a managed project types nothing here either, and
+// this is the owner's ruling of 2026-11-06: a step of the converge that loses
+// no data and takes no secret value is not asked for a confirmation a person
+// has to type. It is read after the covered branch, so a step the review
+// announced keeps the sentence that says so (GateOrdinary), and only where
+// notCovered is "": a plan the review did not announce is exactly the plan that
+// may delete, replace or remove an IAM grant, and the ruling's exception is
+// about steps that lose nothing — the cover that says which those are is the
+// same one the gate judges the step by (stepCover below). Such a step reads the
+// note below and asks for its own name, as it did before the ruling.
+//
+// The marker is refused above either way: a coding agent's session is not this
+// case (PersonAtTheTerminal reads the marker).
 func (r *initRun) askOrdinary(what, notCovered string) (bool, error) {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		return false, &initflow.AgentError{Marker: m}
@@ -169,7 +203,13 @@ func (r *initRun) askOrdinary(what, notCovered string) (bool, error) {
 			}
 			return true, nil
 		}
-	} else if r.review != nil && r.review.state == reviewTaken {
+		if r.gateStandsIn() && initflow.PersonAtTheTerminal(r.conditions()) {
+			fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
+			fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
+			return true, nil
+		}
+	}
+	if notCovered != "" && r.review != nil && r.review.state == reviewTaken {
 		fmt.Fprintf(r.w, "note: this step is not covered by the run confirmation: %s; it asks for its own\n", notCovered)
 	}
 	return r.ask(what)
@@ -384,7 +424,7 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 		}
 	}
 	if todo[initflow.Installation2] {
-		fmt.Fprintln(w, "  installation-2: Terraform apply of the installation root again, deploying the history job (planned when applied)")
+		fmt.Fprintln(w, "  installation-2: Terraform apply of the installation root again once the images stage has put the history image and the catalog's base image in place, deploying the jobs that run FROM them (planned when applied)")
 	}
 	if todo[initflow.Repository] {
 		repo := "the checkout's repository"
@@ -463,6 +503,9 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 		if e.previewState(initflow.Policy) == initflow.Todo {
 			sep = append(sep, "migrating the published policy node in place (type the project's name)")
 		}
+		if e.previewState(initflow.Workspace) == initflow.Todo {
+			sep = append(sep, "publishing the workspace record (its own y/N, and the project's name typed for the group's first record and whenever it admits more to the group than the published one does)")
+		}
 	} else {
 		// The plugin wiring is not in this list: its y/N is one of the
 		// prompts a managed project does not ask (init_plugin_stage.go).
@@ -471,6 +514,9 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 		}
 		if e.previewState(initflow.Policy) == initflow.Todo {
 			sep = append(sep, "migrating the published policy node in place when the migration loosens a ceiling, which takes the project's name: a Typed step is money or permanence, and no plan gate admits one (D1026)")
+		}
+		if e.previewState(initflow.Workspace) == initflow.Todo {
+			sep = append(sep, "publishing the workspace record when it admits the group's first one or more than the published record does, which takes the project's name: the first record, a member, a repository, or a record that drops the ceiling the published one states, is a Typed step, and no plan gate admits one (D1026)")
 		}
 	}
 	if len(sep) == 0 {
@@ -570,6 +616,14 @@ func (r *initRun) firebaseReason() string {
 
 // notCoveredFirebase is notCovered for a plan of the Firebase root, which is
 // also not covered when the Firebase project is not verified as Fugaro's.
+//
+// The two reasons read differently on purpose: the cover's is a sentence about
+// the plan and the addresses it names, while an unverified Firebase project is
+// the step's own fact about the project the root would write into — "the plan
+// is outside what the review announced (the Firebase project is not verified as
+// Fugaro's)" says a thing about the cover that is not so. The gate is handed
+// coverReasonsFirebase, whose items are that answer unwrapped; what a prompt
+// shows is this.
 func (r *initRun) notCoveredFirebase(p *tf.Plan, imports []tf.ImportKey) string {
 	if why := r.firebaseReason(); why != "" {
 		return why
@@ -577,11 +631,28 @@ func (r *initRun) notCoveredFirebase(p *tf.Plan, imports []tf.ImportKey) string 
 	return r.notCovered(p, imports)
 }
 
+// coverReasonsFirebase is coverReasons for that root, and the reason is one
+// item rather than a cover item per change: an unverified Firebase project
+// refuses the whole plan, which is the step's own fact and not something the
+// cover said about any address.
+func (r *initRun) coverReasonsFirebase(p *tf.Plan, imports []tf.ImportKey) []string {
+	if why := r.firebaseReason(); why != "" {
+		return []string{why}
+	}
+	return r.coverReasons(p, imports)
+}
+
 // stepCover is the cover of one step in the shape internal/managed reads
-// (managed.Cover), built from the very function the step's confirmation asks
-// (initRun.notCovered, initRun.notCoveredFirebase): what the gate judged and
-// what a person would have been shown about the same plan are then one answer
-// rather than two that happen to agree.
+// (managed.Cover), built from the very cover the step's confirmation asks
+// (initRun.coverReasons, initRun.coverReasonsFirebase): what the gate judged
+// and what a person would have been shown about the same plan are then one
+// answer rather than two that happen to agree.
+//
+// The reasons themselves and not the sentence they are shown in: the gate's
+// refusal is per address (managed.Refusal, one rule per change, and the record
+// holds those), while notCovered's line is one sentence about the plan for a
+// prompt — and a gate handed that sentence has one refusal whose address is the
+// sentence's own opening rather than the address of the change that refused.
 //
 // It lives here because reading the run's review is this file's own rule, held
 // by TestRunConfirmationCallSites: the review is the confirmation's, and the
@@ -593,24 +664,21 @@ func (r *initRun) notCoveredFirebase(p *tf.Plan, imports []tf.ImportKey) string 
 // mistake here could turn into "nothing refused it", and the gate's answer for
 // it is the refusal.
 type stepCover struct {
-	notCovered func(*tf.Plan, []tf.ImportKey) string
+	notCovered func(*tf.Plan, []tf.ImportKey) []string
 }
 
 func (c stepCover) NotCovered(p *tf.Plan, imports []tf.ImportKey) []string {
 	if c.notCovered == nil {
 		return []string{"this step's cover was not available to the gate, and a plan no cover judged is not admitted"}
 	}
-	if why := c.notCovered(p, imports); why != "" {
-		return []string{why}
-	}
-	return nil
+	return c.notCovered(p, imports)
 }
 
 // coverOf is the cover of one step of this run, or one that refuses: a run
-// whose review was never built has no cover for any root, and notCovered
-// answers "" in that case because it has no plan to ask about — an answer the
-// gate must not read as "nothing to refuse".
-func (r *initRun) coverOf(which func(*tf.Plan, []tf.ImportKey) string) stepCover {
+// whose review was never built has no cover for any root, and the reasons are
+// empty in that case because there is no plan to ask about — an answer the gate
+// must not read as "nothing to refuse".
+func (r *initRun) coverOf(which func(*tf.Plan, []tf.ImportKey) []string) stepCover {
 	if r.review == nil || r.review.cover == nil {
 		return stepCover{}
 	}

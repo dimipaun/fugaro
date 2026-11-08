@@ -3,7 +3,9 @@
 **Status: the draft as task B1.13 part one wrote it, and 0.14.0 has shipped.** It is kept as written
 because it is what that release's `### For operators` section carried; the sentence below that the
 proxy "arrives in 0.15.0" did not happen — 0.15.0, and every release through 0.20.3, shipped without
-the proxy chain, which is unwritten today. [status-2026-11-07.md](status-2026-11-07.md) is the census
+the proxy chain, which no release carries today (its first two tasks, B1.5 and B1.6, are merged since
+the census below was read, and the runner's half, B1.7, is not).
+[status-2026-11-07.md](status-2026-11-07.md) is the census
 of 2026-11-07: it says what is on `main`, what remains and which tasks can launch now.
 
 The ordered steps an installation must run after deploying 0.14.0. They are drafted here (plan task

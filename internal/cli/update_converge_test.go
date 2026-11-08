@@ -43,6 +43,14 @@ type convergeRig struct {
 	*imagesRig
 	root     string
 	settings string
+	// claude is the fake the checkout stage's plugin step runs: what it
+	// recorded is how a test sees that the plugin was installed in Claude
+	// Code, as opposed to pinned in the checkout's settings.
+	claude *testutil.ClaudePluginFake
+	// builder is the fake Cloud Build the checkout stage's cloud step submits
+	// to: what it recorded is how a test sees, and counts, the billable
+	// job-image builds of a run.
+	builder *fakeBuilder
 }
 
 // v4Node is the published node the release before this one leaves behind: the
@@ -57,6 +65,14 @@ func v4Node() map[string]any {
 }
 
 func newConvergeRig(t *testing.T, node map[string]any) *convergeRig {
+	t.Helper()
+	return newConvergeRigYAML(t, node, refreshYAML)
+}
+
+// newConvergeRigYAML is newConvergeRig over a checkout whose default branch
+// holds yaml as fugaro.yaml: the fixture for the update door's own failures,
+// where the file the repository stage reads is the thing that is wrong.
+func newConvergeRigYAML(t *testing.T, node map[string]any, yaml string) *convergeRig {
 	t.Helper()
 	fakeTerraform(t) // built with go, which upgradeEnv takes off PATH
 	upgradeEnv(t, convergeRelease)
@@ -110,7 +126,7 @@ func newConvergeRig(t *testing.T, node map[string]any) *convergeRig {
 	r.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion-1)
 	r.db.Set(projectpolicy.PathShared(), node)
 
-	root := repoCheckout(t, githubOrigin, refreshYAML)
+	root := repoCheckout(t, githubOrigin, yaml)
 	t.Chdir(root)
 	settings := filepath.Join(root, ".claude", "settings.json")
 	checkoutFile(t, settings, wiredAt("v"+convergePrev))
@@ -120,7 +136,7 @@ func newConvergeRig(t *testing.T, node map[string]any) *convergeRig {
 	// The checkout stage's cloud step rebuilds the workflow images the records
 	// still show on the previous release's base: billable builds, and here the
 	// fake builder's, never a real submit.
-	useFakeBuilder(t)
+	builder := useFakeBuilder(t)
 	records = map[string]string{}
 	prev := openRecordBucket
 	openRecordBucket = openFakeRecords
@@ -135,7 +151,7 @@ func newConvergeRig(t *testing.T, node map[string]any) *convergeRig {
 
 	seedAppSecret(t, r.initRig, "github-app-key")
 	seedAppSecret(t, r.initRig, "claude-oauth-token")
-	return &convergeRig{imagesRig: r, root: root, settings: settings}
+	return &convergeRig{imagesRig: r, root: root, settings: settings, claude: f, builder: builder}
 }
 
 // seedAppSecret stores acme/app's own container for logical, as a run of
@@ -224,6 +240,19 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 		}
 	}
 	for _, c := range after.Checks {
+		// The per-workflow settings comparison, which is the update's own
+		// work: its images stage rebuilds the workflow images the records
+		// still show on the previous release's base, so no image-config- line
+		// may be firing when it is done.
+		//
+		// image-catalog-<workflow> is deliberately not asserted here, and
+		// asserting it would be wrong rather than merely weak: `fugaro update`
+		// publishes the catalog and builds no entry of it, so an installation
+		// whose catalog holds an entry no build has built is still told to run
+		// `fugaro image build <entry>` afterwards — the check is outside
+		// doctorUpdatePrefixes for exactly that reason (catalogImageChecks).
+		// This fixture has no catalog at all, so the assertion could never
+		// fire anyway.
 		if strings.HasPrefix(c.ID, "image-config-") && !c.OK {
 			t.Errorf("after fugaro update, doctor's %s check still fires: %s", c.ID, c.Problem)
 		}
@@ -233,6 +262,15 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 	}
 	if !strings.Contains(out, convergeRelease) {
 		t.Errorf("the run never names the release it converged to:\n%s", out)
+	}
+	// The checkout's cloud step is the third step of its stage, and this run
+	// onboarded the repository itself (it is the run the anchor writes
+	// fugaro.yaml's gcp_project: line in, which leaves the working tree
+	// different from the default branch): the job images are built here, from
+	// the repository this run converged, and a skipped cloud step would be a
+	// run refusing to build from a file it did onboard.
+	if n := len(r.builder.specs); n != 2 {
+		t.Errorf("%d job image(s) reached Cloud Build, want the checkout's two workflows: the job images of a repository this run onboarded are refreshed here\n%s", n, out)
 	}
 }
 

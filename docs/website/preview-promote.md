@@ -10,11 +10,18 @@ the one that directory already documents — and **everything in "One-time setup
 below is the owner's to run**. No agent runs any command in this document, and
 none was run while it was written: this page is the instructions, not a record.
 
-Owner: **@Dimi** (the `dimipaun` account, the repository's owner and the only
-reviewer of the `website-live` environment). Date: **2026-10-18**. The shape is
+Owner: **@Dimi** (the `dimipaun` account, the repository's owner). Date: **2026-10-18**. The shape is
 the owner's ruling of 2026-10-18: **previews are manual and public, promoting is
-manual and the owner's alone, and authentication to Google is Workload Identity
-Federation, never a key file.**
+manual, and authentication to Google is Workload Identity Federation, never a key file.**
+
+**2026-11-07: the `website-live` environment no longer requires a reviewer.** The owner removed
+the approval click from it (and from `console-release` and `mobile-release`), so the fence is the
+`main`-only deployment branch policy, the WIF provider's `assertion.ref == 'refs/heads/main'`
+condition and the tag ruleset — not a person. The promotion is now part of every release: the
+release procedure dispatches the preview, checks it, dispatches the promotion and verifies the
+live site, under the release's own go (`docs/release.md`, "What fences a release now" and the
+"After each release, the website" steps). The owner's dispatch guard below (`if: github.actor ==
+'dimipaun'`) is unchanged.
 
 ## What the two workflows are
 
@@ -25,13 +32,14 @@ Federation, never a key file.**
 | What it does | a credential-free `build` job checks out the ref and runs the site's gate (`npm run check` in `website/`: the Astro build and every `website/test/*.mjs`); a separate `deploy` job takes the build as an artifact, vets its `firebase.json`, and deploys `website/dist` to a **preview channel** of the site's own Firebase project (`firebase hosting:channel:deploy "$CHANNEL" --project "$FIREBASE_PROJECT_ID" --expires 7d --json`) | copies an existing preview channel's current version onto the **live** channel (`firebase hosting:clone "$PROJECT:$CHANNEL" "$PROJECT:live"`); nothing is rebuilt |
 | What it writes | a new version in one preview channel | the live channel |
 | Output | the preview URL, the channel, the ref and the commit, in the run's **job summary** | the project, the promoted channel and who promoted it, in the job summary |
-| Who may start it | anyone with write access to the repository, from `main` (the WIF provider refuses any other dispatch ref) | **the owner alone** — the `website-live` environment's required reviewer *and* a guard on `github.actor` |
+| Who may start it | anyone with write access to the repository, from `main` (the WIF provider refuses any other dispatch ref) | **the owner alone** — a guard on `github.actor` (the `website-live` environment no longer requires a reviewer: 2026-11-07) |
 | Credential | none in the file: Workload Identity Federation | none in the file: Workload Identity Federation |
 | May leave the site down? | no: the live channel is never read or written | yes, by design: promoting is the one thing that moves the live site |
 
 Both are `workflow_dispatch`-only on purpose. **Nothing deploys because a branch
 moved**: a merge to `main` deploys nothing, and the live site changes only when
-the owner promotes bytes they have already seen on a preview URL. This is what
+the owner — or the release procedure, on the owner's go — promotes bytes that
+were seen on a preview URL first. This is what
 D109 asked for — the site's deploy is decoupled from the release train, which is
 also why neither file is referenced by `ci.yml`, `release.yml` or
 `scripts/release-gate.sh`.
@@ -80,13 +88,16 @@ site.
   (`website-preview` never writes live; `website-promote` only ever writes it).
   `internal/cli/docs_website_deploy_test.go` reads the pattern out of both
   files and fails if the workflow and the script ever drift apart.
-- **The promote job's two locks.** `environment: website-live` makes GitHub
-  hold the job until its only required reviewer approves it, and
+- **The promote job's two locks.** `environment: website-live` is what its deployment branch policy lives
+  on, and the guard below is the actor lock.
   `if: github.actor == 'dimipaun'` means a dispatch by anybody else is skipped
-  before a runner or an approval request exists. A second step re-checks the
+  before a runner exists. A second step re-checks the
   actor inside the job, so an edit that later loses the `if:` still stops with
-  a message rather than asking the reviewer to approve a promotion they did not
-  start.
+  a message. **Until 2026-11-07 the environment also had a required reviewer —
+  the owner — and that click held the job**, so a dispatch by anyone else never
+  even queued an approval request; the click was removed on 2026-11-07, leaving
+  the actor guard and the `main`-only branch policy as the whole of the lock.
+  Putting it back is one API call (Step 6).
 
 ## One-time setup — the owner's, and only the owner's
 
@@ -189,16 +200,15 @@ gh variable set GCP_WORKLOAD_IDENTITY_PROVIDER --repo "$REPO" \
 gh variable set GCP_DEPLOYER_SERVICE_ACCOUNT --repo "$REPO" --body "$SA"
 ```
 
-**Step 6 — the `website-live` environment, with the owner as its only required
-reviewer.** Either in the repository's **Settings → Environments** (create
-`website-live`, add yourself under **Required reviewers**, and under
+**Step 6 — the `website-live` environment, whose fence is the branch policy
+(`main` only) and, since 2026-11-07, no reviewer.** Either in the repository's
+**Settings → Environments** (create `website-live`, and under
 **Deployment branches and tags** choose **Selected branches** with `main` and
 `main` only), or with the API:
 
 ```sh
 gh api --method PUT "repos/$REPO/environments/website-live" --input - <<JSON
 {
-  "reviewers": [{"type": "User", "id": $(gh api users/dimipaun --jq .id)}],
   "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}
 }
 JSON
@@ -207,9 +217,27 @@ gh api --method POST "repos/$REPO/environments/website-live/deployment-branch-po
   -f name=main
 ```
 
-**Leave "Prevent self-review" off.** The owner is both the actor and the only
-reviewer, and GitHub would otherwise refuse the owner's own approval of the
-owner's own run — the environment would hold every promotion forever.
+**The environment is created with no reviewers, and that is the current state
+(2026-11-07).** The owner removed the required reviewer from `website-live`, as
+from `console-release` and `mobile-release`, so the job no longer waits for a
+click: the branch policy above, the actor guard in `website-promote.yml` and the
+WIF provider's `main` condition are the fence, and the promotion runs as part of
+the release procedure. To put the click back, add one `"reviewers"` list to the
+same PUT — the body is the whole environment, so a PUT without it clears the
+list, and a PUT with it sets it:
+
+```sh
+gh api --method PUT "repos/$REPO/environments/website-live" --input - <<JSON
+{
+  "reviewers": [{"type": "User", "id": $(gh api users/dimipaun --jq .id)}],
+  "deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}
+}
+JSON
+```
+
+**Leave "Prevent self-review" off if you do.** The owner is both the actor and
+the only reviewer, and GitHub would otherwise refuse the owner's own approval of
+the owner's own run — the environment would hold every promotion forever.
 
 **Step 7 — copy the two files in.** With the procedure
 [`docs/pending-workflows/README.md`](../pending-workflows/README.md) already
@@ -225,10 +253,13 @@ load-bearing: while a staged copy exists, `docs_website_deploy_test.go` reads
    `https://…web.app`-shaped URL, the ref and the commit. Open the URL: the site
    should be the build of that commit. Nothing about the live site changed.
 2. **A promote.** `gh workflow run website-promote --ref main -f
-   channel=owner-test`. Expect the job to appear as **Waiting** until you
-   approve it under **Actions → the run → Review deployments**, and, after the
-   approval, a summary naming the channel it promoted. `https://fugaro.dev`
-   should then serve the version that channel held.
+   channel=owner-test`. Expect a green run with no approval step — since
+   2026-11-07 the `website-live` environment requires no reviewer, so the job
+   starts as soon as the actor guard passes — and a summary naming the channel
+   it promoted. `https://fugaro.dev`
+   should then serve the version that channel held. (While the environment still
+   had a required reviewer, this is where the run sat as **Waiting** until you
+   approved it under **Actions → the run → Review deployments**.)
 3. **The owner-run live checks.** Checks 69a and 69b of
    [`docs/gcp-live-checklist.md`](../gcp-live-checklist.md) are what prove the
    deployed result: the canonical origin, the deployed HTML being the build's
@@ -251,9 +282,11 @@ this page; that is the setup above being incomplete, not a bug in the workflow.
     ref=<any branch> -f channel=…` builds and deploys that branch to a
     **public** preview URL. The owner accepted this on 2026-10-18 (previews are
     manual and public). `channel=live` is refused by `main`'s file.
-  - **No promotion.** `main`'s `website-promote.yml` is skipped for any actor
-    but the owner, and the `website-live` environment holds it for the owner's
-    approval.
+  - **No promotion by anyone but the owner.** `main`'s `website-promote.yml` is
+    skipped for any actor but the owner, and the `website-live` environment
+    admits branch `main` and no other ref. The environment used to hold the job
+    for the owner's approval as well; since 2026-11-07 the click is gone, so the
+    actor guard and the branch policy are what keep a promotion the owner's own.
   The boundary therefore rests on **branch protection on `main`**: a change
   that weakens either file has to be reviewed and merged there first. The
   deployer still holds `roles/firebasehosting.admin`, which can write live, so
@@ -280,8 +313,10 @@ this page; that is the setup above being incomplete, not a bug in the workflow.
 - **A preview channel expires.** `--expires 7d` on each deploy, so a preview
   that is not deployed again disappears; the live channel is unaffected. A
   promotion copies the channel's *current* version, so promoting an expired (or
-  redeployed-elsewhere) channel is the owner's call at approval time — the run
-  refuses a channel it cannot find rather than promoting something else.
+  redeployed-elsewhere) channel is the dispatcher's call at dispatch time — the
+  run refuses a channel it cannot find rather than promoting something else.
+  That is why the release procedure checks the preview before dispatching the
+  promotion: the check is what a reviewer's click used to stand for.
 - **The live site's custom domain is not touched by either workflow.**
   Registering `fugaro.dev`, attaching it to the Firebase project and writing the
   DNS records are the owner's steps (D92), and `firebase.json` deliberately

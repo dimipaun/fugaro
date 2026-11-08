@@ -1110,6 +1110,63 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     dirFlag: false,
   },
   {
+    // The Project tab's managed state and its audit trail (the managed screens'
+    // plan, CM4; `managed.status`, D1472 to D1477; rule 6's own row). The whole
+    // argv is the row's four words plus the installation's two: `fugaro managed
+    // status` has no positional word of its own, and the operation declares no
+    // argument (`src/main/ipc.ts`), so there is nothing a renderer could fill
+    // and nothing it could steer -- no `--gcp-project`, no `--region`, and no
+    // `--strict`, which is `doctor`'s flag and not this command's.
+    //
+    // It is a read of one project's marks and of the newest audit record, and
+    // it is the read whose *document* is the disclosure bound rather than whose
+    // argv is: what the child prints is the bounded subset D1476 fixes, never
+    // the record's `argv`. Nothing about that bound is this row's to keep -- the
+    // CLI's `--json` is the whole of what a caller may ask for, and the shape it
+    // answers with is the command's own (`console/docs/json-contract.md` §6.21).
+    //
+    // Like every other read here it takes the two project flags (rule 3) and
+    // keeps no cache and no credential: the CLI resolves the project's own
+    // database node through the caller's ADC.
+    operation: 'managed.status',
+    words: ['managed', 'status', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  {
+    // The Project tab's policy notes, the node half (the managed screens' plan,
+    // CM4; `policy.show`, D1480 and D1481; rule 6's own row). The command is
+    // `fugaro project policy show --json`, and the row spells all four of its
+    // words because three of them are the command path: the `project` group's
+    // other words -- `policy publish`, `repos add`, `repos rm` and `sync` -- are
+    // each on this module's own never table, so `project policy show` is the
+    // group's whole reachable argv.
+    //
+    // The command prints `{project, policy}` and nothing else, which is why the
+    // row is this one and not `project show --json`: the latter also carries the
+    // installation's caps, and those are the Spend screen's subject (D1481). The
+    // published node's own `budget` block is the project's own ceiling and **no
+    // screen draws it**: the policy notes read the node, drop the block and draw
+    // no figure of it, because a configured ceiling is drawn where the `caps`
+    // panel draws one and nowhere else (the managed screens' reconciliation, §6
+    // rule 3 -- this comment said the block "is drawn as the policy it is" until
+    // CM7's review of 2026-11-07, which no screen of that work does). A ceiling
+    // is what the reduced mode withholds all the same, and for a reason about the
+    // read rather than about a drawing: it travels in the **document**, so the
+    // operation is on that view's list (`REDUCED_VIEW_OPERATIONS`'s `caps`,
+    // `src/main/ipc.ts`) and not exempt from it.
+    //
+    // It takes no argument either (`src/main/ipc.ts`'s empty `args`): no
+    // positional word, no `--gcp-project` and no `--region`, so no word of the
+    // argv comes from a renderer.
+    operation: 'policy.show',
+    words: ['project', 'policy', 'show', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  {
     // **The launch, and the console's only write** (design §5.1 rule 11, D22).
     // The row is rule 11's argv word for word: `run --task-file - --json
     // --run-id <id> --repo <owner/name> [--title=<T>] [--plan-task=<P>]

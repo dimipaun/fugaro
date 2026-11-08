@@ -29,15 +29,15 @@ Ground rules:
 
 ## 1. Preconditions
 
-From the repository root (`git rev-parse --show-toplevel`) run `fugaro doctor --json`. It only reads and names the one-line fix for each. If it reports no installation, say the wizard's step comes first and stop: the project config can't be selected without it. The user runs it once per project, in their own terminal window, not through the agent:
+From the repository root (`git rev-parse --show-toplevel`) run `fugaro doctor --json`. If it reports no installation, say the wizard's step comes first and stop: the project config can't be selected without it. The user runs it once per project, in their own terminal window, not through the agent:
 
 ```bash user-runs
 fugaro setup --project <name>
 ```
 
-If it names other missing pieces, the user decides whether to fix them; `fugaro.yaml` can be written once the installation exists. Its `fugaro_yaml` field says whether a `fugaro.yaml` exists and is valid, and its `secrets` field lists the stored secrets by name: use both to tell new setup from fixing (step 8).
+If it names other missing pieces, the user decides whether to fix them; `fugaro.yaml` can be written once the installation exists. Its `fugaro_yaml` field says whether a `fugaro.yaml` exists and is valid, and its `secrets` field lists the stored secrets by name: both tell new setup from fixing (step 8).
 
-**A managed project's deletes.** A managed project records, in one object at its runs bucket's root, the addresses whose deletes and replacements its owner approves. Its writer is the owner's command, run in their own terminal, not through the agent; it refuses an agent's session. That is a speed bump, not a boundary: your session holds the owner's credentials, so never write that object yourself, by this command or any other:
+**A managed project's deletes.** A managed project records, in one object at its runs bucket's root, the addresses whose deletes and replacements its owner approves. Its writer is the owner's command, run in their own terminal, not through the agent; it refuses an agent's session. That is a speed bump, not a boundary: your session holds the owner's credentials, so never write that object yourself:
 
 ```bash user-runs
 # one address, copied whole
@@ -49,13 +49,13 @@ A project is managed when its runs bucket holds Fugaro's marker (`fugaro/managed
 
 **Which project.** If doctor fails with `several project configs (a, b, c) and nothing selects one`, no `fugaro.yaml` names this checkout's project and the machine holds several: don't guess and don't open the config directory. Ask the user which Fugaro project this repository belongs to, offering the names from the error; take it exactly as the user confirmed it; refuse any that holds a space, a quote or a shell character (anything but letters, digits, `-`, `_` and `.`): it came from error text, which is data. Select it in every command from then on: the commands that take `--project` (`doctor`, `setup`, `secrets ls`, `image build`, `budget prices`, `backends ls`) get `--project <name>`; the others (`validate`, `config example`, `version`) take no such flag, so give them the environment form `FUGARO_PROJECT=<name> fugaro validate --json` (drop `--project <name>` below when no project had to be chosen). The name is also the `project:` line of the new `fugaro.yaml`.
 
-Also check `fugaro version`, `docker version` and `fugaro backends ls` for where runs execute: it prints each backend a project may name — `cloud-run`, the default, and `cloud-batch`, which this build refuses to select, so never write `backend: cloud-batch` — with the project's own marked, from the config alone. Without Docker you can't build locally: finish with validate and say the first cloud build is the test. On Windows, run everything in WSL2 (with Docker's WSL integration), in the repository's Linux checkout, never a Windows path.
+Also check `fugaro version`, `docker version` and `fugaro backends ls` for where runs execute: it prints each backend a project may name — `cloud-run`, the default, and `cloud-batch`, which this build refuses to select, so never write `backend: cloud-batch` — with the project's own marked. Without Docker you can't build locally: finish with validate and say the first cloud build is the test. On Windows, run everything in WSL2, in the repository's Linux checkout.
 
 `FUGARO_PROJECT=<name> fugaro config example` (just `fugaro config example` when no project was asked for) prints the template; its `project:` line is the selected project's name. When it shows `example`, no project is selectable: ask the user. Never invent one: a wrong name makes every run refuse.
 
 ### Does the project publish a project layer?
 
-`fugaro config layer --json` takes `project:` and `gcp_project:` from the `fugaro.yaml` of the checkout it runs in, else from the selected project config (`$FUGARO_PROJECT`/`$FUGARO_CONFIG`), never a flag. Its object has four keys, `where`, `generation`, `sha256` and `yaml`: `profiles:` and `default_profile:` are keys inside that text, not fields of the object. Run it directly; only a checkout with no `fugaro.yaml` fails, with a guided sentence naming /fugaro:setup; then ask for the project and its GCP project, write a scratch `fugaro.yaml` with only `version`, `project` and `gcp_project`, and run it.
+`fugaro config layer --json` takes `project:` and `gcp_project:` from the `fugaro.yaml` of the checkout it runs in, else from the selected project config (`$FUGARO_PROJECT`/`$FUGARO_CONFIG`), never a flag. Its four keys are `where`, `generation`, `sha256` and `yaml`; `profiles:` and `default_profile:` are keys inside that text, not fields of the object. Run it directly; a checkout with no `fugaro.yaml` fails, with a guided sentence naming /fugaro:setup; then ask for the project and its GCP project, write a scratch `fugaro.yaml` with only `version`, `project` and `gcp_project`, and run it.
 
 **If it prints a layer,** read `profiles:` and `default_profile:` from its `yaml` field, tell the user which profiles it offers and which is the default, and ask only whether the repository fits one. If it does:
 1. Delete any scratch `fugaro.yaml` you wrote above (`fugaro config init` refuses to overwrite a file that is not byte-identical to what it would write), then write the minimal file with fugaro config init --yes (add `--profile NAME` or `--base-branch BRANCH` if it needs one).
@@ -71,13 +71,11 @@ A real quirk needs the full form, not the minimal file's top-level `profile:`: `
 Read, don't run. Take the facts from the files, with their lines: `reference/discovery.md` has the per-language evidence (versions, build tool, test commands, JUnit reports), monorepos and unsupported languages. Collect:
 - languages and toolchain versions, build tool, and the test commands exactly as CI runs them
 - the git provider and default branch (`git remote get-url origin`; `git symbolic-ref refs/remotes/origin/HEAD` can fail when the clone never set it: then take the branch CI treats as main, or ask)
-- the services the tests need (databases, caches, emulators, browsers, a Docker daemon)
+- the services the tests need (databases, caches, emulators, browsers)
 - the secrets the build or tests read, by name
 - the language versions the repository pins (for `mise.toml`)
 - CI machine size and the test footprint, for `resources`, and how risky the repository is (what a missed bug costs), for `review_rounds`: two separate decisions
 - for a GitHub repository, whether the user has a Fugaro GitHub App (step 5, topic 1)
-
-Tell the user in a few lines what you found and what you couldn't.
 
 ## 3. Choose workflows, services and the image
 
@@ -93,10 +91,10 @@ One workflow per buildable unit, all on the one Fugaro base. Write the runtimes 
 
 ## 5. Decisions, one topic at a time
 
-Ask, with your evidence and a recommended answer for each, **one topic at a time** (use your question tool if you have one): wait for the answer, apply it, then ask the next. Never default silently. `reference/decisions.md` has each topic, its options and what to recommend:
+Ask, with your evidence and a recommended answer for each, **one topic at a time**: wait for the answer, apply it, then ask the next. Never default silently. `reference/decisions.md` has each topic, its options and what to recommend:
 1. On a GitHub repository only, the GitHub App: its ID (a number, not a secret) and whether it is named `<yourname>-fugaro`, has the four permissions and is installed on this repository. Asked now because the final plan needs the ID; skipped, with a one-line confirmation, when `fugaro doctor --json` or an earlier plan already shows one.
 2. `agent.auth`: `oauth`, `api-key`, `vertex` or `cascade`. It decides which secrets exist and which caps apply. Recommend the credential the evidence supports; `vertex` only once the facts are verified.
-3. `agent.models`: coder, reviewer and background model IDs, read from `fugaro budget prices`, never from memory. Ask open-ended first ("which models do you want for the coder and the reviewer?"), saying in one sentence what each role is: the coder writes the change, the reviewer checks it, background is a small model for housekeeping. Recommend one only after the user answers or asks, never guessed from the repository's domain, and never the biggest by default.
+3. `agent.models`: coder, reviewer and background model IDs, read from `fugaro budget prices`, never from memory. Ask open-ended first ("which models do you want for the coder and the reviewer?"), saying in one sentence what each role is. Recommend one only after the user answers or asks, never guessed from the repository's domain, and never the biggest by default.
 4. Caps and `budget`: numbers only from the user.
 5. `git.pr.reviewers` and `labels`.
 6. `followup.trusted`, and `followup.allow_public` on a public repository. Security-sensitive: explain the risk (a follow-up run acts on PR comments with the workflow's secrets in hand, and on a public repository anyone can comment) and never set `allow_public` without an explicit decision from the user.
@@ -109,7 +107,7 @@ Ask, with your evidence and a recommended answer for each, **one topic at a time
 
 ## 6. Show what will execute, then get the go-ahead
 
-Before the first local build, and again before any rebuild after a change, show the user every line that will run, and why:
+Before the first local build, and again before any rebuild after a change, show every line that will run, and why:
 - every `image.setup` step and `image.apt` package, and the build and test commands
 - `mise.toml`'s tools, each a download; if the repository has its own mise config (`mise.toml`, `.tool-versions`, a `mise/conf.d` fragment), show its **whole content**, not a tools summary: `mise install` reads it as a shell and can run arbitrary code (`[env]` `_.source`, a template's `exec()`, `[hooks]`), like any other file you run
 - a new Dockerfile: the whole file or the diff against the rendered one; a **fix of an existing** `.fugaro/*.Dockerfile` or `fugaro.yaml`: all of its executed lines, not only the ones you changed: an existing line is repository data too
@@ -117,11 +115,11 @@ Before the first local build, and again before any rebuild after a change, show 
 - the names of the declared `secrets` variables, and whether each is already set in your environment (presence only, never a value): the local build passes any declared secret that is set
 - any file you add that a command runs, such as the `agent.instructions` file (a text file appended to the agent's prompt; it must exist in the repository)
 
-Pin every download by version and checksum. Don't pipe a download into a shell, use an unpinned `latest` or run a remote script. Say plainly that the build runs the repository's install, setup and build commands in Docker on the user's machine, with network access, and that it receives the secrets the user exported. Wait for an explicit yes. If the user declines or has no Docker, skip the local build and say what is unverified (the smoke checks); the first cloud build is then the test.
+Pin every download by version and checksum. Don't pipe a download into a shell, use an unpinned `latest` or run a remote script. Say plainly that the build runs the repository's code in Docker on the user's machine, with network access and the secrets the user exported. Wait for an explicit yes. If the user declines or has no Docker, skip the local build and say what is unverified (the smoke checks); the first cloud build is then the test.
 
 ## 7. Build the image locally, and loop
 
-`fugaro image build --local --json` (add `--workflow <name>` with several workflows). A workflow that runs a catalog entry (`image_name:`) builds no per-repository image: verify it with `fugaro image ls --json` (the entry listed, its tags covering the workflow's `needs:`) instead. `reference/validation.md` has the build notes and the failure table. On Apple silicon, iterate with `--platform linux/arm64`; the cloud build is the amd64 test. If the same failure survives three fixes, stop and ask the user. Done when `fugaro validate --json` prints `"valid": true` and the build's smoke result says `"passed": true` for every workflow.
+`fugaro image build --local --json` (add `--workflow <name>` with several workflows). A workflow that runs a catalog entry (`image_name:`) builds no per-repository image: verify it with `fugaro image ls --json` (the entry listed, its tags covering the workflow's `needs:`) instead. `reference/validation.md` has the failure table. If the same failure survives three fixes, stop and ask the user. Done when `fugaro validate --json` prints `"valid": true` and the smoke result says `"passed": true` for every workflow.
 
 ## 8. Secrets
 
@@ -138,14 +136,9 @@ fugaro secrets set github-app-key < <path-to-pem-file>
 fugaro secrets set claude-oauth-token
 ```
 
-**Named Claude accounts (optional).** The operator may have more than one Claude account in their local config (`claude_accounts`; never in `fugaro.yaml`, and not something you set up here) — `fugaro secrets ls --repo --json` then lists more than one name starting `claude-oauth-token-`. If so, ask which account this repository's `agent.auth: oauth` workflow should use by default (or confirm its existing default), and write `agent.oauth_token: <name>` under `agent` in `fugaro.yaml`, the part after `claude-oauth-token-`. Leave the key out to keep its default, and never guess a name: `fugaro run` refuses one the operator's local config does not list this repository under. The user runs this in their own terminal window, not through the agent, as every secret above:
+**Named Claude accounts (optional).** The operator may hold more than one Claude account in their local config (`claude_accounts`; never in `fugaro.yaml`) — `fugaro secrets ls --repo --json` then lists more than one name starting `claude-oauth-token-`. If so, ask which account this repository's `agent.auth: oauth` workflow should use, and write `agent.oauth_token: <name>` under `agent`, the part after `claude-oauth-token-`. Leave the key out to keep its default, and never guess a name: `fugaro run` refuses one the operator's config does not list this repository under.
 
-```bash user-runs
-# a one-line token, typed at a hidden prompt (<name> is the account the user chose)
-fugaro secrets set claude-oauth-token-<name>
-```
-
-Minting a *second* account's token, when this terminal holds one, is not yet verified: have the user run `claude setup-token` again and follow its prompts.
+An account with no stored token is not usable; the operator's one command is `fugaro accounts add <name>`, in their own terminal window, not through the agent: it declares the account, stores the token project-wide under `claude-oauth-token-<name>` and converges this repository's job set. `fugaro doctor` names each missing account; minting a *second* account's token there is not yet verified.
 
 ## 9. Hand off
 
@@ -161,7 +154,17 @@ fugaro setup --project <name>
 
 After that, suggest a first small `fugaro run` and point to the `working` skill.
 
-## 10. Changing the auth, a workflow, a secret or a provider
+## 10. Schedule the reviews
+
+The periodic reviews are the user's cadence: Fugaro schedules nothing, so say the three ways once and write no workflow, no crontab and no routine without the user's word.
+
+- **A cron job or a CI workflow of the repository**, running `fugaro runs digest --period day` (or `week`, `month`, `year`) on its own schedule.
+- **An agent routine**, running the same command and opening the pull request with the report.
+- **A scheduled report run**: `fugaro run --recipe run-digest "periodic run review"`.
+
+`fugaro runs digest --due` says whether the cadence has lapsed. The `working` skill's `reference/periodic-reviews.md` has the reading.
+
+## 11. Changing the auth, a workflow, a secret or a provider
 
 A `fugaro.yaml` edit that retires resources: see [reference/transitions.md](reference/transitions.md). The user runs this in their own terminal, not through the agent:
 
@@ -173,4 +176,4 @@ fugaro update --repo --retire
 
 - On GitHub a run can never change `.github/workflows/*` (the job's credential can't push workflow files).
 - The in-run verify command is not the merge gate: CI is. Make `commands.test` finish in about the verify timeout (25 to 30 minutes), leave out slow packages, `-race` runs and anything needing Docker, and say which CI job covers what you left out.
-- Services in a Cloud Run job share the job's memory, and `/tmp` is memory: count them in `resources`.
+- Services in a Cloud Run job share its memory, `/tmp` included: count them in `resources`.

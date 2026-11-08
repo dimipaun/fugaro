@@ -61,6 +61,18 @@ import (
 // bound on the read and an empty state for a day with nothing in it, for a
 // trail this document can already print.
 //
+// Why the last update's retirement is in this document (F21, D1484, D1485).
+// The managed screens' Project tab draws what the last update retired by itself
+// and the runs it walked past while it did, and nothing else on the machine
+// remembers that once the run is over: the summary is printed once and the plan
+// file is overwritten by the next update. The record of it is CM1's
+// (localcfg's update.json, in the state directory beside the remembered
+// checkouts), and this is where a screen reads it — through the argv the marks
+// are already read with, so a console spawns nothing extra for it, which is what
+// F21 means by filing the record as one of the managed screens' subjects. What
+// is carried is the record's own entry, member for member, with the record's
+// version and the state of a record that could not be read beside it.
+//
 // What it never says (D1475). "Revoked" is a run-time fact of a write gate and
 // is persisted nowhere; a project whose label or marker was taken off is "not
 // managed", which is a different claim. A state the CLI does not have must not
@@ -70,17 +82,18 @@ import (
 // agent's session runs it with no refusal (a writer is refused for what it
 // changes), and it needs no checkout to answer, since --project and --config
 // name the installation. It writes no cloud object and keeps no cache of its
-// own. It is NOT one of the reads the desktop console spawns, though, and that
-// difference is a file: selectProject resolves the working directory as a
-// checkout on the way to the installation, and the resolution remembers the
-// checkout it ran in (recordCheckout, project.go) unless the command's own
-// path stands on consoleReadPaths. This command joins that list in CM3, with
-// the design's §5.1 rule 6 row it needs there, so until it does a console
-// spawn of it records the checkout exactly as a person's own run does. The
-// roles a request for this document needs are the runs bucket's viewer and
-// the project's viewer, the ones every read of the marks already takes. And
-// it is not a tamper-proof trail: the bucket is unversioned and any
-// project-level storage writer can rewrite an object in it.
+// own. It IS one of the reads the desktop console spawns, and that is a file
+// as much as a row: selectProject resolves the working directory as a checkout
+// on the way to the installation, and the resolution remembers the checkout it
+// ran in (recordCheckout, project.go) unless the command's own path stands on
+// consoleReadPaths — which this command's does, added by the managed screens'
+// CM3 with the design's §5.1 rule 6 row that names this argv, so a console
+// paint of this document records no checkout and the operator's state file
+// keeps the directory a person opened rather than one the console resolved on
+// its way here. The roles a request for this document needs are the runs
+// bucket's viewer and the project's viewer, the ones every read of the marks
+// already takes. And it is not a tamper-proof trail: the bucket is unversioned
+// and any project-level storage writer can rewrite an object in it.
 
 // managedStatusNow is the day the trail is read about and the clock the read's
 // own two-day window is measured from. It is a package variable for the reason
@@ -89,7 +102,8 @@ import (
 // under, and one that let the wall clock decide would flake at UTC midnight.
 var managedStatusNow = time.Now
 
-// managedStatusDoc is the document: the marks' own facts, then the trail.
+// managedStatusDoc is the document: the marks' own facts, the trail, and the
+// machine's own record of the project's last update.
 //
 // The shape is CLOSED, and a consumer reads it that way: a member this build
 // does not write is not in it, and a field whose meaning has to change gets a
@@ -137,6 +151,56 @@ type managedStatusDoc struct {
 	// managed files no record at all (D1025), so there is no trail to read and
 	// no state to report about it.
 	AuditState string `json:"audit_state"`
+	// Retirements is what the last plain `fugaro update` of this project
+	// retired by itself, from the machine's own record of that update (CM1,
+	// localcfg.UpdateProject), and null when this machine has recorded no
+	// update for the project. Null is not "nothing was retired": a record that
+	// DID retire nothing is an entry whose `retire` is `[]`, and the two are
+	// different facts about the machine (D1484) — see RetirementsState for the
+	// third answer.
+	Retirements *managedStatusRetirements `json:"retirements"`
+	// RetirementsState is the sentence for a record that could not be read, and
+	// "" for one that was. It is AuditState's own rule one subject over, and
+	// for the same reason: a record that is corrupt, over the bound, not a
+	// regular file or of a version this build does not write leaves no entry to
+	// show, and a screen that read that absence as "no update recorded yet"
+	// would make a claim about the machine from a failure to read it. Unlike
+	// AuditState it is not gated on the marks: this record is written by a
+	// plain update of any project, managed or not.
+	RetirementsState string `json:"retirements_state"`
+}
+
+// managedStatusRetirements is the retirement half of the document: one
+// project's entry in the machine's record of the last update, with the record's
+// own version beside it.
+//
+// The entry is the RECORD'S OWN type, embedded rather than retyped into a
+// second struct with the same nine tags: that second struct is the pair that
+// drifts silently, and what the console reads here is a document this program
+// already writes (D1485 — a member added to the record must arrive here or the
+// console has been told nothing about it, and the docs test that walks this
+// shape is what makes that a failure rather than a surprise). The version is
+// what says which record it was read from, and it is neither of the record's
+// own members: a consumer compares it against the version it knows before it
+// draws a row.
+type managedStatusRetirements struct {
+	// Version is the version of the record this entry came from
+	// (localcfg.UpdateRecordVersion today). A record of another version does
+	// not reach a consumer as an entry at all — it is RetirementsState — so
+	// this member is the one a reader has when it has an entry.
+	Version int `json:"version"`
+	// UpdateProject is the project's own entry: the time its retirement
+	// settled, the set it retired (`[]` for one that retired nothing, never
+	// null) and the runs the registry held while it did — absent when the
+	// number is not known, and never a zero in its place (D1483).
+	//
+	// The entry is carried as the record spells it, `at` included: that time is
+	// the update's own, from the machine it ran on and in that machine's zone,
+	// and it is not re-spelled into UTC the way the trail's own `at` is
+	// rendered. The record is the document a reader may compare against the
+	// file, so a member re-spelled here would be one the two disagree about,
+	// and a consumer draws that time rather than reading a zone into it.
+	localcfg.UpdateProject
 }
 
 // managedStatusAudit is the bounded subset of one audit record (D1476): the
@@ -180,6 +244,14 @@ This is the read a screen of a managed project is built on: one closed document
 about one project, holding the two marks' own answer and the bounded subset of
 the newest audit record — never a sentence to be parsed, whose next rewording
 would change what a screen draws.
+
+The document also carries this machine's record of the project's last plain
+"fugaro update": what that update retired by itself, when it settled the
+retirement and how many runs the registry held while it did, with the record's
+own version beside it — or a sentence instead of the entry when that record
+cannot be read, so a record that is corrupt is never drawn as a project nothing
+was recorded for. It is a local read, and it is made whatever the marks answer:
+a project that is not managed runs updates too.
 
 It reads the same two facts a managed apply reads, and changes no cloud object:
 whether the project is managed is the creation fact in its runs bucket and the
@@ -257,7 +329,53 @@ func managedStatus(cmd *cobra.Command, o cloudOptions, asJSON bool) error {
 		// would let a trail outlive the marks that justify it.
 		doc.AuditDay, doc.AuditCount, doc.AuditState, doc.Audit = managedStatusTrail(ctx, s, lc.RunsBucketName(), managedStatusNow().UTC())
 	}
+	doc.Retirements, doc.RetirementsState = managedStatusRetirementsOf(lc.Name)
 	return managedStatusPrint(cmd.OutOrStdout(), doc, asJSON)
+}
+
+// managedStatusRetirementsOf is the retirement half of the document, read from
+// the machine's own record of the last update (CM1, localcfg.LoadUpdateRecord).
+//
+// It is a LOCAL read, and it is made whatever the marks answer: the record is
+// written by a plain `fugaro update` of any project, and a project that is not
+// managed ran one too. It reaches no cloud object, which is the one thing that
+// makes it unlike the rest of this document — and it is not a fallback for a
+// machine that cannot reach the cloud either: the marks are the document's
+// whole subject, so a read that cannot make them exits before this one is
+// reached, and this subject is only ever printed beside them.
+//
+// The three answers are kept apart because they are three facts. An entry is
+// the record and its version. Null with no state is "this machine has recorded
+// no update for the project": a record file that is not there is an empty
+// document and not an error (LoadUpdateRecord's own rule), so a machine that
+// has never updated has nothing to report and nothing wrong. Null WITH a state
+// is a record that is there and could not be read — JSON this build cannot
+// parse, a byte count over the bound, a file that is not a regular file, or a
+// version this build does not write — and drawing that as the first would be a
+// claim about the machine made out of a failure to read it, which is D1483's
+// rule for the runs and AuditState's for the trail.
+//
+// The record's spelling of an empty set is `[]`, and a nil one is normalised to
+// it rather than passed on as JSON null: the console reads this member as a list
+// or as a shape it does not know, and "the last update retired nothing" is a set
+// that was written.
+func managedStatusRetirementsOf(project string) (*managedStatusRetirements, string) {
+	rec, err := localcfg.LoadUpdateRecord(os.Getenv)
+	if err != nil {
+		path, pathErr := localcfg.UpdateRecordPath(os.Getenv)
+		if pathErr != nil {
+			path = localcfg.UpdateRecordFile
+		}
+		return nil, "could not read the last update's record at " + safetext.Field(path) + ": " + oneLineCLI(err.Error())
+	}
+	up, ok := rec.Projects[project]
+	if !ok {
+		return nil, ""
+	}
+	if up.Retire == nil {
+		up.Retire = []localcfg.UpdateRetirement{}
+	}
+	return &managedStatusRetirements{Version: rec.Version, UpdateProject: up}, ""
 }
 
 // managedStatusClients are the two clients this read needs and no others:
@@ -357,9 +475,12 @@ func managedStatusUnread(bucket, day string, err error) string {
 
 // managedStatusPrint writes the document, or the lines a person reads.
 //
-// The two renderings carry the same facts and the same bound: the text form
-// names the account and the plan digest because an operator at a terminal is
-// asking who admitted what, and neither form ever prints the record's argv.
+// The two renderings carry the same bound: neither ever prints the record's
+// argv, and the text form names the account and the plan digest because an
+// operator at a terminal is asking who admitted what. The retirement half is
+// the document's alone (the update that wrote the record printed its own
+// summary when it ran), so no line here is added or changed by it: what a person
+// reads from this command is the marks and the trail.
 func managedStatusPrint(w io.Writer, doc managedStatusDoc, asJSON bool) error {
 	if asJSON {
 		enc := json.NewEncoder(w)

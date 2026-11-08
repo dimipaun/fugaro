@@ -731,6 +731,10 @@ SECURITY.md, moved the table's row from 99 to 100: it is a ruling's pin rather t
 a folder's, and the figure is the tree's either way. Amended 2026-11-07:
 `internal/cli/docs_cli_output_console_graph_test.go`, the CLI output and console
 graph folder's pin, moved the table's row from 100 to 101. Amended 2026-11-07:
+`internal/cli/docs_credentials_posture_test.go`, the credentials service's
+posture pin over SECURITY.md, its website mirror, the credentials-service rule
+and every living document under `docs/`, moved the table's row from 101 to
+102. Amended 2026-11-07:
 `internal/cli/docs_check130_test.go`, the licensing folder's pin over the register's
 Check 130 section (plan L1.10, run by L1.11), moved the table's row from 101 to
 102. Amended 2026-11-07:
@@ -738,6 +742,20 @@ Check 130 section (plan L1.10, run by L1.11), moved the table's row from 101 to
 pin over Checks 180 and 181 in [gcp-live-checklist.md](../gcp-live-checklist.md),
 moved the table's row from 102 to 103: it is a check block's pin rather than a
 folder's, and the figure is the tree's either way.) They
+102. Amended 2026-11-07: `internal/cli/docs_check340_test.go`, the periodic-reviews
+work's pin over its Check 340 section of the live checklist, moved the table's row from
+102 to 103: it is a check's pin rather than a folder's, and the figure is the tree's
+either way. Amended 2026-11-07: `internal/cli/docs_comment_fragments_test.go`, the
+pin over the three comment-only fragments under `docs/pending-workflows/`, moved
+the table's row from 103 to 104: it is a check's pin rather than a folder's, and
+the figure is the tree's either way. Amended 2026-11-07: `internal/cli/docs_roles_scopes_test.go`, the
+roles-and-scopes folder's pin (RS1: the decision block, the answered cells, the files
+and the tests the plan names), moved the table's row from 105 to 106. Amended
+2026-11-07: `internal/cli/docs_subscriptions_test.go`, the subscriptions folder's
+pin over its plan's no-price-figure constraint (S0.1), moved the table's row from
+109 to 110. Amended 2026-11-07: `internal/cli/docs_release_gate_test.go`, the subscriptions
+release gate's pin over the two release procedures' counsel sign-off and the honour-based
+release that checks no key (S0.7), moved the table's row from 110 to 111. Amended 2026-11-08: `internal/cli/docs_check111_test.go`, the setup-wizard folder's pin over the register's Check 111 section (W0.3), moved the table's row from 111 to 112.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -747,7 +765,7 @@ stale has found a merge that did not.
 | Catalog recipes | 9 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
 | Top-level `fugaro.yaml` keys | 12 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
 | Top-level `fugaro.yaml` keys whose name contains `review` | 0 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*review[a-z_]*": '` |
-| Config scope rows | 93 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
+| Config scope rows | 101 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
 | Layers a configuration key may be set in | 4 | `sed -n '/The layers a key may be set in/,/^)/p' internal/config/scope.go \| grep -c 'In[A-Z]'` |
 | Blocks the project layer's `defaults:` may set | 3 | `sed -n '/type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -c 'yaml:'` |
 | Fields of `task.Spec.Overrides` | 4 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |
@@ -757,6 +775,7 @@ stale has found a merge that did not.
 | Image-skew `Since` constants | 28 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
 | Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 103 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 112 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 4 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -ci repo` |

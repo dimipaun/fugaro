@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pool"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runcache"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -264,7 +265,7 @@ func newLsCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error { return runLs(cmd, &o) },
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name)")
+	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name, or a path inside its checkout)")
 	f.BoolVar(&o.all, "all", false, "every repository in the runs bucket")
 	f.BoolVar(&o.mine, "mine", false, "only runs you requested")
 	f.StringVar(&o.since, "since", lsDefaultSince, "only runs started within this long ("+lsDefaultSince+", 36h, 90m; 0 for all)")
@@ -297,6 +298,10 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 	}
 	if prSet && !cmd.Flags().Changed("since") {
 		o.since = prLookback
+	}
+	var err error
+	if o.repo, err = repoArg(ctx, o.cloud, o.repo); err != nil {
+		return err
 	}
 	since, err := parseSince(o.since)
 	if err != nil {
@@ -898,9 +903,68 @@ func printRowsWithTotals(w io.Writer, project string, rows []runview.Row, tot ru
 		}
 		line += fmt.Sprintf(" · compute not estimated for %d %s", n, noun)
 	}
-	_, err := fmt.Fprintln(w, line)
-	return err
+	if _, err := fmt.Fprintln(w, line); err != nil {
+		return err
+	}
+	return printOwnerWaiting(w, rows)
 }
+
+// printOwnerWaiting prints, under the table, what each listed run is waiting
+// for the repository's owner to decide (OD1), in the same words the pull
+// request's own status section uses: the run, the count its own reason names,
+// and one line per decision with the file and the reviewer's sentence. It
+// prints nothing when no listed run is waiting, which is every ordinary
+// listing. The sentences are untrusted text — a reviewer wrote them — so they
+// are clipped and escaped like every other cell.
+func printOwnerWaiting(w io.Writer, rows []runview.Row) error {
+	waiting := 0
+	for _, r := range rows {
+		if r.OwnerDecisions != nil {
+			waiting++
+		}
+	}
+	if waiting == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, "Waiting on you"); err != nil {
+		return err
+	}
+	for _, r := range rows {
+		od := r.OwnerDecisions
+		if od == nil {
+			continue
+		}
+		reason := r.Reason
+		if reason == "" {
+			reason = "review is waiting on " + runner.Plural(od.Total, "owner decision")
+		}
+		if _, err := fmt.Fprintf(w, "  %s: %s\n", oneLine(r.Run), oneLine(reason)); err != nil {
+			return err
+		}
+		for _, d := range od.Decisions {
+			summary := oneLine(clipRunes(d.Summary, maxOwnerDecisionRunes))
+			line := "    - " + summary
+			if d.File != "" {
+				line = "    - `" + oneLine(d.File) + "`: " + summary
+			}
+			if _, err := fmt.Fprintln(w, line); err != nil {
+				return err
+			}
+		}
+		if n := od.Total - len(od.Decisions); n > 0 {
+			if _, err := fmt.Fprintf(w, "    and %s more; the run's record lists %d of them\n", runner.Plural(n, "decision"), len(od.Decisions)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// maxOwnerDecisionRunes bounds one decision's sentence in a listing, the way
+// maxNameCellRunes bounds a name column: the record already caps it at
+// runstore.MaxOwnerDecisionText, and a table line that carried the whole cap
+// for every decision of every run would bury the rows above it.
+const maxOwnerDecisionRunes = 120
 
 // launcherCell is a row's BY cell: who started the run, in the short form a
 // column has room for (the part before the @ of an address, the whole value

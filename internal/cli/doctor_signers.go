@@ -10,6 +10,7 @@ import (
 	iam "google.golang.org/api/iam/v1"
 
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/shellword"
@@ -27,9 +28,14 @@ const signConsequence = "can sign sign-in tokens with any claims, i.e. act as an
 // expects (the Firebase Admin SDK account, the minter role on the signer
 // account alone), Google's own service agents of this project (matched by
 // exact email AND this project's number) and the project owners (the trust
-// root); none is ever given a remove command. Every other one is a warning
-// that fails doctor under --strict. Nothing is
-// checked without a budget backend. Read-only.
+// root); none is ever given a remove command. The managed deployment's own
+// grants are a warning of their own (token-signers-managed): they are the
+// module's bindings, so they carry no remove command either, but in the one
+// layout this check can see them in — the Firebase project is the deployer's
+// own project — the deployer is a signer, through the unconditioned create its
+// other role holds and the account role's condition naming the accounts it
+// creates. Every other one is a warning that fails doctor under --strict.
+// Nothing is checked without a budget backend. Read-only.
 func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service, i *iam.Service) []doctorCheck {
 	if lc.Budget == nil || lc.Budget.FirebaseProject == "" {
 		return nil
@@ -46,7 +52,12 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 	if nerr != nil {
 		number = 0
 	}
-	fs, err := infra.TokenSigners(ctx, c, i, fp, signer, number)
+	// The installation's own managed deployment, as its local config records
+	// it: its GCP project (the deployer account is there) and the operators it
+	// names. Both empty recognises nothing, so a grant nobody's apply made
+	// still warns.
+	managed := infra.Managed{Project: lc.GCPProject, Operators: lc.Terraform.Operators}
+	fs, err := infra.TokenSigners(ctx, c, i, fp, signer, number, managed)
 	if err != nil {
 		// A warning: with nothing read, --strict must not go green.
 		return []doctorCheck{{ID: "token-signers", Severity: "warning",
@@ -59,11 +70,21 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 	var agentOrder []string
 	owners := map[string]bool{}
 	var ownerOrder []string
+	managedWhy := map[string][]string{} // member -> why its grant is the design's
+	var managedOrder []string
 	n := 0
 	for _, f := range fs {
 		switch {
 		case f.Expected:
 			expected = append(expected, pluginwire.Printable(f.Member)+condSuffix(f.Condition))
+		case f.Class == infra.SignerManaged:
+			m := pluginwire.Printable(f.Member) + condSuffix(f.Condition)
+			if _, ok := managedWhy[m]; !ok {
+				managedOrder = append(managedOrder, m)
+			}
+			if why := pluginwire.Printable(f.Why); !slices.Contains(managedWhy[m], why) {
+				managedWhy[m] = append(managedWhy[m], why)
+			}
 		case f.Class == infra.SignerGoogleAgent:
 			m := pluginwire.Printable(strings.TrimPrefix(f.Member, "serviceAccount:"))
 			if _, ok := agents[m]; !ok {
@@ -86,6 +107,17 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 		}
 	}
 	var info []doctorCheck
+	if len(managedOrder) > 0 {
+		var parts []string
+		for _, m := range managedOrder {
+			parts = append(parts, m+" ("+strings.Join(managedWhy[m], "; ")+")")
+		}
+		out = append(out, doctorCheck{ID: "token-signers-managed", Severity: "warning",
+			Problem: "the managed deployment's own grants, which Fugaro's own Terraform makes on purpose, and which are a signing path here, because the Firebase project is the deployer's own project: the deployer's other, unconditioned " + tf.DeployerRole +
+				" role holds iam.serviceAccounts.create, so the account creates an " + tf.ManagedPrefix + " account of this project, the conditioned role below names exactly the accounts it creates, and its iam.serviceAccounts.setIamPolicy is how it grants itself the token-creator role on the one it made — and Firebase accepts a token signed by any account of the project. The bindings: " + strings.Join(parts, ", ") +
+				"; what a service makes of the module's condition is not read here and is Check 68 of docs/gcp-live-checklist.md's to measure (docs/design/managed-deployer-fence.md)",
+			Fix: "the same-project layout is what leaves this open, and the choice is the owner's: a Firebase project of the deployer's own keeps the deployer out of the budget database's accounts (docs/design/m9-budget-and-dashboard.md §6.0), and removing either binding stops the managed replacement `fugaro update` runs"})
+	}
 	if len(agentOrder) > 0 {
 		var parts []string
 		for _, m := range agentOrder {

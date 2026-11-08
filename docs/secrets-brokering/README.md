@@ -1,7 +1,10 @@
 # Secrets and credential brokering
 
-**Status: every task of S0 but B0.6, and every inert piece of S1, are on `main`; the proxy chain and
-the flip are not, and no task is approved** — [status-2026-11-07.md](status-2026-11-07.md) reads
+**Status: S0 is complete — every task of it, B0.6 (Check 190's run record) included — and every inert
+piece of S1 is on `main` beside the proxy chain's first two tasks — B1.5's service route and B1.6's
+loopback forwarder, which landed after the census below was read; the chain's runner half (B1.7), the
+docs (B1.10), the two live checks (B1.11) and the flip (B1.13 part two) are not, and no task is
+approved** — [status-2026-11-07.md](status-2026-11-07.md) reads
 every task of the plan, one row each, against the merged tree, and says which can launch now. The
 owner answered D490–D506 on 2026-10-27: all as recommended except **D501** (the service keeps scaling
 to zero: not the recommendation;
@@ -41,7 +44,7 @@ None.
 | Block | Use |
 | --- | --- |
 | **D490–D519** | D490–D506 written and answered 2026-10-27; D507–D519 reserved and unused. Above the Bitbucket workspace-token work's D460–D489, on `main` and in every open PR |
-| **Checks 190–199** | 190–192 assigned by the plan (owner-run): 190 is written by B0.4 and **was run by the owner on 2026-10-30 (B0.5) — the >32 MiB push failed with a 413 — and its result is not yet in the register (B0.6)**; 191–192 are not written; 193–199 reserved and unused. Above Checks 180–189 |
+| **Checks 190–199** | 190–192 assigned by the plan (owner-run): 190 is written by B0.4 and **was run by the owner on 2026-10-30 (B0.5) — the >32 MiB push failed with a 413 — and its result is recorded in the register (B0.6)**; 191–192 are not written; 193–199 reserved and unused. Above Checks 180–189 |
 
 ## Related
 

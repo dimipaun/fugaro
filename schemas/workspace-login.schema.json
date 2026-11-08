@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/workspace-login.schema.json",
+  "title": "Fugaro workspace login",
+  "description": "The document `fugaro workspace login --json` prints (docs/workspaces/spec.md §3): the pin the named workspace is held by on this machine, read offline from this machine's own project config. It is a named set of fields and not a marshalled localcfg.Config, which is the `config list` rule, and the pin's assertion key is not a field here at all: the document says the pin carries one and never what the member's key is. The assertion the pin verifies is bound to one member and to one use, and the exchange that checks it is the member's own authorization server rather than this command, so this document describes the sign-in and never performs it. Members are only ever added within a version, so removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document under the same version.",
+  "type": "object",
+  "required": [
+    "version",
+    "project",
+    "workspace",
+    "pin",
+    "next"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "$comment": "workspaceLoginDocVersion in internal/cli/workspace_login.go."
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The project config on this machine that names the workspace: the member, whose own file the pin is written in. A machine whose files name the workspace from several projects has no one pin to describe and refuses rather than choosing one."
+    },
+    "workspace": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The workspace's name, which uses the project-name grammar (config.ProjectNameRE, F21)."
+    },
+    "pin": {
+      "$ref": "#/$defs/pin",
+      "description": "What this member trusts (spec §2). Every value here is the member's own record and never one read from the workspace."
+    },
+    "next": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The one step left: the sign-in at the workspace's own Firebase, whose end is the member-bound assertion this project's own /oauth/authorize accepts. It is in the document and not only on the terminal, because a consumer that reads JSON would otherwise be told what the machine is pinned to and not what to do about it."
+    }
+  },
+  "$defs": {
+    "pin": {
+      "type": "object",
+      "required": [
+        "firebase_project",
+        "issuer",
+        "service_account",
+        "assertion_key_set"
+      ],
+      "properties": {
+        "firebase_project": {
+          "type": "string",
+          "description": "The pin's firebase_project: the WORKSPACE's Firebase project id, which is the one to sign in at and the value an assertion's subject must name."
+        },
+        "issuer": {
+          "type": "string",
+          "description": "The pin's issuer, which is exactly https://securetoken.google.com/<firebase_project>."
+        },
+        "service_account": {
+          "type": "string",
+          "description": "The pin's service_account: the workspace service account this project's own fugaro update binds its read-only database grant to."
+        },
+        "assertion_key_set": {
+          "type": "boolean",
+          "description": "The pin carries the key this member verifies a member-bound assertion against. It is a fact about the pin and never the key: the key itself is not a field of this document, so a reader cannot log one by accident."
+        }
+      }
+    }
+  }
+}
