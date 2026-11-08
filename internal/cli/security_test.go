@@ -155,13 +155,19 @@ func TestSecurityPathsPrintsTheListInForce(t *testing.T) {
 // TestSecurityPathsCheckAnswersPerPath: with --check the command answers one
 // path at a time — the row that answered, and whether the path is sensitive at
 // all — and a path the list in force has nothing to say about is answered `no`
-// with no row rather than left out.
+// with no row rather than left out. The three paths are Check 370's own: a
+// floor row's path, a routine tree the floor says nothing about, and the case
+// between them — a routine tree with a listed exception — which is the shape a
+// project's own list will have.
 func TestSecurityPathsCheckAnswersPerPath(t *testing.T) {
 	securityCheckout(t, "acme/app", securityNoKeyYAML)
 
-	doc := securityDoc(t, "security", "paths", "--check", "internal/creds/state.go", "--check", "docs/recipes.md")
+	doc := securityDoc(t, "security", "paths",
+		"--check", "internal/creds/state.go",
+		"--check", "docs/recipes.md",
+		"--check", "docs/pending-workflows/console-tests.yml")
 
-	if len(doc.Checked) != 2 {
+	if len(doc.Checked) != 3 {
 		t.Fatalf("checked = %d answers, want one per --check path", len(doc.Checked))
 	}
 	cred := doc.Checked[0]
@@ -189,11 +195,28 @@ func TestSecurityPathsCheckAnswersPerPath(t *testing.T) {
 		t.Errorf("checked[1].matched = %+v, want null: no row of the list in force matched it", *recipes.Matched)
 	}
 
-	out, _, err := execute(t, "security", "paths", "--check", "internal/creds/state.go", "--check", "docs/recipes.md")
+	workflows := doc.Checked[2]
+	if workflows.Path != "docs/pending-workflows/console-tests.yml" {
+		t.Errorf("checked[2].path = %q, want %q", workflows.Path, "docs/pending-workflows/console-tests.yml")
+	}
+	if !workflows.Sensitive {
+		t.Error("checked[2].sensitive = false, want true: docs/pending-workflows/** is a floor row, so a workflow staged there is listed although docs/ is routine")
+	}
+	if workflows.Matched == nil {
+		t.Fatalf("checked[2].matched is null, want the floor's pending-workflows row")
+	}
+	if workflows.Matched.Name != "pending-workflows" || workflows.Matched.Category != "CI" || workflows.Matched.Source != "floor" {
+		t.Errorf("checked[2].matched = %+v, want the floor's pending-workflows row (CI, floor)", *workflows.Matched)
+	}
+
+	out, _, err := execute(t, "security", "paths",
+		"--check", "internal/creds/state.go",
+		"--check", "docs/recipes.md",
+		"--check", "docs/pending-workflows/console-tests.yml")
 	if err != nil {
 		t.Fatalf("fugaro security paths --check: %v\n%s", err, out)
 	}
-	for _, want := range []string{"internal/creds/state.go", "docs/recipes.md", "credentials"} {
+	for _, want := range []string{"internal/creds/state.go", "docs/recipes.md", "docs/pending-workflows/console-tests.yml", "credentials", "pending-workflows"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the printed answers do not name %q:\n%s", want, out)
 		}
