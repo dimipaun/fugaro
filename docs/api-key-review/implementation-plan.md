@@ -605,9 +605,11 @@ The launch is **`fugaro review --pr N`**, or equivalently `fugaro run --pr N --r
 the review-only job, and the fallback the launcher's own refusal names. It is **not**
 `fugaro run --review-run`: that flag carries an existing review's findings into a **fix round's**
 brief (`internal/cli/run.go`) and needs `--pr` besides, which is a different thing entirely.
-**This step cannot be run before E7** (**F10**):
-`reviewJobAdmitted` is `false`, so the launch is refused outright until the service admits the review
-caller, and the check is written to be run *after* that, not instead of it. Read off: the review job
+**This step was written for a tree on which E7's second half was not built** (**F10**):
+`reviewJobAdmitted` was `false`, so the launch was refused outright until the service admitted the
+review caller — **the flip of 2026-11-08 made it `true` (`docs/cloud-senior-review` §6's CSR11)**, so
+the launch is admitted and what this step measures is the service's own answer on a live installation.
+Read off: the review job
 was launched for the variant the sentinel names; its model calls were served by the project's
 Anthropic key; the job's own environment held no credential of the repository's; and a repository
 whose `agent.auth` is `api-key` **without** the pairing naming the key is still refused, with the
@@ -643,13 +645,14 @@ may not start and the cloud path is not launchable. A reader must take those two
    CLAUDE.md allows an additive field there but not a changed meaning.
 6. **The security review owed before AK4–AK7 land**, not after: each is SEC, and the review is
    mandatory rather than advisory.
-7. **AK4–AK7 are gated on E7, and it is not this plan's to meet** (**F10**, **U6**;
-   `docs/cloud-senior-review` §1): `internal/cli/review.go`'s `reviewJobAdmitted` is `false`, so every
-   `fugaro review --pr N` is refused until the credentials service admits the review job's own
-   caller — **C3.9**'s code, unscheduled — and the constant is flipped by **CSR11** only after the
-   owner's live checks. Those tasks make the cloud path *served by a key*; they do not make it
-   *launchable*, and a plan that implied otherwise would be selling a path nobody can run. Nothing
-   here takes E7, and no release of this design is worth anything to a user until it is met.
+7. **AK4–AK7 were gated on E7, and it was not this plan's to meet** (**F10**, **U6**;
+   `docs/cloud-senior-review` §1) — **that gate is lifted, because E7's second half reached the tree
+   on 2026-11-08**: `internal/cli/review.go`'s `reviewJobAdmitted` is `true` (CSR11's flip, resting on
+   **CSRW1** and **CSRW2**), so a `fugaro review --pr N` is admitted where it was refused. What the
+   flip did not do is measure a live installation — the owner's live checks are still unrun — and what
+   these tasks add is the cloud path *served by a key*: a plan that read the flip as having given an
+   owner a working api-key review would be selling a path nobody has measured. Nothing here takes
+   E7's live measurement, and no release of this design is worth anything to a user until it is met.
 8. **AK5 was gated on the sentinel's job shape, and AK5 takes it — taken 2026-11-07.** AK4 made the
    sentinel publishable and servable and no installation could *deploy* it, and the readers of the
    account axis that had to yield — plus the account-choice keys AK4 refuses outright — are listed in

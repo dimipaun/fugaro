@@ -85,14 +85,13 @@ type Row struct {
 	Sensitive bool   // the value is never printed (spec §2.3)
 	Owner     string // the command family that writes it
 	Doc       string // the document that must state it
-	// TypedWhy is the sentence saying why turning this key ON is confirmed by
-	// the project's own name rather than y/N, and who may answer that form:
-	// `settings set|unset` take --yes for it outside a coding agent's session
-	// (D1107, amending D846 for those two alone), while `fugaro project repos
-	// rm` and `fugaro update`'s publish of a looser node are the doors where
-	// nothing stands in for it. The widening directions do not include every
+	// TypedWhy is the sentence saying why turning this key ON is the widening
+	// direction rather than the ordinary write: the write prints it and the dry
+	// run carries it as `why`. A widening is the owner's own step and is asked
+	// nothing for itself (D1552); what fences it is the coding agent's session,
+	// at every door that writes it. The widening directions do not include every
 	// key, so the row carries its own. Empty is a key whose write is the
-	// ordinary confirmation.
+	// ordinary one.
 	TypedWhy string
 }
 
@@ -714,7 +713,7 @@ var localRows = []Row{
 		Default:  unset("false: nothing chooses an account for the owner"),
 		Owner:    "settings set",
 		Doc:      docModels,
-		TypedWhy: "this lets Fugaro choose an account for the owner: a run then spreads one project across several accounts, which is the owner's own decision about the terms the subscriptions are held under, so the project's own name is what confirms it, or --yes outside a coding agent's session",
+		TypedWhy: "this lets Fugaro choose an account for the owner: a run then spreads one project across several accounts, which is the owner's own decision about the terms the subscriptions are held under",
 	},
 	// The installation's credentials, pools and crafts (docs/model-crafts/
 	// spec.md §1–3). They are local-only for claude_accounts' reason, and the

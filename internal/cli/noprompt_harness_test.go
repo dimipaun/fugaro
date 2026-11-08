@@ -150,16 +150,16 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// The raise is what asks: the caps are unset in the fixture's database, so
 	// setting one from nothing is a loosening.
 	"fugaro budget set": {args: []string{"--global", "--per-run", "50"}, reaches: "global caps per-run: not set -> $50"},
-	// The project-wide kill switch is the one that asks; a repository's is not.
-	// Its sentence is the banner itself, because the kill is the whole of what
-	// the run has said by the time it asks: T3, which removes the ask, changes
-	// this sentence to whatever the run prints instead.
-	"fugaro budget kill": {args: []string{"--all"}, reaches: "this halts every run"},
-	// A resume asks only where there is a switch to move, so the fixture's
-	// database is killed first: the ask is the subject of this run.
+	// The project-wide kill switch is the one T3 fenced; a repository's is not.
+	// The fence is the session's marker and not an ask, so with the markers
+	// cleared the switch moves and this is what the run prints instead of the
+	// banner T3 took away.
+	"fugaro budget kill": {args: []string{"--all"}, reaches: "project aurora killed"},
+	// A resume moves a switch only where there is one to move, so the fixture's
+	// database is killed first: the moved switch is the subject of this run.
 	"fugaro budget resume": {
 		args:    []string{"--all"},
-		reaches: "this lets project aurora start and continue runs again",
+		reaches: "project aurora resumed",
 		seed: func(t *testing.T, f *budgetFixture) {
 			f.db.Set(budget.PathKillGlobal, map[string]any{"on": true, "by": "boss@example.com", "at": int64(1)})
 		},
@@ -301,10 +301,11 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro runs ls":                "prints the no-project-config refusal",
 	"fugaro runs stats":             "prints the no-project-config refusal",
 	"fugaro runs summary":           "prints the no-project-config refusal",
-	"fugaro seats":                  "prints the estimate this world's own config and runs bucket produce, with nobody in it: no list names a person and no run of the window recorded a requester",
 	"fugaro secrets":                "is a name for set, ls and rm: a bare run prints its own usage and returns",
+	"fugaro security paths":         "refuses outside a checkout: the list is what a run from one repository is reviewed against, and this world's directory names no origin remote",
 	"fugaro secrets ls":             "prints the no-project-config refusal",
 	"fugaro settings":               "prints the registry's every row with no project selected, which is the whole of what a bare run does",
+	"fugaro seats":                  "reads the selected project's records for an advisory estimate, and this world selects no project",
 	"fugaro setup":                  "refuses on this world's runs bucket name before the wizard's first step",
 	"fugaro update":                 "refuses on this world's runs bucket name before its first stage",
 	"fugaro update-skills":          "reports that a development build has no release to pin the plugin to",
@@ -322,16 +323,6 @@ var closedStdinNoFixture = map[string]string{
 // The list reaching empty is what the policy's first constraint looks like from
 // here.
 var closedStdinPrompts = map[string]string{
-	// A raise asks for the project's name before it loosens the budget; T3
-	// removes the ask and leaves the owner-session fence in its place.
-	"fugaro budget set": "T3",
-	// The project-wide kill switch asks the same way, and T3 owns it too. A
-	// repository's kill switch does not ask, which is why the fixture is --all.
-	"fugaro budget kill": "T3",
-	// The resume is the third of the raise forms T3 lists, and it asks with the
-	// same typed name. It reaches the ask only where a switch is set, which its
-	// fixture seeds.
-	"fugaro budget resume": "T3",
 	// The account write asks before it rewrites the project's claude_accounts
 	// block and mints the account's secret version; T5 removes the ask.
 	"fugaro accounts add": "T5",

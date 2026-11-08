@@ -111,8 +111,15 @@ const ELEMENT_PREFIX = /^(?:a|aside|button|code|dd|details|div|dl|figure|form|g|
  * installation line's (`installation-`) or a screen root spelled bare -- and an
  * attribute hook is a `data-*` or an `aria-*`. Everything else the section
  * mentions (`class`, `title`, `role`, `putReading`, `UNAVAILABLE_MARK`,
- * `path:line`) names no hook a stylesheet could select. */
-const HOOK = /^(?:(?:live|spend|projects|run|degraded|graph|coordinator|console|unavailable|installation|notice)(?:-[a-z0-9-]+)?|(?:data|aria)-[a-z0-9-]+|hidden)$/
+ * `path:line`) names no hook a stylesheet could select.
+ *
+ * **`policy-` joins the prefixes with §2.5's policy notes** (the managed-screens
+ * plan's CM11, the task that writes the first rule against them). Those hooks
+ * land on the Project tab like the `projects-` ones, but CM7 named them after
+ * the command they draw -- `project policy show` -- rather than after the tab,
+ * so a scan that knew only the screen's prefix would refuse every rule written
+ * against them; the prefix a hook is read by is the one §2.5's table spells. */
+const HOOK = /^(?:(?:live|spend|projects|policy|run|degraded|graph|coordinator|console|unavailable|installation|notice)(?:-[a-z0-9-]+)?|(?:data|aria)-[a-z0-9-]+|hidden)$/
 
 /** CLASS_HOOK is the class half of `HOOK`, and `SUFFIX` is the shorthand §2.7
  * and §2.8 write their hook sets with: the degraded screen's section is two
@@ -142,7 +149,7 @@ const HOOK = /^(?:(?:live|spend|projects|run|degraded|graph|coordinator|console|
  * follows, and any token that is neither is skipped -- so the `-num` of §2.10's
  * prose, which follows a `cell(...)` signature rather than a hook, licenses
  * nothing. */
-const CLASS_HOOK = /^(?:live|spend|projects|run|degraded|graph|coordinator|console|unavailable|installation|notice)-[a-z0-9-]+$/
+const CLASS_HOOK = /^(?:live|spend|projects|policy|run|degraded|graph|coordinator|console|unavailable|installation|notice)-[a-z0-9-]+$/
 
 /** SUFFIX is one `-suffix`, or a run of them joined by `/` as §2.7's
  * `-word`/`-at`/`-age` is written. */
@@ -372,6 +379,48 @@ function stringConstantsIn(text: string): ReadonlyMap<string, string> {
   return constants
 }
 
+/** EMITTER_NAMES is the eight helpers a file's own drawing goes through; it is
+ * spelled here as well as in `EMITTER` because a **file's own** helper is read
+ * with it. */
+const EMITTER_NAMES = 'make|cell|makeNS|cellNS|drawn|drawnNS|textCell|numberCell'
+
+/** localDrawingTags is the tag each of a file's own drawing helpers draws: the
+ * literal one inside the first emitter call in its body. It is the shape the
+ * managed sections take further than any screen before them -- `policynotes.ts`
+ * has `valueCell(element, factory, value, 'policy-notes-branch')` and
+ * `absentValueCell(…)` handing their classes to a `cell(parent, factory,
+ * 'span', …)` whose tag is a literal, and `retirements.ts`'s `textCell` reads
+ * the raw member where every other one reads the tag -- and the helpers are none
+ * of the eight names above, so a call through one is a call the walk would
+ * otherwise skip with the classes it passes.
+ *
+ * A helper whose tag is its own parameter (`cell`, `make`, `numberCell`) is not
+ * in the map: its tag is the caller's, and the caller's call site is one of the
+ * eight shapes the walk already reads. */
+function localDrawingTags(text: string): ReadonlyMap<string, string> {
+  const tags = new Map<string, string>()
+  for (const match of text.matchAll(/(?:export\s+)?function\s+(\w+)\s*\(/g)) {
+    // The body is the text from this function's own line to the next
+    // declaration, so one helper cannot be read as drawing what the one below
+    // it draws.
+    const at = match.index ?? 0
+    const next = text.slice(at + 1).search(/\n\s*(?:export\s+)?function\s/)
+    const body = next === -1 ? text.slice(at) : text.slice(at, at + 1 + next)
+    // A helper's own name can itself be one of the emitter names (`function
+    // textCell(`), so the search starts at the body, past the parameter list.
+    const opened = body.indexOf('{')
+    const inner = opened === -1 ? '' : body.slice(opened)
+    const call = new RegExp(`\\b(?:${EMITTER_NAMES})\\(`).exec(inner)
+    if (call === null) continue
+    const args = callArguments(inner, (call.index ?? 0) + (call[0]?.length ?? 0) - 1)
+    const factory = args.findIndex((argument) => argument.trim() === 'factory')
+    if (factory === -1) continue
+    const tag = literalsIn(args[factory + 1] ?? '').find((one) => /^[a-z][a-z0-9]*$/.test(one))
+    if (tag !== undefined) tags.set(match[1] ?? '', tag)
+  }
+  return tags
+}
+
 /** drawnPairs is every `tag.class` pair the renderer can put in the DOM: the
  * two ways a screen draws an element (an emitter call, whose classes are
  * literals or a spread list, and a raw `factory.create` with `setAttribute`). */
@@ -381,14 +430,34 @@ function drawnPairs(): ReadonlySet<string> {
     const text = readFileSync(file, 'utf8')
     const lists = classListsIn(text)
     const constants = stringConstantsIn(text)
-    for (const match of text.matchAll(EMITTER)) {
+    // The file's own helpers count as emitters too, so a class handed to
+    // `valueCell`/`textCell` is paired with the tag that helper draws.
+    const helpers = localDrawingTags(text)
+    const own = [...helpers.keys()].join('|')
+    const emitter = own === '' ? EMITTER : new RegExp(`\\b(${EMITTER_NAMES}|${own})\\(`, 'g')
+    for (const match of text.matchAll(emitter)) {
       const args = callArguments(text, match.index + (match[0]?.length ?? 0) - 1)
       const at = args.findIndex((argument) => argument.trim() === 'factory')
       if (at === -1) continue
-      for (const tag of literalsIn(args[at + 1] ?? '')) {
+      const drawn = helpers.get(match[1] ?? '')
+      const spelled = literalsIn(args[at + 1] ?? '')
+      const tags = spelled.length > 0 || drawn === undefined ? spelled : [drawn]
+      for (const tag of tags) {
         for (const argument of args.slice(at + 2)) {
           const trimmed = argument.trim()
           for (const className of literalsIn(trimmed)) if (CLASS_LITERAL.test(className)) pairs.add(`${tag}.${className}`)
+          // A class argument that **names** the class instead of spelling it:
+          // `make(factory, 'dd', MANAGED_VALUE_CLASS)`, the shape the managed
+          // sections draw through (`managed.ts`, `retirements.ts`,
+          // `policynotes.ts`, `credentialsservice.ts` each have their own
+          // `make`/`cell` pair and stamp the module's named strings). The name is
+          // resolved the way `setAttribute('class', CONSTANT)` already resolves
+          // one below -- the file's own string constants -- so a selector that
+          // qualifies one of those hooks with its tag is checked rather than
+          // refused for a shape the scan could not read.
+          const named = /^[A-Z][A-Z0-9_]*$/.exec(trimmed)?.[0]
+          const value = named === undefined ? undefined : constants.get(named)
+          if (value !== undefined && CLASS_LITERAL.test(value)) pairs.add(`${tag}.${value}`)
           const spread = /^\.\.\.(\w+)$/.exec(trimmed)?.[1]
           if (spread === undefined) continue
           for (const one of (lists.get(spread) ?? '').matchAll(/'([a-z][a-z0-9-]*)'/g)) pairs.add(`${tag}.${one[1]}`)

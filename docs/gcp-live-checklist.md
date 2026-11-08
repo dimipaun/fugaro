@@ -819,7 +819,7 @@ probe account carries predefined grants only).
 | 303 | The bounded decision agent, and the cost of one cycle ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O12** and its Check 303 — the text O2 wrote; reconciliation **U4**, whose cost is a target until this check measures it; **Q4**, answered 2026-11-04, which makes this check the gate on slice 2): with the owner's own Claude login, one real decision call through the bounded agent — the model that answered it being the classifier's and not the output's — the count caps (6 calls an hour, 40 a day) and the breaker at 3 **proved by spending them**, and the cost of one cycle measured end to end. It runs **before O12 is started, not after**: Q4 approves slice 2 (O12, O13) only once slice 1 has run 14 days **and** this number is in | See "Check 303" below; **you** run it, with your own login, and **no agent runs any step of it** | The one thing here that is genuinely billable: one decision call, plus the calls the caps and the breaker spend proving themselves. Its whole point is the number it produces, which replaces U4's target and Q4's proposed bounds. **USER-RUN, NOT RUN.** |
 | 304 | The handoff between two people ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O17** and its Check 304 — the text O2 wrote, the `ee/` command O17 builds): an agent handed from one developer to another by an owner or an admin, on a real installation, with the two people in different sessions — the receiving person holding the agent, the giving person no longer able to act as it, and the project-owned agent that belongs to no person at all behaving as the registered extension it is | See "Check 304" below; **you** run it, on a real installation with a second person, and **no agent runs any step of it** | Two sessions and one handoff: no model call unless the agent is asked to work, and nothing billable in the handoff itself. **USER-RUN, NOT RUN.** |
 | 305 | The MCP state group and its scopes ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O16** and its Check 305 — **the text is written when O16's files are named**, and this row and the section below reserve the number, which is never renumbered): `get_state`, `get_events` and `apply_patch` over the state store, behind `state:read` and `state:write`, with `apply_patch` also gated by **D1225**, and with no `spawn_task` anywhere in it (T2) | Not written yet: O16 writes "Check 305" when the MCP registry and its scope files exist (M7, T3, T4), and the register's number is held for it | Nothing to run and nothing to expect until the files are named: the number is reserved so that a later task writes the check into the register rather than renumbering it. **USER-RUN, NOT RUN.** |
-| 340 | The prefix-limited listing grant ([`docs/periodic-reviews/`](periodic-reviews/implementation-plan.md) §P8, its Check 340; **R12's, and it gates R12**; `docs/design/bucket-iam.md` §4 — the H3 veto — and §11 item **V7**): which form the `storage.googleapis.com/objectListPrefix` request attribute carries — the request's own prefix (`runs/`, `reports/`) or the bucket's object path (`projects/_/buckets/<bucket>/objects/runs/`) — read as a throwaway service account holding R12's two conditioned bindings (objectViewer on `runs/`, objectUser on `reports/`, each carrying the `resource.name` read clause and the listing clause joined by `\|\|`): that account lists `runs/<slug>/` and `reports/`, reads a `runs/` object, and is refused the root listing, a `tokens/` read and a `tokens/` and a `cache/` listing. The design records the attribute as unverified and no code in this tree reads it, so this is the one reading no test can make: **the wrong form is a grant that lists nothing, and if neither form lists, R12's Terraform does not land and the plan stops and asks** (E4) | See "Check 340" below; `bash scripts/live-checks/check340.sh --project <project> --bucket <sandbox bucket>` is the whole of it — the script creates the throwaway account, grants the two bindings, seeds four objects of its own, makes all fourteen readings and tears every bit of it down again — and **you** run it, on a **sandbox bucket** only, never `belong` (a project or a bucket naming that installation is refused before a single call); **no agent runs any step of it** | Nothing billable and no model call: one throwaway service account, four small objects under `runs/`, `reports/`, `tokens/` and `cache/`, two bucket bindings and one impersonation grant, every one of them removed and read back as gone by the script's own Restore, which runs from its exit trap even on a failed assertion or a Ctrl-C. **USER-RUN, NOT RUN.** One attempt has been made — 2026-11-07, exit `2`, aborted, **nothing settled about the attribute and no `PASS` for `list-prefix`** — and the section below records what that run did and did not measure. |
+| 340 | The prefix-limited listing grant ([`docs/periodic-reviews/`](periodic-reviews/implementation-plan.md) §P8, its Check 340; **R12's, and it gates R12**; `docs/design/bucket-iam.md` §4 — the H3 veto — and §11 item **V7**): which form the `storage.googleapis.com/objectListPrefix` request attribute carries — the request's own prefix (`runs/`, `reports/`) or the bucket's object path (`projects/_/buckets/<bucket>/objects/runs/`) — read as a throwaway service account holding R12's two conditioned bindings (objectViewer on `runs/`, objectUser on `reports/`, each carrying the `resource.name` read clause and the listing clause joined by `\|\|`): that account lists `runs/<slug>/` and `reports/`, reads a `runs/` object, and is refused the root listing, a `tokens/` read and a `tokens/` and a `cache/` listing. The design records the attribute as unverified and no code in this tree reads it, so this is the one reading no test can make: **the wrong form is a grant that lists nothing, and if neither form lists, R12's Terraform does not land and the plan stops and asks** (E4) | See "Check 340" below; `bash scripts/live-checks/check340.sh --project <project> --bucket <sandbox bucket>` is the whole of it — the script creates the throwaway account, grants the two bindings, seeds four objects of its own, reads **both** candidate forms (fourteen rows, the `reports/` row covering the bare prefix and the slug level under it as two calls) and tears every bit of it down again — and **you** run it, on a **sandbox bucket** only, never `belong` (a project or a bucket naming that installation is refused before a single call); **no agent runs any step of it** | Nothing billable and no model call: one throwaway service account, four small objects under `runs/`, `reports/`, `tokens/` and `cache/`, two bucket bindings and one impersonation grant, every one of them removed and read back as gone by the script's own Restore, which runs from its exit trap even on a failed assertion or a Ctrl-C. **USER-RUN, NOT RUN.** Two attempts have been made, both on 2026-11-07 and both exit `2`, aborted — the first with an unreadable block, the second by a `tokens/` listing whose refusal named `storage.objects.get` where the script then accepted only `storage.objects.list`, which stopped the run before the full-path form was ever tried — so **nothing is settled about the attribute and no `PASS` for `list-prefix`** is recorded; the section below records what each run did and did not measure. |
 | 361 | The workspace's own Firebase's sign-in providers ([`docs/workspaces/`](workspaces/spec.md) spec §3's provider pin, and that plan's **W3**): the Identity Platform configuration of the workspace's **own** project, read once over REST and judged against the pin — `google.com` and `password` enabled, `anonymous` and phone-number sign-in off, no other provider enabled, and public sign-up **not** disabled. It is the check W3's design says no hermetic test can hold: the project and its rules come from the installation path, but `fugaro setup`'s Identity Platform step initializes with **no provider** (`IdentityPlatformStep`, `internal/infra/identityplatform.go`) — right for a member's project and wrong for the workspace's — and `refusePublicSignUp` (`internal/cli/init_firebase.go`) deliberately does not police a workspace's providers in either direction, so the providers are enabled by you and this is the read-back. A workspace whose project carries no provider has nobody who can sign in, and one that carries a provider the pin refuses is a sign-in path the exchange never sees | See "Check 361" below; `bash scripts/live-checks/check361.sh --project <the workspace's own project>` is the whole of it — ONE read-only GET, nothing created and nothing deleted, so it is safe to run repeatedly — and **you** run it: a project whose name contains `belong` is refused before any call, and **no agent runs any step of it** | Nothing billable and no model call: one GET of the project's Identity Platform configuration with your own credentials. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
@@ -11813,6 +11813,36 @@ dropped (bounded, on the row's one line), decides presence only from a `service-
 gone, its email is present — and, when the `reports/` listing fails, reads the bucket policy back with your own
 identity so that a binding which never landed is told apart from a clause that does not match it.
 
+**Second run: 2026-11-07, exit `2` — aborted with the attribute still unanswered, and the fallback was lost with
+it.** The owner ran the script a second time, on the same `fugaro-dev` and a fresh sandbox bucket, and it ended `2`
+with an `aborted` row again. Under the **relative** form it listed `runs/<slug>/` (**PASS**), read the `runs/`
+object (**PASS**), was refused the root listing (**PASS**) and refused the `tokens/` read (**PASS**); the `reports/`
+listing **failed** — and the bucket policy read back with your own identity **found the binding present**, which is
+the reading that says the clause does not match the prefix rather than that the grant never landed; and the `tokens/`
+listing's failure was **unclassified**: gcloud refused it with a denial naming **`storage.objects.get`** (gcloud
+probes a prefix as an object before it lists it), and the script accepted only `storage.objects.list` as a refusal,
+so it read the refusal as "a call that did not answer" and stopped the run there. The `cache/` refusal was therefore
+never read and the **full-path form was never reached**, because the run stopped before it: of the fourteen per-form
+rows, five under the relative form were reached — four `PASS`ing and the `reports/` listing `FAIL`ing — and the other
+nine were not reached at all. **The row 340 above is still NOT RUN and no `PASS` is recorded for `list-prefix`
+anywhere here**: four `PASS`ing criteria and one `FAIL`ed listing are not an answer about the attribute, and the
+full-path form — the only one that could have carried it — was never read. Three faults left that run where it
+stopped, and all three are fixed in the same task: **either permission is a refusal** for the `tokens/` **read**,
+while the `tokens/` and `cache/` **listings** are asked with a **wildcard** (`gs://<bucket>/tokens/*`) so that gcloud
+sends the **List** request instead of refusing the prefix at the object request it makes first, and they require
+`storage.objects.list`. A denial naming only `storage.objects.get` there says the List request did **not** go out: the
+row is recorded as **NOT OBSERVED** — neither a criterion that held nor one that failed — and it **fails the form**, so
+the run reads on to the end of both forms and then ends **exit `2`** with no string for R12's builder, because the pair
+that guards R12's two prefixes is half of what this check runs before R12 to settle and a run that never measured it
+must not read as an answer. A denial for this account about a resource inside this check's own bucket is what makes
+either reading a refusal at all, and every other unclassified failure — an expired session, a 5xx gcloud did not retry,
+a killed call, a denial naming another permission or another bucket's resource — still stops the run;
+**both forms are always read to the end of their criteria**, so a failed criterion is that form's failure alone and
+the answer is decided from the two result sets instead of the first form's first failure, and a form that fails a
+listing no longer keeps the other form from being measured at all; and the **`reports/` criterion lists both
+`gs://<bucket>/reports/<slug>/` and `gs://<bucket>/reports/`**, each answer in its own row, because a clause that
+matches the slug-level prefix but not the bare one is exactly the reading a single folded `FAIL` hides.
+
 **Run it:**
 
 ```bash
@@ -11821,26 +11851,48 @@ bash scripts/live-checks/check340.sh --project <project> --bucket <sandbox bucke
 
 **You** run it, on a **sandbox bucket** only, and **no agent runs any step of it**. A project or a bucket whose
 name contains `belong` is refused before a single call, and the bucket is read back with your own identity first,
-so a mistyped one is a stop rather than a reading. The script is the whole check and asks you for nothing else. It
+so a mistyped one is a stop rather than a reading. A bucket that is **not there** — gcloud answers `404` and its own
+"bucket does not exist" — is a stop of its own, and both the `bucket-reachable` row and the stop name what to do:
+`gcloud storage buckets create gs://<bucket> --project=<project> --location=us-central1 --uniform-bucket-level-access`
+on a **sandbox** project. **The script never creates the bucket**: it grants IAM on one and writes four objects into
+it, so the bucket has to be yours to throw away, created by you. The script is the whole check and asks you for nothing else. It
 creates a throwaway service account of the run's own (`fugaro-chk340-<hex>`, and it never adopts an account that is
 already there); grants it R12's two conditioned bindings — `roles/storage.objectViewer` under the `runs/` clause
 and `roles/storage.objectUser` under the `reports/` clause, each carrying the `resource.name` read half and the
 listing half joined by `||`, written through `--condition-from-file` so the expression's own bytes survive
 gcloud's comma-splitting; seeds four small objects of its own under `runs/<slug>/`, `reports/<slug>/`,
-`tokens/<slug>/` and `cache/<slug>/`; and then, impersonating that account, tries the **relative** form first and
-the **full path** form only if the relative one failed. Each form is read the same seven ways: `runs/<slug>/` must
-list, `reports/` must list, one `runs/` object must read, and the root listing and a `tokens/` read and a `tokens/`
-and a `cache/` listing must all be refused. The two listings and the read that must succeed are **retried** for
+`tokens/<slug>/` and `cache/<slug>/`; and then, impersonating that account, reads **both** candidate forms to the
+end of their criteria, **relative** first and **full path** second, whatever the first one did. Each form is read the
+same ways: `runs/<slug>/` must list, `reports/<slug>/` **and** the bare `reports/` must list — two calls, each
+answer recorded in the row, so a clause that matches the slug level and not the bare prefix is visible instead of
+folded into one `FAIL` — one `runs/` object must read, and the root listing and a `tokens/` read and a `tokens/`
+and a `cache/` listing must all be refused. The two prefixed listings are asked as **wildcards**
+(`gs://<bucket>/tokens/*`, `gs://<bucket>/cache/*`), which is what makes the **List** request the one that goes out —
+see the paragraph below — and their rows are criteria only when the denial names the permission the missing **listing**
+clause would have carried. The two listings and the read that must succeed are **retried** for
 `CHECK340_PROPAGATION_SECONDS` (150 seconds by default) before a failure is recorded, and the four refusals are
 read only once one of those three has held under that form — if none did, they are recorded as **not read**, because
 a refusal then could be the fresh grant simply not being in effect yet. IAM propagates a fresh grant and its
 condition asynchronously (V7's neighbour, §11 item **V5**), and reading one as a refusal would pick the wrong form —
 the one thing this check must not do. A refusal that is **allowed** instead is a grant wider than R12's two prefixes,
 and it fails that form. And a refusal has to **be** a refusal: the four calls are criteria only when the failure is
-the refusal itself, a denial naming the permission the clause would have carried (`storage.objects.list` for the
-root and the two listings, `storage.objects.get` for the read) — a call that did not answer (a 5xx gcloud did not
-retry, an expired session, a killed request, a denial of another kind) stops the run instead, because recorded as a
-refusal it would be a criterion nobody observed passing, and the form it names is one R12 must not write. A **grant the bucket refuses**, and a **removal it refuses** between the two forms, are a
+the refusal itself, **for this account** and about **a resource inside this check's own bucket**, naming a permission
+the missing clause could have carried: `storage.objects.list` for the root listing, **either** permission for the
+`tokens/` **read** (a read is an object request, so the denial names the object permission the missing clause would
+have carried, and either name is the refusal itself), and `storage.objects.list` again for the `tokens/` and `cache/`
+**listings**. Those two are the reason the check does not ask them the plain way: `ls gs://<bucket>/tokens/` names a
+prefix, gcloud resolves it as an object **before** it lists, and since no clause of R12's grant covers a `tokens/`
+object that request is refused whatever the listing clause says — the List request would never go out, and the row
+could not measure the clause it exists for (this is the reading the second run died on, and the one a wider listing
+clause would hide behind: such a clause would still leave the probe refused, so the row would hold while the veto it
+guards was gone). A **wildcard** names a pattern, so gcloud goes straight to listing with prefix `tokens/`, and a
+denial naming `storage.objects.get` after that says the List request did not go out after all: the row says
+**NOT OBSERVED**, neither a criterion that held nor one that failed, and the form does not pass — the run reads on and
+ends exit `2` rather than exit `0` with R12's string, so the string is only ever handed over off a run that measured
+the pair. A listing that WAS allowed is the opposite reading and fails that form. A call that did not answer instead — a 5xx
+gcloud did not retry, an expired session, a killed request, a denial naming **another** permission or **another**
+bucket's resource — stops the run, because recorded as a refusal it would be a criterion nobody observed passing,
+and the form it names is one R12 must not write. A **grant the bucket refuses**, and a **removal it refuses** between the two forms, are a
 third thing again: the run stops there, with exit `2` and an `aborted` row naming the binding, rather than reading a
 permission error as "this form does not list". A refused removal has to stop the run all the same — the previous
 form's conditioned binding is still on the bucket, so the next form would list through the **earlier** clause and the
@@ -11851,8 +11903,11 @@ forms speak for the same throwaway account, so if the relative form failed for a
 read past its 150-second window — the full-path form would list and read through the still-active relative clause
 and be answered as the form the attribute carries. The second form is therefore not granted until the account is
 **refused** the listing the first form allowed — read as the account's own reach and not yours — **and refused for
-that reason**: the refusal has to be a denial naming `storage.objects.list`, the permission the removed clause
-carried, because that is the reading that says the clause is gone. A listing that failed naming another permission,
+that reason**: the refusal has to be a denial naming one of the permissions the removal takes away —
+`storage.objects.list`, the listing permission the clause carried, or `storage.objects.get`, which is what gcloud
+names for the very same request when it probes the prefix as an object — the wait's own URL is a plain prefix and not
+a wildcard, so that probe is its first request, and the `tokens/` read is the other criterion that takes either name —
+because that is the reading that says the clause is gone. A listing that failed naming another permission,
 or naming none — an expired session, a 5xx gcloud did not retry, a killed call, and gcloud's own command prefix in
 the message, whose dots read like a permission — is a call that
 did not answer rather than a binding that is gone, so it is retried like a listing that still succeeds: reading it as
@@ -11864,16 +11919,25 @@ not an answer.
 **Reading the `CHECK 340 RESULT` block.** The same shape as the other scripted checks': ONE block on stdout, a
 `FACT <key>: PASS|FAIL|INFO — <detail>` line per fact, ending `CHECK 340 RESULT END (exit N)`. The two forms carry
 their own rows — `relative-lists-runs`, `relative-lists-reports`, `relative-reads-runs` and the four refusals, then
-the same seven under `full-` — and the row that matters is **`list-prefix`**: `PASS` names the form that held and
-prints the exact string R12's builder must write, above the block in one line to copy back; `FAIL` says **neither**
+the same under `full-` — and the row that matters is **`list-prefix`**: `PASS` names the form that held and
+prints the exact string R12's builder must write, above the block in one line to copy back. One form passing every
+criterion is enough **unless both do**: no single attribute value starts with both candidate strings, so a bucket
+that lets both forms through contradicts itself and the run stops, exit `2`, rather than naming a form off two result
+sets that disagree. A form that failed a listing is that form's failure alone, and the verdict is taken from the two
+result sets rather than from the first form to stop. `FAIL` says **neither**
 form listed, which is the reading that stops the plan (E4). The bucket-wide `objectViewer` a listing would otherwise
-need is deliberately **not** a fallback here, because it reads `tokens/` and `cache/` too. Exit `0` means a form
+need is deliberately **not** a fallback here, because it reads `tokens/` and `cache/` too. `INFO` is the third
+reading, and it is the one no string comes with: **`list-prefix: INFO — not settled`** is what a form whose every
+readable criterion held still gets when the `tokens/` or `cache/` listing came back **NOT OBSERVED**, and the run ends
+exit `2` — the attribute's form is visible in the rows above, but the guard R12's two prefixes exist for was not
+measured, so nothing is handed to R12's builder and the run is not the one that clears R12. Exit `0` means a form
 passed every criterion **and** the Restore confirmed it deleted everything this run made; `1` means none did — or a
 form passed and the Restore could not confirm what it deleted, in which case the block's `restore` row names the
 account and the prefixes to remove by hand — so exit `1` reads as **E4** only when that row passed; and `2` means the
 run could not tell (a guard stopped it, a tool is missing, a grant or a removal the bucket refused, a refusal that
 came back as a call that did not answer, a removal that had not taken effect in time, a listing that never answered,
-an internal error ended it) — `2` is not an answer about
+a **`tokens/` or `cache/` listing that came back as the object request** rather than as the List (so the guard was
+never measured), a bucket that let **both** forms through, an internal error ended it) — `2` is not an answer about
 the attribute, and the block's `aborted` row says so. `belong`, `bucket-reachable`, `account` and `seed` say what the run was reading, and `restore` is last.
 
 **Cost.** Nothing billable and no model call: one throwaway service account, two bucket bindings, one impersonation

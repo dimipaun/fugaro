@@ -35,35 +35,36 @@ func secretsPolicyWorkflowEntry(t *testing.T, path, name string) config.ProjectS
 // TestSecretsSetAllowDataToWritesTheWorkflowBlockEntry: naming one more
 // repository in a workflow secret's allow_data_to is the same widening, by the
 // same flag, as it is for a reserved name — one mechanism, one spelling, and
-// the key it writes is the block the entry lives in. The confirmation prints
-// the list the entry ends up with, not the flag's own value, because the entry
-// keeps the repositories it already named.
+// the key it writes is the block the entry lives in. The write prints the list
+// the entry ends up with, not the flag's own value, because the entry keeps the
+// repositories it already named, and it asks nothing for itself (D1552): the
+// coding agent's session is where it is refused.
 func TestSecretsSetAllowDataToWritesTheWorkflowBlockEntry(t *testing.T) {
 	secretsRmFugaro(t)
 	path := secretsPolicyWorkflowFixture(t)
 	noTerminal(t)
 	before := readFileString(t, path)
 
-	out, _, err := execute(t, "secrets", "set", "deploy-token", "--allow-data-to", "acme/web")
-	if err == nil {
-		t.Fatal("the widening was written with no terminal to confirm it at")
-	}
-	if !strings.Contains(err.Error(), "terminal") {
-		t.Fatalf("err = %v, want the typed confirmation's no-terminal refusal", err)
-	}
-	if !strings.Contains(out, "acme/app, acme/web") {
-		t.Errorf("the confirmation does not print the list the entry ends up with:\n%s", out)
+	t.Setenv(accountsAddAgent, "1")
+	if _, _, err := execute(t, "secrets", "set", "deploy-token", "--allow-data-to", "acme/web", "--yes"); err == nil {
+		t.Fatal("a coding agent's session widened a workflow secret's allow_data_to")
+	} else if !strings.Contains(err.Error(), accountsAddAgent) {
+		t.Fatalf("err = %v, want the refusal to name the marker it saw", err)
 	}
 	if after := readFileString(t, path); after != before {
 		t.Fatalf("the refusal wrote the config:\n%s", after)
 	}
+	t.Setenv(accountsAddAgent, "")
 
-	out, errOut, err := execute(t, "secrets", "set", "deploy-token", "--allow-data-to", "acme/web", "--yes")
+	out, errOut, err := execute(t, "secrets", "set", "deploy-token", "--allow-data-to", "acme/web")
 	if err != nil {
-		t.Fatalf("secrets set --allow-data-to --yes: %v\nstdout %s\nstderr %s", err, out, errOut)
+		t.Fatalf("the widening asked for an answer at the owner's session: %v\nstdout %s\nstderr %s", err, out, errOut)
+	}
+	if !strings.Contains(out, "acme/app, acme/web") {
+		t.Errorf("the write does not print the list the entry ends up with:\n%s", out)
 	}
 	if !strings.Contains(out, "widens what the secret reaches") {
-		t.Errorf("the confirmation does not say the write is a widening:\n%s", out)
+		t.Errorf("the write does not say it is a widening:\n%s", out)
 	}
 	if !strings.Contains(out+errOut, "workflow_secrets.deploy-token.allow_data_to") {
 		t.Errorf("the diff does not name the key it wrote:\n%s%s", out, errOut)
