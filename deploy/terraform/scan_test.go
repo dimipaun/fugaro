@@ -50,7 +50,18 @@ func readScan(t *testing.T, dir, name string) scanResult {
 // whether the script finds a trivy on PATH, which is the whole of which route
 // it takes; a PATH without one is built by dropping the entries that carry a
 // real trivy, so the test decides the route and not the machine.
-func scanRoute(t *testing.T, withTrivy bool, exit string) (trivy, docker scanResult, cache string, err error) {
+//
+// The cache is the script's to compute: the child's TRIVY_CACHE_DIR is set
+// empty (not unset, so a value on the machine running the test cannot reach
+// the child) and its HOME is a directory of the test's choosing, so the
+// $HOME/.cache/trivy the script derives is the one value here that only the
+// script can have put in the fake's environment. Handing the child the cache
+// instead would make the fake log that value whichever way the script went,
+// and the assertion that the two routes share a cache could not fail. home is
+// the directory to run the script under, or "" for a fresh one; two runs given
+// the same home derive the same cache, which is how the equality test compares
+// them.
+func scanRoute(t *testing.T, withTrivy bool, exit, home string) (trivy, docker scanResult, cache string, err error) {
 	t.Helper()
 	fakes := t.TempDir()
 	if err := os.WriteFile(filepath.Join(fakes, "docker"), []byte(scanFake), 0o755); err != nil {
@@ -61,12 +72,15 @@ func scanRoute(t *testing.T, withTrivy bool, exit string) (trivy, docker scanRes
 			t.Fatal(err)
 		}
 	}
+	if home == "" {
+		home = t.TempDir()
+	}
 	logs := t.TempDir()
-	cache = filepath.Join(logs, "cache")
+	cache = filepath.Join(home, ".cache", "trivy")
 	cmd := exec.Command("sh", "scan.sh")
 	cmd.Env = append(os.Environ(),
 		"PATH="+fakes+":"+pathWithoutTrivy(),
-		"FAKE_LOG_DIR="+logs, "FAKE_EXIT="+exit, "TRIVY_CACHE_DIR="+cache)
+		"FAKE_LOG_DIR="+logs, "FAKE_EXIT="+exit, "HOME="+home, "TRIVY_CACHE_DIR=")
 	out, err := cmd.CombinedOutput()
 	if err != nil && exit == "0" {
 		t.Fatalf("scan.sh failed: %v\n%s", err, out)
@@ -99,7 +113,7 @@ func TestScanRunsTheTrivyOnPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	direct, docker, cache, err := scanRoute(t, true, "0")
+	direct, docker, cache, err := scanRoute(t, true, "0", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,8 +125,12 @@ func TestScanRunsTheTrivyOnPath(t *testing.T) {
 	if direct.args != want {
 		t.Errorf("the trivy on PATH was run as\n%s\nwant\n%s", direct.args, want)
 	}
+	// The child's TRIVY_CACHE_DIR arrives empty, so this is the $HOME/.cache/trivy
+	// the script derived and exported itself -- the docker route mounts it, and
+	// a direct route that stopped passing it on (or passed another directory)
+	// leaves the fake's environment empty or wrong here.
 	if direct.cache != cache {
-		t.Errorf("the trivy on PATH was handed TRIVY_CACHE_DIR %q, want the docker route's %q", direct.cache, cache)
+		t.Errorf("the trivy on PATH was handed TRIVY_CACHE_DIR %q, want the docker route's cache %q", direct.cache, cache)
 	}
 }
 
@@ -137,7 +155,7 @@ func TestScanRunsThePinnedImageWithoutTrivy(t *testing.T) {
 	if pin == "" {
 		t.Fatal("images/scan.sh carries no trivy_image pin")
 	}
-	trivy, docker, cache, err := scanRoute(t, false, "0")
+	trivy, docker, cache, err := scanRoute(t, false, "0", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,16 +183,23 @@ func TestScanRoutesAreOneCommandLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	direct, notDocker, _, err := scanRoute(t, true, "0")
+	// One home for both runs, so the cache the script derives is one directory:
+	// the two routes are then held to it on both sides -- what the direct route
+	// hands its trivy in TRIVY_CACHE_DIR, and what the docker route mounts.
+	home := t.TempDir()
+	direct, notDocker, cache, err := scanRoute(t, true, "0", home)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if notDocker.scanRan() {
 		t.Errorf("the docker route ran with a trivy on PATH: %s", notDocker.args)
 	}
-	_, docker, cache, err := scanRoute(t, false, "0")
+	_, docker, _, err := scanRoute(t, false, "0", home)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if direct.cache != cache {
+		t.Errorf("the trivy on PATH was handed TRIVY_CACHE_DIR %q, want the cache %q the docker route mounts", direct.cache, cache)
 	}
 	// Everything up to the scanned directory is the route's own: the docker
 	// invocation, its mounts and images/scan.sh's pinned image.
@@ -209,7 +234,7 @@ func TestScanRoutesAreOneCommandLine(t *testing.T) {
 // caller.
 func TestScanRoutesFailOnAFinding(t *testing.T) {
 	for _, withTrivy := range []bool{true, false} {
-		if _, _, _, err := scanRoute(t, withTrivy, "1"); err == nil {
+		if _, _, _, err := scanRoute(t, withTrivy, "1", ""); err == nil {
 			t.Errorf("trivy on PATH=%v: a finding passed", withTrivy)
 		}
 	}
