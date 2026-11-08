@@ -407,9 +407,12 @@ func TestDocsLicensingOneWording(t *testing.T) {
 // Mutations (verified, run and restored): cut "raw bytes before any JSON is
 // parsed" out of the note -- TestDocsLicenceKeyDesign fails, naming that
 // claim; delete the rule that no claim is read out of an unverified payload,
-// and the rule that the hand-off variable is never written to a file, a log or
-// an error message -- it fails on each, which neither sentence did before they
-// were pinned; rewrite the test-mode sentence so it keeps "staging key id",
+// the rule that a refusal names no claim, the rule that the signature is over
+// the bytes as they are spelled, the rule that an id the build does not hold is
+// refused before either other part is decoded, and the rule that the hand-off
+// variable is never written to a file, a log or an error message -- it fails on
+// each, which none of those five sentences did before they were pinned;
+// rewrite the test-mode sentence so it keeps "staging key id",
 // "refused" and "production" while flipping the rule (a staging key is
 // accepted, a test key can license a customer) -- it fails on the two
 // sentences that carry the rule; put back the withdrawn claim that the tier
@@ -432,13 +435,16 @@ var licenceKeyDesignGroups = []struct {
 }{
 	{
 		subject: "the key",
-		why:     "the format is what three verifiers agree on byte for byte, and the claims are the licence's own terms",
+		why:     "the format is what three verifiers agree on byte for byte, the claims are the licence's own terms, and the three boundary rules -- the key id is what decides before anything else is decoded, the signature is over the bytes as they are spelled, and a refusal names no attacker-chosen claim -- are where the scheme's safety rests",
 		phrases: []string{
 			"ed25519",
 			"base64url",
 			"<key id>.<payload>.<signature>",
 			"before any json is parsed",
+			"signed as it is spelled",
+			"fails the signature",
 			"key id",
+			"refused before either other part is decoded",
 			"rotate",
 			"| `tier` | `community`, `team` or `enterprise` |",
 			"| `features` |",
@@ -448,6 +454,7 @@ var licenceKeyDesignGroups = []struct {
 			"| `expires` |",
 			"not to a person or a machine",
 			"no claim is read out of a payload whose signature did not verify",
+			"names the key and the part that failed, never a claim",
 		},
 	},
 	{

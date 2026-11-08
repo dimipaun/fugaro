@@ -68,11 +68,13 @@ Two consequences, and both are rules rather than implementation notes:
 ## The check
 
 The check runs at the **`ee/register`** registration point in the CLI, in the console's main process
-and at the app's mailbox client — D308 with D303 as amended: the verifier lives in `ee/`, and
-**nothing in the core** imports, reads, stores or knows about a key. An untagged build therefore has
-no key check at all: the MIT CLI's own commands never check a key, and a build without the
-registration launches with no key (`TestUntaggedBuildStillLaunches`). The core reaches the paid code
-only through `ee/register`, and never the other way round.
+and at the app's mailbox client — D308 with D303 as amended: the Go verifier lives in `ee/` (the
+console's and the app's are their own modules, S2.4 and S2.5), and **nothing in the core** imports,
+reads, stores or knows about a key. An untagged build therefore has no key check at all: the MIT
+CLI's own commands never check a key, and a build without the registration launches with no key
+(`TestUntaggedBuildStillLaunches`). The core reaches the paid code only through `ee/register`: no
+core package imports `ee/`, and the boundary is one-directional — `ee/register` itself calls into the
+core (`internal/cli`), which is what makes the registration the only route in.
 
 Against `now`, an installed key is in one of three states:
 
@@ -114,8 +116,9 @@ code.
   and a tier's term is stated here so a tier can be granted a longer one without a change to the key
   format. **The maxima are this note's number and not the Terms'**: one year for every tier today,
   taken from the longest term the ruled issuance already gives a key — section 10.2(b)'s open-source
-  key is "valid for one year", and the Team and Enterprise subscriptions renew by the year — with
-  section 10.3's three-month commercial evaluation key (D440) well under it. S2.3's
+  key is "valid for one year", and the Team and Enterprise annual terms run for a year (B4; a monthly
+  Team term is shorter and sits under the same ceiling) — with section 10.3's three-month commercial
+  evaluation key (D440) well under it. S2.3's
   `TestKeyBeyondTheTierLifetimeIsRefused` is what enforces the bound: a tier's maximum moves here, in
   a decision, and never in the verifier alone. **It bounds one key's length from that key's own
   `issued`, which is not the same as bounding a leaked signing key**: `issued` is the minter's to
