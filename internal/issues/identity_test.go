@@ -70,14 +70,6 @@ func TestIdentityVerifiedWritesCache(t *testing.T) {
 		t.Fatalf("digest %q, not the member's own", got.Digest)
 	}
 	path := identityCachePathFor(env)
-	fi, err := os.Stat(path)
-	if err != nil || fi.Mode().Perm() != 0o600 {
-		t.Fatalf("%s: %v, %v", path, fi, err)
-	}
-	di, err := os.Stat(filepath.Dir(path))
-	if err != nil || di.Mode().Perm() != 0o700 {
-		t.Fatalf("the cache directory is not private: %v, %v", di, err)
-	}
 	var doc struct {
 		Format  int    `json:"format"`
 		Address string `json:"address"`
@@ -178,8 +170,16 @@ func TestVerifiedOnlyIgnoresCache(t *testing.T) {
 func TestIdentityCacheIsPrivateAndStrict(t *testing.T) {
 	env := identityEnv(t)
 	path := identityCachePathFor(env)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if _, err := ResolveIdentity(context.Background(), identityDeps(env, verifiedLookup(testMember))); err != nil {
 		t.Fatal(err)
+	}
+	// Private: the file 0600 in a 0700 directory.
+	fi, err := os.Stat(path)
+	if err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("%s: %v, %v", path, fi, err)
+	}
+	if di, err := os.Stat(filepath.Dir(path)); err != nil || di.Mode().Perm() != 0o700 {
+		t.Fatalf("the cache directory is not private: %v, %v", di, err)
 	}
 	for name, body := range map[string]string{
 		"an unknown field": `{"format":1,"address":"user:user@example.test","extra":1}`,
