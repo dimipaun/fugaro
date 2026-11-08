@@ -71,7 +71,7 @@ People are made launchers or operators by `fugaro init --launcher/--operator`, s
 | `fugaro/recipes/<name>.yaml` | `fugaro recipes publish` (`internal/cli/recipes.go` `publishRecipe`) | every launch that names a recipe (`recipes_resolve.go`) |
 | `fugaro/project-layer.yaml` | (0.6.0) `fugaro config publish` | every launch and most in-checkout commands (layered-config §7) |
 
-**No launcher command writes outside `runs/` and `tokens/`.** The one object a launcher writes under `tokens/` is its own launch's sealed budget token (the writers table above); the only writers of `fugaro/` and `builds/` that a person runs are `init` (all stages), `recipes publish`, `config publish`, `image build` and `image refresh` (operator steps: they need `fugaroBuildSubmitter` or Owner rights anyway), and a non-dry-run `image check`. The `cache/` and `locks/` writers are the runner, which runs as the job account. There is only the `gcp` backend, so no local mode writes `cache/` or `locks/` with a person's credentials. Every bucket write a person makes goes through `internal/blobx` or `gocloud.dev/blob`.
+**No launcher command writes outside `runs/`, `tokens/` and `issues/`.** The one object a launcher writes under `tokens/` is its own launch's sealed budget token (the writers table above), and under `issues/` the shared issue store's record it files with its own credential (D1727, §4's H5 note), a prefix no job account holds; the only writers of `fugaro/` and `builds/` that a person runs are `init` (all stages), `recipes publish`, `config publish`, `image build` and `image refresh` (operator steps: they need `fugaroBuildSubmitter` or Owner rights anyway), and a non-dry-run `image check`. The `cache/` and `locks/` writers are the runner, which runs as the job account. There is only the `gcp` backend, so no local mode writes `cache/` or `locks/` with a person's credentials. Every bucket write a person makes goes through `internal/blobx` or `gocloud.dev/blob`.
 
 **The "job" of the `runs/`, `cache/` and `locks/` rows is the account, not the slug, once phase 3 is deployed.** A per-repository job account's condition narrows it to its own slug, so "the job" and "that repository's job" are the same thing there. A project job account (§2.1's phase-3 row) reaches every slug under those three prefixes, so on a shared job the writer of any of those rows is the account of the (profile, provider, account) the run is in, and the objects it can write are not its repository's own. §10 states what that reaches.
 
@@ -88,31 +88,34 @@ People are made launchers or operators by `fugaro init --launcher/--operator`, s
 
 ## 3. The end state
 
-| Principal | `fugaro/` | `builds/<slug>/` | `runs/` | `cache/`, `locks/` | `tokens/` | How |
-|---|---|---|---|---|---|---|
-| Operator | read, write | read, write | read, write | read, write | read, write | `objectAdmin`, no condition (unchanged) |
-| Launcher (not an operator) | read | read | **read, write** | read | **read, write** | `objectViewer`, no condition; plus `objectUser` with the condition `resource.name.startsWith("projects/_/buckets/<bucket>/objects/runs/") \|\| resource.name.startsWith(…"tokens/")` (`gcp.LauncherBucketCondition`, titled `fugaro-launchers-runs-tokens`) |
-| Job account | none | none | its slug only | its slug only | its slug only, **read-only** | unchanged; plus `objectViewer` on `tokens/<slug>/` (`gcp.TokenBucketCondition`) |
-| **Project job account** (phase 3) | none | none | **every slug** | **every slug** | **every slug, read-only** | `objectUser` with the condition `resource.name.startsWith("projects/_/buckets/<bucket>/objects/runs/") \|\| resource.name.startsWith(…"cache/") \|\| resource.name.startsWith(…"locks/")` — `gcp.ProjectBucketCondition`, one clause per prefix and no slug, and the same condition for every profile's account; plus `objectViewer` (never `objectUser`) on the whole of `tokens/` (`gcp.ProjectTokenBucketCondition`, one clause, no slug) |
-| Build account | none | its slug only | none | none | none | unchanged |
-| History account | read | read | read | read | read | unchanged |
+| Principal | `fugaro/` | `builds/<slug>/` | `runs/` | `cache/`, `locks/` | `tokens/` | `issues/` | How |
+|---|---|---|---|---|---|---|---|
+| Operator | read, write | read, write | read, write | read, write | read, write | read, write | `objectAdmin`, no condition (unchanged) |
+| Launcher (not an operator) | read | read | **read, write** | read | **read, write** | **read, write** | `objectViewer`, no condition; plus `objectUser` with the condition `resource.name.startsWith("projects/_/buckets/<bucket>/objects/runs/") \|\| resource.name.startsWith(…"tokens/") \|\| resource.name.startsWith(…"issues/")` (`gcp.LauncherBucketCondition`, titled `fugaro-launchers-runs-tokens-issues`) |
+| Job account | none | none | its slug only | its slug only | its slug only, **read-only** | none | unchanged; plus `objectViewer` on `tokens/<slug>/` (`gcp.TokenBucketCondition`) |
+| **Project job account** (phase 3) | none | none | **every slug** | **every slug** | **every slug, read-only** | none | `objectUser` with the condition `resource.name.startsWith("projects/_/buckets/<bucket>/objects/runs/") \|\| resource.name.startsWith(…"cache/") \|\| resource.name.startsWith(…"locks/")` — `gcp.ProjectBucketCondition`, one clause per prefix and no slug, and the same condition for every profile's account; plus `objectViewer` (never `objectUser`) on the whole of `tokens/` (`gcp.ProjectTokenBucketCondition`, one clause, no slug) |
+| Build account | none | its slug only | none | none | none | none | unchanged |
+| History account | read | read | read | read | read | read | unchanged |
 
 So:
 
 - `fugaro/` is written only by operators (and by whoever holds project-level storage write: §9).
 - `builds/<slug>/` is written by operators and that repository's own build account, which keeps L6's copy rule.
 - `cache/` and `locks/` are written by operators and each repository's own job account.
+- `issues/` is written by operators and launchers and by no job account: a person files an issue with their own credential, so a run cannot file one in a launcher's name (D1727; §4's H5 note).
 
 **Update 2026-10-16 — the project job's account is not the "Job account" row above (phase 3, D4).** The table describes the per-repository job. Phase 3 adds a second kind: one Cloud Run job and one job service account per (profile, provider, Claude account) (`deploy/terraform/gcp/modules/project/`, [project-centric.md](project-centric.md) §4.1), which every repository admitted to that profile runs on. Such an account cannot have a per-slug condition — it is not a repository's account — so its grant is `roles/storage.objectUser` with the whole of `runs/`, `cache/` and `locks/` (`gcp.ProjectBucketCondition`), one clause per prefix and no slug. Every project job account gets the same condition, whatever its profile. §10 states what that reaches — every repository's objects, not one profile's — and why the profile is not the mitigation D4 assumed. An installation whose local config names no profile gets no project job.
 
 **Update 2026-10-18 — the table above is regenerated with the project job's row, and §10's open question is ruled.** The row is the fourth: a project job account holds `objectUser` on the whole of `runs/`, `cache/` and `locks/`, the same condition for every profile, and an installation whose local config names no profile has no such account. **The owner ruled the question §10 used to leave open on 2026-10-17: the installation-wide reach is ACCEPTED**, on the terms SECURITY.md states, and the profile is not a bucket boundary — a profile separates secrets and the job's service-account identity only. A profile segment in the object layout is a later breaking change, not phase 3's.
+
+**Update 2026-11-08 — the shared issue store adds `issues/` to the launchers' condition (D1727).** Troubleshoot findings are filed in one shared store per installation, under a new `issues/` prefix ([troubleshoot-issue/reconciliation.md](../troubleshoot-issue/reconciliation.md) D1727), and the person who files one writes it with their own credential — so the launchers' grant gains a third clause and a title that names its three prefixes, `fugaro-launchers-runs-tokens-issues` (`gcp.LauncherBucketCondition`, §4's H5). The table above gains the `issues/` column; **no job account gets the prefix** (its grants are unchanged: `gcp.JobBucketPrefixes` names none of it), which is the point — a run cannot file or rewrite an issue in a launcher's name, and only an operator's `objectAdmin` and the launchers' conditional `objectUser` reach it. A condition is ForceNew, so an installation last applied before this release carries one of the two earlier forms (the `runs/`-only one, or 0.9.0's `runs/` and `tokens/` one) and its `fugaro update` replaces it, admitted with no `--allow-delete`; doctor recognises both earlier forms and points at that update rather than at a removal (§7). The 0.23.0 notes' `### For operators` entry is that one command.
 
 ## 4. How to express it (H1 to H5)
 
 **H1: IAM Conditions on the existing bucket (recommended).** Launchers get two grants:
 
 1. `roles/storage.objectViewer` with no condition, which brings `get` and `list` on the whole bucket.
-2. `roles/storage.objectUser` with the launcher condition — `gcp.LauncherBucketCondition`, one clause per prefix — which brings `create`, `delete`, `update` and `get` under `runs/` **and `tokens/`**: the queued run's sealed budget token lives under `tokens/`, the move §3's update records (budget-token-channel.md §7.2, D16), so a launcher that could not write there could not mint one.
+2. `roles/storage.objectUser` with the launcher condition — `gcp.LauncherBucketCondition`, one clause per prefix — which brings `create`, `delete`, `update` and `get` under `runs/`, `tokens/` **and `issues/`**: the queued run's sealed budget token lives under `tokens/`, the move §3's update records (budget-token-channel.md §7.2, D16), and `issues/` is the shared issue store a launcher writes its own issue in (D1727), so a launcher that could not write to them could neither mint a token nor file an issue.
 
 This is the same mechanism the job and build accounts have used since M4. Live check 7 verified it for the job account: allowed under its own prefixes, 403 elsewhere, list denied. The bucket already has uniform bucket-level access, which IAM Conditions require. Nothing moves; every reader and writer path stays.
 
@@ -142,9 +145,9 @@ A one-person installation (both of the owner's installations) then plans **no ch
 Veto alternative: give the launcher grants to every launcher, operators included. That is redundant, and it would plan creates even on a one-person installation.
 
 **H5: The condition is defined once, in Go, and passed byte for byte (recommended).**
-- `gcp.LauncherBucketCondition(bucket)` returns `resource.name.startsWith("projects/_/buckets/<bucket>/objects/runs/") || resource.name.startsWith("projects/_/buckets/<bucket>/objects/tokens/")` — `runs/` and, since 0.9.0, `tokens/`, where a launcher writes the sealed budget token ([budget-token-channel.md](budget-token-channel.md) §7.2, D16). Every release before 0.9.0 wrote the `runs/`-only expression, titled `fugaro-launchers-runs`: that is a *different binding*, and the grant it left behind is recognised as this grant's old form and replaced by `fugaro init` — never deleted ([internal/infra/hardening.go](../../internal/infra/hardening.go)). A condition is ForceNew, so the upgrade plans a replace of `runs_launcher["<m>"]` for each launcher who is not an operator; init admits exactly that replace with no `--allow-delete` (`infra.LauncherGrantUpgrade`: before, `objectUser` under the old title and expression; after, the same member and bucket under this one; m on the launchers list), names those launchers, and leaves any other replace of the grant to the guard.
-- `gcp.LauncherBucketConditionTitle` is `fugaro-launchers-runs-tokens`, with no description, as for the job grants.
-- The installation spec carries them as `launcher_bucket_condition = {title, expression}`. A module variable validation requires the expression to be the runs bucket's own `runs/` and `tokens/` paths, byte for byte.
+- `gcp.LauncherBucketCondition(bucket)` returns `resource.name.startsWith("projects/_/buckets/<bucket>/objects/runs/") || resource.name.startsWith("projects/_/buckets/<bucket>/objects/tokens/") || resource.name.startsWith("projects/_/buckets/<bucket>/objects/issues/")` — `runs/`, `tokens/` since 0.9.0, where a launcher writes the sealed budget token ([budget-token-channel.md](budget-token-channel.md) §7.2, D16), and `issues/` since 0.23.0, the shared issue store a launcher writes its own issue in (D1727, §3's update of 2026-11-08). Each earlier form is a *different binding*: every release before 0.9.0 wrote the `runs/`-only expression, titled `fugaro-launchers-runs`, and 0.9.0 up to the issues grant wrote the `runs/` and `tokens/` expression, titled `fugaro-launchers-runs-tokens` (`gcp.RunsOnlyLauncherBucketConditionTitle`, `gcp.LegacyLauncherBucketConditionTitle`). The grant either left behind is recognised as this grant's old form and replaced by `fugaro update` — never deleted ([internal/infra/hardening.go](../../internal/infra/hardening.go)). A condition is ForceNew, so the upgrade plans a replace of `runs_launcher["<m>"]` for each launcher who is not an operator; the update admits exactly that replace with no `--allow-delete` (`infra.LauncherGrantUpgrade`: before, `objectUser` under either old title and expression; after, the same member and bucket under this one; m on the launchers list), names those launchers, and leaves any other replace of the grant to the guard.
+- `gcp.LauncherBucketConditionTitle` is `fugaro-launchers-runs-tokens-issues`, with no description, as for the job grants.
+- The installation spec carries them as `launcher_bucket_condition = {title, expression}`. A module variable validation requires the expression to be the runs bucket's own `runs/`, `tokens/` and `issues/` paths, byte for byte.
 
 This is the convention of the job and build conditions ("a condition that differs in one byte is another binding", `names.go`). It lets the guard and doctor compare against the same string.
 
@@ -160,7 +163,7 @@ Veto alternative: build the expression in HCL from `var.runs_bucket`. That gives
 |---|---|---|
 | `objectAdmin` | person | no condition |
 | `objectViewer` | person | no condition |
-| `objectUser` | person | the condition is exactly `{title: fugaro-launchers-runs-tokens, expression: LauncherBucketCondition(b)}` for a bucket `b` in `Cover.Buckets` |
+| `objectUser` | person | the condition is exactly `{title: fugaro-launchers-runs-tokens-issues, expression: LauncherBucketCondition(b)}` for a bucket `b` in `Cover.Buckets` |
 | `objectUser` | Fugaro account in a repository's workflow module | a condition whose every `||` clause is `resource.name.startsWith("projects/_/buckets/<b>/objects/<p>/<slug>/")`, with `<b>` in `Cover.Buckets`, `<p>` in `runs`, `cache`, `locks` or `builds`, and a non-empty `<slug>` |
 | `objectUser` | Fugaro job account in the project module (`module.project["<job>"]`, phase 3) | a condition whose every `||` clause is `resource.name.startsWith("projects/_/buckets/<b>/objects/<p>/")` — the widened form, with no `<slug>` at all — with `<b>` and `<p>` as above |
 | `objectViewer` | Fugaro account | no condition (the history account) |
@@ -236,7 +239,7 @@ The 0.6 CLI keeps working for launchers after the apply, because a 0.6 launch wr
    |---|---|---|
    | A non-operator member holds a write-capable role with no condition (`objectAdmin`, `objectUser`, `objectCreator`, `legacyBucketWriter`, `legacyBucketOwner`, `storage.admin`, or any custom role, which is flagged as "cannot tell") | warning | `fugaro init` (0.7.0) when the member is a launcher; else `gcloud storage buckets remove-iam-policy-binding gs://<b> --member=<m> --role=<r>` |
    | A conditional write grant to a person that is not the launcher condition | warning | the same command with `--condition-from-file` / `--all` |
-   | A member holds `objectUser` under the launchers' pre-0.9.0 runs/-only condition (`gcp.LegacyLauncherBucketConditionTitle`, `fugaro-launchers-runs`, before the sealed budget token moved to `tokens/`) | warning | `fugaro init` (0.9.0 or later), which replaces the grant — never the remove command: the binding is the launcher's own, and removing it takes the launcher's `runs/` writes with it |
+   | A member holds `objectUser` under an earlier form of the launchers' condition — the pre-0.9.0 runs/-only one (`gcp.RunsOnlyLauncherBucketConditionTitle`, `fugaro-launchers-runs`, before the sealed budget token moved to `tokens/`) or 0.9.0's `runs/` and `tokens/` one (`gcp.LegacyLauncherBucketConditionTitle`, `fugaro-launchers-runs-tokens`, before the shared issue store added `issues/`, D1727) | warning | `fugaro update` (0.23.0 or later), which replaces the grant — never the remove command: the binding is the launcher's own, and removing it takes the launcher's `runs/` writes with it |
    | A launcher who is not an operator lacks `runs_reader` or `runs_launcher` | warning | `fugaro init` |
    | `projectOwner:`/`projectEditor:` convenience `legacyBucketOwner` | info: "project Owners and Editors can write fugaro/; treat them as operators" | none |
 
@@ -363,7 +366,7 @@ An operator's own coding agent with the operator's ADC can also write `fugaro/` 
 
 ## 11. Verified from the code, and not verified (live checklist)
 
-**Verified from the code** (§2): the grants, the object paths and their writers, the absence of launcher writes outside `runs/` and `tokens/`, gocloud's 403 mapping, the guard's missing condition check, and the bucket's uniform access with no versioning or retention.
+**Verified from the code** (§2): the grants, the object paths and their writers, the absence of launcher writes outside `runs/`, `tokens/` and `issues/`, gocloud's 403 mapping, the guard's missing condition check, and the bucket's uniform access with no versioning or retention.
 
 **Verified live earlier, by analogy:** a prefix condition with `objectUser` allows writes and deletes under the prefix and denies writes, reads and listing elsewhere, for the job account (check 7).
 
@@ -392,7 +395,7 @@ An operator's own coding agent with the operator's ADC can also write `fugaro/` 
 | H2 | Launcher write scope | all of `runs/` | leaf names only (`task.json`, `launching`, `launch.json`, `cancel`, `budget-token`) |
 | H3 | Launcher read scope | whole bucket, unconditioned | `fugaro/`, `builds/`, `runs/`, `locks/` with a list-prefix condition |
 | H4 | Operators and overlap | operators keep `objectAdmin`; launcher grants for launchers who are not operators | launcher grants for every launcher |
-| H5 | Where the condition lives | Go (`gcp.LauncherBucketCondition`), passed as a tfvar, title `fugaro-launchers-runs-tokens` | HCL-computed |
+| H5 | Where the condition lives | Go (`gcp.LauncherBucketCondition`), passed as a tfvar, title `fugaro-launchers-runs-tokens-issues` | HCL-computed |
 | H6 | Guard | checks every bucket grant's condition (launchers exact; accounts by shape) | launcher condition only, accounts as today |
 | H7 | Migration deletes | allowed exactly by `HardeningAllowDelete`, behind the step's own typed confirmation and a banner | `--allow-delete` per launcher |
 | H8 | Refusal | `blobx.ErrForbidden` plus one operator-role message, exit 1, no pre-check | pre-flight `testIamPermissions` |
