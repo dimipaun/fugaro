@@ -183,42 +183,31 @@ Answered through `AskUserQuestion` on 2026-11-08 unless marked "resolved" (one d
 | **D1834** | Which rigor do follow-ups get? | Resolved: the parent's recorded mode (`RigorRecord.Mode`, post-floor) as `task.Spec.Rigor`, resolved again at launch through the floors; a follow-up never lowers one, and a recorded hotfix is **not** carried (the field stays empty, as `followUpRigor` in `internal/cli/followup.go` does for a follow-up). | Resolved 2026-11-08 (not asked); amended after review (round 1: the hotfix case, and the record field's name). |
 | **D1835** | A review cap is hit with findings left. | Follow BF1m: Startup and POC finalize ready at the cap with the leftovers deferred and recorded; Pro stays draft at the cap but still records non-floor leftovers as deferrals; floor findings always hold the draft. Critical is unchanged (it tolerates nothing, D7). | **2026-11-08: the recommendation, for the Startup/POC/Pro/floor sentence.** The Critical clause and Hotfix at a cap were **added after review and were not answered by the owner**. |
 | **D1836** | What if triage fails, times out or returns nothing parseable? | Resolved: every finding blocks (D4), recorded as `triage_failed`; the run continues as today. | Resolved 2026-11-08 (not asked). |
-| **D1837** | Which review levels does triage apply to? | The recommendation was levels 1 and 2 only (level 3 passes every finding through). | **2026-11-08: all levels, NOT the recommendation.** Consequence: a run that asked for level 3 can finish ready with non-floor adversarial findings deferred. See Open tension 1. |
+| **D1837** | Which review levels does triage apply to? | The recommendation was levels 1 and 2 only (level 3 passes every finding through). | **2026-11-08: all levels, NOT the recommendation; asked again after round 2 with the SC6 note (#1978 escalates level 3 automatically on security-sensitive diffs) and the owner kept it.** Consequence: a run at level 3, asked for or escalated, can finish ready with non-floor adversarial findings deferred. Floors still hold. |
 | **D1838** | Which model and account serve the stage? | The senior reviewer's model and account: independent of the coder, short input. A mixed-account stage like `review`. | **2026-11-08: the recommendation.** `stages.triage.claude_account` overrides it. |
 | **D1839** | Who launches follow-ups after the parent merges? | A new CLI command now, callable by the orchestrator later. Alternatives: orchestrator only (nothing works until that chain lands), or launch at ready (they would run on a base lacking the parent). | **2026-11-08: the recommendation.** |
 | **D1840** | How are verdicts logged? | Resolved: new optional `triage` block in `result.json` (new names, `tolerated` untouched), one entry per finding: round, index, key (hash of file and summary), verdict, one-line reason, group key, source (`agent`, `table`, `fail_safe`, `cap`). | Resolved 2026-11-08 (not asked). |
-| **D1841** | Which modes run the agent? | Startup, Pro and Hotfix. POC and Critical keep today's behaviour and make no triage call: `findingsPolicyOf` returns the zero policy for them (`rigor.Files(POC)` and `Files(Critical)` tolerate nothing), so Decide blocks on every finding of the last round; BF1m changes POC's cap behaviour, not the judge. | **2026-11-08: the recommendation** (the reason for POC corrected after round 1). **Amended after review (round 2, F28): Hotfix cannot change a verdict, so the question is open again, see Open item 6.** |
+| **D1841** | Which modes run the agent? | Startup and Pro. POC and Critical keep today's behaviour and make no triage call (`findingsPolicyOf` returns the zero policy for them), and Hotfix makes none either: its table blocks only security and unscored findings, both floor, so a judge could never defer anything there (F28). | **2026-11-08: first the recommendation (Startup, Pro, Hotfix); then, after round 2 (F28), the owner chose to drop Hotfix, the recommendation of the amended question (2026-11-08).** |
 | **D1842** | What about a repository that never opted in? | Resolved: no triage and no deferral where `cfg.Configured()` is false (D25: the base branch decides). | Resolved 2026-11-08 (not asked). |
 | **D1843** | How does this relate to BF1m (#1999)? | BF1m ships first as the deterministic baseline; this plan builds over it. Tasks sharing its files wait for its merge. | **2026-11-08: the recommendation.** |
 | **D1844** | What is the config surface? | Resolved: the `triage` stage's `claude_account`, and one boolean `agent.triage` (default on in Startup and Pro; Hotfix per Open item 6). **The off switch lives where the other owner-set switches live: the published project policy node (the `ReviewFloor` precedent in `internal/projectpolicy/policy.go`), read from the base the way D25 reads the mode, never from the task-embedded layer a launcher writes or the checked-out ref.** A repository may only turn it off for itself. Persona text is embedded per level (LD10), not configurable. | Resolved 2026-11-08 (not asked); amended after review (round 1: a launcher can embed any layer, so the project layer in the task is not a binding off switch). |
 | **D1845** | The spec's Hotfix and Critical lines. | Resolved: Hotfix defers everything except what the floor keeps (security still blocks); Critical is not triaged (D7). Both spec lines are amended here. | Resolved 2026-11-08 (not asked). |
 | **D1846** | How does triage treat reviewer text? | Resolved: as untrusted data (the same stance as `.fugaro/review.md`); it can never turn a `needs_owner` finding into a deferral, and a verdict that names no known finding is dropped. | Resolved 2026-11-08 (not asked). |
+| **D1847** | How far may the judge defer (F23)? | The recommendation was impact 3 or less: a finding of impact 4 or 5 that is not floor always reaches the fixer, whatever the reviewer's wording. | **2026-11-08: any non-floor finding the table blocks, NOT the recommendation.** Consequence: a coder that steers a reviewer's class or impact label can get a real correctness finding deferred where today the table blocks it. It is accepted; the mitigations are the shadow-first slice (T-TR7a logs every verdict before any steers the loop) and Check 482, and the bound is a parameter of `Apply` that can be set later without a schema change. |
 
 ## Open tensions and open items for the owner
 
-1. **Level 3 and deferral (D1837, not the recommendation).** Level 3 is the adversarial outer review the owner asks for per
-   job, mostly for security trees. With "all levels", a level-3 run can finish ready with its non-floor adversarial
-   findings deferred. The floors still hold (security, data loss, impact 5, `needs_owner`). Open PR #1978 (SC6) turns level 3 on automatically for
-   a diff that matches the security classification, so this reaches runs the owner did not ask level 3 for. Choices: keep as
-   answered, or let level 3 (asked for or escalated) pass every non-floor finding through to the fixer. Please rule.
-2. **A fixer that sees only blockers needs the loop to stop early (F4).** That changes today's loop in `Decide` and
-   `seniorLoop`, which BF1m also edits; the plan sequences it after BF1m. Please confirm the order stands if BF1m
-   is delayed.
-3. **Follow-up wiring to the orchestrator is out of scope.** D1839 gives a CLI command; "tasks waiting on the parent
-   are unblocked" needs the orchestrator to call it and set `DependsOn` (planned elsewhere). Say if you want a task
-   for that in this plan once its chain lands.
-4. **Merging.** Acceptance 1 reads "ready" here (D1832). If you want Fugaro to merge, that is a different, larger
-   decision (a `gitprov` merge call against D13) and not part of this plan.
+Round 2's questions were put to the owner on 2026-11-08 and answered: the deferral bound (D1847, not the recommendation), Hotfix
+(dropped, D1841), level 3 (kept as answered, D1837) and BF1m's ordering (stands, D1843). What remains open:
 
-5. **How far may the judge defer (F23)?** Choices: (a) any table-blocked finding that is not floor class (as D1830 reads);
-   (b) only findings of impact 3 or less, so a high-impact finding still reaches the fixer whatever the reviewer's wording; (c)
-   (b) plus a cap on the share of a round the judge may defer. **The plan ships (b) as its default until you rule** (round 2:
-   shipping the looser reading unruled would be a loosening admitted by default); it costs some deferrals of real but
-   low-impact issues.
-6. **Hotfix and triage (D1841 amended, F28).** The judge can never defer anything in Hotfix. Choices: (a) drop Hotfix from
-   D1841 (Startup and Pro only); (b) keep it as a shadow-only stage that logs verdicts and never changes the outcome; (c) keep it
-   as written (a call that cannot change a verdict). I recommend (a). If (a), "Hotfix at a review cap" is moot and
-   `TestCapHitHotfixFollowsStartup` goes.
+1. **A fixer that sees only blockers needs the loop to stop early (F4).** That changes today's loop in `Decide` and `seniorLoop`,
+   which BF1m also edits; the plan sequences it after BF1m (D1843, re-confirmed). If BF1m is delayed the six tasks that share its files wait.
+2. **Follow-up wiring to the orchestrator is out of scope.** D1839 gives a CLI command; "tasks waiting on the parent are
+   unblocked" needs the orchestrator to call it and set `DependsOn` (planned elsewhere). Say if you want a task for that here once its chain lands.
+3. **Merging.** Acceptance 1 reads "ready" here (D1832). If you want Fugaro to merge, that is a different, larger decision (a
+   `gitprov` merge call against D13) and not part of this plan.
+4. **D1847's accepted risk (F23).** The floor rests on the reviewer's labels and the judge may defer any non-floor finding the
+   table blocks; revisit with the data the shadow slice produces.
 
 ## UNVERIFIED
 

@@ -7,7 +7,7 @@ Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (
 **Plan only. Nothing is implemented. No task is approved:** each task needs the owner's explicit go; an answer to a
 decision is not a go. The owner's answers that shaped this plan, all 2026-11-08: D1830 (an agent inside the floor),
 D1833 (record, then a CLI files tasks), D1835 (follow BF1m at a cap), D1837 (**all levels, not the recommendation**),
-D1838 (the senior reviewer's model), D1839 (a CLI command launches follow-ups), D1841 (Startup, Pro, Hotfix: **amended after round 2**, the judge can never defer anything in Hotfix, so its place is Open item 6; until ruled the plan builds Startup and Pro and leaves Hotfix out),
+D1838 (the senior reviewer's model), D1839 (a CLI command launches follow-ups), D1841 (Startup, Pro, Hotfix: amended after round 2: Hotfix dropped, Startup and Pro only),
 D1843 (BF1m first, triage on top).
 
 **External prerequisite: BF1m (#1999) merged.** It edits `internal/rigor/table.go`, `internal/runner/outcome.go`,
@@ -50,7 +50,7 @@ task here that writes one of those files waits for it (D1843). Tasks that touch 
 | The triage stage runs with no tools and no settings sources (F25) | T-TR7a |
 | The off switch is read from the base and the published policy node, never the task-embedded layer (F14, D1844) | T-TR5 |
 | An all-deferred round ends its own level and the next level runs; the held-back rule reads the deferred set (F21, D1837) | T-TR7b |
-| The judge may defer only up to the bound the owner rules (Open item 5, F23) | T-TR6 |
+| The judge's reach is exactly the non-floor findings the table blocks; no further bound (D1847, owner ruling; risk accepted, F23) | T-TR6, T-TR7a (shadow first) |
 | A follow-up never lowers a floor and carries the parent's mode, except a recorded hotfix, which it does not carry (D1834) | T-TR10 |
 | A cap hit: Startup and POC finalize ready with leftovers deferred; Pro and above stay draft, non-floor leftovers still recorded (D1835) | T-TR8 |
 | "Ready" is never "merged" (F8, D1832) | T-TR9, T-TR12 |
@@ -136,16 +136,14 @@ task here that writes one of those files waits for it (D1843). Tasks that touch 
 
 ### T-TR6: applying a verdict inside the floor
 - **Files:** `internal/triage/apply.go` (new), `internal/triage/apply_test.go` (new). **Interfaces:** consumed T-TR1's `Floor`,
-  `rigor.Split`, T-TR2's `Verdict`; produced `Apply(m rigor.Mode, in []Input, v Verdict, ok bool, bound Bound) Outcome` where
-  `Input` is `{Score rigor.Score, NeedsOwner bool, Key string}` (the flag is not in `rigor.Score`, F22) and `Bound` is the
-  deferral bound the owner rules in Open item 5 (**default: impact 3 or less may be deferred; a finding of impact 4 or 5 that is not floor reaches the fixer, until the owner rules Open item 5**). `Outcome{Blocking, Deferred
-  []Entry}`: table-tolerated findings are `Deferred` with `source: table`; a floor finding, a `needs_owner` finding and a
-  finding above the bound are `Blocking` whatever the verdict; a `needs_owner` finding is never in `Deferred` and so never a
+  `rigor.Split`, T-TR2's `Verdict`; produced `Apply(m rigor.Mode, in []Input, v Verdict, ok bool) Outcome` where
+  `Input` is `{Score rigor.Score, NeedsOwner bool, Key string}` (the flag is not in `rigor.Score`, F22) and the judge's reach is exactly the non-floor findings the table blocks, with no further bound (D1847). `Outcome{Blocking, Deferred
+  []Entry}`: table-tolerated findings are `Deferred` with `source: table`; a floor finding and a `needs_owner` finding are `Blocking` whatever the verdict; a `needs_owner` finding is never in `Deferred` and so never a
   follow-up; a verdict naming no known finding is dropped; a verdict whose `index` and `key` disagree, and two verdicts for one finding, both block it; a missing verdict for a table-blocked finding blocks it; `ok == false`
   blocks every table-blocked finding with `source: fail_safe`.
 - **Tests:** `TestApplyNeverDefersAFloorFinding`, `TestApplyNeverDefersANeedsOwnerFinding`, `TestApplyDropsAVerdictForAnUnknownFinding`,
   `TestApplyMissingVerdictBlocks`, `TestApplyFailSafeBlocksAll`, `TestApplyTableToleratedStaysDeferred`,
-  `TestApplyRespectsTheDeferralBound`, `TestApplyDefaultBoundKeepsImpactFourWithTheFixer`, `TestApplyVerdictWithDisagreeingIndexAndKeyBlocks`, `TestApplyTwoVerdictsForOneFindingBlock`. **Command:** `GOFLAGS=-p=2 go test ./internal/triage/ -run 'TestApply' -count=1`.
+  `TestApplyVerdictWithDisagreeingIndexAndKeyBlocks`, `TestApplyTwoVerdictsForOneFindingBlock`. **Command:** `GOFLAGS=-p=2 go test ./internal/triage/ -run 'TestApply' -count=1`.
 - **Depends on:** T-TR1, T-TR2. **Red step:** `TestApplyNeverDefersAFloorFinding`: an agent verdict deferring a `security` finding is
   accepted. **Mutation (run, restore):** drop the `Floor` check; that test fails. **Reviewer tier:** opus + mandatory independent
   review. **OWNER-RUN:** no. **Commit:** `triage: apply a verdict inside the floor, failing safe`.
@@ -154,7 +152,7 @@ task here that writes one of those files waits for it (D1843). Tasks that touch 
 - **Files:** `internal/runner/triage_stage.go` (new), `internal/runner/triage_stage_test.go` (new), `internal/runner/runner.go`
   (one call after each review verdict), `internal/agent/agent.go` and `agent_test.go` (a tools field and its argv; the review posture the review stage uses: `ReviewSettingSources`, `StrictMCPConfig`, `reviewPosture`, a temporary working directory instead of the checkout; **a security path**), `internal/runner/policy.go` (the switch is read from the published node here, "the only place it is read from"), `internal/runner/budget.go` (a stage slice), `internal/runner/accountchoice.go`
   (`rec.StageAccounts["triage"]`). **Interfaces:** consumed T-TR3, T-TR5, T-TR6, the review verdicts, `reachedRigor`;
-  produced a runner-internal step: when `agent.triage` is on, the mode is Startup or Pro (Hotfix per Open item 6) and the repository opted in,
+  produced a runner-internal step: when `agent.triage` is on, the mode is Startup or Pro (Hotfix not triaged (D1841)) and the repository opted in,
   it calls the senior reviewer's model and account (D1838) with `triage.Prompt` (the task's goal included), **with no tools and no settings sources** (F25), applies the verdict and **writes it to the
   record only** (shadow): the fixer, `Decide` and the PR are untouched. A failed call records `failed: true` and continues.
 - **Tests:** `TestTriageRunsAfterEachReviewRound`, `TestTriagePersonaFollowsTheReachedMode`, `TestTriageSkippedInPOCAndCritical`,
@@ -171,7 +169,7 @@ task here that writes one of those files waits for it (D1843). Tasks that touch 
   blocking subset and says to touch nothing else), `internal/runner/outcome.go` (`Decide` reads the deferred set),
   `internal/runner/triage_stage.go`, `internal/runner/prompts_test.go`, `internal/runner/outcome_test.go`,
   `internal/runner/triage_loop_test.go` (new). **Interfaces:** consumed T-TR7a's outcome; produced: a round whose findings are
-  all deferred ends the review loop and finalizes ready (Startup and Pro; Hotfix per Open item 6; D1835's cap rule is T-TR8); **with `agent.triage` off, in POC or Critical, or for an unconfigured repository the loop and the fixer behave exactly as today (after BF1m): a round the table alone tolerates does not end it** (F32); **deferrals made at a Startup round never make the PR ready after a raise at finalize** (`raisedAfterReview`, F31); a mixed round
+  all deferred ends the review loop and finalizes ready (Startup and Pro; Hotfix not triaged (D1841); D1835's cap rule is T-TR8); **with `agent.triage` off, in POC or Critical, or for an unconfigured repository the loop and the fixer behave exactly as today (after BF1m): a round the table alone tolerates does not end it** (F32); **deferrals made at a Startup round never make the PR ready after a raise at finalize** (`raisedAfterReview`, F31); a mixed round
   hands the fixer only `Outcome.Blocking`; every level's findings are triaged (D1837), and **an all-deferred round ends that level and the loop moves to the next enabled level** (F21): `heldBackLevel` and `decidingReview` read the deferred set, not the recorded verdict word, so a level-2 round with only deferrals neither holds the PR as a draft after level 3 ships nor leaves level 3 unrun.
 - **Tests:** `TestFixPromptListsOnlyBlockingFindings`, `TestFixPromptSaysTouchNothingElse`, `TestAllDeferredRoundEndsTheLoop`,
   `TestStartupTrivialOnlyFindingsAreReadyAfterOneReview` (acceptance 1), `TestFixerIsNeverGivenADeferredFinding`
@@ -188,7 +186,7 @@ task here that writes one of those files waits for it (D1843). Tasks that touch 
 - **Files:** `internal/runner/outcome.go`, `internal/runner/outcome_test.go`, `internal/runner/triage_cap_test.go` (new).
   **Interfaces:** consumed T-TR7b and BF1m's cap rule; produced: at the cap, Startup and POC finalize ready with every
   non-floor leftover recorded under `Record.Deferred` (`source: cap`); Pro stays draft with the same recorded
-  deferrals; Critical is unchanged (it tolerates nothing, D7); Hotfix is Open item 6 (the judge defers nothing there); a floor finding always holds the draft (D1835).
+  deferrals; Critical is unchanged (it tolerates nothing, D7); Hotfix is not triaged (D1841); a floor finding always holds the draft (D1835).
 - **Tests:** `TestCapHitStartupFinalizesReadyWithDeferrals`, `TestCapHitProStaysDraftButRecordsDeferrals`,
   `TestCapHitFloorFindingHoldsTheDraft`, `TestCapHitCriticalUnchanged`. **Command:** `GOFLAGS=-p=2 go test ./internal/runner/ -run
   'TestCapHit' -count=1 -timeout 20m`.
