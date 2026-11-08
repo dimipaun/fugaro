@@ -763,6 +763,15 @@ folder's pin, moved the table's row from 112 to 113: it holds the folder's own c
 than a claim about code — the ask is the owner's words verbatim, the twenty decision rows
 carry an empty owner's-answer cell, the number block sits above every claim the folder read,
 <<<<<<< HEAD
+and every task in the plan states its files, its red step and its reviewer tier.
+Amended 2026-11-08: `internal/cli/docs_security_classification_test.go`, the security-classification
+folder's pin, moved the table's row from 113 to 114 — the amendment beside it was written against a
+base in which this row read 112, so the figure it set landed one short of the tree it merged into, and
+the row read 113 while `ls internal/cli/docs_*_test.go | wc -l` printed 114.) They
+||||||| da8fbf671
+and every task in the plan states its files, its red step and its reviewer tier.) They
+=======
+<<<<<<< HEAD
 and every task in the plan states its files, its red step and its reviewer tier. Amended
 2026-11-08: the row read 113 while `ls internal/cli/docs_*_test.go | wc -l` printed 114,
 so it reads 114 — a pin landed in a commit that did not move the row, and the amendment
@@ -774,6 +783,7 @@ and every task in the plan states its files, its red step and its reviewer tier.
 Amended 2026-11-08: that move was resolved away by the batch merge that landed the
 same pin beside `de90e93c`'s recount of the doubled row, so the table's row moves from
 113 to 114 and carries the tree's figure again.) They
+>>>>>>> origin/main
 >>>>>>> origin/main
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
