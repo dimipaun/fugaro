@@ -467,6 +467,16 @@ type run struct {
 	// returns, which is the only one readiness reads: level 3's where it ran,
 	// level 2's otherwise, and level 1's where no outer level ran at all.
 	lastSenior seniorRound
+	// seniorLevelLast is the senior level's own last round, kept beside
+	// lastSenior because level 3 overwrites that one. Readiness is decided on
+	// the highest enabled level, but the decisions the run owes the owner are
+	// what the last round of every enabled OUTER level left (OD1,
+	// decidingOwnerDecisions): without this, a senior round that shipped while
+	// carrying one — or that ran out of rounds with one beside a fixable
+	// finding — would be forgotten the moment the adversarial review ran, and
+	// the run would go ready, or end a draft with the question recorded
+	// nowhere and the follow-up that answers it launched blind.
+	seniorLevelLast seniorRound
 	// ckpt is the checkpoint pushes' state (checkpoint.go).
 	ckpt checkpointState
 	// stageCkptStop is the running stage's checkpointer stop — startCheckpoints'
@@ -1712,6 +1722,13 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.spec = spec
 	r.rec.RunID, r.rec.Repo = spec.RunID, spec.Repo
+	// The owner's ruling this launch was given (OD1), onto the record with the
+	// rest of what the task says the run is: it is the answer the brief below
+	// works from, and a reader of the record has to find the same text the
+	// agent was given. A follow-up launched without one refines this with the
+	// ruling the run before it worked from, once that record has been read
+	// (recordRuling, owner.go).
+	r.rec.OwnerRuled = spec.OwnerRuled
 	// The task's arm, before anything else the task's text can reach: an
 	// arm refuses the run further down the very path an unsampled run
 	// takes (shadow.go, readArm).
@@ -2362,6 +2379,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 		if err := r.prepareFollowUp(ctx); err != nil {
 			return err
 		}
+		// The ruling this run works from, with the decisions it answers (OD1):
+		// its launch's own, or the pair the run before it worked from, which it
+		// inherits. Written here and not with the task's other text above
+		// because only now has the previous record been read.
+		r.recordRuling()
 	}
 	// A kill switch or the grace may have halted the run while bootstrap
 	// was busy: nothing is pushed yet, so it ends as a bootstrap halt.
@@ -2728,6 +2750,21 @@ func (r *run) agentLoop(ctx context.Context) {
 		if add := followup.ReviewAddendum(f.sel, f.nonce); add != "" {
 			reviewPrompt += "\n\n" + add
 		}
+		// The ruling the run was launched with (OD1) reaches the reviewer here
+		// and not only the implement brief: the review stages read in sessions
+		// of their own, and a reviewer that does not know the run was answered
+		// marks the same finding needs_owner again — the run stops where it
+		// stopped and the next follow-up is refused, which is the loop the
+		// ruling exists to end. Every ruling the run works from goes in, each
+		// with the decisions it answers listed beside it, so a ruling settles
+		// those and not whatever else it names — including the rulings behind
+		// the newest one, whose questions are as settled as its own: the
+		// reviewer that re-raises one of those stops the run on a question the
+		// owner answered two rulings ago. All three levels are handed this one
+		// brief (reviewPromptWithFocus, AdversarialPrompt), so they all read it.
+		if add := followup.RulingAddendum(r.ownerRulings(), f.nonce, r.redactor()); add != "" {
+			reviewPrompt += "\n\n" + add
+		}
 	}
 	tier := ""
 	for _, st := range r.plan {
@@ -2793,6 +2830,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		}
 		if !parsed {
 			r.lastSenior = seniorRound{Round: round}
+			r.seniorLevelLast = r.lastSenior
 			model, effort := r.reviewFacts("review")
 			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: "none", Head: head, Model: model, Effort: effort})
 			r.save(ctx)
@@ -2801,12 +2839,25 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		}
 		// The round is kept whole as well as counted: the mode's threshold
 		// table reads the findings' scores, which the summary does not carry
-		// (outcome.go, T3.1).
+		// (outcome.go, T3.1). The senior level's own copy of it is kept too, so
+		// the owner decisions it left survive level 3's round overwriting this
+		// one (seniorLevelLast).
 		r.lastSenior = seniorRound{Round: round, Findings: v.Findings}
+		r.seniorLevelLast = r.lastSenior
 		model, effort := r.reviewFacts("review")
 		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: v.Verdict, Findings: len(v.Findings), Head: head, Model: model, Effort: effort})
 		r.save(ctx)
 		if r.capReached() {
+			return false
+		}
+		// OD1: a round that asks for changes and names nothing but decisions
+		// only the owner can make is where the loop stops. No fix round is
+		// dispatched — there is nothing a coder could change — and no further
+		// round is bought, because the reviewer would be asked the same
+		// question about the same unchanged code. The decisions are recorded
+		// and the run ends waiting for them (ownerStop).
+		if v.Verdict != "ship" && allOwner(v.Findings) {
+			r.ownerStop(ctx, v.Findings)
 			return false
 		}
 		if v.Verdict == "ship" || round >= r.reviewRounds(st) {
@@ -2869,6 +2920,14 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: runstore.TierAdversarial, Verdict: v.Verdict, Findings: len(v.Findings), Head: head, Model: model, Effort: effort})
 		r.save(ctx)
 		if r.capReached() {
+			return false
+		}
+		// OD1, exactly as seniorLoop stops: level 3 is the deciding level of a
+		// run whose mode enabled it, so a round that names only the owner's
+		// decisions stops the run here rather than buying a fix round and a
+		// further adversarial review of code that cannot change.
+		if v.Verdict != "ship" && allOwner(v.Findings) {
+			r.ownerStop(ctx, v.Findings)
 			return false
 		}
 		if v.Verdict == "ship" || round >= r.adversarialRounds(st) {
@@ -3138,6 +3197,19 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 			return sessionID, false
 		}
 		if sum.Verdict != "changes" {
+			return sessionID, true
+		}
+		if allOwner(v.Findings) {
+			// OD1: the round names nothing but decisions only the owner can
+			// make, so the cheap loop fixes nothing here. Where it decides
+			// readiness — a run whose level 2 and level 3 are both off (POC) —
+			// that is the run's stop; where an outer level does, the round is
+			// handed on and that level's review is what decides, the first line
+			// advising it and never overruling it (seniorReview).
+			if decides {
+				r.ownerStop(ctx, v.Findings)
+				return sessionID, false
+			}
 			return sessionID, true
 		}
 		r.afterStage(ctx, "review_first")
@@ -4342,8 +4414,14 @@ func (r *run) finalize(ctx context.Context) error {
 	// challenger's is the diff it holds back.
 	r.uploadPatch(ctx, sha)
 
+	// The decisions the deciding round left go into the record before Decide
+	// reads it: the loop stops on an all-owner round (ownerStop), and a round
+	// that shipped with one or left it beside a fixable finding ends a draft
+	// that waits on it just the same (OD1). A run that stopped for its own
+	// reason records none (recordOwnerDecisions).
+	r.recordOwnerDecisions(halt)
 	pol := r.findingsPolicy()
-	ready, reason := Decide(records, decided, r.decidingReview(), pol)
+	ready, reason := Decide(records, decided, r.decidingReview(), pol, r.rec.OwnerDecisions)
 	r.rec.Tolerated = r.toleratedRecord(pol)
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
@@ -4352,8 +4430,18 @@ func (r *run) finalize(ctx context.Context) error {
 		ready, reason = false, fr
 	}
 	if halt != nil {
-		// Never ready, and the reason is the halt's, whatever failed first.
-		ready, reason = false, (&HaltError{*halt}).Error()
+		// Never ready, and the reason is the halt's, whatever failed first. The
+		// owner-decision stop is the one halt that is not a limit the run
+		// passed but a question it cannot answer, so its reason is the plain
+		// sentence the record, the pull request's status block and the
+		// launcher's refusal all print, and not the halt's own
+		// "halted: <reason>: <detail>" spelling of it (OD1).
+		ready = false
+		if halt.Reason == runstore.HaltOwnerDecision {
+			reason = halt.Detail
+		} else {
+			reason = (&HaltError{*halt}).Error()
+		}
 	}
 	// Finalize's push must not outlive its token either; a short reserve
 	// still asks for at least what bootstrap's fetch does.

@@ -615,6 +615,7 @@ reads:
 | `artifact_bytes` | int64 | **yes** | the recorded total size of those artifacts (a negative recorded size counts as none) |
 | `changed_files` | `*runstore.ChangedFiles` | **yes** | the paths the run changed, as the run itself recorded them (design D27, console v2 plan V2.1.2): `paths`, `total` and `truncated` below. **Absent for a run that recorded none** — every record written before the field existed, and every run that died before finalize — and absence means **"no record of what this run changed"**, never "it changed nothing" (the `-` cell of `runs ls`'s `FILES` column) |
 | `rigor` | `*runstore.RigorRecord` | **yes** | the mode the run resolved, the layer that won and the areas that matched (docs/rigor-modes D22, D24, D25): `mode`, `from`, `areas`, `at` and `revision` below. **Absent for a run that resolved none** — a record written before the field existed, a run that died before bootstrap, or a block that cannot be read as a decision — and absence means **"no record of this run's rigor"**, never "it resolved nothing" (the `-` cell of `runs ls`'s `MODE` column) |
+| `owner_decisions` | `*runstore.OwnerDecisions` | **yes** | what the run's review left for the repository's owner to settle (OD1): `decisions` (each one `file`° and `summary`, below) and `total`. **Absent for a run that left none** — every run whose review named no such finding, every run that stopped for its own reason, and every record written before the field existed — and absence means **"nothing is pending"**, never "the review had nothing to say" (the row's `reason` says the same sentence, and the `halt.reason` of `owner_decision` is the other half of the same fact where the loop stopped on the finding) |
 
 **`rigor` is the mode the run resolved, and it is read from the base branch.**
 The block is one decision (docs/rigor-modes D24), carrying the mode, the layer
@@ -648,6 +649,33 @@ the rules strictest first before it caps them, so the rules that survive are the
 strictest ones and the first of them is the rule a reader names. A tampered
 `result.json` therefore reaches the console as no block or as a bounded one,
 never as a value no reader can check.
+
+**`owner_decisions` is what the run is waiting on, and it is a count and a list
+together.** A review finding whose only remedies are a decision the run cannot
+make — a licence or legal clearance, a product or policy choice, a step only the
+owner can run — is marked by the reviewer (`needs_owner`) and is never handed to
+a fixer. When every finding of the deciding round is one of those, the run halts
+with `halt.reason: "owner_decision"` (a reason of its own, beside the five
+governance ones) and its pull request stays a draft. A deciding round that left
+one beside a fixable finding, or that shipped while carrying one, ends no halt —
+the loop ran to its own end — but a draft for the same reason: the block is on
+the record, `reason` is the same waiting sentence, and readiness is blocked
+above every verdict, so a console that reads `outcome: "draft"` and a block
+together is reading one fact. Either way the list is:
+
+| Field | Type | omitempty | Note |
+|---|---|---|---|
+| `decisions` | `[]object` | no | the pending decisions, **`[]` when the block is present but empty — never null**; each one `file`° (the path the finding names) and `summary` (one sentence, clipped to `runstore.MaxOwnerDecisionText` = **200** runes) |
+| `total` | int | no | **how many decisions the review really left**, so a truncated block still says how big the set it is part of was |
+
+**`total` is the count and `decisions` is the list, and neither replaces the
+other.** The block is capped at `runstore.MaxOwnerDecisions` = **100** when it is
+written, and an entry without a sentence is not stored at all; the reader bounds
+it **again** (`runview.Join`, `OwnerDecisions.Bounded`), because the record is an
+object the job can write, and a block whose every sentence is unreadable reads as
+no block — the run's own `reason`, and its `halt.reason` where it halted on them,
+still says it is waiting. The count a reader
+shows is `total`, never `len(decisions)`.
 
 **The derived status (`derived`), and why it is not a status.** A Cloud Batch
 run on a Spot VM can be preempted: the platform reclaims the VM, the job ends
@@ -767,6 +795,7 @@ exactly its own tags and nothing is nested under a `process` or `checks` key:
 | `draft_note` | string | **yes** | a line about the run's draft PR, when it needs one |
 | `follow_up` | `*runstore.FollowUp` | **yes** | what a follow-up acted on; absent for a first run |
 | `comments_path` | string | **yes** | where the comments it was given are stored |
+| `owner_ruled` | string | **yes** | the repository owner's ruling this run worked from (OD1): the text the launcher appended to the run's brief verbatim — the ruling its own launch was given, or, for a follow-up launched without one, the one the run before it worked from, which it inherits — so the run the console diagnoses is one that was told the answer. Absent for a run that worked from no ruling: every run but a follow-up that answered an `owner_decisions` block, and every follow-up after a run that worked from none. **The run's own bytes**, exactly as the fields above. Redacted and clipped to `task.MaxOwnerRuledBytes` = 4 KiB on read, and held to `task.ValidateOwnerRuled` when a follow-up inherits it: a record whose ruling is not text a brief may hold (blank, a control character, over the bound) is read as a run that worked from none, and its `owner_ruled_decisions` with it. The decisions that ruling answered are the record's `owner_ruled_decisions`, and the rulings this run worked from behind it the record's `owner_ruled_earlier` — neither of which this shape carries: the console shows the run's own ruling, and the chain is the reviewers' |
 | `route_by`, `model_by` | `map[string]float64` | **yes** | the run's spend by provider route and by model (a Claude call has no route) |
 | `stages` | `[]runstore.StageTiming` | **yes** | the run's per-stage record (governance T1.1–T1.3), in the record's own order and bounded at `diagnoseStages` = 128: each entry is `name`, `started_at`, `duration_s`, `calls`°, `agents`°, `model_usd`°, `model`° and `model_notional_usd`°. `calls` and `agents` are **pointers**, so a stage nobody counted has the key absent, which is not the same fact as a stage counted at zero. `model_usd` is what the stage's calls cost, `model_notional_usd` the notional part of it (D140). The stages are the run's whole model spend but for gateway spend that settled after its stage's wait ran out, which is in `model_by["unattributed"]` and in no stage: exactly, `sum(stages[].model_usd) + model_by["unattributed"] == row.cost.model_usd`. **That identity is why the bound is where it is**: it holds only for the whole list, so `diagnoseStages` sits above the loop's own maximum (87 stages under the config limits, plus the provision and render stages) and never truncates a run the loop can make — it guards against the record a hand can edit, not against the loop. Absent when the record has no stages, and when there is no record at all |
 | `reviews` | `[]runstore.ReviewSummary` | **yes** | the record's review rounds, in the record's own order and bounded at `diagnoseReviews` = 96: each entry is `round`, `tier`, `verdict`, `findings` and, when the round recorded one, `bounce`°, `head`°, **`model`°** and **`effort`°** (CLI 0.16.0). `tier` is `first`, `senior` or `adversarial`, and `verdict` is the reviewer's own word or `none` for a round that returned nothing parseable. `model` and `effort` are what **reviewed** the round — the stage's pinned model and the reasoning effort that reached the stage — and the pair with `head`, the commit the round read, tells a reader which model the record says reviewed which head: these are the record's own unsigned bytes, recorded and not verified, so they are a hint for a person and never an input to a decision. `model`, `effort` and `head` are **absent** in a round that recorded none, which is every review written before CLI 0.16.0, so a reader tests the key rather than the empty string. Every string in the list is redacted, `model` and `effort` included: they are the record's bytes, which a hand can edit. The bound sits above the loop's own maximum (77 rounds), so it guards against the record a hand can edit, never against the loop; a run that reached it prints the first `diagnoseReviews` rounds and then the line `… at most 96 review rounds are printed`, which says the list is cut and not how many rounds it left out. Absent when the record has no reviews, and when there is no record at all |
