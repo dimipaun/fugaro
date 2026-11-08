@@ -160,12 +160,31 @@ func TestParallelismSkillNamesTheCLIForTheGraph(t *testing.T) {
 // tuning goes in project or repo settings, never in Fugaro's own text.
 func TestParallelismSkillIsGeneric(t *testing.T) {
 	text := decouplingText(t)
-	for _, own := range []string{
-		"Belong", "dimipaun",
-		"internal/", "cmd/fugaro", "console/", "mobile/", "website/", "plugin/skills",
-	} {
+	for _, own := range []string{"Belong", "dimipaun"} {
 		if strings.Contains(text, own) {
-			t.Errorf("the decoupling text names %q, which is one repository's own: the pass ships to every user", own)
+			t.Errorf("the decoupling text names %q, which is this installation's own organisation: the pass ships to every user", own)
 		}
+	}
+
+	// The checkout's own trees, read off the disk rather than listed here: a
+	// pass that named one of them would be written for this repository. docs/
+	// is left out on purpose — it is where a plan and its contract document live
+	// in any repository, and the pass points at both.
+	entries, err := os.ReadDir("..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	trees := 0
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || e.Name() == "docs" {
+			continue
+		}
+		trees++
+		if strings.Contains(text, e.Name()+"/") {
+			t.Errorf("the decoupling text names %s/, a tree of this repository: the pass ships to every user, and project-specific tuning goes in project or repo settings", e.Name())
+		}
+	}
+	if trees == 0 {
+		t.Fatal("no tree of the checkout was read, so this check cannot report anything")
 	}
 }
