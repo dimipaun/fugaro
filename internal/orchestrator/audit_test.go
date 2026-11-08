@@ -31,7 +31,10 @@ import (
 //
 // Mutation: mint the id from the caller (or from a counter) instead of
 // deriving it, drop the cleaning of the free text, or stamp the entry from the
-// caller's clock, and the case that names it stops failing.
+// caller's clock, and the case that names it stops failing. Honour an id or a
+// stamp the caller set (`if e.ID == ""`, `if e.At.IsZero()`) and the case that
+// passes both stops failing, which is what makes that guard a tested one
+// rather than a line the next edit may delete.
 func TestAuditAppendIsIdempotentOnADerivedId(t *testing.T) {
 	ctx := context.Background()
 	f := gcpfake.NewRTDB(t)
@@ -109,6 +112,46 @@ func TestAuditAppendIsIdempotentOnADerivedId(t *testing.T) {
 		entry := nodeObject(t, doc[stored.ID], "the entry")
 		if got := nodeText(t, entry, "text"); got != stored.Text {
 			t.Errorf("the node carries %q and the append returned %q: the caller is told a line the log does not have", got, stored.Text)
+		}
+	})
+
+	t.Run("an id and a stamp from the caller are ignored", func(t *testing.T) {
+		f := gcpfake.NewRTDB(t)
+		audit := mustAudit(t, rtdbClient(t, f), clockAt(leaseAt))
+
+		// A producer that minted both itself, with a forged id that is a name a
+		// key can carry (so what this case catches cannot be the empty key) and a
+		// stamp two days in the past: the two things that make the log readable
+		// are the derived id, which makes one event one line however often it is
+		// delivered, and the server's order, which is what a laptop's clock
+		// cannot be. A caller that could set either would make both untrue.
+		stored, err := audit.Append(ctx, orchestrator.Entry{
+			ID: winnerHolder + ":forged", At: leaseAt.Add(-48 * time.Hour),
+			Subject: winnerHolder, Transition: "blocked", Text: "a line a caller wrote",
+		})
+		if err != nil {
+			t.Fatalf("the append: %v", err)
+		}
+		if want := winnerHolder + ":blocked"; stored.ID != want {
+			t.Errorf("the entry keeps the caller's id %q, not the one its names derive (%q)", stored.ID, want)
+		}
+		if stored.At != leaseAt {
+			t.Errorf("the entry is stamped %s, not the server time the append read (%s)", stored.At, leaseAt)
+		}
+
+		log := nodeObject(t, f.Value(mustPath(t, orchestrator.PathAudit)), "the audit log")
+		if len(log) != 1 {
+			t.Fatalf("the log carries %d entries for one append: %v", len(log), logKeys(log))
+		}
+		if _, ok := log[winnerHolder+":forged"]; ok {
+			t.Errorf("the caller's own id was written as a key: %v", logKeys(log))
+		}
+		entry := nodeObject(t, log[stored.ID], "the entry")
+		if got := nodeText(t, entry, "id"); got != stored.ID {
+			t.Errorf("the node carries the id %q, not the derived one (%q)", got, stored.ID)
+		}
+		if got := nodeText(t, entry, "at"); got != leaseAt.Format(time.RFC3339) {
+			t.Errorf("the node carries the stamp %q, not the server's (%q)", got, leaseAt.Format(time.RFC3339))
 		}
 	})
 
