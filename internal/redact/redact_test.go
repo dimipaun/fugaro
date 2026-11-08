@@ -122,6 +122,17 @@ var patternCases = []struct {
 		keep: `\"message\":\"quota exceeded for project foo\",\"step\":\"terraform apply\"`,
 	},
 	{
+		name: "escaped header value escaped a level deeper",
+		in: `{"content":"{\"x-api-key\":\"a\\\"` + fake(strings.Repeat("Zx9", 8)) +
+			`\"}"}`,
+		leak: strings.Repeat("Zx9", 8),
+	},
+	{
+		name: "escaped header value that is never closed",
+		in:   `{"content":"{\"api-key\":\"` + fake(strings.Repeat("Zx9", 8)) + `\"}`,
+		leak: strings.Repeat("Zx9", 8),
+	},
+	{
 		name: "escaped header value after an unescaped name",
 		in:   `x-api-key: \"` + fake(strings.Repeat("Zx9", 8)) + `\" and then some`,
 		leak: strings.Repeat("Zx9", 8),
@@ -145,7 +156,23 @@ var patternCases = []struct {
 		in: `{"authorization":{"token":"` + fake(strings.Repeat("A1b2C3d4", 3)) +
 			`"},"step":"terraform apply"}`,
 		leak: strings.Repeat("A1b2C3d4", 3),
-		keep: `"step":"terraform apply"}`,
+	},
+	{
+		name: "credential beside a nested object",
+		in: `{"authorization":{"a":{"b":1},"token":"` + fake(strings.Repeat("A1b2C3d4", 3)) +
+			`"}}`,
+		leak: strings.Repeat("A1b2C3d4", 3),
+	},
+	{
+		name: "header over a list holding quotes",
+		in:   `authorization: ["` + fake(strings.Repeat("A1b2C3d4", 3)) + `"]`,
+		leak: strings.Repeat("A1b2C3d4", 3),
+	},
+	{
+		name: "header over a list of plain values",
+		in:   `authorization: [1, 2] and the rest of the line`,
+		leak: "[1, 2]",
+		keep: " and the rest of the line",
 	},
 	{
 		name: "header quoted inside a shell command",
@@ -356,6 +383,23 @@ func TestRedactKeepsARecordReadableWhenTheHeaderIsInsideAValue(t *testing.T) {
 	}
 	if !strings.Contains(rec["message"], "[REDACTED]") {
 		t.Errorf("message = %q, want the marker", rec["message"])
+	}
+}
+
+// TestRedactReportMasksAPathThePassUncovered: the masks run over what the
+// pattern pass produced as well as over what it was given. A token standing
+// where a mask's delimiter has to be keeps the path from being masked on the
+// text as it arrived, and the pass takes that delimiter away along with the
+// token: masked once more, the path goes, or the report names the person who
+// filed it and its text changes under a second application.
+func TestRedactReportMasksAPathThePassUncovered(t *testing.T) {
+	in := "at " + fake("ghp_", strings.Repeat("A1b2C3d4", 5)) + fake("/home/", "someone", "/.cache")
+	once := Report(in)
+	if strings.Contains(once, fake("/home/", "someone")) {
+		t.Errorf("Report(%q) = %q: the home path survived", in, once)
+	}
+	if twice := Report(once); twice != once {
+		t.Errorf("Report is not idempotent: once %q, twice %q", once, twice)
 	}
 }
 

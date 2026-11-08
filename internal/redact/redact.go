@@ -88,24 +88,36 @@ func Text(s string, exact []string) string {
 // otherwise name the person filing it. Its caller runs the exact pass over
 // the same text with the credentials in hand (Text) and hands the result on.
 //
-// The masks run before the pattern pass, not after it. A mask deletes bytes,
-// and a byte deleted after the pass had run could be the one that made a
-// quoted value unterminated: the text would then change again on a second
-// application, which the report's caller does not expect. Masks first leaves
-// the pass the last word on the text, so Report is idempotent whatever a mask
-// removes.
+// The two run on both sides of each other, because each takes away what the
+// other needs, and the pass goes first both times.
+//
+// The pass goes first because a mask deletes bytes: a path swallowed with the
+// word after it (`/root/x:,Authorization: <token>`) can take a header's name
+// with it, and a credential the pass would have caught is left bare. Masking
+// last is what keeps the output free of a path the pass exposed by rewriting
+// the bytes in front of it — a token standing where the mask's delimiter has
+// to be (`sk-…/home/…`) hides the path from the mask on the text as it
+// arrived and takes the delimiter with it when it goes. The second pass is
+// there for what the first mask exposed in turn. A mask's replacement matches
+// no mask rule and the pass is idempotent over its own output, so Report is
+// idempotent.
 func Report(s string) string {
+	return masks(patternPass(masks(patternPass(s))))
+}
+
+// masks removes the two things only a report has to lose, in one place
+// because Report applies them on both sides of the pattern pass.
+func masks(s string) string {
 	s = email.ReplaceAllString(s, redacted)
-	s = homePath.ReplaceAllString(s, "$1"+redacted)
-	return patternPass(s)
+	return homePath.ReplaceAllString(s, "$1"+redacted)
 }
 
 // patternPass is the credentials a value list cannot name, because Fugaro
 // never held them: a bearer token a failing cloud call printed, a signed URL,
 // a private-key block. The rules are ordered so that the widest match wins —
 // a header's whole value goes rather than the token inside it — and every
-// replacement is [REDACTED], which no rule matches, so running the pass again
-// changes nothing.
+// replacement is [REDACTED], which either no rule matches or the one that does
+// puts back unchanged, so running the pass again changes nothing.
 func patternPass(s string) string {
 	// The block first, so a key goes whole rather than in the pieces a token
 	// shape happens to find in its body. The escaped header goes before the
@@ -113,7 +125,7 @@ func patternPass(s string) string {
 	// redacted; the quoted header goes before the plain one, which would
 	// otherwise take the rest of its line.
 	s = keyBlock.ReplaceAllString(s, redacted)
-	s = authHeaderEscaped.ReplaceAllString(s, `$1$2`+redacted+`$4`)
+	s = authHeaderEscaped.ReplaceAllString(s, `$1$2$6`+redacted+`$4$5`)
 	s = authHeaderQuoted.ReplaceAllString(s, `$1"`+redacted+`$4`)
 	s = authHeader.ReplaceAllString(s, `$1`+redacted)
 	s = authScheme.ReplaceAllString(s, "$1 "+redacted)
@@ -137,11 +149,14 @@ var (
 	// The closing quote is required, unlike the rule below: it is what tells
 	// the body how many backslashes are its own, and taking it away would let
 	// the body keep backslashes the closing needs, leaving the escapes around
-	// the marker unbalanced. So a value that is escaped a level deeper than
-	// this rule reads — one whose own text carries a quote — is cut short
-	// rather than matched whole, and one that is never closed is not matched
-	// at all.
-	authHeaderEscaped = regexp.MustCompile(`(?i)(\\*"?\b(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api-key|private-token)\\*"?\s*:\s*)(\\+")((?:\\\\.|[^"\\\r\n])*)(\\+")`)
+	// the marker unbalanced. A well-formed value also has to be followed by a
+	// character that cannot be part of one: a closing quote followed by a word
+	// character — `…\"a\"SECRET…` — is a value escaped a
+	// level deeper than this rule reads, whose body happens to end before the
+	// part that matters, so the second alternative takes the rest of the line
+	// instead of leaving the tail of a credential behind. A value that is
+	// never closed is caught by it too.
+	authHeaderEscaped = regexp.MustCompile(`(?i)(\\*"?\b(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api-key|private-token)\\*"?\s*:\s*)(?:(\\+")((?:\\\\.|[^"\\\r\n])*)(\\+")(?:([^A-Za-z0-9_])|\z)|(\\+")[^\r\n]*)`)
 
 	// authHeaderQuoted is a header whose value is a credential whatever it is,
 	// where that value is a quoted string: the whole value goes, scheme word
@@ -163,21 +178,23 @@ var (
 	//     string value of a record (`{"message":"… Authorization: Bearer
 	//     …","step":"…"}`); a rule that ran to the line would take the fields
 	//     after it, which are the diagnosis the record exists to carry.
-	//   - a container that closes on the line (`{"authorization":{"token":
-	//     "…"}}`) goes whole, brackets included, so a credential nested inside
-	//     one does not survive the rule that stopped at the first quote.
-	//   - a container that never closes takes the rest of the line, having no
-	//     bracket to stop at: a marker that mangles a line is better than a
-	//     credential that survives one.
+	//   - a bracketed value with no quote in it ends at its own bracket. That
+	//     covers a list a log printed (`authorization: [1, 2]`) and, since
+	//     the marker is bracketed too, the rule's own replacement, which is
+	//     what keeps a second application from eating the rest of the line.
+	//   - anything else that starts with a bracket — an object
+	//     (`{\"token\":\"…\"}`), a list holding quotes — takes the rest of the
+	//     line: a container has no end this rule can trust, and the first
+	//     bracket on the line is as likely to close something nested as the
+	//     value itself, so stopping there would leave the credential beside it
+	//     in place. A marker that mangles a line is better than a credential
+	//     that survives one.
 	//
 	// The value has to start with a character that is neither whitespace nor a
 	// quote — a quoted value is the form above, already redacted — and a
 	// leading backslash counts only when what follows it is not a quote, or
 	// this rule would eat the line from the escaped form's `\"[REDACTED]\"`.
-	// A bracketed value that closes before any quote ends at its own bracket,
-	// which is also what keeps this rule from matching its own marker a second
-	// time.
-	authHeader = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api-key|private-token)"?\s*:\s*)(?:\{[^\r\n]*?\}|\[[^\r\n]*?\]|[\[{][^\r\n]*|(?:[^\s"\\\r\n\[{]|\\[^\s"\r\n])[^"\r\n]*)`)
+	authHeader = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api-key|private-token)"?\s*:\s*)(?:\[[^"\r\n]*?\]|[\[{][^\r\n]*|(?:[^\s"\\\r\n\[{]|\\[^\s"\r\n])[^"\r\n]*)`)
 
 	// authScheme is the same credential where no header name introduces it:
 	// a curl line or an error body prints `Bearer <token>` on its own. The
