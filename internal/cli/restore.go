@@ -183,10 +183,10 @@ type restoreRun struct {
 }
 
 // runRestore is newRestoreCmd's body. The order is the whole of the design:
-// the refusals first, then the inputs (restorePreflight), then the one
-// confirmation, then the move, the creation and its verification, the
-// checkout and the apply — and every refusal before the creation is a hard
-// return.
+// the refusals first, then the inputs (restorePreflight), then the statement
+// of what the run makes permanent, then the move, the creation and its
+// verification, the checkout and the apply — and every refusal before the
+// creation is a hard return.
 func runRestore(cmd *cobra.Command, o restoreOptions, newID, rootArg string) error {
 	// A credential leak first, before anything opens the cloud (refuseHTTP2Debug).
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
@@ -239,7 +239,7 @@ func restorePreflight(cmd *cobra.Command, o restoreOptions, newID, rootArg strin
 		return nil, nil, userErr("nothing was restored: %s", initflow.AgentRefusal(m))
 	}
 	if !stdinIsTerminal(cmd.InOrStdin()) {
-		return nil, nil, userErr("nothing was restored: %s", initflow.NeedsTerminal("a restore's typed confirmations"))
+		return nil, nil, userErr("nothing was restored: %s", initflow.NeedsTerminal("the typed steps of the creating path a restore delegates to (fugaro setup --create-project --managed)"))
 	}
 	sel, lc, err := selectProject(ctx, o.cloud)
 	if err != nil {
@@ -291,9 +291,9 @@ func restorePreflight(cmd *cobra.Command, o restoreOptions, newID, rootArg strin
 	if err := rr.refuseExisting(ctx); err != nil {
 		return nil, nil, err
 	}
-	// What the config's move will be, before the confirmation rather than
-	// after it: restoreConfig's refusals are refusals a typed name does not
-	// help with.
+	// What the config's move will be, before the run's first write rather than
+	// after it: restoreConfig's refusals are refusals the run's own statement
+	// does not help with.
 	if err := rr.planConfig(); err != nil {
 		return nil, nil, err
 	}
@@ -301,8 +301,8 @@ func restorePreflight(cmd *cobra.Command, o restoreOptions, newID, rootArg strin
 }
 
 // restoreSteps is the sequence behind runRestore's refusals: the preflight,
-// the one confirmation, the creation and its verification, the checkout and
-// the apply.
+// the statement of what the run makes permanent, the creation and its
+// verification, the checkout and the apply.
 //
 // The local config moves before the creation (the creating path installs into
 // it, and init refuses a --gcp-project the selected config does not name), so
@@ -316,11 +316,12 @@ func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (
 	if err != nil {
 		return err
 	}
-	// The one confirmation, before anything is changed: the local config, the
-	// checkout's file, the project and the apply.
-	if err := rr.confirm(cmd); err != nil {
-		return err
-	}
+	// What this run is about to make permanent, said before the first write:
+	// the policy removed the typed confirmation this step used to be, and the
+	// statement of what it does is what remains of it — the operator reads the
+	// amount, the new project, the root and the two files before any of them
+	// changes.
+	fmt.Fprintf(cmd.OutOrStdout(), "%s\n", rr.whatToDo())
 	if err := rr.writeConfig(); err != nil {
 		return err
 	}
@@ -595,8 +596,8 @@ func restoreConfigPath(sel localcfg.Selection, lc *localcfg.Config) (string, err
 //     are given, which then win.
 //   - When the old project cannot be read — deleted, closed, or no longer
 //     the caller's to read: the case a restore is for — there is no fact to
-//     read, and the run proceeds only on --budget and --budget-currency, with
-//     the typed confirmations as designed. Without them it is a refusal
+//     read, and the run proceeds only on --budget and --budget-currency, as
+//     the run's own statement prints them. Without them it is a refusal
 //     naming the flags: an absent amount is not an unlimited one.
 //   - A read that did not answer (a 5xx, a cancelled context) is a refusal
 //     either way: it is neither "gone" nor "managed".
@@ -677,7 +678,11 @@ func (rr *restoreRun) budgetOf(ctx context.Context, c *infra.Clients) (*managed.
 		return nil, userErr("nothing was restored: the creation fact of %s could not be read, and a restore refuses a project that is not managed: %s", old, safetext.Field(err.Error()))
 	}
 	if !isManaged {
-		return nil, userErr("nothing was restored: %s can be read and is not managed (%s). A restore rebuilds a managed project, and no flag turns an installation that is not managed into one", old, safetext.Field(managedReason))
+		// The open end of D1541, in the one command that has it here: the old
+		// project answers and is not managed, so this run refuses and names the
+		// one command that flags an existing project managed, with the project
+		// ID as its argument.
+		return nil, managedRequired(rr.cmd, old, managedReason)
 	}
 	if flags != nil {
 		return flags, nil
@@ -850,8 +855,8 @@ func restoreBaseImages(lc *localcfg.Config) (kept map[string]string, dropped []s
 
 // readConfirmLine reads one line from in, one byte at a time.
 //
-// It is byte-wise and not a bufio.Reader, and that is the whole point. The
-// creating path below is handed the SAME reader this run's confirmations read
+// It is byte-wise and not a bufio.Reader, and that is the whole point. A
+// restore's creating path is handed the SAME reader a value entry here read
 // from, so that it sees the user's terminal — stdinIsTerminal is a type
 // assertion on an *os.File — and a bufio.Reader would break that twice over:
 // the child would be handed the *bufio.Reader itself and every typed step of
@@ -877,44 +882,19 @@ func readConfirmLine(in io.Reader) (string, error) {
 	}
 }
 
-// whatToDo is the question's subject: what this run is about to make
-// permanent, in one line. It names the amount, because it is the figure the
-// operator is committing to on a billing account.
+// whatToDo is what this run makes permanent, in one line: the statement the
+// run prints before its first write, in place of the typed confirmation the
+// policy removed. It names the amount, because it is the figure the operator
+// is committing to on a billing account.
 func (rr *restoreRun) whatToDo() string {
 	return fmt.Sprintf("restore %s into the new GCP project %s, with a monthly budget of %d %s, apply the agent-authored root %s from zero, and move this machine's project config and the repository's gcp_project: line to it",
 		rr.lc.Name, rr.newID, rr.budget.Amount, oneLine(rr.budget.Currency), rr.rootArg)
 }
 
-// whyPermanent is why this step is one initflow.Typed and not one --yes
-// covers, and it names no flag: there is none to pass.
-func (rr *restoreRun) whyPermanent() string {
-	return "a restore creates a project on your billing account, writes a Terraform state from zero, and edits a committed file in the checkout: every step of it is money or permanent, so the project's name is typed here at a real terminal"
-}
-
-// confirm is the one typed confirmation of the run (initflow.Typed's shape,
-// the same one confirmTypedStrict gives): a real terminal, and the project's
-// name typed back. A pipe or a redirect confirms nothing, a wrong name
-// changes nothing, and no flag stands in for either.
-func (rr *restoreRun) confirm(cmd *cobra.Command) error {
-	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "⚠ CONFIRM (project %s): %s\n", rr.lc.Name, rr.whatToDo())
-	if !stdinIsTerminal(cmd.InOrStdin()) {
-		return userErr("%s: %s", initflow.NeedsTerminal("the typed confirmation of a restore"), rr.whyPermanent())
-	}
-	fmt.Fprintf(out, "Type %s to confirm: ", rr.lc.Name)
-	line, err := readConfirmLine(cmd.InOrStdin())
-	if err != nil && !errors.Is(err, io.EOF) {
-		return userErr("reading the confirmation: %v", err)
-	}
-	if strings.TrimSpace(line) != rr.lc.Name {
-		return userErr("not confirmed (the project's name was not typed); nothing was changed")
-	}
-	return nil
-}
-
 // planConfig is what the config's move will be, decided before the run's
-// typed confirmation: restoreConfig's refusals are refusals a typed name does
-// not help with, and the operator reads them before typing rather than after.
+// first write: restoreConfig's refusals are refusals the run's own statement
+// does not help with, and the operator reads them before anything changes
+// rather than after.
 func (rr *restoreRun) planConfig() error {
 	// The config as its own file writes it, beside the selection's copy: the
 	// selection has this invocation's --gcp-project and --region applied to it
@@ -939,9 +919,8 @@ func (rr *restoreRun) planConfig() error {
 }
 
 // writeConfig is the local config's move: the diff, a backup of the old file,
-// and the write through init's own helpers. It runs behind the run's typed
-// confirmation, so it asks nothing of its own, and it takes the value
-// planConfig decided.
+// and the write through init's own helpers. It asks nothing of its own, and it
+// takes the value planConfig decided.
 //
 // There is no "already up to date" branch, because there is no such run: the
 // config names the OLD project (newID == lc.GCPProject is refused before
@@ -1014,17 +993,17 @@ func (rr *restoreRun) createArgs() []string {
 //
 // Delegating is the point and not a shortcut. The creating run is what writes
 // the project's creation fact for the project it created and what sets up
-// D77's state bucket and binds the deployer to it (markCreated), and what
-// removes every confirmation would be a second implementation of the creation
-// that skipped one of them. So the restore runs the creation, with the
-// creating run's own confirmations — the project's ID typed, the billing
-// account typed, and the installation's own review — exactly as a person
-// running it by hand would.
+// D77's state bucket and binds the deployer to it (markCreated), and doing
+// either here would be a second implementation of the creation that skipped
+// one of the creating run's own steps. So the restore runs the creation,
+// with the creating run's own inputs — the project's ID, the billing account,
+// and the installation's own review — exactly as a person running it by hand
+// would.
 //
 // The stdin is the command's own, unchanged: the child has to see the user's
-// terminal (stdinIsTerminal is a type assertion on an *os.File), and this
-// run's own confirmations read it a byte at a time so that they take one line
-// and leave the rest — see readConfirmLine.
+// terminal (stdinIsTerminal is a type assertion on an *os.File), and a value
+// entry here reads it a byte at a time so that it takes one line and leaves
+// the rest — see readConfirmLine.
 func (rr *restoreRun) create(ctx context.Context, made *initCreation) error {
 	cmd := rr.cmd
 	args := rr.createArgs()
@@ -1049,10 +1028,11 @@ func (rr *restoreRun) create(ctx context.Context, made *initCreation) error {
 // field of the repository the restore changes, and the one every teammate's
 // CLI and every CI job reads the shared config from.
 //
-// The edit keeps init's own discipline: the diff, then a yes at a terminal
-// (anything else, and a pipe, leaves the file alone and prints the line to
-// add), and a read-back that has to mean what the file meant plus the one
-// value. There is no --yes here: a restore has none.
+// The edit keeps init's own discipline: the diff, then the write, and a
+// read-back that has to mean what the file meant plus the one value. The
+// policy removed the yes this step used to wait for, so the write follows the
+// diff; the run's own statement of what it makes permanent is printed by
+// restoreSteps before the config moves at all.
 func (rr *restoreRun) anchor(cmd *cobra.Command) error {
 	path := filepath.Join(rr.checkout, "fugaro.yaml")
 	old, err := requireFugaroYAML(path)
@@ -1069,17 +1049,6 @@ func (rr *restoreRun) anchor(cmd *cobra.Command) error {
 		return nil
 	}
 	fmt.Fprintf(w, "%s\n%s", path, lineDiff(string(old), string(out)))
-	addLine := fmt.Sprintf("to let teammates use this installation without setup, change the gcp_project line of %s yourself: gcp_project: %s\n", path, rr.newID)
-	if !stdinIsTerminal(cmd.InOrStdin()) {
-		fmt.Fprint(w, addLine)
-		return nil
-	}
-	fmt.Fprintf(w, "Write this to %s? [y/N]: ", path)
-	line, _ := readConfirmLine(cmd.InOrStdin()) // an ended input is a no
-	if ans := strings.ToLower(strings.TrimSpace(line)); ans != "y" && ans != "yes" {
-		fmt.Fprint(w, addLine)
-		return nil
-	}
 	if err := writeFileAtomic(path, out); err != nil {
 		return userErr("writing %s: %v", path, err)
 	}

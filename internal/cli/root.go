@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"text/template"
 
 	"github.com/spf13/cobra"
@@ -138,6 +139,39 @@ func NewRootCmd() *cobra.Command {
 // newCoreRoot builds the released tree. It is separate from NewRootCmd so that
 // the extensions above are the only difference between the tree the core
 // builds and the tree a build with paid commands ships.
+// managedMutatingCommands are the commands that may not change a project that
+// is not managed, keyed by cobra's own command path (consoleReadPaths' shape in
+// project.go), each with the opening clause its refusal prints: what it
+// declines and what it is. The refusal itself is managed_require.go's, which
+// reads the clause from the annotation this table becomes, and it names the one
+// command that flags an existing project managed (D1541).
+//
+// The annotation is applied to the tree rather than written at each command's
+// own constructor so that the answer to "which commands refuse an unmanaged
+// project" is one table rather than a search: a command added here is annotated
+// by being added, and the sentence a command refuses with is declarative text
+// beside the list of commands that say it.
+var managedMutatingCommands = map[string]string{
+	"fugaro restore": "nothing was restored: a restore rebuilds a managed project",
+}
+
+// annotateManagedMutating applies managedMutatingCommands to the tree as cobra
+// annotations. A path that does not resolve is skipped rather than fatal: the
+// table is checked by a test, and a command whose annotation went missing still
+// refuses an unmanaged project in managedRequired's own words.
+func annotateManagedMutating(root *cobra.Command) {
+	for path, what := range managedMutatingCommands {
+		c, _, err := root.Find(strings.Fields(strings.TrimPrefix(path, root.Name()+" ")))
+		if err != nil || c == nil {
+			continue
+		}
+		if c.Annotations == nil {
+			c.Annotations = map[string]string{}
+		}
+		c.Annotations[managedRequiresAnnotation] = what
+	}
+}
+
 func newCoreRoot() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "fugaro",
@@ -210,6 +244,7 @@ func newCoreRoot() *cobra.Command {
 		// is not something an operator is offered.
 		newCredentialsCmd(),
 	)
+	annotateManagedMutating(root)
 	return root
 }
 

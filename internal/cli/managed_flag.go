@@ -1,12 +1,9 @@
 package cli
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
-	"io"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -46,10 +43,12 @@ import (
 //   - It is per project, with the exact project ID. One invocation names one
 //     project: the argument is a GCP project ID, there is no bulk form, no
 //     wildcard and no "all projects" form, and it must be the selected
-//     installation's own gcp_project. The confirmation is the exact project ID
-//     typed at a real terminal, and nothing stands in for it: this command
-//     registers no --yes and no --non-interactive, so a pipe, a script and a
-//     flag cannot give it.
+//     installation's own gcp_project. The confirmation is that argument and
+//     nothing else: the project is named by its exact ID on the command line,
+//     which is the owner's declaration (D1541's consent by argument, the
+//     answer of 2026-11-07 — not a string typed at a prompt), and this command
+//     registers no --yes and no --non-interactive, so no flag stands in for
+//     naming the project either.
 //   - It writes through the marker's own discipline. The object is
 //     fugaro/managed.json at the runs bucket's root, written by
 //     managed.WriteFlag exactly as Task 0.1 writes the creation fact: into a
@@ -108,10 +107,12 @@ confirmation, and it is normally written by the run that created the project
 (fugaro setup --create-project --managed). Flagging is the after-the-fact way,
 answered by the owner on 2026-10-16 (design D58).
 
-Run it in your own terminal, as an operator, with your own credentials, and
-type the GCP project ID it asks for. A coding agent's session is refused, and
-nothing stands in for the typed ID — not --yes, not --non-interactive, not a
-pipe.
+Run it as an operator, with your own credentials. A coding agent's session is
+refused, and so is a Fugaro run's process. The permission you give is the
+PROJECT_ID argument itself: naming the exact GCP project ID on the command line
+is the declaration that this project is managed (design D1541), and nothing is
+typed at a prompt — this command registers no --yes and no --non-interactive,
+so no flag stands in for naming the project either.
 
 PROJECT_ID must be the exact GCP project ID of the installation selected by
 --project, --config or the checkout: one invocation names one project, and
@@ -273,20 +274,19 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 		return remote(fmt.Errorf("reading the number of GCP project %s: %s", safetext.Field(lc.GCPProject), safetext.Field(err.Error())))
 	}
 	w := cmd.OutOrStdout()
-	// What is about to be written, and what it costs, before anything is
-	// typed: the answer's own framing is that flagging only adds guards AND
-	// that the marker is what turns the confirmation off, so the second half
-	// is printed rather than left to be inferred.
-	fmt.Fprintf(w, "⚠ CONFIRM (project %s): flagging GCP project %s as managed writes gs://%s/%s\n", safetext.Field(lc.Name), safetext.Field(lc.GCPProject), safetext.Field(bucket), managed.MarkerObject)
+	// What is about to be written, and what it costs, before it is written:
+	// the answer's own framing is that flagging only adds guards AND that the
+	// marker is what turns the confirmation off, so the second half is stated
+	// rather than left to be inferred. It is a statement and not a
+	// confirmation — what confirms this write is PROJECT_ID on the command
+	// line (D1541) — so it is printed as what the command does.
+	fmt.Fprintf(w, "flagging GCP project %s as managed writes gs://%s/%s\n", safetext.Field(lc.GCPProject), safetext.Field(bucket), managed.MarkerObject)
 	fmt.Fprintf(w, "  and the label %s=%s on the project itself: a managed project carries both, and the read requires both, so the object alone would change nothing about this project's runs\n", managed.ProjectLabelKey, managed.ProjectLabelValue)
 	fmt.Fprintf(w, "  it records: this project is managed, with the budget alert amount %d %s and the bound on billable image builds (one build per invocation, D1013)\n", amount, safetext.Field(currency))
 	fmt.Fprintf(w, "  it gives up: the typed confirmation for this project's applies. From the next apply on, a plan a coding agent's session authored is applied with no human prompt when the deterministic gate admits it (D55), and what stands in the confirmation's place is the gate, the whole-project inventory, the owner's delete list (fugaro allow-delete) and the budget above.\n")
 	fmt.Fprintf(w, "  it creates nothing: no resource is created, no billing call is made, and the amount above is recorded rather than spent.\n")
 	fmt.Fprintf(w, "  it does not protect against: a coding agent's session, which holds these credentials and can write this object directly (SECURITY.md).\n")
 	fmt.Fprintf(w, "  if this project already records whether it is managed: nothing is written unless its marker is the creation fact that records no amount (what `fugaro setup --create-project` without --managed leaves), which this replaces with the one above. A marker that already records an amount is refused, and so is any object this build cannot read as this project's.\n")
-	if err := confirmTypedGCPProject(cmd, lc.GCPProject); err != nil {
-		return err
-	}
 	replaced, err := managed.WriteFlag(ctx, c.Storage, bucket, lc.GCPProject, number, budget)
 	if err != nil {
 		return managedFlagErr(lc, bucket, err)
@@ -376,32 +376,6 @@ func managedFlagRunMarker(getenv func(string) string) string {
 		}
 	}
 	return ""
-}
-
-// confirmTypedGCPProject is the confirmation this command takes and the only
-// one it takes: the exact GCP project ID typed at a real terminal. It is not
-// confirmTypedStrict, which asks for the Fugaro project's name, because what
-// this command decides is about a GCP project and the string that shows the
-// owner has the right one in front of them is that project's own ID (D58's
-// answer). No flag stands in for it: this command registers no --yes and no
-// --non-interactive, so a refusal here names none.
-func confirmTypedGCPProject(cmd *cobra.Command, gcpProject string) error {
-	if !stdinIsTerminal(cmd.InOrStdin()) {
-		return userErr("%s: it is confirmed by typing the GCP project ID and by nothing else — not a flag, not a pipe", initflow.NeedsTerminal("flagging a project managed"))
-	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Type %s to confirm: ", safetext.Field(gcpProject))
-	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return userErr("reading the confirmation: %v", safetext.FieldErr(err))
-	}
-	// The exact ID, after the trim the other typed confirmations do: another
-	// project's ID, a prefix of this one and an empty line are all "not
-	// confirmed".
-	if strings.TrimSpace(line) != gcpProject {
-		return userErr("not confirmed (the GCP project ID was not typed exactly); nothing was written")
-	}
-	noteIDETerminalCmd(cmd, cmd.OutOrStdout())
-	return nil
 }
 
 // managedFlagErr is what the owner can do about a flag that did not happen:

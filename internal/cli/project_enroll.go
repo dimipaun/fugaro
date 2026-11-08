@@ -15,10 +15,9 @@ package cli
 // runs/ grant a run of a profile can write those prefixes).
 //
 // The interim path 1.6 opened (P4, 12a item 3) is closed here: a new repository
-// needs `repos add` or a confirmed `sync`, no Terraform and no update --repo.
+// needs `repos add` or `sync`, no Terraform and no update --repo.
 
 import (
-	"bufio"
 	"context"
 	"crypto/rsa"
 	"encoding/json"
@@ -816,13 +815,15 @@ func newProjectSyncCmd() *cobra.Command {
 }
 
 // runProjectSync lists the App's installed repositories and adds the ones the
-// allow-list does not admit, in one confirmed batch.
+// allow-list does not admit, in one batch.
 //
 // It is a writer of config/policy/shared, so it takes the writer's refusals
 // before it reads anything: every one runProjectReposEdit takes (the shared
 // config, a database that is not this project's, the deployed rules marker).
 // What it never does is remove: the list it writes is the list it read plus
-// what it was told to add.
+// what it was told to add. It asks nothing: the policy removed the typed
+// confirmation this batch used to take, and what it wrote is printed after the
+// write (putAllowRepos).
 func runProjectSync(cmd *cobra.Command, o *projectSyncOptions) error {
 	ctx := cmd.Context()
 	// SD8: sync writes the same allow_repos `repos add` writes, so it carries
@@ -894,10 +895,6 @@ func runProjectSync(cmd *cobra.Command, o *projectSyncOptions) error {
 	before := append([]string{}, nonNil(p.AllowRepos)...)
 	allow := append(nonNil(p.AllowRepos), missing...)
 	slices.Sort(allow)
-	what := fmt.Sprintf("add %d repositories to the allow-list and remove none: %s", len(missing), strings.Join(missing, ", "))
-	if err := confirmTyped(cmd, bufio.NewReader(cmd.InOrStdin()), lc, o.yes, what); err != nil {
-		return err
-	}
 	return putAllowRepos(ctx, out, configPath, lc, db, etag, raw, before, nonNil(allow))
 }
 

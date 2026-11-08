@@ -651,56 +651,43 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 	})
 }
 
-// TestRestoreConfirmWantsTheNameTyped: one typed confirmation for the run,
-// which is initflow.Typed's shape. A pipe confirms nothing and names no flag
-// (there is none), and the question names the new project, the root and the
-// amount, so the person reads what is permanent about it before typing.
-func TestRestoreConfirmWantsTheNameTyped(t *testing.T) {
-	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject}
-	rr := &restoreRun{lc: lc, newID: restoreNewProj, rootArg: "infra/installation", root: "/repo/infra/installation",
-		budget: &managed.Budget{Amount: 7, Currency: "USD"}}
-
-	t.Run("a pipe is not a confirmation, and the refusal names no flag", func(t *testing.T) {
-		terminal(t, false)
-		cmd, _ := restoreTestCmd(initProjectName + "\n")
-		err := rr.confirm(cmd)
-		if err == nil {
-			t.Fatal("a restore was confirmed with no terminal")
-		}
-		if ExitCode(err) != ExitUserError {
-			t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
-		}
-		if strings.Contains(err.Error(), "--yes") {
-			t.Errorf("the refusal names --yes, which this command does not have: %v", err)
-		}
-		if !strings.Contains(err.Error(), "terminal") {
-			t.Errorf("the refusal does not say a terminal is needed: %v", err)
-		}
-	})
-
-	t.Run("the project's name typed confirms it, and the question says what it does", func(t *testing.T) {
-		terminal(t, true)
-		cmd, out := restoreTestCmd(initProjectName + "\n")
-		if err := rr.confirm(cmd); err != nil {
-			t.Fatalf("the project's name typed did not confirm the restore: %v", err)
-		}
-		text := out.String()
+// TestRestoreStatesWhatItMakesPermanent: the policy removed the typed
+// confirmation this run used to be, so the run's own statement of what it
+// makes permanent is what a person reads before anything changes — the
+// installation, the new project, the amount it commits them to on a billing
+// account, the root, and the two files the run moves. It is printed before the
+// first write, which is the property the confirmation was there for.
+func TestRestoreStatesWhatItMakesPermanent(t *testing.T) {
+	t.Run("the statement names the project, the root and the amount", func(t *testing.T) {
+		rr := &restoreRun{lc: &localcfg.Config{Name: initProjectName, GCPProject: initProject}, newID: restoreNewProj, rootArg: "infra/installation", root: "/repo/infra/installation",
+			budget: &managed.Budget{Amount: 7, Currency: "USD"}}
+		said := rr.whatToDo()
 		for _, want := range []string{initProjectName, restoreNewProj, "7 USD", "infra/installation"} {
-			if !strings.Contains(text, want) {
-				t.Errorf("the question does not name %q:\n%s", want, text)
+			if !strings.Contains(said, want) {
+				t.Errorf("the statement does not name %q:\n%s", want, said)
 			}
 		}
 	})
 
-	t.Run("another name confirms nothing", func(t *testing.T) {
-		terminal(t, true)
-		cmd, _ := restoreTestCmd("yes\n")
-		err := rr.confirm(cmd)
-		if err == nil {
-			t.Fatal("a restore was confirmed by typing something else")
+	t.Run("the run prints it before it writes anything", func(t *testing.T) {
+		r, _ := newRestoreRig(t)
+		restoreManagedOld(r)
+		recordRestoreApply(t, r)
+		_, root := restoreCheckout(t)
+		out, err := restoreStepsWith(t, r, createStdin, root)
+		if err != nil {
+			t.Fatalf("the restore: %v\n%s", err, out)
 		}
-		if !strings.Contains(err.Error(), "nothing was changed") {
-			t.Errorf("the refusal does not say nothing was changed: %v", err)
+		said := "restore " + initProjectName + " into the new GCP project " + newProj + ", with a monthly budget of 7 USD"
+		i := strings.Index(out, said)
+		if i < 0 {
+			t.Fatalf("the run does not state what it makes permanent:\nwant %q in:\n%s", said, out)
+		}
+		// The creating path's own line is printed after the config moved, so
+		// the statement above it is the statement printed before the first
+		// write.
+		if j := strings.Index(out, "fugaro: creating the project through the same path"); j >= 0 && j < i {
+			t.Errorf("the statement comes after the run started writing:\n%s", out)
 		}
 	})
 }
@@ -725,19 +712,16 @@ func TestRestoreConfirmWantsTheNameTyped(t *testing.T) {
 // see that, which is why this test does not use one.
 func TestRestoreCreatingPathRemarksTheProjectAndRebuildsTheDeployer(t *testing.T) {
 	r, lc := newRestoreRig(t)
-	// The restore's own confirmation is the first line; the rest is what the
-	// creating path asks for and never covers with a flag: the project's ID,
-	// the billing account, and the installation's own review.
-	in := strings.NewReader(initProjectName + "\n" + createStdin)
+	// Every line here is what the creating path asks for and never covers with
+	// a flag: the project's ID, the billing account, and the installation's
+	// own review. The restore itself asks for nothing.
+	in := strings.NewReader(createStdin)
 	restoreTestTerminal(t, in)
 	cmd, out := restoreTestCmdIn(in)
 	rr := &restoreRun{cmd: cmd, o: restoreOptions{billingAccount: billingAcc, displayName: "Fugaro Restored"},
 		lc: lc, newID: newProj, path: r.cfg, old: mustRead(t, r.cfg),
 		budget: &managed.Budget{Amount: 7, Currency: "USD"}}
 
-	if err := rr.confirm(cmd); err != nil {
-		t.Fatalf("the restore's own confirmation: %v", err)
-	}
 	if err := rr.planConfig(); err != nil {
 		t.Fatalf("planning the local config's move: %v", err)
 	}
@@ -808,8 +792,7 @@ func TestRestoreWritesTheNewProjectIDIntoTheCheckout(t *testing.T) {
 		if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		terminal(t, true)
-		cmd, out := restoreTestCmd("y\n")
+		cmd, out := restoreTestCmd("")
 		rr := &restoreRun{lc: &localcfg.Config{Name: initProjectName, GCPProject: initProject}, newID: restoreNewProj, checkout: root}
 		if err := rr.anchor(cmd); err != nil {
 			t.Fatalf("writing the line: %v", err)
@@ -827,35 +810,13 @@ func TestRestoreWritesTheNewProjectIDIntoTheCheckout(t *testing.T) {
 		}
 	})
 
-	t.Run("a no writes nothing", func(t *testing.T) {
-		root := t.TempDir()
-		path := filepath.Join(root, "fugaro.yaml")
-		if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		terminal(t, true)
-		cmd, _ := restoreTestCmd("n\n")
-		rr := &restoreRun{lc: &localcfg.Config{Name: initProjectName, GCPProject: initProject}, newID: restoreNewProj, checkout: root}
-		if err := rr.anchor(cmd); err != nil {
-			t.Fatalf("a refused line edit is not an error: %v", err)
-		}
-		after, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(after) != doc {
-			t.Errorf("the file was written after a no:\n%s", after)
-		}
-	})
-
 	t.Run("a line that already names the new ID writes nothing", func(t *testing.T) {
 		root := t.TempDir()
 		moved := strings.Replace(doc, "gcp_project: "+initProject, "gcp_project: "+restoreNewProj, 1)
 		if err := os.WriteFile(filepath.Join(root, "fugaro.yaml"), []byte(moved), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		terminal(t, true)
-		cmd, _ := restoreTestCmd("y\n")
+		cmd, _ := restoreTestCmd("")
 		rr := &restoreRun{lc: &localcfg.Config{Name: initProjectName, GCPProject: initProject}, newID: restoreNewProj, checkout: root}
 		if err := rr.anchor(cmd); err != nil {
 			t.Fatal(err)
@@ -1036,35 +997,38 @@ func TestRestoreGCPProjectLine(t *testing.T) {
 	})
 }
 
-// TestRestoreAnchorWithoutATerminal: with no terminal the line is not written
-// and the run prints the one line the operator has to add. A restore has no
-// --yes, and a pipe is not a terminal: nothing here confirms an edit to a
-// committed file.
-func TestRestoreAnchorWithoutATerminal(t *testing.T) {
-	const doc = "version: 1\nproject: " + initProjectName + "\ngcp_project: " + initProject + "\nworkflows:\n  default: {}\n"
-	root := t.TempDir()
-	path := filepath.Join(root, "fugaro.yaml")
-	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
-		t.Fatal(err)
-	}
+// TestRestoreNeedsATerminalForTheCreatingPathsOwnSteps: the restore's own
+// confirmations are gone (the policy removed them), so what it still needs a
+// terminal for is the creating path it delegates to: the typed project ID,
+// the billing account and the installation review `fugaro setup
+// --create-project --managed` asks for, none of which a flag covers. A pipe is
+// not a terminal, the refusal says which steps those are, and it comes before
+// anything is read.
+func TestRestoreNeedsATerminalForTheCreatingPathsOwnSteps(t *testing.T) {
+	r, _ := newRestoreRig(t)
+	restoreManagedOld(r)
+	calls := recordRestoreApply(t, r)
+	_, root := restoreCheckout(t)
+	before := mustRead(t, r.cfg)
 	terminal(t, false)
-	cmd, out := restoreTestCmd("y\n") // a yes on a pipe confirms nothing
-	rr := &restoreRun{lc: &localcfg.Config{Name: initProjectName, GCPProject: initProject}, newID: restoreNewProj, checkout: root}
-	if err := rr.anchor(cmd); err != nil {
-		t.Fatalf("no terminal is not an error: %v", err)
+	cmd, out := restoreTestCmd("") // a pipe is not a terminal
+	_, _, err := restorePreflight(cmd, restoreOptions{cloud: cloudOptions{config: r.cfg}, billingAccount: billingAcc}, newProj, root)
+	if err == nil {
+		t.Fatalf("a restore ran with no terminal:\n%s", out.String())
 	}
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
 	}
-	if string(after) != doc {
-		t.Errorf("the file was written with no terminal:\n%s", after)
+	for _, want := range []string{"terminal", "fugaro setup --create-project --managed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
 	}
-	if !strings.Contains(out.String(), "gcp_project: "+restoreNewProj) {
-		t.Errorf("the run did not print the line to add:\n%s", out.String())
+	if n := len(r.gcs.Requests()) + len(r.crm.Requests()) + len(r.iam.Requests()); n != 0 {
+		t.Errorf("the refusal made %d cloud request(s): it is decided before the selection", n)
 	}
-	if !strings.Contains(out.String(), path) {
-		t.Errorf("the run did not say which file to add it to:\n%s", out.String())
+	if len(*calls) != 0 || len(r.crm.Creates()) != 0 || !bytes.Equal(mustRead(t, r.cfg), before) {
+		t.Error("a restore with no terminal changed something")
 	}
 }
 
@@ -1112,9 +1076,10 @@ func TestRestoreApplyCloudDropsTheOldProjectID(t *testing.T) {
 
 // TestRestorePlansTheConfigBeforeItAsks: restoreConfig's refusals (a
 // runs_bucket that is not the installation's default, a state bucket of the
-// operator's own) are refusals a typed name does not help with, so they are
-// decided before the confirmation — runRestore calls planConfig, then
-// confirm — and nothing is written when one of them fires.
+// operator's own) are decided before the run states what it makes permanent and
+// long before its first write — the preflight calls planConfig, and
+// restoreSteps prints the statement after it — so nothing is written when one
+// of them fires.
 func TestRestorePlansTheConfigBeforeItAsks(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "aurora.yaml")
 	const doc = "version: 1\nname: " + initProjectName + "\ngcp_project: " + initProject + "\nregion: us-east5\nruns_bucket: somewhere-else\n"
@@ -1305,9 +1270,9 @@ func restoreManagedOld(r *projectRig) {
 // most the one line typed so far, so a buffered reader in one step (the
 // creating path's) cannot take the lines a later step (the anchor's) reads.
 //
-// afterFirst, when set, runs once the first line (the restore's own typed
-// confirmation) has been handed out: what happens in the cloud while the
-// operator is typing.
+// afterFirst, when set, runs once the first line has been handed out — the
+// creating path's typed project ID, since the restore asks for nothing itself:
+// what happens in the cloud while the operator is typing.
 type ttyLines struct {
 	rest       string
 	afterFirst func()
@@ -1358,7 +1323,7 @@ func TestRestoreEndsInTheSharedManagedApply(t *testing.T) {
 		restoreManagedOld(r)
 		calls := recordRestoreApply(t, r)
 		checkout, root := restoreCheckout(t)
-		out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+		out, err := restoreStepsWith(t, r, createStdin, root)
 		if err != nil {
 			t.Fatalf("the restore: %v\n%s", err, out)
 		}
@@ -1393,7 +1358,7 @@ func TestRestoreEndsInTheSharedManagedApply(t *testing.T) {
 		_, root := restoreCheckout(t)
 		before := mustRead(t, r.cfg)
 		t.Setenv(agentMarkers[0], "1")
-		out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+		out, err := restoreStepsWith(t, r, createStdin, root)
 		if err == nil || !strings.HasPrefix(err.Error(), "nothing was restored") {
 			t.Fatalf("want the agent refusal, got %v", err)
 		}
@@ -1430,7 +1395,7 @@ func TestRestorePrintsTheChildCommandLine(t *testing.T) {
 	restoreManagedOld(r)
 	recordRestoreApply(t, r)
 	_, root := restoreCheckout(t)
-	out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+	out, err := restoreStepsWith(t, r, createStdin, root)
 	if err != nil {
 		t.Fatalf("the restore: %v\n%s", err, out)
 	}
@@ -1457,8 +1422,9 @@ func TestRestorePrintsTheChildCommandLine(t *testing.T) {
 }
 
 // TestRestoreNeverAdoptsAnExistingProject is MEDIUM 1: a NEW_PROJECT_ID that
-// already exists is refused before the confirmation, with nothing changed —
-// init's creating path would adopt it and write no creation fact.
+// already exists is refused in the preflight, before the run states what it
+// makes permanent and with nothing changed — init's creating path would adopt
+// it and write no creation fact.
 func TestRestoreNeverAdoptsAnExistingProject(t *testing.T) {
 	r, _ := newRestoreRig(t)
 	restoreManagedOld(r)
@@ -1466,12 +1432,12 @@ func TestRestoreNeverAdoptsAnExistingProject(t *testing.T) {
 	calls := recordRestoreApply(t, r)
 	checkout, root := restoreCheckout(t)
 	before, yaml := mustRead(t, r.cfg), mustRead(t, filepath.Join(checkout, "fugaro.yaml"))
-	out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+	out, err := restoreStepsWith(t, r, createStdin, root)
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("want a refusal of an existing project, got %v\n%s", err, out)
 	}
-	if strings.Contains(out, "CONFIRM") {
-		t.Errorf("the refusal came after the confirmation was asked:\n%s", out)
+	if strings.Contains(out, "restore "+initProjectName+" into the new GCP project") {
+		t.Errorf("the refusal came after the run stated what it makes permanent:\n%s", out)
 	}
 	if len(*calls) != 0 || len(r.crm.Creates()) != 0 {
 		t.Errorf("%d apply call(s), %d creation(s) for an existing project", len(*calls), len(r.crm.Creates()))
@@ -1493,7 +1459,7 @@ func TestRestoreAFailedCreationPutsTheConfigBack(t *testing.T) {
 	checkout, root := restoreCheckout(t)
 	before, yaml := mustRead(t, r.cfg), mustRead(t, filepath.Join(checkout, "fugaro.yaml"))
 
-	declined := initProjectName + "\n" + "not-the-id\n" + billingAcc + "\n" + initProjectName + "\n"
+	declined := "not-the-id\n" + billingAcc + "\n" + initProjectName + "\n"
 	out, err := restoreStepsWith(t, r, declined, root)
 	if err == nil {
 		t.Fatalf("a declined creation ended in success:\n%s", out)
@@ -1512,7 +1478,7 @@ func TestRestoreAFailedCreationPutsTheConfigBack(t *testing.T) {
 	}
 
 	// The retry: the same command, the same ID, typed right this time.
-	out, err = restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+	out, err = restoreStepsWith(t, r, createStdin, root)
 	if err != nil {
 		t.Fatalf("the retry after a failed creation: %v\n%s", err, out)
 	}
@@ -1535,7 +1501,7 @@ func TestRestoreACreationThatEndsUnmarkedStopsBeforeTheCheckout(t *testing.T) {
 	calls := recordRestoreApply(t, r)
 	checkout, root := restoreCheckout(t)
 	before, yaml := mustRead(t, r.cfg), mustRead(t, filepath.Join(checkout, "fugaro.yaml"))
-	out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+	out, err := restoreStepsWith(t, r, createStdin, root)
 	if err == nil || !strings.Contains(err.Error(), "is not managed") {
 		t.Fatalf("want the creation's verification to refuse, got %v\n%s", err, out)
 	}
@@ -1587,7 +1553,7 @@ func TestRestoreAHalfMarkedCreationKeepsTheConfigAndItsWayToFinish(t *testing.T)
 	calls := recordRestoreApply(t, r)
 	checkout, root := restoreCheckout(t)
 	before, yaml := mustRead(t, r.cfg), mustRead(t, filepath.Join(checkout, "fugaro.yaml"))
-	out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+	out, err := restoreStepsWith(t, r, createStdin, root)
 	if err == nil || !strings.Contains(err.Error(), "but not its fugaro_managed=true label") {
 		t.Fatalf("want the half mark to refuse and name the missing label, got %v\n%s", err, out)
 	}
@@ -1745,7 +1711,7 @@ func TestRestoreAProjectThatAppearsDuringTheConfirmationIsNotAdopted(t *testing.
 			calls := recordRestoreApply(t, r)
 			checkout, root := restoreCheckout(t)
 			cfg, yaml := mustRead(t, r.cfg), mustRead(t, filepath.Join(checkout, "fugaro.yaml"))
-			out, err := restoreStepsDuring(t, r, initProjectName+"\n"+createStdin+"y\n", root, func() {
+			out, err := restoreStepsDuring(t, r, createStdin, root, func() {
 				r.existing(true)
 				r.crm.AddProject(newProj, int64(gcpfake.FirstCreatedProjectNumber))
 				r.gcs.AddBucket("fugaro-runs-"+newProj, gcpfake.FirstCreatedProjectNumber, managedBucketLabels)
@@ -1805,7 +1771,7 @@ func TestRestoreStopsWhenTheNewProjectsMarkerHasNoValidBudget(t *testing.T) {
 			t.Cleanup(func() { restoreInitCmd = old })
 			checkout, root := restoreCheckout(t)
 			before, yaml := mustRead(t, r.cfg), mustRead(t, filepath.Join(checkout, "fugaro.yaml"))
-			out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+			out, err := restoreStepsWith(t, r, createStdin, root)
 			if err == nil || !strings.Contains(err.Error(), "does not open the managed apply") || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("want verifyCreated's budget-gate refusal carrying %q, got %v\n%s", tc.want, err, out)
 			}
@@ -1940,15 +1906,15 @@ func TestRestorePreflightRefusesEachBadInputWithoutASideEffect(t *testing.T) {
 	}
 }
 
-// TestRestoreConfirmLineIsOneLine is LOW 3: the CONFIRM line carries the
-// budget's currency, which comes from a fact or a flag; it is printed as one
-// line whatever it holds (Budget.Check refuses such a value first, in the
-// preflight).
+// TestRestoreConfirmLineIsOneLine is LOW 3: the line that states what this run
+// makes permanent carries the budget's currency, which comes from a fact or a
+// flag; it is printed as one line whatever it holds (Budget.Check refuses such
+// a value first, in the preflight).
 func TestRestoreConfirmLineIsOneLine(t *testing.T) {
 	rr := &restoreRun{lc: &localcfg.Config{Name: initProjectName, GCPProject: initProject}, newID: restoreNewProj, rootArg: "infra",
 		budget: &managed.Budget{Amount: 7, Currency: "USD\x1b[2K\r\x1b[1A"}}
 	if got := rr.whatToDo(); strings.ContainsAny(got, "\x1b\r\n") {
-		t.Errorf("the confirmation's subject carries the currency raw: %q", got)
+		t.Errorf("the statement carries the currency raw: %q", got)
 	}
 }
 
@@ -2006,7 +1972,7 @@ func TestRestoreAFailedAnchorSaysWhatWasLeft(t *testing.T) {
 	restoreManagedOld(r)
 	calls := recordRestoreApply(t, r)
 	checkout, root := restoreCheckout(t)
-	out, err := restoreStepsDuring(t, r, initProjectName+"\n"+createStdin+"y\n", root, func() {
+	out, err := restoreStepsDuring(t, r, createStdin, root, func() {
 		// The checkout's directory goes read-only once the operator has
 		// confirmed: the line's write fails, after the project is made.
 		if err := os.Chmod(checkout, 0o500); err != nil {
@@ -2047,7 +2013,7 @@ func TestRestoreAPanicPutsTheConfigBack(t *testing.T) {
 				t.Error("the panic did not go on")
 			}
 		}()
-		_, _ = restoreStepsWith(t, r, initProjectName+"\n", root)
+		_, _ = restoreStepsWith(t, r, "", root) // the creating path panics before it reads
 	}()
 	if !bytes.Equal(mustRead(t, r.cfg), cfg) {
 		t.Errorf("a panic left the config moved:\n%s", mustRead(t, r.cfg))
