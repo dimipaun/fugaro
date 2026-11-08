@@ -13,6 +13,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
+// maxCursorFile bounds the cursor file before it is read: a few hundred
+// issue numbers are a few KB, and a file past this is corruption or
+// tampering, refused unread rather than buffered.
+const maxCursorFile = 64 << 10
+
 // cursorFile is the cursor as it is stored: the last time each issue number
 // was asked about, keyed by the number in decimal.
 type cursorFile struct {
@@ -32,9 +37,10 @@ type Cursor struct {
 
 // LoadCursor reads the cursor from $XDG_CACHE_HOME/fugaro/issue-cursor.json,
 // else under the platform's cache directory. Everything that is not a
-// readable cursor file - none at all, a directory, a symlink, garbage, a
-// key that is not an issue number - is an empty cursor, never an error: the
-// worst it can cost is asking about a few issues again.
+// readable cursor file - none at all, a directory, a symlink, a file past
+// maxCursorFile, garbage - is an empty cursor, never an error, and a single
+// entry whose key is not an issue number is dropped on its own: the worst
+// any of it can cost is asking about a few issues again.
 func LoadCursor(getenv func(string) string) *Cursor {
 	c := &Cursor{checked: map[int]time.Time{}}
 	dir, err := localcfg.UserDir(getenv, runtime.GOOS, localcfg.DirCache)
@@ -47,7 +53,7 @@ func LoadCursor(getenv func(string) string) *Cursor {
 	// not be followed. Mark only ever puts a regular file here by renaming
 	// a temporary one over the path.
 	fi, err := os.Lstat(c.path)
-	if err != nil || !fi.Mode().IsRegular() {
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() > maxCursorFile {
 		return c
 	}
 	data, err := os.ReadFile(c.path)

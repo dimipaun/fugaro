@@ -209,8 +209,13 @@ func TestFetchNoVerdictForOddMilestone(t *testing.T) {
 }
 
 // TestFetchNoVerdictForUnknownShape pins the whitelist: an unknown state, a
-// closed issue with no reason (or a reason this reader does not know) is no
-// verdict, never an error and never a state it decided itself.
+// closed issue with no reason (or a reason this reader does not know), and
+// an issue GitHub no longer has (deleted or transferred since it was
+// submitted) are all no verdict, never an error and never a state the
+// reader decided itself. A 404 in particular must be no verdict rather than
+// an unreachable GitHub: the pass ends on the latter, and ending it here
+// every time would keep the issues behind a dead one from ever being
+// reached.
 func TestFetchNoVerdictForUnknownShape(t *testing.T) {
 	for _, fields := range []map[string]any{
 		{"state": "open", "state_reason": "completed"},
@@ -222,6 +227,10 @@ func TestFetchNoVerdictForUnknownShape(t *testing.T) {
 		got, err := fetch(t, srv, 42)
 		wantState(t, got, err, NoVerdict{})
 	}
+
+	srv, _ := issueServer(t, http.StatusNotFound, `{"message":"Not Found"}`)
+	got, err := fetch(t, srv, 42)
+	wantState(t, got, err, NoVerdict{})
 }
 
 // TestFetchPullRequestIsNoVerdict pins that a pull request, which the same
@@ -255,14 +264,17 @@ func TestFetchPullRequestIsNoVerdict(t *testing.T) {
 // first half of this test hang on the second server's body instead of
 // failing.
 func TestFetchRefusesRedirect(t *testing.T) {
+	// Built here, not in the handler: issueBody fails the test, and only
+	// the goroutine running the test may do that.
+	elsewhereBody := issueBody(t, map[string]any{
+		"state":        "closed",
+		"state_reason": "completed",
+		"milestone":    milestone("0.22.0", "closed"),
+	})
 	var reached int
 	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		reached++
-		_, _ = w.Write([]byte(issueBody(t, map[string]any{
-			"state":        "closed",
-			"state_reason": "completed",
-			"milestone":    milestone("0.22.0", "closed"),
-		})))
+		_, _ = w.Write([]byte(elsewhereBody))
 	}))
 	t.Cleanup(elsewhere.Close)
 	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -338,8 +350,8 @@ func TestFetchTransportError(t *testing.T) {
 		status int
 		body   string
 	}{
-		{http.StatusNotFound, `{"message":"Not Found"}`},
 		{http.StatusInternalServerError, `{"message":"Server Error"}`},
+		{http.StatusBadGateway, `<html>an intercepting proxy</html>`},
 		{http.StatusOK, `not json at all`},
 		{http.StatusOK, ``},
 	} {
@@ -365,13 +377,14 @@ func (errClient) Do(*http.Request) (*http.Response, error) {
 // number could smuggle), and a number that is not a positive integer is
 // refused before any request is made.
 func TestFetchUsesTheRepoConstantAndTheInteger(t *testing.T) {
+	body := issueBody(t, nil)
 	var seen []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen = append(seen, r.Method+" "+r.URL.RequestURI())
 		if r.Header.Get("Accept") == "" {
 			t.Errorf("the request carries no Accept header")
 		}
-		_, _ = w.Write([]byte(issueBody(t, nil)))
+		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -386,8 +399,13 @@ func TestFetchUsesTheRepoConstantAndTheInteger(t *testing.T) {
 	for _, number := range []int{0, -1, -42} {
 		before := len(seen)
 		got, err := fetch(t, srv, number)
-		if !errors.Is(err, ErrTransport) {
-			t.Errorf("Fetch(%d) = %v, %v, want ErrTransport", number, got, err)
+		if err == nil {
+			t.Errorf("Fetch(%d) = %v, nil, want an error", number, got)
+		}
+		// Neither sentinel: a caller that stops its pass on an unreachable
+		// GitHub or an exhausted limit must not stop on its own bug.
+		if errors.Is(err, ErrTransport) || errors.Is(err, ErrRateLimited) {
+			t.Errorf("Fetch(%d) = %v, %v, want an error of neither sentinel", number, got, err)
 		}
 		if len(seen) != before {
 			t.Errorf("Fetch(%d) made a request: a number that is not positive must be refused first", number)

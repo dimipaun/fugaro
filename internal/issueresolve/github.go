@@ -173,9 +173,14 @@ func isPullRequest(raw json.RawMessage) bool {
 // The request is bounded by FetchTimeout, its answer by maxBody, and the
 // error is ErrRateLimited or ErrTransport - never an untyped error and
 // never a state the reader guessed.
+//
+// A number that is not positive is the one refusal that is neither: it is
+// a caller's bug, not an unreachable GitHub (ErrTransport) and not an
+// exhausted limit (ErrRateLimited), and a caller that stops its pass on
+// those must not stop on this.
 func (r *Reader) Fetch(ctx context.Context, number int) (State, error) {
 	if number < 1 {
-		return NoVerdict{}, fmt.Errorf("%w: refusing issue number %d", ErrTransport, number)
+		return NoVerdict{}, fmt.Errorf("refusing issue number %d", number)
 	}
 	url := r.baseURL + "/repos/" + updatecheck.Repo + "/issues/" + strconv.Itoa(number)
 
@@ -203,6 +208,13 @@ func (r *Reader) Fetch(ctx context.Context, number int) (State, error) {
 	case http.StatusForbidden, http.StatusTooManyRequests:
 		return NoVerdict{}, fmt.Errorf("%w: GitHub answered %d", ErrRateLimited, resp.StatusCode)
 	case http.StatusOK:
+	case http.StatusNotFound:
+		// The issue was deleted or transferred since it was submitted.
+		// GitHub answered, and the answer is that there is no such issue:
+		// nothing to decide, and emphatically not an unreachable GitHub,
+		// which would end the pass before it reached the issues behind this
+		// one (the case the cursor exists for).
+		return NoVerdict{}, nil
 	default:
 		// The reason phrase is the responder's text and is not repeated.
 		return NoVerdict{}, fmt.Errorf("%w: GitHub answered %d", ErrTransport, resp.StatusCode)
