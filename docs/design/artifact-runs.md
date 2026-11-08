@@ -101,10 +101,10 @@ all, which is precisely what a render needs.
 
 **Timeouts are four numbers, and the run's clock is what really bounds it.**
 `timeouts: {total, stage, verify, finalize_reserve}` (`internal/config/config.go:423-428`);
-defaults `total = 90m`, `finalize_reserve = min(5m, total/5)`, `stage = min(40m, total)`,
-`verify = min(30m, total)` (`internal/config/defaults.go:77-90`). This
-repository's own `fugaro.yaml` raises them to `total: 2h, stage: 90m, verify:
-25m, finalize_reserve: 5m` (`fugaro.yaml:54`). The runner turns `total` and
+defaults `total = 3h`, `finalize_reserve = min(5m, total/5)`, `stage = min(60m, total)`,
+`verify = min(30m, total)` (`internal/config/defaults.go:306-319`). This
+repository's own `fugaro.yaml` sets `total: 3h, stage: 150m, verify:
+25m, finalize_reserve: 5m` (`fugaro.yaml:81`). The runner turns `total` and
 `finalize_reserve` into one wall-clock deadline — `finalizeAt = Start + (Total - Reserve)`
 and `StageContext` capped by it (`internal/runner/budget.go:22-34`) — and the
 launcher tells Cloud Run a task timeout of `total + 2m` so the two agree
@@ -386,7 +386,7 @@ repository.
   `finalizeAt`), because it is neither a stage (no model turn) nor a verify
   step (no test parser). **This is the load-bearing line of the whole design**:
   a two-hour ffmpeg render is not inside an agent turn, does not consume a
-  stage timeout (90m here, `fugaro.yaml:54`), and does not touch
+  stage timeout (150m here, `fugaro.yaml:81`), and does not touch
   `agent.max_budget_usd` or any model cap — it is one deterministic command
   under one deadline, inside the run's total.
 - **Its exit code is the run's gate.** A failed render ends the run `failed`
@@ -785,8 +785,8 @@ casually:**
 An agent turn is the wrong place for a two-hour render, for four independent
 reasons, each of which is a number in this repository:
 
-1. **A stage has a timeout** (`timeouts.stage`, 90m in this repository's own
-   `fugaro.yaml:54`, 40m by default, `internal/config/defaults.go:77-90`). A
+1. **A stage has a timeout** (`timeouts.stage`, 150m in this repository's own
+   `fugaro.yaml:81`, 60m by default, `internal/config/defaults.go:314-316`). A
    render inside a turn is killed by a limit that has nothing to do with it —
    and a stage that *does* finish eats the budget of the loop it is in.
 2. **Every model turn costs model dollars**, and the caps are model dollars.
@@ -1640,7 +1640,7 @@ line read for it — the plan's Review Focus repeats the important ones):
 | V5 | `mode:` is `implement|review`; `review` is the no-git-token, no-PR precedent, with the outcome `reviewed` | `internal/recipe/recipe.go:38-42,356-362,632-639`, `docs/design/generic-tool.md:195-203`, `internal/runner/runner.go:635` |
 | V6 | The `check` step is deterministic, runs `verify.Run` in the checkout as the agent's user, may only come first, and may name only `commands.build|test|lint` | `internal/recipe/recipe.go:47-62`, `internal/runner/gate.go:61,125-132`, `internal/verify/verify.go:176,243`, `schemas/recipe.schema.json` |
 | V7 | A recipe names no command; bucket text would run code | `docs/design/generic-tool.md:356` (G10's row), `internal/runner/gate.go:125-127` |
-| V8 | Timeouts: `total 90m` / `stage min(40m,total)` by default; this repository's `fugaro.yaml` says `2h/90m/25m/5m`; `finalizeAt` is the real deadline; Cloud Run gets `total+2m`; a task may run 24h; the CLI caps `--total-timeout` at 24h | `internal/config/defaults.go:77-90`, `fugaro.yaml:54`, `internal/runner/budget.go:22-34`, `docs/design/v1.md:370`, `docs/SPEC.md:30`, `internal/cli/run.go:976-991` |
+| V8 | Timeouts: `total 3h` / `stage min(60m,total)` by default; this repository's `fugaro.yaml` says `3h/150m/25m/5m`; `finalizeAt` is the real deadline; Cloud Run gets `total+2m`; a task may run 24h; the CLI caps `--total-timeout` at 24h | `internal/config/defaults.go:306-319`, `fugaro.yaml:81`, `internal/runner/budget.go:22-34`, `docs/design/v1.md:370`, `docs/SPEC.md:30`, `internal/cli/run.go:976-991` |
 | V9 | Cloud Run jobs take 1, 2, 4, 6 or 8 vCPU and at most 32Gi | `internal/backend/gcp/limits.go:25,36-46`, `limits_test.go:11,23` |
 | V10 | The caps count model dollars; compute is an estimate, reported and never capped; `compute_usd`/`compute_estimated` exist and are rolled into history | `docs/design/m9-spec-v3-reconciliation.md:10`, `docs/design/m9-budget-and-dashboard.md:798`, `internal/budget/evaluate.go:190-204`, `internal/runner/cost.go:62-64`, `internal/runstore/cost.go:12-18`, `internal/budget/rollup.go:296-303` |
 | V11 | `fugaro budget preview` has no compute notion | `internal/cli/budget_preview.go:26-28,489-538,697-731` |
