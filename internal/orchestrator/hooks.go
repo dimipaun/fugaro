@@ -52,21 +52,29 @@ type Agent struct {
 func (a Agent) PersonIdentity() string { return a.Owner.Member }
 
 // Handoff is one move of an agent between developers: which agent, who it
-// belongs to now, who it moves to, who asked for it and the standing that
-// person holds. To is an Owner, so the move that leaves an agent belonging to
-// nobody — the shared central orchestrator — is spelled the same way as a move
-// to a person.
+// belongs to now, who it moves to, who asked for it and what that person holds.
+// To is an Owner, so the move that leaves an agent belonging to nobody — the
+// shared central orchestrator — is spelled the same way as a move to a person.
 //
-// Role is given rather than resolved here: internal/access is the tree's one
-// answer to which role a person holds, and it resolves one from a credential
-// and a stored grant, which is a seam that could not be tested without either.
-// The caller resolves the role; the rule over the value — only an owner or an
-// admin moves an agent — is code on the other side of the seam.
+// What is given about the person who asked is Access, the resolver's own input,
+// and not a role: a role is held at a scope, and an all-repos or a repository
+// grant holds no project-level thing (F19), so a bare access.Role here would
+// read a repository admin as a project admin and let them move the
+// orchestrators of the whole project. The caller reads the input
+// (internal/access's Caller, the grants node and the implicit admins — the same
+// values every command hands access.Allowed); the rule over the value — only a
+// project-scope admin moves an agent — is code on the other side of the seam
+// and asks access.Allowed for it, so this value cannot carry a decision its
+// caller made up.
 type Handoff struct {
 	Agent Agent
 	To    Owner
-	By    string
-	Role  access.Role
+	// By is the member who asked for the handoff, in the spelling Grant.User
+	// and access.Caller use ("user:<address>").
+	By string
+	// Access is what the caller resolved about By: the stored grants, the
+	// implicit project admins and the published allow_repos.
+	Access access.Input
 }
 
 // HandoffFuncs is the shared half of the orchestrator: the one operation that

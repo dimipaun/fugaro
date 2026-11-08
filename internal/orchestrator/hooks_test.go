@@ -28,7 +28,9 @@ func TestTheHandoffSeamRefusesAHookThatWouldPanic(t *testing.T) {
 		Agent: orchestrator.Agent{ID: "agent-a", Owner: orchestrator.Owner{Member: "user:holder@example.invalid"}},
 		To:    orchestrator.Owner{Member: "user:taker@example.invalid"},
 		By:    "user:admin@example.invalid",
-		Role:  access.RoleAdmin,
+		Access: access.Input{Grants: []access.Grant{{
+			User: "user:admin@example.invalid", Role: access.RoleAdmin, Scope: access.Scope{Kind: access.ScopeProject},
+		}}},
 	}
 
 	if err := orchestrator.SetHandoff(orchestrator.HandoffFuncs{}); err == nil {

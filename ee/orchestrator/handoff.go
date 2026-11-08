@@ -24,14 +24,24 @@ var ErrHandoffRefused = errors.New("ee/orchestrator: only an owner or an admin m
 // (internal/orchestrator.SetHandoff), and the whole of the rule the spec states
 // for it: "Handoff: owner or admin transfers an agent to another developer".
 //
-// The role check is the fence, and it is a rule over the value given rather
-// than a read of anything: the caller resolved the person's role
-// (internal/access), and this is the standing a handoff needs. owner and admin
-// are one standing here, because internal/access resolves the project's GCP
-// owners and editors to RoleAdmin at project scope, and it spells no "owner":
-// the check is admin's rank, so a viewer and an operator are refused, and so is
-// a word outside the closed set, because access.Role.AtLeast answers false for
-// anything that is not a role.
+// The check is the fence, and it is a rule over the value given rather than a
+// read of anything: the caller resolved what the person holds
+// (internal/access), and this asks the tree's own gate for the act — a
+// project-scope admin, which is the standing a handoff needs.
+//
+// It asks access.Allowed for a project-level action and not for a role,
+// because a role on its own does not carry the scope it is held at: admin of
+// every repository the policy admits and admin of one repository are both
+// "admin", and neither holds a project-level thing (F19). An agent is the
+// project's — its state node is the project's database's — so handing one over
+// is project work, and a repository admin who could move it would be able to
+// take an agent out of a project they only hold a repository in. So the
+// all-repos and the repository admin are refused, the viewer and the operator
+// are refused, an implicit project admin (the GCP owners and editors) is
+// allowed, and a grant whose role or scope does not parse grants nothing and is
+// refused with it. owner and admin are one standing here for the same reason
+// internal/access spells no "owner": the project's GCP owners resolve to a
+// project admin through the implicit list.
 //
 // A request that names no agent, or nobody who asked for it, is refused the
 // same way: neither is a move, and a handoff recorded against an empty member
@@ -43,9 +53,9 @@ func Transfer(h orchestrator.Handoff) (orchestrator.Agent, error) {
 	if h.By == "" {
 		return orchestrator.Agent{}, fmt.Errorf("%w: the request names no one who asked for it", ErrHandoffRefused)
 	}
-	if !h.Role.AtLeast(access.RoleAdmin) {
-		return orchestrator.Agent{}, fmt.Errorf("%w: %q holds %q", ErrHandoffRefused,
-			safetext.OneLine(h.By), safetext.OneLine(string(h.Role)))
+	if !access.Allowed(h.Access, h.By, access.ActionHandoffAgent, "") {
+		return orchestrator.Agent{}, fmt.Errorf("%w: %q does not hold admin at project scope", ErrHandoffRefused,
+			safetext.OneLine(h.By))
 	}
 	return orchestrator.Agent{ID: h.Agent.ID, Owner: h.To}, nil
 }

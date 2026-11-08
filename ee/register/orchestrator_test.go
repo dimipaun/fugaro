@@ -27,9 +27,15 @@ import (
 func TestTaggedBinaryMovesAnAgent(t *testing.T) {
 	agent := orchestrator.Agent{ID: "agent-a", Owner: orchestrator.Owner{Member: "user:holder@example.invalid"}}
 	to := orchestrator.Owner{Member: "user:taker@example.invalid"}
+	admin := access.Input{Grants: []access.Grant{{
+		User: "user:admin@example.invalid", Role: access.RoleAdmin, Scope: access.Scope{Kind: access.ScopeProject},
+	}}}
+	operator := access.Input{Grants: []access.Grant{{
+		User: "user:operator@example.invalid", Role: access.RoleOperator, Scope: access.Scope{Kind: access.ScopeProject},
+	}}}
 
 	got, err := orchestrator.HandoffAgent(orchestrator.Handoff{
-		Agent: agent, To: to, By: "user:admin@example.invalid", Role: access.RoleAdmin,
+		Agent: agent, To: to, By: "user:admin@example.invalid", Access: admin,
 	})
 	if err != nil {
 		t.Fatalf("the tagged binary refused an admin's handoff (%v): this package registered the core's default rather than ee/orchestrator's Transfer", err)
@@ -39,7 +45,7 @@ func TestTaggedBinaryMovesAnAgent(t *testing.T) {
 	}
 
 	if moved, err := orchestrator.HandoffAgent(orchestrator.Handoff{
-		Agent: agent, To: to, By: "user:operator@example.invalid", Role: access.RoleOperator,
+		Agent: agent, To: to, By: "user:operator@example.invalid", Access: operator,
 	}); !errors.Is(err, eeorch.ErrHandoffRefused) {
 		t.Fatalf("the tagged binary answered an operator's handoff with %+v, %v, want ee/orchestrator's refusal: a viewer or an operator moves no agent", moved, err)
 	}

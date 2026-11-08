@@ -8,12 +8,14 @@ package orchestrator_test
 // project owns rather than a person, and what a build without ee/ does with the
 // core's seam.
 //
-// The role every case hands in is given rather than resolved here: Transfer is
-// the rule over the value (internal/access resolves a role from a credential
-// and a stored grant, and the caller does that). An owner reaches Transfer as
-// an admin, because internal/access resolves the project's GCP owners and
-// editors to RoleAdmin at project scope, and "owner" is not a role this tree
-// spells (access.ParseRole refuses it).
+// What every case hands in is the resolver's input rather than a role
+// (internal/orchestrator.Handoff.Access), because a role does not carry the
+// scope it is held at: an admin of every repository and an admin of one
+// repository are both "admin" and neither holds a project-level thing (F19), so
+// the fence has to be asked about the act, not about a rank. A GCP owner of the
+// project reaches Transfer as an implicit project admin, because internal/access
+// resolves the project's owners and editors that way, and "owner" is not a role
+// this tree spells (access.ParseRole refuses it).
 //
 // This test binary links internal/orchestrator and ee/orchestrator and NOT
 // ee/register, which is the one thing that installs the seam — so the handoff
@@ -43,31 +45,58 @@ func heldAgent() orchestrator.Agent {
 	return orchestrator.Agent{ID: handoffAgentID, Owner: orchestrator.Owner{Member: handoffHolder}}
 }
 
+// holds is the input of a reader who has stored one grant: by's role at the
+// scope given. Everything else the resolver decides against — the other grants,
+// the implicit admins, allow_repos — is empty, which is the installation whose
+// only answer about by is this one pair.
+func holds(by string, role access.Role, scope access.Scope) access.Input {
+	return access.Input{Grants: []access.Grant{{User: by, Role: role, Scope: scope}}}
+}
+
+// projectAdmin is the standing a handoff needs: admin at project scope, which
+// is the project and every repository in it (access.ScopeProject).
+func projectAdmin() access.Input {
+	return holds(handoffAdmin, access.RoleAdmin, access.Scope{Kind: access.ScopeProject})
+}
+
 // TestHandoffNeedsOwnerOrAdmin is O17's red step and the spec's handoff rule:
 // an owner or an admin moves an agent to another developer, and nobody else
 // does. The refused cases answer nothing at all — a refused handoff that still
 // answered the moved agent would be a caller that reads the new owner off a
 // call that refused it.
+//
+// The scope cases are the half a bare role could not state: an all-repos admin
+// is an admin of every repository the policy admits (access.ScopeAllRepos) and
+// an admin of one repository holds that repository (access.ScopeRepos), and
+// neither holds the project's agents, so both are refused — the same answer a
+// viewer and a project operator get.
 func TestHandoffNeedsOwnerOrAdmin(t *testing.T) {
 	moved := orchestrator.Owner{Member: handoffTaker}
 	for _, tc := range []struct {
 		name string
-		role access.Role
+		in   access.Input
 		ok   bool
 	}{
-		{"an admin", access.RoleAdmin, true},
-		{"an operator", access.RoleOperator, false},
-		{"a viewer", access.RoleViewer, false},
-		{"no role at all", access.RoleNone, false},
-		{"a word that is not a role", access.Role("launcher"), false},
+		{"an admin at project scope", projectAdmin(), true},
+		{"a GCP owner of the project", access.Input{Implicit: []string{handoffAdmin}}, true},
+		{"an all-repos admin", holds(handoffAdmin, access.RoleAdmin, access.Scope{Kind: access.ScopeAllRepos}), false},
+		{"an admin of one repository", holds(handoffAdmin, access.RoleAdmin,
+			access.Scope{Kind: access.ScopeRepos, Repos: []string{"github/acme/app"}}), false},
+		{"an operator at project scope", holds(handoffAdmin, access.RoleOperator, access.Scope{Kind: access.ScopeProject}), false},
+		{"a viewer at project scope", holds(handoffAdmin, access.RoleViewer, access.Scope{Kind: access.ScopeProject}), false},
+		{"no role at all", access.Input{}, false},
+		{"a project grant whose role is not a role", holds(handoffAdmin, access.Role("launcher"),
+			access.Scope{Kind: access.ScopeProject}), false},
+		{"a project grant whose scope does not parse", holds(handoffAdmin, access.RoleAdmin,
+			access.Scope{Kind: access.ScopeProject, Repos: []string{"github/acme/app"}}), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := eeorch.Transfer(orchestrator.Handoff{
-				Agent: heldAgent(), To: moved, By: handoffAdmin, Role: tc.role,
+				Agent: heldAgent(), To: moved, By: handoffAdmin, Access: tc.in,
 			})
 			if !tc.ok {
 				if !errors.Is(err, eeorch.ErrHandoffRefused) {
-					t.Fatalf("Transfer as %q answered %v, want a refusal: only an owner or an admin moves an agent", tc.role, err)
+					t.Fatalf("Transfer for %s answered %v, want a refusal: only a project-scope owner or admin moves an agent", tc.name, err)
 				}
 				if got != (orchestrator.Agent{}) {
 					t.Errorf("a refused handoff answered the agent %+v, want nothing", got)
@@ -75,7 +104,7 @@ func TestHandoffNeedsOwnerOrAdmin(t *testing.T) {
 				return
 			}
 			if err != nil {
-				t.Fatalf("Transfer as %q: %v", tc.role, err)
+				t.Fatalf("Transfer for %s: %v", tc.name, err)
 			}
 			if got.ID != handoffAgentID || got.Owner != moved {
 				t.Errorf("Transfer answered %+v, want the agent %s held by %s", got, handoffAgentID, moved.Member)
@@ -85,24 +114,24 @@ func TestHandoffNeedsOwnerOrAdmin(t *testing.T) {
 }
 
 // TestHandoffNamesAnAgentAndWhoAskedForIt is Transfer's other two refusals, the
-// ones that are not about the role at all: a request that names no agent, or
-// nobody who asked for it, is refused even for an admin. Neither is a move — a
-// handoff of no agent moves nothing, and one recorded against an empty member
-// is one nobody could be held to — so both answer the refusal and nothing else,
-// and neither is reached through the role check's ranks.
+// ones that are not about the standing at all: a request that names no agent,
+// or nobody who asked for it, is refused even for a project admin. Neither is a
+// move — a handoff of no agent moves nothing, and one recorded against an empty
+// member is one nobody could be held to — so both answer the refusal and
+// nothing else, and neither is reached through the standing check.
 func TestHandoffNamesAnAgentAndWhoAskedForIt(t *testing.T) {
 	moved := orchestrator.Owner{Member: handoffTaker}
 	for _, tc := range []struct {
 		name string
 		h    orchestrator.Handoff
 	}{
-		{"no agent", orchestrator.Handoff{To: moved, By: handoffAdmin, Role: access.RoleAdmin}},
+		{"no agent", orchestrator.Handoff{To: moved, By: handoffAdmin, Access: projectAdmin()}},
 		{"an agent with no id", orchestrator.Handoff{
 			Agent: orchestrator.Agent{Owner: orchestrator.Owner{Member: handoffHolder}},
-			To:    moved, By: handoffAdmin, Role: access.RoleAdmin,
+			To:    moved, By: handoffAdmin, Access: projectAdmin(),
 		}},
 		{"nobody who asked for it", orchestrator.Handoff{
-			Agent: heldAgent(), To: moved, Role: access.RoleAdmin,
+			Agent: heldAgent(), To: moved, Access: projectAdmin(),
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -132,7 +161,7 @@ func TestAgentOwnedByTheProjectHasNoPersonIdentity(t *testing.T) {
 	}
 
 	taken, err := eeorch.Transfer(orchestrator.Handoff{
-		Agent: heldAgent(), To: orchestrator.Owner{}, By: handoffAdmin, Role: access.RoleAdmin,
+		Agent: heldAgent(), To: orchestrator.Owner{}, By: handoffAdmin, Access: projectAdmin(),
 	})
 	if err != nil {
 		t.Fatalf("handing the agent to the project: %v", err)
@@ -148,7 +177,7 @@ func TestAgentOwnedByTheProjectHasNoPersonIdentity(t *testing.T) {
 	}
 
 	back, err := eeorch.Transfer(orchestrator.Handoff{
-		Agent: taken, To: orchestrator.Owner{Member: handoffHolder}, By: handoffAdmin, Role: access.RoleAdmin,
+		Agent: taken, To: orchestrator.Owner{Member: handoffHolder}, By: handoffAdmin, Access: projectAdmin(),
 	})
 	if err != nil {
 		t.Fatalf("handing the project's agent back to a person: %v", err)
@@ -165,7 +194,7 @@ func TestAgentOwnedByTheProjectHasNoPersonIdentity(t *testing.T) {
 // default must refuse the handoff rather than perform one nothing checked.
 func TestCoreBuildsWithoutEE(t *testing.T) {
 	_, err := orchestrator.HandoffAgent(orchestrator.Handoff{
-		Agent: heldAgent(), To: orchestrator.Owner{Member: handoffTaker}, By: handoffAdmin, Role: access.RoleAdmin,
+		Agent: heldAgent(), To: orchestrator.Owner{Member: handoffTaker}, By: handoffAdmin, Access: projectAdmin(),
 	})
 	if !errors.Is(err, orchestrator.ErrActorNotAllowed) {
 		t.Fatalf("a build that did not link ee/register answered a handoff with %v, want the core's refusal: the shared half is ee/'s, and a build without it moves no agent", err)
