@@ -913,6 +913,90 @@ func TestATreeWhoseGitIsSomewhereElseIsRebuilt(t *testing.T) {
 	}
 }
 
+// TestAnInheritedGitEnvDoesNotMoveTheCall: git takes the repository it works
+// on from the environment ahead of the directory it is given, so a GIT_DIR
+// inherited from the shell — a hook or an alias that exported one, a tool that
+// left one behind — sends the "git init" and the fetch after it into a
+// repository of the person's own: its HEAD detached to the source commit, an
+// origin remote added to it, its index overwritten and the staged work gone.
+// The variables that name a repository are dropped from the environment of
+// every git call here; the repository the environment named is left as it was
+// found, and the tree still lands in the cache.
+func TestAnInheritedGitEnvDoesNotMoveTheCall(t *testing.T) {
+	r := newRemote(t, "v1.0.0")
+	o := options(t, r, "v1.0.0", r.commit["v1.0.0"])
+	mine := anotherRepository(t)
+	// Work in progress in the repository the environment names: staged first,
+	// then modified again, so a "checkout --force" in it would lose both.
+	testutil.WriteFiles(t, mine, map[string]string{"staged": "staged, not committed\n"})
+	testutil.Git(t, mine, "add", "-A")
+	testutil.WriteFiles(t, mine, map[string]string{"notes": "modified by hand\n"})
+
+	looking := func(args ...string) string { return testutil.Git(t, mine, args...) }
+	before := []string{
+		looking("rev-parse", "HEAD"),
+		looking("ls-files", "-s"),
+		looking("status", "--porcelain"),
+		looking("remote"),
+	}
+	beforeFiles := treeNames(t, mine)
+
+	t.Setenv("GIT_DIR", filepath.Join(mine, ".git"))
+	t.Setenv("GIT_WORK_TREE", mine)
+	t.Setenv("GIT_INDEX_FILE", filepath.Join(mine, ".git", "index"))
+	dir, _, err := Ensure(context.Background(), o)
+	// The variables are unset rather than left for the test's own git calls,
+	// which would otherwise look at the same repository they are checking.
+	for _, k := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"} {
+		os.Unsetenv(k)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, filepath.Join(dir, "VERSION")); got != "v1.0.0\n" {
+		t.Fatalf("the tree holds %q", got)
+	}
+	after := []string{
+		looking("rev-parse", "HEAD"),
+		looking("ls-files", "-s"),
+		looking("status", "--porcelain"),
+		looking("remote"),
+	}
+	if !slices.Equal(before, after) {
+		t.Fatalf("the repository the environment named was written into:\n%v\nbecame\n%v", before, after)
+	}
+	if got, want := treeNames(t, mine), beforeFiles; !slices.Equal(got, want) {
+		t.Fatalf("the repository the environment named was written into: %v became %v", want, got)
+	}
+	if got := read(t, filepath.Join(mine, "notes")); got != "modified by hand\n" {
+		t.Fatalf("the repository the environment named lost its work: %q", got)
+	}
+}
+
+// TestAnInjectedConfigValueDoesNotReachTheCall is the other half of the same
+// rule: GIT_CONFIG_COUNT and its numbered key and value pairs inject
+// configuration into every git call the process starts, the way "-c" does, and
+// git exports GIT_CONFIG_PARAMETERS to whatever a hook or an alias starts. A
+// url.*.insteadOf left behind that way has the fetch read the source from
+// somewhere the call never named; the fetch follows the URL it was given.
+func TestAnInjectedConfigValueDoesNotReachTheCall(t *testing.T) {
+	r := newRemote(t, "v1.0.0")
+	o := options(t, r, "v1.0.0", r.commit["v1.0.0"])
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "url.file:///nonexistent/.insteadOf")
+	t.Setenv("GIT_CONFIG_VALUE_0", r.dir)
+	dir, _, err := Ensure(context.Background(), o)
+	for _, k := range []string{"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"} {
+		os.Unsetenv(k)
+	}
+	if err != nil {
+		t.Fatalf("the source the call named was not the one fetched: %v", err)
+	}
+	if got := read(t, filepath.Join(dir, "VERSION")); got != "v1.0.0\n" {
+		t.Fatalf("the tree holds %q", got)
+	}
+}
+
 // treeNames is everything under a directory, relative and sorted, for
 // comparing a repository before and after a call that must not have written
 // into it. A whole listing rather than HEAD alone: an object or a ref landing

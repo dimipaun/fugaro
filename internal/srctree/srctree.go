@@ -1019,12 +1019,64 @@ func gitArgs(args ...string) []string {
 	}, args...)
 }
 
+// gitEnv is the environment of every git call here: the process's, without the
+// variables git takes a repository, or a configuration value, from, and with
+// the two this package sets itself so that a caller's value cannot stand
+// beside its own.
+//
+// It is the same rule as gitArgs, one step further out. gitArgs refuses the
+// commands a repository the call meets may name; the environment is where the
+// repository itself can be named. git reads GIT_DIR, GIT_WORK_TREE,
+// GIT_INDEX_FILE, GIT_COMMON_DIR, GIT_OBJECT_DIRECTORY and GIT_NAMESPACE ahead
+// of the directory a call runs in, so one inherited from the shell — a git
+// hook or alias exports GIT_CONFIG_PARAMETERS to everything it starts, and a
+// tool can leave a GIT_DIR behind — sends the "git init" and the fetch after
+// it into a repository of the person's own, detaches its HEAD and overwrites
+// its index. The GIT_CONFIG_COUNT family and GIT_CONFIG_PARAMETERS inject
+// values the way "-c" does, so a wrapper's leftover url.*.insteadOf would have
+// the fetch read the source from somewhere the call never named.
+//
+// GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_CONFIG_NOSYSTEM and the deprecated
+// GIT_CONFIG stay: they name the configuration files the person chose for this
+// machine, which a fetch may need (a proxy, a mirror, a CA bundle), and a test
+// that points them at nothing would otherwise fall back to the real home
+// directory. The line is between a name the caller set deliberately and a
+// value injected into this call; both are outside what this package can
+// enforce anyway, since whoever sets this process's environment can name the
+// git on its PATH.
+func gitEnv() []string {
+	env := make([]string, 0, len(os.Environ())+2)
+	for _, kv := range os.Environ() {
+		if k, _, _ := strings.Cut(kv, "="); !gitEnvDropped(k) {
+			env = append(env, kv)
+		}
+	}
+	return append(env, "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0")
+}
+
+// gitEnvDropped reports whether k is a variable this package refuses to
+// inherit: the ones that name the repository, the index or the object store
+// the call works on, the ones that inject a configuration value, and the two
+// gitEnv sets itself.
+func gitEnvDropped(k string) bool {
+	switch k {
+	case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+		"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+		"GIT_NAMESPACE", "GIT_CONFIG_PARAMETERS",
+		"GIT_TERMINAL_PROMPT", "GIT_OPTIONAL_LOCKS":
+		return true
+	}
+	return k == "GIT_CONFIG_COUNT" ||
+		strings.HasPrefix(k, "GIT_CONFIG_KEY_") ||
+		strings.HasPrefix(k, "GIT_CONFIG_VALUE_")
+}
+
 // execGit is the default Runner: git from PATH, with no terminal prompt and
 // no optional lock, in dir.
 func execGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	c := exec.CommandContext(ctx, "git", args...)
 	c.Dir = dir
-	c.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0")
+	c.Env = gitEnv()
 	c.WaitDelay = gitWaitDelay
 	var stderr bytes.Buffer
 	c.Stderr = &stderr
