@@ -105,7 +105,7 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 			// bullet trimmed back to "under the launcher condition" alone keeps
 			// the name and drops the prefixes, which is exactly the state the
 			// round-3 review found (both v1.md places said runs/ alone).
-			"`roles/storage.objectUser` under the launcher condition — `runs/`, `tokens/` since 0.9.0 (the sealed budget token) and `issues/` since 0.23.0 (the shared issue store)",
+			"`roles/storage.objectUser` under the launcher condition — `runs/`, `tokens/` since 0.9.0 (the sealed budget token) and `issues/` since 0.22.0 (the shared issue store)",
 		},
 	}
 	for file, wants := range required {
@@ -127,7 +127,7 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 	// still total 2, which a planted mutation confirmed before this was
 	// tightened (and the issues/ half is a prefix a third place could lose the
 	// same way).
-	const v1Grant = "`roles/storage.objectUser` under the launcher condition — `runs/`, `tokens/` since 0.9.0 (the sealed budget token) and `issues/` since 0.23.0 (the shared issue store)"
+	const v1Grant = "`roles/storage.objectUser` under the launcher condition — `runs/`, `tokens/` since 0.9.0 (the sealed budget token) and `issues/` since 0.22.0 (the shared issue store)"
 	if data, err := os.ReadFile("../../docs/design/v1.md"); err != nil {
 		t.Fatal(err)
 	} else if n := strings.Count(string(data), v1Grant); n != 2 {
@@ -136,11 +136,11 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 }
 
 // The release note is an artifact beside the claim the doc makes about it: §3's
-// dated update of 2026-11-08 ends "The 0.23.0 notes' `### For operators` entry
+// dated update of 2026-11-08 ends "The 0.22.0 notes' `### For operators` entry
 // is that one command", and a sentence that names a release file is a claim
-// that the file exists and carries the entry — which is the state the round-1
-// review found missing (the sentence named 0.23.0 while docs/releases/ held up
-// to v0.22.0.md and the launcher's grant had no note behind it). The version is
+// that the file exists and carries the entry — which is the state the reviews
+// found missing (the sentence named the next release while the file's
+// `### For operators` section carried no step for the launcher's grant). The version is
 // read off that sentence rather than typed here, so the file, the sentence and
 // the release the doctor text and the replace banner name
 // (`infra.issuesGrantRelease`) move together: the note is the step an operator

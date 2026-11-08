@@ -29,8 +29,11 @@ const sealRelease = "0.9.0"
 // issue store under issues/, and so need the condition widened again
 // (gcp.LauncherBucketCondition, D1727): an installation not re-applied since
 // it has the runs/ and tokens/ one. It names the release the issues grant
-// ships in, which is the release the operator's `fugaro update` has to reach.
-const issuesGrantRelease = "0.23.0"
+// ships in, which is the release the operator's `fugaro update` has to reach:
+// the one being cut, never a later one, since the fix would otherwise send an
+// operator whose own binary already carries the grant after a release that does
+// not exist yet.
+const issuesGrantRelease = "0.22.0"
 
 // bucketWriteRoles are the predefined roles that write objects.
 var bucketWriteRoles = []string{"roles/storage.objectAdmin", "roles/storage.objectUser", "roles/storage.objectCreator",
@@ -410,7 +413,7 @@ func LauncherGrantUpgradeBanner(allowed []string) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("bucket access (0.23.0): these launchers' bucket write is replaced by one on runs/, tokens/ and issues/, so the launchers who file an issue can upload it:\n")
+	b.WriteString("bucket access (" + issuesGrantRelease + "): these launchers' bucket write is replaced by one on runs/, tokens/ and issues/, so the launchers who file an issue can upload it:\n")
 	for _, a := range allowed {
 		m, _ := grantMember(a, "runs_launcher")
 		b.WriteString("  " + pluginwire.Printable(m) + "\n")

@@ -129,7 +129,7 @@ func TestInitAdmitsTheLauncherGrantUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the upgrade plan is refused: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "bucket access (0.23.0)") || !strings.Contains(out, "  "+a+"\n") {
+	if !strings.Contains(out, "bucket access (0.22.0)") || !strings.Contains(out, "  "+a+"\n") {
 		t.Errorf("no banner naming %s:\n%s", a, out)
 	}
 	if len(r.ran(t, "apply")) != 1 {
@@ -143,7 +143,7 @@ func TestInitAdmitsTheLauncherGrantUpgrade(t *testing.T) {
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), `runs_launcher["`+a+`"]`) {
 		t.Fatalf("a replace from another condition: exit %d, err %v", ExitCode(err), err)
 	}
-	if strings.Contains(out, "bucket access (0.23.0)") {
+	if strings.Contains(out, "bucket access (0.22.0)") {
 		t.Errorf("a refused plan printed the upgrade banner:\n%s", out)
 	}
 	if len(r.ran(t, "apply")) != 0 {
@@ -182,7 +182,7 @@ func TestInstallationAtThePreviousVersionConvergesIssuesGrant(t *testing.T) {
 				t.Fatalf("fugaro update left an installation at the previous version behind: %v\n%s%s", err, out, errOut)
 			}
 			all := out + errOut
-			if !strings.Contains(all, "bucket access (0.23.0)") || !strings.Contains(all, "  "+a+"\n") {
+			if !strings.Contains(all, "bucket access (0.22.0)") || !strings.Contains(all, "  "+a+"\n") {
 				t.Errorf("the update does not name the launcher whose grant it replaces:\n%s", all)
 			}
 			if len(r.ran(t, "apply")) != 1 {

@@ -23,7 +23,7 @@
 version: 1
 
 summaries:
-  v0.23.0: A launcher's cloud access now covers the installation's shared issue store, so an issue is filed with the credential of the person who files it and no run can write one.
+  v0.22.0: An installation's rules now carry the orchestrator's state subtree and fugaro update deploys it and records its generation in one run, and a launcher's cloud access reaches the prefix the shared issue store lives under, ahead of the commands that file and read issues there.
   v0.21.0: A change can now be reviewed in the cloud by its own read-only job, long tasks get a three-hour default budget so they finish without a per-run override, runs record why they failed, and a person on a managed project is never asked to type anything.
   v0.20.3: A run that reviews on your Claude subscription now starts on the job that holds its token, and a managed project's own update retires what it created.
   v0.20.2: fugaro update no longer stops at the installation step on a project that has a catalog check.

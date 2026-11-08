@@ -101,7 +101,7 @@ func TestRunsBucketFindings(t *testing.T) {
 				t.Errorf("an operator is told to remove the launcher's own grant: %+v", f)
 			}
 			if f.Severity == "warning" && strings.Contains(f.Problem, gcp.LegacyLauncherBucketConditionTitle) &&
-				strings.Contains(f.Problem, "cannot upload an issue") && strings.Contains(f.Fix, "fugaro update (0.23.0 or later)") {
+				strings.Contains(f.Problem, "cannot upload an issue") && strings.Contains(f.Fix, "fugaro update (0.22.0 or later)") {
 				issues = true
 			}
 		}
