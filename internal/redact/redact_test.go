@@ -621,6 +621,30 @@ var patternCases = []struct {
 		in:   `{\"password\":\"` + fake("ab'", "cdefgh12"),
 		leak: fake("ab'", "cdefgh12"),
 	},
+	{
+		name: "password holding a single quote outside quotes",
+		in:   "PGPASSWORD=" + fake("it's-a-", "secret-value") + " psql: connection refused",
+		leak: fake("it's-a-", "secret-value"),
+		keep: "psql: connection refused",
+	},
+	{
+		name: "password holding a double quote outside quotes",
+		in:   "PGPASSWORD=" + fake(`abcd"`, "efgh1234") + " psql: connection refused",
+		leak: fake(`"`, "efgh1234"),
+		keep: "psql: connection refused",
+	},
+	{
+		name: "password beginning with a comma",
+		in:   "PGPASSWORD=" + fake(",", "Qw3Qw3Qw3x") + " psql: connection refused",
+		leak: fake("Qw3Qw3Qw3x"),
+		keep: "psql: connection refused",
+	},
+	{
+		name: "password beginning with a backslash",
+		in:   "PGPASSWORD=" + fake(`\`, "srv-pw-1234") + " psql: connection refused",
+		leak: fake(`\`, "srv-pw-1234"),
+		keep: "psql: connection refused",
+	},
 }
 
 // TestRedactCorpus: a shape the exact pass cannot name is still a credential,

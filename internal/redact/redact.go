@@ -179,42 +179,57 @@ func redactPasswords(s string) string {
 // and a value that does close is the pair's to read.
 //
 // The unquoted value is read to whitespace and no further, because a password
-// may hold anything else: `,` and `\` are ordinary bytes of one
-// (`PGPASSWORD=Qw3Qw,3Qw3Qw3x`, `PGPASSWORD=Qw3Q\w3Qw3Qw3`), and a class that
-// stopped at either of them redacted the head of the value and left its tail
-// in the text — the same leak of the half it did not reach. `;` and `&` are
-// ordinary bytes too, but they are also what separates the fields of a keyword
-// connection string and the parameters of a query (`Pwd=…;Database=app`,
-// `password=…&user=app`), and the fields after the credential are the
-// diagnosis: so one branch reads the value to one of them, and only where the
-// name of a field follows (`[;&]<name>=`), which is the shape that separates
-// the two readings. The delimiter and that name are part of the match, because
-// the replacement has to put them back where they stood — the branch takes the
-// whole `Pwd=…;Database=` so that the value group is the credential alone, and
-// a rule that matched the name without writing it back would lose the next
-// field's name. That is also why the rules run twice (see redactPasswords):
-// the scan resumes after the name the first application put back, and a
-// credential written in the field after the delimiter (`?token=…&password=…`)
-// is read by the second application, with the name back in place.
+// may hold anything else: `,`, `\` and either quote are ordinary bytes of one
+// (`PGPASSWORD=Qw3Qw,3Qw3Qw3x`, `PGPASSWORD=it's-a-secret-value`,
+// `PGPASSWORD=abcd"efgh1234`), and a class that stopped at any of them
+// redacted the head of the value and left its tail in the text, or — where the
+// value was too short to reach the floor before the byte — left it whole. `;`
+// and `&` are ordinary bytes too, but they are also what separates the fields
+// of a keyword connection string and the parameters of a query
+// (`Pwd=…;Database=app`, `password=…&user=app`), and the fields after the
+// credential are the diagnosis: so one branch reads the value to one of them,
+// and only where the name of a field follows (`[;&]<name>=`), which is the
+// shape that separates the two readings. The delimiter and that name are part
+// of the match, because the replacement has to put them back where they stood —
+// the branch takes the whole `Pwd=…;Database=` so that the value group is the
+// credential alone, and a rule that matched the name without writing it back
+// would lose the next field's name. That is also why the rules run twice (see
+// redactPasswords): the scan resumes after the name the first application put
+// back, and a credential written in the field after the delimiter
+// (`?token=…&password=…`) is read by the second application, with the name back
+// in place.
 //
 // The last branch is the value that reaches no such delimiter: it crosses `;`
 // and `&` the way it crosses any other byte, because `PGPASSWORD=ab;cdefgh12`
 // has two bytes before the `;` and is one value rather than a field of a
-// connection string. Neither unquoted branch starts on a `,`, `;` or `&`, which
-// keeps an empty field (`?token=&state=ok`) out of the rule: there is no value
-// there to redact, and reading one would take the parameters after it.
+// connection string.
 //
-// No branch reads a value that starts with the bracket the marker opens with,
-// and two things turn on that. A rule that has already run — the escaped header
-// above, or this rule itself on its second application — leaves the marker
-// where the value was, and the marker is a value of the shape these rules
-// read: in an escaped record, where every quote of the record is escaped, a
-// marker read as a value runs to the closing quote of the record outside it and
-// takes the fields after it as well, which is how a record stops being one. And
-// the second application would read the marker in a value's place and take the
-// field after it, the way the first application took the name of the field
-// before it. The bracket costs one spelling of a credential: a value whose
-// first byte is `[` is the one these rules leave alone.
+// What a value may not start on is the other half of the rule, and each
+// exclusion is a shape the rule would otherwise read as a value:
+//
+//   - a quote, because the value a quote opens is the quoted branches' to read
+//     and one under the floor (`{"password":"abc"}`) is not a credential to
+//     guess at: read from the quote, this branch would take the closing quote
+//     and the record's brace with it.
+//   - `;` or `&`, because an empty field (`?token=&state=ok`) has no value
+//     there to redact, and reading one would take the parameters after it. A
+//     `,` is not such a delimiter and is a value's byte like any other
+//     (`PGPASSWORD=,Qw3Qw3Qw3x`).
+//   - a backslash directly before a quote, because that is how a transcript
+//     escapes one: the escaped header above leaves `…\":\"[REDACTED]\"…` in
+//     its place, and a value read from that backslash crosses the escaped
+//     quotes and takes the record's fields with it.
+//   - the bracket the marker opens with. A rule that has already run — the
+//     escaped header above, or this rule itself on its second application —
+//     leaves the marker where the value was, and the marker is a value of the
+//     shape these rules read: in an escaped record, where every quote of the
+//     record is escaped, a marker read as a value runs to the closing quote of
+//     the record outside it and takes the fields after it as well, which is how
+//     a record stops being one. And the second application would read the
+//     marker in a value's place and take the field after it, the way the first
+//     application took the name of the field before it. The bracket costs one
+//     spelling of a credential: a value whose first byte is `[` is the one
+//     these rules leave alone.
 //
 // The quotes and the value are groups because a replacement puts the quotes
 // back around the marker and drops what stood between them — the opener before
@@ -225,8 +240,8 @@ const passwordValueTail = `(?:((?:\\+)?")` + `((?:\\"|[^\["\n])(?:\\"|[^"\n]){3,
 	`|((?:\\+)?')` + `((?:\\'|[^\['\n])(?:\\'|[^'\n]){3,})` + `(')` +
 	`|((?:\\+)?")((?:\\"|[^\["\n])(?:\\"|[^"\n]){3,})(?m:$)` +
 	`|((?:\\+)?')((?:\\'|[^\['\n])(?:\\'|[^'\n]){3,})(?m:$)` +
-	`|([^\s"';,&[][^\s"';&]{3,})([;&][A-Za-z_][A-Za-z0-9_\-]*=)` +
-	`|([^\s"';,&[][^\s"']{3,}))`
+	`|((?:[^\s"';&\\[]|\\[^"])[^\s;&]{3,})([;&][A-Za-z_][A-Za-z0-9_\-]*=)` +
+	`|((?:[^\s"';&\\[]|\\[^"])[^\s]{3,}))`
 
 var (
 	// authHeaderEscaped is the same header one encoding further in: a JSON

@@ -72,6 +72,11 @@ var corpus = []struct {
 		leak: "/var/home/" + "someone",
 	},
 	{
+		name: "password holding a quote",
+		in:   "PGPASSWORD=" + "it's-a-" + strings.Repeat("Qw3", 3) + " psql: connection refused",
+		leak: "it's-a-" + strings.Repeat("Qw3", 3),
+	},
+	{
 		name: "address git invents with no identity set",
 		in: "fatal: unable to auto-detect email address (got '" +
 			"someone" + "@" + "someone-ThinkPad" + ".(none)" + "')",
