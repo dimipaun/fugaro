@@ -11341,10 +11341,11 @@ with). A criterion that was not measured is not a pass: **only an all-PASS
 block is a PASS**, and a step that could not verify its criterion says so in its own row instead of
 leaving the reader to take the block for an answer it never got.
 
-**What the check does not settle.** D474's API-root lock is 0.13.0's and this check does not read it;
-a workspace access token reaches the whole workspace rather than one project (the pair is one
-credential with two reaches, and this check runs the project token because it is the narrower one);
-and no part of the path is kept out of the job — see D490 above.
+**What the check does not settle.** D474's API-root lock shipped in 0.14.0 (policy version 4,
+`bitbucket_api_roots`) and this check does not read it; a workspace access token reaches the whole
+workspace rather than one project (the pair is one credential with two reaches, and this check runs
+the project token because it is the narrower one); and no part of the path is kept out of the job —
+see D490 above.
 
 **Restore.** The script removes its own scratch directory and every file a credential was written
 into, and the block's `restore` row says whether they really went — a FAILed row there names what to
