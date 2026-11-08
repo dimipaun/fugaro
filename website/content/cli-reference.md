@@ -4290,7 +4290,7 @@ Estimate how many people a subscription's seat rule would count
 
 Estimate how many people a subscription's seat rule would count on this
 installation, from the installation's own data alone: the people on this
-machine's launcher and operator lists, plus everyone who requested a run in the
+machine's operator and admin lists, plus everyone who requested a run in the
 last 90 days, each counted once.
 
 The estimate is ADVISORY. A seat is a contract pricing rule of the Subscription
@@ -4303,14 +4303,14 @@ and reads only core data.
 
 The three sources, and what each one is worth:
 
-  - terraform.launchers and terraform.operators in this machine's own project
+  - terraform.operators and terraform.admins in this machine's own project
     config: the two lists fugaro setup writes and fugaro update applies. They are
-    the operator's record of who may launch, and members the console or an agent
+    the admins' record of who holds a role, and members the console or an agent
     launch records elsewhere are not in them.
   - The requesters of the runs the last 90 days minted, read from each run's
-    task.json in every repository of the installation's bucket. Every launcher
-    counts, an agent launch is recorded under the configured person, and an agent
-    with no configured identity is invisible here.
+    task.json in every repository of the installation's bucket. Everyone who
+    launches counts, an agent launch is recorded under the configured person, and
+    an agent with no configured identity is invisible here.
 
 What the estimate cannot tell, it lists and does not guess:
 
@@ -4333,10 +4333,14 @@ what the launching CLI typed -- so the comparison folds case, and the row's key
 is the text printed: two texts that print alike are one person, and the
 estimate is the number of rows.
 
---json prints {project, days, since, until, people[], not_counted[],
+--json prints {version, project, days, since, until, people[], not_counted[],
 unreadable, notes}; people carry {person, sources[]} and not_counted {member,
-why, sources[]}, sources from launcher, operator and requester, and why is
+why, sources[]}, sources from operator, admin and requester, and why is
 unknown_size or account.
+
+Version 2 is this document. Version 1 named a row's sources with the words the
+roles carried before they were renamed: a consumer reading "operator" as the
+list version 1 named it would now draw the admins.
 
 Usage: `fugaro seats`
 

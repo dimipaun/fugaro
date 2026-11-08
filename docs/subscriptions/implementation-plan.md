@@ -846,7 +846,7 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
   days (T14: every launcher). It counts groups as unknown size and offers `--json`. It stores and
   sends nothing. It is core MIT: it reads only core data.
 - **Tests:**
-  - `TestSeatsCountsLaunchersOperatorsAndRequesters`
+  - `TestSeatsCountsOperatorsAdminsAndRequesters`
   - `TestSeatsFlagsGroups`
   - `TestSeatsDeduplicatesPeople`
   - `TestSeatsReadsNinetyDays`

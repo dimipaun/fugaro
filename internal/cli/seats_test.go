@@ -4,8 +4,8 @@ package cli
 // estimate.
 //
 // The estimate is three sources merged, each identity counted once: the two
-// lists this machine's config holds (terraform.launchers and
-// terraform.operators) and the requesters the window's runs recorded. Every
+// lists this machine's config holds (terraform.operators and terraform.admins)
+// and the requesters the window's runs recorded. Every
 // test here pins lsNow, the clock the 90-day window is measured back from, and
 // mints its run IDs through runIDAt, so none is date-lucky (runid_test.go's
 // guard).
@@ -27,6 +27,7 @@ import (
 
 // seatsOut is `fugaro seats --json`'s document as these tests read it.
 type seatsOut struct {
+	Version    int               `json:"version"`
 	Project    string            `json:"project"`
 	Days       int               `json:"days"`
 	Since      string            `json:"since"`
@@ -98,9 +99,13 @@ func seatsWhy(doc seatsOut, member string) string {
 	return ""
 }
 
-func TestSeatsCountsLaunchersOperatorsAndRequesters(t *testing.T) {
+func TestSeatsCountsOperatorsAdminsAndRequesters(t *testing.T) {
 	at := pinSeatsClock(t)
 	f := newCloudFixture(t)
+	// The lists are written in the version-1 keys this fixture's config carries,
+	// which fold to the roles' own words: v1's `launchers` IS this version's
+	// operators and v1's `operators` its admins (localcfg.foldLegacyLists), so
+	// the sources below read operator and admin.
 	f.appendConfig(t, "terraform:\n  launchers: [user:alice@example.com, user:bob@example.com]\n"+
 		"  operators: [user:bob@example.com, user:carol@example.com]\n")
 	seedRun(t, f, runIDAt(3, "090000", "aaaa"), "", "dave@example.com", false)
@@ -110,6 +115,12 @@ func TestSeatsCountsLaunchersOperatorsAndRequesters(t *testing.T) {
 		t.Fatalf("seats: %v", err)
 	}
 	doc := seatsDocOf(t, out)
+	if doc.Version != seatsDocVersion {
+		t.Errorf("version = %d, want %d: a source names the list it was read from, and version 1 named them with the pre-rename words", doc.Version, seatsDocVersion)
+	}
+	if strings.Contains(out, `"launcher"`) {
+		t.Errorf("the document still carries the retired source name:\n%s", out)
+	}
 	if doc.Project != "aurora" {
 		t.Errorf("project = %q, want %q", doc.Project, "aurora")
 	}
@@ -117,15 +128,17 @@ func TestSeatsCountsLaunchersOperatorsAndRequesters(t *testing.T) {
 		t.Errorf("window = %d days %s to %s, want 90 days %s to %s",
 			doc.Days, doc.Since, doc.Until, at.AddDate(0, 0, -90).Format("2006-01-02"), at.Format("2006-01-02"))
 	}
-	// Two launchers, two operators -- bob is on both lists -- and the
-	// requester of the window's one run: four people, each counted once.
+	// Two operators, two admins -- bob is on both lists -- and the requester
+	// of the window's one run: four people, each counted once. A row's sources
+	// name the list it was read from in the roles' own words, so carol, who is
+	// on terraform.admins alone, is seen as an admin and not as an operator.
 	if len(doc.People) != 4 {
 		t.Fatalf("people = %+v, want alice, bob, carol and dave, once each", doc.People)
 	}
 	for _, want := range []struct{ person, sources string }{
-		{"alice@example.com", "launcher"},
-		{"bob@example.com", "launcher, operator"},
-		{"carol@example.com", "operator"},
+		{"alice@example.com", "operator"},
+		{"bob@example.com", "operator, admin"},
+		{"carol@example.com", "admin"},
 		{"dave@example.com", "requester"},
 	} {
 		if got := seatsSources(doc, want.person); got != want.sources {
@@ -161,9 +174,9 @@ func TestSeatsFlagsGroups(t *testing.T) {
 		t.Fatalf("not_counted = %+v, want the group, the domain and the account", doc.NotCounted)
 	}
 	for _, want := range []struct{ member, why, sources string }{
-		{"group:eng@example.com", "unknown_size", "launcher, operator"},
-		{"domain:example.org", "unknown_size", "launcher"},
-		{"serviceAccount:ci@proj-1234.iam.gserviceaccount.com", "account", "operator"},
+		{"group:eng@example.com", "unknown_size", "operator, admin"},
+		{"domain:example.org", "unknown_size", "operator"},
+		{"serviceAccount:ci@proj-1234.iam.gserviceaccount.com", "account", "admin"},
 	} {
 		if got := seatsSources(doc, want.member); got != want.sources {
 			t.Errorf("%s: sources = %q, want %q", want.member, got, want.sources)
@@ -212,7 +225,7 @@ func TestSeatsDeduplicatesPeople(t *testing.T) {
 	if len(doc.People) != 1 {
 		t.Fatalf("people = %+v, want one row: one person, however many sources name them", doc.People)
 	}
-	if got := seatsSources(doc, doc.People[0].Person); got != "launcher, operator, requester" {
+	if got := seatsSources(doc, doc.People[0].Person); got != "operator, admin, requester" {
 		t.Errorf("%s: sources = %q, want all three sources on the one row", doc.People[0].Person, got)
 	}
 }
@@ -309,7 +322,7 @@ func TestSeatsSanitizesHostileValues(t *testing.T) {
 		t.Fatalf("seats: %v", err)
 	}
 	people, flagged := seatsTableRows(out, "PERSON"), seatsTableRows(out, "NOT COUNTED")
-	// The launcher list's one person, and the requesters: the three that
+	// The operator list's one person, and the requesters: the three that
 	// differ only in whitespace print alike and are one row, an ESC's CSI
 	// sequence is dropped whole, and the rest are one each.
 	if len(people) != 7 || len(flagged) != 1 {

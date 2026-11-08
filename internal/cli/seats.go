@@ -10,8 +10,8 @@ package cli
 // untrusted recorded identity). So this command publishes the estimate the
 // ruling asks for, from the installation's own core data and nothing else:
 //
-//   - the two IAM lists this machine's config holds, terraform.launchers and
-//     terraform.operators: the members `fugaro setup` writes and `fugaro
+//   - the two IAM lists this machine's config holds, terraform.operators and
+//     terraform.admins: the members `fugaro setup` writes and `fugaro
 //     update` applies (localcfg's member rule);
 //   - the requesters of the runs the last 90 days minted, each run's
 //     task.json requested_by. T14's "every launcher" is what makes this
@@ -58,10 +58,12 @@ import (
 const seatsWindow = 90 * 24 * time.Hour
 
 // The three sources a row's SEEN AS column names, in the order every row
-// lists them.
+// lists them. Each names the list the identity came from in the roles' own
+// words, so a reader can match a row to the config key it was read from:
+// terraform.operators, terraform.admins, and a run's own recorded requester.
 const (
-	seatsLauncher  = "launcher"
 	seatsOperator  = "operator"
+	seatsAdmin     = "admin"
 	seatsRequester = "requester"
 )
 
@@ -75,9 +77,9 @@ const (
 	seatsUnknownSize = "unknown_size"
 	// seatsAccount: a serviceAccount: member is one identity on the list and
 	// no person, so a licensed seat -- the licence's "one person" -- is not
-	// what it holds. It is listed, because the ruling's estimate counts every
-	// launcher and a member dropped silently is the one outcome nobody can
-	// check.
+	// what it holds. It is listed, because the ruling's estimate counts
+	// everyone who launches by any means and a member dropped silently is the
+	// one outcome nobody can check.
 	seatsAccount = "account"
 )
 
@@ -100,8 +102,19 @@ type seatsFlaggedRow struct {
 	Sources []string `json:"sources"`
 }
 
+// seatsDocVersion is `fugaro seats --json`'s document version. Each row's
+// sources name the list the identity was read from in the roles' own words,
+// and those words are not the ones this document first carried: version 1
+// labelled the second list `operator`, which under the renamed config keys is
+// the admins, so a consumer that read `operator` as the list version 1 named
+// would draw the admins. The values changed meaning, so the document is a new
+// version rather than the same one (CLAUDE.md, "a field never changes
+// meaning"). Version 1 is the shape this document had.
+const seatsDocVersion = 2
+
 // seatsDoc is fugaro seats --json's document.
 type seatsDoc struct {
+	Version int    `json:"version"`
 	Project string `json:"project"`
 	// Days, Since and Until are the window the requesters were read over,
 	// measured back from the clock runs ls reads its own window from.
@@ -127,7 +140,7 @@ func newSeatsCmd() *cobra.Command {
 		Short: "Estimate how many people a subscription's seat rule would count",
 		Long: "Estimate how many people a subscription's seat rule would count on this\n" +
 			"installation, from the installation's own data alone: the people on this\n" +
-			"machine's launcher and operator lists, plus everyone who requested a run in the\n" +
+			"machine's operator and admin lists, plus everyone who requested a run in the\n" +
 			"last 90 days, each counted once.\n\n" +
 			"The estimate is ADVISORY. A seat is a contract pricing rule of the Subscription\n" +
 			"Terms -- anyone who launches jobs, by any means (console, mobile, CLI, an agent)\n" +
@@ -137,14 +150,14 @@ func newSeatsCmd() *cobra.Command {
 			"nothing, sends nothing, and consults no key, licence or server. It is core MIT\n" +
 			"and reads only core data.\n\n" +
 			"The three sources, and what each one is worth:\n\n" +
-			"  - terraform.launchers and terraform.operators in this machine's own project\n" +
+			"  - terraform.operators and terraform.admins in this machine's own project\n" +
 			"    config: the two lists fugaro setup writes and fugaro update applies. They are\n" +
-			"    the operator's record of who may launch, and members the console or an agent\n" +
+			"    the admins' record of who holds a role, and members the console or an agent\n" +
 			"    launch records elsewhere are not in them.\n" +
 			"  - The requesters of the runs the last 90 days minted, read from each run's\n" +
-			"    task.json in every repository of the installation's bucket. Every launcher\n" +
-			"    counts, an agent launch is recorded under the configured person, and an agent\n" +
-			"    with no configured identity is invisible here.\n\n" +
+			"    task.json in every repository of the installation's bucket. Everyone who\n" +
+			"    launches counts, an agent launch is recorded under the configured person, and\n" +
+			"    an agent with no configured identity is invisible here.\n\n" +
 			"What the estimate cannot tell, it lists and does not guess:\n\n" +
 			"  - A group: or domain: member of either list names an unknown number of people.\n" +
 			"    It is listed apart, with the lists that hold it, and counted nowhere: one\n" +
@@ -163,10 +176,13 @@ func newSeatsCmd() *cobra.Command {
 			"what the launching CLI typed -- so the comparison folds case, and the row's key\n" +
 			"is the text printed: two texts that print alike are one person, and the\n" +
 			"estimate is the number of rows.\n\n" +
-			"--json prints {project, days, since, until, people[], not_counted[],\n" +
+			"--json prints {version, project, days, since, until, people[], not_counted[],\n" +
 			"unreadable, notes}; people carry {person, sources[]} and not_counted {member,\n" +
-			"why, sources[]}, sources from launcher, operator and requester, and why is\n" +
-			"unknown_size or account.",
+			"why, sources[]}, sources from operator, admin and requester, and why is\n" +
+			"unknown_size or account.\n\n" +
+			"Version 2 is this document. Version 1 named a row's sources with the words the\n" +
+			"roles carried before they were renamed: a consumer reading \"operator\" as the\n" +
+			"list version 1 named it would now draw the admins.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runSeats(cmd, &o) },
 	}
@@ -198,6 +214,7 @@ func runSeats(cmd *cobra.Command, o *seatsOptions) error {
 		return err
 	}
 	doc := seatsDoc{
+		Version:    seatsDocVersion,
 		Project:    env.lc.Name,
 		Days:       int(seatsWindow / (24 * time.Hour)),
 		Since:      since.Format("2006-01-02"),
@@ -292,7 +309,7 @@ func seatsRequesters(ctx context.Context, env *cloudEnv, slugs []string, since t
 // seatsEstimate merges the three sources into the document's two tables. The
 // input lists are read as they are written: a member text for the two config
 // lists, and a run's own recorded text for a requester.
-func seatsEstimate(launchers, operators, requesters []string) (people []seatsPersonRow, notCounted []seatsFlaggedRow) {
+func seatsEstimate(operators, admins, requesters []string) (people []seatsPersonRow, notCounted []seatsFlaggedRow) {
 	peopleAt := map[string]int{}
 	flaggedAt := map[string]int{}
 	add := func(member, source string) {
@@ -323,11 +340,11 @@ func seatsEstimate(launchers, operators, requesters []string) (people []seatsPer
 			people[i].Sources = append(people[i].Sources, source)
 		}
 	}
-	for _, m := range launchers {
-		add(m, seatsLauncher)
-	}
 	for _, m := range operators {
 		add(m, seatsOperator)
+	}
+	for _, m := range admins {
+		add(m, seatsAdmin)
 	}
 	for _, r := range requesters {
 		add(r, seatsRequester)
@@ -347,7 +364,7 @@ func seatsEstimate(launchers, operators, requesters []string) (people []seatsPer
 // and printed by, and why it is listed and not counted ("" for a person).
 //
 // The text is sanitised to one terminal-safe line and capped, so a member or
-// a recorded requester can neither rewrite an operator's screen nor print
+// a recorded requester can neither rewrite the reader's screen nor print
 // something other than the key the estimate counted -- what a source wrote is
 // untrusted text (roles.go), and this command decides nothing by it.
 func seatsIdentity(member string) (text, why string) {
@@ -379,8 +396,8 @@ func seatsIdentity(member string) (text, why string) {
 // estimate is, what its columns mean, and what the read left out.
 func seatsNotes(doc seatsDoc) []string {
 	notes := []string{
-		"advisory: an estimate, never a count of seats or a bill: it reads this installation's own data alone (the launcher and operator lists of this machine's config, and the requester each run of the window recorded), and it stores nothing and sends nothing",
-		"sources:  SEEN AS names why an identity counts: launcher (terraform.launchers), operator (terraform.operators), requester (a run of the window whose task.json recorded it)",
+		"advisory: an estimate, never a count of seats or a bill: it reads this installation's own data alone (the operator and admin lists of this machine's config, and the requester each run of the window recorded), and it stores nothing and sends nothing",
+		"sources:  SEEN AS names why an identity counts: operator (terraform.operators), admin (terraform.admins), requester (a run of the window whose task.json recorded it)",
 	}
 	if doc.Unreadable > 0 {
 		notes = append(notes, fmt.Sprintf("read:     %d run %s of the window could not be read (an object this build cannot use), so whoever requested %s is counted nowhere: the estimate is a lower bound by that much",
