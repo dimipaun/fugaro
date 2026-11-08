@@ -82,6 +82,44 @@ func TestDefaultTimeoutsSatisfyTheRelation(t *testing.T) {
 	}
 }
 
+// TestExampleTemplateTimeoutsAreTheDefaults: `fugaro config example` prints
+// example.yaml and the setup skill hands it to a user as the file to start
+// from, so the timeouts it writes have to be the ones a workflow that names
+// none gets. A template left on an older clock pins that clock in every
+// repository set up from it — how the 90-minute default outlived the release
+// that changed it — so the two are held together here.
+func TestExampleTemplateTimeoutsAreTheDefaults(t *testing.T) {
+	tmpl, problems := Parse(Example)
+	if len(problems) > 0 {
+		t.Fatalf("example.yaml does not parse: %v", problems)
+	}
+	if len(tmpl.Workflows) == 0 {
+		t.Fatal("example.yaml declares no workflow, so this scan reads nothing")
+	}
+	bare, problems := Parse([]byte(minimalYAML))
+	if len(problems) > 0 {
+		t.Fatalf("the minimal config does not parse: %v", problems)
+	}
+	want := bare.Workflows["server"].Timeouts
+	// Set is deliberately not compared: it records that the file wrote the
+	// key, which the template does and the config that names none does not.
+	values := func(t Timeouts) Timeouts {
+		only := func(d Duration) Duration { return Duration{Duration: d.Duration} }
+		return Timeouts{
+			Total:           only(t.Total),
+			Stage:           only(t.Stage),
+			Verify:          only(t.Verify),
+			Render:          only(t.Render),
+			FinalizeReserve: only(t.FinalizeReserve),
+		}
+	}
+	for name, w := range tmpl.Workflows {
+		if got := values(w.Timeouts); got != values(want) {
+			t.Errorf("example.yaml's %s workflow writes %+v, but a workflow that names no timeouts gets %+v: the template is what a repository set up from `fugaro config example` pins", name, got, values(want))
+		}
+	}
+}
+
 func TestShortTotalScalesDefaults(t *testing.T) {
 	cfg, problems := Parse([]byte(minimalYAML + "    timeouts: { total: 10m }\n"))
 	if len(problems) > 0 {
