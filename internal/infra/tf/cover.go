@@ -883,21 +883,48 @@ var knownCommands = [][2][]string{
 // JSON array of {provider, repo, workflow} triples, and — only on an
 // installation that names a verifier — the addresses that may ask the verify
 // route, — only on one that names an operator — the addresses the read
-// mint admits (BB4), and — only on one whose coordinator is on — the
-// coordinator's own account, which is the read mint's second class (BB5). No
-// secret ID and no secret value, because the loader
-// derives the
-// container from the project name and reads it as the service's own account,
-// and the job accounts are derived from the triples rather than carried. The
-// case below is an allowlist of these, so an environment that hands this
-// process anything else is not covered; TestAllowedTypesCoverTheModules keeps
-// the two lists in step.
+// mint admits (BB4), — only on one whose coordinator is on — the
+// coordinator's own account, which is the read mint's second class (BB5), and
+// — only on one that deploys review-only jobs — those jobs' {profile,
+// provider, account} triples, which are the class the service admits a review
+// caller as (C3.9a). No secret ID and no secret value, because the loader
+// derives the container from the project name and reads it as the service's own
+// account, and both job sets are derived from their triples rather than
+// carried. The case below is an allowlist of these, so an environment that
+// hands this process anything else is not covered;
+// TestAllowedTypesCoverTheModules keeps the two lists in step.
+//
+// This list is what the cover ADMITS, which is not always what a module renders
+// yet: CredentialsServiceEnvAwaitingTheModule names the entries that are on it
+// ahead of the module.
 var credentialsServiceEnv = []string{
 	"FUGARO_PROJECT", "FUGARO_GCP_PROJECT", "FUGARO_REGION",
 	"FUGARO_RTDB_URL", "FUGARO_FIREBASE_PROJECT",
 	"FUGARO_CREDENTIALS_SERVICE_URL", "FUGARO_JOB_ACCOUNTS",
 	"FUGARO_VERIFIER_ACCOUNTS", "FUGARO_PERSON_ACCOUNTS",
-	"FUGARO_COORDINATOR_ACCOUNT",
+	"FUGARO_COORDINATOR_ACCOUNT", "FUGARO_REVIEW_JOB_ACCOUNTS",
+}
+
+// CredentialsServiceEnvAwaitingTheModule are the names credentialsServiceEnv
+// admits that the installation module does not render yet: the cover is what
+// one `fugaro update` confirmation covers, so a name is added to the allow-list
+// FIRST and the module that renders it second (the module and this table ship
+// in the same binary — deploy/terraform is embedded — so the order is the
+// cover's and not a release's).
+//
+// FUGARO_REVIEW_JOB_ACCOUNTS is the live case, and it is why the service reads
+// the name as an OPTIONAL value (internal/cli's credentialsServiceConfig): an
+// installation whose module does not render it starts the same service it
+// always did and refuses every caller of the review class (C3.9a), rather than
+// refusing to bind a port.
+//
+// It is a list with a tripwire and not a carve-out. Two tests hold it: the
+// golden test below fails on a name that is both here and on the plan, and
+// internal/cli's TestCredentialsServiceEnvIsTheDeploymentsOwn fails on one that
+// is here and in the module's own source — so the entry cannot be left behind
+// once the module renders it.
+func CredentialsServiceEnvAwaitingTheModule() []string {
+	return []string{"FUGARO_REVIEW_JOB_ACCOUNTS"}
 }
 
 // APITargets are the two services the Firebase web key may call, sorted;
