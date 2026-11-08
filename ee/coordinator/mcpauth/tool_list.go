@@ -6,7 +6,9 @@ package mcpauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 	"time"
@@ -29,11 +31,14 @@ import (
 // repository ever ran — the same thirty days the coordinator's own tick reads
 // (coordinator.RunsWindow) — and the count is what keeps an answer a client
 // reads. Both are the caller's to narrow and neither is the caller's to widen
-// past what the project answers with.
+// past what the project answers with: a count over the ceiling is refused, and
+// so is a `since` before the window, because the bucket read behind the answer
+// is an offset into the run IDs and a time before them would walk the whole
+// history (runstore.ListRunIDs) with no number of runs to say so.
 
 // listTasksArgsSchema is the schema of list_tasks: which of the project's
 // repositories to list, how many runs, and how far back.
-var listTasksArgsSchema = json.RawMessage(`{"type":"object","properties":{"repo":{"type":"string","description":"One of this project's repositories, as a slug; every one of them when absent"},"limit":{"type":"integer","minimum":1,"maximum":100,"description":"How many runs to answer, newest first (default 20)"},"since":{"type":"string","description":"Only runs minted at or after this RFC 3339 time (default: the last 30 days)"}},"additionalProperties":false}`)
+var listTasksArgsSchema = json.RawMessage(`{"type":"object","properties":{"repo":{"type":"string","description":"One of this project's repositories, as a slug; every one of them when absent"},"limit":{"type":"integer","minimum":1,"maximum":100,"description":"How many runs to answer, newest first (default 20)"},"since":{"type":"string","description":"Only runs minted at or after this RFC 3339 time, never earlier than the last 30 days (default: the last 30 days)"}},"additionalProperties":false}`)
 
 // listTasksArgs is what list_tasks reads out of a call's arguments.
 type listTasksArgs struct {
@@ -71,11 +76,20 @@ func (p *ProjectRuns) listTasks(ctx context.Context, call Call) (any, error) {
 	case a.Limit > 0:
 		limit = a.Limit
 	}
-	since := p.now().UTC().Add(-coordinator.RunsWindow)
+	now := p.now().UTC()
+	since := now.Add(-coordinator.RunsWindow)
 	if a.Since != "" {
 		at, err := time.Parse(time.RFC3339, a.Since)
 		if err != nil {
 			return nil, fmt.Errorf("since %q is not an RFC 3339 time", safetext.Field(a.Since))
+		}
+		// A since before the window is refused rather than clamped onto it: the
+		// answer carries no window of its own, so a caller whose `since` had
+		// been narrowed under it could not tell the rows from everything it
+		// asked for. The refusal is also what teaches the bound.
+		if at.Before(since) {
+			return nil, fmt.Errorf("since %s is earlier than the last %d days list_tasks answers over",
+				safetext.Field(a.Since), coordinator.RunsWindow/(24*time.Hour))
 		}
 		since = at
 	}
@@ -108,12 +122,36 @@ func (p *ProjectRuns) listTasks(ctx context.Context, call Call) (any, error) {
 	rows := make([]taskStatus, 0, len(found))
 	for _, l := range found {
 		status, err := p.status(ctx, l.slug, l.runID)
-		if err != nil {
+		switch {
+		case err == nil:
+			rows = append(rows, status)
+		case unreadableRecord(err):
+			// One run's own object is not the project's listing: a record that
+			// does not decode costs its row its status and nothing else, which
+			// is what internal/cli/runs.go does with the same failure
+			// (corruptObject: "that is the run's problem, not the listing's").
+			// Answering the whole list with a refusal because one run of it
+			// wrote a bad object would make the other runs unreachable.
+			rows = append(rows, taskStatus{RunID: l.runID, Repo: l.slug, Unreadable: true})
+		default:
 			return nil, err
 		}
-		rows = append(rows, status)
 	}
 	return answerJSON(rows)
+}
+
+// unreadableRecord reports whether err is a run's own record that cannot be
+// used: one that does not decode, or one past its read cap (runstore's own
+// MaxRecordBytes, and the only two failures ReadRecord's own read produces).
+//
+// A failure that is neither — the bucket, the network — is not the run's and
+// still fails the call, which is the distinction internal/cli/runs.go draws
+// between an unusable object and a read that failed.
+func unreadableRecord(err error) bool {
+	var syntax *json.SyntaxError
+	var typ *json.UnmarshalTypeError
+	return errors.As(err, &syntax) || errors.As(err, &typ) ||
+		errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, runstore.ErrTooLarge)
 }
 
 // listed is one of the project's runs as the listing found it, before its

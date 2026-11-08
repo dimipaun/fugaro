@@ -249,6 +249,14 @@ type taskStatus struct {
 	StartedAt  string          `json:"started_at,omitempty"`
 	FinishedAt string          `json:"finished_at,omitempty"`
 	CostUSD    float64         `json:"cost_usd,omitempty"`
+	// Unreadable marks a row of a listing whose record this call could not use:
+	// a record that does not decode, or one past its read cap. The record is
+	// the run's own object and its own agent writes it, so one bad object is
+	// the run's problem rather than the listing's (list_tasks' own comment),
+	// and every other field of such a row is empty. get_task_status refuses the
+	// same run rather than answer it: a listing has rows to keep, and a
+	// question about one run has nothing to answer with.
+	Unreadable bool `json:"unreadable,omitempty"`
 }
 
 // statusOf is one run's record as the tools answer it. Every string the run

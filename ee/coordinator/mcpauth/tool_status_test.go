@@ -4,6 +4,7 @@
 package mcpauth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -57,6 +58,13 @@ const (
 	testExactRunID         = "20300101-160000-1f2e"
 	testBigTranscriptRunID = "20300101-170000-3d4c"
 	testBigPatchRunID      = "20300101-180000-5b6a"
+
+	// testCorruptRunID wrote a result.json that does not decode and
+	// testTooBigRecordRunID one over runstore.MaxRecordBytes: both are the
+	// run's own object, written by the run's own agent, and each is one of the
+	// two ways a record is there and unusable.
+	testCorruptRunID      = "20300101-190000-7a8b"
+	testTooBigRecordRunID = "20300101-200000-9c0d"
 
 	// testRunsBucket is the runs bucket of this installation, derived the way
 	// production derives it: fugaro-runs-<gcp-project>.
@@ -197,6 +205,35 @@ func TestListTasksNamesOnlyTheProjectsRuns(t *testing.T) {
 		f.refusal("list_tasks", args)
 	}
 
+	// `since` narrows the window and cannot widen it. The two runs are an hour
+	// and three hours before the fixture's clock, so a `since` between them
+	// answers the newer one alone and one after both answers nothing — the same
+	// build whether the bucket honoured the offset or filtered the whole list.
+	rows = nil
+	f.answer("list_tasks", `{"since":"2030-01-01T13:00:00Z"}`, &rows)
+	if len(rows) != 1 || rows[0].RunID != testSiblingRunID {
+		t.Errorf("list_tasks since 13:00 named %v; want only the run minted after it", rows)
+	}
+	rows = nil
+	f.answer("list_tasks", `{"since":"2030-01-01T15:00:00Z"}`, &rows)
+	if len(rows) != 0 {
+		t.Errorf("list_tasks since 15:00 named %v; want nothing it is newer than", rows)
+	}
+
+	// A window wider than the one the tool answers over is refused rather than
+	// clamped onto it: the answer carries no window of its own, so a caller
+	// whose `since` had been silently narrowed could not tell the rows it asked
+	// for from the rows it got. The refusal is also the bound's only statement,
+	// since the schema says 30 days and the answer says nothing.
+	for _, args := range []string{
+		`{"since":"0001-01-01T00:00:00Z"}`,
+		`{"since":"not-a-time"}`,
+	} {
+		if err := f.refusal("list_tasks", args); err == nil || err.Error() == "" {
+			t.Errorf("list_tasks(%s) was refused with no reason", args)
+		}
+	}
+
 	// The other project's run is unreachable by both of the names it has: its
 	// own <repo-slug>/<run-id>, and the bare run ID, which exists in the
 	// bucket and is not looked for outside the project's own repositories.
@@ -208,6 +245,59 @@ func TestListTasksNamesOnlyTheProjectsRuns(t *testing.T) {
 		if !errors.Is(err, runstore.ErrNotFound) {
 			t.Errorf("another project's run, asked for as %s, answered %v; want runstore.ErrNotFound", args, err)
 		}
+	}
+}
+
+// TestListTasksKeepsARowWhoseRecordIsUnusable: a result.json that does not
+// decode, or one past runstore.MaxRecordBytes, costs its own row its status
+// and nothing else.
+//
+// The record is the run's own object and the run's own agent writes it, so one
+// bad object is the run's problem rather than the listing's — the rule
+// internal/cli/runs.go applies to the same failure (corruptObject: "that is
+// the run's problem, not the listing's"). Refusing the whole answer for it
+// would make every other run of the project unreachable by the one tool that
+// names them, and the run that wrote the bad object is exactly the one a
+// caller is asking about.
+func TestListTasksKeepsARowWhoseRecordIsUnusable(t *testing.T) {
+	f := newRunsFixture(t)
+	f.seedRun(testSlug, testRunID, &runstore.Record{Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeReady}, nil)
+	// Neither of the two below can be seeded through WriteRecord, which writes
+	// the record it is given: one run's object is bytes that are not JSON at
+	// all, and the other is longer than a read will take.
+	f.seedRun(testSlug, testCorruptRunID, nil, map[string][]byte{"result.json": []byte("{not json")})
+	f.seedRun(testSlug, testTooBigRecordRunID, nil, map[string][]byte{
+		"result.json": bytes.Repeat([]byte(" "), runstore.MaxRecordBytes+1),
+	})
+
+	var rows []taskStatus
+	text := f.answer("list_tasks", `{}`, &rows)
+	if len(rows) != 3 {
+		t.Fatalf("list_tasks named %d row(s) %s; want all three of the project's runs, two of them unreadable", len(rows), text)
+	}
+	byID := map[string]taskStatus{}
+	for _, row := range rows {
+		byID[row.RunID] = row
+	}
+	if got := byID[testRunID]; got.Status != string(runstore.StatusSucceeded) || got.Unreadable {
+		t.Errorf("list_tasks answered %+v for the run whose record reads; want its status", got)
+	}
+	for _, id := range []string{testCorruptRunID, testTooBigRecordRunID} {
+		got, ok := byID[id]
+		if !ok {
+			t.Fatalf("list_tasks left out the row of %s; want its row kept and marked, because one run's own unusable record is not the project's listing", id)
+		}
+		if !got.Unreadable || got.Repo != testSlug || got.RunID != id || got.Status != "" || got.PR != nil {
+			t.Errorf("list_tasks answered %+v for %s; want the row kept, its repository and ID named, marked unreadable, and no status invented for it", got, id)
+		}
+	}
+
+	// The same run asked about on its own is refused instead: a listing has
+	// rows to keep, and a question about one run has nothing to answer with —
+	// the run's state is not this package's to invent.
+	err := f.refusal("get_task_status", `{"run_id":"`+testCorruptRunID+`"}`)
+	if errors.Is(err, runstore.ErrNotFound) {
+		t.Errorf("get_task_status of a run whose record does not decode answered %v; want the read failure, not a run that is not there", err)
 	}
 }
 
