@@ -9,7 +9,12 @@ owner's answers to them, and the plan that turns those answers into ordered part
 follows from these documents is the Go above, the Terraform grant that gives the
 coordinator's writer its one role (the account P5's aggregation job creates once the owner opts in with `fugaro update --firebase-project <id> --coordinator`, so the grant has a member; off by default), and the database rules change that admits the
 signed-in reader — and no TypeScript and no live action: what is here lands on the
-long-lived branch and not on `main`, and the owner deploys the grant and the rules. **Owner: Dimi Paun. Date: 2026-10-19.** The plan's own date is **2026-10-21**,
+long-lived branch and not on `main`, and the owner deploys the grant and the rules. **Corrected
+2026-11-07 (D434, D435; T10, T20):** that was the reading of 2026-10-21, and three things in it are
+no longer true of the work — what has landed is on `main` and not on a long-lived branch, the parts
+still ahead land behind `ee/register` rather than in the core, and P6 is a console part, so there is
+TypeScript in it after all. The re-plan section below says what each becomes; the sentence is kept
+here as the reading the folder was written to. **Owner: Dimi Paun. Date: 2026-10-19.** The plan's own date is **2026-10-21**,
 written against `main` at `1e0953b7` (`docs(central-orchestrator): spec, reconciliation and plan
 for central orchestrators (#775)`). The reconciliation was run against
 `c6009b5f`, and every path and symbol in it was read at that commit; the citation check that
@@ -154,6 +159,33 @@ the one answered against the recommendation least of all.
 ones out: they read `internal/cli/docs_coordinator_test.go` itself, holding that file's record of
 its own planted mutations to the list under it, and its own count of the tests it declares to the
 map it heads.
+
+## Re-planned behind `ee/register` (2026-11-07)
+
+The owner's rulings of 2026-10-27 put this work in the business-licensed folder — **D434/T10** moved
+its **command and library** first (landed as the ee-reorg plan's E2.1b: `ee/coordinator/`,
+`ee/coordinator/cli/` and `ee/coordinator/mcpauth/`), and **D435/T20** re-targets what is still
+ahead: **P6–P8, the MCP front door included**, which is what the plan's own re-plan note of
+2026-11-07 records. In one place, what that means:
+
+- The **Go half of each remaining part lands under `ee/coordinator/`**, reached only through
+  `ee/register`; an untagged build's `fugaro coordinator` is the core's stub and says why (E1.1,
+  D522), so the console's sidecar has to be the tagged binary.
+- **The Terraform and the console do not move**: `deploy/terraform/` is embedded in the binary and
+  applied by the MIT `fugaro update`, and the console half of P6 is `console/`, which is
+  business-licensed already and still changes no credential, no network surface and no CSP.
+- **The front door has moved on since P7 and P8 were written**, and its MCP half is planned in
+  `docs/mcp-server/` rather than here: that folder's front door serves this work's tools on one
+  endpoint, and its **D920** answer of 2026-11-04 (a public endpoint whose gate is the bearer token)
+  is the reading that replaced this plan's Cloud Run IAM invoker. **What the re-plan could not settle
+  from the documents is recorded under the part rather than decided here** — the service's own
+  Terraform layout and whose reading of the front door's authorization survives its build are the two
+  P7 names.
+- **#831 closes as superseded (T20), and that is OWNER-RUN.** The pull request is already closed —
+  the census of 2026-11-07 (`docs/subscriptions/status-2026-11-07.md`) records it closed on
+  2026-10-27 — but the comment T20 names, `gh pr close 831 --comment "Superseded: re-planned in ee/ (T20)"`,
+  is a person's to post. It is recorded here as **unperformed**, not reported as done: no agent run
+  comments on a pull request.
 
 ## Related
 

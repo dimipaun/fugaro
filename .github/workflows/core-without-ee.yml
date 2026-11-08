@@ -31,8 +31,6 @@ name: core-without-ee
 # path filter -- the change that breaks the untagged build is as likely to be
 # in internal/runner as in go.mod.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 # Least privilege, at the top so that no step can widen it by omission. The

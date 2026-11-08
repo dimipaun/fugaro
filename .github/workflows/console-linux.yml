@@ -81,9 +81,7 @@
 name: console-linux
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 # The workflow inherits nothing: `contents: read` is all it needs to check the
 # repository out, and it is declared here and on the job so that neither can
