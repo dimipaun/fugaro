@@ -24,14 +24,19 @@ writes the scan that holds this over the folder, and the plan makes it this docu
 has not landed yet (the census of 2026-11-07 lists it NOT STARTED), so until it does this document
 holds the rule by construction and the Docs suite is its only test.
 
-**What has moved since the questions were written.** The Terms have changed four times since. Counsel
+**What has moved since the questions were written.** The Terms have changed five times since. Counsel
 restructured them on 2026-10-28 into Parts A–G and sections 1 to 34 (they were the draft's sections
 1 to 24). The owner's rulings that restructure did not carry were applied on 2026-10-29, with the
 two figures once held back and the provisions counsel's document had marked (the Terms' own list,
 items 1, 3, 4 and 7). The owner filled in the Licensor's name, jurisdiction, address, privacy notice
-URL and notice address on 2026-10-30. And §7.3 was revised on 2026-10-31 so that crash reporting is
-opt-in and off by default (item 5). So this packet opens with what is already settled, and asks the
-rest.
+URL and notice address on 2026-10-30. §7.3 was revised on 2026-10-31 so that crash reporting is
+opt-in and off by default (item 5). And on 2026-11-07 §7.1 stopped calling the credentials service
+optional — it now says plainly that the service is part of the Core and not of the Software, because
+`fugaro update` deploys it on every installation (the owner's ruling of 2026-11-05); the same day's
+other change to that file was the reading note above the agreement, which is not part of it and now
+records that the two figures go in as counsel wrote them. The Terms' own Status and list record the
+first four of those and not the fifth. So this packet opens with what is already settled, and asks
+the rest.
 
 ## How the clauses are numbered
 
@@ -138,9 +143,11 @@ What the text does not answer is the mixed binary itself. The Terms' §2 and the
 Software the same way — every file under `ee/`, `console/` and `mobile/`, "including code from those
 directories compiled into a released binary or application" — so the binary a person downloads is
 the Software even when they run only a command that initiates no Job, and nothing in the text says
-whether clause 1.1's condition reaches them. The draft carried a note to §3.3 saying what moved and
-that one mixed-licence binary ships; counsel's text has no such note — §2's "Core" and "Software"
-definitions do the work instead.
+whether clause 1.1's condition reaches them. The draft carried a note to §3.3, and it listed the
+moves only — the coordinator, the spend and cost reports, the central orchestrators and the hosted
+MCP server — and said nothing about a mixed-licence binary; counsel's text carries no such note
+either, and [reconciliation.md](reconciliation.md) records the gap in as many words: "the released
+binary carrying `ee/` code under one key-gated build is not addressed".
 
 1. In the released binary, does clause 1.1 reach a person who runs only a command that initiates no
    Job — `fugaro runs digest`, `fugaro diagnose`, `fugaro watch` — given that the binary carries the
@@ -224,7 +231,8 @@ cancellation today.
 [Subscriptions S0.4](implementation-plan.md#s04-the-one-terms-revision-after-counsels-feedback) is
 the one revision run of the Terms after counsel's feedback. Of its item list, these are already
 applied and counsel-approved: T12 (§9.1), the key binding (§§2, 5.3, 6.1, 6.3, 6.4, 7.5, 9.1), O4
-(§§6.1, 8.2), T15's first half (§§6.3, 7.5, 10.2(a)) and the kept contract figures (§§10.5, 12.2).
+(§§6.1, 8.2), T15's first half (§§6.3, 7.5, 10.2(a)), the kept contract figures (§§8.1, 14, 15 and
+5.4) and the two figures the owner ruled in after they had been held back (§§10.5, 12.2).
 What is still open, and what A1–A6 feed:
 
 - **§6.1** — whether the Software's key requirement is stated as behaviour or as the Customer's
@@ -232,9 +240,9 @@ What is still open, and what A1–A6 feed:
 - **§6.3** — T26's renewal 30 days before expiry, T13's hand minting, and the paid-key path (A6).
 - **§1.3** — T15's second half: an individual as an organisation of one (A3).
 - **§15 or §6.4** — the refund leakage (A4).
-- **The draft's §3.3 note**, gone from counsel's text with no replacement — whether the commands
-  that initiate no Job need a seat in the mixed-licence binary, which §5.2's "not part of the
-  Software" does not settle on its own (A2).
+- **The mixed-licence binary** — the draft's §3.3 note covered the moves only, and neither it nor
+  counsel's text says whether the commands that initiate no Job need a seat in the binary that
+  carries `ee/` code, which §5.2's "not part of the Software" does not settle on its own (A2).
 - **T24's split** — the contract figures in the Terms and the commercial ones on the Order Form
   (A5).
 
