@@ -76,11 +76,13 @@ import (
 // restoreOptions are fugaro restore's own flags, besides the cloud flags.
 //
 // There is no --yes and no --non-interactive, and none is missing: every step
-// of a restore is money or permanent, which is initflow.Typed's definition —
-// a project is created on a billing account, a Terraform state is written
-// from zero, and a committed file in the checkout is edited. A flag that
-// stood in for the typed name would be exactly the second, weaker path this
-// command must not be.
+// of a restore is money or permanent — a project is created on a billing
+// account, a Terraform state is written from zero, and a committed file in the
+// checkout is edited — and the no-prompt policy removed the one typed
+// confirmation this command used to take by its own project's name
+// (restoreSteps prints whatToDo instead). What still needs a real terminal is
+// the creating path the run delegates to, and those questions are that path's
+// own: a flag here would stand in for none of them.
 type restoreOptions struct {
 	cloud                          cloudOptions
 	budget                         int64
@@ -130,9 +132,12 @@ can be run again; what the creation did in the cloud (the project, its
 billing link, its state bucket, the installation's resources, any secrets)
 is not undone, and the message says so.
 
-Every step is money or permanent, so the project's name is typed at a real
-terminal, and there is no --yes, no --non-interactive and no address argument.
-The command is refused in a coding agent's session.
+Every step is money or permanent, so this command prints what it is about to
+make permanent — the new project, the budget amount, the root and the two files
+— before its first write, and the creating path it delegates to keeps its own
+typed questions (the new project's ID and the billing account) at a real
+terminal. There is no --yes, no --non-interactive and no address argument. The
+command is refused in a coding agent's session.
 
 It ends by printing what was NOT restored, as a list: the runs that were in
 flight and their counters, the spend history and the kill-switch state, the

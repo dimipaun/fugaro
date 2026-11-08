@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -19,8 +20,13 @@ import (
 // what the unmanaged refusal of every other mutating command names (D1541) —
 // but it is not a step the upgrade needs.
 //
-// Three things decide what the step does, and each is one of the answer's own:
+// Four things decide what the step does, and each is one of the answer's own:
 //
+//   - It never runs under --plan-only. That door creates and changes nothing —
+//     it is what previews the plan — and this step's whole output is two marks
+//     that take an installation's typed confirmation away. A preview that wrote
+//     them would turn a consent gate off on a read-only flag's word, which is
+//     the one thing --plan-only promises it cannot do.
 //   - It runs only when the run was given the budget. The amount is the
 //     owner's, required and never defaulted (D64), and a fact that records no
 //     amount is refused by every managed apply — so a run given no amount has
@@ -67,6 +73,14 @@ import (
 // the agent refusal, and "" (nil) everywhere else.
 func (e *initEngine) selfFlagUnmanaged(ctx context.Context) error {
 	r, o := e.r, e.r.o
+	// First, because it is the door and not the input: --plan-only creates and
+	// changes nothing, and the marks below are the marks that take this
+	// installation's typed confirmation away. A preview writes none of them,
+	// and it is also why no fence is needed here: what an agent's session could
+	// do with --plan-only is read a plan.
+	if o.planOnly {
+		return nil
+	}
 	if o.budget <= 0 || o.budgetCurrency == "" {
 		return nil
 	}
@@ -146,8 +160,24 @@ func (e *initEngine) selfFlagUnmanaged(ctx context.Context) error {
 	// the other leaves the installation exactly as unmanaged as it was.
 	replaced, err := managed.WriteFlag(ctx, e.c.Storage, bucket, r.gcpProject, number, budget)
 	if err != nil {
+		// The reachable failure here is ErrAlreadyMarked: an object that is
+		// there and is not the version-1 creation fact this write replaces —
+		// the state this step itself leaves when its label write below fails,
+		// and the state a fact written by another run or by hand leaves. There
+		// is no object to write, and `fugaro managed flag` would refuse the
+		// same object for the same reason (it writes through this same
+		// WriteFlag), so a warning naming that command would send the owner in
+		// a circle. What the installation is missing is named instead: if the
+		// fact where the object was written records the amount, the half that
+		// is absent is the label on the project itself.
+		why := safetext.FieldErr(err)
+		if errors.Is(err, managed.ErrAlreadyMarked) {
+			r.warn(fmt.Sprintf("this run was given a budget and %s is %s, so it was not flagged: %v. Nothing of the update above is undone, and there is nothing for this step to write — it replaces one thing, this project's version-1 creation fact, which records no amount — and `fugaro managed flag` replaces the same one thing and refuses this object for the same reason. If the object it found records the budget amount, what this installation is missing is the %s=%s label on the project itself: write it on the account that owns the project, at your own terminal, and docs/design/managed-projects.md has that one line",
+				r.gcpProject, managedReasonFor(answer), why, managed.ProjectLabelKey, managed.ProjectLabelValue))
+			return nil
+		}
 		r.warn(fmt.Sprintf("this run was given a budget and %s is %s, so it was not flagged (%v): the installation stays as it is, and nothing of the update above is undone. `fugaro managed flag %s --budget N --budget-currency CCC`, run by its owner at their own terminal, is the command that does it",
-			r.gcpProject, managedReasonFor(answer), safetext.FieldErr(err), r.gcpProject))
+			r.gcpProject, managedReasonFor(answer), why, r.gcpProject))
 		return nil
 	}
 	if err := managed.WriteManagedLabelForFlag(ctx, e.c.CRM, r.gcpProject); err != nil {

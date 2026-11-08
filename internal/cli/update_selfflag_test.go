@@ -92,6 +92,39 @@ func TestUpdateOnAnUnmanagedInstallationFlagsItAndNeedsNoSecondCommand(t *testin
 	}
 }
 
+// TestUpdatePlanOnlyFlagsNothing: --plan-only creates and changes nothing, and
+// the self-flag's whole output is the two marks that take the installation's
+// typed confirmation away. A preview that wrote them would turn a consent gate
+// off on a read-only flag's word — and the update's own help says, in as many
+// words, that this door never takes --yes because it changes nothing on a
+// flag's word. So the same command line as the HARD RULE's test, with
+// --plan-only, leaves the installation exactly as unmanaged as it found it,
+// and says nothing about flagging it.
+func TestUpdatePlanOnlyFlagsNothing(t *testing.T) {
+	r := unmanagedUpdateRig(t)
+	out, errOut, err := executeStdin(t, "", updateBudgetArgs("--plan-only")...)
+	if err != nil {
+		t.Fatalf("fugaro update --plan-only with the budget: %v\n%s\n%s", err, out, errOut)
+	}
+	// Neither half: the creation fact, and the label on the project itself. One
+	// without the other leaves the project unmanaged, and a preview may write
+	// neither.
+	if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); ok {
+		t.Errorf("fugaro update --plan-only wrote gs://%s/%s = %s", initRunsBucket, managed.MarkerObject, got)
+	}
+	if l := r.crm.Labels(initProject)[managed.ProjectLabelKey]; l != "" {
+		t.Errorf("fugaro update --plan-only wrote %s=%q on the project", managed.ProjectLabelKey, l)
+	}
+	if managedFlagIsManaged(t, r) {
+		t.Error("the managed read believes a project --plan-only did not flag")
+	}
+	// And it did not claim to have flagged anything: the sentence the read-only
+	// door must never print is the one the real flag prints.
+	if said := out + errOut; strings.Contains(said, "no second command") {
+		t.Errorf("fugaro update --plan-only claimed to have flagged the installation:\n%s", said)
+	}
+}
+
 // TestUpdateSelfFlagRefusesInAnAgentSession is F20's test for this fence: a
 // coding agent's session that passes --budget does not get the flag by asking
 // for it, because what the flag does is write the marks that take the owner's
