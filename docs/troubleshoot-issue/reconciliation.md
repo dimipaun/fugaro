@@ -2,7 +2,7 @@
 
 **Status (2026-11-08, later): the owner sent an updated spec (the failed command in the header; the regression rule and "troubleshoot never checks for duplicates" in section 2). F25–F27 and D1731–D1733 cover them; `spec.md` is the updated text.** Reconciliation of [spec.md](spec.md) against `origin/main` (commit `93ba9e997`, read 2026-11-08). Where the two disagree this file wins.** The spec is the owner's (Dimi Paun). Nothing here is implemented and no task is approved. Every cited path and symbol was grepped on `origin/main`; what was not checked is in section 4.
 
-**Numbers.** This work reserves **D1720–D1749** (D1720–D1733 used) and **Checks 450–459** (verified above every `D` and `Check` number on `origin/main` and in the open pull requests' docs on 2026-11-08: the highest seen were D1710 and Check 441). The sibling this spec builds on is `docs/diagnose-agent/` (D1600–D1619, Checks 410–419).
+**Numbers.** This work reserves **D1720–D1749** (D1720–D1736 used) and **Checks 450–459** (verified above every `D` and `Check` number on `origin/main` and in the open pull requests' docs on 2026-11-08: the highest seen were D1710 and Check 441). The sibling this spec builds on is `docs/diagnose-agent/` (D1600–D1619, Checks 410–419).
 
 ## What the spec's concepts already have
 
@@ -94,6 +94,10 @@ All answered by the owner on 2026-11-08 through `AskUserQuestion`; every answer 
 | **D1731** | Where the resolved state and fix version come from (F25) | The shared record gains `resolved_in`, written by a later spec on `update` (F27, owner 2026-11-08: not this plan); upload compares versions offline; a match at or above `resolved_in` is a regression linked to the original URL | Ask GitHub at upload: a network call and rate limits per upload, no regression detection offline | **Recorded at submit/close, 2026-11-08 (recommended); amended: the writer is left to the `update` spec.** |
 | **D1732** | The stored failed command and update's use of it (F26) | Redacted argv, values replaced by placeholders, printed by `update`, never run, never posted | Command name only: the hint is often incomplete | **Redacted argv, print only, 2026-11-08 (recommended).** |
 | **D1733** | Which issues `update` suggests retrying (F27) | This reporter's issues resolved at or below the installed version, once (assuming `resolved_in` is filled by the other spec) | Every pending issue: noisy | **Only this user's, resolved by the new version, 2026-11-08 (recommended); stays in this plan.** |
+
+| **D1734** | `list` and `show` in an agent session | Show local copies, skip sync, say so | Refuse: an agent can't read issues | **Local data, no sync, 2026-11-08 (recommended).** |
+| **D1735** | Where T-IS19's "notified" lives | A flag in the local issue file; `update` makes no cloud write | Shared record: a cloud write on the update path, refused in agent sessions | **Local only, 2026-11-08 (recommended); a second machine may repeat the hint once.** |
+| **D1736** | The `resolved_in` contract (F25) | A release (for example 0.21.1) compared as semver with the reporter's `cli.Version`; a `dev` or unparseable version never matches, so it attaches as a plain occurrence | Commit-based: needs git history at upload, no offline comparison | **Release semver, dev never matches, 2026-11-08 (recommended); the other spec must write that shape.** |
 
 Spec owner recorded: Dimi Paun (asked, answered 2026-11-08).
 
