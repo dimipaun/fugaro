@@ -68,6 +68,11 @@ func TestDocsCheck111IsOneScriptTheOwnerRuns(t *testing.T) {
 		// rather than once at the end of mode 2: --modes may name 2(a) without
 		// 2(b), and the modes after it must still run as the owner.
 		"putting **yours** back, byte for byte, as soon as each of them is done",
+		// The copy the owner makes for --second-adc is a login of theirs, made
+		// for the run and taken away by it: the section has to say so, and that
+		// the copy the run never used is the one case that is left.
+		"no copy of a login outlives a run that used one",
+		"**Remove the copy you made for `--second-adc` too**",
 		// Modes 3 and 4 are the runs with NO terminal, and with no terminal the
 		// IDE extension's marker alone is a coding agent's session
 		// (internal/agentenv.Session): the section has to say that the two runs
@@ -124,9 +129,14 @@ func TestDocsCheck111ScriptKeepsItsPromises(t *testing.T) {
 		`quota_set "$ADC_QUOTA_ORIGINAL"`,
 		"adc_swap_in",
 		"adc_swap_out",
-		// The copies of the two logins go with the scratch directory, so no copy
-		// of a credential outlives the run — kept directory or not.
-		`rm -f "${ADC_OWN_BACKUP:-}" "${SECOND_ADC_BACKUP:-}"`,
+		// The copy of your own login goes with the scratch directory, the copy
+		// the manual row has the owner make for `--second-adc` is removed by the
+		// Restore, and that copy is made at a private `mktemp` path rather than a
+		// fixed name in a shared directory — so no copy of a credential outlives
+		// the run, kept directory or not.
+		`rm -f "${ADC_OWN_BACKUP:-}"`,
+		`rm -f "$SECOND_ADC"`,
+		`mktemp \"\${TMPDIR:-/tmp}/chk111-second.XXXXXXXX\"`,
 		// The one manual step, and the run's refusal to read a mode as a pass
 		// while its premise is not there.
 		"fact manual INFO",

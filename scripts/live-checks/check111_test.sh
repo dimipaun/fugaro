@@ -386,11 +386,18 @@ FUGARO_EOF
   real_cp=$(command -v cp)
   cat >"$1/bin/cp" <<CP_EOF
 #!/usr/bin/env bash
-dst="\${3:-}"
+# The last non-flag argument is the destination and the one before it the
+# source, whether the check called \`cp\` or \`cp -p\`: the short-copy fault has to
+# land on the copy over the live ADC file either way.
+src=""; dst=""
+for a in "\$@"; do
+  case "\$a" in -*) continue ;; esac
+  if [ -z "\$src" ]; then src="\$a"; else dst="\$a"; fi
+done
 if [ -n "\${FAKE111_SHORT_COPY:-}" ] && [ "\$dst" = "\$FAKE111_SHORT_COPY" ] &&
   { [ -n "\${FAKE111_SHORT_COPY_EVERY:-}" ] || [ ! -e "\$FAKE111_DIR/short-copy-done" ]; }; then
   : >"\$FAKE111_DIR/short-copy-done"
-  head -c 24 "\${2:-}" >"\$dst" 2>/dev/null || true
+  head -c 24 "\$src" >"\$dst" 2>/dev/null || true
   exit 1
 fi
 exec $real_cp "\$@"
@@ -572,12 +579,13 @@ test_a_leak_is_a_fail() {
 # --second-adc the check copies that login over gcloud's own ADC file for mode
 # 2's runs alone, and every other mode runs under YOUR login — the premise the
 # checklist writes for them (their project stage reads the project through those
-# credentials). The two runs are the only ones that read the second marker, and
-# both files are given back byte for byte.
+# credentials). The two runs are the only ones that read the second marker; your
+# own file is given back byte for byte, and the copy of the second login the
+# manual row has the owner make is removed by the Restore, so no copy of a login
+# outlives a run that used one.
 test_only_mode_2_runs_under_the_second_login() {
   setup_case swap
   sandbox_args
-  cp -p "$dir/second-adc.json" "$dir/second-pristine.json"
   run111
   expect_status "$status" 0 "the swap"
   expect_block_keys "$out" "the swap"
@@ -592,16 +600,18 @@ test_only_mode_2_runs_under_the_second_login() {
     || fail "the swap: expected the other seven wizard runs and the version read under your own login, got $(grep -c '^login own$' "$dir/calls")"
   cmp -s "$dir/cloudsdk/application_default_credentials.json" "$dir/adc-pristine.json" \
     || fail "the swap: your own ADC file did not come back byte for byte: $(cat "$dir/cloudsdk/application_default_credentials.json")"
-  cmp -s "$dir/second-adc.json" "$dir/second-pristine.json" \
-    || fail "the swap: the second login's own file was not given back byte for byte: $(cat "$dir/second-adc.json")"
+  # The copy the manual row has the owner make for --second-adc was made for
+  # this run and this run used it: the Restore takes it away, and says so.
+  [ -e "$dir/second-adc.json" ] \
+    && fail "the swap: the copy made for --second-adc outlived the run: $(head -c 80 "$dir/second-adc.json")"
+  expect_contains "$out" "the copy of the second login you made for --second-adc ($dir/second-adc.json) is removed" "the swap: the Restore says the copy is gone"
   expect_scratch_gone "$dir" "the swap"
 
-  # The two copies the swap makes are the only credential files this check ever
-  # writes, and they go even when the scratch directory is kept: a kept scratch
-  # holds transcripts, never a login.
+  # The one copy the swap makes is the only credential file this check writes,
+  # and it goes even when the scratch directory is kept: a kept scratch holds
+  # transcripts, never a login.
   setup_case swapkeep
   sandbox_args
-  cp -p "$dir/second-adc.json" "$dir/second-pristine.json"
   RUN111_ENV=(CHECK111_KEEP_SCRATCH=1)
   run111
   expect_status "$status" 0 "the swap, scratch kept"
@@ -609,8 +619,8 @@ test_only_mode_2_runs_under_the_second_login() {
     || fail "the swap, scratch kept: expected mode 2's two runs under the second login, got $(grep -c '^login second$' "$dir/calls")"
   cmp -s "$dir/cloudsdk/application_default_credentials.json" "$dir/adc-pristine.json" \
     || fail "the swap, scratch kept: your own ADC file did not come back byte for byte"
-  cmp -s "$dir/second-adc.json" "$dir/second-pristine.json" \
-    || fail "the swap, scratch kept: the second login's own file was not given back byte for byte"
+  [ -e "$dir/second-adc.json" ] \
+    && fail "the swap, scratch kept: the copy made for --second-adc outlived the run"
   scratch=$(scratch_of "$dir")
   [ -d "$scratch" ] || fail "the swap, scratch kept: the scratch directory was removed anyway"
   [ -z "$(find "$scratch" -name 'adc-*.bak' 2>/dev/null)" ] \
@@ -646,7 +656,6 @@ test_the_second_login_goes_out_before_the_modes_after_mode_2() {
 test_the_second_login_is_put_back_when_a_mode_stops() {
   setup_case swapfail
   sandbox_args
-  cp -p "$dir/second-adc.json" "$dir/second-pristine.json"
   RUN111_ENV=(FAKE111_QUOTA_DENIED="$S")
   run111
   expect_status "$status" 2 "the swap after a stop"
@@ -662,8 +671,13 @@ test_the_second_login_is_put_back_when_a_mode_stops() {
   expect_absent "$out" "STILL the login in" "the swap after a stop: no leftover swap"
   cmp -s "$dir/cloudsdk/application_default_credentials.json" "$dir/adc-pristine.json" \
     || fail "the swap after a stop: your own ADC file did not come back byte for byte: $(cat "$dir/cloudsdk/application_default_credentials.json")"
-  cmp -s "$dir/second-adc.json" "$dir/second-pristine.json" \
-    || fail "the swap after a stop: the second login's own file was not given back byte for byte"
+  # The stop is at mode 2's premise — after the swap put the second login in
+  # place, before mode 2(a)'s run — so the copy the owner made for --second-adc
+  # was used, and the Restore put your own file back: it takes that copy away
+  # with it, because the run ended with your ADC file as it found it.
+  [ -e "$dir/second-adc.json" ] \
+    && fail "the swap after a stop: the copy made for --second-adc outlived a run that used it"
+  expect_contains "$out" "the copy of the second login you made for --second-adc ($dir/second-adc.json) is removed" "the swap after a stop: and the Restore says the copy is gone"
   grep -q "set-quota-project $OWN_QUOTA" "$dir/calls" \
     || fail "the swap after a stop: the ADC's quota project was not put back"
   expect_scratch_gone "$dir" "the swap after a stop"
@@ -710,6 +724,69 @@ test_a_half_way_copy_that_cannot_be_put_back_names_the_way_out() {
   expect_contains "$out" "choosing YOUR OWN account" "the half-way copy that cannot be put back: with the account to choose"
   expect_contains "$out" "CHECK 111 RESULT: FAIL" "the half-way copy that cannot be put back: the verdict"
   expect_scratch_gone "$dir" "the half-way copy that cannot be put back"
+}
+
+# The second login is a file of the owner's, and a file can be saved read-only
+# (mode 0400). The swap may not carry its permissions onto the ADC file: a copy
+# that did would leave the ADC unwritable, so mode 2's own quota project step
+# (gcloud rewrites that file) would fail on a file this check broke, and the
+# Restore's copy of your own file back over it would fail too — the machine left
+# on the second login by the check itself rather than by anything the owner did.
+# The copy over the ADC is a plain `cp`, so your file keeps the mode it had.
+test_a_read_only_second_login_still_swaps() {
+  setup_case readonly
+  sandbox_args
+  chmod 400 "$dir/second-adc.json"
+  RUN111_ARGS+=(--modes 2a)
+  run111
+  expect_status "$status" 1 "the read-only second login"
+  expect_contains "$out" "FACT premise-2a: PASS — " "the read-only second login: mode 2(a) ran on its premise"
+  expect_contains "$out" "FACT restore: PASS — " "the read-only second login: the Restore's own row"
+  [ -w "$dir/cloudsdk/application_default_credentials.json" ] \
+    || fail "the read-only second login: your ADC file is not writable any more, so gcloud and the Restore would both fail on it"
+  cmp -s "$dir/cloudsdk/application_default_credentials.json" "$dir/adc-pristine.json" \
+    || fail "the read-only second login: your own ADC file did not come back byte for byte: $(cat "$dir/cloudsdk/application_default_credentials.json")"
+  [ -e "$dir/second-adc.json" ] \
+    && fail "the read-only second login: the copy made for --second-adc outlived the run"
+  expect_scratch_gone "$dir" "the read-only second login"
+}
+
+# The copy of the second login is the one file of the owner's the Restore
+# removes, and it removes it because the copy is a login. One that cannot be
+# removed — the directory it sits in is not writable — is a FAIL with the
+# command, never a note: a credential file left behind with nobody naming it is
+# exactly what "no copy of a login outlives the run" forbids.
+test_a_second_login_copy_that_cannot_be_removed_is_a_fail() {
+  setup_case stubborncopy
+  mkdir -p "$dir/second"
+  mv "$dir/second-adc.json" "$dir/second/second-adc.json"
+  chmod 500 "$dir/second"
+  sandbox_args
+  RUN111_ARGS=(--api-off-project "$Q" --api-on-project "$S" --second-account sandbox-second@example.invalid \
+    --second-adc "$dir/second/second-adc.json" --modes 2a)
+  run111
+  expect_status "$status" 1 "the copy that cannot be removed"
+  expect_contains "$out" "FACT restore: FAIL — " "the copy that cannot be removed: the Restore's row is a FAIL"
+  expect_contains "$out" "could NOT be removed — run: rm -f $dir/second/second-adc.json" "the copy that cannot be removed: and names the command"
+  cmp -s "$dir/cloudsdk/application_default_credentials.json" "$dir/adc-pristine.json" \
+    || fail "the copy that cannot be removed: your own ADC file did not come back byte for byte"
+  chmod 700 "$dir/second"
+  expect_scratch_gone "$dir" "the copy that cannot be removed"
+}
+
+# The manual row is what the owner follows to make the copy mode 2 needs, and
+# that copy is a login: the row has to have them make it at a path nobody can
+# prepare in advance (mktemp picks the name, in their own TMPDIR, and creates it
+# mode 0600 before anything is written), it may not name a fixed path in a
+# shared directory, and it has to say that the check takes the copy away again.
+test_the_manual_row_has_the_owner_make_a_private_copy() {
+  local text row
+  text=$(cat "$script")
+  row=$(grep '^  fact manual INFO' "$script")
+  expect_contains "$text" 'mktemp \"\${TMPDIR:-/tmp}/chk111-second.XXXXXXXX\"' "the manual row: the copy is made at a private mktemp path"
+  expect_absent "$text" "/tmp/chk111-second.json" "the manual row: and never at a fixed path in a shared directory"
+  expect_contains "$row" "removes that copy in the same trap" "the manual row: the check takes the copy away"
+  expect_contains "$row" "never point --second-adc at a login you mean to keep" "the manual row: and says what that means for the file passed"
 }
 
 # The live ADC already IS the login --second-adc names: this machine is still
@@ -1133,8 +1210,10 @@ test_dry_run_runs_nothing() {
   expect_contains "$(cat "$dir/err")" "dry run: NOTHING below was run" "dry run: the plan says so"
   expect_contains "$(cat "$dir/err")" "gcloud services disable cloudbilling.googleapis.com --project=$P --force" "dry run: the plan names the commands a real run would run"
   expect_contains "$(cat "$dir/err")" "set-quota-project $OWN_QUOTA" "dry run: and the Restore's own write"
-  expect_contains "$(cat "$dir/err")" "cp -p $dir/second-adc.json over $dir/cloudsdk/application_default_credentials.json" "dry run: the plan says which login mode 2's runs would use, and where it would go"
+  expect_contains "$(cat "$dir/err")" "cp $dir/second-adc.json over $dir/cloudsdk/application_default_credentials.json" "dry run: the plan says which login mode 2's runs would use, and where it would go, with a plain copy that keeps your file's own permissions"
   expect_contains "$(cat "$dir/err")" "your own ADC file back over" "dry run: and that the Restore would put your own file back"
+  expect_contains "$(cat "$dir/err")" "rm -f $dir/second-adc.json — the copy of the second login you made for this run" "dry run: and that the Restore takes that copy away"
+  [ -s "$dir/second-adc.json" ] || fail "dry run: the dry run removed the copy of the second login, and it runs none of the Restore's commands"
   expect_contains "$out" "CHECK 111 DRY RUN: nothing was run" "dry run: the block carries no verdict"
   expect_absent "$out" "CHECK 111 RESULT: PASS" "dry run: no verdict"
   expect_absent "$out" "CHECK 111 RESULT: FAIL" "dry run: no verdict either way"
@@ -1328,6 +1407,9 @@ t test_the_second_login_goes_out_before_the_modes_after_mode_2
 t test_the_second_login_is_put_back_when_a_mode_stops
 t test_a_copy_that_stops_half_way_does_not_report_your_own_login_back
 t test_a_half_way_copy_that_cannot_be_put_back_names_the_way_out
+t test_a_read_only_second_login_still_swaps
+t test_a_second_login_copy_that_cannot_be_removed_is_a_fail
+t test_the_manual_row_has_the_owner_make_a_private_copy
 t test_a_machine_left_on_the_second_login_is_refused
 t test_a_second_account_for_every_mode_is_refused
 t test_second_adc_guards

@@ -41,10 +41,13 @@
 #             `--api-off-project`).
 # Creates:    nothing. Every step is a refusal: no project is created, no
 #             billing account is linked, no API is enabled by a run, no config is
-#             written outside this check's own scratch directory, and the one
-#             thing any mode reaches outside your shell is your ADC — its quota
-#             project, and (with `--second-adc`) the login mode 2's runs use,
-#             both of which the Restore puts back.
+#             written outside this check's own scratch directory, and the only
+#             things any mode reaches outside your shell are your ADC — the quota
+#             project it carries, and (with `--second-adc`) the login mode 2's
+#             runs use — and the copy of that second login you passed. The
+#             Restore puts the quota project and your own ADC file back, and
+#             removes that copy with them whenever the run put your own file
+#             back, so no copy of a login outlives a run that used one.
 # Costs:      nothing but wall clock (a few minutes: seven wizard runs, each
 #             stopping at the billing stage). No model call, no run, no money.
 # Runs:       by YOU. No agent runs any step of this, and the script refuses to
@@ -60,9 +63,11 @@
 # Cleanup:    always, and before the block is printed: if mode 2 swapped the
 #             second login in, your ADC file is your own again, byte for byte,
 #             which is what mode 2 found; the API this check disabled on
-#             `--project` and on `--api-off-project` is enabled
-#             again, your ADC's quota project goes back to the one it had, and
-#             the scratch directory with the seven transcripts is removed. The
+#             `--project` and on `--api-off-project` is enabled again; your ADC's
+#             quota project goes back to the one it had; the scratch directory
+#             with the seven transcripts is removed, and with it the copy of the
+#             second login you made for `--second-adc` — the one case that keeps
+#             that copy is a run that could not put your own file back. The
 #             `restore` row says what really happened; a step that could not be
 #             undone reads FAIL and names the command to run by hand. No role is
 #             removed by any step of this script — the mode 2 route that removes
@@ -104,14 +109,18 @@
 # through those credentials, and a caller that lacks billing.accounts.list is
 # exactly what mode 2 exists to see, so 1(a) would refuse instead of offering if
 # the second account were the whole run's caller (that combination is refused
-# here rather than reported as a FAIL the checklist does not describe). Two
-# byte-for-byte copies are kept in the scratch directory for the length of the
-# run — your own file as mode 2 found it, and the second login as you made it —
-# and both files are put back exactly, by mode 2's end and again by the Restore
-# whatever ends the run; the copies never outlive the run, not even under
-# `CHECK111_KEEP_SCRATCH`. Nothing here reads either file: `cp` and `cmp` move
-# and compare bytes, and no refresh token ever reaches a shell variable, a
-# transcript or a fact.
+# here rather than reported as a FAIL the checklist does not describe). ONE
+# byte-for-byte copy is kept in the scratch directory for the length of the run
+# — your own file as mode 2 found it — and it is put back exactly, at mode 2's
+# end and again by the Restore whatever ends the run; it never outlives the run,
+# not even under `CHECK111_KEEP_SCRATCH`. The second login's own file is never
+# written to, and the copy over your file is a plain `cp`: your file keeps the
+# permissions it had, where `cp -p` would hand it the second file's and a second
+# login saved read-only would leave your ADC unwritable for the rest of the run.
+# The copy you made for `--second-adc` is removed by the Restore whenever the run
+# put your own file back, so no copy of a login outlives a run that used one.
+# Nothing here reads either file: `cp` and `cmp` move and compare bytes, and no
+# refresh token ever reaches a shell variable, a transcript or a fact.
 #
 # CHECK111_DRY_RUN, CHECK111_RUN_SECONDS and CHECK111_KEEP_SCRATCH exist for this
 # script's own test and for you: the first turns --dry-run on from the
@@ -304,7 +313,6 @@ ADC_QUOTA_ORIGINAL=""
 # your own copy is back, compared byte for byte.
 SECOND_ADC_IS=no
 ADC_OWN_BACKUP=""
-SECOND_ADC_BACKUP=""
 API_P_BEFORE=""
 API_Q_BEFORE=""
 API_S_BEFORE=""
@@ -547,7 +555,7 @@ guard_second_adc() {
   if mode_2_selected && cmp -s "$SECOND_ADC" "$file"; then
     stop "the ADC at $file is byte for byte the login --second-adc names, so this machine is still logged in as the second account — and modes 1(a), 1(b), 3, 4 and 5 run under YOUR OWN login, which is the premise the checklist writes for them. Run 'gcloud auth application-default login' and choose your own account, then run this check again. Nothing was run"
   fi
-  fact second-adc PASS "$SECOND_ADC (mode 2's runs alone are run with this login: this check copies it over $file for them and puts your own file back byte for byte as soon as each of them is done, so the modes that are not mode 2 run as you whatever --modes selects, and again from its exit trap whatever ends the run)"
+  fact second-adc PASS "$SECOND_ADC (mode 2's runs alone are run with this login: this check copies it over $file for them and puts your own file back byte for byte as soon as each of them is done, so the modes that are not mode 2 run as you whatever --modes selects, and again from its exit trap whatever ends the run; that trap removes this copy as well whenever the run put your own file back, so no copy of a login outlives a run that used one)"
 }
 
 mode_2_selected() {
@@ -577,21 +585,26 @@ guard_second_account() {
   stop "--second-account $SECOND_ACCOUNT without --second-adc makes that account the ADC of EVERY run here, and modes$other are not written for it: their runs read their project through those credentials, and a caller that lacks billing.accounts.list is what mode 2 exists to see. Save the second account's login to a file and pass --second-adc (the manual row has the commands), so only mode 2's runs use it; or run modes 2a,2b alone, with --modes 2a,2b, as a run whose whole caller is that account. Nothing was run"
 }
 
-# adc_swap_in / adc_swap_out: mode 2's login, in place and out again. Two
-# byte-for-byte copies live in the scratch directory for the length of the run
+# adc_swap_in / adc_swap_out: mode 2's login, in place and out again. One
+# byte-for-byte copy lives in the scratch directory for the length of the run
 # (mode 0700, and removed before the directory is — never kept, not even under
-# CHECK111_KEEP_SCRATCH): your own file as mode 2 found it, and the second login
-# as you made it, which is a file of yours that this check gives back unchanged
-# too. Nothing here reads either file.
+# CHECK111_KEEP_SCRATCH): your own file as mode 2 found it. The second login's
+# own file is never written to and never copied aside — nothing here writes it,
+# and a second copy would exist only to be put back over a file that was never
+# changed, which is one more copy operation that can fail and report a swap as
+# broken when it is not. The copy over your file is a plain `cp`, so your file
+# keeps the permissions it had: `cp -p` would hand it the second file's, and a
+# second login saved read-only (mode 0400, say) would then leave your ADC
+# unwritable — gcloud could not rewrite it, so mode 2 would stop on a file this
+# check broke, and the Restore could not put yours back over it. Nothing here
+# reads either file.
 adc_swap_in() {
   [ -n "$SECOND_ADC" ] || return 0
   [ "$SECOND_ADC_IS" != yes ] || return 0
   local live
   live=$(adc_file)
   ADC_OWN_BACKUP="$SCRATCH/adc-own.bak"
-  SECOND_ADC_BACKUP="$SCRATCH/adc-second.bak"
   cp -p "$live" "$ADC_OWN_BACKUP" || stop "this check could not keep a copy of your ADC file ($live) before mode 2's swap, and without it the swap could not be undone. Nothing was run"
-  cp -p "$SECOND_ADC" "$SECOND_ADC_BACKUP" || stop "this check could not keep a copy of $SECOND_ADC before mode 2's swap. Nothing was run"
   # In place BEFORE the write, never after it: the write has already begun to
   # change the live file when this flag would otherwise be set, and a copy that
   # stops half way — a full disk, an I/O error, a Ctrl-C in the lines between the
@@ -599,7 +612,7 @@ adc_swap_in() {
   # so set late it left the Restore's "your own login, byte for byte" branch
   # armed over a file that was not, and said nothing about how to get it back.
   SECOND_ADC_IS=yes
-  cp -p "$SECOND_ADC" "$live" || stop "this check could not put the second account's login in place for mode 2 ($SECOND_ADC -> $live), and $live may be part of one or of your own file. Mode 2 was not run; the Restore is putting your own copy ($ADC_OWN_BACKUP) back over it, and says so with the command to run if it cannot"
+  cp "$SECOND_ADC" "$live" || stop "this check could not put the second account's login in place for mode 2 ($SECOND_ADC -> $live), and $live may be part of one or of your own file. Mode 2 was not run; the Restore is putting your own copy ($ADC_OWN_BACKUP) back over it, and says so with the command to run if it cannot"
   cmp -s "$live" "$SECOND_ADC" || stop "the second account's login did not land whole in $live, so mode 2 would run as the wrong caller. Mode 2 was not run; the Restore is putting your own copy ($ADC_OWN_BACKUP) back over it, and says so with the command to run if it cannot"
   say "mode 2's runs use the login in $SECOND_ADC; your own ADC file is copied back byte for byte as soon as each of them is done, and by the Restore whatever ends this run"
 }
@@ -609,7 +622,6 @@ adc_swap_out() {
   local live ok=yes
   live=$(adc_file)
   { cp -p "$ADC_OWN_BACKUP" "$live" && cmp -s "$live" "$ADC_OWN_BACKUP"; } 2>/dev/null || ok=no
-  cp -p "$SECOND_ADC_BACKUP" "$SECOND_ADC" 2>/dev/null || ok=no
   [ "$ok" = yes ] || return 1
   SECOND_ADC_IS=out
   say "your own ADC file is back in place, byte for byte — mode 2 was the only part of this run that used $SECOND_ADC"
@@ -1553,12 +1565,29 @@ restore_run() {
       notes="$notes; $(adc_file) is your own login again, byte for byte, which is what mode 2 found there"
     else
       ok=no
-      notes="$notes; your ADC file is STILL the login in $SECOND_ADC, or part of it, and your own copy could not be put back over it — run: gcloud auth application-default login, choosing YOUR OWN account, and keep $SECOND_ADC for the next run"
+      notes="$notes; your ADC file is STILL the login in $SECOND_ADC, or part of it, and your own copy could not be put back over it — run: gcloud auth application-default login, choosing YOUR OWN account, and keep $SECOND_ADC for the next run (remove it when you are done: rm -f $SECOND_ADC)"
     fi
   elif [ "$SECOND_ADC_IS" = out ]; then
-    notes="$notes; $(adc_file) is your own login, byte for byte (mode 2's second login, $SECOND_ADC, was in place for mode 2's runs alone and put back out, and compared against the copy kept of it, when they were done)"
+    notes="$notes; $(adc_file) is your own login, byte for byte (mode 2's second login, $SECOND_ADC, was in place for mode 2's runs alone and put back out when they were done)"
   elif [ -n "$SECOND_ADC" ]; then
-    notes="$notes; mode 2's second login was never written to $(adc_file) — the swap stops before the copy that would write it — so your ADC file is untouched"
+    notes="$notes; mode 2's second login was never written to $(adc_file) — the swap stops before the copy that would write it — so your ADC file is untouched, and the copy you made for --second-adc ($SECOND_ADC) was never used by this run: remove it when you are done, with rm -f $SECOND_ADC"
+  fi
+  # The copy of the second login was made by the owner, for this run, and a run
+  # that put the machine back exactly as it found it takes that copy away with
+  # it: it is a login of the owner's left in a directory nobody names again, and
+  # the register promises that no copy of one outlives the run. The two states
+  # above that are NOT "put back" keep it instead, and name it in the row — the
+  # swap that could not be undone, where the copy is worth keeping for a second
+  # attempt, and the run that never reached mode 2, which may not throw away a
+  # file it never used. A copy that cannot be removed is a FAIL with the command
+  # to run, because it is the one thing here that would outlive the run.
+  if [ -n "$SECOND_ADC" ] && [ "$SECOND_ADC_IS" = out ]; then
+    if rm -f "$SECOND_ADC" 2>/dev/null && [ ! -e "$SECOND_ADC" ]; then
+      notes="$notes; the copy of the second login you made for --second-adc ($SECOND_ADC) is removed, so no copy of a login outlives this run"
+    else
+      ok=no
+      notes="$notes; the copy you made for --second-adc ($SECOND_ADC) could NOT be removed — run: rm -f $SECOND_ADC"
+    fi
   fi
   if [ -n "$QUOTA_POINTED" ]; then
     if quota_set "$ADC_QUOTA_ORIGINAL"; then
@@ -1589,11 +1618,12 @@ restore_run() {
 cleanup() {
   restore_run
   FACTS_CAPTURED=$(cat "$FACTS_FILE" 2>/dev/null || true)
-  # The two ADC copies mode 2's swap makes are the only credential files this
-  # check ever writes, and they live exactly as long as the run: the Restore has
-  # already put both files back, so the copies go even when the scratch
-  # directory itself is kept, and no copy of a login outlives the run.
-  rm -f "${ADC_OWN_BACKUP:-}" "${SECOND_ADC_BACKUP:-}" 2>/dev/null || true
+  # The one ADC copy mode 2's swap makes is the only credential file this check
+  # writes, and it lives exactly as long as the run: the Restore has already put
+  # your own file back, so the copy goes even when the scratch directory itself
+  # is kept, and no copy of a login outlives the run. The copy the owner made for
+  # --second-adc is the Restore's own removal, above.
+  rm -f "${ADC_OWN_BACKUP:-}" 2>/dev/null || true
   if [ -n "$KEEP_SCRATCH" ]; then
     say "the scratch directory is KEPT on purpose: $SCRATCH (CHECK111_KEEP_SCRATCH — the seven transcripts are in it)"
   else
@@ -1703,7 +1733,7 @@ print_block() { # print_block FACTS STATUS [recorded] — always on the owner's 
 # owner's own IAM (removing a billing role from their account) — neither is
 # something this check may do, and the route that removes a role is theirs to undo.
 record_manual() {
-  fact manual INFO "the ONE step no script runs for you, and what to paste back: mode 2 needs a caller that LACKS billing.accounts.list, which takes a browser or your own IAM — do it by hand, BEFORE this run, and pass what it made: (a) for mode 2(a), make your SECOND account's login a file and leave your machine on your own account — gcloud auth application-default login (choose the SECOND account); cp $(adc_file) /tmp/chk111-second.json; gcloud auth application-default login (choose YOUR OWN account again, so nothing of this is left behind); then grant that second account only the rank that lets the call be MADE on ${S:-<S>} (gcloud projects add-iam-policy-binding ${S:-<S>} --member=user:<SECOND> --role=roles/serviceusage.serviceUsageConsumer), and pass --second-adc /tmp/chk111-second.json --second-account <SECOND>: this check copies that login over $(adc_file) for mode 2's runs alone and puts your own file back byte for byte afterwards, and again from its exit trap whatever ends the run; (b) for mode 2(b) either the same --second-adc and --second-account, or remove the billing role from your own account (gcloud projects remove-iam-policy-binding ${S:-<S>} --member=user:<YOU> --role=<YOUR-BILLING-ROLE>) and pass --role-removed, then put the role back when you are done; if a run ever ends with your ADC still logged in as the second account (a swap that could not be put back — the restore row says so), run gcloud auth application-default login and choose your own account; then paste back, for each of the seven runs, its result, the exact guided line, the exact refusal or offer text, the exit code, which source answered in mode 2 AND which route made the caller lack the permission, and the assertion block's counts (P's and Q's must read 0, and S's must read 1 in mode 2), plus the agent marker your shell carried and whether --yes ever took mode 1(a)'s offer"
+  fact manual INFO "the ONE step no script runs for you, and what to paste back: mode 2 needs a caller that LACKS billing.accounts.list, which takes a browser or your own IAM — do it by hand, BEFORE this run, and pass what it made: (a) for mode 2(a), make your SECOND account's login a file and leave your machine on your own account — gcloud auth application-default login (choose the SECOND account); f=\$(mktemp \"\${TMPDIR:-/tmp}/chk111-second.XXXXXXXX\") && cp $(adc_file) \"\$f\" && echo \"\$f\" (mktemp picks the name and makes the file 0600 before anything is written, so no path in a shared directory can be prepared in advance — pass the path it prints); gcloud auth application-default login (choose YOUR OWN account again, so nothing of this is left behind); then grant that second account only the rank that lets the call be MADE on ${S:-<S>} (gcloud projects add-iam-policy-binding ${S:-<S>} --member=user:<SECOND> --role=roles/serviceusage.serviceUsageConsumer), and pass --second-adc \"\$f\" --second-account <SECOND>: this check copies that login over $(adc_file) for mode 2's runs alone, puts your own file back byte for byte afterwards and again from its exit trap whatever ends the run, and removes that copy in the same trap whenever the run put your own file back — so make it a throwaway: never point --second-adc at a login you mean to keep, and no copy of the second login outlives a run that used one (a run that could not put your file back, or that stopped before mode 2, leaves the copy and the restore row names the rm for you); (b) for mode 2(b) either the same --second-adc and --second-account, or remove the billing role from your own account (gcloud projects remove-iam-policy-binding ${S:-<S>} --member=user:<YOU> --role=<YOUR-BILLING-ROLE>) and pass --role-removed, then put the role back when you are done; if a run ever ends with your ADC still logged in as the second account (a swap that could not be put back — the restore row says so), run gcloud auth application-default login and choose your own account; then paste back, for each of the seven runs, its result, the exact guided line, the exact refusal or offer text, the exit code, which source answered in mode 2 AND which route made the caller lack the permission, and the assertion block's counts (P's and Q's must read 0, and S's must read 1 in mode 2), plus the agent marker your shell carried and whether --yes ever took mode 1(a)'s offer"
 }
 
 # -------------------------------------------------------------------- the plan
@@ -1719,7 +1749,7 @@ print_plan() {
   say "  [network, writes] mode 1(a) again with --yes: fugaro ${SETUP_ARGS[*]} --yes (the picker never runs there, so no offer may come)"
   say "  [network, writes] mode 1(b): the same two gcloud calls on ${Q:-<--api-off-project, required>}, then at a real terminal: fugaro ${SETUP_ARGS[*]} with the gcloud fallback maimed — the run must REFUSE and name the enable line"
   if [ -n "$SECOND_ADC" ]; then
-    say "  [local, writes] before mode 2: cp -p $(adc_file) to the scratch directory, cp -p $SECOND_ADC over $(adc_file) — mode 2's runs alone use the second account's login, and your own file is copied back byte for byte as soon as each of them is done, so the modes after mode 2 run as you, and again from the exit trap whatever ends the run. Both copies are removed with the scratch directory, never kept"
+    say "  [local, writes] before mode 2: cp -p $(adc_file) to the scratch directory, then cp $SECOND_ADC over $(adc_file) — a plain copy, so your file keeps the permissions it had — mode 2's runs alone use the second account's login, and your own file is copied back byte for byte as soon as each of them is done, so the modes after mode 2 run as you, and again from the exit trap whatever ends the run. That copy is removed with the scratch directory, never kept"
   else
     say "  [local] no --second-adc was given: mode 2's runs use $(adc_file) as it is, so that login has to be the second account's for the whole run — which only a run of modes 2a,2b alone may be"
   fi
@@ -1731,6 +1761,7 @@ print_plan() {
   say "and its Restore (also from the exit trap) would run:"
   if [ -n "$SECOND_ADC" ]; then
     say "  [local, writes] cp -p your own ADC file back over $(adc_file) — only if mode 2 swapped the second login in and could not put it back at the end of mode 2"
+    say "  [local, writes] rm -f $SECOND_ADC — the copy of the second login you made for this run, removed whenever the run put your own ADC file back, so no copy of a login outlives a run that used one"
   fi
   say "  [network, writes] gcloud services enable cloudbilling.googleapis.com --project=$P — only if mode 1(a) disabled it"
   say "  [network, writes] gcloud services enable cloudbilling.googleapis.com --project=${Q:-<Q>} — only if mode 1(b) disabled it"
