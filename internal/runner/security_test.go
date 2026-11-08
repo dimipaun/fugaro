@@ -159,16 +159,18 @@ func TestRunWithLevelThreeAlreadyAskedRecordsNoEscalation(t *testing.T) {
 	}
 }
 
-// TestRunEscalationTurnsLevelThreeOnOverALayersNone: the forced level is
-// raise-only (D1517 — the reason SC10's `security: false` changes nothing), so
-// a layer that writes level 3's own off-switch does not defeat the escalation.
-// D722 refuses a floored level a layer turned off, and that refusal is the
-// launcher's: it is raised at bootstrap, where the person who wrote the task
-// can still be told. At this seam there is no launcher left, and the run's own
-// classification decides (D1510) — without this the run would be
-// indistinguishable from one whose diff matched nothing at all: level 3 off, no
-// adversarial step, and no escalation in the record.
-func TestRunEscalationTurnsLevelThreeOnOverALayersNone(t *testing.T) {
+// TestRunEscalationIsRefusedWhenALayerTurnsLevelThreeOff: the forced level is a
+// requirement of the escalation's own resolution, and a layer that wrote level
+// 3's own off-switch is refused there exactly as D722 refuses a level the
+// owner's floor requires and a layer turned off — the level is never quietly
+// kept on. The refusal is a warning and the run goes on (F9), so the escalation
+// is refused with it: level 3 stays off, the plan keeps the steps it had, and
+// the record carries no escalation. Overriding the switch instead would spend
+// an adversarial round on a run whose repository — or whose launcher — turned
+// the level off, and D722's own reason is why it may not: a launcher writes the
+// task, so ignoring its `none` would be the launcher deciding how much review
+// it gets.
+func TestRunEscalationIsRefusedWhenALayerTurnsLevelThreeOff(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		cfg  *config.LevelSetting
@@ -198,19 +200,17 @@ func TestRunEscalationTurnsLevelThreeOnOverALayersNone(t *testing.T) {
 			if levelOn(r.levels, policy.LevelL3) {
 				t.Fatal("level 3 runs before the escalation, so the test proves nothing")
 			}
+			plan := slices.Clone(r.plan)
 			change(t, repo, map[string]string{listedPath: "package creds\n"}, "work on the credentials tree")
 			r.escalateSecurity(context.Background(), runstore.SecurityAtImplement)
-			if !levelOn(r.levels, policy.LevelL3) {
-				t.Fatalf("a layer's none defeated the escalation: %+v", r.levels)
+			if levelOn(r.levels, policy.LevelL3) {
+				t.Fatalf("the escalation turned level 3 on over a layer's none: %+v", r.levels.L3)
 			}
-			if got := r.levels.L3.Model; got != reviewerModel {
-				t.Errorf("the escalated level runs %q, want the reviewer's own %q: the off-switch is cleared, not the level's model", got, reviewerModel)
+			if !reflect.DeepEqual(r.plan, plan) {
+				t.Fatalf("the plan moved for an escalation that was refused: %+v, want %+v", r.plan, plan)
 			}
-			if !hasAdversarialStep(r.plan) {
-				t.Fatalf("the plan carries no adversarial step: %+v", r.plan)
-			}
-			if r.rec.Security == nil {
-				t.Fatal("the escalation fired and the record carries nothing, so the run looks like one whose diff matched nothing")
+			if r.rec.Security != nil {
+				t.Fatalf("the escalation was refused and the record claims it happened: %+v", r.rec.Security)
 			}
 		})
 	}
