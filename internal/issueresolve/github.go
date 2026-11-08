@@ -168,16 +168,17 @@ func isPullRequest(raw json.RawMessage) bool {
 }
 
 // Fetch asks GitHub about issue number and reports what it shows. number
-// must be positive: it is the only thing that decides the URL, and a number
-// that is not one (zero, negative) is refused before a request is made.
-// The request is bounded by FetchTimeout, its answer by maxBody, and the
-// error is ErrRateLimited or ErrTransport - never an untyped error and
-// never a state the reader guessed.
+// is the only thing that decides the URL, and it must be positive: a number
+// that is not one (zero, negative) is refused before any request is made,
+// with a plain error - it is a caller's bug, not an answer from GitHub.
 //
-// A number that is not positive is the one refusal that is neither: it is
-// a caller's bug, not an unreachable GitHub (ErrTransport) and not an
-// exhausted limit (ErrRateLimited), and a caller that stops its pass on
-// those must not stop on this.
+// The request is bounded by FetchTimeout, its answer by maxBody. What
+// GitHub decides comes back as a State; what it does not decide - a pull
+// request, a close reason this reader does not know, a close as completed
+// without a release milestone, an issue it no longer has - is NoVerdict
+// with no error; and an answer that could not be used at all is
+// ErrRateLimited or ErrTransport, never an untyped error and never a state
+// the reader guessed.
 func (r *Reader) Fetch(ctx context.Context, number int) (State, error) {
 	if number < 1 {
 		return NoVerdict{}, fmt.Errorf("refusing issue number %d", number)
