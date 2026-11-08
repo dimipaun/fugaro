@@ -104,10 +104,18 @@ func TestWorkingSkillNeverSubmitsOnItsOwn(t *testing.T) {
 // to say where a report lands in the CLI that ships. That is the checkout's
 // own `docs/fugaro-reviews/` today (`--dir` names the folder; the writer, the
 // reader and `--due` all work on it), with the commit as a separate opt-in
-// step. The bucket the 2026-11-05 rulings (E1, E7, E8) move reports into is
-// R10's writer, which the plan ships in the same release as R1 and R3: the
-// wording here is the shipped one, and R10's PR is where both this file and
-// the skill change together.
+// step.
+//
+// No task in the plan owns this sentence, and the pin is what stands in for
+// one. R3 asks for the bucket wording the 2026-11-05 rulings (E1, E7, E8)
+// call for, but the writer that would make it true is R10's, and R10's file
+// list is `internal/cli/runs_digest.go`, `internal/cli/runs_digest_test.go`,
+// `docs/recipes.md` and `internal/digest/store.go` -- the plugin skills are
+// not in it, so R10's PR does not touch this file and nothing else schedules
+// the correction either. So the pin holds the shipped wording, and landing
+// R10's default breaks it on purpose: whoever lands R10 updates the skill,
+// the reference and this test together, rather than the skills going on
+// describing a default the command no longer has.
 func TestWorkingSkillCarriesTheDueSignalAndTheReportsPlace(t *testing.T) {
 	files := workingSkillFiles(t)
 	ref, ok := files["skills/working/reference/periodic-reviews.md"]

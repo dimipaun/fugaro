@@ -396,7 +396,7 @@ be held to it) or **Open** (the design leaves it to the owner).
   whichever the tree says by then". The tree has both: D326 (`:302`) is the rule's *idea*, and
   `docs/periodic-reviews/` is where the rule *list* is written down
   (`docs/periodic-reviews/spec.md:114`, `implementation-plan.md:266`, `:279`, the skill's own list in
-  `plugin/skills/working/reference/periodic-reviews.md:54`, which names the four patterns and what each
+  `plugin/skills/working/reference/periodic-reviews.md:56`, which names the four patterns and what each
   one means). → **D1463**.
 - **F25 — this folder's copy is falsified by FC2.** `TestDocsFailureClassCensusMatchesTheRunner`
   (`internal/cli/docs_pr_state_test.go:303`) fatals on `statements == 0`, which is exactly the state
