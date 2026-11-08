@@ -134,13 +134,14 @@ func verdict(a issueAnswer) State {
 	}
 	switch a.State {
 	case "open":
-		// GitHub sends no reason for an open issue (a reopened one carries
-		// "reopened"); anything else is an answer talking past itself, and
-		// no verdict is the honest report of it.
-		if a.StateReason != "" {
-			return NoVerdict{}
+		// An issue that was reopened and is open again carries "reopened"
+		// here; GitHub sends no reason otherwise. Both are an open issue,
+		// which is nothing to do. Any other reason is an answer talking
+		// past itself, and no verdict is the honest report of it.
+		if a.StateReason == "" || a.StateReason == "reopened" {
+			return Open{}
 		}
-		return Open{}
+		return NoVerdict{}
 	case "closed":
 		switch a.StateReason {
 		case "completed":

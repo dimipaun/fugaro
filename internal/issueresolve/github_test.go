@@ -147,6 +147,18 @@ func TestFetchDecodesARealIssue(t *testing.T) {
 	srv, _ := issueServer(t, http.StatusOK, issueBody(t, nil))
 	got, err := fetch(t, srv, 42)
 	wantState(t, got, err, Open{})
+
+	// A reopened issue is open, and carries the one reason GitHub sends for
+	// an open one: reading it as no verdict would say an issue that is back
+	// is decided, and it must not be a state the reader guessed either.
+	//
+	// Mutation: accepting only "" as an open reason makes this case fail.
+	srv, _ = issueServer(t, http.StatusOK, issueBody(t, map[string]any{
+		"state":        "open",
+		"state_reason": "reopened",
+	}))
+	got, err = fetch(t, srv, 42)
+	wantState(t, got, err, Open{})
 }
 
 // TestFetchClosedCompletedCarriesMilestone pins the one answer that fixes
@@ -306,15 +318,21 @@ func TestFetchRefusesRedirect(t *testing.T) {
 // is refused without being read whole, and a large but real-sized response
 // (a long discussion on an issue) still decodes.
 //
-// Mutation, each caught by one case below: dropping the length check
-// accepts the oversize response, and reading with io.ReadAll instead of the
-// limited reader buffers the whole body before refusing it.
+// Mutation, each caught by one case below: dropping the length check lets
+// the valid document the first case pads past the bound through, and reading
+// with io.ReadAll instead of the limited reader buffers the whole of the
+// counting body before refusing it.
+//
+// The padding is whitespace because JSON allows it: a valid issue document
+// followed by it is a document this reader would decode and act on, so the
+// bound - not the decode - is what refuses it. An oversize body that is cut
+// into invalid JSON would be refused either way and so would pin nothing.
 func TestFetchBoundsTheBody(t *testing.T) {
-	oversize := issueBody(t, map[string]any{"body": strings.Repeat("x", maxBody)})
-	srv, _ := issueServer(t, http.StatusOK, oversize)
+	padded := issueBody(t, nil) + strings.Repeat(" ", maxBody+1)
+	srv, _ := issueServer(t, http.StatusOK, padded)
 	got, err := fetch(t, srv, 42)
 	if !errors.Is(err, ErrTransport) {
-		t.Fatalf("Fetch = %v, %v, want ErrTransport for a body past the %d byte bound", got, err, maxBody)
+		t.Fatalf("Fetch = %v, %v, want ErrTransport for a valid document padded past the %d byte bound", got, err, maxBody)
 	}
 
 	// The bound has to stop the read, not only refuse the verdict: a
