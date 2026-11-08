@@ -1,11 +1,9 @@
 name: ci
 on:
-  push:
-    branches: [main]
   # Pull requests are not merge-gated by CI (owner's ruling 2026-10-16: the
   # in-run loop already runs the tests). Run it on demand against a branch with
-  # `gh workflow run ci --ref <branch>`; every push to main still runs it, and
-  # the release gate (scripts/release-gate.sh) requires it green on the tag's commit.
+  # `gh workflow run ci --ref <branch>`; nothing runs it
+  # automatically (owner's ruling 2026-11-07: dispatch by hand, in batches); the release gate (scripts/release-gate.sh) requires it green on the tag's commit.
   workflow_dispatch:
 permissions:
   contents: read
@@ -83,7 +81,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: "21"

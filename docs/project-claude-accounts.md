@@ -1,6 +1,6 @@
 # Project Claude accounts: one OAuth token per (profile, account)
 
-Status: **0.9.0, released.** The released Fugaro is 0.20.3, and 0.9.0 is the first release any of this page works on:
+Status: **0.9.0, released.** The released Fugaro is 0.21.0, and 0.9.0 is the first release any of this page works on:
 the `claude_accounts` field inside a profile, the `accounts` block in the published policy and the
 jobs they name all ship in 0.9.0 (policy version 3,
 [`internal/projectpolicy/version.go`](../internal/projectpolicy/version.go)), and a 0.8.x binary
@@ -491,9 +491,14 @@ Per repository checkout, `fugaro doctor` carries three checks for this feature:
 
 - **`project-account-stored`** — every account job the installation serves has a stored project-wide
   version of its token. A missing one is a failing check naming the job, the profile, the account
-  and the token, with the fix on the line: the account's token, stored project-wide — which §2's one
-  command does, and which `fugaro secrets set claude-oauth-token-<name> --project-wide` does on its
-  own. The OK line
+  and the token, with the fix on the line `fugaro accounts add <name> --repos <owner/name> --profile <profile>` for a
+  named account a profile serves — §2's one command, spelled with the account's own `allow_data_to`
+  and the profile that already serves it, so pasting it neither widens the account with the checkout
+  it happens to run in nor picks a profile for itself — `claude setup-token; fugaro secrets set claude-oauth-token-<name>` for a
+  named account no profile's `claude_accounts` lists, where `accounts add` would refuse in a project
+  with several profiles and otherwise serve the account from a profile that did not — and
+  `claude setup-token; fugaro secrets set claude-oauth-token --project-wide` for
+  the default account, whose name is reserved and which no `accounts add` form takes. The OK line
   lists each account job with the repositories its token may be used by, and says that the mount is
   static — so the container holds the *project-wide* copy, and a repository copy does not reach it.
   It prints **no line at all** when the installation serves no account job — there is nothing to

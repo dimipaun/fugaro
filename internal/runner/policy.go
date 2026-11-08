@@ -464,8 +464,16 @@ func sourcesText(m map[string]string) string {
 // PolicyKeyPath is where a policy key lives in fugaro.yaml: the governance
 // keys under a governance: block of their own — a tier's own keys under
 // governance.tiers.<tier>, the block that carries them (policy.TierKey) — the
-// agent's output limits under agent:, and everything else — the budget's cost
-// and model policy — under budget:.
+// agent's own keys, its output limits and the crafts, under agent:, and
+// everything else — the budget's cost and model policy — under budget:.
+//
+// A craft key is the agent.crafts block (policy.CraftAccessKey), which is the
+// block where a repository's file writes the one of the three it may write at
+// all: a craft's access, a selection among the credentials and the pools the
+// project creates (F12, D1628). A credential or a pool a later layer may not
+// introduce is reported under it too — no repository file carries either, and
+// the block that speaks a credential name is the one that carries crafts, never
+// budget:, where neither a craft nor a credential lives.
 func PolicyKeyPath(key string) string {
 	switch key {
 	case policy.KeyMaxRunTokens, policy.KeyMaxOutputCoder, policy.KeyMaxOutputReviewer:
@@ -478,6 +486,9 @@ func PolicyKeyPath(key string) string {
 	}
 	if strings.HasPrefix(key, "tiers.") {
 		return "governance." + key
+	}
+	if strings.HasPrefix(key, "crafts.") {
+		return "agent." + key
 	}
 	return "budget." + key
 }

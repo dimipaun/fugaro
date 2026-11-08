@@ -165,6 +165,85 @@ func TestForgetRepoStateDeletesOnlyThatRepository(t *testing.T) {
 	}
 }
 
+// TestRepoCredentialsServiceAppliedReadsTheSharedState: the upgrade's backfill
+// asks whether a repository root's apply made the service usable to that
+// repository, and the answer has to come from the installation's own copy of
+// that root's state — the objects under its prefix in the state bucket, written
+// by whichever machine ran the apply — and never from a document one machine
+// happens to hold.
+//
+// The three falses are the three states that are all "no evidence a job may
+// invoke the service": a root never applied anywhere (no object at all), one
+// applied with the switch off (the resource is not planned, so its address is
+// absent), and one whose only object is another repository's. The error is the
+// one a caller may not read as a no: a state object that is not a state. A
+// record written from any of them is what leaves a `cascade` run of that
+// repository with no model mounts and no address (D143).
+func TestRepoCredentialsServiceAppliedReadsTheSharedState(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	f.gcs.AddBucket(testStateBucket, testProjectNumber, tfstate)
+	b := f.gcs.Bucket(t, testStateBucket)
+	spec := sandboxSpec(t)
+	other := "other-0123456789abcdef"
+	write := func(name, doc string) {
+		t.Helper()
+		if err := b.WriteAll(ctx, name, []byte(doc), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state := func(addresses ...string) string {
+		res := make([]map[string]any, 0, len(addresses))
+		for _, a := range addresses {
+			res = append(res, map[string]any{"address": a})
+		}
+		doc, err := json.Marshal(map[string]any{
+			"format_version": "1.0",
+			"values":         map[string]any{"root_module": map[string]any{"child_modules": []map[string]any{{"resources": res}}}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(doc)
+	}
+
+	// Never applied anywhere.
+	if on, err := RepoCredentialsServiceApplied(ctx, f.c, testStateBucket, spec.Slug); err != nil || on {
+		t.Fatalf("a repository with no state at all: on %v, err %v", on, err)
+	}
+	// Applied with the service off: the root's own resources are there, the
+	// invoker grant is not.
+	write(RepoStatePrefix(spec.Slug)+"/default.tfstate", state(`module.repo.module.workflow["web"].google_cloud_run_v2_job.workflow`))
+	if on, err := RepoCredentialsServiceApplied(ctx, f.c, testStateBucket, spec.Slug); err != nil || on {
+		t.Fatalf("a root applied with the service off: on %v, err %v", on, err)
+	}
+	// Another repository's grant is not this one's.
+	write(RepoStatePrefix(other)+"/default.tfstate", state(`module.repo.module.workflow["web"].google_cloud_run_v2_service_iam_member.credentials[0]`))
+	if on, err := RepoCredentialsServiceApplied(ctx, f.c, testStateBucket, spec.Slug); err != nil || on {
+		t.Fatalf("another repository's state: on %v, err %v", on, err)
+	}
+	// Applied with the service on.
+	write(RepoStatePrefix(spec.Slug)+"/default.tfstate", state(
+		`module.repo.module.workflow["web"].google_cloud_run_v2_job.workflow`,
+		`module.repo.module.workflow["web"].google_cloud_run_v2_service_iam_member.credentials[0]`))
+	if on, err := RepoCredentialsServiceApplied(ctx, f.c, testStateBucket, spec.Slug); err != nil || !on {
+		t.Fatalf("a root applied with the service on: on %v, err %v", on, err)
+	}
+	// A second workflow's grant counts too: the module plans one per workflow.
+	write(RepoStatePrefix(spec.Slug)+"/default.tfstate", state(
+		`module.repo.module.workflow["build"].google_cloud_run_v2_service_iam_member.credentials[0]`))
+	if on, err := RepoCredentialsServiceApplied(ctx, f.c, testStateBucket, spec.Slug); err != nil || !on {
+		t.Fatalf("a grant in another workflow's module: on %v, err %v", on, err)
+	}
+	// A state object that cannot be read is the error, never a no — even when
+	// the objects beside it hold no grant, since the unreadable one might.
+	write(RepoStatePrefix(spec.Slug)+"/default.tfstate", state(`module.repo.module.workflow["web"].google_cloud_run_v2_job.workflow`))
+	write(RepoStatePrefix(spec.Slug)+"/extra.tfstate", "not a state")
+	if _, err := RepoCredentialsServiceApplied(ctx, f.c, testStateBucket, spec.Slug); err == nil {
+		t.Error("an unreadable state object answered instead of erroring")
+	}
+}
+
 // seedVersions makes every secret of spec exist with our marks, and gives
 // the ones in with a version.
 func (f *cloud) seedVersions(spec RepoSpec, with ...string) {
@@ -434,6 +513,72 @@ func TestSecretCommands(t *testing.T) {
 	}
 	if got := SecretCommands(spec, map[string]bool{"bitbucket-token": true, "claude-oauth-token": true, "sandbox-probe": true}, "fugaro", func(s string) string { return s }); len(got) != 0 {
 		t.Fatalf("every secret stored, still: %+v", got)
+	}
+
+	// No profile serves the account, so the step is not `accounts add`: the
+	// account is one the config already declares (config.AllowedClaudeAccounts
+	// is where the name in spec.Secrets came from), and the command would have
+	// nothing to declare and only a profile to choose for itself — refusing in
+	// a project with several profiles (accountsAddProfile) and adopting the
+	// only one otherwise, deploying a job for an account that profile did not
+	// serve. The pair that mints the token and stores it in the container such
+	// a job would mount is the whole step, as it was before `accounts add` took
+	// it over (code review, medium). The default account's own step is
+	// unchanged above, because `fugaro accounts add default` is refused (the
+	// name is reserved).
+	named, err := Repo(sandboxInputs(t, m5Additions+"claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/sandbox]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := map[string]bool{"bitbucket-token": true, "claude-oauth-token": true, "sandbox-probe": true}
+	got = SecretCommands(named, stored, "fugaro", func(s string) string { return s })
+	want = []SecretStep{{Name: "claude-oauth-token-acme-personal", What: named.Secrets["claude-oauth-token-acme-personal"],
+		Commands: []string{"claude setup-token", "fugaro secrets set claude-oauth-token-acme-personal"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("commands for a named account no profile serves:\n%+v\nwant:\n%+v", got, want)
+	}
+
+	// A profile that already serves the account leaves that half of the
+	// command a no-op, so the step is `accounts add` — the one command that
+	// declares the account, stores its token project-wide and converges the
+	// installation (spec §8) — spelled with --repos with this repository,
+	// because the command would otherwise take the origin of whatever checkout
+	// it is pasted into, and with the profile (code review, medium).
+	served, err := Repo(sandboxInputs(t, m5Additions+
+		"claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/sandbox]\n"+
+		"profiles:\n  alpha: { provider: bitbucket }\n  zeta: { provider: bitbucket, claude_accounts: [acme-personal] }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = SecretCommands(served, stored, "fugaro", func(s string) string { return s })
+	want = []SecretStep{{Name: "claude-oauth-token-acme-personal", What: served.Secrets["claude-oauth-token-acme-personal"],
+		Commands: []string{"fugaro accounts add acme-personal --repos acme/sandbox --profile zeta"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("commands for a served named account:\n%+v\nwant:\n%+v", got, want)
+	}
+}
+
+// TestSecretCommandsNamesTheRepositoryItIsFor pins the repository the
+// named-account line carries: spec.Name, the one the step's other commands
+// already use (SecretFix), and never a checkout's origin — `fugaro accounts
+// add` defaults --repos to the origin of whatever checkout it is pasted
+// into, so a line that did not name this repository would bind the account
+// to another one.
+func TestSecretCommandsNamesTheRepositoryItIsFor(t *testing.T) {
+	spec, err := Repo(sandboxInputs(t, m5Additions+
+		"claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/sandbox]\n"+
+		"profiles:\n  zeta: { provider: bitbucket, claude_accounts: [acme-personal] }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := map[string]bool{"bitbucket-token": true, "claude-oauth-token": true, "sandbox-probe": true}
+	for _, name := range []string{"acme/sandbox", "acme/other"} {
+		spec.Name = name
+		got := SecretCommands(spec, stored, "fugaro", func(s string) string { return s })
+		want := "fugaro accounts add acme-personal --repos " + name + " --profile zeta"
+		if len(got) != 1 || len(got[0].Commands) != 1 || got[0].Commands[0] != want {
+			t.Fatalf("steps for %s:\n%+v\nwant one step %q", name, got, want)
+		}
 	}
 }
 

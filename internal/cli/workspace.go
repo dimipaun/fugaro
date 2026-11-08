@@ -65,6 +65,7 @@ command that converges the installation: fugaro update.`,
 	cmd.AddCommand(
 		newWorkspaceLsCmd(),
 		newWorkspaceShowCmd(),
+		newWorkspaceLoginCmd(),
 		newWorkspaceAddCmd(),
 		newWorkspaceRmCmd(),
 		newWorkspaceMemberCmd(),
@@ -245,14 +246,14 @@ func runWorkspaceAdd(cmd *cobra.Command, name string, o *workspaceAddOptions) er
 		Command: workspaceAddCommand(name, o),
 		Yes:     o.yes,
 	}
-	// Re-pinning is the widening direction: the membership the project already
-	// states is replaced by another one, or by the same name with different
-	// values, so the project's own name confirms it (D846) — or --yes outside a
-	// coding agent's session. A first membership widens nothing and is the
-	// ordinary y/N.
+	// Re-pinning is the widening direction (D846): the membership the project
+	// already states is replaced by another one, or by the same name with
+	// different values, which is the owner's own step — asked nothing at their
+	// terminal and refused in a coding agent's session (D1552). A first
+	// membership widens nothing and is the ordinary write.
 	if lc.Workspace != "" || !lc.WorkspacePin.IsZero() {
 		edit.Typed = true
-		edit.TypedWhy = fmt.Sprintf("this replaces what project %s trusts: the membership moves from %s to %s, or %s is re-pinned with different values, so the project's own name is what confirms it, or --yes outside a coding agent's session",
+		edit.TypedWhy = fmt.Sprintf("this replaces what project %s trusts: the membership moves from %s to %s, or %s is re-pinned with different values",
 			lc.Name, workspaceOrNone(lc.Workspace), name, name)
 	}
 	if err := workspaceEditLocal(cmd, lc, sel.Path, edit); err != nil {
@@ -548,12 +549,13 @@ func runWorkspaceMemberAdd(cmd *cobra.Command, workspace, project string, o *wor
 	}
 	// A replaced entry widens and narrows at once, and which the owner is doing
 	// is not something this command can tell: the same declaration that adds an
-	// account drops the one it did not name. So it asks for the project's own
-	// name, like every other write that changes what this machine trusts, and
-	// says what the replace does to the values the entry carries today.
+	// account drops the one it did not name. So it takes the widening
+	// classification, like every other write that changes what this machine
+	// trusts, and says what the replace does to the values the entry carries
+	// today.
 	if declared {
 		edit.Typed = true
-		edit.TypedWhy = fmt.Sprintf("this replaces the entry workspace %s declares for %s: the entry is written whole, so a job service account or a repository it carries today and this declaration does not name is gone from the table; the workspace's own project name confirms it, or --yes outside a coding agent's session",
+		edit.TypedWhy = fmt.Sprintf("this replaces the entry workspace %s declares for %s: the entry is written whole, so a job service account or a repository it carries today and this declaration does not name is gone from the table",
 			workspace, project)
 	}
 	if err := workspaceEditLocal(cmd, lc, path, edit); err != nil {
@@ -758,12 +760,13 @@ func runWorkspaceCapSet(cmd *cobra.Command, o *workspaceCapOptions) error {
 		Command: fmt.Sprintf("fugaro workspace cap set --workspace %s --monthly %s", o.workspace, amount),
 		Yes:     o.yes,
 	}
-	// Raising a ceiling is the widening direction D846 reserves the project's
-	// own name for. The first cap widens nothing — there was no ceiling to
-	// loosen — and lowering one takes room away.
+	// Raising a ceiling is the widening direction D846 reserves for the owner's
+	// own step: asked nothing at their terminal, and refused in a coding
+	// agent's session (D1552). The first cap widens nothing — there was no
+	// ceiling to loosen — and lowering one takes room away.
 	if lc.WorkspaceCap != nil && o.monthly > lc.WorkspaceCap.Monthly {
 		edit.Typed = true
-		edit.TypedWhy = fmt.Sprintf("this raises workspace %s's own cap from $%v to $%s a month, which is the ceiling its credentials spend against: the project's own name is what confirms it, or --yes outside a coding agent's session",
+		edit.TypedWhy = fmt.Sprintf("this raises workspace %s's own cap from $%v to $%s a month, which is the ceiling its credentials spend against",
 			o.workspace, lc.WorkspaceCap.Monthly, amount)
 	}
 	if err := workspaceEditLocal(cmd, lc, path, edit); err != nil {

@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/logtail"
 	"github.com/dimipaun/fugaro/internal/procgroup"
@@ -192,11 +193,11 @@ func (r *run) artifactMode(ctx context.Context) {
 				r.endArtifactCancelled(ctx, "cancelled while collecting the artifacts")
 				return
 			}
-			r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, r.redact(aerr.Error())
+			r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, failure.Unclassified, r.redact(aerr.Error()))
 			r.d.Log.Warn("the artifact step failed", "err", r.rec.Reason)
 			break
 		}
-		r.rec.Status, r.rec.Outcome = runstore.StatusSucceeded, runstore.OutcomeArtifacts
+		r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeArtifacts, "", r.rec.Reason)
 	case r.haltValue() != nil:
 		// A halt that landed while the render ran: recorded by the stage's
 		// own machinery (the budget backend polls independently), and a halt
@@ -210,7 +211,7 @@ func (r *run) artifactMode(ctx context.Context) {
 		r.endArtifactCancelled(ctx, "cancelled during render")
 		return
 	default:
-		r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, r.redact(err.Error())
+		r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, failure.Unclassified, r.redact(err.Error()))
 		r.d.Log.Warn("the render step failed", "err", r.rec.Reason)
 	}
 	r.skipPR = true
@@ -1475,7 +1476,7 @@ func (r *run) storeArtifactEnded(ctx context.Context) {
 // cancelled, outcome none, never infra_error. finalize, which still runs
 // after, does nothing more (r.skipPR).
 func (r *run) endArtifactCancelled(ctx context.Context, reason string) {
-	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusCancelled, runstore.OutcomeNone, reason
+	r.recordEnd(runstore.StatusCancelled, runstore.OutcomeNone, failure.Cancelled, reason)
 	r.skipPR = true
 	r.storeArtifactEnded(ctx)
 }
@@ -1486,8 +1487,8 @@ func (r *run) endArtifactCancelled(ctx context.Context, reason string) {
 // which is why the halt advice in halt.go needs no arm of its own for this
 // mode.
 func (r *run) endArtifactHalted(ctx context.Context, h *runstore.Halt) {
-	r.rec.Status, r.rec.Outcome, r.rec.Halt = runstore.StatusHalted, runstore.OutcomeNone, h
-	r.rec.Reason = (&HaltError{*h}).Error()
+	r.rec.Halt = h
+	r.recordEnd(runstore.StatusHalted, runstore.OutcomeNone, haltClass(h.Reason), (&HaltError{*h}).Error())
 	r.skipPR = true
 	r.storeArtifactEnded(ctx)
 }
@@ -1496,7 +1497,7 @@ func (r *run) endArtifactHalted(ctx context.Context, h *runstore.Halt) {
 // the state directory, the render's process) failed outright: status
 // infra_error, outcome none.
 func (r *run) failArtifactInfra(ctx context.Context, err error) {
-	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusInfraError, runstore.OutcomeNone, r.redact(err.Error())
+	r.recordEnd(runstore.StatusInfraError, runstore.OutcomeNone, failure.InfraError, r.redact(err.Error()))
 	r.skipPR = true
 	r.d.Log.Warn("the artifact run failed", "err", r.rec.Reason)
 	r.storeArtifactEnded(ctx)
@@ -1511,7 +1512,13 @@ func (r *run) endArtifactFailed(ctx context.Context) {
 	if reason == "" {
 		reason = "the plan stage ended without a result"
 	}
-	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, r.redact(reason)
+	// The class is the one the site that wrote this reason chose, exactly as
+	// finalize's failed case reads it: the reason here *is* r.failure(), so a
+	// class written independently of it would describe a different sentence
+	// (a plan stage whose result reported an error carries
+	// stage_error_unexplained — or the provider-auth or transport class beside
+	// it — and unclassified would drop it).
+	r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, r.failureClass(), r.redact(reason))
 	r.skipPR = true
 	r.storeArtifactEnded(ctx)
 }

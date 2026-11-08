@@ -43,6 +43,14 @@ that finds every place it is written and every test that pins it.
 | **Why, in the owner's words** | the reason for opt-in was **cost**, and a Cloud Run service that **scales to zero costs nothing idle**; so **remove the opt-in complexity** |
 | **Reverses** | the "ships dormant / optional" rulings and the `--provision-credentials` opt-in as the *only* way the service is deployed |
 | **Amended after review** | 2026-11-06 — the **deploy** stands for every installation; the **switch** (the repository roots reading the service back and the run handing the job its URL) is separated from it, because the drop it triggers is auth-blind (§1.4) |
+| **Amended after review** | 2026-11-07 — the readiness record is a **per-repository fact written by the door that applies that repository's root**, and it is written as the value that root's **plan was built with**: a record vouches for a grant, only a root's own apply makes one, and the same rule runs the other way (§3 DON8) — and **neither door writes one in a coding agent's session or in a run's own process**, where the bundle is not read at all |
+| **Amended after review** | 2026-11-07 — the record is the **switch itself**, not the reading of the bundle: the auth its plan was built for is **folded into it** (`infra.CredentialsServiceServes`, not a second copy of its conjunction), so a root applied before its owner committed the cascade is recorded held off and no launch is handed an address whose `roles/run.invoker` grant no apply made. The auth stays **read live** at every build and every launch, which is what honours an edit in the other direction |
+| **Amended after review** | 2026-11-07 — **the record carries the plan's FIRST condition as well as its third**: `installed` is read from the installation root's **outputs** — the source the spec reads it from — and not from the local config's block, which is what an owner's opt-out leaves behind while the outputs carry no service, so a `fugaro update --repo` can no longer record `true` for a root it applied held off (§3 DON8) |
+| **Amended after review** | 2026-11-07 — **a read that failed is not a reading and therefore not an answer.** The three states that answer are facts about the bundle, true for every reader (no version, a newest version that is `DISABLED`, a document that parses without a `KindModel` entry); an error is a fact about **this machine's identity**, and the record travels in the local config `fugaro update` publishes, so a `false` written from it switches the service off for every machine of the installation — including the jobs whose mounts the last apply dropped. A failed read leaves the record as the last reading wrote it (§3 DON8) |
+| **Amended after review** | 2026-11-07 — **the reading is asked once per run, and BOTH of its answers are memoized together** (the sixth review round): one run asks twice — the installation door's backfill, then the repository stage's record — and memoizing the reading alone left the second door answering "the bundle holds no model credential" out of a memo the first door had written as "there was no reading", which is the same installation-wide `false` the row above refuses, reached through the run's own second door (§3 DON8) |
+| **Amended after review** | 2026-11-07 — **the record is a tri-state, not a boolean, and the upgrade's backfill reads the INSTALLATION's own state** (the seventh review round, three findings, §3 DON8). *No record* and a recorded `false` are two documents (`localcfg.Repo.CredentialsServiceReady` is a pointer): the first means no machine has judged that root, the second is an apply that ran with the switch off, and only the first may be refilled — so `MergeShared` carries a published record over a local entry that has none, or every machine that did not apply that root would publish the absence over the record the machine that did wrote, leaving a `cascade` repository's runs with no address on every machine of the installation. The backfill's evidence is the repository root's **state in the installation's state bucket** (`infra.RepoCredentialsServiceApplied`) and not the tfvars in this machine's workdir, which per-machine — and per-checkout — state would leave an installation whose roots a teammate applied converging one `fugaro update --repo` at a time, the operator step the HARD RULE forbids. And a repository the local config does not hold gets its entry **before** `infra.Repo` reads it, so a first onboarding plans the switched-on root and records it in one run, as it did before this release |
+| **Amended after review** | 2026-11-07 — **the backfill corrects the record in both directions** (the ninth review round, one finding, §3 DON8): it skipped every entry recorded `true`, which left the mirror of the stale `false` — a `true` outliving the apply that re-applied that root held off, so its jobs have their model mounts back and no `roles/run.invoker` grant — and the stale `true` was published over the `false` that apply wrote, handing every console launch's job an address whose mint the service refuses (bootstrap failure, no PR). The state read now runs for every entry the config holds, and a record is written `false` where the state shows no grant |
+| **Amended after review** | 2026-11-07 — **a launch that cannot read its document falls back to the record, and the backfill re-reads a recorded `false`** (the eighth review round, two findings, §3 DON8). The workdir's tfvars are one answer and not the only one: the machine that never applied that root holds none of them, and that is every console launch (`console/src/main/launch.ts` spawns `fugaro run --repo` from a private empty directory), so an empty `agent.auth` is judged on `installed && (record || deployed)` — withholding the address there starts a `cascade` run whose job mounts no model credential (D143). And the upgrade's backfill skips no entry at all (the ninth round completed it): a record carries no stamp, so an earlier apply's answer outranks the one the root's later apply published, installation-wide and with no `fugaro update`-only way back — in both directions, a stale `false` withholding the address from a job with no mounts and a stale `true` handing one to a job with no grant. The backfill reads the installation's own state for every entry the config holds and writes the record the state and this run's bundle agree on: `true` where the state shows the grant, `false` where it shows none, and nothing where there is no record and no grant |
 | **The Open item, answered** | **2026-11-05: DEPLOY NOW, SWITCH LATER.** The service deploys everywhere; the switch happens **per repository** and only where the service can serve that repository's runs — its auth mode must be one the service serves **and** the bundle must hold what that mode needs. §1.5 states what the switch flips; §3 DON8 is the task |
 | **Does not touch** | Q6, D143, D145, D146, D147, Global Constraints 6 and 12, Checks 90–99, D130–D159, and every task in [implementation-plan.md](implementation-plan.md) |
 
@@ -645,7 +653,7 @@ behaviour is already pinned in `managed_cost_test.go` where it belongs.
   | `docs/bitbucket-credentials/reconciliation.md` | L231 (F13), L503 (D362), L656 |
   | `docs/bitbucket-credentials/implementation-plan.md` | L95, "`fugaro creds set` and `fugaro update --provision-credentials` are never run by an agent" — the flag half is retired; the `creds set` half **stays true** and the task keeps it, which is why this row is a wording change and not a deletion (added by the review) |
   | `docs/run-without-checkout/{spec,reconciliation}.md` | L80-81; L145, L257, L296 |
-  | `docs/stateless-orchestrator/reconciliation.md` | L38 |
+  | `docs/stateless-orchestrator/reconciliation.md` | L39 |
   | `docs/c39-review-identity/{README,implementation-plan,reconciliation,spec}.md` | L29; L50; L200; L913 |
   | `docs/cloud-senior-review/{README,spec,reconciliation,implementation-plan}.md` | L60, L135, L163, L165; L8, L77, L230, L233, L601, L1066; L136, L413, L589, L590, L812 (E7); L97, L100, L243, L575, L579, L757, L793, L1146, L1167, L1203, L1355 |
   | `docs/ee-reorg/{implementation-plan,reconciliation}.md` | L542; L65 |
@@ -672,7 +680,9 @@ behaviour is already pinned in `managed_cost_test.go` where it belongs.
 - **Tests:** the pinned sentences themselves are the tests, and the task adds the two that did not exist:
   `TestNoDocumentCallsTheCredentialsServiceOptional` (a repository-wide scan for the retired phrases —
   "ships dormant", "optional credentials service", "opt-in" applied to *this* service — over `docs/`,
-  `website/`, `SECURITY.md`, `CLAUDE.md`, `.claude/rules/` and the release notes, with the same
+  `website/`, `SECURITY.md`, `CLAUDE.md`, `.claude/rules/`, the release notes and `.goreleaser.yaml`,
+  whose footer is the body published with **every** GitHub release and which the fifth review round
+  found still naming the retired flag, with the same
   false-positive discipline `internal/cli/docs_live_init_census_test.go` uses for the roots it exempts:
   the coordinator's and the accounts' own "dormant" uses are **not** this service's and are named in the
   test as excluded) and `TestTheCredentialsServiceIsDeployedForEveryInstallation` (the sentence this
@@ -680,7 +690,8 @@ behaviour is already pinned in `managed_cost_test.go` where it belongs.
 - **Red step:** `TestNoDocumentCallsTheCredentialsServiceOptional` fails on today's tree with the full
   list above. It is written first and its failure is the task's work list.
 - **Mutation to hold it:** restore one retired sentence in any of the documents → the first test fails
-  and names the file; delete the new required sentence from `SECURITY.md` → the second fails.
+  and names the file — the release template included, which is why its footer is a scan root; delete the
+  new required sentence from `SECURITY.md` → the second fails.
 - **Reviewer tier:** **B** (a docs-and-pins task, with the SECURITY.md half reviewed as a security
   claim — `SECURITY.md`'s statements about what a job holds are claims, and D148 is why they move
   deliberately).
@@ -912,12 +923,21 @@ the field. **It needs no second command**, which is the owner's own constraint: 
 
 - **Files:** `internal/infra/spec.go` (a `repoCtx` field and its resolver beside `resolveBitbucketProxied`
   at `:624`, and the two decision points at `:1177` and `:1314`), `internal/infra/spec_test.go`,
+  `internal/infra/repo.go` (**the backfill's evidence**, `RepoCredentialsServiceApplied` and its
+  address, beside the repository state readers it is built on), `internal/infra/repo_test.go`,
   `internal/localcfg/localcfg.go` (the per-repository record, beside `Repo.Vertex` at `:1030-1033`),
-  `internal/cli/init.go` (the converge path that writes the record — the same place
-  `internal/cli/init.go:4271` writes `Vertex`), `internal/cli/run.go` (`credentialsServiceLaunchEnv`
-  at `:3647` and its call site at `:3553`), `internal/cli/update_switch_test.go` (new, so that DON2's
-  `init_converge_test.go` stays DON2's — §4.1). **At most 6 files**, and **`internal/cli/doctor_brokering.go`
-  is not one of them**: DON7 owns that file and reads this task's predicate (§4.1).
+  `internal/localcfg/shared.go` (`mergeRepoRecords`, the one field a union carries rather than wins, and
+  the `SharedDiff` rule that follows from it), `internal/localcfg/shared_test.go`,
+  `internal/localcfg/select_shared_test.go`, `internal/cli/init.go` (the converge path that writes the
+  record — the same place `internal/cli/init.go:4271` writes `Vertex` — and the backfill's one call from
+  `install`), `internal/cli/init_credentials.go` (both doors: the record write and the backfill that
+  reads the installation's state), `internal/cli/run.go` (`credentialsServiceLaunchEnv` at `:3647` and
+  its call site at `:3553`), `internal/cli/update_switch_test.go` (new, so that DON2's
+  `init_converge_test.go` stays DON2's — §4.1), `internal/cli/run_credentials_env_test.go`. **The count
+  is the honest one and not six**: the two review rounds after the first plan added the third reader of
+  the record (`internal/localcfg/shared.go`), the state-bucket evidence (`internal/infra/repo.go`) and
+  the second door (`internal/cli/init_credentials.go`), each with its test — **`internal/cli/doctor_brokering.go`
+  is still not one of them**: DON7 owns that file and reads this task's predicate (§4.1).
 - **Interfaces:** three conditions, and **all three must hold** for a repository's runs to go through
   the service. They are checked in **one place**, an exported predicate in `internal/infra` that
   `internal/cli`'s launch path and DON7's `doctor` line both call — a second implementation of "is this
@@ -934,19 +954,155 @@ the field. **It needs no second command**, which is the owner's own constraint: 
      (`internal/config/defaults.go:77`), and this is the condition the review's finding is about. **It
      is read live from `c.in.Cfg.Agent.Auth` at every build of the repository root's spec**, not stored:
      the auth mode is in `fugaro.yaml` in the checkout, and a stored copy could outlive an edit to it,
-     which is the one way this switch could break a run that used to work.
+     which is the one way this switch could break a run that used to work. The record below carries a
+     copy of the auth **an apply was made for** — a fact about that apply, not a second source for this
+     condition: the launch reads the live auth whatever the record says, in both directions of an edit
+     (the header's third 2026-11-07 row).
 - **The record, and why there is one.** Conditions 1 and 3 are readable wherever a spec is built, but
   **condition 2 is not**: the bundle is a Secret Manager secret, `internal/infra` is a hermetic spec
   builder that reads no cloud, and `internal/infra/spec.go`'s whole input is the local config, the
   checkout's `fugaro.yaml` and the published policy. So the readiness half is **recorded** by the
-  command that does read the cloud — `fugaro update` — as a per-repository boolean in the local config,
+  command that does read the cloud — `fugaro update` — as a per-repository record in the local config,
   following `localcfg.Repo.Vertex` (`internal/localcfg/localcfg.go:1030-1033`, the fact `update` sets
-  from `infra`'s spec at `internal/cli/init.go:4271`). **Both doors refresh it**, and either alone is
-  enough: `fugaro update` reads the bundle once for the installation and writes the record on every
-  repository entry the local config holds; `fugaro update --repo PATH` refreshes the entry for that
-  repository, which is also the door that applies its root. **It is written `false` as well as `true`** —
-  a bundle that is later emptied switches the repository back off on the next `update`, which re-adds
-  the mounts, which is the fail-safe direction and not a failure.
+  from `infra`'s spec at `internal/cli/init.go:4488`). **The record is written where the root is
+  applied, and only there** (the header's second *amended after review* row): `fugaro update --repo PATH`
+  — and the converge's repository stage, which is the same engine — reads the bundle once and refreshes
+  the entry for the repository whose root it applies. **The installation door applies no repository root,
+  so it writes no record for one — with one exception, and it is the migration this release owes**
+  (added by the follow-up run; the word *backfill* is this record's). An installation that opted in under
+  an earlier release has roots whose tfvars already carry `installation.credentials_service` and entries
+  that carry **no record at all**, because the field did not exist in the release that applied them — and
+  this release's launcher reads the record, so without the backfill every one of those repositories would
+  run held off until its own checkout ran another `fugaro update --repo`, one checkout at a time.
+  `fugaro update`'s installation door
+  therefore calls `backfillCredentialsServiceReady` (`internal/cli/init_credentials.go`, from `install()`
+  before `writeConfig`) once, for every entry that carries **no record** and whose **own** root's
+  **state** says the service is on — `infra.RepoCredentialsServiceApplied`
+  (`internal/infra/repo.go`): the repository root's state objects in the **installation's state bucket**
+  (`fugaro/repos/<slug>/*.tfstate`), parsed and matched by address, so the evidence is the root that was
+  applied and never a blanket yes: a repository whose state holds no such grant — never applied
+  anywhere, applied with the service off, or forgotten — keeps the record it has. **The state, and not
+  the tfvars in a workdir** (the seventh review round's second finding): `infra.RepoWorkdir` is
+  **per-machine** state (`<state>/fugaro/terraform/<project>/repos/<slug>`), so a repository whose root
+  was applied from another machine, or from another checkout of this one, has no document here at all
+  and the workdir read would report "never applied" for a root that is applied — converging the
+  upgrade one checkout per `fugaro update`, which is an operator step beside `fugaro update` and what
+  CLAUDE.md's HARD RULE forbids. The state is also the honest half of the pair: the tfvars are what a
+  run *handed* Terraform, so an apply that failed or was refused leaves a document ahead of the state,
+  and the state bucket is written by whichever machine ran the apply and read by the identity that runs
+  the update already. It is the same fact the repository door's own refresh is built on, one door
+  earlier, because the repository stage converges the checkout's own root alone and the siblings would
+  otherwise need one `fugaro update --repo` each. The workdir read stays where it is still the right
+  question — `deployedRepoCredentialsService`, a launch outside any checkout, which may read no state
+  bucket and needs only this machine's own last apply — **but it is one answer and not the only one**
+  (the eighth review round's first finding): a machine that never applied that root holds no tfvars of
+  it, and that machine is *every* console launch, because `console/src/main/launch.ts` spawns
+  `fugaro run --repo` from a private empty directory, so the document is never readable there. The
+  empty auth is therefore judged on `installed && (record || deployed)` — either the repository's own
+  record or this machine's tfvars — since both are written by an apply that dropped the job's mounts
+  and granted its account `roles/run.invoker`, and withholding the address from a repository whose
+  mounts are already gone halts its `cascade` run at the service's door (D143). **The backfill revisits
+  every entry, whatever record it carries** (the eighth round's second finding, completed by the ninth):
+  a recorded `false` is an apply that ran with the switch off, which is evidence and not an absence, but
+  a record carries no stamp, so one left by an *earlier* apply of that root outranks the answer that
+  root's *later* apply published — installation-wide, for every machine that reads the published file,
+  with no `fugaro update`-only way back. The backfill therefore reads the installation's own state for
+  every entry the config holds and writes the record the state and this run's bundle agree on: **true**
+  where the state shows the grant and the bundle holds a model credential, **`false`** where the state
+  shows no grant — the mirror the ninth review round found, and the one that hands an address out: a
+  `true` outliving the apply that re-applied the root held off (mounts back, `roles/run.invoker` gone)
+  tells every console launch of that repository that the service is ready, so the provider opens keyless
+  for a mint the service refuses and every run of it fails at bootstrap. An entry that holds **no**
+  record and whose state shows no grant keeps its absence: nothing has judged that root, and a written
+  `false` would claim an apply that ran with the switch off. The reason is the grant: the thing that makes the
+  service usable to a repository is the `roles/run.invoker` grant its **own** root's apply makes
+  (`deploy/terraform/gcp/modules/workflow/sa.tf`'s `google_cloud_run_v2_service_iam_member.credentials`;
+  the installation root grants `run.invoker` to the operators, the coordinator and the verifier and to no
+  job account), so a record written for a repository whose root was not applied would tell that
+  repository's launch the service is ready while its job accounts hold no grant — and a `cascade` run has
+  no credential of its own to fall back to (D143). **It is written `false` as well as `true`**, and it is
+  written as **the value the plan was built with** and not from a second reading of the bundle, for the
+  same reason in the other direction: a record that says ready for a root whose plan was made held off is
+  the same broken state. A repository joining the local config is **not** that case (the seventh review
+  round's third finding): `recordCredentialsServiceReady` makes its entry — provider and nothing else —
+  **before `infra.Repo` reads it**, so the spec the run plans from carries this run's record, the root is
+  deployed for the service, and the write after the apply fills the entry in. An entry created only in
+  that write, which is where it was first written, left the onboarding `fugaro update --repo` deploying a
+  **held-off** root — mounts kept, no `roles/run.invoker` — while recording `false`, so the launch after
+  it withheld the address too and a `cascade` run had no model credential and nothing to swap it for
+  until a **second**, unannounced update in the same checkout. **On main one run sufficed for a first
+  onboarding, and it still does** — and `fugaro update --repo` is the documented way a repository joins
+  the config, so the second run would have been an operator step inside the one documented command.
+  **The record is a tri-state, and it has to be** (the seventh round's first finding): "no record" says
+  *no machine has judged this root*, a recorded `false` says *an apply ran with the switch off*, and the
+  field is a pointer so that both are documents a config can hold
+  (`localcfg.RecordSwitch`/`Repo.CredentialsServiceOn`; every reader of the switch reads the two the
+  same way, and `MergeShared` is the one place that must not). The record is published with the local
+  config, and `MergeShared` unions the repository entries with **the local entry winning a key clash**,
+  so a machine whose entry carries no record would otherwise publish that absence — as `false`, which is
+  what a boolean could only write — over the record another machine wrote from an apply it made: every
+  launch of that installation, on every machine, then withholds the address from a `cascade` repository
+  whose job gave its mounts up to that apply, and halts at the service's door (D143). So the record is
+  the one field of a repository entry that is **carried rather than won**: a local entry with no record
+  takes the published one, and a local entry that has a record wins in both directions, because only the
+  door that applies that root writes one and a recorded `false` is the switch-off travelling to the
+  other machines. The same rule keeps `fugaro doctor`'s shared-config diff honest: a published record
+  over a local entry that has none is not a difference, since publishing again writes it back unchanged. **The record is the SWITCH, not the bundle
+  reading**, and that means the auth of the plan it was built with is folded into it (the header's third
+  2026-11-07 row, which is the round that found the gap): `recordCredentialsServiceReady` writes
+  `infra.CredentialsServiceServes`' own answer, and not a second copy of its conjunction.
+  The state it closes is the natural adoption order — an owner fills the bundle and runs
+  `fugaro update --repo` while the checkout still says `agent.auth: oauth` (that root is planned held
+  off: mounts kept, no `roles/run.invoker`), and commits the cascade afterwards. A record written from
+  bare readiness would say ready there; the next launch reads the cascade from the document, sees the
+  record vouch for the service and hands the job the address — whose grant no apply ever made — so the
+  provider opens GitHub keyless for a mint the private service refuses and a `cascade` run has nothing
+  of its own to fall back to (D143). Folded in, that run records `false`, the launch withholds the
+  address, the job keeps the mounts that apply kept, and the run after the cascade is committed — the
+  one that applies the root with the switch on — is the one that records `true`. The auth is judged as
+  the RUNS read it (`deploymentConfig`: the `fugaro.yaml` at the default branch, else this working
+  tree), the same document the plan above is built from, or the record and the plan are one edit apart.
+  **And the plan's FIRST condition is in it too** (the header's fifth 2026-11-07 row): `installed` is
+  read from the **installation root's own outputs**, the source the spec reads it from
+  (`infra.Inputs.Installation`, which `withDefaults` never fills from the local config) — not from the
+  local config's block, which is the stale half in the state an owner's opt-out leaves
+  ([runbook.md](runbook.md) §9): the config still carrying the block and its URL, the installation's
+  outputs carrying no service at all, and a `fugaro update --repo` in a checkout, which applies no
+  installation root. The bundle's reading alone would record `true` there, for a root this run applies
+  held off, and the next launch — which reads the config's block — would put the address of a service
+  that is not there on a job whose mounts are still in place: the provider opens keyless for a mint
+  nothing answers, and the run halts at the service's door (D143) while the credential it needed is
+  still mounted and unread.
+  The backfill needs no such fold: its evidence is the deployed root's own tfvars, which carry the
+  service exactly when that apply dropped the mounts and made the grant, so the auth of that apply is
+  already in the document it reads. A bundle that is later emptied switches the
+  repository back off on the next `update`, which re-adds the mounts, which is the fail-safe direction
+  and not a failure. **Both doors leave the record alone in a coding agent's session and in a run's own
+  process** (the header's 2026-11-07 row): the bundle holds every model
+  credential the service issues, and the two commands that read it, `fugaro creds ls` and `fugaro creds
+  set`, refuse both before their first call (`credsOwnerOnly`, `internal/cli/creds.go`), so
+  `credentialsBundleReady` answers "nothing was read" there and neither door writes — every entry keeps
+  the record the person's own last run left on it, and the repository door's plan is the one that record
+  already answers. An agent's run therefore moves no switch; the person's own next `fugaro update` is
+  what converges it, which is still the one command CLAUDE.md's HARD RULE promises. **A read that
+  failed leaves the record alone the same way** (the header's other 2026-11-07 row): the three states
+  that answer — no version, a newest version that is `DISABLED`, a document with no `KindModel` entry —
+  are facts about the bundle and true for every reader, while an error is a fact about the identity
+  that read. `credentialsBundleReady` says so in its second answer, which is `false` wherever there is
+  no reading to write (both markers, every failure), so a `false` reaches the config only from a
+  reading that produced it. The reason is what the record *is*: it is published with the local config
+  (`internal/localcfg/shared.go`), so one identity refused the bundle's version list — an operator
+  without the accessor role, a listing that failed — would write the switch off for every machine of
+  the installation, and every teammate's `cascade` run would then be handed no service address by
+  `credentialsServiceLaunchEnv` and stop at the service's door (D143) on the word of a machine that
+  read nothing. **One run asks the bundle twice** — the installation door's backfill, then the
+  repository stage's record (`init.go`'s `install` and repoEngine) — so the two answers are memoized
+  **together**: memoizing the reading alone would leave the second door reading the memo's `false` as a
+  reading of its own and writing it, which is the same installation-wide `false` reached through the
+  run's own second door rather than through another machine. The cost of the rule is a convergence, not a wrong write: an entry the failed read
+  could not judge stays unrecorded, and the next run that *can* read the bundle — the same door, the
+  next time it works — is the one that records it. The three answering states are kept as writes
+  because each of them means the same thing to every reader of the bundle, the service included.
 - **What the switch flips, and the one thing it does not touch.** §1.5's three flips are this task's
   output, and **flip 1 needs no Terraform change at all** — which is the finding that makes this task
   small. `deploy/terraform/gcp/modules/workflow/sa.tf:148-151` gates the mount drop on
@@ -976,9 +1132,44 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   same installation, `agent.auth: oauth`, **every one of the three flips still off** — the condition the
   review's finding is about); `TestEditingTheAuthModeTakesEffectWithoutAnotherUpdate` (a record that
   says on, a `fugaro.yaml` that now says `oauth`, and the spec holds the switch off — the live read of
-  condition 3); `TestTheRecordIsWrittenFalseWhenTheBundleIsEmptied` (the fail-safe direction); and
+  condition 3); `TestTheRecordIsWrittenFalseWhenTheBundleIsEmptied` (the fail-safe direction);
+  `TestTheRecordFollowsTheAuthTheRunsRead` (the record is the switch: one ready bundle, two auths, and
+  the `oauth` one records nothing — the direction the third review round found, with the held-off apply
+  it belongs to) and `TestACascadeRepositoryAppliedHeldOffIsNotHandedTheService` (that same state at the
+  launch: a cascade document, the block present, no record, and the job is handed no address);
+  `TestAnUnreadableBundleLeavesTheRecordAlone` (the fourth review round: over a bundle the record was
+  written from, the version list starts answering 403, and the record is still `true` in the entry
+  **and in the file `fugaro update` publishes** — the write a failed read may not make);
+  `TestAnOptedOutInstallationRecordsNoSwitch` (the fifth: one rig and one ready bundle, and the
+  installation's outputs move from carrying the service to carrying none — the config's block stays,
+  which is the opt-out — and the record has to go with the plan, `false` and absent from the file);
+  `TestAFailedReadIsNotAnsweredByTheRunsSecondDoor` (the sixth: one run, the backfill's refused read,
+  and the converged repository's record still `true` in the entry **and in the file** — the run's own
+  second door may not read the memo's "no reading" as an answer); and
   `TestNoRepositoryRootGainsAServiceTheBundleCannotServe` (the whole-predicate guard: **no** repository
-  root in the fixtures plans `installation.credentials_service` set unless all three conditions hold).
+  root in the fixtures plans `installation.credentials_service` set unless all three conditions hold);
+  `TestMergeSharedCarriesTheRepositoriesCredentialsServiceRecord` and
+  `TestSharedDiffIgnoresARecordItWouldPublishBack` (the seventh review round's first finding, in
+  `internal/localcfg`: a published record over a local entry that has none survives the union **and** is
+  not reported as a difference, while a local record is a difference in both directions — the second
+  half is what keeps the fix from trading one wrong write for a `doctor` nag);
+  `TestRepoCredentialsServiceAppliedReadsTheSharedState` (the seventh round's second finding, in
+  `internal/infra`: never applied, applied with the service off, another repository's state, applied
+  with the grant, a second workflow module, and an object that is not a state — the last one an error
+  and not a `false`); and
+  `TestAFirstOnboardingConvergesInOneRun` (the seventh round's third finding: a `fugaro update --repo`
+  in a checkout the config does not hold yet, **one** run, and the entry carries a record — the shape
+  the onboarding had on main); and the eighth review round's two, in `internal/cli`:
+  `TestALaunchOutsideACheckoutReadsTheRecordOrTheDeployedRoot` (a `fugaro run --repo` from a directory
+  holding no checkout — the console's own spawn — once with the root's tfvars, once with the record
+  alone and no tfvars on this machine, both handing the address, and once with neither handing
+  nothing) and `TestAStaleFalseIsCorrectedByTheInstallationsState` (two machines: the local entry
+  records `false`, the installation's state carries the grant a later apply made, and one ordinary
+  `fugaro update` leaves the record `true` **and the shared merge publishing it**); and the ninth
+  round's mirror, `TestAStaleTrueIsCorrectedByTheInstallationsState` (the local entry records `true`
+  and the state shows no grant — a root re-applied held off, and the same state with no object at all
+  under that root's prefix — and one ordinary `fugaro update` leaves the record `false`, in the file
+  and **in the shared merge over the `false` the other machine published**).
 - **Red step:** `TestAnOAuthInstallationStillLaunchesAfterUpdateAlone` fails the moment DON1 lands and
   this task's gate does not — the fixture converges, the repository root drops the model mount, and the
   launch hands the job a URL the service cannot serve. **It is the one test in this file whose red step
@@ -989,11 +1180,40 @@ the field. **It needs no second command**, which is the owner's own constraint: 
 - **Mutation to hold it:** drop condition 2 and switch on readiness by the block alone → the empty-bundle
   test fails, and a `cascade` run in the field stops at the service's named refusal;
   drop condition 3 → the `oauth` test fails, which is the review's finding reintroduced; store the auth
-  mode in the record instead of reading it live → the edit-the-`fugaro.yaml` test fails; make
+  mode in the record instead of reading it live → the edit-the-`fugaro.yaml` test fails; record the
+  bundle's reading alone and leave the auth to the launch → `TestTheRecordFollowsTheAuthTheRunsRead`
+  fails, the `oauth` apply recorded ready over a root it planned held off; read `installed` from the
+  local config's block instead of the outputs → `TestAnOptedOutInstallationRecordsNoSwitch` fails, the
+  record vouching for a service the installation does not have; answer a failed read with
+  `false` rather than with no answer → `TestAnUnreadableBundleLeavesTheRecordAlone` fails, and one
+  refused listing publishes the switch off for the whole installation; memoize the reading without its
+  record flag → `TestAFailedReadIsNotAnsweredByTheRunsSecondDoor` fails, the failed read written down by
+  the run's own second door; make
   `repoCredentialsService` return the block regardless → the no-repository-gains test fails and `sa.tf`
   drops the mounts of a repository nobody switched on; implement the predicate a second time in
   `internal/cli` and let the two disagree → the launch and the plan part company, which is the state
-  where a run gets a URL for a job whose credential was never dropped.
+  where a run gets a URL for a job whose credential was never dropped; make the union let the local
+  entry win with no record, as a boolean could only write it → the merge test fails, and one machine
+  that never applied that root publishes the switch off for the whole installation, which its own
+  `fugaro update` cannot repair because it reads its own stale entry; report a record the union carried
+  as a difference → the `SharedDiff` test fails, and `doctor` nags on every machine of the installation
+  about a file that publishing again writes back unchanged; read the backfill's evidence from the
+  workdir's tfvars rather than the installation's state → the converges-with-one-update test fails (its
+  workdir does not exist, which is the machine that opted in from another checkout), and every root
+  applied elsewhere stays unbackfilled until that checkout runs `fugaro update --repo`, an operator step
+  inside the one documented command; write a new repository's entry only in the write after the apply →
+  `TestAFirstOnboardingConvergesInOneRun` fails, and the first onboarding of a `cascade` repository
+  deploys a held-off root while recording `false`, so its runs keep failing at bootstrap until a second
+  update nobody announced; judge the empty auth on this machine's tfvars alone → the
+  reads-the-record-or-the-deployed-root test fails on the record-only case, and every console launch of
+  a switched-on `cascade` repository hands its job no address, so its runs fail at bootstrap with no PR;
+  skip a recorded `false` in the backfill again → the stale-false test fails, and the machine that
+  applied with the switch off keeps publishing its `false` over the `true` another machine wrote from a
+  later apply, an installation-wide outage of the switch that no `fugaro update` repairs; skip the
+  entries recorded `true` instead → the stale-true test fails, and the machine that applied with the
+  service on keeps publishing its `true` over the `false` the root's later, held-off apply wrote, so
+  every console launch of that repository hands its job an address whose mint the service refuses for
+  the grant that apply took away.
 - **Reviewer tier:** **A.** **OWNER-RUN:** no — the task is code and tests. **Check 96 stays the
   owner's**, and this task does not depend on it: §1.5's flip 2 is wired today
   (`internal/runner/runner.go:1119`), so the switch mints through the service without the App key's own

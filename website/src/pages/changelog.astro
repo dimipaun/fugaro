@@ -2,8 +2,8 @@
 /**
  * website/src/pages/changelog.astro — the changelog (website plan, W1.9).
  *
- * The page is an index of `docs/releases/vX.Y.Z.md`: the hand-written Highlights of every
- * release, newest first, rendered from the files themselves. Three things follow from that
+ * The page is an index of `docs/releases/vX.Y.Z.md`: the hand-written Highlights of the newest
+ * releases, newest first, rendered from the files themselves. Five things follow from that
  * and are worth stating here rather than in the component:
  *
  *   1. **The entries are built during the build, and nothing is committed.** W0.6's
@@ -22,6 +22,21 @@
  *   3. **The repository the entries link is a fact.** It comes from `website/data/site.yaml`
  *      through the content pipeline (W0.2, W1.3), so the release URLs are built from the
  *      site's own fact and no host is typed into a template.
+ *   4. **Three releases, and the whole history one link away** (D1640, D1648). The files stay
+ *      the source of an entry, and the page renders the three newest of them: a reader who
+ *      wants the rest is sent to GitHub's releases page, which is where every one of them is
+ *      stated with its date — and which is also where the console's releases are, beside them.
+ *      Every release still needs its summary line whether or not the page shows it (F15,
+ *      D1647), which is why the check below runs over every release the generator returned
+ *      rather than over the three the page renders. **The generator's entries are the release
+ *      files**: a file above the CLI stream's current version is the next release's notes,
+ *      written ahead of its release, so the generator leaves it out and this page never asks it
+ *      for anything (`src/lib/changelog.mjs`).
+ *   5. **The two streams beside the CLI are one line each** (D1641, D1644): the desktop
+ *      console's latest release, and the phone app's when it has one. Both are read from the
+ *      notes directories and package manifests of those streams (`src/lib/console-release.mjs`,
+ *      `src/lib/mobile-release.mjs`) at build time, so no version is typed here; the app's
+ *      sentence is its own summaries file, because the app publishes no GitHub release.
  *
  * Nothing here fetches anything: the build is network-free and reads this repository only
  * (Global Constraints 4 and 5).
@@ -34,20 +49,25 @@
  * gradient (`.gradient-text`, the same class the hero's last two words are drawn in), with the
  * room under it a page's first block gets. **The page adds no words to do it**: the headline is
  * still the page's one `h1` and the only text above the first release, which is why the page
- * has no eyebrow, no pill and no lead paragraph — every sentence on this page is a release
- * file's or a release summary's, and `website/test/changelog-page.mjs` refuses one that is
- * neither. The entries under it are the cards `Changelog.astro` draws.
+ * has no eyebrow, no pill and no lead paragraph — every sentence below it is a release file's, a
+ * release summary's, or one of the words the plan allows the page to write for itself (the link
+ * to the full list, and the console's and the app's line), and `website/test/changelog-page.mjs`
+ * refuses a sentence that is none of them. The entries under it are the cards `Changelog.astro`
+ * draws.
  */
 import path from 'node:path'
 import Base from '../layouts/Base.astro'
 import Changelog from '../components/Changelog.astro'
 import { buildChangelog } from '../lib/changelog.mjs'
-import { loadReleaseSummaries, loadSite, REPO_ROOT } from '../content.ts'
+import { latestConsoleRelease } from '../lib/console-release.mjs'
+import { latestMobileRelease } from '../lib/mobile-release.mjs'
+import { loadMobileReleaseSummaries, loadReleaseSummaries, loadSite, REPO_ROOT } from '../content.ts'
 
-// The releases, read from docs/releases/ at build time (W0.6): newest first, each entry
-// the file's own tag, bullets and operator steps, and its `released` flag from the plugin's
-// own version (the owner's brief of 2026-10-19) — never from the checkout's tags, which a
-// deploy build does not carry.
+// The releases, read from docs/releases/ at build time (W0.6): newest first, each entry the
+// file's own tag, bullets and operator steps. The files above the CLI stream's `current`
+// version are drafts of the next release and are not among them (`src/lib/changelog.mjs`,
+// which takes that version from a file rather than from the checkout's tags — a deploy build
+// carries none).
 //
 // **Why the two files are passed rather than defaulted.** The generator finds the repository
 // by walking up from its own file, which is right when it is loaded from `website/src/lib/`
@@ -56,17 +76,66 @@ import { loadReleaseSummaries, loadSite, REPO_ROOT } from '../content.ts'
 // directory it looks for is `website/docs/releases/`, which does not exist.
 // `website/src/content.ts` solves exactly this problem for the site's facts
 // (`findSiteRoot`, W1.3) and exports the repository root it found, so the page passes the
-// directory of release files and the plugin manifest the generator should read, and the
+// directory of release files and the streams catalogue the generator should read, and the
 // generator itself is left as W0.6 wrote it.
 const releasesDir = path.join(REPO_ROOT, 'docs', 'releases')
-const pluginFile = path.join(REPO_ROOT, 'plugin', '.claude-plugin', 'plugin.json')
-const entries = buildChangelog({ releasesDir, pluginFile })
+const streamsFile = path.join(REPO_ROOT, 'docs', 'release-streams.yaml')
+const entries = buildChangelog({ releasesDir, streamsFile })
 
 // The end-user summaries below each release's heading: the per-release lines the owner's
 // brief of 2026-10-19 asked for, read from the site's own data through the content pipeline
 // (W1.3) so the page writes no prose of its own. The component renders the summary it finds
 // and stops the build when a release has none.
 const summaries = loadReleaseSummaries()
+
+// **Every release needs its line, and not only the ones below the cut** (F15, D1647).
+// The page renders the three newest releases and links the rest to GitHub, so a check that ran
+// over the rendered entries alone would let an older release lose its line without saying
+// so — and the line is the one thing that file has on this site. So the check runs here, over
+// every entry the generator returned, before the cut below: the generator returns the release
+// files, and nothing else (the drafts above the CLI's current version are not among them). The
+// component holds the rendered entries to the same rule while it renders them.
+for (const entry of entries) {
+  if (summaries[entry.tag] === undefined) {
+    throw new Error(
+      `docs/releases/${entry.tag}.md has no entry in website/data/release-summaries.yaml, and every release file needs one: the changelog renders that file's line under the release's heading, for the whole directory and not only the three entries it shows (F15, D1647, the owner's brief of 2026-10-19).`,
+    )
+  }
+}
+
+// The three newest releases, which is what the page renders (D1640). The generator still
+// returns every release file, because the home page's hero reads the newest release
+// out of the same call (F10) — the cut is this page's, and it is a cut rather than a filter:
+// the older entries are on GitHub, and the link under them says where (D1648).
+const SHOWN = 3
+const shown = entries.slice(0, SHOWN)
+
+// The two streams beside the CLI (D1641, D1644). Each stream's latest release is the newest
+// notes file at or below its own package's version — `src/lib/console-release.mjs` and
+// `src/lib/mobile-release.mjs`, the rule both were written to apply. The console's line names
+// its version and links its GitHub release; the app publishes no GitHub release, so its line
+// is the sentence its own summaries file carries for that release, and a release it has
+// published with no line there stops the build rather than rendering a line with nothing to
+// say. Both streams are read at build time, so no version is typed into this page.
+const consoleRelease = latestConsoleRelease({
+  notesDir: path.join(releasesDir, 'console'),
+  packageFile: path.join(REPO_ROOT, 'console', 'package.json'),
+})
+const appRelease = latestMobileRelease({
+  notesDir: path.join(releasesDir, 'mobile'),
+  packageFile: path.join(REPO_ROOT, 'mobile', 'package.json'),
+})
+const appSummaries = loadMobileReleaseSummaries()
+let mobileRelease: { version: string; tag: string; summary: string } | null = null
+if (appRelease !== null) {
+  const summary = appSummaries[appRelease.tag]
+  if (summary === undefined) {
+    throw new Error(
+      `docs/releases/mobile/v${appRelease.version}.md is the app's latest release and website/data/mobile-release-summaries.yaml carries no ${appRelease.tag} entry, and the changelog renders that file's line as the app's line (D1644).`,
+    )
+  }
+  mobileRelease = { version: appRelease.version, tag: appRelease.tag, summary }
+}
 
 // The site's facts, through the same pipeline every page renders from: the repository is
 // the one fact this page needs, and `loadSite()` fails the build if the facts are not
@@ -88,7 +157,13 @@ const repository = loadSite().facts.repository
       <span class="gradient-text">Changelog</span>
     </h1>
   </header>
-  <Changelog entries={entries} summaries={summaries} repository={repository} />
+  <Changelog
+    entries={shown}
+    summaries={summaries}
+    repository={repository}
+    consoleRelease={consoleRelease}
+    mobileRelease={mobileRelease}
+  />
 </Base>
 
 <style>

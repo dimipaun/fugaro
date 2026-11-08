@@ -35,34 +35,39 @@ func secretsPolicyEntry(t *testing.T, path, name string) config.ProjectSecret {
 // TestSecretsSetProxyIsATypedWidening: `secrets set NAME --proxy` writes
 // project_secrets.NAME.proxy through the settings write path, and turning the
 // switch on is a widening — the credentials service is handed the token
-// instead of the job — so it takes the project's own name at a terminal, or
-// --yes outside a coding agent's session (D1107, D1165, D1171). The narrowing
-// half, --proxy=false, is neither: it prints no widening sentence, and it takes
-// the key away rather than writing a second spelling of "off".
+// instead of the job — so it is the owner's own step: it asks nothing at the
+// owner's session, with a terminal or without one, and the coding agent's
+// session is what refuses it (D1165, D1171, D1540, D1552). The narrowing half,
+// --proxy=false, is neither: it prints no widening sentence, and it takes the
+// key away rather than writing a second spelling of "off".
 func TestSecretsSetProxyIsATypedWidening(t *testing.T) {
 	secretsRmFugaro(t)
 	path := secretsPolicyFixture(t)
 	noTerminal(t)
 	before := readFileString(t, path)
 
-	if _, _, err := execute(t, "secrets", "set", "bitbucket-token", "--proxy"); err == nil {
-		t.Fatal("the widening was written with no terminal to confirm it at")
-	} else if !strings.Contains(err.Error(), "terminal") {
-		t.Fatalf("err = %v, want the typed confirmation's no-terminal refusal", err)
+	// The coding agent's session is the fence this widening has instead of a
+	// question, and --yes does not lift it.
+	t.Setenv(accountsAddAgent, "1")
+	if _, _, err := execute(t, "secrets", "set", "bitbucket-token", "--proxy", "--yes"); err == nil {
+		t.Fatal("a coding agent's session turned the proxy switch on")
+	} else if !strings.Contains(err.Error(), accountsAddAgent) {
+		t.Fatalf("err = %v, want the refusal to name the marker it saw", err)
 	}
 	if after := readFileString(t, path); after != before {
 		t.Fatalf("the refusal wrote the config:\n%s", after)
 	}
+	t.Setenv(accountsAddAgent, "")
 
-	out, errOut, err := execute(t, "secrets", "set", "bitbucket-token", "--proxy", "--yes")
+	out, errOut, err := execute(t, "secrets", "set", "bitbucket-token", "--proxy")
 	if err != nil {
-		t.Fatalf("secrets set --proxy --yes: %v\nstdout %s\nstderr %s", err, out, errOut)
+		t.Fatalf("the widening asked for an answer at the owner's session: %v\nstdout %s\nstderr %s", err, out, errOut)
 	}
 	if !strings.Contains(out, "widens what the secret reaches") {
-		t.Errorf("the confirmation does not say the write is a widening:\n%s", out)
+		t.Errorf("the write does not say it is a widening:\n%s", out)
 	}
-	if !strings.Contains(out, "confirmed by --yes") {
-		t.Errorf("--yes did not answer the typed form:\n%s", out)
+	if strings.Contains(out, "to confirm: ") {
+		t.Errorf("the widening still asks a question:\n%s", out)
 	}
 	if got := secretsPolicyEntry(t, path, "bitbucket-token"); !got.Proxy {
 		t.Errorf("proxy was not written: %+v", got)
@@ -89,40 +94,36 @@ func TestSecretsSetProxyIsATypedWidening(t *testing.T) {
 
 // TestSecretsSetAllowDataToIsATypedWidening: adding a repository to
 // project_secrets.NAME.allow_data_to is the widening D1171 names — one more
-// repository the value is mounted in — and the confirmation prints the list the
-// entry ends up with, not the flag's own values, because an entry that already
-// names a repository keeps it.
+// repository the value is mounted in — and the sentence the write prints names
+// the list the entry ends up with, not the flag's own values, because an entry
+// that already names a repository keeps it. The widening asks nothing for
+// itself (D1540, D1552): the coding agent's session is where it is refused.
 func TestSecretsSetAllowDataToIsATypedWidening(t *testing.T) {
 	secretsRmFugaro(t)
 	path := secretsPolicyFixture(t)
 	noTerminal(t)
 	before := readFileString(t, path)
 
-	// The typed form is what this write pays, so a run with no terminal and no
-	// --yes is refused with nothing written — and the sentence the confirmation
-	// would have shown is printed before the refusal, so it can be read here:
-	// it names the list the entry ends up with, the repository it already held
-	// first, and not the flag's own value alone.
-	out, _, err := execute(t, "secrets", "set", "bitbucket-token", "--allow-data-to", "acme/web")
-	if err == nil {
-		t.Fatal("the widening was written with no terminal to confirm it at")
-	}
-	if !strings.Contains(err.Error(), "terminal") {
-		t.Fatalf("err = %v, want the typed confirmation's no-terminal refusal", err)
-	}
-	if !strings.Contains(out, "acme/app, acme/web") {
-		t.Errorf("the confirmation does not print the list the entry ends up with:\n%s", out)
+	t.Setenv(accountsAddAgent, "1")
+	if _, _, err := execute(t, "secrets", "set", "bitbucket-token", "--allow-data-to", "acme/web", "--yes"); err == nil {
+		t.Fatal("a coding agent's session widened allow_data_to")
+	} else if !strings.Contains(err.Error(), accountsAddAgent) {
+		t.Fatalf("err = %v, want the refusal to name the marker it saw", err)
 	}
 	if after := readFileString(t, path); after != before {
 		t.Fatalf("the refusal wrote the config:\n%s", after)
 	}
+	t.Setenv(accountsAddAgent, "")
 
-	out, errOut, err := execute(t, "secrets", "set", "bitbucket-token", "--allow-data-to", "acme/web", "--yes")
+	out, errOut, err := execute(t, "secrets", "set", "bitbucket-token", "--allow-data-to", "acme/web")
 	if err != nil {
-		t.Fatalf("secrets set --allow-data-to --yes: %v\nstdout %s\nstderr %s", err, out, errOut)
+		t.Fatalf("the widening asked for an answer at the owner's session: %v\nstdout %s\nstderr %s", err, out, errOut)
 	}
 	if !strings.Contains(out, "widens what the secret reaches") {
-		t.Errorf("the confirmation does not say the write is a widening:\n%s", out)
+		t.Errorf("the write does not say it is a widening:\n%s", out)
+	}
+	if !strings.Contains(out, "acme/app, acme/web") {
+		t.Errorf("the write does not print the list the entry ends up with:\n%s", out)
 	}
 	got := secretsPolicyEntry(t, path, "bitbucket-token").AllowDataTo
 	if len(got) != 2 || got[0] != "acme/app" || got[1] != "acme/web" {

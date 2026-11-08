@@ -41,15 +41,15 @@ type settingsEdit struct {
 	Old, New []byte
 	// What is the sentence the confirmation shows, naming what changes.
 	What string
-	// Typed asks for the project's name rather than y/N. It is the widening
-	// directions: a loosened ceiling, a floor removed, a followup key turned
-	// on. --yes answers it outside a coding agent's session (D1107, which
-	// amends D846 for `settings set|unset` alone); inside one the marker fence
-	// comes first and --yes never lifts it.
+	// Typed marks the widening directions: a loosened ceiling, a floor
+	// removed, a followup key turned on. They are the owner's own step, so
+	// the marker fence below refuses them in a coding agent's session whatever
+	// --yes says, and at the owner's own terminal they ask nothing at all
+	// (D1552, D1555; D1540 is why no prompt replaces the typed name here).
 	Typed bool
-	// TypedWhy is the sentence saying why this form is asked for, and who may
-	// answer it: it names --yes where the caller says a flag stands in
-	// (D1107), and the refusal of a session with no terminal repeats it.
+	// TypedWhy is the sentence saying what this form widens: it is printed
+	// before the write, and it is the sentence the coding-agent refusal above
+	// carries beside the marker and the command.
 	TypedWhy string
 	// Ask is the owner's --ask: the confirmations this write would have been
 	// given in a project that is not managed, asked here instead of being
@@ -115,7 +115,7 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	// diff this prints — so what is refused here is the write and the
 	// confirmation, never the read. A session outside a repository writes
 	// nothing at all, `--yes` included; a session inside one writes the file
-	// it could edit anyway, except when the edit is the typed one — the
+	// it could edit anyway, except when the edit is the widening one — the
 	// owner's own hand, whose file decides the ceiling of every run the
 	// branch starts.
 	//
@@ -125,7 +125,9 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	// person. Every other value — the zero value every other caller passes, a
 	// class the gate does not cover, an edit whose class is Typed — keeps the
 	// refusal exactly as it was, and a caller that passes nothing changes
-	// nothing.
+	// nothing. The marker is the fence itself for a widening (D1552, D1555):
+	// the class rule is the second thing that refuses one, and a fence read off
+	// a class the same release deletes would leave the ceiling unfenced.
 	conds := settingsEditConditions(cmd, e)
 	if marker := conds.Agent; marker != "" && (!e.insideRepo() || e.Typed) && !initflow.CanConfirmManaged(e.editClass(), conds, e.Managed) {
 		fmt.Fprintf(out, "%s\n%s", e.Path, diff)
@@ -146,9 +148,10 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	// The owner's own terminal in a managed project asks nothing (the ruling of
 	// 2026-11-01): the gate read this edit's document, admitted it, and its
 	// verdict IS the confirmation — the diff above is the whole of what the
-	// owner reads. The class is still the class: initflow.GateConfirms is false
-	// for a Typed edit whatever a plan looked like (D1026, and settingsEdit's
-	// own editClass), so the widening directions keep the typed name, and a
+	// owner reads. A widening is the one edit that is asked nothing for
+	// whatever the verdict was (D1552, D1555): initflow.GateConfirms is false
+	// for one (D1026, and settingsEdit's own editClass), and what the person
+	// reads instead of a confirmation is the sentence saying what it widens. A
 	// project that is not managed, a mark that did not answer and an edit the
 	// gate refused all arrive here as the zero value every fence reads exactly
 	// as it did before the gate existed.
@@ -162,19 +165,16 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	if !e.Yes && initflow.GateConfirms(e.editClass(), conds, e.Managed) {
 		fmt.Fprintf(out, "  %s\n", gateSentence(conds.Agent))
 	} else if e.Typed {
-		// The widening is named before the prompt and not only in the
-		// refusal a session with no terminal gets: the confirmation a person
-		// reads is one block, and the sentence saying what makes this edit
-		// different from the ordinary y/N is part of it.
-		fmt.Fprintf(out, "%s\n", e.TypedWhy)
-		// --yes answers the typed form too, and only here: the refusal above
-		// has already decided that this is not a coding agent's session, so
-		// what is left to confirm is the person's own word for it (D1107).
-		if e.Yes {
-			fmt.Fprintln(out, "  confirmed by --yes")
-		} else if err := confirmTypedStrict(cmd, lc, e.TypedWhy, e.What); err != nil {
-			return err
-		}
+		// A widening is the owner's own step, and the owner's own terminal
+		// asks nothing for it (D1552, D1555): a coding agent's session was
+		// refused above, whatever --yes said, and what is left here is the
+		// sentence saying what this write widens and the sentence saying what
+		// it writes — the whole of what the typed name's confirmation showed
+		// minus the prompt itself. The typed name this branch used to ask for
+		// was the last prompt of a raise form, and it is gone with D1540: no
+		// command waits on stdin, and a question a session can answer is not a
+		// fence.
+		fmt.Fprintf(out, "%s\n%s\n", e.TypedWhy, e.What)
 	} else if err := confirmSettingsWrite(cmd, lc, e.Path, e.Yes, e.What); err != nil {
 		return err
 	}

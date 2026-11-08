@@ -2,8 +2,10 @@
 // (design doc m11-setup-and-skills.md §3.1): an ordered list of stages, each
 // with a read-only check and plan, a confirmed apply and a verify; a loop
 // that applies the first stage that is not done, stops at the first stage
-// that needs the user or fails, and runs nothing after it; and the plan view
-// and the JSON result that report where the run stands.
+// that needs the user or fails, and runs nothing after it save where the row
+// the stage sits on names that stop (pastStops, RunsPastStop), a stage that
+// splits its own work on one being told which they are (PastStops); and the
+// plan view and the JSON result that report where the run stands.
 //
 // The package knows nothing about Google, Terraform or the CLI: the stages
 // that exist (and the fakes the tests use) plug in through Stage. It does not
@@ -11,12 +13,15 @@
 // Options.Program, never a verb of its own. What a stage must never be able to
 // do is enforced here, not in the stage: --yes does not reach a stage that
 // creates a project, links billing or takes a secret, no stage runs before
-// the ones ahead of it are done, and a run that cannot prompt never prompts.
+// the ones ahead of it are done or skipped unless its own row says it runs
+// past that stop (pastStops, RunsPastStop), and a run that cannot prompt
+// never prompts.
 package initflow
 
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -78,16 +83,6 @@ const (
 	// whole upgrade for a second command (the owner's rule of 2026-10-30:
 	// fugaro update is the whole upgrade).
 	Rules = "rules"
-	// Credentials is the owner-run stage that applies the credentials service
-	// (docs/credentials-service, D146; C1.20). It is the only writer of the
-	// installation's credentials_service variable, it is always typed at a
-	// real terminal (--yes never covers it), and it comes BEFORE the
-	// repository stage: a repository root reads the installation's
-	// credentials_service output to decide whether its jobs mount a model
-	// credential at all, and it grants each job account run.invoker on the
-	// service — an apply that ran first would plan that grant against a
-	// resource that is not there yet.
-	Credentials = "credentials"
 	// Policy is the published policy node's migration in place
 	// (internal/cli/init_policy_migrate.go, the owner's rule of 2026-10-30:
 	// fugaro update is the whole upgrade). It comes after the repository
@@ -139,11 +134,41 @@ type slot struct {
 	// billing linkage (own flags and typed confirmations) and a secret (a
 	// hidden prompt, never a flag).
 	noYes bool
+	// pastStops names the stages whose needs-you stop this stage still runs
+	// past (RunsPastStop): the stages that stopped with something only the
+	// user can give, and only over a subject this stage does not read at all.
+	// Nothing else is one of them — a failure left a state nothing is known
+	// about, a block a stage's own Check reported is not the user's to clear,
+	// and a stage that writes installation state is not one of them whatever
+	// the stop is about.
+	pastStops []string
+}
+
+// RunsPastStop reports whether the stage name still runs when the stage
+// stopped stopped with a step only the user can give (NeedsYou) and the loop
+// has nothing else to go on. It is the one place that answers it, and the
+// answer is a property of the stage: every row of order is empty but the
+// checkout's, whose pin and plugin read no repository state, because the
+// user's fix for a stopped stage can be weeks away and the door the run's
+// lines name is `fugaro update` (the owner's rule of 2026-10-30: one fugaro
+// update is the whole upgrade) — a door that must not be left unable to clear
+// the one line it is the remedy for (#1836). Which steps of a tolerant row may
+// not run past the stop is the row's own business, and the stage is told what
+// it is running past for it (PastStops).
+func RunsPastStop(name, stopped string) bool {
+	for _, s := range order {
+		if s.name == name {
+			return slices.Contains(s.pastStops, stopped)
+		}
+	}
+	return false
 }
 
 // Gating is linear: a stage runs only when every registered stage before it
-// is done or skipped. needs records why the order is what it is, and the
-// tests check it against the order; it does not gate anything itself.
+// is done or skipped, save for the tolerance pastStops states (RunsPastStop),
+// which is the stages whose needs-you stop this one still runs past. needs
+// records why the order is what it is, and the tests check it against the
+// order; it does not gate anything itself.
 //
 // order is the dependency order the dogfooding run discovered by hand:
 // installation, Firebase, images, the history job, secrets, repository.
@@ -157,11 +182,6 @@ var order = []slot{
 	{name: Installation2, needs: []string{Firebase, Images}},
 	{name: Secrets, needs: []string{Installation2}, noYes: true},
 	{name: Plugin, needs: []string{Preflight}},
-	// The credentials service is the owner's step (money, permanent, and the
-	// identity the repository jobs' model credentials move to), so --yes never
-	// covers it; it is applied before the repository roots, which read its
-	// output and grant each job's account an invoker on it.
-	{name: Credentials, needs: []string{Installation2}, noYes: true},
 	{name: Repository, needs: []string{Installation2, Secrets}},
 	// The rules generation is what the policy node is READ under, so it is
 	// deployed before the node that depends on it: the policy stage's write
@@ -189,7 +209,22 @@ var order = []slot{
 	// run after the repository stage: the images the cloud step refreshes are
 	// that repository's, and the onboarding the repository stage does is what
 	// the refresh builds for.
-	{name: Checkout, needs: []string{Repository, Layer}},
+	//
+	// pastStops: the one row that has it. Its two local steps — the pin in
+	// the checkout's settings and the plugin in the user's own Claude Code —
+	// read no repository fugaro.yaml, and the plugin is what clears the
+	// staleness line every command prints ("run fugaro update"): a repository
+	// stage that stopped needs-you over a file these steps never read may not
+	// take them with it, or the door that line names is the one door that
+	// cannot clear it and the user is left in a loop with no way out (#1836).
+	// The three stages before it publish the installation every run of the
+	// project is admitted by, which is why none of them is here: a run with a
+	// stage left for the user does not write that (accounts_add_converge_test.go
+	// is the door that says so). The cloud step does need the repository the
+	// stop is about — its job images are built from it — so it is dropped
+	// rather than run past that stop, and the loop tells the stage the stops
+	// it is running past for exactly that (PastStops).
+	{name: Checkout, needs: []string{Repository, Layer}, pastStops: []string{Repository}},
 	// The compute backend's provisioning is money, permanent and owner-run,
 	// so --yes never covers it; it comes last, after every stage that
 	// builds the identity, the registry and the installation it reads.
@@ -257,6 +292,13 @@ const (
 	LeftCommand LeftKind = "command" // one line to run
 	LeftPrompt  LeftKind = "prompt"  // a prompt fugaro shows in a terminal
 	LeftConsole LeftKind = "console" // something done in a web console
+	// LeftRefused is a step the managed gate refused (D1012): nothing was
+	// written, and nothing the reader types or runs writes it. It is a kind of
+	// its own rather than a command or a prompt because that is the whole of
+	// what the reader has to be told, and because the command a stage's own
+	// Left carries beside it would ask for exactly what the gate has just
+	// made impossible.
+	LeftRefused LeftKind = "refused"
 )
 
 // Left is one thing only the user can do: a single line of text, never a
@@ -381,6 +423,24 @@ type SelfConfirming interface {
 // the cloud half of that stage keeps its refusal, in the step that makes it.
 type LocalUnderAgent interface{ LocalUnderAgent() }
 
+// PastStops is implemented by a stage whose own steps are not all alike about
+// the stop its row tolerates (pastStops, RunsPastStop): the loop hands it the
+// stops it is running past before it checks, plans and applies it. They are
+// the run's own stops and not a reading of the world — a stage that asked the
+// world instead would be answering with its own guess at a verdict the loop
+// already has, and would be wrong about it wherever the state moved after the
+// stopped stage answered (the run's own writes move it: the repository stage's
+// anchor edits the checkout's fugaro.yaml in the run that onboarded it).
+//
+// It exists for one stage: the checkout's inside fugaro update (internal/cli/
+// init_checkout_upgrade.go). Its pin and its plugin read no repository file and
+// run past a repository stop, which is what its row is for; its cloud step
+// builds the job images from the very repository that stop is about, so it is
+// dropped rather than run past it, and it is every needs-you stop of that stage
+// the cloud step is dropped for — the repository stage's are not all about its
+// file (#1836).
+type PastStops interface{ PastStops(stops []string) }
+
 // StageError is a failure that carries the one-line fix.
 type StageError struct {
 	Err error
@@ -468,25 +528,129 @@ type AgentError struct{ Marker string }
 
 func (e *AgentError) Error() string { return AgentRefusal(e.Marker) }
 
-// GatedError is a step the managed project's gate refused in a coding agent's
-// session (D1012, D1023): the loop reports it as the user's to do, in the
-// gate's own sentence rather than in the session's, because what refused the
-// step is the document the gate read and not the marker the session carries.
-// A session that read AgentRefusal here would be told to leave the run to
-// someone else; a session that reads this one is told what about the document
-// the gate would not admit, which is the account its reader acts on.
+// GatedError is a step the managed project's gate did not admit (D1012,
+// D1023): the loop reports it as the user's to do, in the gate's own sentence
+// rather than in the session's, because what refused the step is the document
+// the gate read and not the marker the session carries. A session that read
+// AgentRefusal here would be told to leave the run to someone else; a session
+// that reads this one is told what about the document the gate would not
+// admit, which is the account its reader acts on.
 //
 // Reason is the gate's sentence as the gate wrote it (managed.NotConverged and
 // the rules that fired, rendered by internal/managed), and Err is that refusal
 // as a value, so a caller can match on it (managed.ErrNotConverged) without
 // reading English.
+//
+// Refusal is what that answer leaves the reader, and it is set where the
+// refusal is built rather than read off Err here: only that caller knows
+// whether the gate judged a document at all. The zero value is the plan
+// refusal, which is the answer that must never hand the reader a confirmation
+// to type (CV1); Left turns the four into the left-for-you.
+//
+// Owner is the left-for-you of the one refusal whose remedy is a command the
+// reader already has (GateRefusedDelete): the flag that admits a refused
+// removal, the address the gate refused and the identity of the object it
+// takes away are the producer's to name — the door, the flag and the plan are
+// all its — so it is built whole there and carried here. Left hands it back
+// with the stage's name filled in.
 type GatedError struct {
-	Reason string
-	Err    error
+	Reason  string
+	Err     error
+	Refusal GateRefusal
+	Owner   Left
 }
 
 func (e *GatedError) Error() string { return e.Reason }
 func (e *GatedError) Unwrap() error { return e.Err }
+
+// GateRefusal is what the gate's answer about a step was, as far as the person
+// who reads the refusal is concerned.
+type GateRefusal uint8
+
+const (
+	// GateRefusedPlan is the gate reading the document and not admitting it:
+	// the cover or the cost list, with no command of the reader's own that
+	// admits what it refused. The step is nobody's from here — the plan is
+	// outside what Fugaro's own tables cover, so what fixes it is a release
+	// and not a confirmation — and the reader is told exactly that instead of
+	// being handed the stage's prompt to type the project's name, which is the
+	// deadlock CV1 is about (D1012: no typed confirmation reaches past a
+	// refusal).
+	GateRefusedPlan GateRefusal = iota
+	// GateRefusedClass is the document being admitted and the step's own
+	// confirmation class being one no plan gate covers (D1026: the policy
+	// publish that would loosen the published node, set an account-choice key
+	// or write the project's first node). The step IS the owner's, at their
+	// own terminal, so the stage's own Left — the one command they run
+	// themselves (spec §4.3) — is kept, and an agent's report to its owner
+	// stays actionable.
+	GateRefusedClass
+	// GateRefusedUnread is there being no verdict to act on: a document that
+	// could not be produced or read, a mark that could not be read a second
+	// time immediately before the write. Nothing is known about the plan,
+	// which is what the reader is told rather than that a cover refused a
+	// shape it never saw.
+	GateRefusedUnread
+	// GateRefusedDelete is the plan removing a resource the reader's own
+	// --allow-delete would admit (tf.Listable): a delete or a replace is their
+	// decision and not a session's, and the command that carries it already
+	// exists (spec §4.3's "For the owner" sentence, which promises that
+	// command and the identity the plan's before view carries). So this
+	// refusal is neither the plan's "file an issue" — nothing is missing from
+	// Fugaro's tables, the owner simply has not approved the removal — nor the
+	// stage's prompt, which asks for a typing the gate never reaches: what it
+	// leaves is Owner, the producer's own command line. The plan's own
+	// section for it is §4.1's delete rule 1.
+	GateRefusedDelete
+)
+
+// Left is the left-for-you of this refusal: the stage's own for the step that
+// is the owner's to run themselves, the producer's command for the removal
+// their own flag admits, and the refusal's own commandless text for every
+// other answer.
+func (e *GatedError) Left(stage Left) Left {
+	switch e.Refusal {
+	case GateRefusedClass:
+		return stage
+	case GateRefusedDelete:
+		owner := e.Owner
+		if owner.Kind == "" {
+			// A producer that classified the refusal without building the
+			// command it promises: the plan's own text, never the empty line
+			// an empty Left would print.
+			return Left{Kind: LeftRefused, Text: gateOutsideCover(e.Reason)}
+		}
+		owner.Stage = stage.Stage
+		return owner
+	case GateRefusedUnread:
+		return Left{Kind: LeftRefused, Text: gateUnjudged(e.Reason)}
+	default:
+		return Left{Kind: LeftRefused, Text: gateOutsideCover(e.Reason)}
+	}
+}
+
+// gateOutsideCover is the refusal of a plan the gate's own rules would not
+// admit. It says the four things this reader needs and names nothing they can
+// act on in this terminal: the step was refused and nothing was written, the
+// gate's sentence for why (quoted — it names the resource or the member the
+// cover would not admit, which is what an issue needs), that there is nothing
+// to type and no command that helps, and that the cause is a plan outside what
+// those rules cover, which is a person's issue to file and a Fugaro release to
+// fix.
+func gateOutsideCover(reason string) string {
+	return "the managed gate refused this step and nothing was written: " + reason +
+		". Nothing here is yours to type or to run, because no confirmation reaches past a refusal (D1012): what the gate would not admit is a plan its own tables do not cover, which is fixed in Fugaro and not in your project — a person files an issue with the sentence above, and the next release reads it"
+}
+
+// gateUnjudged is the refusal of a step the gate reached no verdict on, and it
+// is a different sentence on purpose: there is no plan to blame and no shape
+// missing from Fugaro's tables, so blaming the cover here would be the same
+// mistake as handing the reader a prompt, in the other direction. What is left
+// is the run's own failure, named as one.
+func gateUnjudged(reason string) string {
+	return "the managed gate did not judge this step and nothing was written: " + reason +
+		". Nothing here is yours to type or to run: the gate reached no verdict it could act on, so nothing was applied (D1012), and what the sentence above names is a failure of the run rather than of your plan"
+}
 
 // AgentProceeded is the other half of AgentRefusal: the sentence for the one
 // case in which a step in a coding agent's session runs all the same — D55's
@@ -532,6 +696,25 @@ func GateProceeded() string {
 // refuses to take.
 func GateOrdinary() string {
 	return "this project is managed, so this step takes no confirmation: the marks were read, the step is one the run announced, and what it changes is printed above (the owner's ruling of 2026-11-01)"
+}
+
+// OwnerProceeded is the sentence for the same reader as GateOrdinary — the
+// person whose prompt the step would have been — at the steps the gate has no
+// document for and no verdict about: a policy whose next generation loosens
+// what the project may spend, a project layer this run republishes, the local
+// config. Nothing about them is judged plan by plan, so this sentence claims
+// no verdict; what it says is the owner's ruling of 2026-11-06, that a person
+// at their own terminal on a managed project is not asked to type a
+// confirmation for a step that loses no data and takes no secret value, and
+// that the line above is the note of what changed.
+//
+// It follows GateOrdinary's own rule about what it may name — no flag, no
+// variable, no marker a reader could set — and it is a third sentence rather
+// than that one's words because the reader of this one is owed the difference:
+// GateOrdinary speaks for a step the run announced and the gate let through,
+// this one for a step no rule judged at all.
+func OwnerProceeded() string {
+	return "this project is managed and this is the owner's own terminal: the marks were read, what this step changes is printed above, and nothing is typed for it here (the owner's ruling of 2026-11-06)"
 }
 
 // AskRestored is the line a managed project's own terminal reads when --ask
@@ -839,10 +1022,19 @@ func GateConfirms(class ConfirmClass, c Conditions, m Managed) bool {
 // It is ConfirmsByGate's condition half, named once so that a caller asking
 // the same question about a document the gate's verdict does not cover — the
 // policy node a managed project rewrites, whose loosening takes the Typed
-// class and is admitted by no plan gate — asks it the same way. The terminal
-// is the load-bearing half and the one a caller writing this out again would
-// drop: a pipe carries no marker, so a session nobody is at reads exactly like
-// the owner's own.
+// class and is admitted by no plan gate; the ordinary steps of the converge
+// the run's one confirmation covered, the owner's ruling of 2026-11-06 — asks
+// it the same way. A caller asks this beside its own read of the marks (the
+// gate's own read, never a second one) and prints OwnerProceeded's sentence;
+// it is not a verdict about any plan, and it admits nothing on its own.
+//
+// The terminal is the load-bearing half and the one a caller writing this out
+// again would drop: a pipe carries no marker, so a session nobody is at reads
+// exactly like the owner's own, and a coding agent's session is at a terminal
+// too. --yes is deliberately not part of it, in both directions: a managed
+// project must not need a flag the owner has to remember, and a run that
+// passed it reads the managed sentence rather than "confirmed by --yes" for a
+// step the project asks nothing about anyway.
 func PersonAtTheTerminal(c Conditions) bool {
 	return !c.Ask && c.Agent == "" && c.Terminal && !c.NonInteractive && !c.JSON
 }

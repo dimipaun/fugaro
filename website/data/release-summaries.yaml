@@ -1,6 +1,8 @@
 # website/data/release-summaries.yaml -- the end-user summary of every release.
 #
-# One entry per file in docs/releases/, keyed by the release's tag, and the changelog page
+# One entry per RELEASED file in docs/releases/ -- one at or below the CLI stream's current
+# version in docs/release-streams.yaml, so the notes of a release not yet cut are not held to a
+# line here -- keyed by the release's tag, and the changelog page
 # renders it under the release's heading with the release file's own Highlights collapsed
 # below it (the owner's brief of 2026-10-19: the summary under each release is a product
 # feature a reader understands, and the operator detail of docs/releases/vX.Y.Z.md is one
@@ -16,13 +18,14 @@
 #
 # Read by website/src/content.ts (loadReleaseSummaries), rendered by
 # website/src/components/Changelog.astro, and pinned by website/test/changelog-page.mjs:
-# every release file has an entry here, none is empty, and the page renders it.
+# every released file has an entry here, none is empty, and the page renders it.
 #
 # A new release adds its line here in the same commit as its docs/releases/vX.Y.Z.md: the
 # summary is written for readers who use Fugaro, from what that file says the release does.
 version: 1
 
 summaries:
+  v0.21.0: A change can now be reviewed in the cloud by its own read-only job, long tasks get a three-hour default budget so they finish without a per-run override, runs record why they failed, and a person on a managed project is never asked to type anything.
   v0.20.3: A run that reviews on your Claude subscription now starts on the job that holds its token, and a managed project's own update retires what it created.
   v0.20.2: fugaro update no longer stops at the installation step on a project that has a catalog check.
   v0.20.1: The job images the 0.20 line needs are published; 0.20.0 shipped without them because the image build broke on a CI runner change.
@@ -48,7 +51,7 @@ summaries:
   v0.10.4: fugaro setup now creates a fresh project and no longer offers to adopt an existing one. When billing cannot be linked, setup pauses instead of failing, writes your local configuration and prints one ready-to-forward message for whoever administers billing, and a rerun picks up where it stopped. A project created by setup is marked managed by default.
   v0.10.3: fugaro setup now says in one plain line what to ask your organization for when it cannot create the project or link billing, and the setup page describes a single path, a new project.
   v0.10.2: fugaro watch keeps failed runs as long as you ask, the guard that keeps agents out of workflow files no longer refuses a run it should not, fugaro plan graph refuses documents it used to guess at, and the security page says what the credentials service's account can write.
-  v0.10.1: The credentials service is wired end to end and gets its own database role while staying dormant until an owner opts in, fugaro watch is easier to read, fugaro update --forget is safe on a managed installation, and a run's review and writeback now judge the same diff.
+  v0.10.1: The credentials service is wired end to end and gets its own database role, and a later release deploys it on every installation, fugaro watch is easier to read, fugaro update --forget is safe on a managed installation, and a run's review and writeback now judge the same diff.
   v0.10.0: Setup now asks every question before it changes anything, a separate update command brings an existing installation up to date and the old init command is gone, a credentials service that keeps model credentials out of the job ships switched off until the next release wires it end to end, and managed projects are available again for a project Fugaro created or that its owner flags.
   v0.9.7: The job images publish again after 0.9.6's failed their security scan, so the cheaper review stage of 0.9.6 reaches cloud runs once a repository refreshes its images.
   v0.9.6: The first-run and upgrade commands are now fugaro setup and fugaro update, and cloud runs on long-lived branches review only their own change, so they cost far less.

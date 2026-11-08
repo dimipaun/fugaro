@@ -184,6 +184,62 @@ func TestFailedStepPrintsContextAndSinkPath(t *testing.T) {
 	}
 }
 
+// TestTheLogHoldsTheRunsOwnLines: the log is the run's full output (D1352), so
+// a command whose own output is its steps keeps them — a run that reported a
+// step and a closing line cannot leave an empty file at the path a failure
+// prints. The log gets the plain line: the colour that helps a person watching
+// is noise in a file.
+func TestTheLogHoldsTheRunsOwnLines(t *testing.T) {
+	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
+	var out bytes.Buffer
+	sink := &fakeSink{path: "/state/fugaro/logs/deploy-20261107T090000Z-1.log"}
+	// A terminal, so the person's copy is styled and the log's is not.
+	r := New(Options{Out: &out, Getenv: noEnv, IsTerminal: aTerminal, Sink: sink, Now: func() time.Time { return now }})
+	r.Step("Publish the policy").Done("published")
+	r.Step("Backfill").Failed(errors.New("exit status 1"), []string{"Error: permission denied"})
+	r.Summary()
+	log := sink.String()
+	for _, want := range []string{
+		glyphDone.sym + " Publish the policy published",
+		glyphFailed.sym + " Backfill: exit status 1",
+		"    Error: permission denied",
+		"full output: " + sink.path,
+		"Failed in 0.0s, 2 steps",
+	} {
+		if !strings.Contains(log, want) {
+			t.Errorf("the log does not hold %q:\n%q", want, log)
+		}
+	}
+	if strings.Contains(log, "\x1b") {
+		t.Errorf("the log carries the terminal's colour codes:\n%q", log)
+	}
+}
+
+// TestLogIsTheSinkAlone: Reporter.Log is for a command that prints its own
+// lines to its own writer and wants them kept beside it — the log, and not the
+// terminal a second time, and nothing at all for a run with no log.
+func TestLogIsTheSinkAlone(t *testing.T) {
+	var out bytes.Buffer
+	sink := &fakeSink{}
+	r := New(Options{Out: &out, Getenv: noEnv, NoColor: true, Sink: sink})
+	if n, err := r.Log().Write([]byte("the marker is removed\n")); err != nil || n != len("the marker is removed\n") {
+		t.Fatalf("a log write = %d, %v", n, err)
+	}
+	if !strings.Contains(sink.String(), "the marker is removed") {
+		t.Errorf("the line did not reach the log: %q", sink.String())
+	}
+	if out.Len() != 0 {
+		t.Errorf("the log writer wrote to the terminal as well: %q", out.String())
+	}
+	bare := New(Options{Out: &out, Getenv: noEnv, NoColor: true})
+	if _, err := bare.Log().Write([]byte("nowhere\n")); err != nil {
+		t.Fatalf("a run with no log failed a write: %v", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("a run with no log wrote to the terminal: %q", out.String())
+	}
+}
+
 func TestStreamIsVerboseOnlyAndAlwaysSunk(t *testing.T) {
 	t.Run("the log only", func(t *testing.T) {
 		var out bytes.Buffer

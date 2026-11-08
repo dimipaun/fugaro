@@ -120,11 +120,32 @@ func runCoordinatorStatusFromStore(cmd *cobra.Command, o *coordinatorOptions) er
 // directory is that repository's checkout. A repository with neither is refused
 // there, naming the entry to set, and that is the one case in which this read
 // is not checkout-free.
+//
+// It opens its own store, which is the reader that reads once. A reader that
+// reads this node again and again — `graph --watch --json`, once per document
+// for as long as the console holds the stream open — opens one and calls
+// StoredProjectThrough with it, because a store opened per read is an rtdb
+// client and a token source built per read (CoordinatorStore, CG7).
 func StoredProject(ctx context.Context, env *fcli.Cloud, repos []string, since time.Time, warn io.Writer) (coordinator.StoredProjectView, error) {
 	store, err := openCoordinatorStore(ctx, env.Config())
 	if err != nil {
 		return coordinator.StoredProjectView{}, err
 	}
+	return StoredProjectThrough(ctx, env, store, repos, since, warn)
+}
+
+// StoredProjectThrough is StoredProject's read over a store the caller already
+// holds: the same read and not a second one — the same parallel pass, the same
+// runs-half fallback for a repository with nothing stored, the same warnings in
+// the selection's own order — because two callers reading one node is two
+// callers only if they may differ, and these may not.
+//
+// It is the entry a caller that reads more than once takes, and the reason it
+// exists is the cost of opening: a store is one rtdb client and the credential
+// minted with it (CoordinatorStore), so a caller that reads per change holds one
+// for its whole life rather than reading the ADC file and fetching a token again
+// on every change, every keep-alive and every retry of a failed read (CG7).
+func StoredProjectThrough(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, repos []string, since time.Time, warn io.Writer) (coordinator.StoredProjectView, error) {
 	// Every repository's view is read in one pass, a few at a time: a project
 	// with twenty of them costs one repository's read per round rather than
 	// their sum, which is the whole of this read's cost. Each read writes its

@@ -106,34 +106,37 @@ func refuseBitbucketTokenReadInAgent(getenv func(string) string) error {
 // The ruling of 2026-11-05 (docs/credentials-service/default-on.md) is what
 // makes the states behind that one AHEAD of it doctor's business: the release
 // ends with the service deployed on every installation and a run switched to it
-// only when it can serve that run, so an installation that has not taken the
-// opt-in, one whose bundle holds no version (or only one that is switched off)
-// and one whose verifier list is empty are states a release leaves behind
-// rather than faults in an installation. On THIS release the opt-in is still
-// the flag DON1 removes, and that is what the first state has to say: nothing
-// there is broken and nothing is behind, an installation that never asked for
-// the service runs the way it did before the service existed. That state and
+// only when it can serve that run, so an installation that carries no service at
+// all (DON1's own state: `fugaro update` deploys one on every installation that
+// can hold it — it needs the installation's Firebase backend and at least one
+// repository job), one whose bundle holds no version (or only one that is
+// switched off) and one whose verifier list is empty are states a release leaves
+// behind rather than faults in an installation. The first is what DON1 turns the
+// opt-in into, and that is what its one line has to say: nothing there is broken
+// and nothing is behind, an installation that cannot carry the service runs the
+// way it did before the service existed. That state and
 // the emptied verify route are measurements: one line each, --all and --json
 // are where a reader who wants the service used finds which half is missing,
 // and neither is an item of the default view. The other four are warnings: the
 // block written and no service behind it, a job account the service does not
-// admit, and the two where the installation opted in and the service has
-// nothing to serve with (an empty bundle, a newest version Secret Manager will
+// admit, and the two where the service has nothing to serve with (an empty
+// bundle, a newest version Secret Manager will
 // not serve) all refuse something a run needs, so they print and --strict is
 // where they become a failure.
 //
-// The opt-in state's fix is not an instruction to run something: the flag is
-// the credentials stage's own gate and taking it re-writes this installation's
-// repository roots, so the line says what the command is, what it asks for
-// (its own typed confirmation, which --yes does not cover) and the two
-// prerequisites the stage's own text names — the auth mode the repositories
-// have to run and the App key the bundle has to hold — rather than presenting a
-// run that can break workflows as the routine step a doctor line reads as. The
-// one other state whose fix names the flag is NOT_FOUND: there the opt-in is
-// already written and the flag re-applies the root, which is a repair and not a
-// decision. The empty verify route names the same command for its own reason:
-// the service's verifier list is written into it by that stage's apply, not by
-// a publish. DON1 removes the flag and rewrites every string here that names it.
+// The no-service state's fix is not an instruction to run something: DON1's
+// deploy is the ordinary `fugaro update`, and it switches nothing on by
+// itself — a run reaches the service only where the bundle holds a model
+// credential and that repository's own root has been re-applied with the
+// switch — so the line says what the deploy does and what the switch then costs
+// the repository (the credential leaves its jobs in every agent.auth mode,
+// which is why a project that switches one on runs its workflows with
+// agent.auth: cascade, and a GitHub run refuses to mint until the bundle holds
+// the App's key) rather than presenting a run that can break workflows as the
+// routine step a doctor line reads as. The two states whose fix is a re-apply
+// name the same ordinary command: NOT_FOUND, where the installation root is
+// re-applied and the service created, and the empty verify route, whose list is
+// written into the service by that apply and not by a publish.
 //
 // Both halves of the deployed service's state are read from the service's own
 // IAM policy, which is where the module writes the grant: one member, the
@@ -156,13 +159,13 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 	const id = "credentials-service-deployed"
 	if lc.CredentialsService == nil {
 		return []doctorCheck{{ID: id, OK: true, Severity: "info",
-			Problem: fmt.Sprintf("the installation has not opted into the credentials service (%s): this release deploys it only behind %s, and every run of an installation that never asked for it fetches its model credential the way it did before the service existed, so nothing here is broken or behind — taking the opt-in is what moves the credential out of the jobs, and it does that to every repository root re-applied after it, in every agent.auth mode (which is why a project that takes it runs its workflows with agent.auth: cascade), and a GitHub run of it refuses to mint until the bundle holds the App's key", infra.CredentialsServiceName, selfCommand()+" update --provision-credentials"),
-			Fix:     "the opt-in is " + selfCommand() + " update --provision-credentials, and its credentials stage asks for its own typed confirmation before it applies (a --yes run does not cover it): take it when agent.auth: cascade is what this installation runs, and put the App's key in the bundle it creates (" + selfCommand() + " creds set github-app-key) before its first GitHub run"}}
+			Problem: fmt.Sprintf("the installation has no credentials service (%s): an ordinary %s deploys one on every installation that can hold it — it needs the installation's Firebase backend and at least one repository job — and writes the block this check reads, so this installation has either not run an update of this release or cannot carry one: either way its runs fetch their model credential the way they did before the service existed, and nothing here is broken or behind", infra.CredentialsServiceName, selfCommand()+" update"),
+			Fix:     "nothing to run for this: where " + selfCommand() + " update does deploy one, the deploy alone switches nothing on — a run reaches it only where the bundle holds a model credential and that repository's own root has been re-applied with the switch, which moves the credential out of its jobs in every agent.auth mode (which is why a project that switches one on runs its workflows with agent.auth: cascade), and a GitHub run of such a repository refuses to mint until the bundle holds the App's key (" + selfCommand() + " creds set github-app-key)"}}
 	}
 	unreadable := func(what string) []doctorCheck {
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("the installation has opted into the credentials service (%s), and %s could not be read: whether it is deployed and whether its callers may invoke it could not be checked", infra.CredentialsServiceName, what),
-			Fix:     "rerun doctor with your credentials and the Cloud Run API available, or check by hand: " + selfCommand() + " update --provision-credentials re-applies the installation and its service"}}
+			Fix:     "rerun doctor with your credentials and the Cloud Run API available, or check by hand: " + selfCommand() + " update re-applies the installation and its service"}}
 	}
 	jobs, err := infra.CredentialsJobAccounts(lc)
 	if err != nil {
@@ -182,7 +185,7 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 		if errors.As(err, &ge) && ge.Code == http.StatusNotFound {
 			return []doctorCheck{{ID: id, Severity: "warning",
 				Problem: fmt.Sprintf("the local config opted this installation into the credentials service (%s), and Cloud Run has no service %s in project %s, region %s: every run of it would fail to fetch a model credential", infra.CredentialsServiceName, infra.CredentialsServiceName, pluginwire.Printable(lc.GCPProject), pluginwire.Printable(lc.Region)),
-				Fix:     selfCommand() + " update --provision-credentials (re-applies the installation root, which creates the service)"}}
+				Fix:     selfCommand() + " update (re-applies the installation root, which creates the service)"}}
 		}
 		return unreadable("the IAM policy of the Cloud Run service " + infra.CredentialsServiceName + " (" + oneLineCLI(err.Error()) + ")")
 	}
@@ -314,13 +317,13 @@ func doctorCredentialsServiceServing(ctx context.Context, lc *localcfg.Config, i
 	if err != nil {
 		return unreadable("the verifier list the service is deployed with ("+oneLineCLI(err.Error())+")",
 			"whether its verify route admits anyone could not be checked, and this checkout's config states no list of its own",
-			"rerun doctor with the Realtime Database available, or state the list in this checkout's config (verifier_accounts), which is what the service is deployed from whether the node can be read or not, and re-apply it: "+selfCommand()+" update --provision-credentials")
+			"rerun doctor with the Realtime Database available, or state the list in this checkout's config (verifier_accounts), which is what the service is deployed from whether the node can be read or not, and re-apply it: "+selfCommand()+" update re-applies the service with it")
 	}
 	if verifiers != nil && len(verifiers) == 0 {
-		where, fix := "this checkout's config writes verifier_accounts: []", fmt.Sprintf("name the installation's own verifier account in this checkout's config (%s@%s.iam.gserviceaccount.com) and re-apply it (%s update --provision-credentials writes the service's list from this config), or take the key out of the config to keep the module's own account admitted", infra.VerifierAccountID, pluginwire.Printable(lc.GCPProject), selfCommand())
+		where, fix := "this checkout's config writes verifier_accounts: []", fmt.Sprintf("name the installation's own verifier account in this checkout's config (%s@%s.iam.gserviceaccount.com) and re-apply it (%s update writes the service's list from this config), or take the key out of the config to keep the module's own account admitted", infra.VerifierAccountID, pluginwire.Printable(lc.GCPProject), selfCommand())
 		if published {
 			where = "the published policy's verifier_accounts is an empty list and this checkout's config states none"
-			fix = fmt.Sprintf("name the account the verify route should admit in this checkout's config (%s@%s.iam.gserviceaccount.com) and re-apply it (%s update --provision-credentials): a config that states a list is the one the service is deployed with, and %s project policy publish carries that same list into the node the other machines read", infra.VerifierAccountID, pluginwire.Printable(lc.GCPProject), selfCommand(), selfCommand())
+			fix = fmt.Sprintf("name the account the verify route should admit in this checkout's config (%s@%s.iam.gserviceaccount.com) and re-apply it (%s update): a config that states a list is the one the service is deployed with, and %s project policy publish carries that same list into the node the other machines read", infra.VerifierAccountID, pluginwire.Printable(lc.GCPProject), selfCommand(), selfCommand())
 		}
 		return []doctorCheck{{ID: id, OK: true, Severity: "info",
 			Problem: fmt.Sprintf("the credentials service %s is deployed and serving, and it admits nobody on the verify route: every job account may invoke it and its bundle holds a version, and the verifier list it is deployed with is empty (%s), so nothing can ask whether a verdict's signature is this service's", infra.CredentialsServiceName, where),
@@ -607,7 +610,7 @@ func doctorBundleChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck 
 	if lc.CredentialsService == nil {
 		return []doctorCheck{{ID: idBundle, Severity: "info",
 			Problem: "the installation has not opted into the credentials service, so it has no bundle for a Bitbucket token to live in: runs of a proxied repository have nowhere to fetch one",
-			Fix:     "to broker the Bitbucket token, opt in first: " + selfCommand() + " update --provision-credentials"}}
+			Fix:     "to broker the Bitbucket token the installation needs its credentials service, which an ordinary " + selfCommand() + " update deploys on every installation that can carry one (it needs the installation's Firebase backend and at least one repository job)"}}
 	}
 	proxied := proxiedBitbucketRepos(lc)
 	unreadable := func(what string) []doctorCheck {
@@ -976,7 +979,7 @@ func doctorModelKeyInAgent(lc *localcfg.Config, rf *resolvedFile) *doctorCheck {
 	return &doctorCheck{ID: "model-key-in-agent", Severity: "info",
 		Problem: fmt.Sprintf("this repository's workflows (%s) run with agent.auth %s, and the model credential reaches the agent's own environment as %s (%s)",
 			strings.Join(printableNames(slices.Sorted(maps.Keys(rf.Cfg.Workflows))), ", "), auth, env, why),
-		Fix: "to take it out of the agent's reach, turn the budget on (budget.mode observe or enforce: the gateway holds the key), or opt the installation into the credentials service (" + selfCommand() + " update --provision-credentials)"}
+		Fix: "to take it out of the agent's reach, turn the budget on (budget.mode observe or enforce: the gateway holds the key), or put the installation's credentials service in front of it (an ordinary " + selfCommand() + " update deploys it)"}
 }
 
 // proxiedBitbucketRepos are the repositories of this installation's local

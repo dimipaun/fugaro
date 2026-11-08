@@ -589,11 +589,8 @@ func (p *layerPlan) objectAt() *layerAt {
 // The generation it lands at is what this run's other halves record, so the
 // write is made before any of them reads it (p.gen is left at the new one).
 func (s *layerStage) migrateObject(ctx context.Context, env initflow.Env, p *layerPlan) error {
-	cmd, w := s.e.r.cmd, s.e.r.w
+	w := s.e.r.w
 	printLayerRemoval(w, "the published project layer", p.objectRemoval)
-	if err := s.e.r.asking(func() error { return confirmRemoval(cmd, p.lc, env.Yes, p.fileRewriteWhat(layerMigrateWhat)) }); err != nil {
-		return err
-	}
 	b, err := openRecordBucket(ctx, p.url)
 	if err != nil {
 		return remote(fmt.Errorf("opening %s to rewrite the project layer: %w", p.url, err))
@@ -603,13 +600,16 @@ func (s *layerStage) migrateObject(ctx context.Context, env initflow.Env, p *lay
 	// The record is written by whichever half of this run writes the local
 	// layer file (or by none of them, on a machine with no file), never here:
 	// the generation this run adopts is the one the file ends up written from.
-	gen, err := publishLayer(ctx, w, b, p.objectLayer, false, p.objectAt(), layerRecord{})
+	confirm := func() error {
+		return s.e.r.asking(func() error { return s.confirmWrite(p.lc, env, p.fileRewriteWhat(layerMigrateWhat)) })
+	}
+	gen, err := publishLayer(ctx, w, b, p.objectLayer, false, p.objectAt(), layerRecord{}, confirm)
 	if err != nil {
 		return err
 	}
 	p.gen = gen
 	fmt.Fprintf(w, "rewrote the published project layer without them (generation %d -> %d, sha256 %s)\n", old, gen, p.objectLayer.SHA256)
-	failed := fanOutLayer(ctx, w, &cloudEnv{lc: p.lc, bucket: b}, p.objectLayer, gen)
+	failed := fanOutLayer(ctx, nil, w, &cloudEnv{lc: p.lc, bucket: b}, p.objectLayer, gen)
 	if failed > 0 {
 		return remote(fmt.Errorf("the project layer is rewritten, but %d repository copy(ies) failed (listed above); run %s again", failed, selfCommand()+" update"))
 	}

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"slices"
@@ -20,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -402,6 +404,27 @@ git:
   base_branch: main
 agent:
   auth: oauth
+workflows:
+  web:
+    checkout: clone
+    commands:
+      build: sh build.sh
+      test: sh test.sh
+    timeouts: { total: 5m, stage: 2m, verify: 1m, finalize_reserve: 30s }
+`
+
+// projectJobCascadeRepoYAML is the same clone checkout under agent.auth:
+// cascade, the one mode the credentials service serves (config.AuthCascade,
+// infra.CredentialsServiceServes). It is what a repository launched on an
+// installation whose switch is on carries, which is the shape a test about
+// everything else the switch reads has to spell.
+const projectJobCascadeRepoYAML = `version: 1
+project: aurora
+git:
+  provider: github
+  base_branch: main
+agent:
+  auth: cascade
 workflows:
   web:
     checkout: clone
@@ -1108,6 +1131,554 @@ func TestProjectJobOAuthRefusedAccountNotListed(t *testing.T) {
 	}
 }
 
+// projectJobSentinelProfile is the profiles block of a project whose standard
+// profile serves the account axis's one non-account value: the project's own
+// Anthropic API key (config.AnthropicKeyAccount, D1417/D1422). A profile that
+// lists it deploys one more job — the account segment of the job's name is the
+// sentinel itself and nothing is mounted on it (config.ProjectJobTokenAccount
+// answers no token for it, internal/infra's projectAccountMount mounts nothing)
+// — and that job's review-only variant is the pairing a review served by the key
+// runs in. The list is exact, as a profile that names accounts must write it
+// (D3), and the sentinel's own policy list is that same list, which is where
+// projectpolicy derives it from (anthropicKeySlugs).
+const projectJobSentinelProfile = "profiles: { standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, allow_repos: [github/acme/app], claude_accounts: [" + config.AnthropicKeyAccount + "] } }\n"
+
+// projectJobSentinelPolicy is the node that project publishes: the profile
+// above, and the accounts block entry the sentinel must have for any of this to
+// be reachable — the credentials service intersects a repository's admission
+// with accounts.<name>.allow_repos (credsvc's admittedAccounts), so a sentinel
+// with no entry there is one no review call could ever be served by.
+const projectJobSentinelPolicy = `{"version":4,"allow_repos":["github/acme/*"],` +
+	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
+	`"allow_repos":["github/acme/app"],"claude_accounts":["` + config.AnthropicKeyAccount + `"]}},` +
+	`"accounts":{"` + config.AnthropicKeyAccount + `":{"allow_repos":["github/acme/app"]}}}`
+
+// newProjectJobSentinelFixture is the project that serves the key: the fixture's
+// standard profile rewritten to list the sentinel, that policy published, and
+// the job the installation would have deployed for it registered in the fake —
+// one job per (profile, provider, account), the sentinel being the account
+// segment of this one (gcp.ProjectJobName).
+func newProjectJobSentinelFixture(t *testing.T) *projectJobFixture {
+	t.Helper()
+	return newProjectJobSentinelFixtureMode(t, "off")
+}
+
+// newProjectJobSentinelFixtureMode is newProjectJobSentinelFixture on a budget
+// installation whose local mode is mode, as newProjectJobFixtureMode is to
+// newProjectJobFixture: the mix's own conditions are read in the mode that
+// admits a mix at all (enforce), so the one test about a mixed run spells it.
+func newProjectJobSentinelFixtureMode(t *testing.T, mode string) *projectJobFixture {
+	t.Helper()
+	f := newProjectJobFixtureMode(t, mode)
+	rewriteProfileLine(t, f.cloudFixture, projectJobSentinelProfile)
+	publishPolicy(t, f.launchBudgetFixture, projectJobSentinelPolicy)
+	job := gcp.ProjectJobName("standard", "github", config.AnthropicKeyAccount)
+	f.run.AddProjectJob(job, "standard", "github", config.AnthropicKeyAccount, "2", "4Gi")
+	f.run.SetJobTimeout(job, projectJobTimeout+backend.TaskTimeoutSlack)
+	return f
+}
+
+// TestProjectJobSentinelResolvesToTheJobAndVariantItDeploys is the account
+// axis's placement half for the project's own Anthropic API key (AK5's
+// Interfaces: run.go's claudeAccountFor and mixedRunAccount resolve the sentinel
+// to the review variant that is deployed for it). The value the axis places on
+// is the sentinel itself, and the three readers of that value agree, which is
+// the whole of what makes a review served by the key launchable:
+//
+//   - the deployer builds a coding job whose account segment is the sentinel,
+//     mounting nothing on it (internal/infra's ProjectJobs);
+//   - the deployer builds that job's review-only variant, which is the job a
+//     review served by the key runs in (ProjectReviewJobs) — and the launcher's
+//     own entry derives exactly that name, so the launcher cannot launch a
+//     variant nobody deployed;
+//   - the runner resolves the coding job's name back to the sentinel
+//     (runner.ProjectJobOfPolicy), which is what its pairing test compares
+//     spec.oauth_token against.
+//
+// Mutation (run, restore): place the sentinel on the profile's no-account job
+// (drop the `case auth == "api-key" && selected == config.AnthropicKeyAccount`
+// arm) — the value-level placement below answers "" and this fails on it, and
+// the review of such a repository then resolves the variant of the no-account
+// job, whose account segment is not the sentinel: the runner refuses the pairing
+// and the review halts inside Cloud Run, past the claim and the budget token.
+func TestProjectJobSentinelResolvesToTheJobAndVariantItDeploys(t *testing.T) {
+	f := newProjectJobSentinelFixture(t)
+	addRepoAppIDToFixture(t, f.cloudFixture)
+	lc, err := localcfg.Parse([]byte(readFileString(t, os.Getenv("FUGARO_CONFIG"))))
+	if err != nil {
+		t.Fatalf("the fixture's local config does not parse: %v", err)
+	}
+	coding, err := infra.ProjectJobs(lc, lc.RunsBucket, false)
+	if err != nil {
+		t.Fatalf("the installation's coding jobs: %v", err)
+	}
+	variants, err := infra.ProjectReviewJobs(lc, lc.RunsBucket, false)
+	if err != nil {
+		t.Fatalf("the installation's review variants: %v", err)
+	}
+	p, found, err := projectpolicy.Decode([]byte(projectJobSentinelPolicy))
+	if err != nil || !found {
+		t.Fatalf("the test's own policy document is not one Decode accepts: %v", err)
+	}
+	pr := p.Profiles["standard"]
+
+	account, err := projectJobAccountFor(p, "standard", pr, "api-key", config.AnthropicKeyAccount, "github", "acme/app")
+	if err != nil {
+		t.Fatalf("an api-key launch naming the project's own key, which the profile serves: %v", err)
+	}
+	if account != config.AnthropicKeyAccount {
+		t.Fatalf("the launch's account axis = %q, want %q: the sentinel is a job's own account segment and not a name that resolves to the profile's no-account job", account, config.AnthropicKeyAccount)
+	}
+	job := gcp.ProjectJobName("standard", "github", account)
+	c, ok := coding[job]
+	if !ok {
+		t.Fatalf("the launcher targets the job %s, which the installation does not deploy (%v)", job, slices.Sorted(maps.Keys(coding)))
+	}
+	if c.Account != config.AnthropicKeyAccount {
+		t.Errorf("the deployed job %s carries the account %q, want %q", job, c.Account, config.AnthropicKeyAccount)
+	}
+	if tokenAccount, serves := config.ProjectJobTokenAccount(pr.JobProfile, account); serves || tokenAccount != "" {
+		t.Errorf("the sentinel's job holds the token of %q (%v): the key's job holds no Claude token at all, and a job that did would be one an OAuth run could be placed on", tokenAccount, serves)
+	}
+
+	// The review entry: the variant of THAT job, and the one the installation
+	// deploys. This is the review a project with no Claude account launches
+	// (D1422), on the job the service admits its caller by.
+	rv := projectJobReviewFor("standard", "github", account, projectJobTimeout+backend.TaskTimeoutSlack)
+	if want := credsvc.ReviewJobName("standard", "github", infra.ReviewVariantAccount(config.AnthropicKeyAccount)); rv.Name != want {
+		t.Fatalf("the review entry of the sentinel's job resolves %s, want %s", rv.Name, want)
+	}
+	v, ok := variants[rv.Name]
+	if !ok {
+		t.Fatalf("the launcher resolves the review job %s, which the installation does not deploy (%v)", rv.Name, slices.Sorted(maps.Keys(variants)))
+	}
+	if v.Account != config.AnthropicKeyAccount || len(v.SecretEnv) != 0 {
+		t.Errorf("the review variant %s = account %q, mounts %v, want the sentinel's account and no mount", rv.Name, v.Account, v.SecretEnv)
+	}
+
+	// And the runner's half: the coding job's name resolves back to the sentinel
+	// over the published policy, which is the value its pairing test compares the
+	// task's own oauth_token against (internal/runner's pairingNamesTheProjectsKey).
+	profile, provider, back, ok := runner.ProjectJobOfPolicy(p, job)
+	if !ok || profile != "standard" || provider != "github" || back != config.AnthropicKeyAccount {
+		t.Errorf("ProjectJobOfPolicy(%s) = (%s, %s, %q, %v), want (standard, github, %q, true): the runner pairs no review onto this job otherwise", job, profile, provider, back, ok, config.AnthropicKeyAccount)
+	}
+}
+
+// TestProjectJobSentinelRefusedWhereTheProfileDoesNotServeIt is the same axis's
+// refusal (design §4.4 row 5), which is the one that must not send the operator
+// to a key they may not write: the sentinel is no claude_accounts entry
+// (config.ValidateClaudeAccounts refuses to define it), so the sentence names
+// the profile's own list and the project secret the key's reach is read from,
+// and never a token called claude-oauth-token-<sentinel> — the name that entry
+// would have produced and that nothing holds.
+//
+// Mutation (run, restore): drop the sentinel's own sentence in
+// checkProjectJobAccount — the operator is told to define
+// claude_accounts: {anthropic-api-key--project: ...}, which this configuration
+// refuses, and the assertion on the token name fails.
+func TestProjectJobSentinelRefusedWhereTheProfileDoesNotServeIt(t *testing.T) {
+	f := newProjectJobFixture(t) // the standard profile serves no account at all
+	isolateCache(t)
+	projectJobCheckout(t) // the repository's own fugaro.yaml: agent.auth: api-key
+
+	const run = "20261020-120000-aaaa"
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "--token", config.AnthropicKeyAccount, "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("a launch naming the project's own key on a profile that does not serve it: %v", err)
+	}
+	for _, want := range []string{
+		config.AnthropicKeyAccount,                  // the value this run's credential is
+		"not a Claude account",                      // and what it is instead
+		"standard",                                  // the profile whose list decides
+		"claude_accounts",                           // where that list is written
+		"project_secrets." + config.AnthropicSecret, // and where the key's reach is written
+		"no claim was taken",                        // and that nothing was launched
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if tok := config.ClaudeAccountSecret(config.AnthropicKeyAccount); strings.Contains(err.Error(), tok) {
+		t.Errorf("the refusal names the token %s, which nothing holds: the sentinel is no claude_accounts entry and has no token to store", tok)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions, want none", n)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the refused launch made %d jobs.run calls (%+v), want none", len(calls), calls)
+	}
+	if tok := readToken(t, f.cloudFixture, run); tok != "" {
+		t.Errorf("the refused launch minted a budget token: %s", tok)
+	}
+}
+
+// TestProjectJobSentinelLaunchLandsOnItsOwnJob is the placement end to end: an
+// api-key launch naming the project's own key — the spelling D1413's explicit
+// request takes, --token — runs on the job whose account segment is the sentinel,
+// which is the job the installation deployed for that profile
+// (gcp.ProjectJobName, internal/infra's ProjectJobs). What the run carries is
+// the sentinel as its own account (spec.OAuthToken), which is the value the
+// runner's pairing compares the review variant's account segment against
+// (internal/runner's pairingNamesTheProjectsKey).
+//
+// Mutation (run, restore): return "" from claudeAccountAllowed's sentinel arm
+// (or delete it, which sends the name to the membership check) — the launch is
+// refused for a claude_accounts entry that cannot exist, and every review this
+// release exists to serve is unreachable.
+func TestProjectJobSentinelLaunchLandsOnItsOwnJob(t *testing.T) {
+	f := newProjectJobSentinelFixture(t)
+	isolateCache(t)
+	projectJobCheckout(t) // the repository's own fugaro.yaml: agent.auth: api-key
+
+	const run = "20261020-120001-bbbb"
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "--token", config.AnthropicKeyAccount, "Add a feature"); err != nil {
+		t.Fatalf("an api-key launch naming the project's own key, which the profile serves: %v", err)
+	}
+	profile, provider, account := launchedProjectJob(t, f.cloudFixture)
+	if profile != "standard" || provider != "github" || account != config.AnthropicKeyAccount {
+		t.Errorf("the launch ran the project job of (%s, %s, %q), want (standard, github, %q)", profile, provider, account, config.AnthropicKeyAccount)
+	}
+	if got := readSpec(t, f.cloudFixture, run).OAuthToken; got != config.AnthropicKeyAccount {
+		t.Errorf("the run's own account in task.json = %q, want %q: the runner pairs a review by the task's own oauth_token and the job's account segment together", got, config.AnthropicKeyAccount)
+	}
+}
+
+// TestProjectJobSentinelIsAllowedOnlyForAnAPIKeyWorkflow pins the auth half of
+// claudeAccountAllowed's sentinel arm (`auth == "api-key" || auth == ""`), which
+// is the condition the arm's own comment claims and which nothing else in the
+// tree asserts: admitted for every value of config.AgentAuths, it would let a
+// vertex or cascade repository name the project's own key, take the claim, mint
+// the budget token and call Cloud Run for a run the account gate exists to
+// refuse — the class path refuses those two auths (internal/runner's
+// checkReviewClassModelPath), so the run would halt inside the job, past the
+// claim that a refused launch never takes.
+//
+// The whole list is walked rather than the two refused values alone, so a value
+// added to config.AgentAuths is judged here without anyone remembering to add
+// it, and the admitted row is a launch and not only a nil error.
+//
+// Mutation (run, restore): drop the auth condition (`if name ==
+// config.AnthropicKeyAccount`), which is what the missing pin allowed — the
+// vertex row is admitted, with the claim taken, one execution, one jobs.run
+// call and a budget token minted, and the cascade row loses the account gate's
+// sentence to the later cascade gate's, which refuses it past this arm. Both
+// rows go red.
+func TestProjectJobSentinelIsAllowedOnlyForAnAPIKeyWorkflow(t *testing.T) {
+	for i, auth := range config.AgentAuths {
+		t.Run(auth, func(t *testing.T) {
+			f := newProjectJobSentinelFixture(t)
+			isolateCache(t)
+			// The ref's own document carries the auth under test: what the launch
+			// reads is the fugaro.yaml at the ref the run checks out, so the two
+			// halves of the checkout are the same document here.
+			projectJobCheckoutYAML(t, projectJobRefRepoYAML(auth))
+
+			claimed := false
+			launchHooks.beforeClaim = func() { claimed = true }
+			t.Cleanup(func() { launchHooks.beforeClaim = nil })
+
+			run := fmt.Sprintf("20261020-1300%02d-%04d", i, i)
+			_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "--token", config.AnthropicKeyAccount, "Add a feature")
+			if auth == "api-key" {
+				// The one auth the class serves the key under (D1417): the launch
+				// runs on the sentinel's own job, which is the row that keeps this
+				// test from passing by refusing everything.
+				if err != nil {
+					t.Fatalf("an api-key launch naming the project's own key: %v", err)
+				}
+				if !claimed {
+					t.Error("the admitted launch took no claim")
+				}
+				if profile, provider, account := launchedProjectJob(t, f.cloudFixture); profile != "standard" || provider != "github" || account != config.AnthropicKeyAccount {
+					t.Errorf("the launch ran the project job of (%s, %s, %q), want (standard, github, %q)", profile, provider, account, config.AnthropicKeyAccount)
+				}
+				return
+			}
+			if err == nil {
+				t.Errorf("a %s launch naming the project's own key was admitted", auth)
+			} else {
+				if ExitCode(err) != ExitUserError {
+					t.Errorf("a %s launch naming the project's own key: %v, want a refusal", auth, err)
+				}
+				want := "only applies to a workflow whose agent.auth is oauth"
+				if auth == "oauth" {
+					// The other half of the arm's comment: oauth is no way round it
+					// either, because this value is no claude_accounts entry — the
+					// membership sentence is the one an oauth launch gets.
+					want = "claude_accounts"
+				}
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the %s refusal does not name %q: %v", auth, want, err)
+				}
+			}
+			// Read for every row and not only the refused ones: an arm that
+			// admitted this auth is a launch that took a claim, minted a budget
+			// token and called Cloud Run, and these are the three facts that say
+			// so.
+			if claimed {
+				t.Error("the refusal came after the launch claim")
+			}
+			if n := len(f.run.Executions()); n != 0 {
+				t.Errorf("%d executions, want none", n)
+			}
+			if calls := f.run.RunRequests(); len(calls) != 0 {
+				t.Errorf("the refused launch made %d jobs.run calls (%+v), want none", len(calls), calls)
+			}
+			if tok := readToken(t, f.cloudFixture, run); tok != "" {
+				t.Errorf("the refused launch minted a budget token: %s", tok)
+			}
+		})
+	}
+}
+
+// projectJobSentinelMixConfig is the sentinel's fixture with a mix declared:
+// one Claude account named for each of the two stages the ruling admits, which
+// is rung 2 (stageAccountOf) — the rung a launch resolves without reading a
+// provider route. The fixture itself carries the budget mode a mix is declared
+// under (enforce), so no key for it is written here.
+var projectJobSentinelMixConfig = "claude_accounts:\n  acme-overflow:\n    allow_data_to: [\"acme/app\"]\n" +
+	stagesBlock("review", "acme-overflow", "adversarial", "acme-overflow")
+
+// TestProjectJobSentinelRefusedOnAMixedRun is the pair claudeAccountFor's mix
+// resolution has to refuse: a launch naming the project's own Anthropic API key
+// (--token, claudeAccountAllowed's sentinel arm) on a repository whose project
+// declares a mix. The two are not two ways of holding the same thing — the mix
+// is the one Claude account an api-key run may hold, and it is what the launch's
+// own account has to be, because spec.OAuthToken is what picks the job variant
+// and only the account's own job mounts its token (mixedRunAccount). The
+// sentinel's job mounts no Claude token at all, while the runner resolves the
+// mix for the review and adversarial stages out of the *policy* — never out of
+// spec.OAuthToken (internal/runner's resolveMixedStages, agentenv's
+// stageAgentEnv) — so the launch passes every gate, takes the claim, mints the
+// budget token and starts Cloud Run on a job whose review stages then halt for a
+// token the run does not hold. The launch is refused where the mix is already
+// resolved instead, before the claim, as its neighbours are.
+//
+// Mutation (run, restore): drop the `mix != "" && name ==
+// config.AnthropicKeyAccount` arm in claudeAccountFor — the launch is admitted,
+// and the assertions below fail on the claim, on the executions, on the
+// jobs.run call and on the budget token.
+func TestProjectJobSentinelRefusedOnAMixedRun(t *testing.T) {
+	f := newProjectJobSentinelFixtureMode(t, "enforce")
+	isolateCache(t)
+	f.appendConfig(t, projectJobSentinelMixConfig)
+	projectJobCheckoutYAML(t, projectJobRefRepoYAML("api-key"))
+
+	claimed := false
+	launchHooks.beforeClaim = func() { claimed = true }
+	t.Cleanup(func() { launchHooks.beforeClaim = nil })
+
+	const run = "20261020-140000-cccc"
+	_, _, err := execute(t, "run", "--run-id", run, "--token", config.AnthropicKeyAccount, "Add a feature")
+	if err == nil {
+		t.Error("a launch naming the project's own key on a run that declares a mix was admitted")
+	} else {
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("a launch naming the project's own key on a run that declares a mix: %v, want a refusal", err)
+		}
+		for _, want := range []string{
+			config.AnthropicKeyAccount, // the value this run's account is
+			"acme-overflow",            // and the account the mix names for its stages
+			"one Claude account",       // the rule the pair breaks
+			"Nothing was launched",     // and that the refusal came before anything ran
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not name %q: %v", want, err)
+			}
+		}
+	}
+	if claimed {
+		t.Error("the refusal came after the launch claim")
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions, want none", n)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the refused launch made %d jobs.run calls (%+v), want none", len(calls), calls)
+	}
+	if tok := readToken(t, f.cloudFixture, run); tok != "" {
+		t.Errorf("the refused launch minted a budget token: %s", tok)
+	}
+}
+
+// TestProjectJobSentinelRefusedWhenTheRunIsNotAnAPIKeyRun is the axis's own
+// rule: the sentinel is the run's own account under agent.auth: api-key and
+// under no other auth, and projectJobAccountFor is where that is judged at the
+// launch — claudeAccountAllowed admits the name for api-key and for "", the
+// pre-check callers that resolve with no document to read an auth from (a
+// stored task repeated or retried), and says so in as many words.
+//
+// The two subtests are its two halves. The first walks the whole axis — the
+// empty auth included, which is the pre-check's — and asserts the sentinel's
+// own job for api-key and a refusal for every other value, so an auth added to
+// config.AgentAuths is judged here without anyone remembering to add it. The
+// second is the launch those two resolutions can disagree in: the project layer
+// in force when the retry is resolved says api-key (the pre-check admits the
+// sentinel), while the layer the task carries — the one the earlier run was
+// launched with, and the layer the launch re-resolves the credential over
+// (projectJobAgentAuth) — says something else. Vertex and oauth are both
+// walked, because they are not the same row arriving: a vertex run has no
+// account arm at all, while oauth has one this arm has to come before. Without
+// the arm the launch takes the claim, mints the budget token and starts Cloud
+// Run on the profile's no-account job, carrying the sentinel as its own
+// account: a run placed on a job its own credential never named.
+//
+// Mutation (run, restore): drop the `selected == config.AnthropicKeyAccount`
+// arm of projectJobAccountFor — the sentinel is placed on the no-account job
+// with no error both in the table (the vertex and cascade rows) and end to end
+// (the launch is admitted, and the assertions below fail on the claim, the
+// executions, the jobs.run call and the budget token).
+func TestProjectJobSentinelRefusedWhenTheRunIsNotAnAPIKeyRun(t *testing.T) {
+	p, found, err := projectpolicy.Decode([]byte(projectJobSentinelPolicy))
+	if err != nil || !found {
+		t.Fatalf("the test's own policy document is not one Decode accepts: %v", err)
+	}
+	t.Run("the axis, over every auth", func(t *testing.T) {
+		pr := p.Profiles["standard"]
+		for _, auth := range append([]string{""}, config.AgentAuths...) {
+			got, err := projectJobAccountFor(p, "standard", pr, auth, config.AnthropicKeyAccount, "github", "acme/app")
+			if auth == "api-key" {
+				// The one auth D1417 pairs the key with, and the row that keeps
+				// this test from passing by refusing everything: the sentinel's
+				// own job, which is the job the profile deploys by listing it.
+				if err != nil {
+					t.Fatalf("an api-key run naming the project's own key: %v", err)
+				}
+				if got != config.AnthropicKeyAccount {
+					t.Errorf("an api-key run naming the project's own key was placed with the account %q, want %q", got, config.AnthropicKeyAccount)
+				}
+				continue
+			}
+			if err == nil {
+				t.Errorf("a run whose auth is %q named the project's own key and was placed on the job of the account %q", auth, got)
+				continue
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("a run whose auth is %q naming the project's own key: %v, want a refusal", auth, err)
+			}
+			// The refusal names the value, the one auth it is a job's account
+			// for, and that nothing ran — and the auth it read, which an empty
+			// one reports as unread rather than interpolating nothing.
+			want := []string{config.AnthropicKeyAccount, "api-key", "no account this run can be placed by", "Nothing was launched"}
+			if auth == "" {
+				want = append(want, "could not be read")
+			} else {
+				want = append(want, fmt.Sprintf("%q", auth))
+			}
+			for _, w := range want {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("the refusal for the auth %q does not name %q: %v", auth, w, err)
+				}
+			}
+		}
+	})
+	t.Run("the launch, where the two resolutions disagree", func(t *testing.T) {
+		for _, auth := range []string{"vertex", "oauth"} {
+			t.Run(auth, func(t *testing.T) {
+				f := newProjectJobFixture(t)
+				isolateCache(t)
+				// The layer this command resolves now — the pre-check reads the
+				// sentinel against it — while the repository document itself
+				// names no auth of its own.
+				publishedLayer(t, f.cloudFixture, testProjectLayer)
+				projectJobCheckoutYAMLAt(t, projectJobAnchoredRepoYAML, projectJobAnchoredRepoYAML)
+
+				// The layer the earlier run carried: the one the launch
+				// re-resolves the credential over, and so the auth the axis is
+				// asked with.
+				layer := "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n  agent: { auth: " + auth + " }\n"
+				ctx := context.Background()
+				b, err := blob.OpenBucket(ctx, f.bucket)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer b.Close()
+				spec := &task.Spec{Version: 1, RunID: "20261021-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web",
+					Task: "x", RequestedBy: "someone@example.com", OAuthToken: config.AnthropicKeyAccount,
+					ProjectLayer: &task.ProjectLayer{YAML: layer, SHA256: config.LayerSum([]byte(layer))}}
+				if err := runstore.Open(b, appSlug, spec.RunID).CreateTask(ctx, spec); err != nil {
+					t.Fatal(err)
+				}
+
+				claimed := false
+				launchHooks.beforeClaim = func() { claimed = true }
+				t.Cleanup(func() { launchHooks.beforeClaim = nil })
+
+				_, _, err = execute(t, "run", "--retry", spec.RunID)
+				if err == nil {
+					t.Errorf("a retry whose launch resolves a %s credential was admitted with the project's own key as its account", auth)
+				} else {
+					if ExitCode(err) != ExitUserError {
+						t.Errorf("a retry whose launch resolves a %s credential: %v, want a refusal", auth, err)
+					}
+					for _, want := range []string{config.AnthropicKeyAccount, "no account this run can be placed by", fmt.Sprintf("%q", auth), "Nothing was launched"} {
+						if !strings.Contains(err.Error(), want) {
+							t.Errorf("the refusal does not name %q: %v", want, err)
+						}
+					}
+				}
+				if claimed {
+					t.Error("the refusal came after the launch claim")
+				}
+				if n := len(f.run.Executions()); n != 0 {
+					t.Errorf("%d executions, want none", n)
+				}
+				if calls := f.run.RunRequests(); len(calls) != 0 {
+					t.Errorf("the refused launch made %d jobs.run calls (%+v), want none", len(calls), calls)
+				}
+				if tok := readToken(t, f.cloudFixture, spec.RunID); tok != "" {
+					t.Errorf("the refused launch minted a budget token: %s", tok)
+				}
+			})
+		}
+	})
+}
+
+// TestProjectJobSentinelRefusedOnAPerRepositoryJob: the same name on a
+// repository that runs on a job of its own. A per-repository job's name is
+// derived from the account segment (gcp.WorkflowVariant), and no installation
+// deploys one under this value — its job is the shared project job of a profile
+// that lists it, and that job's review-only variant. Starting the derived name
+// would be Cloud Run's 404 for a job this installation was never asked for, so
+// the launch stops before the claim, as the account gate's refusals do.
+//
+// Mutation (run, restore): delete the `job == nil && spec.OAuthToken == ...`
+// refusal in launchRun — the launch takes the claim, mints the budget token and
+// reaches Cloud Run on a name nothing deployed, and the assertions below fail on
+// the claim and on the token.
+func TestProjectJobSentinelRefusedOnAPerRepositoryJob(t *testing.T) {
+	f := newProjectJobSentinelFixture(t)
+	isolateCache(t)
+	// A baked workflow: it stays on the repository's own job however the project
+	// is configured (internal/cli's launchProjectJobFor).
+	projectJobCheckoutYAML(t, strings.Replace(projectJobRepoYAML, "    checkout: clone\n", "", 1))
+
+	claimed := false
+	launchHooks.beforeClaim = func() { claimed = true }
+	t.Cleanup(func() { launchHooks.beforeClaim = nil })
+
+	const run = "20261020-120002-cccc"
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "--token", config.AnthropicKeyAccount, "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("a launch naming the project's own key on a baked workflow: %v", err)
+	}
+	for _, want := range []string{config.AnthropicKeyAccount, "job of its own", "clone", "no claim was taken"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if claimed {
+		t.Error("the refusal came after the launch claim")
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the refused launch made %d jobs.run calls (%+v), want none", len(calls), calls)
+	}
+	if tok := readToken(t, f.cloudFixture, run); tok != "" {
+		t.Errorf("the refused launch minted a budget token: %s", tok)
+	}
+}
+
 // projectJobReservedTokenPolicy is the node an owner can write by hand (the
 // node is theirs), with the standard profile mounting the reserved
 // claude-oauth-token. The account segment of the job that profile names is the
@@ -1530,6 +2101,7 @@ func addRepoAppIDToFixture(t *testing.T, f *cloudFixture) {
 func TestReviewJobVariantIsHandedNoToken(t *testing.T) {
 	f := newProjectJobServingFixture(t)
 	addRepoAppIDToFixture(t, f.cloudFixture)
+	markRepoCredentialsServiceReady(t, f.cloudFixture)
 	f.appendConfig(t, "credentials_service: { url: "+credentialsServiceFixtureURL+" }\n")
 	lc, err := localcfg.Parse([]byte(readFileString(t, os.Getenv("FUGARO_CONFIG"))))
 	if err != nil {
@@ -1542,10 +2114,12 @@ func TestReviewJobVariantIsHandedNoToken(t *testing.T) {
 	if len(deployed) == 0 {
 		t.Fatal("the fixture's installation deploys no review variant, so this pins nothing")
 	}
-	// The address is what an opted-in installation hands a launch: a
-	// repository's own job is told it, which is why the nil below is this
-	// rule and not a config with no service in it.
-	if env := credentialsServiceLaunchEnv(lc, ""); len(env) != 1 || env[0] != providers.EnvCredentialsServiceURL+"="+credentialsServiceFixtureURL {
+	// The address is what a switched-on installation hands a launch: a
+	// repository's own job, of a repository the service serves, is told it,
+	// which is why the nil below is this rule and not a config with no
+	// service in it. The other two halves of the switch are the record above
+	// and the cascade repository a checked-out launch reads its auth from.
+	if env := credentialsServiceLaunchEnv(lc, "", "acme/app", config.AuthCascade, false); len(env) != 1 || env[0] != providers.EnvCredentialsServiceURL+"="+credentialsServiceFixtureURL {
 		t.Fatalf("a repository launch on this config is handed %v, want the service's address alone: the fixture is not an opted-in installation", env)
 	}
 	for _, account := range []string{"acme-personal", ""} {
@@ -1562,7 +2136,7 @@ func TestReviewJobVariantIsHandedNoToken(t *testing.T) {
 			t.Errorf("the launcher resolves the review job %s, which the installation does not deploy (%v): a launcher cannot launch a job that does not exist", job.Name, slices.Sorted(maps.Keys(deployed)))
 			continue
 		}
-		if env := credentialsServiceLaunchEnv(lc, job.Name); env != nil {
+		if env := credentialsServiceLaunchEnv(lc, job.Name, "acme/app", config.AuthCascade, false); env != nil {
 			t.Errorf("a launch on the review job %s hands the execution %v: the variant carries the service's address from its deployment, and a per-launch entry is a value an execution object records", job.Name, env)
 		}
 		if got := v.Env[providers.EnvCredentialsServiceURL]; got != credentialsServiceFixtureURL {

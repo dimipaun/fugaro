@@ -379,6 +379,24 @@ func TestSetupSkillContent(t *testing.T) {
 	}
 }
 
+// TestSetupSkillChecksCatalogTagsCoverNeeds (R3 review): a workflow that runs a
+// catalog entry builds no per-repository image, and `fugaro validate` checks
+// only that its `needs:` are well formed (internal/config/catalog.go's
+// validateCatalogTags: the count, the shape of each tag and duplicates) -- it
+// never compares them against the entry's own `tags:`. So step 7's sentence
+// sending the agent to `fugaro image ls --json` to see the entry listed and its
+// tags covering the workflow's `needs:` is the only check setup has for an
+// entry that lacks a tag its workflow needs. A byte-budget trim deleted that
+// parenthetical once and setup reported done for such a workflow; this pin is
+// what keeps it, so the next trim finds its bytes elsewhere.
+func TestSetupSkillChecksCatalogTagsCoverNeeds(t *testing.T) {
+	skill := setupFiles(t)["skills/setup/SKILL.md"]
+	const want = "`fugaro image ls --json` (the entry listed, its tags covering the workflow's `needs:`)"
+	if !strings.Contains(skill, want) {
+		t.Errorf("skills/setup/SKILL.md no longer says %q: `fugaro validate` checks only that the tags are well formed, so nothing else catches a catalog entry whose tags do not cover the workflow's `needs:`", want)
+	}
+}
+
 var (
 	// runRepoCmdRE: an instruction to run the repository's own commands for
 	// discovery. Discovery reads files; running them runs repository code

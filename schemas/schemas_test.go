@@ -1793,7 +1793,7 @@ func TestResultSchemaHalted(t *testing.T) {
 		runstore.HaltNoCap, runstore.HaltTokenCap, runstore.HaltBudgetUnavailable, runstore.HaltBudgetTokenExpired,
 		runstore.HaltNoCredential, runstore.HaltCredsRulesDenied,
 		runstore.HaltStageBudget, runstore.HaltReviewRatio, runstore.HaltFanout,
-		runstore.HaltReviewScope, runstore.HaltExpectedExceeded,
+		runstore.HaltReviewScope, runstore.HaltExpectedExceeded, runstore.HaltOwnerDecision,
 	} {
 		if err := check(r); err != nil {
 			t.Errorf("schema rejects halt reason %q: %v", r, err)
@@ -1801,6 +1801,119 @@ func TestResultSchemaHalted(t *testing.T) {
 	}
 	if err := check("other"); err == nil {
 		t.Error(`schema accepts halt reason "other"`)
+	}
+}
+
+// TestResultSchemaOwnerDecisions: the pair a run that stopped waiting on its
+// owner leaves (OD1) validates — the decisions the run left (`owner_decisions`)
+// with their total, the ruling a follow-up works from (`owner_ruled`), and the
+// decisions that ruling answered (`owner_ruled_decisions`, which is what carries
+// it on from follow-up to follow-up) — and the schema refuses the shapes that
+// would let a reader render something the runner did not write: an unknown key
+// inside a decision, a decision with no sentence, a sentence past
+// runstore.MaxOwnerDecisionText, more decisions than the cap, and a total that
+// is not a count. A record with nothing pending writes no key at all, and the
+// empty block is refused too: absent is the fact "this run is not waiting on
+// anything", which an empty block would blur.
+func TestResultSchemaOwnerDecisions(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 11, 7, 10, 0, 0, 0, time.UTC)
+	rec := func(od, answered *runstore.OwnerDecisions, ruled string) runstore.Record {
+		return runstore.Record{
+			Version: 1, RunID: "20261107-100000-abcd", Status: runstore.StatusHalted, Stage: "review", Outcome: runstore.OutcomeDraft,
+			Reason: "review is waiting on 1 owner decision", CostUSD: 1, StartedAt: at,
+			Halt:                &runstore.Halt{Reason: runstore.HaltOwnerDecision, Scope: "run", At: at, Detail: "review is waiting on 1 owner decision"},
+			OwnerDecisions:      od,
+			OwnerRuled:          ruled,
+			OwnerRuledDecisions: answered,
+		}
+	}
+	validate := func(t *testing.T, r runstore.Record) error {
+		t.Helper()
+		data, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	good := runstore.NewOwnerDecisions([]runstore.OwnerDecision{
+		{File: "LICENSE.md", Summary: "the licence text needs counsel's clearance"},
+		{Summary: "the approval flow is a product decision"},
+	})
+	// A ruled follow-up whose reviewers accepted the ruling left no decisions of
+	// its own: the ruling and what it answered are the record's whole account of
+	// the owner's answer, and the run after it reads them from here.
+	if err := validate(t, rec(nil, good, "Counsel cleared it.")); err != nil {
+		t.Errorf("schema rejects the pair a ruled run works from: %v", err)
+	}
+	// A ruled run may leave new decisions of its own beside the pair.
+	if err := validate(t, rec(good, good, "Counsel cleared it.")); err != nil {
+		t.Errorf("schema rejects a ruled run that left decisions of its own: %v", err)
+	}
+	if err := validate(t, rec(good, nil, "")); err != nil {
+		t.Errorf("schema rejects the run's own block: %v", err)
+	}
+	bad := map[string]*runstore.OwnerDecisions{
+		"no sentence":   {Decisions: []runstore.OwnerDecision{{File: "a.go"}}, Total: 1},
+		"no decisions":  {Decisions: []runstore.OwnerDecision{}, Total: 1},
+		"over the cap":  {Decisions: good.Decisions, Total: 1},
+		"long sentence": {Decisions: []runstore.OwnerDecision{{Summary: strings.Repeat("x", runstore.MaxOwnerDecisionText+1)}}, Total: 1},
+	}
+	bad["over the cap"].Decisions = make([]runstore.OwnerDecision, runstore.MaxOwnerDecisions+1)
+	for i := range bad["over the cap"].Decisions {
+		bad["over the cap"].Decisions[i] = runstore.OwnerDecision{Summary: "s"}
+	}
+	for name, od := range bad {
+		if err := validate(t, rec(od, nil, "")); err == nil {
+			t.Errorf("schema accepts %s", name)
+		}
+		if err := validate(t, rec(nil, od, "Counsel cleared it.")); err == nil {
+			t.Errorf("schema accepts %s as the decisions a ruling answered", name)
+		}
+	}
+	// A ruling with no block beside it is a follow-up that answered a run this
+	// record does not describe as waiting: legal on its own, and the field is
+	// the text only.
+	if err := validate(t, rec(nil, nil, "Counsel cleared it.")); err != nil {
+		t.Errorf("schema rejects a ruling with no decisions: %v", err)
+	}
+	// The rulings behind the newest one, each with the decisions it answered
+	// (owner_ruled_earlier): what a follow-up carrying a new ruling keeps, so
+	// that a question the owner settled two rulings ago is not raised and halted
+	// on again. An entry is the pair above under the same rules, and the schema
+	// refuses what a reader could render from it that the runner never wrote.
+	withChain := func(rs []runstore.OwnerRuling) runstore.Record {
+		r := rec(nil, good, "Counsel cleared it.")
+		r.OwnerRuledEarlier = rs
+		return r
+	}
+	if err := validate(t, withChain([]runstore.OwnerRuling{{Ruling: "Keep the MIT text.", Decisions: good}})); err != nil {
+		t.Errorf("schema rejects the rulings behind the newest one: %v", err)
+	}
+	over := make([]runstore.OwnerRuling, runstore.MaxOwnerRulings+1)
+	for i := range over {
+		over[i] = runstore.OwnerRuling{Ruling: "Keep the MIT text.", Decisions: good}
+	}
+	// A ruling of blanks, or one carrying a control character, is refused the way
+	// a launcher's own ruling is (task.ValidateOwnerRuled), and that is a rule
+	// about text: no JSON Schema keyword states it, which is why
+	// task.schema.json's owner_ruled is held to minLength and maxLength and no
+	// more. Here the schema refuses an entry with no text at all, one past the
+	// bound, and one with nothing listed under it.
+	for name, rs := range map[string][]runstore.OwnerRuling{
+		"no ruling text":                 {{Decisions: good}},
+		"a ruling past the bound":        {{Ruling: strings.Repeat("r", task.MaxOwnerRuledBytes+1), Decisions: good}},
+		"a ruling with no decisions":     {{Ruling: "Keep the MIT text."}},
+		"a block with no decision in it": {{Ruling: "Keep the MIT text.", Decisions: &runstore.OwnerDecisions{Decisions: []runstore.OwnerDecision{}, Total: 1}}},
+		"over the cap":                   over,
+	} {
+		if err := validate(t, withChain(rs)); err == nil {
+			t.Errorf("schema accepts %s behind the newest ruling", name)
+		}
 	}
 }
 
@@ -2964,12 +3077,18 @@ func TestTaskSchemaPlanTaskMatchesTheGoRule(t *testing.T) {
 }
 
 // TestTaskSchemaOAuthTokenMatchesTheGoRules ties the task schema's
-// `oauth_token` property to the Go rules it mirrors (config.ClaudeAccountNameRE
-// and config.MaxClaudeAccountNameLen): the schema pattern and maxLength are
-// separate copies, so without this a change to the Go rule would drift from the
-// schema with only the corpus fixtures noticing. The pattern alone admits 61
-// characters (it counts repetition units of one or two), which is why the
-// bound is a separate maxLength.
+// `oauth_token` property to the Go rules it mirrors (config.ClaudeAccountNameRE,
+// config.MaxClaudeAccountNameLen and config.AnthropicKeyAccount): the schema
+// pattern and maxLength are separate copies, so without this a change to the Go
+// rule would drift from the schema with only the corpus fixtures noticing. The
+// pattern alone admits 61 characters (it counts repetition units of one or
+// two), which is why the bound is a separate maxLength.
+//
+// The shape rule is one branch of the property's anyOf, the axis's one
+// non-account value being the other (the sentinel is outside the pattern by
+// construction and admitting it must not widen the pattern), so the pattern is
+// read out of the branches — and the branch that is a const is held to the Go
+// constant here, which is what keeps the schema's literal from drifting.
 func TestTaskSchemaOAuthTokenMatchesTheGoRules(t *testing.T) {
 	data, err := os.ReadFile("task.schema.json")
 	if err != nil {
@@ -2977,8 +3096,11 @@ func TestTaskSchemaOAuthTokenMatchesTheGoRules(t *testing.T) {
 	}
 	var doc struct {
 		Properties map[string]struct {
-			Pattern   string `json:"pattern"`
-			MaxLength int    `json:"maxLength"`
+			MaxLength int `json:"maxLength"`
+			AnyOf     []struct {
+				Pattern string `json:"pattern"`
+				Const   string `json:"const"`
+			} `json:"anyOf"`
 		} `json:"properties"`
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
@@ -2988,22 +3110,36 @@ func TestTaskSchemaOAuthTokenMatchesTheGoRules(t *testing.T) {
 	if !ok {
 		t.Fatal("task.schema.json has no oauth_token property")
 	}
-	if p.Pattern != config.ClaudeAccountNameRE.String() {
-		t.Errorf("schema pattern %q != config.ClaudeAccountNameRE %q", p.Pattern, config.ClaudeAccountNameRE.String())
-	}
 	if p.MaxLength != config.MaxClaudeAccountNameLen {
 		t.Errorf("schema maxLength %d != config.MaxClaudeAccountNameLen %d", p.MaxLength, config.MaxClaudeAccountNameLen)
+	}
+	var patterns, consts []string
+	for _, b := range p.AnyOf {
+		if b.Pattern != "" {
+			patterns = append(patterns, b.Pattern)
+		}
+		if b.Const != "" {
+			consts = append(consts, b.Const)
+		}
+	}
+	if len(patterns) != 1 || patterns[0] != config.ClaudeAccountNameRE.String() {
+		t.Errorf("the oauth_token anyOf's pattern branches = %q, want exactly config.ClaudeAccountNameRE %q: the shape rule is not loosened to admit the sentinel", patterns, config.ClaudeAccountNameRE.String())
+	}
+	if len(consts) != 1 || consts[0] != config.AnthropicKeyAccount {
+		t.Errorf("the oauth_token anyOf's const branches = %q, want exactly config.AnthropicKeyAccount %q: the property admits the project's own key only as the sentinel the Go rule admits", consts, config.AnthropicKeyAccount)
 	}
 }
 
 // TestTaskSchemaRefusesReservedAccountName: a task's oauth_token may not name
 // the account the credentials bundle reserves for the platform's own git
-// credential. The decoder is the authority (task.Spec.Validate, through
-// config.ReservedClaudeAccountName) and the schema is its published copy, so
-// both are held to the same fixture here: a name that is legal everywhere else
-// passes both, and the reserved name fails both. The field is optional and the
-// document is additionalProperties: false, so nothing else in either reader
-// says anything about this name.
+// credential, and — the other direction of the same cross-reader agreement —
+// it does admit the axis's one non-account value. The decoder is the authority
+// (task.Spec.Validate, through config.ReservedClaudeAccountName and the
+// sentinel's own case) and the schema is its published copy, so both are held
+// to the same fixture here: a name that is legal everywhere else passes both,
+// the reserved name and the sentinel's reference twin fail or pass both. The
+// field is optional and the document is additionalProperties: false, so nothing
+// else in either reader says anything about these names.
 func TestTaskSchemaRefusesReservedAccountName(t *testing.T) {
 	sch := compile(t, "task.schema.json")
 	docFor := func(name string) string {
@@ -3015,8 +3151,10 @@ func TestTaskSchemaRefusesReservedAccountName(t *testing.T) {
 		return string(data)
 	}
 	for name, valid := range map[string]bool{
-		"acme-personal":        true,
-		config.BitbucketSecret: false,
+		"acme-personal":               true,
+		config.AnthropicKeyAccount:    true,
+		config.BitbucketSecret:        false,
+		"anthropic-api-key--project2": false, // one character past the sentinel: the const branch is the literal, not a prefix rule
 	} {
 		raw := docFor(name)
 		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(raw))
@@ -3149,18 +3287,29 @@ func TestFugaroSchemaAgentOAuthToken(t *testing.T) {
 
 // TestSchemaRefusesReservedOAuthTokenName: fugaro.yaml's agent.oauth_token
 // may not name the account the credentials bundle reserves for the platform's
-// own git credential. The decoder is the authority (config.Validate) and the
-// schema is its published copy, so both are held to the same fixture here: a
-// name that is legal everywhere else passes both, the reserved name fails
-// both, and the decoder refuses it at its own path — a schema that admitted
-// the name, or a decoder that accepted it, is the drift this catches.
+// own git credential, nor the axis's one non-account value (the project's own
+// Anthropic API key, config.AnthropicKeyAccount). The decoder is the authority
+// (config.Validate) and the schema is its published copy, so both are held to
+// the same fixture here: a name that is legal everywhere else passes both, the
+// reserved name and the sentinel fail both, and the decoder refuses them at its
+// own path — a schema that admitted the name, or a decoder that accepted it, is
+// the drift this catches.
+//
+// The sentinel's row is the deliberate half: a *task's* oauth_token admits it
+// and a repository's document does not. The key is a fact of the installation
+// and of the launch (a review names it as the run's own credential, with
+// --token or the pairing's own account), never of a repository's fugaro.yaml,
+// which speaks of the Claude accounts a repository's runs may use — and
+// config.Validate's own agent.oauth_token rule reads the same shape rule the
+// schema does.
 func TestSchemaRefusesReservedOAuthTokenName(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	const head = "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { oauth_token: "
 	const tail = " }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 	for name, valid := range map[string]bool{
-		"acme-personal":        true,
-		config.BitbucketSecret: false,
+		"acme-personal":            true,
+		config.BitbucketSecret:     false,
+		config.AnthropicKeyAccount: false,
 	} {
 		doc := []byte(head + name + tail)
 		if schemaOK := sch.Validate(yamlInstance(t, doc)) == nil; schemaOK != valid {
@@ -4598,6 +4747,225 @@ settings:
 `
 	if err := compile(t, "settings.schema.json").Validate(yamlInstance(t, []byte(olderDoc))); err != nil {
 		t.Errorf("a document written before writable, owner and target_layer existed does not validate: %v", err)
+	}
+}
+
+// TestSettingsConsoleFixture: console/test/fixtures/settings.json is the answer
+// the console's hermetic CLI stub gives `fugaro settings --json`, and the e2e
+// spec that drives a setting's edit draws it as the CLI's own read (the
+// settings-edit plan's C4, D1118). A fixture that is not a document this CLI can
+// print would make that spec prove the window draws an impossible read, and the
+// goldens recorded from the same screen would carry its invented words, so the
+// fixture is validated against the schema that documents the document -- the
+// schema the command's own output is held to by TestSettingsJSONMatchesSchema in
+// internal/cli, which is where the command lives.
+//
+// Two facts the schema states in prose are asserted here instead, because a
+// validator cannot read a description: every row's `default` is the registry's
+// own string ($defs.keyDefaults, which TestSettingsSchema above pins to
+// settings.Rows(), and whose unset sentences are the ones `unset()` writes with
+// the `unset = ` prefix, internal/settings/registry.go), and the answer is the
+// one the console's row asks for -- `settings --json` and the two project flags,
+// with no `--repo` (contract §6.19) -- so every row is project-scoped, and the
+// built-in layer is the one every read lists first (a layer that was not read is
+// not listed, and the registry in memory is not a read: settingsRead.sources).
+//
+// Three more are rules one member of the document keeps about another, which the
+// schema can only hold one member at a time to: a row the read had to resolve
+// carries **the one level that decided it** and a row of the built-in default
+// carries none (settingsRead.projectRow appends the winning layer's own, and
+// only when a layer won); the layer a row won is **a layer this document's own
+// `sources` list read**, because a layer that was not read is not listed and a
+// row cannot win one that answered nothing; and the project layer is **the cache**
+// in this read -- readLayerCache is its one writer and settingsCloudLayers, the
+// read's one cloud call, is empty until S2 fills it -- so a document listing it
+// says `cached <age> ago` and every row it decided carries that age in its state
+// (staleState). Each of the three was wrong in the fixture this test was added
+// for, and the schema validated it anyway.
+//
+// Four more are the members a consumer draws the edit from (D1102), and they
+// are the CLI's answer rather than the fixture's: `target_layer` is the
+// narrowest of repo, project and local the key may be set in, which is what
+// settingsDefaultLayer answers for `settings set` and what the read prints, so
+// a row whose write lands in a different layer than the one it names is a row
+// the console would spawn `--layer` from wrongly; `sensitive` is the registry's
+// own flag and the member is written **only when it is true**; and writability
+// follows from the two refusals that come before the generic path's allowlist
+// (settingsWriteRowHinted) -- a sensitive key is never written by it and neither
+// is a key a family owns -- so a row that says `writable` while it carries an
+// owner word, or while the registry marks it sensitive, is a row no write
+// produces. The fixture this branch corrected spelled `target_layer` "project"
+// on the row whose write lands in `repo` and `""` on two rows that each name a
+// layer, and it said `writable` on two rows that carry an owner word -- the
+// drift this half exists for. **The rule this half restates is the read's own,
+// and its guard is in the package that holds it**: `target_layer` is
+// settingsDefaultLayer's answer, and `owner` and `writable` are
+// settingsFamilyCommands' and settingsWriteRow's, all three set by projectRow
+// in internal/cli, so TestSettingsConsoleFixtureOwnerAndWritable
+// (internal/cli/settings_console_fixture_test.go) holds the fixture to those
+// three functions and a change to one of them is red there even where the
+// restatements here stay green.
+func TestSettingsConsoleFixture(t *testing.T) {
+	const file = "../console/test/fixtures/settings.json"
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compile(t, "settings.schema.json").Validate(inst); err != nil {
+		t.Errorf("%s is not a document `settings --json` prints:\n%v", file, err)
+	}
+
+	var fixture struct {
+		Sources []struct {
+			Layer string `json:"layer"`
+			Note  string `json:"note"`
+		} `json:"sources"`
+		Settings []struct {
+			Key         string  `json:"key"`
+			Scope       string  `json:"scope"`
+			Value       *string `json:"value"`
+			Wins        string  `json:"wins"`
+			State       string  `json:"state"`
+			Sensitive   *bool   `json:"sensitive"`
+			Writable    bool    `json:"writable"`
+			Owner       string  `json:"owner"`
+			TargetLayer string  `json:"target_layer"`
+			Default     struct {
+				Value string `json:"value"`
+				Unset string `json:"unset"`
+			} `json:"default"`
+			Levels []struct {
+				Layer   string `json:"layer"`
+				Value   string `json:"value"`
+				Outcome string `json:"outcome"`
+			} `json:"levels"`
+		} `json:"settings"`
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile("settings.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatal(err)
+	}
+	defaults := nodeOf(t, schema, "$defs", "keyDefaults", "properties")
+	for _, row := range fixture.Settings {
+		entry, ok := defaults[row.Key].(map[string]any)
+		if !ok {
+			t.Errorf("%s: the fixture carries a row $defs.keyDefaults has no key for, and no read prints such a row", row.Key)
+			continue
+		}
+		want, _ := entry["default"].(string)
+		got := row.Default.Value
+		if strings.HasPrefix(want, "unset = ") {
+			got = row.Default.Unset
+		}
+		if got != want {
+			t.Errorf("%s: the fixture's default is %q, and the registry's is %q", row.Key, got, want)
+		}
+		if row.Scope != "project" {
+			t.Errorf("%s: scope = %q, and the read the console runs names no --repo, so every row of it is project-scoped", row.Key, row.Scope)
+		}
+		// The four members a consumer draws the edit from (D1102): the layer a
+		// write with no --layer lands in, whether the generic path writes the
+		// key, the family that writes one it does not, and whether the row is
+		// sensitive. The registry answers the last three, and the layer rule is
+		// restated because settingsDefaultLayer is internal/cli's and this
+		// guard is the schema package's: the read prints its answer, so the
+		// fixture is held to the same rule -- the narrowest of the three the
+		// key may be set in.
+		reg, known := settings.Lookup(row.Key)
+		if !known {
+			t.Errorf("%s: the registry has no such key, and every row of the read is one of its rows", row.Key)
+			continue
+		}
+		wantLayer := ""
+		for _, l := range []string{settings.LayerRepo, settings.LayerProject, settings.LayerLocal} {
+			if slices.Contains(reg.Layers, l) {
+				wantLayer = l
+				break
+			}
+		}
+		if row.TargetLayer != wantLayer {
+			t.Errorf("%s: target_layer = %q, and the narrowest of repo, project and local the key may be set in is %q, which is what a write with no --layer lands in and what the read prints (settingsDefaultLayer)", row.Key, row.TargetLayer, wantLayer)
+		}
+		if row.Writable {
+			if reg.Sensitive {
+				t.Errorf("%s: the fixture says writable, and a sensitive key is refused before the allowlist is asked (settingsWriteRowHinted): the generic path never writes one", row.Key)
+			}
+			if row.Owner != "" {
+				t.Errorf("%s: the fixture carries the owner word %q and says writable, and the read prints an owner word only for a key the generic path does not write (the family that owns it does, settingsRead.projectRow): no row is both", row.Key, row.Owner)
+			}
+		}
+		switch {
+		case reg.Sensitive && row.Sensitive == nil:
+			t.Errorf("%s: the fixture carries no sensitive member, and the registry marks the key sensitive: the member is written whenever it is true, and this is the row whose value is never printed", row.Key)
+		case !reg.Sensitive && row.Sensitive != nil:
+			t.Errorf("%s: the fixture spells sensitive %v, and the registry's row for it is not sensitive: the member is written only when it is true (settingsJSON's omitempty, and the schema's own \"Absent when false\")", row.Key, *row.Sensitive)
+		}
+		if reg.Sensitive && row.Value != nil {
+			t.Errorf("%s: the fixture carries the value %q, and a sensitive row carries the set/unset fact and never the value: the read writes no value member for it at all", row.Key, *row.Value)
+		}
+		switch {
+		case row.Wins == "default" && len(row.Levels) != 0:
+			t.Errorf("%s: wins = default and the fixture carries %d levels, and the read appends one only for a layer that decided the row (settingsRead.projectRow)", row.Key, len(row.Levels))
+		case row.Wins != "default":
+			if len(row.Levels) != 1 {
+				t.Errorf("%s: wins = %q and the fixture carries %d levels, and the read writes the winning layer's own and nothing else", row.Key, row.Wins, len(row.Levels))
+				continue
+			}
+			l := row.Levels[0]
+			if l.Layer != row.Wins || l.Outcome != "wins" {
+				t.Errorf("%s: its one level is %s/%s, and the read writes the layer that won with the outcome \"wins\"", row.Key, l.Layer, l.Outcome)
+			}
+			if row.Value != nil && l.Value != *row.Value {
+				t.Errorf("%s: the row's value is %q and its level's is %q, and the read writes the row's own value into the level it appended", row.Key, *row.Value, l.Value)
+			}
+		}
+	}
+	if len(fixture.Sources) == 0 || fixture.Sources[0].Layer != "default" {
+		t.Errorf("the fixture's sources begin with %v, and every read lists the built-in layer first (settingsRead.sources)", fixture.Sources)
+	}
+	read := map[string]bool{}
+	for _, src := range fixture.Sources {
+		read[src.Layer] = true
+	}
+	for _, row := range fixture.Settings {
+		if row.Wins != "default" && !read[row.Wins] {
+			t.Errorf("%s: wins = %q, and this document's sources list no such layer: a layer that was not read is not listed, so no row of it can have won one (settingsRead.sources)", row.Key, row.Wins)
+		}
+	}
+	// The project layer reaches this read one way only: readLayerCache, so the
+	// source listing it is the cached copy and says how old it is. A row that
+	// layer decided is stamped with the same age, and the two members are read
+	// off each other here because a fixture that spells them differently is a
+	// table whose STATE column contradicts the stamp above it.
+	for _, src := range fixture.Sources {
+		if src.Layer != "project" {
+			continue
+		}
+		age, okNote := strings.CutPrefix(src.Note, "cached ")
+		age, okAgo := strings.CutSuffix(age, " ago")
+		if !okNote || !okAgo {
+			t.Errorf("the fixture's project source is noted %q, and the read spells a cached layer's note \"cached <age> ago\" (settingsRead.sources)", src.Note)
+			continue
+		}
+		for _, row := range fixture.Settings {
+			if row.Wins != "project" {
+				continue
+			}
+			if want := "stale " + age; row.State != want {
+				t.Errorf("%s: wins = project and state = %q, and the layer that decided it is the cache this document's own project source calls %q: every row that layer decided carries staleState's age", row.Key, row.State, src.Note)
+			}
+		}
 	}
 }
 

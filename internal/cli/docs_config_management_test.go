@@ -94,14 +94,17 @@ const (
 // The named figure moved with G0, which is what the audit's §5 says a figure in
 // a document does: the allowlist gained the wildcard blocks D1161 hands this
 // path and the two budget keys D1179 does, and the two documents whose argument
-// is made of this count carry the number the count produced.
-//
-// Both figures moved again with the repository-image removal's R2, which deleted
-// the twenty-one registry rows of `image.*`, `dockerfile:` and `rebuild.*` -- all
-// twenty-one of them keys the allowlist carried by name, so the gap the audit's
-// §1 is about (the rows no generic writer reaches) is the same 180 it was.
+// is made of this count carry the number the count produced. It moved again with
+// T-IS15 of docs/troubleshoot-issue/, whose two local-only nudge thresholds the
+// generic path does not carry: they are the config file's own keys, and a key
+// added to the registry and not to the allowlist widens the gap the audit is
+// about rather than narrowing it. It moved once more with the repository-image
+// removal's R2, which deleted the twenty-one registry rows of `image.*`,
+// `dockerfile:` and `rebuild.*` -- all twenty-one of them keys the allowlist
+// carried by name, so the gap the audit's §1 is about (the rows no generic
+// writer reaches) is the same one it was.
 const (
-	cfmRegistryRows   = 323
+	cfmRegistryRows   = 355
 	cfmAllowlistNamed = 67
 )
 
@@ -329,11 +332,11 @@ func TestDocsConfigManagementRelativeCitationsResolve(t *testing.T) {
 }
 
 // TestDocsConfigManagementAllowlistCounts: the figure the audit's whole argument
-// is made of is re-counted here rather than trusted. The registry holds 323 rows
+// is made of is re-counted here rather than trusted. The registry holds 355 rows
 // and the generic write path's allowlist carries sixty-seven of them by name
 // plus the rows its nine prefixes reach; the documents state the registry's
 // count and the allowlist's, and a row added to either -- which moves the gap
-// between the two -- fails here rather than leaving §1's "180 rows have no
+// between the two -- fails here rather than leaving §1's "212 rows have no
 // generic writer" reading as checked when it is not.
 //
 // The count moved with G0, which gained the allowlist the wildcard blocks
@@ -342,7 +345,8 @@ func TestDocsConfigManagementRelativeCitationsResolve(t *testing.T) {
 // does not write -- they are the owner's policy, and a family that would write
 // them does not exist yet -- and with R13, whose two jobs: rows it refuses for
 // the same reason: turning a schedule on is the operator's own edit of the
-// layer file.
+// layer file. It moved once more with T-IS15, whose two issues.nudge_* rows are
+// the local config file's own.
 //
 // It counts through the same predicate the write path uses, so the test and the
 // command cannot disagree about what "the allowlist carries" means: the three

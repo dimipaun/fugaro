@@ -88,8 +88,11 @@ const RENDERER = join(__dirname, '..', '..', 'src', 'renderer')
 
 /** SINKS are the functions whose argument is written to the screen unsanitized,
  * with the index of that argument. `note` is `projects.ts`'s wrapper around
- * `literal`, so its call sites are sinks of their own. */
-const SINKS: Readonly<Record<string, number>> = Object.freeze({ literal: 1, note: 2 })
+ * `literal` and `term` is `managed.ts`'s, so their call sites are sinks of their
+ * own: a wrapper around `literal` is a second door into the same slot, and a
+ * vocabulary entry that says "every call site passes a constant" is worth
+ * nothing unless the scan reads those call sites. */
+const SINKS: Readonly<Record<string, number>> = Object.freeze({ literal: 1, note: 2, term: 2 })
 
 /** Entry is why an argument is the console's own word: a reason, or a reason
  * that holds only inside one function's body (`within`). */
@@ -101,11 +104,33 @@ type Entry = string | { readonly within: string; readonly reason: string }
  * source text.
  */
 const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>>> = Object.freeze({
+  'accountkeys.ts': {
+    'model.because':
+      'every reason the section has not to draw a table -- the CLI\'s refusal sentence for its read (`settings.read`, the `SourceRefusal` channel), or one of this module\'s own sentences -- is put through `sanitizeRefusal` (`drawnRefusal`) in `buildAccountKeys`, before it is stored on the model, exactly as `projects.ts` does it for its panels. Design section 6.3 requires the CLI\'s sentence verbatim, so the pattern classes must not touch it: `roles/datastore.viewer` is `[redacted]` and the project\'s own config path is `<path>` under `sentence`, and the tab\'s settings panel draws the same refusal unedited. A sentence the sanitizer refuses is `REFUSAL_UNREADABLE` (`./degraded`), so the cell is never blank',
+  },
   'degraded.ts': {
     'state.installCommand': '`FUGARO_INSTALL_COMMAND` in `src/source/cli.ts`, which is the README\'s own `brew install dimipaun/tap/fugaro` rather than a string a document chose',
     'drawnOrNothing(state.operation)': '`OperationName`, the closed IPC allow-list union: the read the console asked for, in the console\'s own words, and passed through `sanitizeRefusal` again in `refused()` because `RefusedState` can be built without `refusedState`',
     'sentence.ok ? sentence.text : REFUSAL_UNREADABLE':
       'the CLI\'s refusal sentence on the `SourceRefusal` channel (`src/source/source.ts`), not a document string, **through `sanitizeRefusal`** in `refusedState` and again in `refused()` (a state built without `refusedState` is still sanitized; idempotent): design section 6.3 requires it verbatim, the free-text rules would draw `roles/datastore.viewer` as `[redacted]` and the project as `<project>`, and the credential rules still redact a token a child echoed -- `degraded.test.ts` asserts both halves of that',
+  },
+  // The credentials service section (managed screens CM9) draws one document --
+  // `doctor --json`'s `credentials-service-deployed` line -- and its strings
+  // reach the window through the two doors every screen uses: `putText` for the
+  // check's `severity`, and `sanitizeRefusal`/`sanitizeText` for the problem, the
+  // fix and the section's own sentences, each applied in `buildCredentialsService`
+  // before the string is stored on the model. What is left is the class list of
+  // the `make` helper and the `term` helper's own parameter.
+  'credentialsservice.ts': {
+    text: {
+      within: 'term',
+      reason:
+        'the parameter of the `term` helper itself; every call site passes one of this file\'s own term constants (`CREDENTIALS_SERVICE_SEVERITY_TERM`, `CREDENTIALS_SERVICE_PROBLEM_TERM`, `CREDENTIALS_SERVICE_FIX_TERM`), which are the console\'s words for what the value beside them is',
+    },
+    'value.text':
+      'one of a check\'s three members, **after its own door**: `wordMember` puts the severity through `sanitizeText` in the `label` class and `sentenceMember` puts the problem and the fix through `sanitizeRefusal`, and the door\'s answer is what is stored -- so what is drawn is the door\'s text and never the document\'s string. The refusal door is the one design section 6.3 keeps for a CLI sentence, which is what keeps `roles/run.invoker` in the fix that names it (`sentence` would draw `[redacted]`) while a credential a child echoed is still redacted',
+    'model.because':
+      'the section\'s one reason sentence: the CLI\'s own refusal, **through `sanitizeRefusal`** in `drawnRefusal` (the free-text rules would draw `roles/datastore.viewer` as `[redacted]` and the project as `<project>`, and the remedy is the whole value of a refusal), or this file\'s own sentence naming the command (`absent`), or `REFUSAL_UNREADABLE` when the CLI\'s sentence cannot be drawn at all -- the same three-way door `projects.ts`\'s `panel.because` and `managed.ts` keep',
   },
   'live.ts': {
     'flag.name': 'a RunFlag is built only from live.ts\'s own flag table (`runFlags`); an unknown health or deadline is the console\'s "unknown ..." flag, never the document\'s word',
@@ -129,6 +154,11 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
       within: 'modeChip',
       reason:
         '`rigorModeWord(rigor.mode)`, which answers one of the console\'s five mode words or `null`; `null` is the branch that hands the document\'s own value to `putText` (the `label` class, the `runs[].rigor.mode` field), so only the console\'s word reaches the sink',
+    },
+    drawn: {
+      within: 'putRunId',
+      reason:
+        'the ending `displayRuns` answered for one row (`shared/shortid.ts`): the shortest suffix of the run id that tells it apart from the other rows drawn in the same list, never shorter than four characters, and -- in its cross-repository form -- that suffix with the repository in front of it. It is drawn only when it is a tail of the id **this cell would draw**, and the row\'s own four characters (`shortRun` of the sanitized id) otherwise. The id itself has already been through `sanitizeText` in the `runId` class in this same function -- a refusal, and a marker the recorder wrote, take the `putText` branch that draws no ending at all -- and `runEndings` puts the id and the repository through their own classes *before* `displayRuns` cuts and prefixes them, so either answer is a cut of a string the console would draw whole; the whole id travels on the cell as `data-run-id`',
     },
   },
   'spend.ts': {
@@ -158,7 +188,35 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     'row.dailyCapSource': '`capSourceAt` keeps a word only when it is on `CAP_SOURCES`, else `unknown`',
     'row.perRunCapSource': '`capSourceAt` keeps a word only when it is on `CAP_SOURCES`, else `unknown`',
     'panel.because':
-      'every panel constructor draws its reason through `sanitizeRefusal` (`drawnRefusal`) before it is stored, or it is one of the two console constants (`POLICY_BECAUSE`, `ENROLLMENT_BECAUSE`); a document\'s own `note` takes the `putText` branch instead (`becauseKind`)',
+      'every panel constructor draws its reason through `sanitizeRefusal` (`drawnRefusal`) before it is stored, or it is the console\'s own constant (`ENROLLMENT_BECAUSE` -- the policy panel\'s `POLICY_BECAUSE` went with its not-built state when CM10 flipped that panel to `policy.show`); a document\'s own `note` takes the `putText` branch instead (`becauseKind`)',
+  },
+  'managed.ts': {
+    text: {
+      within: 'term',
+      reason:
+        'the parameter of the `term` helper itself; every call site passes one of this file\'s own term constants (`MANAGED_MARK_TERM`, `MANAGED_REASON_TERM`, ... `MANAGED_DIGEST_TERM`), which are the console\'s words for what the value beside them is',
+    },
+    'model.because':
+      'the section\'s one reason sentence: the CLI\'s own refusal, **through `sanitizeRefusal`** in `drawnRefusal` (the free-text rules would draw `roles/datastore.viewer` as `[redacted]` and the project as `<project>`, and the remedy is the whole value of a refusal), or one of this file\'s own sentences naming the command (`absent`), or `REFUSAL_UNREADABLE` when the CLI\'s sentence cannot be drawn at all -- the same three-way door `projects.ts`\'s `panel.because` and `degraded.ts` keep',
+  },
+  // The retirements section (CM8) reads the same `managed status --json`
+  // document as `managed.ts` and draws one subject of it. It is handed no
+  // document string that reaches a sink either: the model's one reason sentence
+  // is the CLI's own refusal through `sanitizeRefusal`, and every value beside a
+  // term goes through `putText` with the class its wire key declares.
+  'retirements.ts': {
+    text: {
+      within: 'term',
+      reason:
+        'the parameter of the `term` helper itself; every call site passes one of this file\'s own term constants (`RETIREMENTS_AT_TERM`, `RETIREMENTS_ADDRESS_TERM`, ... `RETIREMENTS_PROTECTED_TERM`), which are the console\'s words for what the value beside them is',
+    },
+    termText: {
+      within: 'factRow',
+      reason:
+        'the parameter of the `factRow` helper itself, which draws one `dt`/`dd` pair **only when the document carried a value for it**; every call site passes one of this file\'s own term constants, so no document string reaches the sink',
+    },
+    'model.because':
+      'the section\'s one reason sentence: the CLI\'s own refusal, **through `sanitizeRefusal`** in `drawnRefusal` (`refusal` is the only writer of this member, and it draws both the child\'s sentence and this file\'s own), or one of this file\'s own sentences naming the command and the versions (`recordAbsentSentence`, `setAbsentSentence`, `versionSentence`), or `REFUSAL_UNREADABLE` when the sentence cannot be drawn at all -- the same three-way door `managed.ts`\'s `model.because` keeps, for the same channel',
   },
   // The drawers outside `src/renderer/screens`: `src/shared/notice.ts` writes
   // the notice card's text slots, and `src/shared/version.ts` composes the
@@ -453,6 +511,11 @@ function skipString(source: string, at: number): number {
  * CLOSED_VOCABULARY.
  */
 const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>>> = Object.freeze({
+  'credentialsservice.ts': {
+    "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
+    'model.state':
+      '`CredentialsServiceState`, a closed union the model assigns (`read`, `no-check`, `absent`, `shape`) and this file\'s own: the four are four different facts, and `no-check` in particular is not the read case with nothing to show',
+  },
   'live.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
     "formatReading(reading, 'percent')": '`formatReading` of a Reading: the console\'s own number formatting or its unavailable mark',
@@ -494,6 +557,11 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
       reason:
         '`axis` of the same share as the segment\'s own width: the axis is this file\'s constant rather than a number from the document, so the value is the shape\'s size and nothing a document can spell',
     },
+    'id.text': {
+      within: 'putRunId',
+      reason:
+        'the whole run id as `sanitizeText` drew it in the `runId` class -- the class `schema.ts` declares for `runs[].run` and `ready[].run`, and the one whose grammar is the CLI\'s own run-ID shape. It is the door `entry.ts`\'s `wireRuns` opens Run detail from, so the id a command receives is the whole one; the cell\'s drawn text is the short ending, and a refusal takes the `putText` branch above and writes no attribute at all',
+    },
     theme: { within: 'renderLive', reason: 'a `LiveTheme`, the closed theme tuple' },
   },
   'projects.ts': {
@@ -518,6 +586,16 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
       reason:
         'a `ProjectsTheme`, the closed theme tuple. The write is the frame\'s: it is the shell the entry mounts in the frame the tab is opened in, and `renderProjects` draws the whole screen by calling it (console 0.117.0)',
     },
+  },
+  'managed.ts': {
+    "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
+    'model.state':
+      '`ManagedState`, a closed union the model assigns (`read`, `unavailable`) and this file\'s own: there is no third, because the command answers with a document or it does not, and a document of a shape this build cannot read is a read that did not answer',
+  },
+  'retirements.ts': {
+    "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
+    'model.state':
+      '`RetirementsState`, a closed union the model assigns (`read`, `unavailable`) and this file\'s own: there is no third, because the read answers with a document or it does not, and a record of a version this build does not write is a read that did not answer',
   },
   'degraded.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
@@ -765,6 +843,17 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
       reason:
         '`LAUNCH_IDS.form`, the id this file gives the form: the button\'s `aria-controls` and the form\'s own `id` are the one string, so the control and the thing it opens are related in the DOM rather than merely adjacent',
     },
+  },
+  // The policy notes (managed screens CM7) draw two documents -- the published
+  // policy node and `doctor`'s six policy checks -- and their strings reach the
+  // window through `putText`/`putReading` on the two doors every screen uses:
+  // `textCell` for a document's string, `valueCell` for a member whose absence
+  // is a reading with no number. What is left is the class list of the `make`
+  // helper, and every word this file writes through `literal` is written at the
+  // call site -- each member's title and each block's state word is a string
+  // literal in the branch that picks it, never a parameter.
+  'policynotes.ts': {
+    "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
   },
 })
 
@@ -1159,16 +1248,21 @@ const SHARED_DRAWER = '../../shared/notice.ts'
 const SKEW_MODULE = '../../shared/version.ts'
 
 describe('a screen writes only its own vocabulary through literal', () => {
-  it('reads the ten screens', () => {
+  it('reads every screen module on the tree', () => {
     expect([...SCREEN_FILES]).toEqual([
+      'accountkeys.ts',
       'coordinator.ts',
+      'credentialsservice.ts',
       'degraded.ts',
       'graph.ts',
       'launch.ts',
       'live.ts',
+      'managed.ts',
       'nocheckout.ts',
+      'policynotes.ts',
       'projects.ts',
       'reading.ts',
+      'retirements.ts',
       'run.ts',
       'spend.ts',
     ])
@@ -1183,6 +1277,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
       '../../shared/rigor.ts',
       '../../shared/sanitize.ts',
       '../../shared/schema.ts',
+      '../../shared/shortid.ts',
       '../../shared/stringify.ts',
       '../../shared/version.ts',
     ])
@@ -1499,14 +1594,19 @@ describe('no module under src/renderer writes an inline style', () => {
       'graph/layout.ts',
       'graph/model.ts',
       'installations.ts',
+      'screens/accountkeys.ts',
       'screens/coordinator.ts',
+      'screens/credentialsservice.ts',
       'screens/degraded.ts',
       'screens/graph.ts',
       'screens/launch.ts',
       'screens/live.ts',
+      'screens/managed.ts',
       'screens/nocheckout.ts',
+      'screens/policynotes.ts',
       'screens/projects.ts',
       'screens/reading.ts',
+      'screens/retirements.ts',
       'screens/run.ts',
       'screens/spend.ts',
       'section.ts',

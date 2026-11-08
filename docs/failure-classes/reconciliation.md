@@ -1,7 +1,8 @@
 # Reconciliation: the failure-classes design against the code on `main`
 
 **Status (2026-11-07): D1450–D1469 are answered 2026-11-07 and all tasks are approved 2026-11-07
-(owner: "All tasks approved. Jobmax"); of them, FC1 is built on `main` and FC2–FC9 are not started.**
+(owner: "All tasks approved. Jobmax"); of them, FC1–FC5 are built on `main` and FC6–FC9 are not
+started.**
 This file reads
 [spec.md](spec.md) — a verbatim copy of `docs/design/failure-classes.md` — against the tree of `main`
 at **`56c91f66`** (2026-11-07), path by path and symbol by symbol. Everything below was resolved
@@ -27,8 +28,8 @@ owner's; the decisions §6 does carry are the plan's own, D1450–D1469, and the
 of them on 2026-11-07 as this file recommended. The design's status line as **this folder's copy**
 carries it is the dated one — *"a design; nothing is built; no decision below is answered."* — and the
 design on `main` has moved past it: the copy's sentence speaks for the design's own decisions, which
-the design's own status now says stay the owner's, and the line records the one thing that has shipped
-— *"a design, and its FC1 has shipped; the rest of §10 is not built."*
+the design's own status now says stay the owner's, and the line records what has shipped —
+*"a design, and its FC1–FC5 have shipped; the rest of §10 is not built."*
 
 ---
 
@@ -43,9 +44,9 @@ the design against the tree:
 
 | Test | Line | What it holds |
 | --- | --- | --- |
-| `TestDocsFailureClassDesignPinsTheVocabulary` | `internal/cli/docs_pr_state_test.go:127` | the status line, the nineteen-value vocabulary (**read from `failure.Classes()` in `internal/failure`, and held to the document in both directions** — FC1's own change, which replaced the literal list this row described before it: the table's rows are checked against the slice, the slice against the table, the two orders against each other, and the sentence's count word against `len(Classes())`), every sentence an implementer acts on — `failure_class`, `stays const 1`, the `recordEnd` signature, `--group-by failure_class`, `FailuresTable`, `failure_class_high`, `failure_class_new`, `ClassOf`, `stageFailureClass`, the HARD RULE — the backlog census it promises not to move, and the file its own pin lives in |
-| `TestDocsFailureClassCensusMatchesTheRunner` | `internal/cli/docs_pr_state_test.go:303` | the 36-statements / 24-functions / 8-files census, **counted from `internal/runner`'s own files** with the regexp `\brec\.Status[^=!]*= runstore\.Status`, so a new writer reddens the design and the pin together |
-| `TestDocsFailureClassDesignCitationsResolve` | `internal/cli/docs_pr_state_test.go:386` | every `path:line` the design cites names exactly one file of the tree and a line that is **inside** that file, and every relative `:NNN` resolves to its paragraph's nearest preceding citation |
+| `TestDocsFailureClassDesignPinsTheVocabulary` | `internal/cli/docs_pr_state_test.go:130` | the status line, the nineteen-value vocabulary (**read from `failure.Classes()` in `internal/failure`, and held to the document in both directions** — FC1's own change, which replaced the literal list this row described before it: the table's rows are checked against the slice, the slice against the table, the two orders against each other, and the sentence's count word against `len(Classes())`), every sentence an implementer acts on — `failure_class`, `stays const 1`, the `recordEnd` signature, `--group-by failure_class`, `FailuresTable`, `failure_class_high`, `failure_class_new`, `ClassOf`, `stageFailureClass`, the HARD RULE — the backlog census it promises not to move, and the file its own pin lives in |
+| `TestDocsFailureClassCensusMatchesTheRunner` | `internal/cli/docs_pr_state_test.go:329` | the design's §1 one-writer sentence, **read off the parsed `internal/runner`**: no statement outside `recordend.go` writes a record's `Status`, `Outcome`, `Reason` or `FailureClass` — through the record, a copy, a variable or a literal's key, bar the record's own construction — and no reference to `writeEnd` or to `recordEnd` outside the call itself. **FC2's own change, which replaced the regexp census this row described before it** (`\brec\.Status[^=!]*= runstore\.Status`, which matches nothing once every writer calls `recordEnd`), so a new writer reddens the design and the pin together |
+| `TestDocsFailureClassDesignCitationsResolve` | `internal/cli/docs_pr_state_test.go:485` | every `path:line` the design cites names exactly one file of the tree and a line that is **inside** that file, and every relative `:NNN` resolves to its paragraph's nearest preceding citation |
 
 **What that pin does not check, and it matters here: it does not check that the symbol is on the
 cited line**, only that the line exists. Every `runner.go` citation above `:3700` has drifted by four
@@ -375,7 +376,7 @@ be held to it) or **Open** (the design leaves it to the owner).
 - **F12 — the plugin's lint**: `plugin/skills_lint_test.go` resolves every command and flag a skill
   names against the cobra tree; `resolveSkillCommand`, the helper that does it, is
   `plugin/skillcli_test.go:41`, and `plugin/routing_skill_test.go:122` and
-  `plugin/setup_skill_test.go:670` are two of its callers.
+  `plugin/setup_skill_test.go:688` are two of its callers.
 
 ### Gap
 
@@ -396,11 +397,11 @@ be held to it) or **Open** (the design leaves it to the owner).
   whichever the tree says by then". The tree has both: D326 (`:302`) is the rule's *idea*, and
   `docs/periodic-reviews/` is where the rule *list* is written down
   (`docs/periodic-reviews/spec.md:114`, `implementation-plan.md:266`, `:279`, the skill's own list in
-  `plugin/skills/working/reference/periodic-reviews.md:54`, which names the four patterns and what each
+  `plugin/skills/working/reference/periodic-reviews.md:56`, which names the five patterns and what each
   one means). → **D1463**.
 - **F25 — this folder's copy is falsified by FC2.** `TestDocsFailureClassCensusMatchesTheRunner`
-  (`internal/cli/docs_pr_state_test.go:303`) fatals on `statements == 0`, which is exactly the state
-  `recordEnd` produces; `TestDocsFailureClassDesignPinsTheVocabulary` (`:127`) pins sentences of the
+  (`internal/cli/docs_pr_state_test.go:329`) fatals on `statements == 0`, which is exactly the state
+  `recordEnd` produces; `TestDocsFailureClassDesignPinsTheVocabulary` (`:130`) pins sentences of the
   design FC2 rewrites. So FC2 edits the design **and its pin**, and `spec.md`'s copy is a snapshot of
   the pre-FC2 document. Nothing in the tree pins this folder's copy, and nothing should.
 - **F32 — the contract's rows land with the Go keys, not two tasks later.** The design's §10.2 gives
@@ -444,7 +445,7 @@ be held to it) or **Open** (the design leaves it to the owner).
   `plugin/skills_lint_test.go` fails any reference file over `maxReferenceLines` 300 (`:37`) or
   `maxReferenceBytes` 16384 (`:39`, compared at `:348`) — **nine bytes of room**, against a sentence
   that costs far more than nine. The design's §10 puts its one sentence there
-  (`docs/design/failure-classes.md:705`, `spec.md:741`; the design marks it conditional on **O1**'s
+  (`docs/design/failure-classes.md:752`, `spec.md:744`; the design marks it conditional on **O1**'s
   answer), so the sentence is written by **trimming the file as much as
   it adds**: the prose it replaces leaves, or the sentence is shorter than what it displaces, and
   `go test ./plugin/` — which FC8's own gate already runs — is what says so. The precedent is the
@@ -472,8 +473,8 @@ be held to it) or **Open** (the design leaves it to the owner).
   plan's tasks write their pins into the existing `docs_pr_state_test.go`. The design's own promise —
   it kept `docs/backlog/README.md` at "2 items: 2 open, 0 closed, 0 dropped"
   (`docs/backlog/README.md:13`) — is quoted by the vocabulary pin, which reads `docs/backlog/README.md`
-  at `internal/cli/docs_pr_state_test.go:248` and fails when the line is gone (`:251`) or the design
-  stopped quoting it (`:255`).
+  at `internal/cli/docs_pr_state_test.go:252` and fails when the line is gone (`:255`) or the design
+  stopped quoting it (`:259`).
 - **F29 — the HARD RULE, and the one word in it that needs reading.** A field addition owes no operator
   step: `fugaro update` is the whole upgrade, the policy node is untouched, no schema version moves, no
   image contract changes and no plugin pin **migration** is owed. The design's §10.3 states it and the
@@ -524,11 +525,12 @@ stats` and every command the design's §6.3 does not name.
 **Every one of these is answered, as recommended, on 2026-11-07.** The owner's dated answer is in
 every row — put to him through `AskUserQuestion`, every option the recommended one, and he took all
 of them — and every task in [implementation-plan.md](implementation-plan.md) was approved the same day
-(owner: "All tasks approved. Jobmax"), so no gate the plan names is still open — **FC1's included, and
-FC1 is the one task of the nine that is built and merged; FC2–FC9 are not started.** Each row states
-the question, what this reconciliation recommends and why, the alternative, and what the alternative
-costs. **No row re-asks one of the design's §8 D1–D9 or §9 O1–O6**; where a question here touches one
-of them, the row says so and leaves that question to the design's own numbering.
+(owner: "All tasks approved. Jobmax"), so no gate the plan names is still open — **FC1's, FC2's and
+FC3's included, and FC4's (FC2 merged) and FC5's (FC1 and FC3 merged) with them — and FC1–FC5 are
+the five tasks of the nine that are built and merged; FC6–FC9 are not started.**
+Each row states the question, what this reconciliation recommends and why, the alternative, and what
+the alternative costs. **No row re-asks one of the design's §8 D1–D9 or §9 O1–O6**; where a question
+here touches one of them, the row says so and leaves that question to the design's own numbering.
 
 | # | Question | Recommendation (and why) | Alternative | Its cost | Owner's answer |
 | --- | --- | --- | --- | --- | --- |

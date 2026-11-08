@@ -61,6 +61,11 @@
     "branch": { "type": "string", "pattern": "^fugaro/[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
     "pr": { "type": "integer", "minimum": 1 },
     "previous_run": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
+    "owner_ruled": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "description": "The repository owner's ruling this follow-up was launched with (OD1, fugaro run --owner-ruled): their answer to the findings a run on this pull request left for them, which no code change could settle. The runner appends it to the follow-up's brief verbatim and echoes it onto the run's record (runstore.Record.OwnerRuled). Bounded at task.MaxOwnerRuledBytes, never blank, and carrying no control character other than a newline or a tab — the rules task.Spec.Validate applies. A launcher refuses a follow-up on a pull request whose last run stopped waiting on owner decisions unless this carries one, so the loop that spent the runs in the first place cannot start again." },
     "review_prs": {
       "type": "array",
       "description": "Set only for a mode: review recipe (design generic-tool §3.6): the pull requests to review, 1 to 4, never together with branch/pr/previous_run.",
@@ -162,10 +167,13 @@
     "batch": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$" },
     "oauth_token": {
       "type": "string",
-      "pattern": "^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$",
       "maxLength": 31,
       "not": { "enum": ["default", "bitbucket-token"] },
-      "description": "The named Claude OAuth account this run holds (docs/design/named-oauth-tokens.md): the account an agent.auth: oauth workflow used, and, for a mixed agent.auth: api-key run, the one Claude account its review and adversarial stages are served by beside the provider key the gateway holds (docs/design/mixed-credentials.md §11) — either way it names the job variant the run is on. Absent, or \"default\" itself, name the repository's unnamed claude-oauth-token secret; \"default\" is therefore never a value here, which is why the pattern alone (matching \"default\") is not enough. The not clause's second name is bitbucket-token, the one name the credentials bundle reserves for the platform's own git credential: both it and \"default\" pass the pattern and the length cap, so the not clause is the only rule that refuses them, and task.Spec.Validate refuses them in the same words (config.ReservedClaudeAccountName). maxLength is required alongside the pattern: each of the pattern's {0,30} repetitions may consume one character or, via the dash alternative, two (\"-\" plus the alphanumeric it must precede), so the pattern alone admits names up to 61 characters (e.g. \"a\" + 30 repetitions of \"-a\") — config.MaxClaudeAccountNameLen (internal/config/claude_accounts.go) is 31, and this must match it exactly."
+      "anyOf": [
+        { "pattern": "^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$" },
+        { "const": "anthropic-api-key--project" }
+      ],
+      "description": "The named Claude OAuth account this run holds (docs/design/named-oauth-tokens.md): the account an agent.auth: oauth workflow used, and, for a mixed agent.auth: api-key run, the one Claude account its review and adversarial stages are served by beside the provider key the gateway holds (docs/design/mixed-credentials.md §11) — either way it names the job variant the run is on. Absent, or \"default\" itself, name the repository's unnamed claude-oauth-token secret; \"default\" is therefore never a value here, which is why the pattern alone (matching \"default\") is not enough. The not clause's second name is bitbucket-token, the one name the credentials bundle reserves for the platform's own git credential: both it and \"default\" pass the pattern and the length cap, so the not clause is the only rule that refuses them, and task.Spec.Validate refuses them in the same words (config.ReservedClaudeAccountName). maxLength is required alongside the pattern: each of the pattern's {0,30} repetitions may consume one character or, via the dash alternative, two (\"-\" plus the alphanumeric it must precede), so the pattern alone admits names up to 61 characters (e.g. \"a\" + 30 repetitions of \"-a\") — config.MaxClaudeAccountNameLen (internal/config/claude_accounts.go) is 31, and this must match it exactly. The anyOf's second branch is the account axis's one non-account value (config.AnthropicKeyAccount, docs/api-key-review D1417): it is the sentinel the project's own Anthropic API key is named by, outside the pattern by construction, and a review launch writes it here as the run's own credential — so the branch is written as its own alternative rather than by widening the pattern, and the literal is pinned to the Go constant by schemas' own test."
     },
     "compression_off": {
       "type": "boolean",
@@ -257,6 +265,7 @@
     "branch": ["pr", "previous_run"],
     "pr": ["branch", "previous_run"],
     "previous_run": ["branch", "pr"],
+    "owner_ruled": ["branch", "pr", "previous_run"],
     "mutate": ["review_prs"]
   },
   "allOf": [

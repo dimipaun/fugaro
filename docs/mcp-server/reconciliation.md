@@ -1,7 +1,12 @@
 # The hosted MCP server: reconciliation and decisions
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; the rest is not started; this folder approves no task.**
+merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
+prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
+except the reading of the installation's published state its lists come from, which no task of this
+plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
+half and not started; M8 is built except the wiring that would serve its four read tools, which is
+the task M5b gates; M9 is not started; this folder approves no task.**
 
 What the owner's spec ([spec.md](spec.md) §0) says, checked one claim at a time against the code as
 it is at this work's base, and then the decisions the planning found.
@@ -117,7 +122,7 @@ note under the table says what moved.
 | D | The answer, 2026-11-04 | Why, in one line | Amendment |
 | --- | --- | --- | --- |
 | **D920** | **The recommendation** — the MCP endpoint is **public**, the bearer token is the gate, and the six unauthenticated paths are the metadata documents and the authorization endpoints. **Amended 2026-11-04** (M-e) — see §4a | A standard MCP client on a laptop or a phone cannot mint a Google ID token, so P8's IAM invoker makes the feature reachable only by software already written against Fugaro — and spec.md §8 is the price the owner accepts for that. |
-| **D921** | **The recommendation** — **zitadel/oidc** for the protocol machinery, with storage and Dynamic Client Registration supplied by the coordinator — **and the licence is UNCONFIRMED.** **The owner or counsel must confirm the licence before any build.** **Amended 2026-11-04** (M-c) — see §4a | Apache 2.0 is the library's own claim and nothing in this container can check it, and a dependency a self-hosted product cannot ship would sink the whole design — so the licence becomes a gate of its own, and it is the first owner check in §6. |
+| **D921** | **The recommendation** — **zitadel/oidc** for the protocol machinery, with storage and Dynamic Client Registration supplied by the coordinator — **and the licence is UNCONFIRMED.** **The owner or counsel must confirm the licence before any build.** **Amended 2026-11-04** (M-c) — and **answered by the owner on 2026-11-07: he read the branch's own licence table and cleared the set, "Cleared: all permissive", recorded in [licence-gate.md](licence-gate.md)** — see §4a | Apache 2.0 is the library's own claim and nothing in this container can check it, and a dependency a self-hosted product cannot ship would sink the whole design — so the licence becomes a gate of its own, and it is the first owner check in §6. |
 | **D922** | **The recommendation**, in the owner's words of 2026-11-04: the **separate top-level subtree** — **not under `coordinator/`** — is the **`mcpauth`** node, **not readable by any client** (`.read: false`) and with **`.write: false`**; **only the coordinator's account writes it**, because that account holds `roles/firebasedatabase.admin` and the rules do not bind it **Amended 2026-11-04** (H3) — see §4a | The separate subtree is what keeps the coordinator's shared view and the token records off one node, and the closed read is what keeps F26's finding closed against every client the rules bind — **and the amendment is what keeps it closed against the accounts IAM exempts from them**. The separate subtree, the closed read, the keyed hashes, the MAC and the public service's viewer-only grant are now **five independent barriers** rather than two, which is the honest answer to a review that showed the first two were not enough on their own. **This answer was restated the same day** — see the note under the table — and the restatement plus this amendment are the ones every document is written to. spec.md §6 and §8 state both, and M3's red step is the "named and denied to every client" one. |
 | **D923** | **The recommendation**, with the mechanism named: **a PAIRED DEVICE approves the sign-in**, and **the coordinator never mints a custom token**; **v1 admits only exact `user:` launcher entries, and refuses `group:`, `domain:` and `serviceAccount:` entries**; **the Firebase ID token is consumed only at `/oauth/authorize` and is never a grant at `/oauth/token`** **Amended 2026-11-04** (H1, not the recommendation) and again (M-a) — see §4a | The project's Identity Platform is initialized with no sign-in providers and refuses every public sign-up path (F6), so there is no hosted page to redirect to and enabling one is the exact reversal `docs/mobile-auth` D221 refused — and the pairing the repository already has (`fugaro pair`, D165) is the signer that does not make the coordinator one. A `user:` entry is one person (F8's lists), where `domain:`, `group:` and `serviceAccount:` are refused **at `fugaro user` already** (`internal/cli/user.go:266`). Consuming the ID token at authorize is what keeps it out of the token endpoint's grant list. |
 | **D924** | **The recommendation** — the token's limit travels in **a variable of its own** on the execution override, and the run's ceiling is the tighter of it and the job's own — and **spend is counted across the whole token family**, so a rotated refresh token is the same budget and not a new one | The override mechanism already exists (F19) and the gateway is already the place the real stop lives (F10, F27); a variable of its own is what makes "only narrows" structural rather than a launcher's arithmetic, and a per-family counter is what stops rotation from being a way to ask for the limit twice. | **Amended 2026-11-04** (M-b) — see §4a |
@@ -174,12 +179,42 @@ load-bearing:
   a CSRF-bound flow — are in §3's registration rules, §3's flow and §8's redirect-URI paragraph.
 
 **D921's licence, unconfirmed when the answers were given,** added the first owner check in §6 and a
-build gate in the plan, and §4a records what still stands behind that check: **the owner or counsel
-confirms the licence — the transitive dependencies included — and the gate file that closes it is the
-owner's to create**. The
-**status of the whole folder** moved from "design only, nothing approved" to the line every file now
-carries — **design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; the rest is not started; this folder approves no task.**
+build gate in the plan, **and the owner answered it on 2026-11-07**: he ruled that he would clear the
+set by reading one table, and he read [licence-table.md](licence-table.md) and cleared the dependency
+set in one line — **"Cleared: all permissive"** — recorded in [licence-gate.md](licence-gate.md),
+which is **the gate file the check describes**. **Counsel was never asked**, so the clearance this
+tree carries is the owner's and no other.
+
+**What that settles, and what it does not.** Nothing here read as settled until a person wrote the
+gate file: the licence confirmation this branch's runs reported before the owner's ruling was not a
+file, a signature or a review comment this tree could show, and the check's own text is what stood —
+**M5 does not start until the licence is settled and a person has written the gate file.** Both
+halves are now there, so **M5 may merge and the licence holds nothing back**; what the clearance does
+not do is put the front door on a binary, because **M5 merges dormant: M5b is a hard prerequisite
+before any binary links it** (§4a, the ruling of 2026-11-07). Had the licence turned out to be
+unusable, it would still send D921 back to its own alternatives, with the library out of `go.mod` and
+M5 rebuilt against them, rather than a dependency landing ahead of its gate. **The transitive set the
+clearance covers is named here for that reason**: `zitadel/schema`, `muhlemmer/gu` and `kr/text`,
+which are
+new, and the version bumps `go mod tidy` made beside the library: `go-jose/v4` v4.1.4→v4.1.6,
+**`go-logr/logr`** v1.4.3→v1.4.4, `doublestar/v4` v4.10.2→v4.10.4, `otel` v1.44.0→v1.46.0 with
+`/metric` and `/trace`, `x/text` v0.42.0→v0.43.0 and `x/sync` v0.23.0→v0.24.0.
+
+The
+**status of the whole folder** moved from "design only, nothing approved" to the line every file
+took up that day — **design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are
+built and merged on `main`; M5 is built except the paired device M-a asks for, which is pending the
+owner; the rest is not started; this folder approves no task.** **That quotation is the line as it
+stood on 2026-11-04**: the clause after "asks for" was replaced on 2026-11-07, and the line every
+file carries today reads "...which is M5b and is a hard prerequisite before any binary links the
+front door (the owner's ruling of 2026-11-07); M7 is built except the reading of the installation's
+published state its lists come from, which no task of this plan carries; M10 is built except the
+store's own bucket and its one grant, which are M4's store half and not started; M8 is built except
+the wiring that would serve its four read tools, which is the task M5b gates; M9 is not started" —
+**the clauses moving as each task lands** (§4a), each exception added with its own landing because
+the task builds the seam and not the half behind it: M7's reading of the published state, M8's four
+read tools registered on no binary, which is the wiring task M5b gates, and M10's bucket and its one
+grant, which are M4's.
 
 ### The answer of 2026-11-05
 
@@ -276,8 +311,9 @@ answer takes the recommendation, or defers a recommendation the owner judged not
 (H2, D936).
 
 **What the amendment moves, in one line each.** D920 gains the per-route rule an `allUsers` service
-needs; D921 gains four constraints its defaults would otherwise reverse, with its licence still
-**UNCONFIRMED**; D922 gains the records' marks — keyed hashes, a MAC over each — and loses the
+needs; D921 gains four constraints its defaults would otherwise reverse, with its licence cleared by
+the owner on 2026-11-07 by reading the branch's own table; D922 gains the records' marks — keyed
+hashes, a MAC over each — and loses the
 assumption that a closed rules node is closed to IAM; D923 gains an accepted residual risk and a hardened device approval; D924 gains an atomic
 family reservation; D929 gains a switch, off until it has an owner; D930 gains a generation-conditioned
 rotation; D931 loses `spawn_task` to D936; D932 gains redaction; D933 gains the lists' source;
@@ -304,11 +340,16 @@ M4 and M7 carry the rules; §8 states the risk.
 
 ### D921 — amended (finding M-c)
 
-**The licence is still UNCONFIRMED.** The library's Apache 2.0 claim is the library's own and nothing
-in this container can check it, so **the owner or counsel confirms it — the transitive dependencies
-included — before any build**, and **the M5 gate file is the owner's to create**: the build gate is a
-file a person writes rather than something this folder can assert is settled. The review settles the
-library's *behaviour* against this design, which is the paragraph below, and not its licence.
+**The licence check is met, and it was answered by the owner himself** (§4a, the paragraph on it,
+and §6 check 1): D921 was answered with the licence **UNCONFIRMED**, because the library's Apache 2.0
+claim is the library's own and this container cannot check it, and the answer made confirming it —
+**the transitive dependencies included** — the first owner check. **The owner ruled on 2026-11-07
+that he would clear the set by reading one table, and he read it and cleared the set the same day**:
+[licence-table.md](licence-table.md) is the table, **"Cleared: all permissive"** is his answer, and
+[licence-gate.md](licence-gate.md) is the gate file the check describes. **Counsel was never asked**,
+so the clearance is the owner's alone, and **the check no longer gates anything**: what keeps M5
+dormant is **M5b**, the paired device M-a asks for. The review settles the library's *behaviour*
+against this design, which is the paragraph below, and not its licence.
 
 The review also found that **the library's defaults are the opposite of this design's rules**, and
 named them: PKCE is **optional** (`op/token_request.go` line 168) and an empty challenge method reads
@@ -367,8 +408,9 @@ independent barriers rather than one of two. §6 and §8 state all of this.
 node) — and **every launcher and operator holds `signJwt` on the project's signer**
 (`deploy/terraform/gcp/modules/firebase/iam.tf:35-41`) and can read `config/admin/devices` through
 `roles/firebasedatabase.viewer` (`:44-50`). So **any launcher can mint a device token and sign in as
-an operator's device** at `GET /oauth/authorize`. The repository's own rules comment says the same
-thing from the other side: the `mu` claim "binds nothing against a minter"
+an operator's device** at the authorize endpoint's approve step (`POST /oauth/authorize`, M-a's
+single-use POST). The repository's own rules comment says the same thing from the other side: the
+`mu` claim "binds nothing against a minter"
 (`internal/budget/rules/rules.go:482-487`). The review's recommendation was a **device-held signing
 key registered at pairing**; **the owner accepted the residual risk and asked for it documented
 instead** — not built, not in any task. It stands in §3 and §8 as an **ACCEPTED residual risk with
@@ -387,14 +429,29 @@ refuses `r~`/`p~`; and a paired device carries a **viewer role that reaches `tas
 
 **Amended again 2026-11-04** (finding M-a): the device approval is weak for a second, independent
 reason — the "loopback is the attacker's machine" argument in §8 **fails when the approval happens on
-a phone**, where a person cannot see which machine is asking. The owner's answer, written into §3 and
-built by M5 and M6:
+a phone**, where a person cannot see which machine is asking. The owner's answer, written into §3:
 
 - approval requires **QR proximity or number matching**;
 - the phone shows **the client, marked unverified, and the redirect host**;
 - approval is **a single-use POST on a named endpoint**, and **an ID token never travels in a GET
   URL**;
 - **nothing is pushed without a person starting it.**
+
+**M5 and M6 build three of those four, and the first is built only as far as the page.** The approve
+step is a single-use POST on a named endpoint, an ID token never travels in a GET URL, nothing is
+pushed unstarted, and the page shows the client unverified beside the redirect host. But **the number
+is rendered on the same page and posted back by the same form**: the paired device never sees it, so
+a page rendering a flow of its own displays its own number and collects the number and the ID token
+together from whoever fills that form — which is the approval this check is meant to tell apart from
+the real one. **A check on the page is therefore not M-a's device-side approval**, and the half that
+would be — the number shown on, or entered into, the paired device, so the approval is bound there —
+**is not built**: it was raised as a finding rather than added by a task that did not ask for it, and
+**the owner answered it on 2026-11-07 — it is M5b, a task of its own and a hard prerequisite before
+anything wires the front door** (§4a, "The owner's ruling of 2026-11-07"). The token has the same kind
+of limit beside it: nothing spends an ID token, so one that leaks approves flows until it expires —
+and the **refresh family each of those approvals mints has no expiry of its own** (spec.md §8), so the
+exposure the ID token's hour bounds is one approval and not what that approval leaves behind. **Both
+of those limits are M5b's to close**, as its second and fourth requirements.
 
 ### D924 — amended (finding M-b)
 
@@ -439,7 +496,11 @@ double-submit. The amended answer, built by M2:
   replace an `ETag` condition gave a store in the database (`internal/blobx/blobx.go:1`, M2);
 - keep a **small grace window** in which the loser of that race is answered with the same new pair
   rather than read as a replayed token, so a client on a slow link is not logged out by its own
-  retry;
+  retry — **not built**, and the first half of the answer is what stands alone: the loser is refused
+  `invalid_grant` with no invitation to retry (`ee/coordinator/mcpauth/token.go:323`), because the
+  retry a 5xx invites presents the spent token and that presentation revokes the family the winner
+  holds — so a double-submit ends in a re-authorization rather than a logout, and the session the
+  window would save is the one a client that retries anyway loses;
 - a replayed token **outside** the window still revokes the family, exactly as the original answer
   said.
 
@@ -467,7 +528,10 @@ config** (`terraform.launchers` / `terraform.operators`, `internal/cli/user.go:3
 installation's Terraform outputs, so a front door that read "the lists" would be reading one
 operator's file. The amended answer: **the front door reads a source only an operator can write** —
 the installation's own published state, reachable through the coordinator's account and not through
-anything a caller or a run can reach, which [spec.md](spec.md) §4 states and M7 builds. The rest of
+anything a caller or a run can reach, which [spec.md](spec.md) §4 states. **M7 builds the seam that
+reading goes through and not the reading**: `ee/coordinator/mcpauth/identity.go` holds the `Roster`
+interface the door resolves an identity through, **no implementation of it over the published state
+is in the tree, and no task of this plan carries one** (spec.md §11). The rest of
 the answer is unchanged: exact `user:` entries only, and `group:`, `domain:` and `serviceAccount:`
 refused.
 
@@ -532,12 +596,82 @@ pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §1
   (#1715), M6 (#1714) and M4's first half (#1716) are merged on `main`** — M4's half being the
   account, the front door service and its public invoker binding
   (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`, `:527`) — **because the
-  owner approved them one at a time, which is what "may continue" turned into.** **What is not built
-  is the rest of the plan**: M4's store half (`mcpauth_store.tf`, the bucket and its one grant), M5
-  and M7–M10; **M3's node is in with its parity test while the comment D935 asks for above it is not
-  written**; and **what merged as M6 is the draft M-a predates** — no approve-step POST and no
-  `TestAnIDTokenInAQueryStringIsRefused`, because M5, which defines the approve step, is not
-  started.
+  owner approved them one at a time, which is what "may continue" turned into.** **M5 is built** —
+  the two metadata documents, the four endpoints and
+  the approve step, **except the paired device M-a asks for**, which is **M5b** and is a task of its
+  own since the owner's ruling of 2026-11-07 — **M7 is built** (the resource server and the tool
+  registry, dormant with the rest of the door) **except the reading of the installation's published
+  state its lists come from**: `identity.go` holds the `Roster` seam D933's answer goes through and
+  **nothing in the tree implements it over that state, because no task of the plan carries the
+  reading** — **M10 is built** (the audit line, the bounded per-identity record it comes to and
+  revocation from a person's own surface, dormant with the rest of the door) **except the store its
+  records are at rest in**, whose bucket and one grant are M4's store half — **M8 is built** (the
+  four read tools, over the project's own runs and redacted through `internal/safetext`) **except the
+  wiring that would serve them**: no binary registers them, which is the wiring M5b gates — **and the
+  rest is not**: M4's store half (`mcpauth_store.tf`, the bucket
+  and its one grant) and M9; **M3's node is in with its parity test while the comment D935 asks
+  for above it is not written**; and **what merged as M6 is the draft M-a predates** — no approve-step
+  POST and no `TestAnIDTokenInAQueryStringIsRefused`, because M5, which defines the approve step, was
+  built after M6 rather than with it. **And one row of an already-merged task
+  is not in the tree either**: M2's entry, and §6's second barrier below, state the **keyed** hash and
+  the **MAC over every record** as what the store does, while the store hashes with a plain unkeyed
+  sha256 (`ee/coordinator/mcpauth/store.go:398`) and writes no MAC at all — so a reader who is not the
+  store's member reads an identity in the clear, and a record written by anybody else is not refused
+  by a mark. That barrier is M2's own row, it is on `main` already and not in this branch, and it is
+  raised as a finding rather than closed by an edit here.
+
+### The two bounds no task carries (raised 2026-11-07)
+
+**spec.md §3 and §8 bound the open registration endpoint by two things that are built nowhere**, and
+M5's endpoint and the record it writes say so in their own words: **a per-source rate limit** and
+**registration records being expirable**, with the sweep behind the second one reaching all three of
+the unauthenticated shapes the store holds — the registration, the pending authorize request and the
+code. **M5 builds the endpoint and neither bound. M10 does not carry them either**: its entry is the
+audit record and revocation, and §4's shared-files table names `store.go` as M10's at L6 for
+revocation and nothing else. **So no task of the plan owns either bound.** An earlier draft of this
+branch's M10 row had tried to place them there, with a limiter file and its tests added to that row's
+scope; **that was an unauthorised re-scope of an owner-answered plan and is withdrawn**, because
+which task carries a bound is scope and scope is the owner's. **This folder therefore raises it as a
+finding rather than inventing a task**: what is owed is his decision — them inside M10's entry, or a
+task of their own — and until it comes the growth §8 accepts is accepted unbounded, with a
+registration that never stops being a client. The red step such a task would carry is
+`TestRegistrationIsRateLimitedPerSource` and `TestARegisteredClientIsExpiredAndSwept`. **What keeps
+the exposure latent rather than reachable is a guard M5 does carry, and it is a test rather than a
+behaviour**: `TestNoBinaryLinksTheFrontDoorYet` fails if any file a binary builds names this package,
+so the task that wires the front door is the task that carries the two bounds, carries **M5b** (the
+owner's ruling of 2026-11-07) and deletes the guard, and no release mounts an open registration
+endpoint because a wiring arrived unnoticed.
+
+### The owner's ruling of 2026-11-07: M5b, and the licence table
+
+**Two findings the review of this branch left with the owner were answered on 2026-11-07, and
+neither is a code change.**
+
+**1. The paired device is a task of its own, and it is a gate: M5b.** Finding **M-a**'s first
+requirement — the approval bound to **a paired device**, by **QR proximity or number matching** — was
+raised rather than answered by M5, because the page renders its own number and takes it back from the
+same form (§4a, D923's M-a amendment). **The owner ruled that the pull request that builds M5 merges
+dormant**: the consent page's token paste stays exactly as it is there, and **M5b is a hard
+prerequisite before anything wires the front door**. So **`TestNoBinaryLinksTheFrontDoorYet` is
+relaxed by building M5b and not by deleting its message**, which now names the task — and M5b is
+written as a task in [implementation-plan.md](implementation-plan.md) §3 with its four requirements:
+the approval happens on the paired device, the ID token is spent, the approval is bound to the flow,
+and a refresh family ages. **It is a task and not a change to anything merged**: the code that would
+carry it does not exist yet, and the two limits beside the approve step (a token nothing spends, a
+family with no expiry of its own) are its second and fourth requirements.
+
+**2. The licence gate is cleared by a table the owner read, and the gate is met.** §6 check 1's
+second half is D921's licence, and the owner ruled that he would clear the dependency set by reading
+one table. That table is [licence-table.md](licence-table.md): every module this branch adds or bumps
+against `main`, its licence as the module's own file in the module cache reads it, whether the module
+is linked into the fugaro binary or reached only by a dependency's own tests, and a column for
+anything not clearly permissive. **He read it on 2026-11-07 and cleared the set: "Cleared: all
+permissive"**, and the record is [licence-gate.md](licence-gate.md), the gate file §6 check 1
+describes. **The table is evidence rather than the gate and claims no clearance of its own**, and
+**counsel was never asked**, so the clearance is the owner's and no other, and the check no longer
+gates anything (§6, check 1). **The claim three commits on this branch made about the licence before
+the owner ruled was unbacked and is withdrawn in the pull request**; the answer is the gate file the
+owner's own clearance produced, and nothing else here.
 
 ## 4b. The decision the amendment added
 
@@ -551,7 +685,7 @@ whose store is the one every document here now names.
 
 | D | The question | The answer, 2026-11-04 | Why |
 | --- | --- | --- | --- |
-| **D936** | Is `spawn_task` in the first MCP slice? | **No — deferred out of it.** The first slice is **the authorization server plus the read tools**: `get_task_status`, `stream_logs`, `get_result` and `list_tasks` — and `cancel_task` goes with `spawn_task` into the later design item, because the marker it writes is an object in the runs bucket (`internal/runstore/runstore.go:1315`) and that is the same write the coordinator does not hold. **`spawn_task` is its own later design item**, and no task in [implementation-plan.md](implementation-plan.md) starts a run (H2, owner's answer of 2026-11-04 — **DEFER**, not the review's recommendation) | `spawn_task` needs **three privileges, not one**, and the review found the design had priced only the third: `signJwt` to mint the run's custom token; **write to the runs bucket**, which the coordinator does not hold (F3 is `roles/storage.objectViewer`); and **`run.jobs.runWithOverrides`**, which can override **container args** — the base image's entrypoint is `tini --` (`images/base_test.go:59`), so an override can run **any command beside the job's mounted git and model credentials**. That contradicts the answer's own "the coordinator mints nothing" (D923) and M6's `TestTheCoordinatorMintsNoCustomToken`. The first slice keeps that sentence true by not needing `spawn_task` at all. |
+| **D936** | Is `spawn_task` in the first MCP slice? | **No — deferred out of it.** The first slice is **the authorization server plus the read tools**: `get_task_status`, `stream_logs`, `get_result` and `list_tasks` — and `cancel_task` goes with `spawn_task` into the later design item, because the marker it writes is an object in the runs bucket (`internal/runstore/runstore.go:1581`) and that is the same write the coordinator does not hold. **`spawn_task` is its own later design item**, and no task in [implementation-plan.md](implementation-plan.md) starts a run (H2, owner's answer of 2026-11-04 — **DEFER**, not the review's recommendation) | `spawn_task` needs **three privileges, not one**, and the review found the design had priced only the third: `signJwt` to mint the run's custom token; **write to the runs bucket**, which the coordinator does not hold (F3 is `roles/storage.objectViewer`); and **`run.jobs.runWithOverrides`**, which can override **container args** — the base image's entrypoint is `tini --` (`images/base_test.go:59`), so an override can run **any command beside the job's mounted git and model credentials**. That contradicts the answer's own "the coordinator mints nothing" (D923) and M6's `TestTheCoordinatorMintsNoCustomToken`. The first slice keeps that sentence true by not needing `spawn_task` at all. |
 
 **What a later `spawn_task` design item has to answer**, written here so the deferral is a plan and
 not a shrug:
@@ -624,15 +758,21 @@ code task starts:
 
 0. **The launch-override fence is decided and built before M9 or D931.** Spec §8 states the owner's requirement (the runner ignores the override environment except an allowlist) as NOT BUILT: the runner reads its ceiling and wiring from variables `runWithOverrides` can rewrite today, so the mechanism that lets it read non-allowlisted configuration from something an override cannot set is an open owner decision.
 1. **`zitadel/oidc`'s licence is confirmed — by the owner or by counsel — before any build**, and
-   **the M5 gate file is the owner's to create.** D921 was answered with the licence
+   **the owner wrote the M5 gate file on 2026-11-07.** D921 was answered with the licence
    **UNCONFIRMED**: the library's Apache 2.0 claim is the library's own and nothing in this
    container can check it, and a dependency a self-hosted product cannot ship is a dependency the
    whole design rests on by mistake. **The independent security review of 2026-11-04 did not settle
    it either** — what it read is the library's behaviour against this design and not its licence —
-   so **the owner or counsel confirms the licence, the transitive dependencies included**. **This is
-   a gate, not a note:** M5 does not start until the licence is settled and a person has written the
-   gate file, and a licence that turns out to be unusable sends D921 back to its alternatives rather
-   than to a workaround.
+   so the check left the licence to the owner or to counsel. **The owner took it himself: he ruled
+   that he would clear the set by reading one table, he read
+   [licence-table.md](licence-table.md), and he cleared it in one line — "Cleared: all
+   permissive"** ([licence-gate.md](licence-gate.md), the gate file this check describes). **Counsel
+   was never asked about the transitive set and has cleared nothing**, so the clearance the tree
+   carries is the owner's own and the check is **met**: the gate was never a note, and what met it is
+   an artifact rather than a run's word. **What that does not do is wire the front door** — M5 merges
+   dormant, because the paired device M-a asks for is **M5b** and M5b is a hard prerequisite before
+   any binary links it (§4a) — and D921's alternatives, with the library taken out of `go.mod` and M5
+   rebuilt against them, remain the answer to a licence that would not have been cleared.
 2. **The endpoint really is reachable from the public internet** once D920's answer says so: a
    request from outside the project reaches the handler and gets the 401, rather than being refused
    by the platform. spec.md §8 says what follows if it is not.

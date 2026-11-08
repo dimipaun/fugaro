@@ -10,11 +10,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 
 	storage "google.golang.org/api/storage/v1"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
 // slugRE is the shape task.Slug gives: the readable part, then 16 hex
@@ -110,6 +112,65 @@ func RepoStateObjects(ctx context.Context, c *Clients, stateBucket, slug string)
 	}
 	slices.Sort(names)
 	return names, nil
+}
+
+// credentialsMemberAddress is where a repository root's state keeps the
+// workflow module's invoker grant, one instance per workflow:
+// modules/workflow/sa.tf's
+// google_cloud_run_v2_service_iam_member.credentials, planned with count 0/1
+// on that root's installation.credentials_service, so an address with this
+// suffix is in the state exactly when that root was applied with the service
+// on. The suffix is the whole address's tail — module.repo.module.workflow
+// ["<name>"].google_cloud_run_v2_service_iam_member.credentials[0] — and it is
+// the same spelling the spec's own address list carries (spec.go's
+// repoAddresses), so a state and a spec name one resource the same way.
+const credentialsMemberAddress = "google_cloud_run_v2_service_iam_member.credentials[0]"
+
+// RepoCredentialsServiceApplied reports whether the repository root's STATE —
+// the objects under RepoStatePrefix in the installation's state bucket, which
+// belongs to the installation and not to one machine — holds that invoker
+// grant.
+//
+// It is the shared evidence for "this repository's root has been applied with
+// the credentials service on", where the tfvars a workdir holds
+// (RepoCredentialsServiceDeployed) are only this machine's: the workdir is
+// per-machine state (<state>/fugaro/terraform/<project>/repos/<slug>), so a
+// repository whose root was applied from another machine, or from another
+// checkout of this one, has no document here at all — which is exactly the
+// installation an upgrade has to converge (internal/cli's
+// backfillCredentialsServiceReady). The state bucket is the installation's
+// one copy, written by whichever machine ran the apply, and its addresses are
+// what that apply actually made rather than what a run handed Terraform: a
+// root whose apply failed or was refused leaves a document ahead of its
+// state, and the state is the one that counts.
+//
+// False is "this repository's state holds no such grant", and it is one
+// answer for three states that are all "not evidence a job may invoke the
+// service": a root never applied anywhere (no state object), one applied with
+// the service off (the resource is not planned), and one whose state
+// --forget removed. A state object that cannot be read, or that is not JSON,
+// is the error, and no caller may read it as a no (Global Constraint 3).
+func RepoCredentialsServiceApplied(ctx context.Context, c *Clients, stateBucket, slug string) (bool, error) {
+	names, err := RepoStateObjects(ctx, c, stateBucket, slug)
+	if err != nil {
+		return false, err
+	}
+	for _, name := range names {
+		data, err := ReadStateObject(ctx, c, stateBucket, name)
+		if err != nil {
+			return false, err
+		}
+		var st tf.State
+		if err := json.Unmarshal(data, &st); err != nil {
+			return false, fmt.Errorf("gs://%s/%s is not a state this program can read: %w", stateBucket, name, err)
+		}
+		for _, a := range st.Addresses() {
+			if strings.HasSuffix(a, credentialsMemberAddress) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // StateBucketVersioned reports whether the state bucket keeps noncurrent
@@ -301,7 +362,18 @@ func SecretFix(spec RepoSpec, logical, bin string, quote func(string) string) st
 //
 // Each step's command names the scope that name is stored at by default
 // (D2): the project's for a name spec's own eligibility accepts
-// project-wide, the repository's for the rest.
+// project-wide, the repository's for the rest. A named Claude account's
+// step is neither of those commands: `fugaro accounts add <name>` declares
+// the account, stores its token where the shared job mounts it and
+// converges the installation, so the scope is the command's own. It carries
+// --repos with this repository (spec.Name), because the command would
+// otherwise take the origin of whatever checkout it is pasted into, and
+// --profile when the project has a profile that already serves the account
+// (spec.AccountProfiles), since the command must name the profile whose
+// claude_accounts gains the name, or refuse. When no profile serves the
+// account the pair that mints the token and stores it stands instead: the
+// account is one the config already declares, so `accounts add` would have
+// nothing to declare and only a profile to choose for itself.
 func SecretCommands(spec RepoSpec, versions map[string]bool, bin string, quote func(string) string) []SecretStep {
 	var out []SecretStep
 	for _, logical := range slices.Sorted(maps.Keys(spec.Secrets)) {
@@ -314,9 +386,44 @@ func SecretCommands(spec RepoSpec, versions map[string]bool, bin string, quote f
 		// the repository-copy command otherwise.
 		set := SecretFix(spec, logical, bin, quote)
 		st := SecretStep{Name: logical, What: spec.Secrets[logical], Optional: OptionalSecret(logical)}
-		if logical == "claude-oauth-token" {
+		switch {
+		case logical == config.ClaudeOAuthToken:
 			st.Commands = []string{"claude setup-token", set}
-		} else {
+		case strings.HasPrefix(logical, config.ClaudeOAuthTokenPrefix):
+			// A named account's token is the one command that declares the
+			// account, stores the token project-wide -- where the shared job
+			// mounts it -- and converges the installation (spec accounts-add
+			// §8). "default" is reserved (config.ValidateClaudeAccounts), so
+			// `accounts add` has no form for the default account above, and
+			// every other name in this namespace is one it owns end to end.
+			account := strings.TrimPrefix(logical, config.ClaudeOAuthTokenPrefix)
+			// The profile whose claude_accounts already lists the account
+			// (spec.AccountProfiles): it leaves that half of the command a
+			// no-op. The command refuses to pick one in a project with several
+			// (accountsAddProfile), and with exactly one it would add the
+			// account to that profile and deploy a job, where storing the token
+			// was the whole step.
+			if profile := spec.AccountProfiles[account]; profile != "" {
+				// --repos is the repository this root is for (spec.Name), and
+				// not the origin of whatever checkout the line is pasted into:
+				// accountsAddRepos defaults it to that origin, so the same line
+				// run elsewhere would bind the account to the wrong repository —
+				// and accountsAddBeyond measures the widening against that
+				// checkout as well, so the confirmation would say nothing about
+				// it. Naming this repository is a union with the list the
+				// account already has, so it cannot narrow it.
+				st.Commands = []string{bin + " accounts add " + quote(account) + " --repos " + quote(spec.Name) + " --profile " + quote(profile)}
+				break
+			}
+			// No profile serves the account, and it is one this config already
+			// declares (config.AllowedClaudeAccounts is where the name in
+			// spec.Secrets came from), so `accounts add` would have nothing to
+			// declare and only a profile to choose for itself. The pair that
+			// mints the token and stores it in the container such a job would
+			// mount is the whole step, as it was before `accounts add` took it
+			// over.
+			st.Commands = []string{"claude setup-token", set}
+		default:
 			st.Commands = []string{set + " < PATH-TO-THE-VALUE-FILE"}
 		}
 		out = append(out, st)

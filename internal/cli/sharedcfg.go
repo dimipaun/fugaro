@@ -202,6 +202,16 @@ type SharedAnchor struct {
 // the runs bucket publishing either would be choosing when every other machine
 // is told its installation is overdue.
 //
+// issues is update_check's case for the section the terminal prints (T-IS15,
+// docs/troubleshoot-issue/ F14): the two nudge thresholds decide when that line
+// firms up on the machine reading it, so a launcher who could write the block
+// into the runs bucket's shared file would be choosing when every other machine
+// is told its issues have waited too long — the nag's counterpart of the choice
+// to silence it that update_check is refused for. localcfg.Config.Shared nils
+// the block, and it is refused here by key and again by value like the keys
+// above it: on a machine with no local config for the project, the fetched
+// shared config is the one the commands read.
+//
 // review_floor is the sharpest case of the rule, and localcfg.Config.Shared
 // nils it for it: the owner's floor is what stops a launcher turning review
 // off (D722, G1), and it is published through the policy node — which the
@@ -236,6 +246,16 @@ type SharedAnchor struct {
 // through the policy node instead, which the owner writes and the runner fails
 // closed on, and localcfg.Config.Shared nils them.
 //
+// credentials, pools and crafts are that same rule one step further out
+// (docs/model-crafts/reconciliation.md F12, D1628): a credential is the name of
+// a secret, a pool is an ordered list of them, and a craft's access is what
+// decides which of them a run's calls go out on — a spending and data-egress
+// grant, whose admission per repository is the account it generalises'
+// (D1621, F10). A launcher who could write the three into the shared file could
+// aim every teammate's runs at a credential the owner never admitted, so they
+// are the owner's own, they are published through the policy node, and
+// localcfg.Config.Shared nils them.
+//
 // workspace, workspace_pin, workspace_members and workspace_cap are the
 // workspace keys, and workspace_pin is the sharpest of them: the pin is the
 // member's own record of which workspace it trusts — the project its exchange
@@ -247,7 +267,7 @@ type SharedAnchor struct {
 // member table are dropped with it, because a shared file that could name a
 // workspace would be one that could join this project to a group nobody here
 // chose. localcfg.Config.Shared nils all four.
-var sharedForbidden = []string{"terraform", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "workflow_secrets", "bitbucket_api_roots", "update_check", "secret_rotation_days", "secret_expires", "review_floor", "verifier_accounts", "image_catalog", "orchestrator", "default_claude_account", "stages", "claude_account_auto", "workspace", "workspace_pin", "workspace_members", "workspace_cap"}
+var sharedForbidden = []string{"terraform", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "workflow_secrets", "bitbucket_api_roots", "update_check", "issues", "secret_rotation_days", "secret_expires", "review_floor", "verifier_accounts", "image_catalog", "orchestrator", "default_claude_account", "stages", "claude_account_auto", "credentials", "pools", "crafts", "workspace", "workspace_pin", "workspace_members", "workspace_cap"}
 
 // ParseShared validates a published shared config against its anchor and
 // returns it (docs/design/shared-config.md §5). Anyone holding objectAdmin
@@ -257,7 +277,7 @@ var sharedForbidden = []string{"terraform", "user", "commit_name", "commit_email
 // base image or log view elsewhere, a budget block whose Firebase project
 // is not the anchor's GCP project or whose database or signer is not its
 // Firebase project's, a forbidden section (providers, routing,
-// claude_accounts, project_secrets and workflow_secrets among them), an unknown key, YAML
+// claude_accounts, credentials, project_secrets and workflow_secrets among them), an unknown key, YAML
 // anchors, aliases, merge keys, explicit
 // tags, repeated keys or documents, and anything over
 // localcfg.SharedMaxBytes. Every refusal names the field and says to have
@@ -314,7 +334,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 		return bad("gcp_project", "%q is not %s", c.GCPProject, a.GCPProject)
 	case c.RunsBucket != a.Bucket || c.RunsBucketName() != a.Bucket:
 		return bad("runs_bucket", "%q is not the bucket it was read from, %s", c.RunsBucket, a.Bucket)
-	case c.User != "" || c.CommitName != "" || c.CommitEmail != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.Routing != nil || c.ClaudeAccounts != nil || c.ProjectSecrets != nil || c.WorkflowSecrets != nil || c.BitbucketAPIRoots != nil || c.UpdateCheck != nil || c.SecretRotationDays != 0 || c.SecretExpires != nil || c.ReviewFloor != nil || c.ImageCatalog != nil || c.DefaultClaudeAccount != "" || c.ClaudeAccountStages != nil || c.ClaudeAccountAuto || c.Workspace != "" || !reflect.ValueOf(c.WorkspacePin).IsZero() || c.WorkspaceMembers != nil || c.WorkspaceCap != nil:
+	case c.User != "" || c.CommitName != "" || c.CommitEmail != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.Routing != nil || c.ClaudeAccounts != nil || c.ProjectSecrets != nil || c.WorkflowSecrets != nil || c.BitbucketAPIRoots != nil || c.UpdateCheck != nil || c.Issues != nil || c.SecretRotationDays != 0 || c.SecretExpires != nil || c.ReviewFloor != nil || c.ImageCatalog != nil || c.DefaultClaudeAccount != "" || c.ClaudeAccountStages != nil || c.ClaudeAccountAuto || c.Credentials != nil || c.Pools != nil || !reflect.ValueOf(c.Crafts).IsZero() || c.Workspace != "" || !reflect.ValueOf(c.WorkspacePin).IsZero() || c.WorkspaceMembers != nil || c.WorkspaceCap != nil:
 		return refuse("carries a section that is never published (%s)", strings.Join(sharedForbidden, ", "))
 	case c.RegistryHost != c.Region+"-docker.pkg.dev/"+a.GCPProject:
 		return bad("registry_host", "%q is not this project's registry, %s-docker.pkg.dev/%s", c.RegistryHost, c.Region, a.GCPProject)

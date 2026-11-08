@@ -45,10 +45,11 @@ import (
 // session that could remove the mark could remove it mid-command and keep
 // applying ungated — and a Fugaro run's own process is refused beside it,
 // because a run credential holds the operator's credentials and could revoke
-// the marks its own project is managed by. The confirmation is the exact GCP
-// project ID typed at a real terminal, and nothing stands in for it: this
-// command registers no --yes and no --non-interactive, has no bulk form, no
-// wildcard and no prefix, and takes exactly one project ID.
+// the marks its own project is managed by. The consent is the exact GCP project
+// ID as the argument itself (D1541, the flag's own rule): nothing stands in for
+// naming the project, so this command registers no --yes and no
+// --non-interactive, has no bulk form, no wildcard and no prefix, and takes
+// exactly one project ID.
 //
 // What it is not, stated rather than implied: it is not a boundary against a
 // session that goes around this program. A coding agent's session holds the
@@ -85,10 +86,11 @@ update --forget stays refused for a fenced installation. This command makes no
 IAM call at all; undoing the fence is not revocation and is not offered here
 (docs/design/managed-projects.md §10.2).
 
-Run it in your own terminal, as an operator, with your own credentials, and
-type the GCP project ID it asks for. A coding agent's session is refused, a
-Fugaro run's own process is refused, and nothing stands in for the typed ID —
-not --yes, not --non-interactive, not a pipe.
+Run it in your own terminal, as an operator, with your own credentials. The
+permission you give is the PROJECT_ID argument itself: it names the one project
+whose marks come off, and nothing stands in for naming it — not --yes, not
+--non-interactive, not a pipe. A coding agent's session is refused, and a
+Fugaro run's own process is refused.
 
 PROJECT_ID must be the exact GCP project ID of the installation selected by
 --project, --config or the checkout: one invocation names one project, and
@@ -161,25 +163,43 @@ func managedUnflag(cmd *cobra.Command, o cloudOptions, id string) error {
 	if err != nil {
 		return err
 	}
+	// This run's account and its log (D1352), opened where the run's own work
+	// starts and not at the command's door: who is running, whether the
+	// argument is a project ID at all, whether it is the project this
+	// installation is in, and whether the marker is read from the bucket the
+	// managed read looks in are all decided above, from the command line and
+	// this installation's config (reporterOpener). A refused unflag therefore
+	// files no log, not even an empty one, which would be one of the fifty this
+	// name keeps (CL3's pruneLogs).
+	rep, sink := reporterFor(cmd, "managed-unflag", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	defer rep.Summary()
 	// The number is what says a bucket name is this project's (a bucket name
 	// is global), and it is what the removal proves the bucket with. It is
-	// read before the confirmation so a project this credential cannot read is
-	// refused before the owner is asked to type anything for it.
+	// read before the statement above so a project this credential cannot read
+	// is refused before anything is said to have been agreed to.
 	number, err := infra.ProjectNumber(ctx, c, lc.GCPProject)
 	if err != nil {
 		return remote(fmt.Errorf("reading the number of GCP project %s: %s", safetext.Field(lc.GCPProject), safetext.Field(err.Error())))
 	}
 	w := cmd.OutOrStdout()
 	// What is about to be removed, what it gives back, and what it leaves in
-	// place — all before anything is typed, because the owner typing the ID is
-	// agreeing to all of it.
-	fmt.Fprintf(w, "⚠ CONFIRM (project %s): unflagging GCP project %s removes both marks that make it managed:\n", safetext.Field(lc.Name), safetext.Field(lc.GCPProject))
+	// place — all of it before the first write, because the PROJECT_ID argument
+	// is the whole of the consent and the owner is entitled to see what they
+	// have just agreed to.
+	fmt.Fprintf(w, "unflagging GCP project %s removes both marks that make it managed (project %s):\n", safetext.Field(lc.GCPProject), safetext.Field(lc.Name))
 	fmt.Fprintf(w, "  the marker object gs://%s/%s in its runs bucket, and the label %s=%s on the project itself — the read requires both, so the project is managed only while the two are there\n",
 		safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue)
 	fmt.Fprintf(w, "  it gives back: the typed confirmation for this project's applies. From the next apply on a person is asked again, and a coding agent's session is refused as it was before the project was flagged (D55).\n")
 	fmt.Fprintf(w, "  it does not remove: the deployer fence. Its scoped roles and their conditioned bindings stay in the project and in the installation, fugaro update --forget stays refused for a fenced installation, and this command makes no IAM call at all (D75; docs/design/managed-projects.md §10.2).\n")
 	fmt.Fprintf(w, "  a half already gone is not a failure: a project whose object or label is already absent is converged by this one command, and which half it was is said below.\n")
-	if err := confirmTypedGCPProject(cmd, lc.GCPProject); err != nil {
+	// Both halves and the read that settles them are one step, opened after the
+	// statement above so nothing in flight is drawn over it (G1).
+	step := rep.Step("unflag")
+	fail := func(err error) error {
+		step.Failed(err, nil)
 		return err
 	}
 	// The object first, in the flag's order and for the flag's reason: it is
@@ -188,7 +208,7 @@ func managedUnflag(cmd *cobra.Command, o cloudOptions, id string) error {
 	// and a success here already revokes.
 	objectRemoved, err := managed.RemoveMarker(ctx, c.Storage, bucket, lc.GCPProject, number)
 	if err != nil {
-		return managedUnflagErr(lc, bucket, err)
+		return fail(managedUnflagErr(lc, bucket, err))
 	}
 	labelRemoved, err := managed.RemoveManagedLabelForFlag(ctx, c.CRM, lc.GCPProject)
 	if err != nil {
@@ -196,12 +216,18 @@ func managedUnflag(cmd *cobra.Command, o cloudOptions, id string) error {
 		// fail-closed direction — either mark alone leaves the project
 		// unmanaged — so this is not a state that keeps a control, and it is
 		// said rather than reported as if nothing had happened.
-		return remote(fmt.Errorf("removed gs://%s/%s, but not the %s label on GCP project %s (%v): the read requires both, so %s is not managed any more, but the label is still on the project and this command could not take it off. Run it again as the account that owns the project",
-			safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, safetext.Field(lc.GCPProject), safetext.FieldErr(err), safetext.Field(lc.Name)))
+		return fail(remote(fmt.Errorf("removed gs://%s/%s, but not the %s label on GCP project %s (%v): the read requires both, so %s is not managed any more, but the label is still on the project and this command could not take it off. Run it again as the account that owns the project",
+			safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, safetext.Field(lc.GCPProject), safetext.FieldErr(err), safetext.Field(lc.Name))))
 	}
-	fmt.Fprintf(w, "  marker object gs://%s/%s: %s\n", safetext.Field(bucket), managed.MarkerObject,
+	// What each half of the mark came off as goes out through the run's own
+	// writer: it says which of the two was already gone — the difference
+	// between converging a project and doing nothing to it — and it is printed
+	// while the step above it is still in flight, so the line in flight has to
+	// come down for it rather than be drawn over by the spinner (sayThrough).
+	out := sayThrough(rep, w)
+	fmt.Fprintf(out, "  marker object gs://%s/%s: %s\n", safetext.Field(bucket), managed.MarkerObject,
 		removedOr(objectRemoved, "removed", "was not there"))
-	fmt.Fprintf(w, "  label %s on GCP project %s: %s\n", managed.ProjectLabelKey, safetext.Field(lc.GCPProject),
+	fmt.Fprintf(out, "  label %s on GCP project %s: %s\n", managed.ProjectLabelKey, safetext.Field(lc.GCPProject),
 		removedOr(labelRemoved, "removed", "was not the managed mark, left as it is"))
 	// Read back through the managed read itself, with its project-number
 	// check: the command does not say the project is unmanaged unless the read
@@ -209,17 +235,21 @@ func managedUnflag(cmd *cobra.Command, o cloudOptions, id string) error {
 	// so what is claimed and what a later command believes are one thing.
 	ok, reason, err := managed.IsManaged(ctx, c.Storage, c.CRM, lc.Name, lc.GCPProject)
 	if err != nil {
-		return remote(fmt.Errorf("reading back GCP project %s after removing both marks: %s", safetext.Field(lc.GCPProject), safetext.Field(err.Error())))
+		return fail(remote(fmt.Errorf("reading back GCP project %s after removing both marks: %s", safetext.Field(lc.GCPProject), safetext.Field(err.Error()))))
 	}
 	if ok {
-		return remote(fmt.Errorf("both marks were removed from GCP project %s, but it still reads as managed: check it with `gcloud storage cat gs://%s/%s` and `gcloud projects describe %s` as the operator before relying on it",
-			safetext.Field(lc.GCPProject), safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.GCPProject)))
+		return fail(remote(fmt.Errorf("both marks were removed from GCP project %s, but it still reads as managed: check it with `gcloud storage cat gs://%s/%s` and `gcloud projects describe %s` as the operator before relying on it",
+			safetext.Field(lc.GCPProject), safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.GCPProject))))
 	}
-	fmt.Fprintf(w, "read back through the managed read, with the project-number check: %s is not managed\n", safetext.Field(lc.Name))
+	// What the step ends on is the read's own answer, which is what a later
+	// command believes; the per-half lines above it say which of the two was
+	// already gone, which is the difference between converging a project and
+	// doing nothing to it.
+	step.Done(fmt.Sprintf("read back through the managed read, with the project-number check: %s is not managed", safetext.Field(lc.Name)))
 	if reason != "" {
-		fmt.Fprintf(w, "  the read says: %s\n", safetext.Field(reason))
+		fmt.Fprintf(out, "  the read says: %s\n", safetext.Field(reason))
 	}
-	fmt.Fprintf(w, "unflagged GCP project %s: it is not a managed project any more, and its applies take the typed confirmation again; the deployer fence is untouched\n", safetext.Field(lc.GCPProject))
+	fmt.Fprintf(out, "unflagged GCP project %s: it is not a managed project any more, and its applies take the typed confirmation again; the deployer fence is untouched\n", safetext.Field(lc.GCPProject))
 	return nil
 }
 

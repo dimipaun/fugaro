@@ -126,6 +126,24 @@ func clampWarning(ig policy.Ignored) config.Problem {
 		msg = fmt.Sprintf("[%s] names models outside the project's allow-list; the runner will use [%s]",
 			strings.ReplaceAll(ig.Value, ",", ", "), strings.ReplaceAll(ig.Effective, ",", ", "))
 	default:
+		// The craft grant's own refusal: a credential or a pool a repository
+		// may not introduce, or a craft's access where the project selected
+		// nothing (F12, D1628). There is no running value to be measured
+		// against and none to fall back to, so the looser-than sentence would
+		// name nothing at all — and the rule a repository met is the one to
+		// say.
+		//
+		// An empty effective value is what tells that refusal apart, and it is
+		// a craft key that can carry one: the merge renders the value in force
+		// for everything it compares, a pool's strategy included, where the
+		// pool names none and the run's failover default answers for it
+		// (policy's poolStrategyText) — so a strategy that lost to the default
+		// is never read here as a credential the project does not define.
+		if strings.HasPrefix(ig.Key, "crafts.") && ig.Effective == "" {
+			msg = fmt.Sprintf("%s names nothing the project makes available: a repository selects among the credentials and the pools the project creates and never adds one, so the runner ignores this key",
+				pluginwire.Printable(ig.Value))
+			break
+		}
 		msg = fmt.Sprintf("%s is looser than %s; the runner will use %s", ig.Value, ig.Effective, ig.Effective)
 	}
 	return config.Problem{Path: runner.PolicyKeyPath(ig.Key), Message: msg}
@@ -696,9 +714,11 @@ const reviewArtifactTokens = 32000
 // reviewJobNotes are `fugaro validate`'s notes about the independent cloud
 // review job (CSR6): the reviewer's output cap against the artifact it writes
 // (D886), the one ceiling a subscription run has beside the gateway's (F10),
-// and E7's precondition — the credentials service enabled for the installation
-// and admitting the review job's own caller — which is the state CSR2's launch
-// refusal mirrors.
+// and E7's precondition — the credentials service enabled for the installation,
+// and the admission of the review job's own caller that the launcher carries as
+// a constant (reviewJobAdmitted, true since 0.21.0) and also judges on the
+// installation's release when it launches (checkReviewAdmission) — which is the
+// state CSR2's launch refusal mirrors.
 //
 // All three speak for an installation that has named a Claude account, and are
 // silent without one: the review job is the first thing in this design that a
@@ -730,20 +750,31 @@ func reviewJobNotes(cfg *config.Config, lc *localcfg.Config) []config.Problem {
 // refusal: nothing in a fugaro.yaml is what is missing, and whether a review is
 // ever launched is the owner's decision rather than this file's.
 //
-// The two halves are named apart because only one of them is reachable from
-// `fugaro update`. The note never offers a second command for the admission
-// half — none exists — and it never reads as "deploy the service and the review
-// works": the launch refuses until both hold, and so does this sentence.
+// The two halves are named apart because they are supplied by different things.
+// The service half is the installation's and `fugaro update` is its remedy; the
+// admission half is the BINARY's — the launcher carries it as a constant, true
+// since 0.21.0 — so what supplies that one is upgrading Fugaro, and the note
+// says so rather than offering a command against the installation that would
+// change nothing. It never reads as "deploy the service and the review works":
+// the launch refuses until both hold, and so does this sentence. The admission
+// has a third face this note does not carry, because `fugaro validate` judges a
+// file rather than a release: the installation's own release, which
+// checkReviewAdmission refuses the launch on when it predates the release whose
+// service admits the class. A binary at that release answers both arms below the
+// same way (no note), so the note stays silent where a launch would refuse. The
+// two messages that name the binary's half stay what they are: they are the
+// sentences a binary built BEFORE the flip prints, and for that binary "rather
+// than reading it out of the installation" is exactly true.
 func reviewPreconditionNote(lc *localcfg.Config) string {
 	const launch = "fugaro review --pr N refuses until it holds"
 	enabled := lc.CredentialsService != nil && lc.CredentialsService.URL != ""
 	switch {
 	case !enabled && !reviewJobAdmitted:
-		return "a cloud review cannot launch on this installation, and both halves of its precondition are missing. The first is the credentials service itself: a review job mounts no credential of its own, so its read-only installation token and its account's model calls both come from the installation's service, and no credentials_service block is published for this project — run fugaro update --provision-credentials to deploy it, then fugaro creds set github-app-key, the App the review's read-only token is issued for. The second is the service's own admission of the review job's caller: the review's account belongs to a project-scoped job, which the service refuses whole, and no fugaro update supplies that half, because it is a change to the service's own admission (C3.9) — so " + launch + " either way"
+		return "a cloud review cannot launch on this installation, and both halves of its precondition are missing. The first is the credentials service itself: a review job mounts no credential of its own, so its read-only installation token and its account's model calls both come from the installation's service, and no credentials_service block is published for this project — an ordinary fugaro update deploys the service on every installation that can carry one (it needs the installation's Firebase backend, which fugaro update --firebase-project supplies, and at least one repository job), and fugaro creds set github-app-key then writes the App the review's read-only token is issued for. The second is the service's admission of the review job's own caller, and it is the binary's rather than the installation's: the review's account belongs to a project-scoped job, whether the service admits that class is E7's second half, and the launcher carries it as a constant rather than reading it out of the installation, so a fugaro built while the answer was no refuses whatever the installation admits — upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then run fugaro update with the newer binary, which is the whole upgrade and the command that deploys the review class beside the review-only job variant — so " + launch + " either way"
 	case !enabled:
-		return "a cloud review cannot launch on this installation: a review job mounts no credential of its own, so its read-only installation token and its account's model calls both come from the installation's credentials service, and no credentials_service block is published for this project — run fugaro update --provision-credentials to deploy it, then fugaro creds set github-app-key, the App the review's read-only token is issued for, and " + launch
+		return "a cloud review cannot launch on this installation: a review job mounts no credential of its own, so its read-only installation token and its account's model calls both come from the installation's credentials service, and no credentials_service block is published for this project — an ordinary fugaro update deploys the service on every installation that can carry one (it needs the installation's Firebase backend, which fugaro update --firebase-project supplies, and at least one repository job), and fugaro creds set github-app-key then writes the App the review's read-only token is issued for, and " + launch
 	case !reviewJobAdmitted:
-		return "a cloud review cannot launch on this installation, and the half an update cannot supply is the one missing: the service is enabled, and it does not admit the review job's own caller — the review's account belongs to a project-scoped job, and the service refuses one whole (its admission is built for a repository's own job). No fugaro update supplies this half, because it is a change to the service's own admission (C3.9), which this release ships the command, the gate and the review-only job variant ahead of, and " + launch
+		return "a cloud review cannot launch on this fugaro, and the half that is missing is the binary's own: the service is enabled, and this launcher predates the release in which the credentials service admits the review job's own caller — the review's account belongs to a project-scoped job, the service's admission of that class is E7's second half, and it is compiled into the launcher rather than read from the installation, so no configuration here moves it. Upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then run fugaro update with the newer binary, which is the whole upgrade and the command that deploys the review class beside the review-only job variant, and " + launch
 	default:
 		return ""
 	}

@@ -431,6 +431,18 @@ func TestClampWarningRendersEachKeysWords(t *testing.T) {
 			Value: "sonnet,opus", Effective: "sonnet", Source: policy.SourceCeiling},
 			"budget.allowed_models",
 			"[sonnet, opus] names models outside the project's allow-list; the runner will use [sonnet]"},
+		{"a credential a repository may not introduce", policy.Ignored{Key: policy.CraftCredentialKey("repo-key"),
+			Value: "repo-key", Source: policy.SourceCeiling},
+			"agent.crafts.credentials.repo-key",
+			"repo-key names nothing the project makes available: a repository selects among the credentials and the pools the project creates and never adds one, so the runner ignores this key"},
+		{"a member list that is not a narrowing", policy.Ignored{Key: policy.CraftPoolMembersKey("claude"),
+			Value: "c1,c2,c3", Effective: "c1,c2", Source: policy.SourceCeiling},
+			"agent.crafts.pools.claude.members",
+			"c1,c2,c3 is looser than c1,c2; the runner will use c1,c2"},
+		{"a pool strategy that is not tighter", policy.Ignored{Key: policy.CraftPoolStrategyKey("claude"),
+			Value: policy.PoolStrategyRoundRobin, Effective: policy.PoolStrategyFailover, Source: policy.SourceCeiling},
+			"agent.crafts.pools.claude.strategy",
+			"round-robin is looser than failover; the runner will use failover"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := clampWarning(tc.ig)
@@ -3280,13 +3292,15 @@ func TestValidateNotesTheSubscriptionStageBound(t *testing.T) {
 // which half of that precondition it is missing. Validate says it as a note,
 // never a refusal: nothing in a fugaro.yaml is what is missing.
 //
-// The two halves are named separately because only one of them is reachable
-// from `fugaro update`: the note names the command that supplies the first, and
-// says in as many words that no fugaro update supplies the second, which is the
-// admission of a project-scoped caller inside the service itself (C3.9). A note
-// that told the owner to run a second command for it would send them looking
-// for one that does not exist, and one that stayed silent about it would read
-// as "the review will work once the service is deployed".
+// The two halves are named separately because they are supplied by different
+// things: the first is the installation's, and `fugaro update` is its remedy;
+// the second is the BINARY's — the launcher carries the admission of a
+// project-scoped caller as a constant (reviewJobAdmitted, true since 0.21.0) —
+// so the note names upgrading Fugaro for it rather than a command against the
+// installation that would change nothing, and it is the seam alone that puts a
+// reader back in front of a binary that predates the flip. A note that stayed
+// silent about the second would read as "the review will work once the service
+// is deployed", which is false for such a binary.
 func TestValidateNotesTheCredentialsServicePrecondition(t *testing.T) {
 	const service = "credentials_service: { url: https://fugaro-credentials-abcde-uc.a.run.app }\n"
 	preconditionNote := func(errOut string) []string {
@@ -3299,7 +3313,10 @@ func TestValidateNotesTheCredentialsServicePrecondition(t *testing.T) {
 		}
 		return got
 	}
-	t.Cleanup(func() { reviewJobAdmitted = false })
+	// Back to the tree's own value: the seam is a package variable, and a row
+	// that left it false would judge whichever test ran next against a binary
+	// that no longer exists.
+	t.Cleanup(func() { reviewJobAdmitted = true })
 	for _, tc := range []struct {
 		name     string
 		local    string
@@ -3309,19 +3326,21 @@ func TestValidateNotesTheCredentialsServicePrecondition(t *testing.T) {
 		avoid    []string
 	}{
 		{
-			name: "both halves, on this tree", accounts: true,
-			want: []string{"both halves", "fugaro update --provision-credentials", "fugaro creds set github-app-key",
-				"the service's own admission of the review job's caller", "no fugaro update supplies that half"},
+			name: "both halves are missing", accounts: true,
+			want: []string{"both halves of its precondition are missing", "fugaro update --firebase-project",
+				"fugaro creds set github-app-key", "the service's admission of the review job's own caller",
+				"brew upgrade dimipaun/tap/fugaro"},
 		},
 		{
 			name: "the admission is the missing half", accounts: true, local: service, admitted: false,
-			want:  []string{"does not admit the review job's own caller", "No fugaro update supplies this half"},
+			want: []string{"the half that is missing is the binary's own", "predates the release",
+				"brew upgrade dimipaun/tap/fugaro", "no configuration here moves it"},
 			avoid: []string{"--provision-credentials"},
 		},
 		{
 			name: "the service is off, and the admission is built", accounts: true, admitted: true,
-			want:  []string{"fugaro update --provision-credentials", "fugaro creds set github-app-key"},
-			avoid: []string{"does not admit"},
+			want:  []string{"fugaro update --firebase-project", "fugaro creds set github-app-key"},
+			avoid: []string{"predates the release", "the binary's own"},
 		},
 		{
 			name: "both halves hold", accounts: true, local: service, admitted: true,
@@ -3333,7 +3352,8 @@ func TestValidateNotesTheCredentialsServicePrecondition(t *testing.T) {
 			// instead of its own would find both halves holding and print
 			// nothing at all.
 			name: "the admission is the missing half, after one that held", accounts: true, local: service, admitted: false,
-			want:  []string{"does not admit the review job's own caller", "No fugaro update supplies this half"},
+			want: []string{"the half that is missing is the binary's own", "predates the release",
+				"brew upgrade dimipaun/tap/fugaro"},
 			avoid: []string{"--provision-credentials"},
 		},
 		{

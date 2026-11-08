@@ -357,7 +357,23 @@ test('there is no email form, and the calls to action are a plain booking link, 
     const doc = parse(html)
 
     assert.equal(findAll(doc, 'form').length, 0, `${rel} carries a form: the spec's calls to action are the booking link and the repository, and there is no waitlist and no email field anywhere on the page (spec §6)`)
-    assert.equal(findAll(doc, (el) => el.name === 'input' || el.name === 'textarea' || el.name === 'select').length, 0, `${rel} carries an input: the page asks a visitor for nothing (spec §6)`)
+    // The consent banner's own settings panel (the owner's request of 2026-11-08) is the one
+    // thing on the page a control is drawn for, and it is not a field the page asks a visitor
+    // FOR: its switches are the visitor telling the site what NOT to do, they carry no `name`,
+    // and the panel is a `<fieldset>` rather than a `<form>`. Every other input is refused.
+    for (const field of findAll(doc, (el) => ['input', 'textarea', 'select'].includes(el.name))) {
+      let panel = null
+      for (let up = field.parent; up; up = up.parent) {
+        if (up.attrs?.get('id') === 'consent-banner-settings') {
+          panel = up
+          break
+        }
+      }
+      assert.ok(
+        panel,
+        `${rel} carries a <${field.name}> outside the consent banner's settings panel: the page asks a visitor for nothing (spec §6)`,
+      )
+    }
     assert.ok(!/mailto:/i.test(html), `${rel} carries a mailto: link, and the page asks for no address (spec §6)`)
 
     // The embed is G2.3's, behind the campaign consent; the link is this page's, and it is the

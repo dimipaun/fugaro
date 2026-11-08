@@ -321,6 +321,15 @@ type LayerAgent struct {
 	// repository's own value replaces it.
 	AdversarialRounds int    `yaml:"adversarial_rounds"`
 	Recipe            string `yaml:"recipe"`
+	// Crafts sets each craft's model and access for every repository of the
+	// project (docs/model-crafts/spec.md §3). Only a craft's model may be set
+	// here: an access names a credential or a pool, and this layer file is
+	// writable by anyone who can write the runs bucket — the reason
+	// config.Scopes refuses it here, the same one agent.oauth_token carries —
+	// a launcher who could write the file otherwise choosing the credential a
+	// run goes out on. A craft's access is set in the local config and the
+	// policy node, both written by the owner alone.
+	Crafts Crafts `yaml:"crafts"`
 }
 
 // Profile is a named workflow template (scope profile).
@@ -801,7 +810,7 @@ func validateLayer(l *ProjectLayer, a LayerAnchor) []Problem {
 	ps = append(ps, validateRigor("defaults.rigor", d.Rigor.Default, d.Rigor.Areas)...)
 	ps = append(ps, validateGovernance("governance", l.Governance)...)
 	ps = append(ps, validateAB("ab", l.AB)...)
-	for _, p := range validateAgentModels(Agent{Model: ag.Model, Models: ag.Models}) {
+	for _, p := range validateAgentModels(Agent{Model: ag.Model, Models: ag.Models, Crafts: ag.Crafts}) {
 		p.Path = "defaults." + p.Path
 		ps = append(ps, p)
 	}

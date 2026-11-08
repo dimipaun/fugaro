@@ -2,7 +2,9 @@
 
 **Status: partly built — 7 of the plan's 51 tasks are done, 7 partial, 27 not started and 10 are
 owner-run — and no task is approved; the task-by-task census against `origin/main` is
-[status-2026-11-07.md](status-2026-11-07.md).** D430–D448 and the Terms draft's
+[status-2026-11-07.md](status-2026-11-07.md).** Since that census the counsel addendum (S0.2) has
+been written: [counsel-packet.md](counsel-packet.md) asks counsel only what the Terms' own list does
+not already ask, and it is what S8.4's next round answers. D430–D448 and the Terms draft's
 owner questions B1–B17 were answered by the owner on 2026-10-27 (D432, D443 and D445 partly, and
 D433, D434, D436, D437, D438, D440, D444, B6, B7 and B13 not the recommendation). The owner
 ruled every open tension, T10–T26, O4 and the key binding, the same day (T10, T11, T21 and T25
@@ -29,6 +31,7 @@ carries a figure.
 | [spec.md](spec.md) | The owner's "Fugaro Subscriptions Spec", an excerpt: the commercial lines are left out (its opening note lists them) |
 | [reconciliation.md](reconciliation.md) | Findings F1–F47 against the code, the licence files and the earlier rulings; decisions D430–D448 with the owner's answers; B1–B17; resolutions R1–R6; tensions T1–T26, all ruled 2026-10-27, and T27, a consequence the rulings create (ruled 2026-10-29) (a "Rulings" section; the tensions as raised are kept); open items O1–O5; UNVERIFIED U1–U12. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Slices S0 (Terms and licence docs), S1 (the moves into `ee/`), S2 (the per-organisation key and its verifiers), S3 (the owner-operated key service), S4 (seat estimate), S5 (roles design), S6 (lapse state), S7 (website), S8 (owner, counsel, accountant); levels, critical path, shared files, Checks 170–179. Nothing in it is approved |
+| [counsel-packet.md](counsel-packet.md) | The addendum to the Terms (S0.2): what the Terms' own list for counsel does not already ask, with what counsel has settled since and the items S0.4 still applies. It carries no figure |
 
 ## Deviations from the owner's text
 
@@ -43,7 +46,7 @@ carries a figure.
 
 | Numbers | State |
 | --- | --- |
-| **D430–D459** | this work's block. **D430–D448** written and answered 2026-10-27; **D449–D459** reserved and unused. Taken above the go-to-market work's D400–D429 and the Bitbucket credentials work's D360–D389, on `main` and in every open PR |
+| **D430–D459** | this work's block. **D430–D448** written and answered 2026-10-27; **D449–D459** written by the key service's design (S3.1, `docs/design/key-signing-service.md` §12) and unanswered. Taken above the go-to-market work's D400–D429 and the Bitbucket credentials work's D360–D389, on `main` and in every open PR |
 | **Checks 170–179** | this work's block. **170–179** are named by the plan, owner-run and not run (S3.6 registers them). Taken above the go-to-market work's Checks 160–169 |
 
 ## Headline

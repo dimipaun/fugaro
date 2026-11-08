@@ -202,6 +202,15 @@ import {
   renderProjectsFrame,
 } from './screens/projects'
 import type { DrawnProjectsFrame, ProjectsModel } from './screens/projects'
+import { ACCOUNT_KEYS_BUSY, buildAccountKeys, fillAccountKeys } from './screens/accountkeys'
+import {
+  CREDENTIALS_SERVICE_BUSY,
+  buildCredentialsService,
+  fillCredentialsService,
+} from './screens/credentialsservice'
+import { MANAGED_BUSY, buildManagedModel, fillManaged } from './screens/managed'
+import { RETIREMENTS_BUSY, buildRetirementsModel, fillRetirements } from './screens/retirements'
+import type { OperationName } from '../main/ipc'
 import {
   RUN_LOGS_BUSY,
   RUN_LOGS_SHAPE,
@@ -474,16 +483,18 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
 }
 
 /**
- * ReadBridge is the sixteen reads the screens make (Task 3.4c; console L5b
+ * ReadBridge is the nineteen reads the screens make (Task 3.4c; console L5b
  * added `statsRuns`, Bitbucket credentials T1.2 added `coordinatorStatus`,
  * GV2.3b added `planStatus`, coordinator v2 K3 added `coordinatorShow`, K5 added
  * `coordinatorIntents`, console 0.119.0 added `summaryRuns` -- the
  * Coordinator's jobs-free totals read -- and `listModels`, the Project tab's
  * models panel, and the settings-edit plan's C1 added `readSettings`, the same
  * tab's settings panel, and the graph plan's CG9a added `graphRead`, the Graph
- * tab's read of the versioned graph document), named one by one
- * for the reason `CompatibilityBridge` names one: this file should reach for
- * exactly the operations it draws, and a reader should be able to see which
+ * tab's read of the versioned graph document, and the managed-project screens
+ * plan's CM4 added `managedStatus`, `policyShow` and `environmentReport` -- the
+ * same tab's four later sections and its policy panel's own document), named one
+ * by one for the reason `CompatibilityBridge` names one: this file should reach
+ * for exactly the operations it draws, and a reader should be able to see which
  * those are without reading the preload.
  *
  * Every method takes one argument object -- `ipc.ts`'s validated arguments, in
@@ -508,9 +519,12 @@ export interface ReadBridge {
   runLogLink(args: Readonly<Record<string, unknown>>): Promise<unknown>
   planStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
   graphRead(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  managedStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  policyShow(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  environmentReport(args: Readonly<Record<string, unknown>>): Promise<unknown>
 }
 
-/** readBridgeFrom is the sixteen reads over the structural bridge. A missing
+/** readBridgeFrom is the nineteen reads over the structural bridge. A missing
  * member answers `null` rather than rejecting, and so does a member that fails
  * to answer -- by throwing before it returns, or by returning a promise that
  * rejects, which is what `invoke` does on a channel with nothing behind it.
@@ -549,6 +563,9 @@ export function readBridgeFrom(fugaro: unknown): ReadBridge {
     runLogLink: (args) => ask('runLogLink', args),
     planStatus: (args) => ask('planStatus', args),
     graphRead: (args) => ask('graphRead', args),
+    managedStatus: (args) => ask('managedStatus', args),
+    policyShow: (args) => ask('policyShow', args),
+    environmentReport: (args) => ask('environmentReport', args),
   }
 }
 
@@ -3437,18 +3454,24 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * wireRuns makes each drawn run row a door to the Run screen (plan 3.4c step
    * 2: "Run detail: reached from a run row").
    *
-   * The row's own drawn id is the only thing read. `live-run-id` is written
-   * through `putText`, so a run id the sanitizer refused is drawn as the
-   * unavailable mark and matches no run in the model -- and a row whose id
-   * cannot be drawn is a row with nothing to ask about, rather than one that
-   * asks about whatever the mark happens to be.
+   * **The cell's `data-run-id` is the only thing read** (D1707). The drawn text
+   * is the run's short ID -- four characters, extended over the rows of its
+   * table when two of them collide (`live.ts`'s `putRunId`) -- and that is a
+   * display: `fugaro` takes four or more characters as an *ending to resolve*,
+   * so a door that handed one over would be asking about a different question
+   * than the row shows, and one that could match two runs. The whole ID travels
+   * in the attribute, written through the same `runId` class the cell's text
+   * used to go through, so a run ID the sanitizer refused leaves the attribute
+   * off and matches no run in the model -- a row whose ID cannot be drawn is a
+   * row with nothing to ask about, rather than one that asks about whatever the
+   * mark happens to be.
    *
    * **The review inbox's rows are the same door** (v2 plan Task V2.7.1):
-   * `live-review-run-id` is a run id drawn the same way, and `model.review` is
-   * where it is checked. A finished run is a run -- `fugaro diagnose RUN` reads
-   * it from the runs bucket precisely because its registry entry is gone -- so
-   * a ready row that could not be opened would be the one run row on this
-   * screen with nothing behind it.
+   * `live-review-run-id` carries the same attribute, over the same short ID,
+   * and `model.review` is where it is checked. A finished run is a run --
+   * `fugaro diagnose RUN` reads it from the runs bucket precisely because its
+   * registry entry is gone -- so a ready row that could not be opened would be
+   * the one run row on this screen with nothing behind it.
    */
   const wireRuns = (drawn: Drawn, model: LiveModel): void => {
     const known = new Set<string>()
@@ -3457,7 +3480,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     for (const row of model.review) known.add(row.run)
     const door = (rowClass: string, idClass: string): void => {
       for (const row of classed(drawn, rowClass)) {
-        const id = classed(row, idClass)[0]?.textContent ?? ''
+        const id = classed(row, idClass)[0]?.getAttribute('data-run-id') ?? ''
         if (!known.has(id)) continue
         surface.nodeOf(row).addEventListener('click', (event: Event) => {
           // **A write the row draws is not the door.** A lost run's Reap is
@@ -4934,8 +4957,15 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * one entry per installation, keyed by the open installation's project. It is
    * memory and nothing else, and `forgetLive` empties it with the rest of the
    * installation's state, so a view read for one installation is never drawn
-   * under another. */
-  const projectsViews = resultCache<ProjectsModel>(CACHE_LIMIT)
+   * under another.
+   *
+   * **It holds the budget document and not the built model** (CM10): the model
+   * is now a function of three reads -- `budget show`, `policy.show` and
+   * doctor's -- and a cache of the model would freeze the two later ones at
+   * whatever they said when the budget was read. The budget is the read this
+   * cache is for; the other two are made on every visit, so a cached view drawn
+   * before they land is filled in as they do. */
+  const projectsViews = resultCache<Readonly<Record<string, unknown>>>(CACHE_LIMIT)
 
   /** projectsRead is the screen's own read lifecycle. The read is one
    * (`budget show`), so the section is the screen and there is one of each: one
@@ -4962,12 +4992,37 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * behind it. */
   const projectsSettingsRead = sectionRead({ factory, theme })
 
+  /** projectsManagedRead, projectsRetirementsRead, projectsAccountKeysRead and
+   * projectsCredentialsServiceRead are the tab's **four later sections** (the
+   * managed-project screens plan's CM10): the managed state, the last update's
+   * retirements, the review account keys and the credentials service. Each has a
+   * lifecycle of its own -- its own sequence token, its own busy mark and its own
+   * refusal -- for the reason every section here has one: the four reads are as
+   * independent as the three above, and a tab holding one mark for them would
+   * hold three sections behind the slowest one.
+   *
+   * **Four lifecycles and three reads**, because one read can feed two sections
+   * (D1488): `managed status --json` draws the managed state and the retirements,
+   * and `settings --json` -- the read the settings panel already makes -- draws
+   * the account keys. The lifecycles stay separate whatever the read is, which is
+   * the whole reason the count of them is not the count of the reads: the two
+   * sections of one read settle on their own hosts and neither's mark can take
+   * the other's down. */
+  const projectsManagedRead = sectionRead({ factory, theme })
+  const projectsRetirementsRead = sectionRead({ factory, theme })
+  const projectsAccountKeysRead = sectionRead({ factory, theme })
+  const projectsCredentialsServiceRead = sectionRead({ factory, theme })
+
   /** leaveProjects ends those sections' busy state when the operator moves to
    * another tab: nothing is in flight for a screen nobody is looking at. */
   leaveProjects = () => {
     projectsRead.end()
     projectsModelsRead.end()
     projectsSettingsRead.end()
+    projectsManagedRead.end()
+    projectsRetirementsRead.end()
+    projectsAccountKeysRead.end()
+    projectsCredentialsServiceRead.end()
   }
 
   /**
@@ -5005,6 +5060,28 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * takes no cache: the read is the project's settings as the CLI reads them
    * now, and a CLI that cannot take `--project` answers `unknown flag`, which
    * this panel draws as its own reason.
+   *
+   * **Four later sections join them, and the policy panel stops being a
+   * not-built one** (the managed-project screens plan's CM10). The managed
+   * state, the retirements, the review account keys and the credentials service
+   * are four siblings of the three panels above, each with its own read, its own
+   * busy mark and its own refusal -- drawn the way the models and settings
+   * panels are, and not as members of `PROJECT_PANEL_KEYS`, which stays the
+   * first read's seven. Their reads go out in the same turn as the other three,
+   * in one turn and not one after the other, and each section paints the moment
+   * its document arrives. **Jobs are not in the first paint** and are not on
+   * this tab at all (`runs ls --json` is gone from it): the owner's rule of
+   * 2026-10-31, and the reason the tab's first read is the caps and not the run
+   * list.
+   *
+   * **The policy panel is a member of the body's seven and reads a document of
+   * its own** (`policy.show`, D1481). Its read is a later one, so the body is
+   * **repainted** when it lands -- the panel's state, its source line, its count
+   * and the section under its frame are all functions of the body's model, so
+   * the only drawing that can turn it from "no document arrived" into a read one
+   * is the body's own. Until then the panel says which read has not answered,
+   * which is the sentence the node block beside it draws (`absent`) -- and the
+   * rest of the body is drawn, and stays drawn, whatever that read does.
    */
 
   /** settingsEditor is the row editor this console has open, if any -- the one
@@ -5071,6 +5148,78 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     /** settingsPainted says this visit has already drawn a settings panel, for
      * `modelsPainted`'s reason. */
     let settingsPainted = false
+    /** managed, managedSentence and managedOut are the managed state's and the
+     * retirements' read: one document, two sections (D1488). `managed` is what
+     * `managed status --json` last answered, `managedSentence` the CLI's own
+     * sentence for a read that was refused, and `managedOut` whether a read of it
+     * is in flight. */
+    let managed: unknown = null
+    let managedSentence: string | null = null
+    let managedOut = false
+    let managedAttempt = 0
+    let managedToken = 0
+    let retirementsToken = 0
+    /** policy, policySentence and policyAttempt are the policy panel's own read
+     * (`policy.show`): the `{project, policy}` document, the CLI's own sentence
+     * for a refused one, and the attempt that keeps a slow answer from landing
+     * under a newer visit. There is no `policyOut` flag and no busy mark of its
+     * own: the panel is a member of the body's model, so its "still reading"
+     * state **is** the body's drawing of a document that has not arrived. */
+    let policy: unknown = null
+    let policySentence: string | null = null
+    let policyAttempt = 0
+    /** doctor, doctorSentence and doctorAttempt are the credentials service's
+     * read (`environment.report`). The same document is the policy panel's checks
+     * block (`policynotes.ts`), which is why it is held here rather than inside
+     * that section: two sections read it, and one read is made. */
+    let doctor: unknown = null
+    let doctorSentence: string | null = null
+    let doctorOut = false
+    let doctorAttempt = 0
+    let credentialsServiceToken = 0
+    /** accountKeysOut and accountKeysToken are the account keys section's own
+     * lifecycle state over the **settings** read: the section has its own mark
+     * and its own token, and the read is the one the settings panel above it
+     * makes (`settingsOut`/`settingsToken` are that read's). */
+    let accountKeysOut = false
+    let accountKeysToken = 0
+    /** bodyModel is the model the body is drawn from, or null when the body holds
+     * something that is not one -- a refusal, or nothing yet. The policy and
+     * doctor reads repaint the body **only** when it holds a model: a landing
+     * that drew a model built from no budget document would replace the caps with
+     * a sentence about a read that is still in flight. */
+    let bodyModel: ProjectsModel | null = null
+    /** budgetDoc is the last `budget show` document this visit read, and budgetOut
+     * says a read of it is in flight. Both are `repaintBody`'s: the model is drawn
+     * around the document, and a repaint while the budget's own read is out would
+     * take that read's mark down. `budgetAt` is the console clock that document
+     * was read at, which the cache stamp is drawn from and which a repaint may
+     * not move forward. */
+    let budgetDoc: Readonly<Record<string, unknown>> | null = null
+    let budgetAt = 0
+    let budgetOut = false
+    /** cachedAt is the console clock the body's budget figures were read at, or
+     * null when they came out of a read made now. It is held rather than passed,
+     * because the body is repainted by three different landings and only the
+     * budget's own knows whether its figures are the cache's. */
+    let cachedAt: number | null = null
+
+    /** modelNow builds the body's model from the documents this visit holds. The
+     * policy panel is a member of that model, so the two later reads
+     * (`policy.show` and `doctor --json`) are handed here, along with the CLI's
+     * own sentence for whichever of them was refused. */
+    const modelNow = (budget: unknown): ProjectsModel => {
+      const sentences: Partial<Record<OperationName, string>> = {}
+      if (policySentence !== null) sentences['policy.show'] = policySentence
+      return buildProjectsModel({
+        budget,
+        accounts: null,
+        secrets: null,
+        policy,
+        doctor,
+        sentences,
+      })
+    }
 
     /** mount draws the shell if it is not up yet, and answers it. The mark of a
      * read that is still out goes up here, which is the only moment it can be
@@ -5102,6 +5251,36 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
             PROJECTS_SETTINGS_BUSY,
           )
         }
+        // CM10's four, in the order the frame mounts their hosts. Two of them
+        // wear a mark for a read the section above them makes -- the account
+        // keys for the settings read, the retirements for the managed state's --
+        // and that is the point of two lifecycles for one read: each mark goes on
+        // its own host, and whichever lands first takes down neither.
+        if (managedOut) {
+          projectsManagedRead.mark(managedToken, drawn.managed, drawn.managedSlot, MANAGED_BUSY)
+          projectsRetirementsRead.mark(
+            retirementsToken,
+            drawn.retirements,
+            drawn.retirementsSlot,
+            RETIREMENTS_BUSY,
+          )
+        }
+        if (accountKeysOut) {
+          projectsAccountKeysRead.mark(
+            accountKeysToken,
+            drawn.accountKeys,
+            drawn.accountKeysSlot,
+            ACCOUNT_KEYS_BUSY,
+          )
+        }
+        if (doctorOut) {
+          projectsCredentialsServiceRead.mark(
+            credentialsServiceToken,
+            drawn.credentialsService,
+            drawn.credentialsServiceSlot,
+            CREDENTIALS_SERVICE_BUSY,
+          )
+        }
       }
       return drawn
     }
@@ -5109,18 +5288,54 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     /** paint fills the section from what `budget show` answered. `cached` is
      * whether this view came out of the session cache rather than out of a read
      * made now: a cached view carries the console clock it was read at and the
-     * one control that reads it again. */
-    const paint = (model: ProjectsModel, at: number, cached: boolean): void => {
+     * one control that reads it again.
+     *
+     * The model is built here rather than handed in, because the body is drawn
+     * three times over one visit -- once for the budget, and once more for each
+     * of the two reads that land in a panel of it (CM10's policy read and
+     * doctor's checks). A caller would have to hold every document the model is
+     * a function of; the body holds them itself.
+     */
+    const paint = (budget: Readonly<Record<string, unknown>>, at: number, cached: boolean): void => {
+      const model = modelNow(budget)
+      bodyModel = model
+      budgetDoc = budget
+      budgetAt = at
+      cachedAt = cached ? at : null
       const drawn = mount(false)
       clearSection(drawn.body, drawn.slot)
       fillProjects(factory, model, drawn.body)
-      if (cached) {
-        const stamp = renderStamp(factory, at)
+      // The cache is rolled forward with what the repaint drew, so a visit that
+      // comes back to this tab draws the fuller view rather than the one the
+      // budget's own read built. A cached view is never written back: its stamp
+      // would then say the figures are newer than they are.
+      if (!cached) projectsViews.put(key, budget, at)
+      if (cachedAt !== null) {
+        const stamp = renderStamp(factory, cachedAt)
         appendTo(drawn.body, stamp.root)
         surface.nodeOf(stamp.refresh).addEventListener('click', () => {
           start()
         })
       }
+    }
+
+    /** repaintBody draws the body again from the documents this visit holds now,
+     * and it is what the two later reads of a panel of it do when they land
+     * (CM10). It does nothing while the budget's own read is out or while the
+     * body holds something that is not a model: a landing that cleared a live
+     * mark, or replaced the caps with a sentence about a read still in flight,
+     * would be this console taking a drawing away to say a drawing is coming.
+     *
+     * Nothing is lost by waiting -- `load` builds the body from the documents
+     * held at that moment, so a policy or a doctor answer that landed first is
+     * drawn by the budget's own paint. */
+    const repaintBody = (): void => {
+      if (budgetDoc === null || bodyModel === null || budgetOut) return
+      // The stamp's clock is the one the budget's own read was made at, and it
+      // is passed back unchanged: a repaint is not a fresh reading of the caps,
+      // and moving the stamp forward would say the figures are newer than they
+      // are.
+      paint(budgetDoc, budgetAt, cachedAt !== null)
     }
 
     /**
@@ -5342,8 +5557,73 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       bindSettingsPencils(drawn.settings)
     }
 
+    /**
+     * paintManaged and paintRetirements fill the tab's fourth and fifth sections
+     * from what `managed status --json` answered.
+     *
+     * **One read, two sections** (D1488): the managed state draws the marks and
+     * the trail, and the retirements draw the last update's set, out of the same
+     * document. Each is filled on its own host and out of its own model, so a
+     * section that had nothing to say -- a refused read, a document this build
+     * does not read -- says it in its own place without the other's content.
+     */
+    const paintManaged = (): void => {
+      const drawn = mount(false)
+      clearSection(drawn.managed, drawn.managedSlot)
+      fillManaged(factory, buildManagedModel({ raw: managed, because: managedSentence }), drawn.managed)
+    }
+
+    /** paintRetirements fills the fifth section, out of the same document
+     * `paintManaged` reads (`buildRetirementsModel`'s note: it reads the
+     * `retirements` member of `managed status --json`). */
+    const paintRetirements = (): void => {
+      const drawn = mount(false)
+      clearSection(drawn.retirements, drawn.retirementsSlot)
+      fillRetirements(
+        factory,
+        buildRetirementsModel({ raw: managed, because: managedSentence }),
+        drawn.retirements,
+      )
+    }
+
+    /**
+     * paintAccountKeys fills the sixth section from the document the settings
+     * panel beside it reads: the review account keys are `settings --json`'s own
+     * rows (`default_claude_account` and the stage keys), so the tab makes **one**
+     * read of that document and fills two sections with it (D1488).
+     *
+     * The read's state is the settings section's (`settings`/`settingsSentence`),
+     * and the section's own drawing is this module's: it is handed the document
+     * as it arrived, because it reads the version and the members it draws itself
+     * (`buildAccountKeys`'s note).
+     */
+    const paintAccountKeys = (): void => {
+      const drawn = mount(false)
+      clearSection(drawn.accountKeys, drawn.accountKeysSlot)
+      fillAccountKeys(
+        factory,
+        buildAccountKeys({ raw: settings, because: settingsSentence }),
+        drawn.accountKeys,
+      )
+    }
+
+    /** paintCredentialsService fills the seventh section from what
+     * `doctor --json` answered. The same document is the policy panel's checks
+     * block, which is drawn by the body's own repaint and not here: the two
+     * sections read one document and draw different things out of it. */
+    const paintCredentialsService = (): void => {
+      const drawn = mount(false)
+      clearSection(drawn.credentialsService, drawn.credentialsServiceSlot)
+      fillCredentialsService(
+        factory,
+        buildCredentialsService({ raw: doctor, because: doctorSentence }),
+        drawn.credentialsService,
+      )
+    }
+
     /** load makes the one read and draws it when it is still the latest. */
     const load = async (readToken: number): Promise<void> => {
+      budgetOut = true
       const answer = documentOf(await bridge.showBudget({}))
       // The rail's spend and the fleet gauge are this read's too (design section
       // 4.1): they are filled before the staleness check, because the spend is a
@@ -5354,24 +5634,28 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         setGauge(gaugeFromBudget(answer.data))
       }
       // The token is checked before anything is taken down, so a read from an
-      // earlier visit cannot end the *current* visit's mark.
-      if (!projectsRead.settle(readToken)) return
+      // earlier visit cannot end the *current* visit's mark -- **and it is
+      // checked before the in-flight flag is cleared**, because `budgetOut` is
+      // about *a* budget read and not about *this* answer: a superseded answer
+      // says nothing about the read that superseded it, and clearing the flag
+      // here would open `repaintBody`'s guard under a mark that is still the
+      // current visit's. The clearing sits below the return for that reason, and
+      // with the other reads' (`managedOut`, `settingsOut`).
+      const mineNow = projectsRead.settle(readToken)
+      if (!mineNow) return
+      budgetOut = false
       if (stale(mine)) return
       if (!answer.ok) {
+        budgetDoc = null
+        bodyModel = null
         const drawn = mount(false)
         clearSection(drawn.body, drawn.slot)
         appendTo(drawn.body, refusedScreen(factory, 'budget.show', answer.sentence, theme))
         return
       }
-      const model = buildProjectsModel({
-        budget: answer.data,
-        accounts: null,
-        secrets: null,
-        sentences: {},
-      })
+      budgetDoc = answer.data
       const at = Date.now()
-      projectsViews.put(key, model, at)
-      paint(model, at, false)
+      paint(budgetDoc, at, false)
     }
 
     /** loadModels makes the second section's read, `models ls --json`. The
@@ -5413,16 +5697,91 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       if (settingsAttempt !== attempt) return
       if (stale(mine)) return
       settingsOut = false
+      accountKeysOut = false
       settings = null
       settingsSentence = null
       if (!answer.ok) settingsSentence = answer.sentence
       else settings = answer.data
+      // The marks are taken down through the section helpers rather than by the
+      // fillers, for the models read's reason: `fillProjectsSettings` writes
+      // beside the slot, so nothing else would remove the claim from the host it
+      // was made on. **Two** sections settle here, because two are drawn from
+      // this one document (D1488): the settings panel's and the review account
+      // keys'.
+      projectsSettingsRead.settle(settingsToken)
+      projectsAccountKeysRead.settle(accountKeysToken)
+      paintSettings()
+      paintAccountKeys()
+    }
+
+    /**
+     * loadManaged makes the fourth and fifth sections' one read,
+     * `managed status --json` (CM8 and CM9 read the same document). The attempt
+     * check and `stale(mine)` are the models read's, two sections over: an answer
+     * to a read the operator has already asked again -- or to one from a tab they
+     * have left -- never lands under another visit.
+     */
+    const loadManaged = async (attempt: number): Promise<void> => {
+      const answer = documentOf(await bridge.managedStatus({}))
+      if (managedAttempt !== attempt) return
+      if (stale(mine)) return
+      managedOut = false
+      managed = null
+      managedSentence = null
+      if (!answer.ok) managedSentence = answer.sentence
+      else managed = answer.data
+      projectsManagedRead.settle(managedToken)
+      projectsRetirementsRead.settle(retirementsToken)
+      paintManaged()
+      paintRetirements()
+    }
+
+    /**
+     * loadPolicy makes the policy panel's own read, `project policy show --json`
+     * (CM10's flip). It has no mark of its own: the panel is a member of the
+     * body's model, so what the operator sees while this read is out is the
+     * body's own drawing of a document that has not arrived -- and the body is
+     * repainted when it lands, which is the only drawing that can turn that panel
+     * into a read one.
+     *
+     * A refused read is kept as a sentence and handed to the model, so the panel
+     * draws the CLI's own words rather than the console's "no document arrived"
+     * (design section 6.3).
+     */
+    const loadPolicy = async (attempt: number): Promise<void> => {
+      const answer = documentOf(await bridge.policyShow({}))
+      if (policyAttempt !== attempt) return
+      if (stale(mine)) return
+      policy = null
+      policySentence = null
+      if (!answer.ok) policySentence = answer.sentence
+      else policy = answer.data
+      repaintBody()
+    }
+
+    /**
+     * loadDoctor makes the credentials service's read, `doctor --json`. The
+     * document is the policy panel's checks block as well -- CM7's section reads
+     * the six `policy-*` checks out of it (D1482) -- so its landing draws the
+     * seventh section **and** repaints the body: one read, two sections, and
+     * neither waits for the other.
+     */
+    const loadDoctor = async (attempt: number): Promise<void> => {
+      const answer = documentOf(await bridge.environmentReport({}))
+      if (doctorAttempt !== attempt) return
+      if (stale(mine)) return
+      doctorOut = false
+      doctor = null
+      doctorSentence = null
+      if (!answer.ok) doctorSentence = answer.sentence
+      else doctor = answer.data
       // The mark is taken down through the section helper rather than by the
-      // filler, for the models read's reason: `fillProjectsSettings` writes
+      // filler, for the models read's reason: `fillCredentialsService` writes
       // beside the slot, so nothing else would remove the claim from the host it
       // was made on.
-      projectsSettingsRead.settle(settingsToken)
-      paintSettings()
+      projectsCredentialsServiceRead.settle(credentialsServiceToken)
+      paintCredentialsService()
+      repaintBody()
     }
 
     /** beginModels starts the second section's read and puts its mark up -- or,
@@ -5472,17 +5831,93 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       )
     }
 
+    /** markAccountKeys puts the sixth section's mark up, for the document the
+     * settings panel beside it reads: **one read, two marks**, on two hosts, so
+     * that neither section's claim can take the other's down. */
+    const markAccountKeys = (): void => {
+      if (!accountKeysOut || frame === null) return
+      projectsAccountKeysRead.mark(
+        accountKeysToken,
+        frame.accountKeys,
+        frame.accountKeysSlot,
+        ACCOUNT_KEYS_BUSY,
+      )
+    }
+
+    /** markManaged puts the fourth and fifth sections' marks up, for the one
+     * document the two of them are drawn from (D1488). Neither carries a
+     * skeleton: no section here draws one in this release (`markModels`'s rule).
+     */
+    const markManaged = (): void => {
+      if (!managedOut || frame === null) return
+      projectsManagedRead.mark(managedToken, frame.managed, frame.managedSlot, MANAGED_BUSY)
+      projectsRetirementsRead.mark(
+        retirementsToken,
+        frame.retirements,
+        frame.retirementsSlot,
+        RETIREMENTS_BUSY,
+      )
+    }
+
+    /** markCredentialsService puts the seventh section's mark up. */
+    const markCredentialsService = (): void => {
+      if (!doctorOut || frame === null) return
+      projectsCredentialsServiceRead.mark(
+        credentialsServiceToken,
+        frame.credentialsService,
+        frame.credentialsServiceSlot,
+        CREDENTIALS_SERVICE_BUSY,
+      )
+    }
+
     /** beginSettings starts the third section's read and puts its mark up. It
      * is called on every visit, the budget's own read or not: a cached budget
      * view drawn before anything is awaited is not what keeps the settings panel
-     * waiting. */
+     * waiting. The sixth section -- the review account keys, drawn from this same
+     * document -- starts with it: one read, two sections, and neither may be held
+     * behind the other (D1488). */
     const beginSettings = (): void => {
       settingsAttempt += 1
       settingsOut = true
       settingsToken = projectsSettingsRead.start()
+      accountKeysOut = true
+      accountKeysToken = projectsAccountKeysRead.start()
       if (frame === null) mount(true)
-      else markSettings()
+      else {
+        markSettings()
+        markAccountKeys()
+      }
       void loadSettings(settingsAttempt)
+    }
+
+    /**
+     * beginLaterSections starts the three reads the four later sections are drawn
+     * from (CM10) and puts their marks up: the managed state and the retirements
+     * off `managed status --json`, the credentials service off `doctor --json`,
+     * and the policy panel's `policy.show` off a read that wears no mark -- it is
+     * a member of the body's own model.
+     *
+     * It is called on every visit, the budget's own read or not, for
+     * `beginModels`'s reason: a cached budget view drawn before anything is
+     * awaited is not what keeps these sections waiting.
+     */
+    const beginLaterSections = (): void => {
+      managedAttempt += 1
+      managedOut = true
+      managedToken = projectsManagedRead.start()
+      retirementsToken = projectsRetirementsRead.start()
+      policyAttempt += 1
+      doctorAttempt += 1
+      doctorOut = true
+      credentialsServiceToken = projectsCredentialsServiceRead.start()
+      if (frame === null) mount(true)
+      else {
+        markManaged()
+        markCredentialsService()
+      }
+      void loadManaged(managedAttempt)
+      void loadPolicy(policyAttempt)
+      void loadDoctor(doctorAttempt)
     }
 
     /** start takes the sequence token for one read, puts the mark up in the
@@ -5490,10 +5925,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     const start = (): void => {
       token = projectsRead.start()
       // The models section's read is taken with the budget's and in the same
-      // turn, and the settings section's with both: the three are independent
-      // documents, and asking for one after the other answered would be the
-      // serialisation the owner's rule of 2026-10-31 forbids. Below the floor
-      // there is no models read at all; the settings read has no floor.
+      // turn, and the settings section's with both, and the four later sections'
+      // three with all of them: the reads are independent documents, and asking
+      // for one after the other answered would be the serialisation the owner's
+      // rule of 2026-10-31 forbids. Below the floor there is no models read at
+      // all; no other read here has a floor.
       if (!modelsTooOld) {
         modelsAttempt += 1
         modelsOut = true
@@ -5502,17 +5938,33 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       settingsAttempt += 1
       settingsOut = true
       settingsToken = projectsSettingsRead.start()
+      accountKeysOut = true
+      accountKeysToken = projectsAccountKeysRead.start()
+      managedAttempt += 1
+      managedOut = true
+      managedToken = projectsManagedRead.start()
+      retirementsToken = projectsRetirementsRead.start()
+      policyAttempt += 1
+      doctorAttempt += 1
+      doctorOut = true
+      credentialsServiceToken = projectsCredentialsServiceRead.start()
       const fresh = frame === null
       const drawn = mount(true)
       if (!fresh) {
         projectsRead.mark(token, drawn.body, drawn.slot, PROJECTS_BUSY)
         markModels()
         markSettings()
+        markAccountKeys()
+        markManaged()
+        markCredentialsService()
       }
       void load(token)
       if (modelsTooOld) paintModels()
       else void loadModels(modelsAttempt)
       void loadSettings(settingsAttempt)
+      void loadManaged(managedAttempt)
+      void loadPolicy(policyAttempt)
+      void loadDoctor(doctorAttempt)
     }
 
     // The view this screen opens on, if this session has already read it, is
@@ -5526,6 +5978,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       else {
         beginModels()
         beginSettings()
+        beginLaterSections()
       }
     }
   }

@@ -12,7 +12,7 @@ package cli
 //   - TestConsoleIsOutsideTheGoModule -- (a1) no Go file in the module has an
 //     import under console/; (a3) the allow-list of files permitted to MENTION
 //     a console/ path, plus the two halves of that list's contract -- its size
-//     is pinned, so a third entry cannot arrive quietly;
+//     is pinned, so a fifth entry cannot arrive quietly;
 //     and that console/ itself holds no Go code, no go.mod and no go.sum.
 //   - TestGoModHasNoConsoleDependency -- (b) go.mod's require block is
 //     unchanged from the baseline recorded in this file, and go.sum names no
@@ -29,15 +29,18 @@ package cli
 // which made Task 0.1 impossible to write. So (a1) matches on IMPORT LINES
 // only -- an import path is a module path, which is the real boundary, while a
 // comment or a string that merely names console/docs/json-contract.md is a read
-// of a document -- and the allow-list below carries the two files those reads
-// live in: this test's own partner for the sections whose command is still in
-// the core, and, since ee-reorg E2.1b moved the coordinator's command and shapes
-// to ee/, that package's copy of the same check for the section that documents
-// it. Its second half is asserted too, because the exception is narrow: an
-// allow-listed file may mention a console/ path and may neither import one nor
-// embed one. Widening the list is a deliberate edit to the slice below, with a
-// test that fails on the size changing, rather than a quiet new reference in
-// some future file.
+// of a document -- and the allow-list below carries the files those reads live
+// in: this test's own partner for the sections whose command is still in the
+// core, and, since ee-reorg E2.1b and E2.2b1 moved the coordinator's and the
+// report's commands and shapes to ee/, those packages' copies of the same check
+// for the sections that document it. The fourth entry reads no console document
+// at all: security-classification SC1's floor names every tree the engine holds
+// security-sensitive, the console's main process among them, as a glob in a data
+// table. The list's second half is asserted too, because the exception is
+// narrow: an allow-listed file may mention a console/ path and may neither
+// import one nor embed one. Widening the list is a deliberate edit to the slice
+// below, with a test that fails on the size changing, rather than a quiet new
+// reference in some future file.
 //
 // The mention half of (a3) is a heuristic, and the file says which half of it
 // is which. Its floor is the plan's literal rule: a file whose text holds the
@@ -135,10 +138,64 @@ const consoleBoundarySelf = "internal/cli/docs_console_boundary_test.go"
 // ee/report, so §4 and §8's report row moved with them
 // (ee/report/cli/console_contract_test.go), read as bytes and embedding nothing
 // like the other two.
+//
+// The fourth is the settings-edit plan's C4, and it is the same kind of
+// exception: the console's hermetic CLI stub answers `fugaro settings --json`
+// with a committed document (console/test/fixtures/settings.json) that the e2e
+// spec draws as the CLI's own read, the schema that documents that document is
+// schemas/settings.schema.json, and the test that holds the one to the other is
+// the schema's own (schemas/schemas_test.go, TestSettingsConsoleFixture), which
+// is the file that already validates a document of this repository against a
+// schema it owns (TestProjectLayerDocsExample reads docs/project-layer.md). The
+// read is bytes: no import under console/, no go:embed, and no Go file that
+// builds against anything the console holds.
+//
+// The fifth is the same fixture read from this package's side, and it is the
+// other half of the same claim: the registry answers a row's `sensitive` and
+// supplies the layers the narrowest-layer rule reads (the entry above), but
+// `target_layer` is settingsDefaultLayer's own answer, `owner` is the word
+// settingsFamilyCommands makes of the registry's owner token, and `writable` is
+// settingsWriteRow's -- the write's decision the read copies, D1102 -- and all
+// three of those live in this package. So the test that holds the fixture to
+// them (internal/cli/settings_console_fixture_test.go,
+// TestSettingsConsoleFixtureOwnerAndWritable) is the one file here that reads a
+// console document to ask this package's own functions, which is why it is an
+// entry and not a line in a test of its own. Bytes again, like the other four:
+// no import under console/, no go:embed, nothing built against what the console
+// holds.
+//
+// The sixth arrived with security-classification SC1
+// (docs/security-classification/implementation-plan.md §4), and it is the one
+// entry that reads no console document: the engine's security-pattern floor
+// (internal/orchestrator/sensitivity/floor.go) names every tree this repository
+// holds security-sensitive, one name, one category and one glob per row, and the
+// console's main process — where the spawn and IPC allow-lists are — is one of
+// them (reconciliation §6's `console-main` row). The reference is a glob in a
+// data table and not a read of the tree: that file imports nothing from console/
+// and embeds nothing from it, which is what the per-entry assertions below check
+// it for. The case for the entry is that a floor naming the console is the floor
+// the routing text asks for — the fixture that holds those paths already lives
+// in that package's testdata, and a floor that could not name them would be a
+// list that cannot cover the rule it is measured against.
+//
+// The seventh is the same design's SC3: `fugaro security paths` is the reader an
+// agent calls instead of guessing what a repository treats as security-sensitive
+// (D1512), and the document it prints is part of this contract — console/docs/
+// json-contract.md §6.23, written in the same change. The test that holds the
+// command's own output to that section (internal/cli/security_test.go,
+// TestSecurityPathsNamesItsFieldsInTheContract: every key the command prints is
+// named by the section, and the section names the command's two flags and the
+// three layer words) is what reads it, as §6.21's and §6.22's own checks do from
+// the entries above. Bytes again, like the five before it: no import under
+// console/, no go:embed, nothing built against what the console holds.
 var consoleBoundaryAllowList = []string{
 	"internal/cli/docs_desktop_console_test.go",
 	"ee/coordinator/cli/console_contract_test.go",
 	"ee/report/cli/console_contract_test.go",
+	"schemas/schemas_test.go",
+	"internal/cli/settings_console_fixture_test.go",
+	"internal/orchestrator/sensitivity/floor.go",
+	"internal/cli/security_test.go",
 }
 
 // consoleGoModRequireBaseline is go.mod's require block as recorded when Task
@@ -165,6 +222,20 @@ var consoleBoundaryAllowList = []string{
 // renders its step markers with it, forcing the colour profile the reporter
 // itself decided on. None of the three is the console's: the console still
 // contributes nothing to this module.
+//
+// The fourth is the MCP server's, and it is the one entry here that is a new
+// dependency rather than a promotion. `zitadel/oidc` is the authorization
+// library the owner answered D921 with (docs/mcp-server/reconciliation.md §4),
+// and the authorization server of ee/coordinator/mcpauth (plan task M5) is
+// built on it. Its licence is the first owner check of reconciliation.md §6,
+// and the owner answered that check himself on 2026-11-07: he read
+// docs/mcp-server/licence-table.md and the clearance is recorded in
+// docs/mcp-server/licence-gate.md, so the require line below stands on a check
+// that is met rather than ahead of one. The three indirect entries beside it
+// (`zitadel/schema`, `muhlemmer/gu`, `kr/text`) and the version bumps `go mod
+// tidy` made at the same time are the module graph the new require brings, not
+// decisions of their own. The console contributes nothing to any of them
+// either.
 var consoleGoModRequireBaseline = []string{
 	"cel.dev/expr v0.25.2 // indirect",
 	"cloud.google.com/go v0.123.0 // indirect",
@@ -178,7 +249,7 @@ var consoleGoModRequireBaseline = []string{
 	"github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.57.0 // indirect",
 	"github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.57.0 // indirect",
 	"github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect",
-	"github.com/bmatcuk/doublestar/v4 v4.10.2",
+	"github.com/bmatcuk/doublestar/v4 v4.10.4",
 	"github.com/cespare/xxhash/v2 v2.3.0 // indirect",
 	"github.com/charmbracelet/bubbletea v1.3.10",
 	"github.com/charmbracelet/colorprofile v0.2.3-0.20250311203215-f60798e515dc // indirect",
@@ -192,8 +263,8 @@ var consoleGoModRequireBaseline = []string{
 	"github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect",
 	"github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect",
 	"github.com/felixge/httpsnoop v1.1.0 // indirect",
-	"github.com/go-jose/go-jose/v4 v4.1.4 // indirect",
-	"github.com/go-logr/logr v1.4.3 // indirect",
+	"github.com/go-jose/go-jose/v4 v4.1.6 // indirect",
+	"github.com/go-logr/logr v1.4.4 // indirect",
 	"github.com/go-logr/stdr v1.2.2 // indirect",
 	"github.com/google/s2a-go v0.1.10 // indirect",
 	"github.com/google/uuid v1.6.0 // indirect",
@@ -201,6 +272,7 @@ var consoleGoModRequireBaseline = []string{
 	"github.com/googleapis/enterprise-certificate-proxy v0.3.22 // indirect",
 	"github.com/googleapis/gax-go/v2 v2.24.1 // indirect",
 	"github.com/inconshreveable/mousetrap v1.1.0 // indirect",
+	"github.com/kr/text v0.2.0 // indirect",
 	"github.com/klauspost/compress v1.20.1",
 	"github.com/lucasb-eyer/go-colorful v1.2.0 // indirect",
 	"github.com/mattn/go-isatty v0.0.20 // indirect",
@@ -209,6 +281,7 @@ var consoleGoModRequireBaseline = []string{
 	"github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect",
 	"github.com/muesli/cancelreader v0.2.2 // indirect",
 	"github.com/muesli/termenv v0.16.0 // the reporter's steps, with the colour profile forced (D1355)",
+	"github.com/muhlemmer/gu v0.3.1 // indirect",
 	"github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect",
 	"github.com/rivo/uniseg v0.4.7 // indirect",
 	"github.com/santhosh-tekuri/jsonschema/v6 v6.0.3",
@@ -216,23 +289,25 @@ var consoleGoModRequireBaseline = []string{
 	"github.com/spf13/pflag v1.0.9",
 	"github.com/spiffe/go-spiffe/v2 v2.8.1 // indirect",
 	"github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect",
+	"github.com/zitadel/oidc/v3 v3.51.17",
+	"github.com/zitadel/schema v1.3.2 // indirect",
 	"go.opentelemetry.io/auto/sdk v1.2.1 // indirect",
 	"go.opentelemetry.io/contrib/detectors/gcp v1.44.0 // indirect",
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.68.0 // indirect",
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0 // indirect",
-	"go.opentelemetry.io/otel v1.44.0 // indirect",
-	"go.opentelemetry.io/otel/metric v1.44.0 // indirect",
+	"go.opentelemetry.io/otel v1.46.0 // indirect",
+	"go.opentelemetry.io/otel/metric v1.46.0 // indirect",
 	"go.opentelemetry.io/otel/sdk v1.44.0 // indirect",
 	"go.opentelemetry.io/otel/sdk/metric v1.44.0 // indirect",
-	"go.opentelemetry.io/otel/trace v1.44.0 // indirect",
+	"go.opentelemetry.io/otel/trace v1.46.0 // indirect",
 	"gocloud.dev v0.46.0",
 	"golang.org/x/crypto v0.57.0 // indirect",
 	"golang.org/x/net v0.59.0 // indirect",
 	"golang.org/x/oauth2 v0.37.0",
-	"golang.org/x/sync v0.23.0 // indirect",
+	"golang.org/x/sync v0.24.0 // indirect",
 	"golang.org/x/sys v0.48.0",
 	"golang.org/x/term v0.46.0 // the hidden prompt of fugaro secrets set",
-	"golang.org/x/text v0.42.0 // the artifact-name collision rule normalizes and FULL folds with it",
+	"golang.org/x/text v0.43.0 // the artifact-name collision rule normalizes and FULL folds with it",
 	"golang.org/x/time v0.16.0 // indirect",
 	"golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect",
 	"google.golang.org/api v0.299.0",
@@ -748,11 +823,17 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 		// The count is pinned on purpose: a new entry is a deliberate widening
 		// of the boundary, argued for in the commit that adds it (plan Task 0.3
 		// a3) and in a comment on the entry itself. The second is ee-reorg
-		// E2.1b's (the coordinator's moved half) and the third E2.2b1's (the
+		// E2.1b's (the coordinator's moved half), the third E2.2b1's (the
 		// report's), each in the package its command and shapes moved to, and
-		// this number is what makes a fourth one impossible to add quietly.
-		if len(consoleBoundaryAllowList) != 3 {
-			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it holds the console contract's own docs tests and the moved halves of the coordinator's and the report's commands, and a further entry is a widening of the boundary that must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
+		// the fourth and the fifth the settings-edit plan's C4, which reads the
+		// console's settings fixture from both sides -- the schema that
+		// documents it and the write this package answers it with; the sixth is security-classification SC1's (the floor row that names the
+		// console's main process); the seventh is security-classification SC3's
+		// (the security paths read's own §6.23 check, which reads the contract
+		// document); this number is what makes an eighth one impossible to add
+		// quietly.
+		if len(consoleBoundaryAllowList) != 7 {
+			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it holds the console contract's own docs tests, the moved halves of the coordinator's and the report's commands, the two halves of the settings fixture's check, the sensitivity floor's row naming the console's main process and the security paths read's §6.23 check, and a further entry is a widening of the boundary that must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
 		}
 	})
 

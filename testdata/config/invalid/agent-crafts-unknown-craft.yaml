@@ -1,0 +1,9 @@
+version: 1
+project: aurora
+git: { provider: github }
+agent:
+  auth: vertex
+  crafts:
+    code-review: { model: claude-opus-5-5 }
+workflows:
+  server: { commands: { build: make, test: make test } }

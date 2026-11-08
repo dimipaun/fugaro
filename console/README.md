@@ -1649,6 +1649,8 @@ truncated.
 | `sentence` | free text a job wrote, one line, invisible characters stripped, credential-shaped runs neutralised, every URL replaced | clipped at 512 characters, never refused (an empty title is a title) |
 | `label` | a short rendered field (`stage`, `round`, `verify`, `models`, `recipe`, `workflow`) | refused past 200 characters, or if it is not a single line |
 | `repository` | `owner/name`, at most 200 characters, no `..` | refused |
+| `repoPattern` | a policy allow-list entry: `*`, or three segments or more — `provider/owner/name`, a path that nests included — each matching the CLI's own segment grammar (`[a-z0-9*._-]`, a star matched inside a segment and never across a `/`, no `.` or `..` segment and no `.git` ending), at most 255 characters (`projectpolicy.MaxPatternLen`) | refused |
+| `imageRef` | a container image reference, the CLI's own `catalogImageRE` (`registry[:port]/path[:tag][@sha256:…]`, lower-case, at most 255 characters) | refused |
 | `slug` | the console's own slug grammar | refused |
 | `branch` | a git ref, no leading/trailing slash, no `.lock` | refused |
 | `project` | a GCP project name | refused |
@@ -2765,16 +2767,22 @@ and over every step: every line naming the helper is one of those calls, and
 every line that calls `xcrun stapler` names the helper.
 
 **The environment is `console-release`, and the owner creates it before the
-copy-in.** Required reviewers on the owner, deployment branches restricted to
-tags. A staging file cannot create an environment, which is why Task 4.5 is the
-copy-in *and* the environment. **That reviewer, with a tag ruleset, is the real
-control, not the file's gate**: a tag push runs the workflow as the *tagged*
-commit holds it, so a tag on a branch whose copy of the workflow or of
-`scripts/release-gate.sh` was edited runs the edited copy. The approver
-confirms the tag's commit is on `main` before approving the deployment. The
-job's first step checks the same (`git merge-base --is-ancestor "$GITHUB_SHA"
+copy-in.** Deployment branches restricted to tags, and required reviewers on the
+owner — **until 2026-11-07, when the owner removed the reviewer** (this branch
+policy and the release procedure are what hold a signing run to a reviewed ref
+now, and the tag ruleset stops a tag moving once it exists — **it does not
+restrict creations**, so the **Restrict creations** step `docs/release.md`,
+"What fences a release now", still owes is what stops a `console-v*` tag being
+created on an unreviewed commit). A
+staging file cannot create an environment, which is why Task 4.5 is the
+copy-in *and* the environment. **That fence is the real control, not the file's
+gate**: a tag push runs the workflow as the *tagged* commit holds it, so a tag on
+a branch whose copy of the workflow or of `scripts/release-gate.sh` was edited
+runs the edited copy. The job's first step checks the tagged commit is an
+ancestor of `origin/main` (`git merge-base --is-ancestor "$GITHUB_SHA"
 origin/main`), which catches a mistake, not someone who controls the tagged
-tree.
+tree; the approval click that used to confirm the same thing before the
+deployment is the part that is gone.
 
 **It fails closed, and that is the first property to check when reading it.**
 The signing step's first act is to refuse to continue unless all six secrets

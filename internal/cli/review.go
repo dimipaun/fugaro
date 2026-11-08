@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -14,7 +13,6 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -26,48 +24,38 @@ import (
 
 // reviewJobAdmitted is E7's second half — whether the installation's
 // credentials service admits a review caller of a project-scoped job — and it
-// is FALSE in this release, because that admission is C3.9, which is not built
-// (§1): the service refuses a caller whose account belongs to a shared project
-// job whole (internal/credsvc's Global Constraint 6), and the review caller is
-// exactly that. A launcher cannot ask the service its configuration (there is
-// no admin route, D143) and cannot see the admission decision without making a
-// call that mints a credential, so the fact is a constant here: the release
-// that meets E7 flips it, and until then every review refuses rather than
-// starting a job whose first call the service would answer 401.
+// is TRUE since 0.21.0, on the owner's ruling of 2026-11-07 for that release.
+// It was false while the admission was C3.9 and unbuilt (§1): the service
+// refused a caller whose account belongs to a shared project job whole
+// (internal/credsvc's Global Constraint 6), and the review caller is exactly
+// that.
 //
-// A test that has to reach the launch sets it, the way compressionForTest's
-// seam is set, so the command's other refusals and the launch itself stay
-// covered while E7 is unmet.
-var reviewJobAdmitted = false
-
-// reviewSkipAdmissionCheckEnv is the environment switch the owner's own C3.9
-// live check's step 3 is reached with while reviewJobAdmitted is false: set,
-// the launcher skips its early refusal and starts the review job, which is what
-// that step needs and what nothing else supplies (docs/cloud-senior-review
-// implementation-plan.md, gap 1 of §6's table).
+// What made it true is two merges and one property of `fugaro update`, all of
+// them on this tree: the service reads its review class out of
+// FUGARO_REVIEW_JOB_ACCOUNTS beside its shared job table (CSRW1, PR #1932), the
+// installation module renders that variable from the review-only variants the
+// deployment creates (CSRW2, PR #1934), and `fugaro update` deploys the
+// credentials service on every installation that can carry one (DON1) — so the
+// class this constant is about is one the update puts in front of the launcher,
+// and the owner's ruling is that the wiring, and not the live check, is what
+// the flip waited on. The owner-run live checks (C3.9's eleven steps, Check
+// 125's steps 6 and 7) remain the owner's and are what confirms the class on a
+// live installation; no agent runs them and this constant is not a claim that
+// they passed.
 //
-// It is a convenience and never the boundary — the credentials service still
-// answers 401 to a review caller it does not admit, so this switch lets a
-// launch start and admits nothing (Global Constraint 6) — and every constraint
-// on it is a test: off by default, so an installation that never hears of it
-// refuses exactly as before; read with os.Getenv at the refusal and nowhere
-// else, so no fugaro.yaml, no project layer and no local config can set it;
-// refused in a coding agent's session by the tree's own marker path
-// (agentMarker, initflow.AgentRefusal), which is read before the variable is;
-// one warning line when it is honored; and deleted by the commit that flips the
-// constant, since a switch that outlives the gate it was built for is a hole
-// with no reason left to be open.
-const reviewSkipAdmissionCheckEnv = "FUGARO_REVIEW_SKIP_ADMISSION_CHECK"
-
-// reviewSkipAdmissionNotice is the one line a launch prints when the switch is
-// honored, before it starts anything: what the variable is for, and the
-// boundary it does not cross. The operator who reads it has to be able to tell
-// a launch that skipped a convenience from one that was admitted.
-const reviewSkipAdmissionNotice = "warning: " + reviewSkipAdmissionCheckEnv +
-	" is set, so this launch skips the launcher's early refusal of a review and starts the job anyway: " +
-	"the variable is the owner's own live check's door into a review launch, and it admits nothing — " +
-	"the credentials service's answer to the review's caller is what decides whether the run is served, " +
-	"and this switch changes none of it.\n"
+// It stays a constant because the launcher can ask the service nothing: there
+// is no admin route to its configuration (D143), and the admission decision is
+// not visible without a call that mints a credential. What the launcher can
+// still judge is the installation the service was deployed with, and that is
+// what checkReviewAdmission does — the class is compiled in here since 0.21.0,
+// and a launch is refused while the installation's own release predates it.
+//
+// A binary older than this release keeps refusing whatever the installation in
+// front of it admits, because the fact is compiled in; the refusal below says
+// so. A test that has to reach that refusal sets the constant to false, the way
+// compressionForTest's seam is set, so the refusal and the launch both stay
+// covered.
+var reviewJobAdmitted = true
 
 // reviewOnlyRecipe is the catalog recipe a review launch runs: mode: review,
 // exactly one --pr — the same recipe `fugaro run --pr N --recipe review-only`
@@ -167,7 +155,7 @@ func runReviewLaunch(cmd *cobra.Command, o *reviewOptions) error {
 	if err := spec.Validate(); err != nil {
 		return userErr("%v", err)
 	}
-	if err := checkReviewLaunch(ctx, env, repo, slug, o.pr, spec, cmd.ErrOrStderr(), os.Getenv, stdinIsTerminal(cmd.InOrStdin())); err != nil {
+	if err := checkReviewLaunch(ctx, env, repo, slug, o.pr, spec, cmd.ErrOrStderr()); err != nil {
 		return err
 	}
 	res, err := finishLaunch(ctx, env, o2, slug, spec, false, cmd.ErrOrStderr(), false)
@@ -216,19 +204,20 @@ func reviewAccount(spec *task.Spec) string {
 
 // checkReviewLaunch is every refusal a review makes before anything of it is
 // written, in the order the operator would act on them: the credentials service
-// the job fetches its credentials from (E7's two halves, the first of which is
-// the release's own precondition, D893 (c)), the named account's own state
-// (D882), and the pull request's coding run (spec §5).
+// the job fetches its credentials from (E7's first half, D893 (c)), the class
+// that service admits (E7's second half — the binary's here, the installation's
+// in checkReviewAdmission), the named account's own state (D882), and the pull
+// request's coding run (spec §5).
 //
 // The pull request is the command's own --pr, which is checked positive before
 // anything else happens, and not spec.ReviewPRs[0]: the task's own list is the
 // same number (reviewSpec writes it from that flag) and is not read for its
 // length here, so no caller can index an empty slice.
-func checkReviewLaunch(ctx context.Context, env *cloudEnv, repo, slug string, pr int, spec *task.Spec, warn io.Writer, getenv func(string) string, stdinTerminal bool) error {
+func checkReviewLaunch(ctx context.Context, env *cloudEnv, repo, slug string, pr int, spec *task.Spec, warn io.Writer) error {
 	if err := checkReviewService(env); err != nil {
 		return err
 	}
-	if err := checkReviewJobAdmitted(getenv, stdinTerminal, warn); err != nil {
+	if err := checkReviewJobAdmitted(); err != nil {
 		return err
 	}
 	if err := checkReviewAccountState(ctx, env, spec); err != nil {
@@ -237,34 +226,20 @@ func checkReviewLaunch(ctx context.Context, env *cloudEnv, repo, slug string, pr
 	return checkReviewHeadIsStill(ctx, env, repo, slug, pr, warn)
 }
 
-// checkReviewJobAdmitted is E7's second half, and the half nobody can supply
-// yet: the service is deployed to admit a repository's own job, and admitting
-// a review caller whose job is project-scoped is C3.9, which is not built
-// (Global Constraint 6). The refusal says so in as many words, because the
-// other half's remedy (fugaro update --provision-credentials) is a command and
-// this half has none: no fugaro update reaches it, and the operator who reads
-// "not configured" would spend a while looking for one before concluding that
-// the release they are on cannot launch a review at all.
-//
-// The environment switch above is the one door the owner may open here, and it
-// is opened in this function and nowhere else: the refusal is the one thing it
-// skips, so a launch that skips it is the launch below minus this sentence. The
-// marker is classified before the switch is read and acted on where the switch
-// is honored — an agent's session is refused the variable, and the unset case
-// is the sentence this function has always answered, unchanged.
-func checkReviewJobAdmitted(getenv func(string) string, stdinTerminal bool, warn io.Writer) error {
+// checkReviewJobAdmitted is E7's second half — the service admitting a review
+// caller of a project-scoped job — and it is a constant rather than a question
+// (reviewJobAdmitted). Since 0.21.0 the answer is yes, so a launch goes on to
+// the account's state and the pull request's head; the sentence below is what a
+// binary older than that release answers, and it names the binary as the thing
+// that is out of date rather than the installation: the admission is compiled
+// in, so no installation state moves it, and the remedy is one upgrade — a
+// newer fugaro, then the `fugaro update` that is the whole upgrade and that
+// deploys the service's review class (DON1).
+func checkReviewJobAdmitted() error {
 	if reviewJobAdmitted {
 		return nil
 	}
-	marker := agentMarker(getenv, stdinTerminal)
-	if getenv(reviewSkipAdmissionCheckEnv) == "" {
-		return userErr("this installation's credentials service does not admit the review job's own caller: the review's account belongs to a project-scoped job, and the service refuses one whole (its admission is built for a repository's own job). A review launched now would fail inside the job with the service's answer instead of this sentence. No fugaro update supplies this half — it is a change to the service's own admission, which this release ships the command, the gate and the review-only job variant ahead of (docs/cloud-senior-review §1). Until it lands, review a pull request in the run's own job with fugaro run --pr N --recipe " + reviewOnlyRecipe)
-	}
-	if marker != "" {
-		return userErr("nothing was launched: %s is the owner's own live check's way into a review launch, and a coding agent's session is refused it as it is refused every other door to the owner's installation: %s", reviewSkipAdmissionCheckEnv, initflow.AgentRefusal(marker))
-	}
-	io.WriteString(warn, reviewSkipAdmissionNotice)
-	return nil
+	return userErr("this fugaro predates the release in which the credentials service admits the review job's own caller: the review's account belongs to a project-scoped job, and whether the service admits that class is not a question this launcher can ask it (E7's second half) — it is a fact the binary carries, and this one was built while the answer was no, so it refuses the launch whatever the installation in front of it admits. Upgrade Fugaro (`brew upgrade dimipaun/tap/fugaro`), then run `fugaro update` with the newer binary: that is the whole upgrade, and the command that deploys the service's review class beside the review-only job variant. Until then, review a pull request in the run's own job with fugaro run --pr N --recipe " + reviewOnlyRecipe)
 }
 
 // reviewJobFor is the job a review launch runs on: CSR7's review-only variant
@@ -314,7 +289,7 @@ func checkReviewService(env *cloudEnv) error {
 	if env.lc != nil && env.lc.CredentialsService != nil && env.lc.CredentialsService.URL != "" {
 		return nil
 	}
-	return userErr("a review runs on the review-only job, which mounts no credential of its own: its read-only installation token and its account's model calls both come from the installation's credentials service, and this installation has none (credentials_service is not published in this project's config). Run fugaro update --provision-credentials to deploy the service, then fugaro creds set github-app-key, which is the App the review's read-only token is issued for")
+	return userErr("a review runs on the review-only job, which mounts no credential of its own: its read-only installation token and its account's model calls both come from the installation's credentials service, and this installation has none (credentials_service is not published in this project's config). An ordinary `fugaro update` deploys the service on every installation that can carry one, which needs the installation's Firebase backend (`fugaro update --firebase-project`) and at least one repository job; then `fugaro creds set github-app-key` writes the App the review's read-only token is issued for")
 }
 
 // checkReviewAccountState is D882's refusal: a review is never launched on an

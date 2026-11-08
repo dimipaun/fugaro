@@ -240,23 +240,35 @@ variable "credentials_service" {
       repo     = string
       workflow = string
     }))
+    review_job_accounts = optional(list(object({
+      profile  = string
+      provider = string
+      account  = string
+    })), [])
     verifier_accounts = optional(list(string))
     url               = optional(string)
   })
-  # The credentials service (D146, D147), OFF by default: fugaro update's
-  # credentials stage (C1.20) is the only writer, and only when the owner runs
-  # it. Absent, the module creates nothing and every job keeps its
-  # model-secret accessors. bundle_secret is the one container the service
+  # The credentials service (D146, D147): every `fugaro update` writes this
+  # block (DON1, the owner's ruling of 2026-11-05), so the service is part of
+  # the installation the run applies rather than an opt-in. Absent, the module
+  # creates nothing and every job keeps its model-secret accessors — which is
+  # an installation that has not been updated yet, and one whose config names
+  # no Firebase backend or no repository job, which the service cannot be
+  # deployed into at all. bundle_secret is the one container the service
   # reads — the project-wide container of the logical name "creds-bundle"
-  # (internal/backend/gcp's ProjectSecretID), which that stage fills so this
-  # variable and the loader's own derivation (C1.11) name one secret.
+  # (internal/backend/gcp's ProjectSecretID), which the update's own deploy
+  # writes so this variable and the loader's own derivation (C1.11) name one
+  # secret.
   # firebase_project, rtdb_url and job_accounts are the rest of the service's
   # environment (C1.14: the Firebase project, the database, and the jobs whose
-  # accounts may call it), url is the service's own URL — the audience its
+  # accounts may call it), review_job_accounts the review-only variants of
+  # those project jobs — the review class's admitted set, one {profile,
+  # provider, account} row per variant, empty for an installation that deploys
+  # none — url is the service's own URL — the audience its
   # callers' tokens are minted for — which Cloud Run assigns, so the module
   # carries its unassigned placeholder until the apply after the one that
   # creates the service (the module's own output reads the URL back, and the
-  # stage that fills this variable applies again in the same run; the type is
+  # run that deploys the service applies again in the same run; the type is
   # the module's, and its validations are the ones that hold these four to
   # their shape). verifier_accounts is the one OPTIONAL member, and the module
   # renders its environment entry only when it is set: null is an installation

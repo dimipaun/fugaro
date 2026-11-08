@@ -38,15 +38,15 @@ workflows:
 
 // brokeringConfig is the owner's side of an opted-in installation whose one
 // Bitbucket repository is proxied: the credentials service block (written by
-// the opt-in) and the project_secrets entry that names the token and flips
+// `fugaro update`) and the project_secrets entry that names the token and flips
 // the proxy on for workspace-a/repo-a.
 const brokeringConfig = "project_secrets:\n  bitbucket-token:\n    allow_data_to: [workspace-a/repo-a]\n    proxy: true\n" +
 	"repos:\n  workspace-a/repo-a: { provider: bitbucket, workflows: [app] }\n"
 
 // brokeringRig is a doctor rig inside a checkout of workspace-a/repo-a, whose
-// installation opted into the credentials service and whose local config
-// proxies the repository's Bitbucket token, with a Cloud Run services fake
-// beside the jobs one.
+// installation's update deployed the credentials service (the block is in its
+// config) and whose local config proxies the repository's Bitbucket token, with
+// a Cloud Run services fake beside the jobs one.
 type brokeringRig struct {
 	*doctorRig
 	svcs *gcpfake.RunServices
@@ -75,11 +75,12 @@ func newBrokeringDirectRig(t *testing.T) *brokeringRig {
 	return r
 }
 
-// newBrokeringUnoptedRig is the same checkout on an installation that never
-// opted in: no credentials_service block, which is the state the ruling makes
-// the first of the service's six (the check reports it in one line and no
-// longer stays silent about it).
-func newBrokeringUnoptedRig(t *testing.T) *brokeringRig {
+// newBrokeringNoServiceRig is the same checkout on an installation that carries
+// no credentials service: no credentials_service block, which under DON1 is the
+// state an update that could not deploy one leaves rather than one nobody asked
+// for, and the first of the service's six (the check reports it in one line and
+// no longer stays silent about it).
+func newBrokeringNoServiceRig(t *testing.T) *brokeringRig {
 	t.Helper()
 	r := newBrokeringCheckout(t, false)
 	addLocalLines(t, r.doctorRig, brokeringConfig)
@@ -426,8 +427,8 @@ func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 		if !strings.Contains(cs[0].Problem, infra.CredentialsServiceName) || !strings.Contains(cs[0].Problem, "proj-1234") {
 			t.Errorf("the warning does not name the service and the project: %q", cs[0].Problem)
 		}
-		if !strings.Contains(cs[0].Fix, "--provision-credentials") {
-			t.Errorf("the fix does not name the opt-in: %q", cs[0].Fix)
+		if !strings.Contains(cs[0].Fix, "update") {
+			t.Errorf("the fix does not name the command that re-applies the installation: %q", cs[0].Fix)
 		}
 	})
 
@@ -632,7 +633,7 @@ type brokeringServiceState struct {
 }
 
 // brokeringServiceStates are the six states of the service: the installation
-// that has not opted into it at all, the one whose block is written and
+// that carries no service at all, the one whose block is written and
 // whose service is not deployed, the deployed service whose bundle holds no
 // version, the deployed service whose newest bundle version is disabled, the
 // deployed service whose verifier list admits nobody, and the deployed service
@@ -651,17 +652,21 @@ func brokeringServiceStates() []brokeringServiceState {
 	}
 	return []brokeringServiceState{
 		{
-			// The opt-in this release gates behind DON1's flag, which is not
-			// the same state as an installation behind the release: the line
-			// may not read as "run this" (the flag re-writes every repository
-			// root and drops their jobs' model credential), so what is pinned
-			// here are the two things taking it needs and the confirmation it
-			// asks for.
-			name:     "the installation has not opted into the service",
-			names:    []string{infra.CredentialsServiceName, selfCommand() + " update --provision-credentials", "agent.auth: cascade", selfCommand() + " creds set github-app-key", "typed confirmation"},
-			absent:   []string{"has not converged", "deploys it on every installation", "nothing for a run to fetch"},
+			// DON1's own state, and what the ruling of 2026-11-05 turns the
+			// old opt-in into: an installation with no service at all is one
+			// whose update could not deploy it (no Firebase backend, no
+			// repository job), not one that never asked, and it is not behind
+			// the release — its runs fetch their model credential the way they
+			// did before the service existed. The line may not read as "run
+			// this" either: the deploy is the ordinary update, and what moves a
+			// repository's credential out of its jobs is the switch, so what is
+			// pinned here is the deploy's own reach and what the switch costs
+			// when it is on.
+			name:     "the installation carries no credentials service",
+			names:    []string{infra.CredentialsServiceName, selfCommand() + " update", "deploys one on every installation", "re-applied with the switch", "agent.auth: cascade", selfCommand() + " creds set github-app-key"},
+			absent:   []string{"has not converged", "opt in", "provision-credentials", "nothing for a run to fetch"},
 			severity: "info",
-			build:    newBrokeringUnoptedRig,
+			build:    newBrokeringNoServiceRig,
 		},
 		{
 			name:     "the block is written and the service is not deployed",
@@ -1676,7 +1681,7 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
 		}
 		def := doctorDefaultOutput(t, o.Checks)
-		wants(t, def, sentence, "update --provision-credentials")
+		wants(t, def, sentence, "fugaro update", "re-applies the installation root")
 	})
 
 	t.Run("the credentials service is deployed and its bundle holds no version", func(t *testing.T) {
@@ -1849,7 +1854,7 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 		def := doctorDefaultOutput(t, o.Checks)
 		wants(t, def,
 			"info model-key-in-agent:", "the gateway holds the key",
-			"update --provision-credentials")
+			"update deploys it")
 		counted(t, def, "`fugaro doctor --security`")
 		wants(t, doctorSecurityOutput(t, o.Checks),
 			"model-key-in-agent", "the gateway holds the key")

@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/logtail"
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -26,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
@@ -58,8 +60,18 @@ const (
 // Diagnosis is what diagnose gathers about one run. Every string in it
 // that comes from the run is redacted.
 type Diagnosis struct {
-	Project      string           `json:"project"` // the Fugaro project
-	Row          runview.Row      `json:"row"`
+	Project string      `json:"project"` // the Fugaro project
+	Row     runview.Row `json:"row"`
+	// FailureClass is why the run did not end succeeded, as one value of the
+	// closed vocabulary of docs/design/failure-classes.md §3 — the same value
+	// the row carries, on the diagnosis's own shape because diagnose is the
+	// command a person runs to be told why, and D1460 is that a reader of this
+	// document is never sent into the row for it. Absent for a run that did
+	// not fail, and for a row the read side ended itself — a preemption, a
+	// lost execution, or an `error` for a run it could not follow — where the
+	// row's own account of it is `derived`, or that sentence
+	// (runview.Row.FailureClass).
+	FailureClass failure.Class    `json:"failure_class,omitempty"`
 	Halt         *runstore.Halt   `json:"halt,omitempty"`     // why a halted run was halted
 	Verify       []verify.Record  `json:"verify,omitempty"`   // result.json's verify records
 	Failed       []string         `json:"failed,omitempty"`   // the last test record's failed tests
@@ -136,6 +148,15 @@ type Diagnosis struct {
 	// for a run that tolerated nothing, and for every record written before
 	// the field existed.
 	Tolerated *runstore.ToleratedFindings `json:"tolerated,omitempty"`
+	// Ruling is the owner's ruling this run worked from (OD1,
+	// runstore.Record.OwnerRuled, fugaro run --owner-ruled): the answer to
+	// the findings a run on this pull request left, which the brief of this
+	// run carries verbatim — the ruling its own launch was given, or the one
+	// the run before it worked from, which a follow-up launched without one
+	// inherits. The record's own text, redacted and clipped on
+	// read like every other field of it, and absent for a run that worked
+	// from no ruling — every run that is not answering a decision.
+	Ruling string `json:"owner_ruled,omitempty"`
 	// Checkpoint is the report a governance halt left (T6.1, D329, G7): why a
 	// tripwire stopped the run, and what a person deciding whether to continue
 	// it needs to know. The record's own block, with every string redacted and
@@ -231,7 +252,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 	}
 	d := &Diagnosis{Row: rows[0], ReportPath: s.Prefix() + "report.md"}
 	d.DraftNote = draftNote(d.Row, time.Now())
-	d.Row.Reason = red(d.Row.Reason)
+	d.Row.Reason, d.FailureClass = red(d.Row.Reason), d.Row.FailureClass
 	if h := d.Row.Halt; h != nil {
 		c := *h
 		c.Detail = red(c.Detail)
@@ -259,6 +280,8 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 			d.ArtifactPaths = append(d.ArtifactPaths, s.Prefix()+runstore.ArtifactPrefix+red(a.Name))
 		}
 		d.Stages, d.Tolerated = stageTimingsOf(rec.Stages, red), toleratedOf(rec.Tolerated, red)
+		d.Row.OwnerDecisions = ownerDecisionsOf(rec.OwnerDecisions, red)
+		d.Ruling = clipRunes(red(rec.OwnerRuled), task.MaxOwnerRuledBytes)
 		d.Retries = rec.Retries
 		d.Reviews = reviewsOf(rec.Reviews, red)
 		d.Checkpoint = checkpointOf(rec.Checkpoint, red)
@@ -452,6 +475,76 @@ func toleratedOf(t *runstore.ToleratedFindings, red func(string) string) *runsto
 	// record claiming fewer than it lists is not one to print as written.
 	out.Total = max(t.Total, len(out.Findings))
 	return out
+}
+
+// ownerDecisionsOf is the pending owner decisions a run's record carries
+// (OD1) for the document: every sentence redacted -- the file and the sentence
+// are model output -- and bounded again on read, since the record is an object
+// a hand can edit and the write-side bound (runstore.NewOwnerDecisions) is not
+// one a reader can count on. The total is never less than the decisions it
+// lists, so a record claiming fewer than it lists is not printed as written.
+func ownerDecisionsOf(od *runstore.OwnerDecisions, red func(string) string) *runstore.OwnerDecisions {
+	if od == nil || len(od.Decisions) == 0 {
+		return nil
+	}
+	ds := make([]runstore.OwnerDecision, 0, min(len(od.Decisions), runstore.MaxOwnerDecisions))
+	for _, d := range od.Decisions {
+		if len(ds) == runstore.MaxOwnerDecisions {
+			break
+		}
+		ds = append(ds, runstore.OwnerDecision{File: red(d.File), Summary: red(d.Summary)})
+	}
+	out := runstore.NewOwnerDecisions(ds)
+	if out == nil {
+		return nil
+	}
+	out.Total = max(od.Total, out.Total, len(out.Decisions))
+	return out
+}
+
+// ownerBlock is what a run is waiting for its owner to decide (OD1), printed
+// under the run's status and above its cost: the count the run's own reason
+// names (its halt's where it halted on the decisions),
+// then one line per decision with the file and the reviewer's own sentence, in
+// the words the pull request's status section and `fugaro runs ls` use. It is
+// empty for a run that is waiting on nothing, which is every ordinary run.
+func ownerBlock(od *runstore.OwnerDecisions) string {
+	if od == nil {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nWaiting on you\n  review is waiting on %s\n", runner.Plural(od.Total, "owner decision"))
+	for _, d := range od.Decisions {
+		summary := oneLine(clipRunes(d.Summary, maxOwnerDecisionRunes))
+		if d.File != "" {
+			fmt.Fprintf(&b, "  - `%s`: %s\n", oneLine(d.File), summary)
+			continue
+		}
+		fmt.Fprintf(&b, "  - %s\n", summary)
+	}
+	if n := od.Total - len(od.Decisions); n > 0 {
+		fmt.Fprintf(&b, "  and %s more; the run's record lists %d of them\n", runner.Plural(n, "decision"), len(od.Decisions))
+	}
+	return b.String()
+}
+
+// rulingBlock is the owner's ruling a run was launched with (OD1), printed
+// under what the run before it was waiting for: the text the brief carries,
+// indented as a block so a multi-line ruling reads as one, and empty for a run
+// launched without one. Only carriage returns are turned into newlines here —
+// the ruling is a person's own prose, and the diagnosis is where they read it
+// back — but every line is still flattened to one terminal line, since the
+// record is an object a hand can edit.
+func rulingBlock(ruling string) string {
+	if strings.TrimSpace(ruling) == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nThe owner ruled (this run works from it)\n")
+	for _, line := range strings.Split(strings.ReplaceAll(ruling, "\r\n", "\n"), "\n") {
+		fmt.Fprintf(&b, "  %s\n", oneLine(line))
+	}
+	return b.String()
 }
 
 // checkpointOf is the record's checkpoint for the document: every string
@@ -759,6 +852,16 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		status += " (stage " + r.Stage + ")"
 	}
 	fmt.Fprintf(&b, "Status:   %s\n", oneLine(status))
+	// The class is the answer's first sentence (design §8 D9), so it stands
+	// directly under the status it describes: the closed vocabulary's name for
+	// why the run stopped, the runner's own where the record carries one and the
+	// reader's reading of its reason where it does not (runview.ClassOf). A run
+	// that did not fail, and a row whose ending is the read side's own — derived,
+	// or an `error` for a run it could not follow — has no cause to name and gets
+	// no line.
+	if d.FailureClass != "" {
+		fmt.Fprintf(&b, "Class:    %s\n", oneLine(string(d.FailureClass)))
+	}
 	if r.Reason != "" {
 		fmt.Fprintf(&b, "Reason:   %s\n", oneLine(r.Reason))
 	}
@@ -793,6 +896,8 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		fmt.Fprintf(&b, "%s\n", oneLine(line))
 	}
 	b.WriteString(checkpointBlock(d.Checkpoint))
+	b.WriteString(ownerBlock(d.Row.OwnerDecisions))
+	b.WriteString(rulingBlock(d.Ruling))
 	for _, ln := range costLines(r.Cost) {
 		fmt.Fprintf(&b, "%s\n", ln)
 	}

@@ -3,7 +3,6 @@ package infra
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -16,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	terraform "github.com/dimipaun/fugaro/deploy/terraform"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
@@ -1125,74 +1125,182 @@ profiles:
 	}
 }
 
-// TestAnthropicKeySentinelRefusedWithAReachableRemedy: a local config may now
-// list the sentinel the account axis spells for the project's own Anthropic API
-// key (config.ValidClaudeAccountRef accepts it, config.ValidateProfileClaudeAccounts
-// skips it, and projectpolicy.DeriveAccounts publishes its accounts entry from
-// exactly this profile), and no job of this release serves it. This is the door
-// `fugaro update` closes on such an installation — fail-closed, because a
-// shared job mounts Claude OAuth tokens and the project's own key is no token
-// of any job's, and because the review-only variant that carries the key is not
-// deployed yet.
+// anthropicKeyProfileLC is the sentinel's own fixture: a profile that lists
+// the project's own Anthropic API key and no Claude account at all, with the
+// key's project-wide copy reaching the one repository the config records.
+// claude_accounts is not written — that is the installation this task exists
+// for (D1422): no Claude account anywhere, and its reviews still have a job.
 //
-// Both providers are cases, and the Bitbucket one is why the refusal stands in
-// ProjectJobs ahead of the provider skip rather than inside the job loop
-// (projectAccountMount's old arm): a Bitbucket profile is skipped, not
-// deployed, so a check reached only by the jobs a profile deploys never sees
-// it — the sentinel passed an installation unrefused, with its policy entry
-// published for a job that does not exist, while the claim this PR makes in
-// three places is that an installation publishing a profile naming it is
-// refused. The fixtures are the ones that otherwise deploy or derive cleanly
-// (the sentinel's list comes from the profile's own allow_repos, which
-// projectpolicy.anthropicKeySlugs needs the project's key to reach), so nothing
-// else in this deployer refuses them and the assertion below cannot pass for
-// another reason.
+// The profile writes its own allow_repos because it lists an account (D3), and
+// the sentinel's published list is derived from exactly that list, kept where
+// project_secrets.anthropic-api-key reaches the repositories
+// (projectpolicy.anthropicKeySlugs) — so the key's own reach is written here
+// too, or DeriveAccounts refuses the empty list it would publish.
+const anthropicKeyProfileLC = `project_secrets:
+  anthropic-api-key: { allow_data_to: [acme/webapp] }
+profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [github/acme/webapp], claude_accounts: [` + config.AnthropicKeyAccount + `] }
+`
+
+// TestReviewJobIsDeployedForAProjectWithNoClaudeAccount is this task's
+// installation-shape half (F17, D1417, D1422): an installation that publishes
+// the sentinel and no Claude account deploys a job whose account segment is the
+// sentinel — mounting no Claude token, because the value names a credential the
+// platform already holds (projectAccountMount) — and, beside it, the
+// review-only variant the credentials service serves the key from. The
+// service's own account set is derived from the same axis
+// (credsvc.ReviewJobAccountsFor reads config.ProjectJobAccounts), so the two
+// sides are checked against each other here rather than against a second copy
+// of the naming rule: the variant the deployer built IS the account the service
+// admits.
 //
-// The remedy is the point of the test. Without the sentinel's own refusal, the
-// message comes from the container lookup and prescribes
-// claude_accounts.<sentinel>.allow_data_to — a key config.ValidateClaudeAccounts
-// refuses, so one refusal names what the other forbids and the operator has no
-// move at all. What this refusal names instead is the profile field to edit.
+// A Bitbucket profile is the second case and it is a contrast, not a refusal:
+// no shared job is deployed for one (the owner's ruling of 2026-10-15), so no
+// variant is either, and an installation whose only profile is a Bitbucket one
+// has no review job at all. That is why this test reads both sets off the
+// config rather than only the sentinel's coding job.
 //
-// Mutation (run, restore): move the refusal back inside the job loop, or drop
-// it — the Bitbucket case passes unrefused, and with it dropped the shared-job
-// case's message comes from the container lookup, so the assertions below go
-// red.
-func TestAnthropicKeySentinelRefusedWithAReachableRemedy(t *testing.T) {
-	for name, tc := range map[string]struct{ provider, allowRepos string }{
-		"a shared-job profile":                                 {"github", "github/acme/webapp"},
-		"a Bitbucket profile this deployer deploys no job for": {"bitbucket", "bitbucket/acme/sandbox"},
+// Mutation (run, restore): keep AK4's refusal (return the userErr ProjectJobs
+// carried for this profile) — the GitHub case has no jobs to read; or drop the
+// sentinel's arm from projectAccountMount — the container lookup prescribes
+// claude_accounts.<sentinel>.allow_data_to, a key config.ValidateClaudeAccounts
+// refuses.
+func TestReviewJobIsDeployedForAProjectWithNoClaudeAccount(t *testing.T) {
+	for name, tc := range map[string]struct {
+		provider, allowRepos, keyReach string
+		serves                         bool
+	}{
+		"a shared-job profile with no Claude account":          {"github", "github/acme/webapp", "acme/webapp", true},
+		"a Bitbucket profile this deployer deploys no job for": {"bitbucket", "bitbucket/acme/sandbox", "acme/sandbox", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+`project_secrets:
-  anthropic-api-key: { allow_data_to: [acme/sandbox, acme/webapp] }
+  anthropic-api-key: { allow_data_to: [`+tc.keyReach+`] }
 profiles:
   standard: { provider: `+tc.provider+`, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [`+tc.allowRepos+`], claude_accounts: [`+config.AnthropicKeyAccount+`] }
 `)
-			_, err := ProjectJobs(lc, "fugaro-runs-proj-1234", false)
-			if err == nil {
-				t.Fatalf("a %s profile naming %s deployed or passed: no job serves the project's own key as a Claude token, and the review variant that carries it is not built yet", tc.provider, config.AnthropicKeyAccount)
+			coding, err := ProjectJobs(lc, "fugaro-runs-proj-1234", false)
+			if err != nil {
+				t.Fatalf("an installation whose only account-axis value is the project's own Anthropic API key was refused: %v", err)
 			}
-			var ue *UserError
-			if !errors.As(err, &ue) {
-				t.Fatalf("the refusal is not a UserError (%T): a config this deployer cannot serve must read as a sentence the operator can act on, not as an internal error: %v", err, err)
+			review, err := ProjectReviewJobs(lc, "fugaro-runs-proj-1234", false)
+			if err != nil {
+				t.Fatalf("ProjectReviewJobs: %v", err)
 			}
-			for _, banned := range []string{"claude_accounts." + config.AnthropicKeyAccount, ".allow_data_to"} {
-				if strings.Contains(err.Error(), banned) {
-					t.Errorf("the refusal names %q: %v — that is the key config.ValidateClaudeAccounts refuses, so it is a remedy nobody can carry out", banned, err)
+			if !tc.serves {
+				if len(coding) != 0 || len(review) != 0 {
+					t.Fatalf("a %s profile deployed %v and %v: no shared job is deployed for one, so no variant is either", tc.provider, sortedJobNames(coding), sortedJobNames(review))
+				}
+				return
+			}
+			// The axis is two values here — the profile's no-account job and the
+			// sentinel's — and the variant set is one per coding job.
+			wantCoding := []string{
+				gcp.ProjectJobName("standard", "github", ""),
+				gcp.ProjectJobName("standard", "github", config.AnthropicKeyAccount),
+			}
+			slices.Sort(wantCoding)
+			if !slices.Equal(sortedJobNames(coding), wantCoding) {
+				t.Fatalf("coding jobs = %v, want the no-account job and the sentinel's, %v", sortedJobNames(coding), wantCoding)
+			}
+			wantReview := reviewWantNames()
+			slices.Sort(wantReview)
+			if !slices.Equal(sortedJobNames(review), wantReview) {
+				t.Fatalf("review jobs = %v, want one per coding job, %v", sortedJobNames(review), wantReview)
+			}
+			token := config.ReservedSecrets[config.ClaudeOAuthToken]
+			sentinelJob := coding[gcp.ProjectJobName("standard", "github", config.AnthropicKeyAccount)]
+			if sentinelJob.Account != config.AnthropicKeyAccount {
+				t.Errorf("the job of the project's own key carries the account segment %q, want %q", sentinelJob.Account, config.AnthropicKeyAccount)
+			}
+			if _, mounted := sentinelJob.SecretEnv[token]; mounted {
+				t.Errorf("the job of the project's own key mounts %s: the sentinel names no Claude account, so there is no token of its own to mount", token)
+			}
+			if got, want := sentinelJob.ServiceAccount.AccountID, gcp.ProjectServiceAccountID("standard", "github", config.AnthropicKeyAccount); got != want {
+				t.Errorf("the job of the project's own key runs as %s, want %s", got, want)
+			}
+			variant := review[credsvc.ReviewJobName("standard", "github", config.AnthropicKeyAccount)]
+			if variant.Account != config.AnthropicKeyAccount {
+				t.Errorf("the sentinel's review variant carries the account segment %q, want %q", variant.Account, config.AnthropicKeyAccount)
+			}
+			if len(variant.SecretEnv) != 0 {
+				t.Errorf("the sentinel's review variant mounts %v: a review variant mounts nothing at all (O1)", variant.SecretEnv)
+			}
+			if _, ok := variant.Env[runner.SecretEnvsVar]; ok {
+				t.Errorf("the sentinel's review variant carries %s with no mount to name", runner.SecretEnvsVar)
+			}
+			if got, want := variant.ServiceAccount.AccountID, credsvc.ReviewServiceAccountID("standard", "github", config.AnthropicKeyAccount); got != want {
+				t.Errorf("the sentinel's review variant runs as %s, want %s — the name credsvc.ReviewJobAccountsFor derives the admitted account from", got, want)
+			}
+			// The service's half, over the same installation: the policy node
+			// publish derives from this local config, judged by the one function
+			// that turns the axis into admitted accounts.
+			accounts, err := projectpolicy.DeriveAccounts(profilesAsPolicy(lc.Profiles), lc.ClaudeAccounts, lc.ProjectSecrets)
+			if err != nil {
+				t.Fatalf("DeriveAccounts over the test's own config: %v", err)
+			}
+			p := &projectpolicy.Policy{Version: projectpolicy.Version, Profiles: profilesAsPolicy(lc.Profiles), Accounts: accounts}
+			admitted := credsvc.ReviewJobAccountsFor(p, "proj-1234")
+			var want []credsvc.ReviewJobAccount
+			for _, a := range config.ProjectJobAccounts(lc.Profiles["standard"]) {
+				account := infraReviewAccount(a)
+				want = append(want, credsvc.ReviewJobAccount{
+					Email:   credsvc.ReviewServiceAccountID("standard", "github", account) + "@proj-1234.iam.gserviceaccount.com",
+					Account: account,
+				})
+			}
+			if !reflect.DeepEqual(admitted, want) {
+				t.Fatalf("ReviewJobAccountsFor = %v, want the variants the deployer built, %v", admitted, want)
+			}
+			// The sentinel's own entry, said by name: the key is served only where
+			// the service admits the caller, and this is the row that admits the
+			// sentinel's variant.
+			var found bool
+			for _, a := range admitted {
+				if a.Account == config.AnthropicKeyAccount {
+					found = true
 				}
 			}
-			if !strings.Contains(err.Error(), "profiles.standard.claude_accounts") {
-				t.Errorf("the refusal does not name the field the operator edits: %v", err)
+			if !found {
+				t.Errorf("the service admits no account for the project's own key: %v", admitted)
 			}
-			// The sentinel's own sentence, and not another refusal of the same
-			// profile: the container lookup and DeriveAccounts both answer this
-			// profile too, with remedies of their own.
-			if !strings.Contains(err.Error(), "is the project's own Anthropic API key, not a Claude account") {
-				t.Errorf("the refusal is not the sentinel's: %v", err)
+			if _, ok := accounts[config.AnthropicKeyAccount]; !ok {
+				t.Errorf("the derived accounts block has no %s entry: the sentinel's list is what bounds which repositories the key may serve", config.AnthropicKeyAccount)
 			}
 		})
 	}
+	// The module's job.account validation admits the sentinel as a literal
+	// because HCL cannot import the Go constant (modules/project/variables.tf).
+	// Nothing else holds the two spellings together: a Terraform validation a
+	// Go constant moved out from under would refuse every plan of an
+	// installation whose only account-axis value is the key.
+	t.Run("the module admits the sentinel's literal", func(t *testing.T) {
+		b, err := fs.ReadFile(terraform.FS, "gcp/modules/project/variables.tf")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(b), `var.job.account == "`+config.AnthropicKeyAccount+`"`) {
+			t.Errorf("deploy/terraform/gcp/modules/project/variables.tf does not admit config.AnthropicKeyAccount (%q) as a job.account value: an installation publishing the sentinel would deploy no job", config.AnthropicKeyAccount)
+		}
+	})
+}
+
+// infraReviewAccount is the axis value as the admission speaks it, which is the
+// spelling the variant's own names carry: the axis writes the default account as
+// "" (config.ProjectJobAccounts) and the policy spells it
+// config.DefaultClaudeAccount.
+func infraReviewAccount(account string) string {
+	return config.ReviewVariantAccount(account)
+}
+
+// reviewWantNames is the review variant of every job the sentinel's fixture
+// deploys, by the one derivation both sides use.
+func reviewWantNames() []string {
+	var out []string
+	for _, account := range []string{"", config.AnthropicKeyAccount} {
+		out = append(out, credsvc.ReviewJobName("standard", "github", infraReviewAccount(account)))
+	}
+	return out
 }
 
 // TestJobNameIndependentOfSecretEnv: a job's name and its service account are

@@ -125,6 +125,135 @@ func TestDocsCheck340IsRegistered(t *testing.T) {
 	}
 }
 
+// TestDocsCheck340RecordsTheFirstRun: the check has been run once and the run
+// settled nothing, and the register has to say so in both halves — a row or a
+// section that reads "NOT RUN" with no account of the attempt beside it is a
+// record a reader has to take on trust, and one that reads "NOT RUN" while the
+// attempt is nowhere is how the same run gets made twice for the same
+// non-answer. What the first run measured and what it did not is pinned, because
+// a section that says only "it aborted" leaves the next reader unable to tell
+// whether the fallback was reached. And no PASS for `list-prefix` may be
+// recorded: an aborted run is not a reading about the attribute, and the whole
+// point of the row above is that this check has not answered.
+func TestDocsCheck340RecordsTheFirstRun(t *testing.T) {
+	register := readDoc(t, liveChecksDoc)
+	section := flattenDoc(check340Section(t, register))
+	lower := strings.ToLower(section)
+	for _, want := range []string{
+		// The date, the exit, and what exit 2 means here.
+		"2026-11-07",
+		"First run: 2026-11-07, exit `2`",
+		"it settled nothing about the attribute",
+		"aborted",
+		// What the run did measure, and what it did not: the fallback was never
+		// reached, and the reports/ listing is the failure that stopped it.
+		"full-path form was never reached",
+		"the `reports/` listing **failed**",
+		// The two faults the run's own block had, and the fixes, so a reader of
+		// the first run's paste-back knows what to expect from the next one.
+		"service-account impersonation",
+		"denied on resource (or it may not exist)",
+		"service-accounts list",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check %s's section does not say %q: the first run ended exit 2 and the register is where what it did and did not measure is recorded", check340Number, want)
+		}
+	}
+	// The row is where a reader looks first, and it has to carry the attempt as
+	// well as the standing "NOT RUN" — which is what it still reads.
+	row := check340Row(register)
+	if !strings.Contains(row, "2026-11-07") || !strings.Contains(row, "exit `2`") {
+		t.Errorf("Check %s's row does not record the 2026-11-07 attempt and its exit 2: the row and the section are one registration, and a reader who stops at the table has to see that the one attempt settled nothing", check340Number)
+	}
+	// No form is answered, anywhere in the check's own two halves.
+	for _, text := range []string{row, section} {
+		if strings.Contains(text, "`list-prefix` row is **PASS**") || strings.Contains(text, "list-prefix: PASS") {
+			t.Errorf("Check %s records a PASS for `list-prefix`: the run that was made ended exit 2 and measured nothing about the attribute, so a PASS here would be a live claim nobody made", check340Number)
+		}
+	}
+	if !strings.Contains(lower, "no `pass` is recorded for `list-prefix`") {
+		t.Errorf("Check %s's section does not say in as many words that no `PASS` is recorded for `list-prefix`: the first run aborted, and the sentence is what stops its block being read as one", check340Number)
+	}
+}
+
+// TestDocsCheck340RecordsTheSecondRun: the check has now been run TWICE, both
+// times on 2026-11-07 and both times exit 2, and the second run has to be
+// recorded beside the first. It matters because it is the run that lost the
+// fallback: the relative form measured five of its rows (four PASSing, the
+// `reports/` listing FAILing with the binding read back as present), a `tokens/`
+// listing refused with a denial naming `storage.objects.get` was read as "a call
+// that did not answer" and stopped the run, and the full-path form — the only
+// one left that could answer the attribute — was never tried. A section that
+// recorded only the first attempt would leave the next reader with a fix that
+// has since been run once more and still answered nothing; and the row has to
+// carry both attempts, because the row is where a reader stops.
+func TestDocsCheck340RecordsTheSecondRun(t *testing.T) {
+	register := readDoc(t, liveChecksDoc)
+	section := flattenDoc(check340Section(t, register))
+	for _, want := range []string{
+		// The second attempt, its exit, and the standing statement that the
+		// attribute is still unanswered.
+		"Second run: 2026-11-07, exit `2`",
+		"no `PASS` is recorded for `list-prefix` anywhere here",
+		// What the relative form measured, and the reading that separates a
+		// clause which does not match from a grant that never landed: the
+		// policy named the binding.
+		"found the binding present",
+		// The refusal that stopped it, and that it was left unclassified.
+		"unclassified",
+		"`storage.objects.get`",
+		"the **full-path form was never reached**",
+		// The three fixes this task made, so a reader of the second run's
+		// paste-back knows what the next run will do differently.
+		"either permission is a refusal",
+		// The other half of the widened refusal rule, and the half the second
+		// run's own reading forced: the two guarded listings are asked with a
+		// WILDCARD so the List request is the one that goes out, and a denial
+		// naming only the object permission says it did not — so the row is NOT
+		// OBSERVED rather than a criterion that held, it FAILS the form, and the
+		// run ends exit 2 with no string for R12's builder rather than exit 0
+		// with the guard unmeasured. A section that stopped at "either
+		// permission is a refusal" would have the owner read the two listing
+		// rows as readings about the listing clause whatever the clause allows.
+		"recorded as **NOT OBSERVED**",
+		"neither a criterion that held nor one that failed",
+		"it **fails the form**",
+		"/tokens/*",
+		// The third reading of the row that matters, and the one no string comes
+		// with: a form whose readable criteria held is still not an answer while
+		// the guard is unread.
+		"**`list-prefix: INFO — not settled`**",
+		"reads **both** candidate forms to the end of their criteria",
+		// The other half of "both forms are read": one form passing is the
+		// answer, and two passing is a contradiction the run stops on — a
+		// section that said only the first would have the owner read a PASS
+		// where the run exits 2.
+		"no single attribute value starts with both candidate strings",
+		"let **both** forms through",
+		"`reports/<slug>/` **and** the bare `reports/` must list",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check %s's section does not say %q: the check has been run twice and the second run is where the fallback was lost, so the register has to carry it", check340Number, want)
+		}
+	}
+	// A missing bucket is a stop of its own, and the row and the stop have to
+	// say how to make one: the script grants IAM on a bucket and writes into
+	// it, so the bucket is the owner's to create.
+	for _, want := range []string{
+		"gcloud storage buckets create",
+		"--location=us-central1 --uniform-bucket-level-access",
+		"never creates the bucket",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check %s's section does not say %q: a bucket that is not there stops the run, and a stop that does not name the create command leaves the owner with a check that will not start", check340Number, want)
+		}
+	}
+	// The row is where a reader stops, so it carries both attempts.
+	if row := check340Row(register); !strings.Contains(row, "Two attempts have been made") {
+		t.Errorf("Check %s's row does not record the second attempt: the row and the section are one registration, and a reader who stops at the table has to see that the check has been run twice and settled nothing either time", check340Number)
+	}
+}
+
 // TestDocsCheck340CensusReadsTheRegister: the design's own census of the
 // register is a reading of the register, and the two move together — the same
 // rule docs/coordinator/README.md's row is held to. This design's row said the

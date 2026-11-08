@@ -47,9 +47,76 @@ func TestParseAppliesDefaults(t *testing.T) {
 		t.Errorf("reports = %v", got)
 	}
 	to := w.Timeouts
-	if to.Total.Duration != 90*time.Minute || to.Stage.Duration != 40*time.Minute ||
+	if to.Total.Duration != 3*time.Hour || to.Stage.Duration != 60*time.Minute ||
 		to.Verify.Duration != 30*time.Minute || to.FinalizeReserve.Duration != 5*time.Minute {
 		t.Errorf("timeouts = %+v", to)
+	}
+}
+
+// TestDefaultTimeoutsSatisfyTheRelation: the set applyDefaults leaves must be
+// one Validate accepts, and the relations the runner reads out of it must
+// hold at it. A default that broke one would refuse every fugaro.yaml that
+// names no timeouts, so the relation is asserted here rather than left to the
+// values: a stage inside the run, the verify step inside the run, the render
+// inside the wrapper it is one step of and inside what the reserve leaves, and
+// a reserve shorter than the run.
+func TestDefaultTimeoutsSatisfyTheRelation(t *testing.T) {
+	cfg, problems := Parse([]byte(minimalYAML))
+	if len(problems) > 0 {
+		t.Fatalf("the defaults are refused: %v", problems)
+	}
+	to := cfg.Workflows["server"].Timeouts
+	for _, c := range []struct {
+		what string
+		ok   bool
+	}{
+		{"timeouts.stage is inside timeouts.total", to.Stage.Duration <= to.Total.Duration},
+		{"timeouts.verify is inside timeouts.total", to.Verify.Duration <= to.Total.Duration},
+		{"timeouts.render is inside timeouts.verify", to.Render.Duration <= to.Verify.Duration},
+		{"timeouts.render fits what the reserve leaves", to.Render.Duration <= to.Total.Duration-to.FinalizeReserve.Duration},
+		{"timeouts.finalize_reserve is shorter than timeouts.total", to.FinalizeReserve.Duration < to.Total.Duration},
+	} {
+		if !c.ok {
+			t.Errorf("at the defaults (%+v): %s does not hold", to, c.what)
+		}
+	}
+}
+
+// TestExampleTemplateTimeoutsAreTheDefaults: `fugaro config example` prints
+// example.yaml and the setup skill hands it to a user as the file to start
+// from, so the timeouts it writes have to be the ones a workflow that names
+// none gets. A template left on an older clock pins that clock in every
+// repository set up from it — how the 90-minute default outlived the release
+// that changed it — so the two are held together here.
+func TestExampleTemplateTimeoutsAreTheDefaults(t *testing.T) {
+	tmpl, problems := Parse(Example)
+	if len(problems) > 0 {
+		t.Fatalf("example.yaml does not parse: %v", problems)
+	}
+	if len(tmpl.Workflows) == 0 {
+		t.Fatal("example.yaml declares no workflow, so this scan reads nothing")
+	}
+	bare, problems := Parse([]byte(minimalYAML))
+	if len(problems) > 0 {
+		t.Fatalf("the minimal config does not parse: %v", problems)
+	}
+	want := bare.Workflows["server"].Timeouts
+	// Set is deliberately not compared: it records that the file wrote the
+	// key, which the template does and the config that names none does not.
+	values := func(t Timeouts) Timeouts {
+		only := func(d Duration) Duration { return Duration{Duration: d.Duration} }
+		return Timeouts{
+			Total:           only(t.Total),
+			Stage:           only(t.Stage),
+			Verify:          only(t.Verify),
+			Render:          only(t.Render),
+			FinalizeReserve: only(t.FinalizeReserve),
+		}
+	}
+	for name, w := range tmpl.Workflows {
+		if got := values(w.Timeouts); got != values(want) {
+			t.Errorf("example.yaml's %s workflow writes %+v, but a workflow that names no timeouts gets %+v: the template is what a repository set up from `fugaro config example` pins", name, got, values(want))
+		}
 	}
 }
 
@@ -918,8 +985,8 @@ func TestRenderTimeoutDefaultsUnderTotal(t *testing.T) {
 	if w.Commands.Render != "sh render.sh" || w.Commands.Probe != "sh probe.sh" {
 		t.Fatalf("commands = %+v", w.Commands)
 	}
-	// 90m total: verify is min(30m, 90m) = 30m, the reserve is 5m, so render
-	// is min(30m, 85m) = 30m.
+	// 3h total: verify is min(30m, 3h) = 30m, the reserve is 5m, so render
+	// is min(30m, 2h55m) = 30m.
 	if got := w.Timeouts.Render.Duration; got != 30*time.Minute {
 		t.Fatalf("render = %s, want 30m", got)
 	}

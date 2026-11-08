@@ -109,6 +109,10 @@ func isolateProjects(t *testing.T, dir string) string {
 	// The project-name check caches its answer here, never in the
 	// developer's own cache.
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
+	// And the state directory, where a step-printing command files its run's
+	// log: one of these per test, so a test can read back the one log its own
+	// run left (onlyLog) instead of TestMain's shared backstop directory.
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
 	t.Setenv("FUGARO_PROJECT", "")
 	t.Setenv("FUGARO_CONFIG", "")
 	projects := filepath.Join(xdg, "fugaro", "projects")

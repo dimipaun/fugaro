@@ -85,14 +85,13 @@ type Row struct {
 	Sensitive bool   // the value is never printed (spec §2.3)
 	Owner     string // the command family that writes it
 	Doc       string // the document that must state it
-	// TypedWhy is the sentence saying why turning this key ON is confirmed by
-	// the project's own name rather than y/N, and who may answer that form:
-	// `settings set|unset` take --yes for it outside a coding agent's session
-	// (D1107, amending D846 for those two alone), while `fugaro project repos
-	// rm` and `fugaro update`'s publish of a looser node are the doors where
-	// nothing stands in for it. The widening directions do not include every
+	// TypedWhy is the sentence saying why turning this key ON is the widening
+	// direction rather than the ordinary write: the write prints it and the dry
+	// run carries it as `why`. A widening is the owner's own step and is asked
+	// nothing for itself (D1552); what fences it is the coding agent's session,
+	// at every door that writes it. The widening directions do not include every
 	// key, so the row carries its own. Empty is a key whose write is the
-	// ordinary confirmation.
+	// ordinary one.
 	TypedWhy string
 }
 
@@ -174,6 +173,19 @@ var yamlMeta = map[string]Row{
 		Default: unset("agent.model"),
 		Doc:     "docs/multi-model.md",
 	},
+	// The four crafts (docs/model-crafts/spec.md §3), the spec's own table
+	// read back: the coder and the senior review are what a run cannot do
+	// without, and the review and the security review follow the craft above
+	// them when they set nothing of their own.
+	"agent.crafts.coder.model":            {Owner: "models", Default: unset("required: the coder implements, so a run needs its model"), Doc: docCrafts},
+	"agent.crafts.coder.access":           {Owner: "accounts", Default: unset("required: the coder's calls go out on a credential or a pool"), Doc: docCrafts},
+	"agent.crafts.review.model":           {Owner: "models", Default: unset("the coder's model"), Doc: docCrafts},
+	"agent.crafts.review.access":          {Owner: "accounts", Default: unset("the coder's access"), Doc: docCrafts},
+	"agent.crafts.senior-review.model":    {Owner: "models", Default: unset("required: the senior review is the second opinion a run needs"), Doc: docCrafts},
+	"agent.crafts.senior-review.access":   {Owner: "accounts", Default: unset("required: the senior review's calls go out on a credential or a pool"), Doc: docCrafts},
+	"agent.crafts.security-review.model":  {Owner: "models", Default: unset("the senior review's model"), Doc: docCrafts},
+	"agent.crafts.security-review.access": {Owner: "accounts", Default: unset("the senior review's access"), Doc: docCrafts},
+
 	"agent.review_rounds": {Default: unset("the run's rigor mode decides (rigor.DefaultRounds)")},
 	"agent.max_budget_usd": {
 		Default: value("25", "config.DefaultMaxBudgetUSD"),
@@ -240,8 +252,8 @@ var yamlMeta = map[string]Row{
 	"workflows.*.secrets":                   {Default: unset("none")},
 	"workflows.*.resources.cpu":             {Default: value("4", "config.DefaultCPU")},
 	"workflows.*.resources.memory":          {Default: value("8Gi", "config.DefaultMemory")},
-	"workflows.*.timeouts.total":            {Default: unset("90m")},
-	"workflows.*.timeouts.stage":            {Default: unset("40m, or the total when it is shorter")},
+	"workflows.*.timeouts.total":            {Default: unset("3h")},
+	"workflows.*.timeouts.stage":            {Default: unset("60m, or the total when it is shorter")},
 	"workflows.*.timeouts.verify":           {Default: unset("30m, or the total when it is shorter")},
 	"workflows.*.timeouts.render":           {Default: unset("what verify gets")},
 	"workflows.*.timeouts.finalize_reserve": {Default: unset("5m, or a fifth of the total when it is shorter")},
@@ -345,6 +357,7 @@ const (
 	docLayer  = "docs/project-layer.md"
 	docModels = "docs/multi-model.md"
 	docRigor  = "docs/rigor-modes/spec.md"
+	docCrafts = "docs/model-crafts/spec.md"
 	docImages = "docs/project-image-catalog/spec.md"
 	// docOrchestrator is the document that states the orchestrator daemon's
 	// guardrails. It is the work's plan rather than a spec because the guardrail
@@ -362,6 +375,16 @@ const (
 	// schedule on are stated there and nowhere else yet, and a spec of the
 	// installation's own would be the document that takes the rows over.
 	docPeriodicReviews = "docs/periodic-reviews/implementation-plan.md"
+	// docTroubleshoot is the document that states the issue nudge's
+	// thresholds (docs/troubleshoot-issue/). The spec states the behaviour
+	// (§6: the wording gets firmer as an issue ages or recurs more often, at
+	// thresholds config may set) and leaves the keys unnamed, so the row
+	// points at the plan for docOrchestrator's reason: the two keys are named
+	// there and nowhere else yet. The plan states no figure — it says the
+	// defaults are documented — so the values themselves are this table's
+	// DEFAULT column and the schema's keyDefaults, and a spec of the section's
+	// own would be the document that takes the rows over.
+	docTroubleshoot = "docs/troubleshoot-issue/implementation-plan.md"
 )
 
 // layerRow is a row of the project layer's file. The layer is its only store,
@@ -451,6 +474,19 @@ var layerRows = []Row{
 	layerRow("defaults.agent.models.coder", "defaults.agent.model", "models", docModels),
 	layerRow("defaults.agent.models.reviewer", "defaults.agent.model", "models", docModels),
 	layerRow("defaults.agent.models.background", "defaults.agent.model", "models", docModels),
+	// The crafts' models are the layer's to set, as the three models rows
+	// above are; their access is not, and the row says so rather than leaving
+	// the layer's reader to find out at publish time (config.Scopes refuses
+	// defaults.agent.crafts.<craft>.access for the reason agent.oauth_token is
+	// refused there: the layer is a launcher-writable bucket object).
+	layerRow("defaults.agent.crafts.coder.model", "defaults.agent.model", "models", docCrafts),
+	layerRow("defaults.agent.crafts.coder.access", "none: only the local config and the policy node name a credential", "accounts", docCrafts),
+	layerRow("defaults.agent.crafts.review.model", "the coder's model", "models", docCrafts),
+	layerRow("defaults.agent.crafts.review.access", "none: only the local config and the policy node name a credential", "accounts", docCrafts),
+	layerRow("defaults.agent.crafts.senior-review.model", "defaults.agent.model", "models", docCrafts),
+	layerRow("defaults.agent.crafts.senior-review.access", "none: only the local config and the policy node name a credential", "accounts", docCrafts),
+	layerRow("defaults.agent.crafts.security-review.model", "the senior review's model", "models", docCrafts),
+	layerRow("defaults.agent.crafts.security-review.access", "none: only the local config and the policy node name a credential", "accounts", docCrafts),
 	layerRow("defaults.agent.review_rounds", "the run's rigor mode decides (rigor.DefaultRounds)", "settings set", docLayer),
 	layerRow("defaults.agent.max_budget_usd", "25", "settings set", docLayer),
 	layerRow("defaults.agent.first_line_review", "auto", "settings set", docLayer),
@@ -666,8 +702,27 @@ var localRows = []Row{
 		Default:  unset("false: nothing chooses an account for the owner"),
 		Owner:    "settings set",
 		Doc:      docModels,
-		TypedWhy: "this lets Fugaro choose an account for the owner: a run then spreads one project across several accounts, which is the owner's own decision about the terms the subscriptions are held under, so the project's own name is what confirms it, or --yes outside a coding agent's session",
+		TypedWhy: "this lets Fugaro choose an account for the owner: a run then spreads one project across several accounts, which is the owner's own decision about the terms the subscriptions are held under",
 	},
+	// The installation's credentials, pools and crafts (docs/model-crafts/
+	// spec.md §1–3). They are local-only for claude_accounts' reason, and the
+	// one key here that names a credential rather than holding one is why: a
+	// launcher who could write one into the shared file could aim every
+	// teammate's runs at a credential the owner never admitted (F12, D1628).
+	locLocal("credentials.*.name", "required: the name a craft's access and a pool's members speak", "accounts", docCrafts),
+	locLocal("credentials.*.type", "required: the provider that serves it, one of "+strings.Join(config.SupportedCredentialTypes(), ", "), "accounts", docCrafts),
+	locLocal("pools.*.name", "required: the name a craft's access speaks", "accounts", docCrafts),
+	locLocal("pools.*.strategy", config.PoolStrategyFailover, "accounts", docCrafts),
+	locLocal("pools.*.members", "required: a pool with no members serves nothing", "accounts", docCrafts),
+	locLocal("crafts.coder.model", "required: the coder implements, so a run needs its model", "models", docCrafts),
+	locLocal("crafts.coder.access", "required: the coder's calls go out on a credential or a pool", "accounts", docCrafts),
+	locLocal("crafts.review.model", "the coder's model", "models", docCrafts),
+	locLocal("crafts.review.access", "the coder's access", "accounts", docCrafts),
+	locLocal("crafts.senior-review.model", "required: the senior review is the second opinion a run needs", "models", docCrafts),
+	locLocal("crafts.senior-review.access", "required: the senior review's calls go out on a credential or a pool", "accounts", docCrafts),
+	locLocal("crafts.security-review.model", "the senior review's model", "models", docCrafts),
+	locLocal("crafts.security-review.access", "the senior review's access", "accounts", docCrafts),
+
 	loc("project_secrets.*.allow_data_to", "nobody", "secrets", docSetup),
 	loc("project_secrets.*.proxy", "none", "secrets", docSetup),
 
@@ -760,6 +815,16 @@ var localRows = []Row{
 	loc("repos.*.workflows", "every workflow the repository defines", "project", docSetup),
 	loc("repos.*.github_app_id", "none", "project", docSetup),
 	loc("repos.*.vertex", "false", "project", docSetup),
+	// The credentials service's switch, as `fugaro update` recorded it:
+	// written from the bundle it read AND the agent.auth the plan was built
+	// for, on the entry of the repository whose root the run applies, and
+	// read back by the switch to decide whether this repository's runs may go
+	// through the service (localcfg.Repo.CredentialsServiceReady,
+	// docs/credentials-service/default-on.md §3 DON8). It is a
+	// machine-written value like repos.*.vertex beside it, and a row here for
+	// the same reason: every key a config file can hold is one a settings
+	// read has to be able to name.
+	loc("repos.*.credentials_service_ready", "false: no update has applied this repository's root with the service on — its bundle holds no model credential, or its agent.auth is not the cascade", "project", docSetup),
 
 	// The workspace keys (docs/workspaces/spec.md §2, §5, §6), all eleven of
 	// them local-only: the pin is the member's own trust and the member table
@@ -780,6 +845,17 @@ var localRows = []Row{
 	locLocal("workspace_members.*.fp", "none", "workspace", docWorkspace),
 	locLocal("workspace_members.*.exchange_url", "none", "workspace", docWorkspace),
 	locLocal("workspace_cap.monthly", "the workspace states no cap", "workspace", docWorkspace),
+
+	// The terminal Issues section's nudge thresholds (T-IS15). They are
+	// local-only rather than loc's two layers: the section is printed on the
+	// machine running the digest, the committed report carries no part of it,
+	// and no other machine acts on this one's thresholds — so the shared file
+	// never holds the block (Shared drops it) and a row advertising the shared
+	// layer would name a store the key cannot have. Their defaults are values
+	// the loader leaves in place, so they come from defaultValues below, as
+	// update_check's does, rather than from an "unset means" sentence.
+	{Key: "issues.nudge_after_days", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config", Doc: docTroubleshoot},
+	{Key: "issues.nudge_recurrence", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config", Doc: docTroubleshoot},
 }
 
 // defaultValues are the rows whose default is a value the loaders leave in
@@ -796,6 +872,12 @@ var defaultValues = map[string]Default{
 	// sets it nowhere (localcfg.Parse) and no constant holds it, so the value
 	// is written here and read back out of a parsed config like the two above.
 	"local.version": value("1", ""),
+	// The Issues section's nudge thresholds (T-IS15): the loader answers the
+	// constants for a file that sets neither, through the accessors rather
+	// than the fields, so "the file wrote nothing" and "the file wrote the
+	// default" are one reading here.
+	"issues.nudge_after_days": value("7", "localcfg.DefaultIssuesNudgeAfterDays"),
+	"issues.nudge_recurrence": value("3", "localcfg.DefaultIssuesNudgeRecurrence"),
 }
 
 // sensitiveKeys are the keys whose value is never printed (spec §2.3): the

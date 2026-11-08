@@ -2,14 +2,18 @@
 /**
  * website/src/components/Changelog.astro — the release entries (website plan, W1.9).
  *
- * One entry per release, newest first: the release's end-user summary, then the lines W0.6's
- * `src/lib/changelog.mjs` read out of `docs/releases/vX.Y.Z.md` at build time, in a block the
- * reader opens. The component writes no prose of its own: the tag comes from the filename,
- * the summary from `website/data/release-summaries.yaml`, the lines and the sections are the
- * file's own, and the only words it adds are the notes block's label and the "not yet
- * released" marker. Every heading inside an entry is a `###` heading the file itself carries
- * — `### For operators`, `### Known limits` — printed as the heading element it is, so a
- * section the format allows is a section the page renders.
+ * One entry per release, newest first — the three newest, which is what the page passes it
+ * (D1640) — and under them the page's own words: the link to the releases it does not render,
+ * and one line for each of the two streams beside the CLI (D1641, D1644, D1648). An entry is
+ * the release's end-user summary, then the lines W0.6's `src/lib/changelog.mjs` read out of
+ * `docs/releases/vX.Y.Z.md` at build time, in a block the reader opens. The component writes
+ * no prose of its own: the tag comes from the filename, the summary from
+ * `website/data/release-summaries.yaml`, the lines and the sections are the file's own, the
+ * app's line is that app's own summaries file's, and the only words it adds are the notes
+ * block's label and the three labels above. Every heading inside
+ * an entry is a `###` heading the file itself carries — `### For operators`, `### Known limits`
+ * — printed as the heading element it is, so a section the format allows is a section the page
+ * renders.
  *
  * Five decisions are worth stating rather than leaving in the code:
  *
@@ -33,12 +37,15 @@
  *      no link, no image and no other construct — the generator hands the lines over as
  *      written — so this is the whole of the inline rendering, and it is applied to text
  *      that is escaped first.
- *   5. **A release the plugin's version has not reached is not a release that happened.**
- *      `released` is false for a release file written ahead of its version bump in
- *      `plugin/.claude-plugin/plugin.json`. The entry says so rather than reading as
- *      shipped, and the flag is a file in this repository rather than a tag of the checkout
- *      the build runs in, which the deploy checkout does not carry (the owner's brief of
- *      2026-10-19).
+ *   5. **A release file written ahead of its release is not rendered at all, and carries no
+ *      state marker.** `docs/releases/README.md` asks for the next release's highlights to be
+ *      merged before the release runs, so the directory holds files for versions the CLI stream
+ *      has not reached: `src/lib/changelog.mjs` leaves those out — they are drafts, and the page
+ *      receives only releases. The entry used to print "not yet released" for one written ahead
+ *      of the plugin's version (the owner's brief of 2026-10-19); that marker went with the
+ *      filter, because a marker for a file above `current` needs an entry above it and the
+ *      filter keeps none (the plugin rule did render it: `v0.22.0` above the plugin's 0.21.0).
+ *      An entry here is a release that happened.
  *
  * The notes block is a `<details>`, so it opens and closes with no JavaScript: the site's
  * pages are readable and usable with the one script off (D183).
@@ -78,8 +85,6 @@ interface Entry {
   tag: string
   /** The tag without its `v`, which is the version the filename carries. */
   version: string
-  /** True unless the release file is ahead of the plugin's own version. */
-  released: boolean
   /** The file's lines before its first section heading, verbatim. */
   highlights: string[]
   /** Every section the file writes after them, in the file's own order. */
@@ -98,9 +103,40 @@ interface Props {
    * so the page builds the URL and never types it.
    */
   repository: string
+  /** The desktop console's latest release, or null while it has none (D1641). */
+  consoleRelease: StreamRelease | null
+  /** The phone app's latest release with its sentence, or null while it has none (D1644). */
+  mobileRelease: AppLine | null
 }
 
-const { entries, summaries, repository } = Astro.props
+/** One of the two streams beside the CLI: its latest release, and the tag that release carries. */
+interface StreamRelease {
+  /** The version, without its `v` — the line prints it as `v0.120.0`. */
+  version: string
+  /** The tag its own notes and its GitHub release carry: `console-v0.120.0`. */
+  tag: string
+}
+
+/**
+ * The phone app's line: its latest release, and the sentence the app's own summaries file
+ * carries for it (`website/data/mobile-release-summaries.yaml`). The sentence is the whole of
+ * what the line says, because the app publishes no GitHub release to link (D1644).
+ */
+interface AppLine extends StreamRelease {
+  summary: string
+}
+
+const { entries, summaries, repository, consoleRelease, mobileRelease } = Astro.props
+
+// The three words this component adds to the entries, and the whole of them (D1644, D1648):
+// the link to the releases the page does not render, and the label each stream's line carries.
+// The console's and the app's versions are not here — they are read at build time from those
+// streams' own notes and manifests — and neither is the app's sentence, which is its summaries
+// file's. `website/test/changelog-page.mjs` holds every other sentence on the page to a release
+// file or to one of those two data files.
+const MORE_LABEL = 'See all releases on GitHub'
+const CONSOLE_LABEL = 'Desktop console'
+const MOBILE_LABEL = 'Mobile app'
 
 /** One element of an entry's body, in the order the file writes it. */
 type Element = { kind: 'list'; items: string[] } | { kind: 'paragraph'; text: string } | { kind: 'heading'; text: string }
@@ -191,12 +227,6 @@ function summaryOf(entry: Entry): string {
         <a href={`${repository}/releases/tag/${entry.tag}`} rel="noopener">{entry.tag}</a>
       </h2>
 
-      {/* Not a release that happened: the file is on main, and the plugin's version has not
-          reached it yet (the owner's brief of 2026-10-19). It is a pill — the board's shape for
-          a badge of one or two words — and the warning tone, because it is the one line of the
-          card that says "not yet". */}
-      {!entry.released && <p class="release-status pill" data-status="not-yet-released">not yet released</p>}
-
       {/* The summary a reader reads first: the site's own data, and the one line of the entry
           that is not a line of the release file. The tag is carried as an attribute so the
           page's own gate can hold each summary to its entry in the data file. */}
@@ -227,6 +257,33 @@ function summaryOf(entry: Entry): string {
   ))}
 </div>
 
+{/* The rest of the history, one link away: the page renders the newest releases, and this is
+    where a reader finds every other one — with the date and the artifacts GitHub states for it
+    (D1640, D1648). It is the one sentence under the entries that is the page's own. */}
+<p class="changelog-more">
+  <a href={`${repository}/releases`}>{MORE_LABEL}</a>
+</p>
+
+{/* The two streams beside the CLI, one line each (D1641, D1644). The desktop console's latest
+    release is a GitHub release, so its line links it; the phone app publishes none, so its line
+    is the sentence the app's own summaries file carries for that release, in the paragraph under
+    it. Both lines are read at build time from those streams' own notes and manifests, which is
+    why no version is typed here and why the app's line is not rendered at all until the app has
+    a release (D1644). */}
+{consoleRelease && (
+  <p class="changelog-stream">
+    {CONSOLE_LABEL} <a href={`${repository}/releases/tag/${consoleRelease.tag}`} rel="noopener">v{consoleRelease.version}</a>
+  </p>
+)}
+{mobileRelease && (
+  <>
+    <p class="changelog-stream" data-mobile-release={mobileRelease.tag}>
+      {MOBILE_LABEL} v{mobileRelease.version}
+    </p>
+    <p class="changelog-stream-summary">{mobileRelease.summary}</p>
+  </>
+)}
+
 <style>
   /* The bold look's shapes, and the entry's own hierarchy (the owner's brief of 2026-10-21).
      The spacing, the type scale, the radii and the tones come from W1.2's tokens and from the
@@ -245,10 +302,10 @@ function summaryOf(entry: Entry): string {
     gap: var(--space-lg);
   }
 
-  /* The card's own column: the title, the status pill, the summary and the notes, one gap
-     apart, each at the card's own padding (`.card` in `base.css`). Every child's own margin is
-     dropped, because the gap is the whole of the room between them — a paragraph's default
-     bottom margin on top of the gap would be a second one. */
+  /* The card's own column: the title, the summary and the notes, one gap apart, each at the
+     card's own padding (`.card` in `base.css`). Every child's own margin is dropped, because
+     the gap is the whole of the room between them — a paragraph's default bottom margin on top
+     of the gap would be a second one. */
   .release {
     display: grid;
     gap: var(--space-sm);
@@ -256,13 +313,6 @@ function summaryOf(entry: Entry): string {
 
   .release > * {
     margin: 0;
-  }
-
-  /* The pill is inline-flex, and a grid item is stretched to the column's width: without this
-     the "not yet released" badge would run the width of the card instead of hugging its words. */
-  .release-status {
-    justify-self: start;
-    color: var(--warn);
   }
 
   /* The summary: the loudest prose in the card, one step up the type scale from the body, and
@@ -330,6 +380,21 @@ function summaryOf(entry: Entry): string {
      that cannot. */
   .release-notes :global(code) {
     background: var(--ground);
+  }
+
+  /* The page's own words under the entries: the link to the whole history, and a line per other
+     stream. They are one quiet block — a step of the spacing scale above the cards, and the
+     muted tone a note about the list rather than a release is read in — and each is a paragraph
+     of its own, so two stream lines are two things rather than one sentence. */
+  .changelog-more {
+    margin-block-start: var(--space-lg);
+    color: var(--text-muted);
+  }
+
+  .changelog-stream,
+  .changelog-stream-summary {
+    margin-block-start: var(--space-xs);
+    color: var(--text-muted);
   }
 
   /* Opening the notes reveals them in every browser (the owner's request of 2026-10-24): the

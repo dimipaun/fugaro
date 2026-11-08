@@ -245,15 +245,65 @@ type CredentialsService struct {
 	URL string `json:"url,omitempty"`
 }
 
+// CredentialsServiceServes is the switch: whether a repository's runs may go
+// through the installation's credentials service, and therefore whether that
+// repository's jobs stop mounting a model credential of their own
+// (dropModelMounts) and its launch is handed the service's address
+// (internal/cli's credentialsServiceLaunchEnv). All three conditions must
+// hold (docs/credentials-service/default-on.md §1.5):
+//
+//   - installed: the installation has the service's block. It is the
+//     precondition rather than a condition — without a service there is
+//     nothing to switch to — and each caller asks the source it has: the
+//     installation root's outputs where a repository root's spec is built,
+//     the local config's own record of them where a launch decides.
+//   - ready: the bundle holds at least one MODEL credential, which is the
+//     condition that makes the switch safe: the mount it removes is exactly
+//     the credential the service must then hand back, and a `cascade` run
+//     has no credential of its own to fall back to (D143). It is read from
+//     localcfg.Repo.CredentialsServiceReady, the per-repository record
+//     `fugaro update` writes from the bundle AND the auth its plan was built
+//     with — a record of an apply, so it carries the auth that apply was made
+//     for, and an owner who applies a root before committing the cascade
+//     reads false here until a run of its own applies it again — because this
+//     package reads no cloud. The record is read through
+//     localcfg.Repo.CredentialsServiceOn: an entry with no record at all and
+//     one whose record says false are the same answer to the switch, and they
+//     differ only where the config is published (internal/localcfg's
+//     MergeShared, which must not let a machine that holds no record erase
+//     one another machine wrote).
+//   - auth: the repository's agent.auth is one the service serves, which is
+//     config.AuthCascade alone. It is READ LIVE from the repository's
+//     fugaro.yaml at every build of its spec and never stored: a stored copy
+//     could outlive an edit to the file, and an `oauth` repository whose
+//     mounts were dropped would have no App key to open its git provider
+//     with while the service refuses to serve it.
+//
+// It is one function on purpose. The plan a repository root writes and the
+// address a launcher puts on its job's execution have to come from the same
+// answer: a second implementation would be a second answer, and the state
+// where the two disagree is a job whose credential was dropped and whose
+// launch was told about no service to get it from.
+func CredentialsServiceServes(installed, ready bool, auth string) bool {
+	return installed && ready && auth == config.AuthCascade
+}
+
 // repoCredentialsService is the installation's credentials service as a
 // REPOSITORY root reads it: the name and the region the workflow module turns
-// into each job account's roles/run.invoker grant. The URL is left behind
-// because the module's variable carries no such attribute — an object
+// into each job account's roles/run.invoker grant, or nil when the switch is
+// held off for this repository (CredentialsServiceServes). The URL is left
+// behind because the module's variable carries no such attribute — an object
 // conversion in Terraform silently DROPS an extra attribute rather than
 // refusing it, so passing it would read as a value the repository root agreed
 // on while nothing used it.
-func repoCredentialsService(s *CredentialsService) *CredentialsService {
-	if s == nil {
+//
+// nil is the whole of the switch's first flip, and it needs no Terraform
+// change: modules/workflow/sa.tf gates the mount drop on the variable being
+// null, so a held-off repository plans exactly what every repository planned
+// before the service existed — its job accounts keep the accessors and the
+// mounts, and none of them is granted roles/run.invoker.
+func repoCredentialsService(s *CredentialsService, on bool) *CredentialsService {
+	if s == nil || !on {
 		return nil
 	}
 	return &CredentialsService{Name: s.Name, Region: s.Region}
@@ -465,6 +515,20 @@ type RepoSpec struct {
 	// tfvars as repo.project_secrets.
 	ProjectSecrets map[string]string `json:"project_secrets,omitempty"`
 
+	// AccountProfiles names, for each named Claude account this repository's
+	// jobs mount, the profile whose claude_accounts already lists it
+	// (config.ClaudeAccountProfile: the first in name order, and no entry when
+	// no profile serves the account). SecretCommands prints `fugaro accounts
+	// add <name>` for such a token, and that command has to say which profile
+	// gains the name: it refuses to pick one in a project with several
+	// (accountsAddProfile), and with exactly one it would add the account to
+	// that profile and deploy a job — a change storing the token never made.
+	// Naming the profile that already serves the account leaves that half of
+	// the command a no-op. A fact of the project's local config, carried here
+	// because the step's command is the one thing that needs it. json:"-":
+	// this map never reaches tfvars.
+	AccountProfiles map[string]string `json:"-"`
+
 	// GCPProject is the GCP project ID. It is not in the tfvars under this
 	// name: the root's own variable is "project".
 	GCPProject   string           `json:"-"`
@@ -498,6 +562,11 @@ type repoCtx struct {
 	// for the repository by resolveBitbucketProxied: RepoSpec.BitbucketProxied
 	// is this, and nothing else reads it.
 	bitbucketProxied bool
+	// credentialsServiceOn is the per-repository fact of the credentials
+	// service's switch, decided once for the repository by resolve: the
+	// repository's job mounts no model credential and its root hands the
+	// workflow module the service to grant an invoker on, or neither.
+	credentialsServiceOn bool
 }
 
 var appIDRE = regexp.MustCompile(`^[0-9]{1,20}$`)
@@ -583,6 +652,7 @@ func resolve(in Inputs) (*repoCtx, error) {
 	if err := c.resolveBitbucketProxied(); err != nil {
 		return nil, err
 	}
+	c.credentialsServiceOn = CredentialsServiceServes(c.inst.CredentialsService != nil, local.CredentialsServiceOn(), in.Cfg.Agent.Auth)
 	return c, nil
 }
 
@@ -1242,13 +1312,20 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 		ws.SecretEnv[m.Env] = m.Logical
 		ws.SecretIDs[m.Logical] = gcp.SecretID(slug, m.Logical)
 	}
-	// An installation that has opted in to the credentials service holds
-	// every model credential itself (D146, D147), so its jobs mount none of
-	// them: modules/workflow/sa.tf drops each job account's accessor, and a
-	// mount left behind would fail the job's own deploy. The containers stay
+	// A repository the credentials service serves holds its model
+	// credentials itself (D146, D147), so its jobs mount none of them:
+	// modules/workflow/sa.tf drops each job account's accessor, and a mount
+	// left behind would fail the job's own deploy. The containers stay
 	// declared — see dropModelMounts — so nothing here plans a secret's
 	// destruction.
-	if c.inst.CredentialsService != nil {
+	//
+	// c.credentialsServiceOn and not the block's presence: the installation
+	// having a service says nothing about THIS repository. A repository
+	// whose agent.auth the service does not serve, or one whose bundle
+	// cannot hand its credential back, would be left with no model
+	// credential at all — which is the whole of what this gate is for
+	// (CredentialsServiceServes).
+	if c.credentialsServiceOn {
 		dropModelMounts(&ws)
 	}
 	ws.BuildSecrets = []string{c.gitSecret}
@@ -1385,7 +1462,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 			RoleIDs:                    RepoRoleIDs{JobRunner: c.inst.RoleIDs.JobRunner, BuildSubmitter: c.inst.RoleIDs.BuildSubmitter, TagMover: c.inst.RoleIDs.TagMover},
 			Launchers:                  c.inst.Launchers,
 			Operators:                  c.inst.Operators,
-			CredentialsService:         repoCredentialsService(c.inst.CredentialsService),
+			CredentialsService:         repoCredentialsService(c.inst.CredentialsService, c.credentialsServiceOn),
 			CatalogCheckServiceAccount: c.inst.CatalogCheckServiceAccount,
 		},
 		BitbucketProxied: c.bitbucketProxied,
@@ -1441,6 +1518,17 @@ func Repo(in Inputs) (RepoSpec, error) {
 	}
 	slices.Sort(rs.BuildSecrets)
 	rs.BuildSecrets = slices.Compact(rs.BuildSecrets)
+	// The profile that already serves every named account the workflows above
+	// resolved a token for: SecretCommands' `accounts add` step names it
+	// (RepoSpec.AccountProfiles).
+	rs.AccountProfiles = map[string]string{}
+	for logical := range rs.Secrets {
+		if name, ok := strings.CutPrefix(logical, config.ClaudeOAuthTokenPrefix); ok {
+			if profile := config.ClaudeAccountProfile(lc.Profiles, name); profile != "" {
+				rs.AccountProfiles[name] = profile
+			}
+		}
+	}
 	if len(checked) > 0 {
 		if rs.Check, err = c.check(rs, checked); err != nil {
 			return RepoSpec{}, err

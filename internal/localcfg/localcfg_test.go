@@ -58,6 +58,13 @@ func TestParseRejects(t *testing.T) {
 		"bad parallel":  {sample + "max_parallel: -1\n", "max_parallel"},
 		"bad provider":  {sample + "  acme/api: { provider: githbu, workflows: [web] }\n", "must be one of github, bitbucket"},
 		"fake provider": {sample + "  acme/api: { provider: fake, workflows: [web] }\n", "must be one of github, bitbucket"},
+		// A craft's model is a model ID in this file as it is in fugaro.yaml,
+		// and this is the file the installation's crafts are written in.
+		"bad craft model":     {sample + "crafts:\n  coder: {model: \"claude opus\"}\n", "crafts.coder.model"},
+		"long craft model":    {sample + "crafts:\n  coder: {model: \"" + strings.Repeat("m", 101) + "\"}\n", "crafts.coder.model"},
+		"bad craft access":    {sample + "crafts:\n  coder: {access: \"Not A Name\"}\n", "crafts.coder.access"},
+		"bad credential type": {sample + "credentials:\n  - {name: acme-main, type: openai}\n", "not yet"},
+		"pool of nobody":      {sample + "pools:\n  - {name: acme-pool, members: [acme-nowhere]}\n", "no credential of this name"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Parse([]byte(tc.yaml)); err == nil || !strings.Contains(err.Error(), tc.msg) {
@@ -2252,5 +2259,58 @@ func TestWorkspaceKeysAreLocalOnly(t *testing.T) {
 	}
 	if _, err := Parse(out); err != nil {
 		t.Errorf("the published file does not read back: %v", err)
+	}
+}
+
+// TestIssuesNudgeKeysDecodeStrictly: the issues block is where the Issues
+// section's nudge thresholds are set (T-IS15 of docs/troubleshoot-issue/, F14),
+// and it decodes the way every block here does. A key the file leaves out is
+// the default's, a key the block does not have is refused rather than ignored,
+// and a figure the section cannot use is refused where it is written — a
+// threshold below one day or one occurrence is not a firmer line, it is the
+// same line for everyone.
+func TestIssuesNudgeKeysDecodeStrictly(t *testing.T) {
+	zero := &Config{}
+	if zero.NudgeAfterDays() != DefaultIssuesNudgeAfterDays || zero.NudgeRecurrence() != DefaultIssuesNudgeRecurrence {
+		t.Fatalf("a config that writes no issues block answers %d and %d, want the defaults %d and %d",
+			zero.NudgeAfterDays(), zero.NudgeRecurrence(), DefaultIssuesNudgeAfterDays, DefaultIssuesNudgeRecurrence)
+	}
+	c, err := Parse([]byte(sample + "issues:\n  nudge_after_days: 14\n  nudge_recurrence: 5\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.NudgeAfterDays() != 14 || c.NudgeRecurrence() != 5 {
+		t.Errorf("thresholds = %d and %d, want 14 and 5", c.NudgeAfterDays(), c.NudgeRecurrence())
+	}
+	// One key written, the other left to its default: the block is two
+	// settings, not one value.
+	if c, err = Parse([]byte(sample + "issues: { nudge_after_days: 30 }\n")); err != nil {
+		t.Fatal(err)
+	}
+	if c.NudgeAfterDays() != 30 || c.NudgeRecurrence() != DefaultIssuesNudgeRecurrence {
+		t.Errorf("with only nudge_after_days written: %d and %d, want 30 and the default %d",
+			c.NudgeAfterDays(), c.NudgeRecurrence(), DefaultIssuesNudgeRecurrence)
+	}
+	// One is the boundary validate accepts: a day's wait and a single
+	// occurrence are figures the section can use, where zero and below are not.
+	if c, err = Parse([]byte(sample + "issues: { nudge_after_days: 1, nudge_recurrence: 1 }\n")); err != nil {
+		t.Fatalf("thresholds of one: %v", err)
+	}
+	if c.NudgeAfterDays() != 1 || c.NudgeRecurrence() != 1 {
+		t.Errorf("thresholds = %d and %d, want 1 and 1", c.NudgeAfterDays(), c.NudgeRecurrence())
+	}
+	for name, y := range map[string]string{
+		"unknown block field": "issues: { firm_after: 3 }\n",
+		"misnamed key":        "issues: { nudge_after_day: 3 }\n",
+		"zero days":           "issues: { nudge_after_days: 0 }\n",
+		"negative days":       "issues: { nudge_after_days: -1 }\n",
+		"zero recurrence":     "issues: { nudge_recurrence: 0 }\n",
+		"negative recurrence": "issues: { nudge_recurrence: -2 }\n",
+		"days as a string":    "issues: { nudge_after_days: soon }\n",
+		"nested under a list": "issues: [nudge_after_days]\n",
+	} {
+		if _, err := Parse([]byte(sample + y)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
 	}
 }

@@ -132,7 +132,7 @@ workflows:
     secrets:                  # logical names; values stored with fugaro secrets set
       - { name: npm-token, env: NPM_TOKEN }
     resources: { cpu: 4, memory: 8Gi }
-    timeouts: { total: 90m, stage: 40m, verify: 30m, finalize_reserve: 5m }
+    timeouts: { total: 3h, stage: 60m, verify: 30m, finalize_reserve: 5m }
 ```
 
 `agent.models` pins a model per role (coder, reviewer, background), and an optional `budget:` block can only tighten the owner's caps ([design/m9-budget-and-dashboard.md](docs/design/m9-budget-and-dashboard.md)). **Other models (experimental):** the coder can be a non-Anthropic model through OpenRouter, while Claude Code stays the harness and, by default, Claude the reviewer; the project owner opts each repository in. Setup: [Other models through OpenRouter](#other-models-through-openrouter); the full guide is [docs/multi-model.md](docs/multi-model.md).

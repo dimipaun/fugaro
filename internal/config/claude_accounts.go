@@ -69,25 +69,25 @@ const MaxClaudeAccountNameLen = 31
 // tier-B entry — the review-only variant mounts nothing at all (O1), which is
 // why the value rides the account axis rather than a profile's secrets.
 //
-// A profile that names it is publishable today and DEPLOYABLE by no
-// installation yet: every reader of the account axis on the way to a job —
-// internal/infra's ProjectJobs (ProjectJobAccounts and projectAccountMount),
-// this file's
-// ProjectJobTokenAccount, modules/project's job.account validation — reads a
-// profile's claude_accounts as the Claude OAuth tokens its jobs mount, and the
-// project's own key is no token of any job's. The two of those that are claims
-// about a credential answer for it here and in the deployer (ProjectJobTokenAccount
-// returns no token, and ProjectJobs refuses a profile that names it in words the
-// operator can act on — for EVERY profile, ahead of the skip that leaves a
-// Bitbucket profile undeployed, because a refusal reached only by the jobs a
-// profile deploys would let a Bitbucket profile pass an installation
-// unrefused); the two that ARE the route — the module's job.account validation
-// and the task spec's oauth_token — belong to the task that builds it. An
-// installation that publishes a profile naming the sentinel is therefore
-// refused by fugaro update before terraform is planned, whichever provider its
-// profiles run on, which is fail-closed and deliberate: the route that deploys
-// its review variant is the api-key review plan's next task (AK5), and no
-// message here may send an operator at a route that does not exist.
+// A profile that names it is deployable, and that is the one place the value is
+// not a token: internal/infra's ProjectJobs deploys the job whose account
+// segment is the sentinel — mounted with nothing at all (projectAccountMount) —
+// and its review-only variant beside it, which mounts nothing either (O1). An
+// installation that publishes the sentinel and lists no Claude account at all
+// therefore has a review job, which is the shape D1422 exists for. The readers
+// of the account axis on the way to that job each answer for the one value of
+// the axis that is no credential: this file's ProjectJobTokenAccount returns no
+// token (which is a claim about a credential — there is none — and not a
+// refusal), modules/project's job.account validation admits the literal, and a
+// task's oauth_token admits it too (internal/task and schemas/task.schema.json),
+// because a review launch names it as the run's own credential: the class's
+// pairing is `spec.oauth_token == the sentinel` over the variant whose account
+// segment is the sentinel's (internal/runner's checkReviewClassModelPath, D1417
+// and D1422). The value is admitted at those two reference sites and nowhere
+// else: it is still no claude_accounts KEY (ValidateClaudeAccounts) and still no
+// account a choice key may name (AnthropicKeyAccountChoiceMessage), because a
+// stage's account is a token the job's environment carries and this credential
+// is fetched per call from the platform's own store.
 //
 // The account-CHOICE keys stand beside those readers and are the same claim
 // from the other side — a profile entry says which account a repository's runs
@@ -252,6 +252,26 @@ func ClaudeAccountBySecret(accounts map[string]ClaudeAccount, secret string) (na
 	return "", false
 }
 
+// ClaudeAccountProfile is the profile whose claude_accounts already lists
+// account: the first in name order when several do, and "" when none does.
+//
+// The profile is what `fugaro accounts add` serves an account through
+// (accountsAddProfile): it adds the name to one profile's list, or — in a
+// project with several profiles — refuses, because picking one would be that
+// command choosing which jobs may serve a credential. So a message that hands
+// an owner `accounts add` for an account the project already serves has to name
+// the profile, and naming one whose list already holds the account leaves that
+// half of the command a no-op: the account is declared, the token is stored,
+// and no profile and no job of the job set changes.
+func ClaudeAccountProfile(profiles map[string]JobProfile, account string) string {
+	for _, name := range profileNames(profiles) {
+		if slices.Contains(profiles[name].ClaudeAccounts, account) {
+			return name
+		}
+	}
+	return ""
+}
+
 // AllowedClaudeAccounts are the names repo may choose among: "default"
 // always, plus every configured name whose allow_data_to lists repo,
 // sorted. This is the one place that decides the question in design §6a;
@@ -279,14 +299,16 @@ const reservedAccountNameMessage = "this name is reserved: the platform holds an
 // reference half accepts the value (ValidClaudeAccountRef), so only a
 // claude_accounts KEY is refused. It never echoes the name, and it names both
 // the reason and the fix — the operator writing it as a key meant to configure
-// an account whose token does not exist.
+// an account whose token does not exist, and no job mounts the key (the job a
+// profile that names the sentinel deploys, and its review variant, mount
+// nothing).
 //
-// The fix it names is a different name, not a profile entry: a profile that
-// names the sentinel is published today and refused by fugaro update (this
-// constant's comment in AnthropicKeyAccount), so a sentence sending the
-// operator there would hand them a route that ends in a refusal. The clause
-// changes when that variant is deployed (AK5).
-const anthropicKeyAccountNameMessage = `this is the account axis's value for the project's own Anthropic API key, not a Claude account: its credential is the project's own, held by the platform, so there is no token to store under this name, and no job serves a profile that names it yet — pick a different account name`
+// The fix it names is a different name, not a profile entry: a profile entry
+// under this value is a reference the installation deploys, but an *entry in
+// this block* would be an account no bundle could ever hold — the credential
+// under the name is the platform's own — so a sentence sending the operator
+// there would describe a second way to ask for something this rule refuses.
+const anthropicKeyAccountNameMessage = `this is the account axis's value for the project's own Anthropic API key, not a Claude account: its credential is the project's own, held by the platform, so there is no token to store under this name — pick a different account name`
 
 // AnthropicKeyAccountChoiceMessage is the one sentence every account-CHOICE key
 // answers AnthropicKeyAccount with. A profile's claude_accounts entry names the
@@ -295,10 +317,13 @@ const anthropicKeyAccountNameMessage = `this is the account axis's value for the
 // choose — the local config's default_claude_account and
 // stages.<s>.claude_account, the project layer's default_claude_account and
 // claude_account_stages — and the project's own key is no such account: no job
-// mounts it, in this release, as a Claude token (the deployer refuses the
-// profile that lists it, ProjectJobTokenAccount answers no token for it). So
-// the value is refused there, and the move the sentence names is the one that
-// works today, dropping the key.
+// mounts it, as a Claude token, for a stage to read (ProjectJobTokenAccount
+// answers no token for it, and the job a profile that names the sentinel
+// deploys, plus its review variant, mount nothing at all). A stage's account is
+// a token the job's environment already carries; this credential reaches a run
+// by the class's own pairing instead (D1417), which is why the value is refused
+// here even now that the sentinel deploys. So the move the sentence names is the
+// one that works, dropping the key.
 //
 // It never names a claude_accounts entry, and that is the point of its own
 // case: the lookup that answers a name this file does not define would tell the
@@ -509,7 +534,9 @@ func MountsAnthropicKey(secret string) bool {
 // defines it — a file that demanded a claude_accounts entry for it would
 // refuse the one shape the sentinel exists for. Stating it is what this
 // function allows; whether an installation can then deploy the profile is not
-// this file's question and is not true yet (AnthropicKeyAccount's comment).
+// this file's question, and it can — the value rides the account axis to a job
+// like every other one (AnthropicKeyAccount's comment names the job and its
+// review variant).
 //
 // What it does NOT check is the key's reach, and that is deliberate: the key
 // is stored project-wide (D2's sweep) rather than for a list of repositories,

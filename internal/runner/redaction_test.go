@@ -2,13 +2,17 @@ package runner_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // objectsContaining lists the bucket objects under the run's prefix whose
@@ -28,6 +32,59 @@ func objectsContaining(t *testing.T, h *harness, needle string) []string {
 		}
 	}
 	return out
+}
+
+// TestStageFailureClassCopiesNoText: the runner reads the agent's own message
+// to class a stage's failure, and that message is untrusted input, so the only
+// thing that may cross from it into the record is the name of one value of the
+// runner's own closed vocabulary. The record's failure_class is asserted to be
+// that value, and the record printed with its reason blanked -- the reason
+// being the one field that quotes the message, redacted and clipped -- is
+// asserted to carry no byte of what the agent wrote. Two spellings of the
+// message are looked for, the whole text and the phrase the class was read
+// from, and both are long enough that a match cannot be a coincidence.
+//
+// Mutation (return the message's first line, or the matched phrase, as the
+// class): the record's class is the message, and the printed record carries it.
+// Mutation (drop the fold, matching and storing the raw text): the same, with
+// the message's own bytes in the field.
+func TestStageFailureClassCopiesNoText(t *testing.T) {
+	const nonce = "NONCE-STAGECLASS-7c41d2"
+	text := `API Error: 403 {"type":"error","error":{"type":"permission_error","message":"fugaro: the provider answered with status 403"}} ` + nonce
+	rec, err := newHarness(t, "", nil).run(t, implement("feature"), failingReview("success", text))
+	if err != nil || rec.Status != runstore.StatusFailed {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	// The class reached the record, read off that message: without this the
+	// rest of the test would hold about a run that classified nothing.
+	if rec.FailureClass != failure.ProviderAuthRefused {
+		t.Fatalf("the record's class is %q, want %q: the class is read off the agent's own message and written with the reason", rec.FailureClass, failure.ProviderAuthRefused)
+	}
+	// And it is a word of this build's own: whatever a message says, the value
+	// written is one of the vocabulary's, which is what makes it a value and
+	// not a copy of the text under a field's name.
+	if !slices.Contains(failure.Classes(), rec.FailureClass) {
+		t.Errorf("the record's class %q is not one of the vocabulary's values: a class outside the closed set is the message's own text under a field's name", rec.FailureClass)
+	}
+	// Everything the message reached, printed: the reason is the field that
+	// quotes it, so it is blanked and the rest of the record is read for the
+	// message. Nothing else may carry a byte of it.
+	without := *rec
+	without.Reason = ""
+	data, err := json.Marshal(without)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, part := range []string{nonce, text, "the provider answered with status 403", `"type":"authentication_error"`} {
+		if strings.Contains(string(data), part) {
+			t.Errorf("the record carries %q outside its reason: %s", part, data)
+		}
+	}
+	// The assertion above is only as good as the message being there: the
+	// reason, which is allowed to quote it, does.
+	if !strings.Contains(rec.Reason, nonce) {
+		t.Errorf("the reason does not carry the agent's own words, so nothing here saw the message: %q", rec.Reason)
+	}
 }
 
 // TestVerifyRecordsInResultAreRedacted: failed test names come
