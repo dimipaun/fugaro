@@ -306,9 +306,19 @@ func raiseOwnerOnly(cmd *cobra.Command, what, command string) error {
 // back would send the owner to another repository's caps than the one this run
 // was about. repo is that owner/name (namedRepo's answer), empty for a command
 // whose scope is not a repository.
-func ownerRaiseCommand(cmd *cobra.Command, repo string) string {
+//
+// --project is always printed, from this run's own project and not from the
+// flag: the typed project name a raise used to ask for was what caught an
+// owner reading the refusal in another project's checkout or with another
+// FUGARO_PROJECT set, and a command that answered the defaults instead would
+// raise another project's caps or clear its kill switch, unprompted (D1542).
+// The name is a project's, so it is quoted like any other value.
+func ownerRaiseCommand(cmd *cobra.Command, repo, project string) string {
 	words := append([]string{selfCommand()}, strings.Fields(cmd.CommandPath())[1:]...)
 	cmd.Flags().Visit(func(f *pflag.Flag) {
+		if f.Name == "project" {
+			return // printed once below, from this run's own project
+		}
 		if f.Value.Type() == "bool" && f.Value.String() == "true" {
 			words = append(words, "--"+f.Name)
 			return
@@ -319,6 +329,9 @@ func ownerRaiseCommand(cmd *cobra.Command, repo string) string {
 		}
 		words = append(words, "--"+f.Name+"="+quoteWord(f.Value.String()))
 	})
+	if project != "" {
+		words = append(words, "--project="+quoteWord(project))
+	}
 	return strings.Join(words, " ")
 }
 
@@ -1393,7 +1406,7 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 			return nil
 		}
 		if raise {
-			if err := raiseOwnerOnly(cmd, "raising a cap", ownerRaiseCommand(cmd, p.repo)); err != nil {
+			if err := raiseOwnerOnly(cmd, "raising a cap", ownerRaiseCommand(cmd, p.repo, lc.Name)); err != nil {
 				return err
 			}
 			ok, err := askConfirm(cmd, "raise a cap, so runs may spend more than before?")
@@ -1534,7 +1547,7 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 			// A resume lets runs start spending again, which D1542 fences
 			// exactly as it fences a raise — and a kill, which halts them,
 			// asks nothing and is fenced by nothing.
-			return raiseOwnerOnly(cmd, "resuming "+what, ownerRaiseCommand(cmd, repo))
+			return raiseOwnerOnly(cmd, "resuming "+what, ownerRaiseCommand(cmd, repo, lc.Name))
 		},
 		Conflict: func() { fmt.Fprintln(out, "changed by someone else meanwhile; reading it again") },
 		Now:      budgetNow,

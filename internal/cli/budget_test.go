@@ -412,16 +412,18 @@ func TestBudgetRaiseRefusesInAnAgentSession(t *testing.T) {
 		args    []string
 		command string
 	}{
-		{[]string{"budget", "set", "--global", "--daily", "150"}, "fugaro budget set --daily=150 --global"},
-		{[]string{"budget", "set", "--global", "--daily", "150", "--yes"}, "fugaro budget set --daily=150 --global --yes"},
-		{[]string{"budget", "set", "--global", "--per-run", "30"}, "fugaro budget set --global --per-run=30"},
-		{[]string{"budget", "set", "--global", "--per-run", "30", "--yes"}, "fugaro budget set --global --per-run=30 --yes"},
-		{[]string{"budget", "set", "--defaults", "--daily", "500"}, "fugaro budget set --daily=500 --defaults"},
-		{[]string{"budget", "set", "--defaults", "--daily", "500", "--yes"}, "fugaro budget set --daily=500 --defaults --yes"},
-		// The command handed back names the repository this run resolved, never
-		// the empty value a bare --repo carries or a path: either one would send
-		// the owner to another checkout's caps than the one this run was about.
-		{[]string{"budget", "set", "--repo", "--daily", "150"}, "fugaro budget set --daily=150 --repo=acme/app"},
+		{[]string{"budget", "set", "--global", "--daily", "150"}, "fugaro budget set --daily=150 --global --project=aurora"},
+		{[]string{"budget", "set", "--global", "--daily", "150", "--yes"}, "fugaro budget set --daily=150 --global --yes --project=aurora"},
+		{[]string{"budget", "set", "--global", "--per-run", "30"}, "fugaro budget set --global --per-run=30 --project=aurora"},
+		{[]string{"budget", "set", "--global", "--per-run", "30", "--yes"}, "fugaro budget set --global --per-run=30 --yes --project=aurora"},
+		{[]string{"budget", "set", "--defaults", "--daily", "500"}, "fugaro budget set --daily=500 --defaults --project=aurora"},
+		{[]string{"budget", "set", "--defaults", "--daily", "500", "--yes"}, "fugaro budget set --daily=500 --defaults --yes --project=aurora"},
+		// Every command handed back names the project this run acted on and, for
+		// the repository scope, the repository it resolved: a project the owner's
+		// own defaults answer, an empty --repo or a path would each land on
+		// another project's or checkout's caps than the one this run was about,
+		// and the typed project name that used to catch that is gone.
+		{[]string{"budget", "set", "--repo", "--daily", "150"}, "fugaro budget set --daily=150 --repo=acme/app --project=aurora"},
 	} {
 		_, _, err := execute(t, c.args...)
 		if err == nil || ExitCode(err) != ExitUserError {
@@ -691,12 +693,14 @@ func TestBudgetResumeRefusesInAnAgentSession(t *testing.T) {
 		args    []string
 		command string
 	}{
-		{[]string{"budget", "resume", "--all"}, "fugaro budget resume --all"},
-		{[]string{"budget", "resume", "--all", "--yes"}, "fugaro budget resume --all --yes"},
+		{[]string{"budget", "resume", "--all"}, "fugaro budget resume --all --project=aurora"},
+		{[]string{"budget", "resume", "--all", "--yes"}, "fugaro budget resume --all --yes --project=aurora"},
 		// acme/app is killed above, so this resume is a real one, and the
-		// command handed back names the repository this run resolved: the bare
-		// --repo it was typed with would point at the owner's own checkout.
-		{[]string{"budget", "resume", "--repo"}, "fugaro budget resume --repo=acme/app"},
+		// command handed back names the project and the repository this run
+		// resolved: the bare --repo it was typed with would point at the owner's
+		// own checkout, and with no --project the defaults would pick the
+		// project, either one clearing another switch than this run's.
+		{[]string{"budget", "resume", "--repo"}, "fugaro budget resume --repo=acme/app --project=aurora"},
 	} {
 		_, _, err := execute(t, c.args...)
 		if err == nil || ExitCode(err) != ExitUserError {
