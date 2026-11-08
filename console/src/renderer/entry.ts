@@ -5186,8 +5186,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     /** budgetDoc is the last `budget show` document this visit read, and budgetOut
      * says a read of it is in flight. Both are `repaintBody`'s: the model is drawn
      * around the document, and a repaint while the budget's own read is out would
-     * take that read's mark down. */
+     * take that read's mark down. `budgetAt` is the console clock that document
+     * was read at, which the cache stamp is drawn from and which a repaint may
+     * not move forward. */
     let budgetDoc: Readonly<Record<string, unknown>> | null = null
+    let budgetAt = 0
     let budgetOut = false
     /** cachedAt is the console clock the body's budget figures were read at, or
      * null when they came out of a read made now. It is held rather than passed,
@@ -5290,13 +5293,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     const paint = (budget: Readonly<Record<string, unknown>>, at: number, cached: boolean): void => {
       const model = modelNow(budget)
       bodyModel = model
+      budgetDoc = budget
+      budgetAt = at
       cachedAt = cached ? at : null
       const drawn = mount(false)
       clearSection(drawn.body, drawn.slot)
       fillProjects(factory, model, drawn.body)
       // The cache is rolled forward with what the repaint drew, so a visit that
       // comes back to this tab draws the fuller view rather than the one the
-      // budget's own read built.
+      // budget's own read built. A cached view is never written back: its stamp
+      // would then say the figures are newer than they are.
       if (!cached) projectsViews.put(key, budget, at)
       if (cachedAt !== null) {
         const stamp = renderStamp(factory, cachedAt)
@@ -5323,8 +5329,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // is passed back unchanged: a repaint is not a fresh reading of the caps,
       // and moving the stamp forward would say the figures are newer than they
       // are.
-      if (cachedAt !== null) paint(budgetDoc, cachedAt, true)
-      else paint(budgetDoc, Date.now(), false)
+      paint(budgetDoc, budgetAt, cachedAt !== null)
     }
 
     /**
