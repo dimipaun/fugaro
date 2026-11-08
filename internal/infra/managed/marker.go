@@ -504,19 +504,20 @@ func WriteManagedLabel(ctx context.Context, c *crm.Service, created, project str
 // gate that replaces it belongs to the command, not to this package, and it
 // is a stronger one than a string comparison: managed_flag.go refuses a
 // coding agent's session and any Fugaro run's process before this is reached
-// (agentMarker and managedFlagRunMarkers), and the confirmation is the
-// project's exact GCP project ID typed at the owner's own terminal
-// (confirmTypedGCPProject) — D58's answer, and the reason the label is
-// written only ever by an owner-run command (design finding 14: a label is a
-// write to the privilege boundary the feature rests on).
+// (agentMarker and managedFlagRunMarkers), and the consent is the project's
+// exact GCP project ID named as that command's argument — the owner's own
+// declaration, with nothing typed at a prompt (D1541, which replaced D58's
+// typed confirmation) — and it is the reason the label is written only ever
+// by an owner-run command (design finding 14: a label is a write to the
+// privilege boundary the feature rests on).
 //
 // Everything else is writeManagedLabel's, shared and unchanged: the same
 // value, the same refusals, the same labels kept, and the same fail-closed
 // direction when it cannot write (the object is the authority and the label
 // narrows; an unlabelled project reads as not managed). Nothing but
-// managed_flag.go may call this — the flag's typed confirmation is a
-// parameter of the command, not of this function, so a caller that skips the
-// command skips the gate.
+// managed_flag.go may call this — the flag's consent (the PROJECT_ID argument)
+// is a parameter of the command, not of this function, so a caller that skips
+// the command skips the gate.
 //
 // The error is one bounded field (safetext.FieldErr), exactly as
 // WriteManagedLabel's is: the project name is the operator's own argument and

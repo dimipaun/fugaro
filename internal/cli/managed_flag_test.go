@@ -826,15 +826,15 @@ func TestManagedFlagRefusesAProjectThatAlreadyRecordsAnAmount(t *testing.T) {
 	}
 }
 
-// TestManagedFlagOffersNoWayAroundTheTypedID: the confirmation is the whole
-// boundary D58's answer has, so nothing stands in for it — no --yes, no
-// --non-interactive, and no flag naming more than one project. This is the
-// assertion a later change that added one would break.
-func TestManagedFlagOffersNoWayAroundTheTypedID(t *testing.T) {
+// TestManagedFlagOffersNoWayAroundTheArgument: the PROJECT_ID argument is the
+// whole boundary D1541 gives this command, so nothing stands in for it — no
+// --yes, no --non-interactive, and no flag naming more than one project. This
+// is the assertion a later change that added one would break.
+func TestManagedFlagOffersNoWayAroundTheArgument(t *testing.T) {
 	cmd := newManagedFlagCmd()
 	for _, name := range []string{"yes", "non-interactive", "all", "projects", "force", "allow-delete"} {
 		if cmd.Flags().Lookup(name) != nil || cmd.PersistentFlags().Lookup(name) != nil {
-			t.Errorf("fugaro managed flag defines --%s: the typed GCP project ID is the only confirmation it takes", name)
+			t.Errorf("fugaro managed flag defines --%s: the exact GCP project ID as the argument is the only consent it takes", name)
 		}
 	}
 	// What it does define: the cloud flags, and the required budget pair.

@@ -721,11 +721,11 @@ var pendingSites = map[string]string{
 	"managed_apply.go:managedAsk":      "T9",
 	"pair.go:pairReadCode":             "T7",
 	// T6 removed every read of this command family it could remove. This one
-	// stays because its callers do not: confirmRemoval is T6's file's function,
-	// and upgrade.go (T5), init_layer_stage.go and init_policy_migrate.go (T7)
-	// and update_workspace.go (T15) still call it, so the entry outlives T6 and
-	// belongs to the task that removes the last caller. Deleting it here would
-	// not compile.
+	// stays because its callers do not: confirmRemoval is defined in a file T6
+	// owns, but upgrade.go (T5), init_layer_stage.go and init_policy_migrate.go
+	// (T7) and update_workspace.go (T15) still call it, so the entry outlives T6
+	// and belongs to the task that removes the last caller. Deleting it here
+	// would not compile.
 	"project_cmd.go:confirmRemoval":          "T6's file, whose callers T5, T7 and T15 remove",
 	"settings_write.go:confirmSettingsWrite": "T5",
 }

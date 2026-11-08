@@ -136,9 +136,6 @@ func NewRootCmd() *cobra.Command {
 	return root
 }
 
-// newCoreRoot builds the released tree. It is separate from NewRootCmd so that
-// the extensions above are the only difference between the tree the core
-// builds and the tree a build with paid commands ships.
 // managedMutatingCommands are the commands that may not change a project that
 // is not managed, keyed by cobra's own command path (consoleReadPaths' shape in
 // project.go), each with the opening clause its refusal prints: what it
@@ -172,6 +169,9 @@ func annotateManagedMutating(root *cobra.Command) {
 	}
 }
 
+// newCoreRoot builds the released tree. It is separate from NewRootCmd so that
+// the extensions above are the only difference between the tree the core
+// builds and the tree a build with paid commands ships.
 func newCoreRoot() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "fugaro",
