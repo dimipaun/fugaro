@@ -4,6 +4,7 @@
 package mcpauth
 
 import (
+	"bytes"
 	"fmt"
 	"slices"
 	"strings"
@@ -105,6 +106,59 @@ func TestLogsComeFromTheRunsOwnArtefacts(t *testing.T) {
 	}
 	if strings.Contains(logLines(logs), "a line of s1\n") {
 		t.Errorf("stream_logs read a transcript the cap leaves out: %s", logLines(logs))
+	}
+
+	// A transcript this call cannot read is left out and recorded rather than
+	// failing the question: a stage's stream over runstore.MaxTranscriptBytes
+	// (32 MiB) is a size the run's own agent chose, and what the caller asked
+	// for is the progress the other stages recorded.
+	f.seedRun(testSlug, testBigTranscriptRunID, &runstore.Record{
+		Status: runstore.StatusRunning,
+		Stages: []runstore.StageTiming{{Name: "plan", StartedAt: testNow}, {Name: "implement", StartedAt: testNow}},
+	}, map[string][]byte{
+		"transcripts/plan-1.jsonl":      transcriptLine("a line of the stage that fits"),
+		"transcripts/implement-1.jsonl": append(bytes.Repeat([]byte("x"), runstore.MaxTranscriptBytes+1), '\n'),
+	})
+
+	logs = runLogs{}
+	f.answer("stream_logs", `{"run_id":"`+testBigTranscriptRunID+`"}`, &logs)
+	if !strings.Contains(logLines(logs), "a line of the stage that fits") {
+		t.Errorf("stream_logs answered %+v for a run with one transcript over the store's read cap; want the stage it could read", logs)
+	}
+	if !logs.Truncated || logs.OmittedTranscripts != 1 {
+		t.Errorf("stream_logs answered truncated=%v omitted_transcripts=%d with one transcript over runstore.MaxTranscriptBytes; want the one it could not read recorded", logs.Truncated, logs.OmittedTranscripts)
+	}
+}
+
+// TestLogsRecordTheLinesTheyDrop: the answer is a tail of the run's recorded
+// lines, and it says it is a tail whenever a line was dropped. The drop
+// happens as the lines arrive so that the answer's cost is not the run's
+// output's, which leaves the count at the end unable to see it: a run whose
+// non-empty lines are an exact multiple of maxLogLines ends with the buffer
+// holding exactly maxLogLines, so only the drop itself says a line was lost.
+func TestLogsRecordTheLinesTheyDrop(t *testing.T) {
+	f := newRunsFixture(t)
+	var transcript strings.Builder
+	for i := 1; i <= 2*maxLogLines; i++ {
+		transcript.Write(transcriptLine(fmt.Sprintf("line %04d", i)))
+	}
+	f.seedRun(testSlug, testExactRunID, &runstore.Record{
+		Status: runstore.StatusRunning,
+		Stages: []runstore.StageTiming{{Name: "plan", StartedAt: testNow}},
+	}, map[string][]byte{"transcripts/plan-1.jsonl": []byte(transcript.String())})
+
+	var logs runLogs
+	f.answer("stream_logs", `{"run_id":"`+testExactRunID+`"}`, &logs)
+	got := logLines(logs)
+	if n := strings.Count(got, "\n"); n != maxLogLines || !strings.Contains(got, "line 0201") ||
+		!strings.Contains(got, "line 0400") || strings.Contains(got, "line 0200") {
+		t.Errorf("stream_logs answered %d line(s) that are not the last %d of the %d the run recorded: %q", n, maxLogLines, 2*maxLogLines, got)
+	}
+	if !logs.Truncated {
+		t.Errorf("stream_logs answered the run's last %d lines of %d without recording the cut: a caller cannot tell this answer from one that dropped nothing", maxLogLines, 2*maxLogLines)
+	}
+	if logs.OmittedTranscripts != 0 {
+		t.Errorf("stream_logs answered omitted_transcripts=%d with every transcript read: that field counts whole transcripts, not lines", logs.OmittedTranscripts)
 	}
 }
 

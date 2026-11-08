@@ -41,14 +41,22 @@ const (
 	// project's — minted later, so a list that leaked it would name it first
 	// rather than last. testSiblingRunID is the sibling repository's, minted
 	// after testRunID for the same reason. testDeadRunID is a second run of
-	// the project's own, for the case whose record names no stage, and
-	// testCappedRunID is the one that wrote more transcripts than one call
-	// reads.
+	// the project's own, for the case whose record names no stage.
 	testRunID        = "20300101-120000-a1b2"
 	testSiblingRunID = "20300101-140000-7e8f"
 	testOtherRunID   = "20300102-120000-c3d4"
 	testDeadRunID    = "20300101-130000-e5f6"
-	testCappedRunID  = "20300101-150000-9c0d"
+
+	// The rest are one run per bound a read has: testCappedRunID wrote more
+	// transcripts than one call reads, testExactRunID more lines than one call
+	// answers (an exact multiple of the line cap, which is the count a check
+	// made after the read cannot see), testBigTranscriptRunID one transcript
+	// over runstore.MaxTranscriptBytes, and testBigPatchRunID a diff over
+	// runstore.MaxRecordBytes.
+	testCappedRunID        = "20300101-150000-9c0d"
+	testExactRunID         = "20300101-160000-1f2e"
+	testBigTranscriptRunID = "20300101-170000-3d4c"
+	testBigPatchRunID      = "20300101-180000-5b6a"
 
 	// testRunsBucket is the runs bucket of this installation, derived the way
 	// production derives it: fugaro-runs-<gcp-project>.
@@ -267,5 +275,33 @@ func TestResultNeverQuotesAToken(t *testing.T) {
 	}
 	if slices.Contains(res.ChangedFiles, testSeededToken) {
 		t.Errorf("the answer carries the session's own text as a changed path: %v", res.ChangedFiles)
+	}
+
+	// A diff in the band between the store's record cap and the runner's own
+	// patch cap is still answered: reading it through Store.ReadFile refuses
+	// anything over runstore.MaxRecordBytes, and a refusal there is the whole
+	// answer — the status, the pull request and the changed files with it.
+	var big strings.Builder
+	for big.Len() <= runstore.MaxRecordBytes {
+		big.WriteString("+a line of the run's own diff\n")
+	}
+	f.seedRun(testSlug, testBigPatchRunID, &runstore.Record{
+		Status:       runstore.StatusSucceeded,
+		Outcome:      runstore.OutcomeReady,
+		PR:           &runstore.PRRef{Number: 8, URL: "https://github.com/acme/aurora/pull/8"},
+		PatchObject:  runstore.PatchName,
+		ChangedFiles: &runstore.ChangedFiles{Paths: []string{"x.go"}, Total: 1},
+	}, map[string][]byte{runstore.PatchName: []byte(big.String())})
+
+	res = runResult{}
+	f.answer("get_result", `{"run_id":"`+testBigPatchRunID+`"}`, &res)
+	if res.PR == nil || res.PR.Number != 8 || res.Status != string(runstore.StatusSucceeded) {
+		t.Errorf("get_result answered %+v for a run whose diff is over the store's record cap; want its record", res)
+	}
+	if len(res.Patch) != maxPatchBytes || !res.PatchTruncated {
+		t.Errorf("get_result answered a %d-byte diff (truncated=%v); want the head cut at %d and marked as cut", len(res.Patch), res.PatchTruncated, maxPatchBytes)
+	}
+	if !strings.Contains(res.Patch, "the run's own diff") {
+		t.Errorf("get_result answered a diff that is not the run's own: %q", res.Patch[:min(len(res.Patch), 200)])
 	}
 }

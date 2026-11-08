@@ -87,12 +87,14 @@ type runLogs struct {
 	Repo   string     `json:"repo"`
 	Stages []logStage `json:"stages"`
 	// Truncated is set when the answer is a tail: the run recorded more lines
-	// than maxLogLines, or wrote more transcripts than maxLogTranscripts, and
-	// what is left out is the older material.
+	// than maxLogLines, wrote more transcripts than maxLogTranscripts, or wrote
+	// one this call could not read. What is left out is the older material, and
+	// OmittedTranscripts says how much of it is whole transcripts.
 	Truncated bool `json:"truncated,omitempty"`
-	// OmittedTranscripts is how many of the run's own transcripts the answer
-	// read nothing out of, the oldest ones, so that a caller can tell which of
-	// the two cuts it is reading. It is non-zero only where Truncated is set.
+	// OmittedTranscripts is how many of the run's own transcripts this answer
+	// read nothing out of — the oldest ones the cap left out, and any the call
+	// could not read — so that a caller can tell a cut of the lines from a cut
+	// of the transcripts. It is non-zero only where Truncated is set.
 	OmittedTranscripts int `json:"omitted_transcripts,omitempty"`
 }
 
@@ -120,9 +122,19 @@ func (p *ProjectRuns) streamLogs(ctx context.Context, call Call) (any, error) {
 		names = names[len(names)-maxLogTranscripts:]
 	}
 	var lines []recorded // the last maxLogLines recorded lines, in order
+	dropped := false     // whether any line was left out, by either cut below
 	for _, name := range names {
 		data, err := st.ReadFile(ctx, transcriptsPrefix+name.name+".jsonl")
-		if errors.Is(err, runstore.ErrNotFound) {
+		// A transcript this call cannot read is left out and recorded, like one
+		// the cap leaves out: an agent writes its own stage's stream, so one
+		// over runstore.MaxTranscriptBytes (32 MiB) is a size the run chose,
+		// and refusing the whole answer for it would lose the progress the
+		// other stages recorded — the case this tool is reached for. A
+		// diagnosis reads the same failure the same way and answers no result
+		// for that stage (internal/cli/diagnose.go:719).
+		if errors.Is(err, runstore.ErrNotFound) || errors.Is(err, runstore.ErrTooLarge) {
+			logs.OmittedTranscripts++
+			logs.Truncated = true
 			continue
 		}
 		if err != nil {
@@ -137,14 +149,20 @@ func (p *ProjectRuns) streamLogs(ctx context.Context, call Call) (any, error) {
 			// maxLogLines are dropped as they arrive rather than held to the
 			// end: a transcript is a stage's whole stream, and holding two of
 			// them to read the last few hundred lines of it would make the
-			// answer's cost a function of the run's own output.
+			// answer's cost a function of the run's own output. The drop is
+			// what `dropped` is: the count below cannot see it, because the
+			// trim leaves the buffer holding exactly maxLogLines.
 			if len(lines) == 2*maxLogLines {
 				lines = append(lines[:0], lines[maxLogLines:]...)
+				dropped = true
 			}
 		}
 	}
 	if len(lines) > maxLogLines {
-		lines, logs.Truncated = lines[len(lines)-maxLogLines:], true
+		lines, dropped = lines[len(lines)-maxLogLines:], true
+	}
+	if dropped {
+		logs.Truncated = true
 	}
 	for _, line := range lines {
 		if n := len(logs.Stages); n > 0 && logs.Stages[n-1].Stage == line.stage {

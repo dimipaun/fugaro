@@ -9,12 +9,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
 
 	"gocloud.dev/blob"
+	"gocloud.dev/gcerrors"
 
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -333,11 +335,10 @@ type runResult struct {
 	PatchTruncated    bool            `json:"patch_truncated,omitempty"`
 }
 
-// maxPatchBytes bounds the diff one answer carries. A run's own patch object
-// is read under the runs bucket's record cap (runstore.MaxRecordBytes), and an
-// answer is a summary a client reads rather than a download: past this the
-// head of the diff is served and the cut is recorded, as the record records
-// the same fact for the object (Record.PatchTruncated).
+// maxPatchBytes bounds the diff one answer carries. An answer is a summary a
+// client reads rather than a download: past this the head of the diff is
+// served and the cut is recorded, as the record records the same fact for the
+// object (Record.PatchTruncated).
 const maxPatchBytes = 256 << 10
 
 // getResult is the get_result tool: the outcome of one of the project's own
@@ -391,17 +392,32 @@ func (p *ProjectRuns) getResult(ctx context.Context, call Call) (any, error) {
 // writing the field still has one, and get_result is a tool a caller reaches
 // for exactly then. An object that is not there is a run that uploaded no
 // diff, which is not an error.
+//
+// The bytes come from the bucket rather than from Store.ReadFile, whose cap
+// for anything but a transcript is runstore.MaxRecordBytes (1 MiB), while the
+// runner stores a patch up to twice that (internal/runner's MaxPatchBytes, the
+// reason internal/runner's own test reads a patch through the bucket too): a
+// diff in that band would otherwise refuse the whole answer for being read,
+// losing the run's status, its pull request and its changed files with it —
+// which is the one thing this tool must not do. The read is ranged to the cut
+// it serves, so a large diff's bytes never come into memory either.
 func (p *ProjectRuns) patch(ctx context.Context, st *runstore.Store) (string, bool, error) {
-	data, err := st.ReadFile(ctx, runstore.PatchName)
-	if errors.Is(err, runstore.ErrNotFound) {
+	key := st.Prefix() + runstore.PatchName
+	r, err := p.bucket.NewRangeReader(ctx, key, 0, maxPatchBytes+1, nil)
+	if gcerrors.Code(err) == gcerrors.NotFound {
 		return "", false, nil
 	}
 	if err != nil {
 		return "", false, fmt.Errorf("reading the run's own diff: %w", err)
 	}
-	truncated := false
-	if len(data) > maxPatchBytes {
-		data, truncated = data[:maxPatchBytes], true
+	defer r.Close()
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return "", false, fmt.Errorf("reading the run's own diff: %w", err)
+	}
+	truncated := len(data) > maxPatchBytes
+	if truncated {
+		data = data[:maxPatchBytes]
 	}
 	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
 	for i, line := range lines {
