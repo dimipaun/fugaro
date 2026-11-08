@@ -112,6 +112,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		repo.RepoRigorSet = setsRigor(tree)
 		repo.RepoGovernanceSet = setsGovernance(tree)
 		repo.RepoGitAuthorSet = setsGitAuthor(tree)
+		repo.RepoSecuritySet = setsSecurity(tree)
 		repo.RepoLevelsNoneModelSet = setsLevelsNoneModel(tree)
 		res := &Resolution{Sources: map[string]string{}}
 		markLeaves(tree, "", SourceRepo, res.Sources)
@@ -159,6 +160,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	c.RepoRigorSet = setsRigor(tree)
 	c.RepoGovernanceSet = setsGovernance(tree)
 	c.RepoGitAuthorSet = setsGitAuthor(tree)
+	c.RepoSecuritySet = setsSecurity(tree)
 	c.RepoLevelsNoneModelSet = setsLevelsNoneModel(tree)
 	applyDefaults(&c)
 	if ps := Validate(&c); len(ps) > 0 {
@@ -456,6 +458,24 @@ func setsGitAuthor(tree map[string]any) bool {
 		return false
 	}
 	_, ok = git["author"]
+	return ok
+}
+
+// setsSecurity is setsRigor for the security: block: whether the repository's
+// text writes the key, at any value. It reads the tree and not the resolved
+// block for the same reason — a runner older than securitySince decodes the
+// file with KnownFields, so the key alone is what it refuses, and an explicit
+// null, which decodes to no block at all, is refused exactly like a full one.
+// Its answer becomes Config.RepoSecuritySet.
+//
+// It is the repository's half alone. The project layer's security: block
+// (D1501) is the other half and arrives with the task that lets a layer write
+// the key at all (SC8 of docs/security-classification/implementation-plan.md:
+// layerTopKeys does not carry it yet, so a layer that writes it is refused as
+// an unknown key); the image-skew gates in internal/cli judge this half today
+// and have to gain the layer's when it lands, the way rigorSince's have both.
+func setsSecurity(tree map[string]any) bool {
+	_, ok := tree["security"]
 	return ok
 }
 
