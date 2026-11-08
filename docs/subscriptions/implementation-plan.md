@@ -110,7 +110,8 @@ The owner's answers and rulings that shape it (non-price; figures are private, D
 | --- | --- |
 | No price, currency amount, discount offer, fee rate or Enterprise minimum in the repository | S0.1 |
 | A key verifier makes no network call | S2.3 (`TestLicencePackageImportsNoNetwork`), S7.3 (privacy rule 5 over `ee/`) |
-| A leaked signing key cannot mint keys old releases accept for ever | S2.1, S2.3 (`TestKeyBeyondTheTierLifetimeIsRefused`) |
+| No key is given a term longer than its tier's maximum — the tier's term plus the 30-day issue lead a renewal key needs | S2.1, S2.3 (`TestKeyBeyondTheTierLifetimeIsRefused`) |
+| A leaked signing key's horizon is an accepted limit, not one the tier's maximum bounds: `issued` is the minter's to choose, so a future-dated `issued` passes the length check | S2.1 |
 | The base and history images build `fugaro` with the `ee` tag; the credentials image does not; no key is mounted until enforcement (R1 as amended by D524) | E1.4 (ee-reorg) |
 | The core never imports `ee/`; paid code reaches the binary only through `ee/register` | S1.2, S1.3 (existing boundary tests) |
 | An untagged build still launches; the launch declares to the coordinator only when `ee/` registered a declarer | S1.2, S1.4 (`TestUntaggedBuildStillLaunches`) |

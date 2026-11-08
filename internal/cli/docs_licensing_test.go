@@ -508,7 +508,8 @@ var licenceKeyDesignGroups = []struct {
 			"maximum lifetime",
 			"not the same as bounding a leaked signing key",
 			"`issued` is the minter's to choose",
-			"one year for every tier today",
+			"a tier's maximum is its term plus the 30-day issue lead",
+			"one year and 30 days for every tier today",
 			"without a change to the key format",
 			"never in the verifier alone",
 			"no revocation",
@@ -615,5 +616,33 @@ func TestDocsLicenceKeyNoteIsInTheLicensingReadme(t *testing.T) {
 		if !strings.Contains(table, want) {
 			t.Errorf("%s's file table carries no %q: the table is the folder's map, and the S2.1 note is a document a verifier author has to be able to find -- and to see is a design rather than a built feature -- from the folder's front page", readme, want)
 		}
+	}
+}
+
+// TestDocsSubscriptionsPlanBoundsWhatTheTierMaximumBounds: the subscriptions
+// plan's constraint table is what an S2.3 or S3.2 reviewer reads as the
+// mitigation the verifier owes, and the S2.1 row of it is pinned by this note.
+// The row used to say a leaked signing key cannot mint keys old releases accept
+// for ever, which the ruled check does not deliver -- the length check is over
+// `expires - issued`, and `issued` is the minter's to choose -- so the two
+// sentences the note holds for it are held here too: the constraint the check
+// does satisfy, and the horizon as an accepted limit.
+//
+// The withdrawn claim is asserted absent rather than left unpinned: the plan is
+// where a verifier author looks for what to implement, and a sentence that reads
+// as a security property the design does not have is worse than no sentence.
+func TestDocsSubscriptionsPlanBoundsWhatTheTierMaximumBounds(t *testing.T) {
+	const plan = "docs/subscriptions/implementation-plan.md"
+	flat := strings.ToLower(flattenDoc(docSection(t, plan, readDoc(t, plan), "## Global constraints and review focus")))
+	for _, want := range []string{
+		"no key is given a term longer than its tier's maximum",
+		"a leaked signing key's horizon is an accepted limit",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("%s's constraint table never says %q: its S2.1 row is the note's own claim, and a constraint row that asks the verifier for more than the ruled check does is how TestKeyBeyondTheTierLifetimeIsRefused gets written against a property it cannot hold", plan, want)
+		}
+	}
+	if strings.Contains(flat, "cannot mint keys old releases accept for ever") {
+		t.Errorf("%s's constraint table still says a leaked signing key cannot mint keys old releases accept for ever: the length check bounds `expires - issued`, and `issued` is the minter's to choose, so the note it pins says the opposite", plan)
 	}
 }

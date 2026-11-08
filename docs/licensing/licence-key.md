@@ -114,8 +114,12 @@ code.
 - **A maximum lifetime per tier.** The verifier refuses a key whose `expires - issued` is longer
   than its tier allows, which is the ruled condition: no key is given a term longer than its tier's,
   and a tier's term is stated here so a tier can be granted a longer one without a change to the key
-  format. **The maxima are this note's number and not the Terms'**: one year for every tier today,
-  taken from the longest term the ruled issuance already gives a key — section 10.2(b)'s open-source
+  format. **A tier's maximum is its term plus the 30-day issue lead**, because the renewal above
+  makes that the longest key the design mints: an annual renewal is minted 30 days before the key it
+  follows expires, and its `issued` is the day it is minted while its `expires` is the end of the
+  term it covers — a ceiling of the bare term would refuse the very renewal the overlap exists for.
+  **The maxima are this note's number and not the Terms'**: one year and 30 days for every tier
+  today, from the longest term the ruled issuance already gives a key — section 10.2(b)'s open-source
   key is "valid for one year", and the Team and Enterprise annual terms run for a year (B4; a monthly
   Team term is shorter and sits under the same ceiling) — with section 10.3's three-month commercial
   evaluation key (D440) well under it. S2.3's
