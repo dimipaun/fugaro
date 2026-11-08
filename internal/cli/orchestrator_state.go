@@ -188,7 +188,7 @@ func printCachedOrchestratorBrief(cmd *cobra.Command, o *orchestratorStateOption
 	// The stamp is the server's, so a machine whose own clock is behind the
 	// database's sees it in the future; that is said rather than turned into a
 	// refusal, because how stale the brief is is what a reader is here for.
-	age := "0s ago"
+	var age string
 	if d := time.Since(c.WrittenAt); d > 0 {
 		age = d.Truncate(time.Second).String() + " ago"
 	} else {
