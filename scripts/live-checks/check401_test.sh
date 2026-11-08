@@ -684,6 +684,24 @@ test_the_address_assertions_catch_a_leaking_script() {
     "mutation: an address-printing script was NOT caught, so the assertion the suite uses is vacuous"
 }
 
+# The scratch directory is made before the exit trap is installed (main), so a
+# TMPDIR inside a git work tree has to be refused BEFORE anything is made: a
+# directory created and then refused is one no trap ever removes, in a check
+# whose own header says its cleanup always runs.
+test_a_tmpdir_inside_a_work_tree_is_refused_and_leaves_nothing() {
+  setup_case worktree
+  git init -q "$dir/tmp" >/dev/null 2>&1 || fail "worktree: git init"
+  run401 --installation "$PROJECT" --config "$dir/config.yaml"
+  expect_status "$status" 2 "worktree: the refusal"
+  expect_contains "$errtext" "inside a git work tree" "worktree: the refusal says why"
+  local left
+  left=$(find "$dir/tmp" -mindepth 1 -maxdepth 1 -name 'chk401.*' 2>/dev/null)
+  if [ -n "$left" ]; then
+    fail "worktree: the refused run left its scratch directory behind: $left"
+  fi
+  assert_no_address "$dir" "worktree"
+}
+
 # Sharding, so the Go test in scripts/ can run this file's tests side by side:
 # CHECK_TEST_SHARD="i/n" runs every n-th test starting at i, and
 # CHECK_TEST_ONLY=name runs that one test alone. Neither set: all run.
@@ -717,6 +735,7 @@ t test_a_config_version_this_check_does_not_know_stops
 t test_a_config_without_a_database_stops
 t test_dry_run_runs_nothing
 t test_xtrace_is_refused
+t test_a_tmpdir_inside_a_work_tree_is_refused_and_leaves_nothing
 t test_usage
 t test_the_address_assertions_catch_a_leaking_script
 

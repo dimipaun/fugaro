@@ -225,14 +225,18 @@ SCRATCH_REMOVED=no
 FACTS_CAPTURED=""
 
 scratch_up() {
+  # The work-tree guard runs BEFORE the directory is made: the trap that
+  # removes the scratch directory is installed after this function returns
+  # (main), so a directory created and then refused here would be left behind
+  # for good. Where mktemp would put it is where the guard looks.
+  if (cd "${TMPDIR:-/tmp}" && git rev-parse --show-toplevel >/dev/null 2>&1); then
+    die "Check 401 stopped: ${TMPDIR:-/tmp} is inside a git work tree, so what it writes could be committed by accident — set TMPDIR outside every repository and run again"
+  fi
   SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/chk401.XXXXXXXX") || die "Check 401 cannot make a scratch directory"
   chmod 700 "$SCRATCH"
   : >"$SCRATCH/$SCRATCH_MARKER"
   FACTS_FILE="$SCRATCH/facts"
   : >"$FACTS_FILE"
-  if (cd "$SCRATCH" && git rev-parse --show-toplevel >/dev/null 2>&1); then
-    die "Check 401 stopped: $SCRATCH is inside a git work tree, so what it writes could be committed by accident — set TMPDIR outside every repository and run again"
-  fi
   say "scratch directory: $SCRATCH (mode 0700, removed at the end)"
 }
 
