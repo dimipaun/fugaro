@@ -395,13 +395,19 @@ func catalogPathMessage(f string) string {
 }
 
 // catalogContextMessage names what is wrong with a dockerfile source's context,
-// "" when nothing is. It is catalogPathMessage's rules minus the one that
-// refuses the repository root: a path names one file, so the root is not a
-// Dockerfile and is refused, while a context names the directory a build runs
-// on, and the repository root is a legitimate one — the value the issue's own
-// example spells (D1392). The .. segment rule names the context, because that
-// is the key the operator wrote it on; the other two read the same whichever
-// key carries the value.
+// "" when nothing is. It is catalogPathMessage's rules, held for a directory
+// rather than for one file: the rules the two share read the same whichever key
+// carries the value, except the .. segment one, which names the context because
+// that is the key the operator wrote it on. The two that read differently are
+// exactly what a directory is allowed and a file is not. A file has no
+// repository root and no trailing slash, so the path refuses both; a context
+// names the directory a build runs on, so the root is a legitimate one — the
+// value the issue's own example spells (D1392) — and a directory is written
+// with its own trailing slash, which is how the key's own example spells `ci/`
+// (D1391). Everything else is the path's rule, cleanliness included: the
+// trimmed value is one clean relative path, so a `//` or a `.` segment is
+// refused. The empty value is an entry with no context, the entry this
+// amendment leaves exactly as it was, and no rule here reads it.
 func catalogContextMessage(f string) string {
 	switch {
 	case strings.ContainsFunc(f, badKeyRune):
@@ -412,6 +418,8 @@ func catalogContextMessage(f string) string {
 		return "must be a relative path inside the repository"
 	case slices.Contains(strings.Split(f, "/"), ".."):
 		return "must not hold a .. segment: the context is read inside the repository it names"
+	case f != "" && path.Clean(f) != strings.TrimSuffix(f, "/"):
+		return "must be a clean path: no // and no . segment"
 	}
 	return ""
 }

@@ -398,10 +398,12 @@ func catalogContextYAML(context string) string {
 
 // TestCatalogContextIsADirectoryPath pins the context grammar (D1391, D1392):
 // the key names a directory of the source's own repository, so it is held to
-// the path's rules minus the one that refuses the repository root — path names
-// a file and the root is not one, context names a directory and the root is a
-// legitimate one. The two keys therefore disagree about exactly that value, and
-// both sides of the disagreement are pinned here.
+// the path's rules, with the two exceptions a directory is what makes — the
+// repository root is a legitimate context and a file has no root to name, and a
+// directory is written with its own trailing slash and a file is not. The keys
+// therefore disagree about those two values and about nothing else, and both
+// sides of both disagreements are pinned here: the shared rules below are the
+// path's own, cleanliness included.
 func TestCatalogContextIsADirectoryPath(t *testing.T) {
 	// The issue's own example value, and a directory of the repository spelled
 	// the way a directory is written.
@@ -410,22 +412,31 @@ func TestCatalogContextIsADirectoryPath(t *testing.T) {
 			t.Errorf("context %q: unexpected problems: %v", context, ps)
 		}
 	}
-	// The sibling key still refuses the root, which is the whole of what the
-	// two keys disagree about: a context that reused its message would refuse
-	// the issue's own example value.
-	if msg := catalogPathMessage("."); msg == "" {
-		t.Fatal("catalogPathMessage accepts the repository root, so the two keys no longer disagree about it")
+	// The sibling key still refuses the two values a directory is allowed: a
+	// context that reused its message would refuse the issue's own example
+	// value, and one that dropped the path's cleanliness with it would take the
+	// trailing slash as a licence for `a//b`.
+	for _, f := range []string{".", "ci/"} {
+		if msg := catalogPathMessage(f); msg == "" {
+			t.Fatalf("catalogPathMessage accepts %q, so the two keys no longer disagree about it", f)
+		}
 	}
 	const ctlMsg = "must hold no control character"
 	const lenMsg = "must be at most 200 characters"
 	const absMsg = "must be a relative path inside the repository"
 	const dotdotMsg = "must not hold a .. segment: the context is read inside the repository it names"
+	const cleanMsg = "must be a clean path: no // and no . segment"
 	for _, tc := range []struct{ name, context, msg string }{
 		{"a .. segment", "ci/../../etc", dotdotMsg},
 		{"an absolute path", "/ci", absMsg},
 		{"a control character", "ci\nDockerfile", ctlMsg},
 		{"an escape sequence", "docker/\x1b[31mcontext", ctlMsg},
 		{"over the length bound", strings.Repeat("a", maxCatalogPathLen+1), lenMsg},
+		// The path's clean rule, held here too: the trailing slash a directory
+		// is spelled with is the only part of it this key may drop.
+		{"a . segment", "./ci", cleanMsg},
+		{"an empty segment", "ci//maven", cleanMsg},
+		{"two trailing slashes", "ci//", cleanMsg},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ps := ValidateCatalog("image_catalog", catalogOf(t, catalogContextYAML(tc.context)))
