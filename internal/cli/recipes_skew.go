@@ -2085,8 +2085,8 @@ func checkCloneGovernanceImage(ctx context.Context, env *cloudEnv, spec *task.Sp
 // validate warns (planningImageWarnings).
 //
 // It names 0.22.0, the release the key ships in ("Sloth",
-// docs/contract-first-decoupling/implementation-plan.md: CD6 lands the key and
-// CD7's gate consumes it), which is not tagged yet: the release that tags it
+// docs/contract-first-decoupling/implementation-plan.md's CD6, whose gate the
+// plan had left to CD7), which is not tagged yet: the release that tags it
 // holds this number to the tag it cuts, as it does for jobsSince's 0.22.0 and
 // reviewJobSince's 0.20.0. docs/release.md ("Before you tag") has the checklist
 // verify it.
