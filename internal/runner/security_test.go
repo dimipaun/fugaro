@@ -159,6 +159,68 @@ func TestRunWithLevelThreeAlreadyAskedRecordsNoEscalation(t *testing.T) {
 	}
 }
 
+// TestRunEscalationTurnsLevelThreeOnOverALayersNone: the forced level is
+// raise-only (D1517 — the reason SC10's `security: false` changes nothing), so
+// a layer that writes level 3's own off-switch does not defeat the escalation.
+// D722 refuses a floored level a layer turned off, and that refusal is the
+// launcher's: it is raised at bootstrap, where the person who wrote the task
+// can still be told. At this seam there is no launcher left, and the run's own
+// classification decides (D1510) — without this the run would be
+// indistinguishable from one whose diff matched nothing at all: level 3 off, no
+// adversarial step, and no escalation in the record.
+func TestRunEscalationTurnsLevelThreeOnOverALayersNone(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  *config.LevelSetting
+		task *config.LevelSetting
+	}{
+		{"the configuration's none", &config.LevelSetting{Off: true}, nil},
+		{"the configuration's literal none model", &config.LevelSetting{Model: config.NoneModel}, nil},
+		{"the task's none", nil, &config.LevelSetting{Off: true}},
+		{"both layers", &config.LevelSetting{Off: true}, &config.LevelSetting{Off: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, repo := securityRun(t, rigor.Pro)
+			r.cfg.Agent.Models = config.ModelRoles{Coder: "claude-sonnet-5", Reviewer: reviewerModel}
+			r.cfg.Agent.Levels.L3 = tc.cfg
+			if tc.task != nil {
+				r.spec.ReviewLevels = &config.ReviewLevels{L3: tc.task}
+			}
+			// The ordinary resolution: level 3 is off, and Pro's own floor does
+			// not require it, so the layer's `none` is a legal configuration
+			// and no refusal is raised.
+			if err := r.resolveLevels(); err != nil {
+				t.Fatalf("resolving the levels of a run whose level 3 is off: %v", err)
+			}
+			if err := r.buildPlan(); err != nil {
+				t.Fatal(err)
+			}
+			if levelOn(r.levels, policy.LevelL3) {
+				t.Fatal("level 3 runs before the escalation, so the test proves nothing")
+			}
+			change(t, repo, map[string]string{listedPath: "package creds\n"}, "work on the credentials tree")
+			r.escalateSecurity(context.Background(), runstore.SecurityAtImplement)
+			if !levelOn(r.levels, policy.LevelL3) {
+				t.Fatalf("a layer's none defeated the escalation: %+v", r.levels)
+			}
+			if got := r.levels.L3.Model; got != reviewerModel {
+				t.Errorf("the escalated level runs %q, want the reviewer's own %q: the off-switch is cleared, not the level's model", got, reviewerModel)
+			}
+			if !hasAdversarialStep(r.plan) {
+				t.Fatalf("the plan carries no adversarial step: %+v", r.plan)
+			}
+			if r.rec.Security == nil {
+				t.Fatal("the escalation fired and the record carries nothing, so the run looks like one whose diff matched nothing")
+			}
+		})
+	}
+}
+
+// reviewerModel is the model the levels in these tests resolve to where no
+// layer names one, so a case can tell a level that runs the reviewer's model
+// from one that runs nothing at all.
+const reviewerModel = "claude-opus-5-5"
+
 // TestRunEscalationSurvivesAUnitThatChangedNothing: the escalation is
 // raise-only. A later round that changed nothing — an empty diff — must not put
 // the levels back where they were.

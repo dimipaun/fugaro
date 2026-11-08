@@ -545,7 +545,13 @@ func resolvedLevel(levels config.Levels, level policy.Level) config.ResolvedLeve
 // (Agent.FirstLineOn), so a resolution taken before the rewrite would turn the
 // cheap first-line loop off for exactly the runs a switch routed.
 func (r *run) applyLevels(in config.LevelInputs) (config.Levels, []config.Warning, error) {
-	in.Config = r.cfg
+	if in.Config == nil {
+		// The run's own merged configuration, unless the caller hands one in:
+		// the escalation's forced resolution passes the run's configuration
+		// with level 3's off-switch cleared, which a level forced on may not
+		// be vetoed by (plan.go, D1517).
+		in.Config = r.cfg
+	}
 	if in.Providers == nil {
 		in.Providers = r.modelProviders()
 	}

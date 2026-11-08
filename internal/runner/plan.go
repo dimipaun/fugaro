@@ -71,6 +71,9 @@ func (r *run) resolveLevels() error {
 // the same refusals and the same Inserted answer, and the runner's plan then
 // carries the step.
 //
+// A forced level is raise-only (D1517): the layers' off-switches for it are
+// cleared rather than allowed to defeat it (forcedLevelsAreRaiseOnly below).
+//
 // It resolves and returns; it does not write the run's levels. A caller that
 // cannot go on with the answer — a refusal the floor's own requirement met, a
 // plan that would not hold it — leaves the run's levels where they are, which
@@ -91,19 +94,20 @@ func (r *run) resolveLevelsForcing(force []policy.Level) (config.Levels, error) 
 	if r.shadow {
 		arm, r.cfg.Agent.Models.Coder = r.cfg.Agent.Models.Coder, r.championCoder
 	}
-	floor := r.policy.ReviewFloor(mode)
-	if len(force) > 0 {
-		// Cloned: ReviewFloor hands out the policy's own slice, and appending
-		// to it would write the forced levels into the merged policy.
-		floor = append(slices.Clone(floor), force...)
-	}
-	levels, warns, err := r.applyLevels(config.LevelInputs{
+	in := config.LevelInputs{
 		Mode:           mode,
-		Floor:          floor,
+		Floor:          r.policy.ReviewFloor(mode),
 		Task:           r.spec.ReviewLevels,
 		Recipe:         r.rcp,
 		CatalogDefault: r.derived,
-	})
+	}
+	if len(force) > 0 {
+		// Cloned: ReviewFloor hands out the policy's own slice, and appending
+		// to it would write the forced levels into the merged policy.
+		in.Floor = append(slices.Clone(in.Floor), force...)
+		in.Config, in.Task = r.forcedLevelsAreRaiseOnly()
+	}
+	levels, warns, err := r.applyLevels(in)
 	if r.shadow {
 		r.cfg.Agent.Models.Coder = arm
 		if levels.L1.On && levels.L1.Model == r.championCoder {
@@ -120,6 +124,51 @@ func (r *run) resolveLevelsForcing(force []policy.Level) (config.Levels, error) 
 		return config.Levels{}, fmt.Errorf("review levels: %w", err)
 	}
 	return levels, nil
+}
+
+// forcedLevelsAreRaiseOnly is the configuration and the task block with review
+// level 3's off-switch cleared, for the escalation's forced resolution.
+//
+// The forced level is raise-only — D1517's rule for the escalation's row, and
+// the reason SC10's `security: false` changes nothing — so a layer's `none` for
+// level 3 is not a veto on it. D722 refuses a floored level a layer turned off,
+// and that refusal is the launcher's: it is raised at bootstrap, where the
+// person who wrote the task can still be told to fix it. At the escalation's
+// seams the launcher is gone and the run's own classification is what decides
+// (D1510), so the switch is cleared rather than allowed to defeat a requirement
+// the owner's list made. The escalation says so where it can be read: in the
+// log and in the record's own member (security.go).
+func (r *run) forcedLevelsAreRaiseOnly() (*config.Config, *config.ReviewLevels) {
+	cfg := *r.cfg
+	cfg.Agent.Levels.L3 = levelThreeNotOff(cfg.Agent.Levels.L3)
+	task := r.spec.ReviewLevels
+	if task == nil {
+		return &cfg, nil
+	}
+	block := *task
+	block.L3 = levelThreeNotOff(block.L3)
+	return &cfg, &block
+}
+
+// levelThreeOff reports whether a layer's level 3 block writes the level's
+// off-switch: `none: true`, or the literal `model: none`, which config's own
+// levelOff reads the same way.
+func levelThreeOff(l *config.LevelSetting) bool {
+	return l != nil && (l.Off || l.Model == config.NoneModel)
+}
+
+// levelThreeNotOff is l with that switch cleared, and l itself when it was not
+// off, so a layer that named the level a model still names it.
+func levelThreeNotOff(l *config.LevelSetting) *config.LevelSetting {
+	if !levelThreeOff(l) {
+		return l
+	}
+	out := *l
+	out.Off = false
+	if out.Model == config.NoneModel {
+		out.Model = ""
+	}
+	return &out
 }
 
 // buildPlan derives the run's plan from its recipe and the levels it has
