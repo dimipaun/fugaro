@@ -116,8 +116,8 @@ type Row struct {
 	//
 	// It is a *reading* of a legacy record and says so by living in the row
 	// alone: nothing writes it back to the runs bucket, and no reader treats
-	// it as anything but a value of the closed vocabulary (the derivation the
-	// Derived field beside it is, runview.go:110).
+	// it as anything but a value of the closed vocabulary — the way the
+	// Derived field beside it is a derivation and says so.
 	FailureClass failure.Class `json:"failure_class,omitempty"`
 	// Derived, when set, is the read side's own reading of a run the run's
 	// record never settled: today the one value is DerivedPreempted, for a run
