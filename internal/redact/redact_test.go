@@ -357,6 +357,13 @@ var patternCases = []struct {
 		keep: `\",\"step\":\"terraform apply\"}`,
 	},
 	{
+		name: "camel case password field of an escaped json record",
+		in: `{\"dbPassword\":\"` + fake(strings.Repeat("Qw3", 5)) +
+			`\",\"step\":\"terraform apply\"}`,
+		leak: strings.Repeat("Qw3", 5),
+		keep: `\",\"step\":\"terraform apply\"}`,
+	},
+	{
 		name: "password field inside a json string value",
 		in: `{"message":"invalid token: ` + fake(strings.Repeat("Qw3", 5)) +
 			`","type":"auth"}`,
