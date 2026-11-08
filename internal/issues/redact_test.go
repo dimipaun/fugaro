@@ -71,6 +71,12 @@ var corpus = []struct {
 		in:   "at " + "/var/home/" + "someone" + "/x.yaml the file is",
 		leak: "/var/home/" + "someone",
 	},
+	{
+		name: "address git invents with no identity set",
+		in: "fatal: unable to auto-detect email address (got '" +
+			"someone" + "@" + "someone-ThinkPad" + ".(none)" + "')",
+		leak: "someone" + "@" + "someone-ThinkPad",
+	},
 }
 
 // TestRedactCorpus: the gate removes every kind the spec names, whoever wrote

@@ -544,6 +544,83 @@ var patternCases = []struct {
 		leak: strings.Repeat("Qw3", 5),
 		keep: "the token is refused",
 	},
+	{
+		name: "auth token in an environment dump",
+		in:   "SENTRY_AUTH_TOKEN=" + fake(strings.Repeat("Qw3", 5)) + " sentry refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "sentry refused",
+	},
+	{
+		name: "api key in an environment dump",
+		in:   "DD_API_KEY=" + fake(strings.Repeat("Qw3", 5)) + " dd refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "dd refused",
+	},
+	{
+		name: "access key in an environment dump",
+		in:   "ACCESS_KEY=" + fake(strings.Repeat("Qw3", 5)) + " s3 refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "s3 refused",
+	},
+	{
+		name: "token in an environment dump",
+		in:   "token=" + fake(strings.Repeat("Qw3", 5)) + " the token is refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "the token is refused",
+	},
+	{
+		name: "api key field of a record in camel case",
+		in: `{"apiKey":"` + fake(strings.Repeat("Qw3", 5)) +
+			`","step":"terraform apply"}`,
+		leak: strings.Repeat("Qw3", 5),
+		keep: `"step":"terraform apply"}`,
+	},
+	{
+		name: "token on a command line",
+		in:   "--token " + fake(strings.Repeat("Qw3", 5)) + " --user someone failed",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "--user someone failed",
+	},
+	{
+		name: "password with a comma outside quotes",
+		in:   "PGPASSWORD=" + fake("Qw3Qw,", "3Qw3Qw3x") + " psql: connection refused",
+		leak: fake(",", "3Qw3Qw3x"),
+		keep: "psql: connection refused",
+	},
+	{
+		name: "password with a backslash outside quotes",
+		in:   "PGPASSWORD=" + fake(`Qw3Qw\`, "w3Qw3Qw3") + " psql: connection refused",
+		leak: fake(`\`, "w3Qw3Qw3"),
+		keep: "psql: connection refused",
+	},
+	{
+		name: "password with a semicolon before its fourth byte",
+		in:   "PGPASSWORD=" + fake("ab;", "cdefgh12") + " psql: connection refused",
+		leak: fake("ab;", "cdefgh12"),
+		keep: "psql: connection refused",
+	},
+	{
+		name: "password field followed by another password field",
+		in:   "Pwd=" + fake(strings.Repeat("Qw3", 5)) + ";Pwd=" + fake(strings.Repeat("Qw3", 5)),
+		leak: strings.Repeat("Qw3", 5),
+	},
+	{
+		name: "password of a mysql dsn",
+		in:   "app:" + fake(strings.Repeat("Qw3", 5)) + "@tcp(db:3306)/app refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "db:3306)/app refused",
+	},
+	{
+		name: "password with a single quote in a connection string",
+		in:   "postgres://app:" + fake("ab'", "cdefgh12") + "@db.example.com/app refused",
+		leak: fake("ab'", "cdefgh12"),
+		keep: "db.example.com/app refused",
+	},
+	{
+		name: "password cut off after the other kind of quote",
+		in:   `{\"password\":\"` + fake("ab'", "cdefgh12"),
+		leak: fake("ab'", "cdefgh12"),
+	},
 }
 
 // TestRedactCorpus: a shape the exact pass cannot name is still a credential,
@@ -591,6 +668,10 @@ func TestReportRedactsThePerson(t *testing.T) {
 		{"mac home path", "at " + fake("/Users/", "someone", "/Library/logs") + " it is", fake("/Users/", "someone")},
 		{"root home", "reading " + fake("/root", "/.config/fugaro") + " now", fake("/root", "/.config/fugaro")},
 		{"windows home path", "at " + fake(`C:\\Users\\`, "someone", `\\AppData`) + " it is", fake(`C:\\Users\\`, "someone")},
+		{"home path after a compiler flag", "cc " + fake("-I/home/", "someone", "/include") + " -o out", fake("/home/", "someone")},
+		{"wsl home path", "at " + fake("/mnt/c/Users/", "someone", "/x") + " it is", fake("/Users/", "someone")},
+		{"git bash home path", "at " + fake("/c/Users/", "someone", "/x") + " it is", fake("/Users/", "someone")},
+		{"windows home path with a space in the profile name", "at " + fake(`C:\Users\John `, "Smith") + `\AppData it is`, "Smith"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Report(tc.in)
