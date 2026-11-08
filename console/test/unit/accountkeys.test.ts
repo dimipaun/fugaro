@@ -12,6 +12,15 @@
 // spellings (`default_claude_account`, `stages.*.claude_account`, F16), and the
 // section draws one row per key with the stage each belongs to.
 //
+// **The wildcard row carries an account this section does not draw.** The read
+// resolves `stages.*.claude_account` to the first stage in sorted order and does
+// not say which one it took (`valueAtPath`, `internal/cli/settings_read.go`), so
+// the account in that row belongs to a stage the row does not name and the row
+// states that instead (`ACCOUNT_KEYS_STAGE_WORD`). The case below pins both
+// halves: the default row's account is drawn, and the wildcard row's account
+// appears nowhere -- a document that named a stage (`stages.review.
+// claude_account`) still draws that stage's account against it.
+//
 // **"Names only, never a token" is held by the read's rule, not by a promise**
 // (D1479): a row the document marks `sensitive` is dropped whole -- no key, no
 // value, no row -- so a key an operator makes secret-shaped leaves no trace on
@@ -34,6 +43,7 @@ import {
   ACCOUNT_KEYS_ROW_CLASS,
   ACCOUNT_KEYS_SOURCE,
   ACCOUNT_KEYS_STAGE_CLASS,
+  ACCOUNT_KEYS_STAGE_WORD,
   ACCOUNT_KEYS_UNSET_WORD,
   ACCOUNT_KEYS_VALUE_CLASS,
   DEFAULT_ACCOUNT_KEY,
@@ -209,7 +219,7 @@ describe('the review account keys, drawn from the read the tab already makes', (
     expect(root.getAttribute('data-state')).toBe('read')
   })
 
-  it('draws both keys with their values, and the read\'s other rows nowhere', () => {
+  it('draws both keys, the default\'s account and no account against the wildcard', () => {
     const root = section(
       settingsDoc([
         settingRow(DEFAULT_ACCOUNT_KEY, 'team-b'),
@@ -219,7 +229,13 @@ describe('the review account keys, drawn from the read the tab already makes', (
     // The two subjects in the order the section draws them: the project's
     // default first, the stage rows after it.
     expect(rowKeys(root)).toEqual([DEFAULT_ACCOUNT_KEY, STAGE_ACCOUNT_KEY])
-    expect(valueCells(root)).toEqual(['team-b', 'team-d'])
+    // The default row's account is the key's own value, so it is drawn. The
+    // wildcard row's is the first stage account in sorted order -- a stage this
+    // row does not name -- so the cell says what the read states instead, and
+    // the account it carried is drawn nowhere: `* team-d` would say every stage
+    // uses `team-d`.
+    expect(valueCells(root)).toEqual(['team-b', ACCOUNT_KEYS_STAGE_WORD])
+    expect(drawn(root)).not.toContain('team-d')
     // The default account belongs to no stage, so its row draws no stage cell.
     expect(stageCells(root)).toEqual(['*'])
     // Nothing else of the document is drawn: the read prints every key the
@@ -359,8 +375,11 @@ describe('the review account keys, drawn from the read the tab already makes', (
     expect(model.state).toBe('read')
     expect(model.because).toBeNull()
     expect(model.rows).toEqual([
-      { key: DEFAULT_ACCOUNT_KEY, stage: null, value: 'team-b' },
-      { key: STAGE_ACCOUNT_KEY, stage: '*', value: null },
+      { key: DEFAULT_ACCOUNT_KEY, stage: null, value: { kind: 'account', name: 'team-b' } },
+      // The document carries no row for the wildcard key, so its cell is the
+      // console's unset rather than the stage word -- the two are different
+      // facts, and only a value the read resolved is the second one.
+      { key: STAGE_ACCOUNT_KEY, stage: '*', value: { kind: 'unset' } },
     ])
   })
 })

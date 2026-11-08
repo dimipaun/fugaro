@@ -16,11 +16,27 @@
 // `default_claude_account` and the per-stage accounts are the row
 // `stages.*.claude_account` (F16: the registry's spelling, which is a wildcard
 // and not a stage). This module matches that shape -- `stages.<stage>.
-// claude_account` -- and draws the stage segment it took the value from, so a
-// document that carried one row per configured stage draws one row per stage
-// and the CLI's own wildcard row draws its `*` verbatim. The console invents no
+// claude_account` -- and draws the stage segment the key carries, so a document
+// that carried one row per configured stage would draw one row per stage, and
+// the CLI's own wildcard row draws its `*` verbatim. The console invents no
 // stage name: the segment in the key is the only thing the read says about which
 // stage an account belongs to.
+//
+// **An account is drawn only against a key that names its stage.** The registry
+// has one wildcard key, so the read prints one row for every stage account a
+// project decides -- and resolves its `value` from `stages.*.claude_account` by
+// taking **the first stage in sorted order** (`valueAtPath`, `stepInto`,
+// `internal/cli/settings_read.go`). The row therefore carries an account that
+// belongs to a stage the row does not name: a project deciding
+// `stages.review.claude_account` alone arrives as `*` with that account, which
+// drawn would say every stage uses it, and a project deciding `review` and `fix`
+// arrives as the one of the two that sorts first (`fix`). So the value cell of
+// the wildcard row -- the one key whose subject is a set of stages rather than a
+// single key -- is the console's own word for what the read actually says (an
+// account is set for some stage, which this row does not identify), and never
+// that account. Nothing is lost by it: the row is still drawn, under the read's
+// own key and with its own `*`, and a document that ever names its stages draws
+// each account against the stage it belongs to.
 //
 // **`sensitive` is dropped whole** (D1479). "Names only, never a token" is held
 // by the read's rule rather than by a promise: an account is a name by
@@ -114,20 +130,39 @@ export const ACCOUNT_KEYS_BUSY = 'Reading the review account keys…'
  * value here" and "the value is the empty string". */
 export const ACCOUNT_KEYS_UNSET_WORD = 'unset'
 
+/** ACCOUNT_KEYS_STAGE_WORD is what the value cell of the wildcard row says. The
+ * registry has one wildcard key for every stage account, and the read
+ * resolves its `value` to the first stage in sorted order without saying which
+ * one it took (`valueAtPath`), so the account in that row is not this row's to
+ * draw -- drawn, `* team-c` would say every stage uses `team-c` when every stage
+ * but `review` uses the default. The word states what the read does say -- an
+ * account is set for some stage, which this row does not name -- and is the
+ * console's own, like `unset` beside it. */
+export const ACCOUNT_KEYS_STAGE_WORD = 'set for a stage'
+
 /** DEFAULT_ACCOUNT_KEY and STAGE_ACCOUNT_KEY are the two subjects, in the
  * registry's own spellings (`internal/settings/registry.go`, F16). The stage key
  * is a **pattern** and the string below is the spelling the CLI prints for it:
- * the wildcard is the registry's, not this module's invention. */
+ * the wildcard is the registry's, not this module's invention, and it is the one
+ * key shape whose value this section does not draw (`ACCOUNT_KEYS_STAGE_WORD`). */
 export const DEFAULT_ACCOUNT_KEY = 'default_claude_account'
 export const STAGE_ACCOUNT_KEY = 'stages.*.claude_account'
 
+/** AccountKeyValue is what a row's value cell says: an account the read printed
+ * against a key that names the stage it belongs to, the console's own `unset`
+ * for a key no layer decides, or the console's own word for a stage account the
+ * read resolved to a stage the row does not name. */
+export type AccountKeyValue =
+  | { readonly kind: 'account'; readonly name: string }
+  | { readonly kind: 'unset' }
+  | { readonly kind: 'stage' }
+
 /** AccountKeyRow is one drawn row: the read's own key, the stage segment the key
- * carries (`null` for the project's default), and the value the read printed or
- * `null` when the read carries none. */
+ * carries (`null` for the project's default), and what its value cell says. */
 export interface AccountKeyRow {
   readonly key: string
   readonly stage: string | null
-  readonly value: string | null
+  readonly value: AccountKeyValue
 }
 
 /** AccountKeys is the section's model: the rows, and whether the read answered.
@@ -255,7 +290,30 @@ function valueAt(row: Record<string, unknown>): ValueRead {
 /** unsetRow is the row drawn for a key the read carries nothing for: the key
  * under its own spelling, its stage when it has one, and no value. */
 function unsetRow(key: string): AccountKeyRow {
-  return { key, stage: stageOf(key), value: null }
+  return { key, stage: stageOf(key), value: { kind: 'unset' } }
+}
+
+/** WILDCARD_STAGE is the `*` of the registry's own `stages.*.claude_account`
+ * (F16): the segment the read prints for the pattern rather than a stage any
+ * project can configure (`CheckStageSegment`, `internal/config/stage_accounts.go`,
+ * refuses a segment outside `RunStages`, and no stage is named `*`). */
+const WILDCARD_STAGE = '*'
+
+/** drawnValue is what a row's value cell says, from the stage the row's key
+ * carries and the value the read printed. The rules live here, in the model, so
+ * the drawing is handed a decision rather than making one:
+ *
+ *   - no value is `unset`, the console's word for "the read carries none";
+ *   - a value against the wildcard row is a stage account the read resolved to a
+ *     stage the row does not name, so the cell says that rather than the account
+ *     (`ACCOUNT_KEYS_STAGE_WORD`);
+ *   - anything else is an account, drawn as the name it is: the project's
+ *     default (whose key names its one subject exactly) and a stage row whose
+ *     key carries the stage the account belongs to. */
+function drawnValue(stage: string | null, value: string | null): AccountKeyValue {
+  if (value === null) return { kind: 'unset' }
+  if (stage === WILDCARD_STAGE) return { kind: 'stage' }
+  return { kind: 'account', name: value }
 }
 
 /**
@@ -274,6 +332,12 @@ function unsetRow(key: string): AccountKeyRow {
  *     stage rows the read carries or the registry's own wildcard key when it
  *     carries none -- because the registry has the key either way, and a section
  *     that drew nothing would be saying the key does not exist;
+ *   - **an account is drawn only against a key that names its stage**
+ *     (`drawnValue`). The wildcard row's `value` is the first stage account in
+ *     sorted order, which the read does not identify, so its cell states that
+ *     rather than drawing an account that would speak for every stage. It is
+ *     decided here and not in the drawing, so the rule is testable in plain Node
+ *     and the drawing cannot choose a different one;
  *   - **a member of the wrong type withholds the section** rather than being
  *     coerced: a value that is not a string is not the value the contract gives
  *     a row, and a table drawn from coerced members is a table of claims the CLI
@@ -310,8 +374,9 @@ export function buildAccountKeys(inputs: AccountKeysInputs): AccountKeys {
     if (read.kind === 'shape') {
       return { state: 'unavailable', because: drawnRefusal(ROW_SHAPE_BECAUSE), rows: [] }
     }
-    if (stage === null) defaultRow = { key, stage: null, value: read.value }
-    else stageRows.push({ key, stage, value: read.value })
+    const value = drawnValue(stage, read.value)
+    if (stage === null) defaultRow = { key, stage: null, value }
+    else stageRows.push({ key, stage, value })
   }
   return {
     state: 'read',
@@ -324,8 +389,8 @@ export function buildAccountKeys(inputs: AccountKeysInputs): AccountKeys {
 }
 
 /** literal writes this module's own vocabulary -- the panel's name, the state
- * word, the unset word and the reason, which `buildAccountKeys` sanitized before
- * it stored it. A document's string never reaches it: those come through
+ * word, the two value words and the reason, which `buildAccountKeys` sanitized
+ * before it stored it. A document's string never reaches it: those come through
  * `putText` (`../app.ts`) or not at all. */
 function literal(element: ScreenElement, text: string): ScreenElement {
   element.textContent = text
@@ -355,10 +420,14 @@ function accountKeyRow(factory: ScreenFactory, row: AccountKeyRow): ScreenElemen
   const value = factory.create('span')
   value.setAttribute('class', ACCOUNT_KEYS_VALUE_CLASS)
   // An account is a name, so it is drawn with the class the tab's accounts
-  // panel draws its own names with -- and a value the read does not carry is
-  // this module's own word rather than an empty cell.
-  if (row.value === null) literal(value, ACCOUNT_KEYS_UNSET_WORD)
-  else putText(value, row.value, 'person', 'settings[].value')
+  // panel draws its own names with, and only when the key it came from names the
+  // stage it belongs to (`drawnValue`). The other two cells are this module's own
+  // words rather than a document's string: `unset` for a key no layer decides,
+  // and the stage word for the wildcard row, whose account belongs to a stage the
+  // row does not name.
+  if (row.value.kind === 'account') putText(value, row.value.name, 'person', 'settings[].value')
+  else if (row.value.kind === 'unset') literal(value, ACCOUNT_KEYS_UNSET_WORD)
+  else literal(value, ACCOUNT_KEYS_STAGE_WORD)
   element.append(value)
   return element
 }
