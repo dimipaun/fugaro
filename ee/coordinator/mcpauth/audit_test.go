@@ -209,6 +209,53 @@ func TestAnInstallationsFaultIsAuditedAsFailed(t *testing.T) {
 	}
 }
 
+// failingHandler is a sink that says it records — so CanRecord passes — and
+// fails when the line is written. It is the fault no check can see coming: the
+// residual SECURITY.md states, and the branch of auditedCall that answers the
+// door's own fault instead of what the tool said.
+type failingHandler struct{}
+
+var errSinkDown = errors.New("the audit sink is down")
+
+func (failingHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (failingHandler) Handle(context.Context, slog.Record) error { return errSinkDown }
+
+func (failingHandler) WithAttrs([]slog.Attr) slog.Handler { return failingHandler{} }
+
+func (failingHandler) WithGroup(string) slog.Handler { return failingHandler{} }
+
+// TestALineThatFailsWhileBeingWrittenIsNotAnswered is D143's second half, on
+// the two paths a level-filtered sink cannot reach: a handler whose Enabled
+// says yes and whose Handle fails, which CanRecord cannot find out.
+//
+// The served call is the residual: the tool has run, and the caller is told the
+// door could not record it rather than given the tool's answer. The scope
+// refusal is the same rule on a path that never asks CanRecord at all — the
+// door audits a refusal before it answers it — so a 403 whose line could not be
+// written is withheld with the line.
+func TestALineThatFailsWhileBeingWrittenIsNotAnswered(t *testing.T) {
+	a, err := NewAuditor(failingHandler{})
+	if err != nil {
+		t.Fatalf("building the auditor: %v", err)
+	}
+	ts := newResourceServer(t, WithAuditor(a))
+	ts.serve(t, "get_task_status", answering("run-7 is implementing"))
+	_, scoped := ts.runFlowScoped(t, testClientRedirect, ScopeTasksWrite)
+	admitted := ts.seededToken(t, testIdentity)
+
+	ans := wantFailure(t, ts.rpc(t, admitted, auditCallBody(t, "get_task_status", "")), http.StatusOK, codeInternal)
+	if msg := ans.Error.Message; !strings.Contains(msg, "audit") {
+		t.Errorf("a call whose line failed while being written is answered %q; want the door's own fault named: the tool ran, and an answer reading as the tool's would be a call nobody can look up", msg)
+	}
+
+	refusal := ts.rpc(t, scoped.AccessToken, auditCallBody(t, "get_task_status", ""))
+	if refusal.Code != http.StatusOK {
+		t.Errorf("a scope refusal under a sink that cannot record answered %d (%s); want the door's fault at 200: a 403 whose line could not be written is a refusal an operator would never see", refusal.Code, strings.TrimSpace(refusal.Body.String()))
+	}
+	wantFailure(t, refusal, http.StatusOK, codeInternal)
+}
+
 // TestTheWriterRefusesAnEventItCannotRecord is the writer's own rule: the
 // fields are a closed set, so an event outside it is refused and the refusal
 // names the field and never what it held (the no-echo rule).

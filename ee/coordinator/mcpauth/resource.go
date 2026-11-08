@@ -311,8 +311,8 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, auth authorize
 // **Every answer from the catalogue's own lookup down is audited once** (M10,
 // audit.go): the call named a tool of this installation, so its line and its
 // record entry are written whatever the answer is — the door's own 403, a
-// catalogue name nothing has registered yet, a tool's own refusal, or the
-// tool's data. The three refusals above that lookup are not: params that are
+// catalogue name nothing has registered yet, a tool's own refusal, a store this
+// installation could not answer for, or the tool's data. The three refusals above that lookup are not: params that are
 // not an object, a call naming no tool, and one naming a name the catalogue
 // does not hold. None of the three has a tool to name, so each is the JSON-RPC
 // layer's answer rather than an event about a person's call (SECURITY.md says
@@ -377,6 +377,19 @@ func (s *Server) callTool(w http.ResponseWriter, r *http.Request, auth authorize
 				return
 			}
 			s.rpcError(w, http.StatusOK, req.ID, codeInvalidParams, fmt.Sprintf("no tool named %q is served here: the name is one this endpoint knows and does not serve yet", params.Name))
+			return
+		}
+		if errors.Is(err, ErrStoreUnreadable) {
+			// A store that could not be read or written is the installation's
+			// fault and not the caller's — the same distinction authorize's
+			// 500s make — so the line says failed rather than refused, and the
+			// answer is the door's own sentence rather than the store's, which
+			// names objects of this installation and helps the caller not at
+			// all.
+			if !s.auditedCall(w, r, req.ID, auth, params.Name, OutcomeFailed, ReasonUnreadable) {
+				return
+			}
+			s.rpcError(w, http.StatusOK, req.ID, codeInternal, "the tool could not be answered: this installation's store could not be read or written, which is a fault of the installation and not of this call")
 			return
 		}
 		if !s.auditedCall(w, r, req.ID, auth, params.Name, OutcomeRefused, ReasonToolRefused) {

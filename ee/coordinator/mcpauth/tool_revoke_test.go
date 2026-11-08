@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -110,6 +111,67 @@ func TestAFamilyIsNotRevokedByACallTheDoorCannotAudit(t *testing.T) {
 	}
 	if len(auditLines(t, &audit)) != 0 {
 		t.Errorf("a handler that records nothing wrote %q", audit.String())
+	}
+}
+
+// downStore is the store of D935 not answering the two M10 tools: a revocation
+// that cannot be written and a record that cannot be read. It is
+// unreadableStore's shape for the half of the door that runs inside a tool,
+// where the fault is the installation's and nothing the caller did would have
+// changed it.
+type downStore struct{ Store }
+
+var errStoreDown = errors.New("the installation's store is not answering")
+
+func (downStore) RevokeFamily(context.Context, string) error { return errStoreDown }
+
+func (downStore) GetAudit(context.Context, string) (AuditRecord, error) {
+	return AuditRecord{}, errStoreDown
+}
+
+// TestAToolWhoseStoreCouldNotBeAnsweredIsAuditedAsFailed is the same
+// distinction authorize's 500s make, at the tools M10 adds: a store that does
+// not answer is a fault of the installation, so the line says failed and not
+// refused — an operator's failed revocation must not read as a denial — and the
+// answer says the door's own sentence rather than repeating the store's error,
+// which names objects of this installation and tells the caller nothing.
+func TestAToolWhoseStoreCouldNotBeAnsweredIsAuditedAsFailed(t *testing.T) {
+	for _, tc := range []struct{ tool, args string }{
+		{"revoke_family", `{"family_id":"family-the-record-named"}`},
+		{"get_audit_record", `{"identity":` + quoted(t, testIdentity) + `}`},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			var audit bytes.Buffer
+			ts := newResourceServer(t, auditTo(t, &audit), WithRoster(rosterOf(Members{
+				Launchers: []string{testIdentity},
+				Operators: []string{testIdentity},
+			})))
+			// The tools are handed the failing store rather than the door's
+			// own: the door's lookup has to keep answering, or the call would
+			// be refused before any tool ran and there would be nothing to
+			// record.
+			down := downStore{Store: ts.store}
+			for _, tool := range []Tool{AuditRecordTool(down), RevokeFamilyTool(down)} {
+				if err := ts.tools.Register(tool); err != nil {
+					t.Fatalf("registering %s: %v", tool.Name, err)
+				}
+			}
+			_, tokens := ts.runFlow(t, testClientRedirect)
+
+			ans := wantFailure(t, ts.rpc(t, tokens.AccessToken, auditCallBody(t, tc.tool, tc.args)), http.StatusOK, codeInternal)
+			if strings.Contains(ans.Error.Message, errStoreDown.Error()) {
+				t.Errorf("the answer repeats the store's own error: %s", ans.Error.Message)
+			}
+			lines := auditLines(t, &audit)
+			if len(lines) != 1 {
+				t.Fatalf("%s wrote %d lines; want exactly one:\n%s", tc.tool, len(lines), audit.String())
+			}
+			for _, want := range []string{"outcome=" + OutcomeFailed, "reason=" + ReasonUnreadable} {
+				if !strings.Contains(lines[0], want) {
+					t.Errorf("the line %q does not carry %q: a revocation the installation could not make is not one this door refused", lines[0], want)
+				}
+			}
+		})
 	}
 }
 

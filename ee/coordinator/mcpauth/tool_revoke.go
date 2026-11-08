@@ -63,7 +63,12 @@ func RevokeFamilyTool(store Store) Tool {
 				return nil, err
 			}
 			if err := store.RevokeFamily(ctx, args.FamilyID); err != nil {
-				return nil, fmt.Errorf("the family was not revoked: %w", err)
+				// The store's own error stays out of what the caller reads: it
+				// names this installation's objects, and the caller can do
+				// nothing with it. The sentinel is what callTool maps to the
+				// door's own fault, so a revocation that could not be made is
+				// not recorded as one this door refused.
+				return nil, fmt.Errorf("%w: the family was not revoked", ErrStoreUnreadable)
 			}
 			return map[string]any{
 				"family_id": args.FamilyID,

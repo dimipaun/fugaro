@@ -261,7 +261,10 @@ func AuditRecordTool(store Store) Tool {
 			}
 			rec, err := store.GetAudit(ctx, args.Identity)
 			if err != nil {
-				return nil, err
+				// As revoke_family's: the store's own error is not the
+				// caller's to read, and the sentinel is what callTool maps to
+				// the door's fault rather than to a denial of the read.
+				return nil, fmt.Errorf("%w: the record was not read", ErrStoreUnreadable)
 			}
 			return rec, nil
 		},

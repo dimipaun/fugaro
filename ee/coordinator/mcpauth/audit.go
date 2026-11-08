@@ -159,6 +159,15 @@ func ValidReason(reason string) bool {
 // sentinel so that the two tools that carry it refuse in one shape.
 var ErrOperatorOnly = errors.New("mcpauth: this tool is an operator's: the front door serves it to the people on the installation's operator list, and fugaro user is the command that changes them")
 
+// ErrStoreUnreadable is a tool's report that the store this installation's
+// records live in could not be read or written: the fault authorize answers as
+// a 500, and the one OutcomeFailed and ReasonUnreadable exist for. A tool wraps
+// it and leaves the store's own error out of the chain's message, because what
+// the caller reads is the door's sentence and not an installation's object
+// names; callTool turns it into the door's fault rather than a denial, so a
+// revocation that could not be made is not recorded as one the door refused.
+var ErrStoreUnreadable = errors.New("mcpauth: this installation's store could not be read or written")
+
 // AuditEvent is one audited event: exactly the fields the line carries, and no
 // other. Every one is a name this installation already holds or a constant of
 // this file, and there is no field a value could be written into.
