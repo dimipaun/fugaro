@@ -8,12 +8,12 @@ asks **only what the Terms' own list for counsel does not already ask**. The dra
 carried eighteen numbered questions (#1146), of which 12–18 were added with the owner's answers;
 counsel's restructured text answers most of those and ends with its own list of eight open items,
 and none of the questions below repeats one of the eight. Nothing here is legal advice, and nothing
-here decides anything: every question is counsel's, and every ruling it cites is the owner's — the
-tensions T10 to T27 in
+here decides anything: every question is counsel's, and every ruling it cites is the owner's. The
+tensions T10 to T27 are in
 [reconciliation.md](reconciliation.md#rulings-on-the-tensions-2026-10-27), with T27's consequence
-[ruled 2026-10-29](reconciliation.md#a-consequence-the-rulings-create-ruled-2026-10-29), and the
-two later rulings, the coordinator (2026-10-29) and crash reporting (2026-10-31), in the Terms' own
-list for counsel, items 7 and 5.
+[ruled 2026-10-29](reconciliation.md#a-consequence-the-rulings-create-ruled-2026-10-29), and O4 and
+the key binding are ruled in the same file; the two later rulings, the coordinator (2026-10-29) and
+crash reporting (2026-10-31), are in the Terms' own list for counsel, items 7 and 5.
 
 **It carries no figure (D430, T22).** An amount, a rate and a discount are named by the clause they
 sit in and never by their value — the two figures the owner ruled into the Terms (the liability cap
