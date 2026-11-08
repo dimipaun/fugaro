@@ -238,10 +238,17 @@ func TestAdmitIsCaseFoldedOnTheDomainOnly(t *testing.T) {
 // of the comparison. An assertion whose address is a display name is one this
 // member cannot read at all (mobileauth refuses it rather than parsing the
 // address out of it, which is how a name would become an admission), and an
-// entry written that way in the member's own lists is inert for the same
-// reason — it is not one person written as `user:<address>`, and the operator
-// who wrote it has an installation whose own door refuses it too
-// (`fugaro user`'s userMember).
+// entry written that way in the member's own lists is inert — it is not one
+// person written as `user:<address>`.
+//
+// The entry below is dropped by the ENTRY rule rather than by the address rule,
+// because the name it wraps carries whitespace and an entry with whitespace in
+// its address is not one address (projectpolicy's memberUserEntry, which
+// `fugaro user`'s own rule agrees with — internal/cli/workspace_admit_test.go).
+// The forms that reach the address rule are
+// TestAdmitRefusesAListEntryTheAddressRuleCannotRead's, and this test's two
+// halves are the two doors: what a workspace can assert, and what an operator
+// can write.
 func TestAdmitRefusesADisplayNameForm(t *testing.T) {
 	member, key := memberWithKey(t)
 	ctx := context.Background()
@@ -254,6 +261,53 @@ func TestAdmitRefusesADisplayNameForm(t *testing.T) {
 
 	wrapping := newTestAdmission(t, member, memberLists([]string{"user:Person One <" + testEmail + ">"}, nil))
 	refuse(t, mustErr(wrapping.Admit(ctx, assertionFor(t, key, testProject, exchangeURL(member.name), nil))), "an assertion for a person whose only list entry is a display name wrapping their address")
+}
+
+// TestAdmitRefusesAListEntryTheAddressRuleCannotRead is the fail-closed half of
+// the comparison: an entry the address rule cannot read names nobody, and the
+// entries beside it are unaffected.
+//
+// Nothing above reaches it, and that is why it is here. The forms an operator
+// can write that the rule refuses are dropped by the entry rule only when they
+// carry whitespace or a wildcard; these four are accepted by BOTH writing doors
+// — projectpolicy's memberUserEntry and `fugaro user`'s userMember — and
+// mobileauth.NormalizeEmail refuses every one of them, so namesAddress is the
+// only thing between such an entry and an admission. A `continue` read as a
+// match there would make one operator typo admit every address a workspace can
+// assert, at a member whose lists the operator believes name one person.
+//
+// The divergence is deliberate rather than a fault to fix here: an entry of
+// this shape is still a legitimate launcher or operator of this installation's
+// own (its IAM binding is what `fugaro setup`/`user` writes, and a
+// non-ASCII address is a real person's), and it is inert at a workspace sign-in
+// because a workspace's Firebase cannot attest an address this rule refuses
+// either. internal/cli/workspace_admit_test.go pins that reading, and the
+// decision to tighten what `fugaro user` writes is the owner's (the PR's own
+// note).
+func TestAdmitRefusesAListEntryTheAddressRuleCannotRead(t *testing.T) {
+	for _, entry := range []string{
+		"user:person-1@localhost",
+		"user:person-1@exämple.com",
+		"user:person-1@example.com.",
+		"user:a@b@c",
+		"user:Person One <" + testEmail + ">",
+	} {
+		t.Run(entry, func(t *testing.T) {
+			member, key := memberWithKey(t)
+			admission := newTestAdmission(t, member, memberLists([]string{entry}, nil))
+			refuse(t, mustErr(admission.Admit(context.Background(), assertionFor(t, key, testProject, exchangeURL(member.name), nil))),
+				"an assertion for a person whose only list entry ("+entry+") names nobody this member can read")
+		})
+	}
+
+	// And an entry the rule cannot read does not poison the list it sits on:
+	// the person the operator did name is admitted, which is what makes the
+	// entry inert rather than fatal.
+	member, key := memberWithKey(t)
+	admission := newTestAdmission(t, member, memberLists([]string{"user:" + testEmail, "user:person-1@localhost"}, nil))
+	if _, err := admission.Admit(context.Background(), assertionFor(t, key, testProject, exchangeURL(member.name), nil)); err != nil {
+		t.Fatalf("the admission refused the one person this member's list names, because an entry beside them is one the address rule cannot read: %v", err)
+	}
 }
 
 // TestAdmitRefusesACustomTokenProvider is finding 7's second half, at the
@@ -319,10 +373,14 @@ func TestExchangeRefusesAMemberThatCannotReachTheWorkspacesFirebase(t *testing.T
 		t.Fatalf("the member spent %d assertion ids while failing closed", len(spent))
 	}
 
-	// And a member constructed with no lists at all admits nobody either: a
-	// member's own lists are what the admission is, so a nil source is refused
-	// where it is wired rather than at the first sign-in.
+	// And neither half may be missing: a member's own lists are what the
+	// admission is, and a member with no exchange has nothing to verify an
+	// assertion against, so both are refused where the admission is wired
+	// rather than at somebody's first sign-in.
 	if _, err := NewAdmission(member.ex, nil); err == nil {
 		t.Fatalf("NewAdmission accepted a nil lists source: a member with no lists admits nobody, and it must say so where it is built")
+	}
+	if _, err := NewAdmission(nil, memberLists([]string{"user:" + testEmail}, nil)); err == nil {
+		t.Fatalf("NewAdmission accepted a nil exchange: an admission with nothing to verify an assertion against must be refused where it is built")
 	}
 }

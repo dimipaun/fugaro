@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/mobileauth"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
@@ -55,7 +56,52 @@ func TestTheMemberRulesAgreeEntryForEntry(t *testing.T) {
 	}
 }
 
-// TestTheListsFugaroUserWritesAreTheOnesTheAdmissionReads takes the lists off
+// TestTheAdmissionIsStricterThanWhatFugaroUserWrites pins a divergence between
+// the two rules THE ADMISSION applies, so that it stays a decision rather than
+// becoming an accident.
+//
+// `fugaro user`'s userMember and the admission's own entry reader accept these
+// spellings: they are one person written as `user:<address>`, which is all
+// either of them asks. The address rule the admission then compares with
+// (mobileauth.NormalizeEmail, in `ee/coordinator/oauth`'s admission —
+// TestAdmitRefusesAListEntryTheAddressRuleCannotRead is its other half) refuses
+// every one of them, so the entry admits nobody at any workspace sign-in. The
+// cost is an operator who writes one and waits for a person who can never get
+// in; the address rule cannot be loosened for them (its own doc says why: an
+// address two writers could spell two ways is the last place to guess), and the
+// entry is still this installation's own launcher or operator, which is what
+// `terraform.launchers`/`operators` are applied as.
+//
+// Two ways to close it, and both are the owner's call rather than this task's:
+// userMember could apply mobileauth.NormalizeEmail and refuse these spellings at
+// the door — which would also refuse a launcher whose address is non-ASCII or
+// not a dotted domain, people this installation can legitimately run for
+// without any workspace — or the divergence stands and this test is what says
+// so. Until that call, what it pins is that a spelling is either written and
+// inert (here) or refused at one of the two doors — the display-name form
+// TestTheMemberRulesAgreeEntryForEntry carries is refused by the entry rule
+// before the address rule ever sees it.
+func TestTheAdmissionIsStricterThanWhatFugaroUserWrites(t *testing.T) {
+	for _, member := range []string{
+		"user:person-1@localhost",
+		"user:person-1@exämple.com",
+		"user:person-1@example.com.",
+		"user:a@b@c",
+	} {
+		if _, err := userMember(member); err != nil {
+			t.Errorf("%q is refused by fugaro user (%v), and this test pins it as written: if the command has been tightened to apply the address rule, this case belongs in TestTheMemberRulesAgreeEntryForEntry instead", member, err)
+		}
+		named := projectpolicy.MemberListsOf([]string{member}, nil).Addresses()
+		if len(named) != 1 {
+			t.Errorf("%q names %v to the admission's reader, and it is one person's address", member, named)
+			continue
+		}
+		if _, err := mobileauth.NormalizeEmail(named[0]); err == nil {
+			t.Errorf("%q is an address the address rule can read: it is no longer inert at a workspace sign-in, and this test's premise (written, and never admitted) is gone", member)
+		}
+	}
+}
+
 // this installation the way each reader does: the file the command wrote (the
 // two lists a member's admission is read from) and the `ls --json` document
 // (the same two lists as this program reports them). Both must name exactly the
