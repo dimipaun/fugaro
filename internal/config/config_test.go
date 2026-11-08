@@ -111,6 +111,7 @@ func TestExampleTemplateTimeoutsAreTheDefaults(t *testing.T) {
 			Verify:          only(t.Verify),
 			Render:          only(t.Render),
 			FinalizeReserve: only(t.FinalizeReserve),
+			ReviewBudgetPct: t.ReviewBudgetPct,
 		}
 	}
 	for name, w := range tmpl.Workflows {
