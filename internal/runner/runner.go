@@ -1514,10 +1514,10 @@ func (r *run) branchClaim() string {
 // only for the branch the run's identity names (G6), so a run that pushes --
 // a first run or a follow-up; a review run and an artifact run push nothing
 // and are not judged -- cannot do its work with an identity that names no
-// branch. Only a launcher older than fugaro proxiedSince mints one of those:
-// the claim is the launcher's to write (B1.1), and an identity without it is
-// one that predates the proxy. The run stops here, before the clone, rather
-// than at its first push, where the service's refusal names nothing the
+// branch. Only a launcher older than fugaro branchClaimSince mints one of
+// those: the claim is the launcher's to write (B1.1), and an identity without
+// it is one that predates the claim. The run stops here, before the clone,
+// rather than at its first push, where the service's refusal names nothing the
 // operator can act on.
 //
 // The forwarder holds no credential (G5): it attaches the job's Google ID
@@ -1539,7 +1539,7 @@ func (r *run) startProxiedGit(ctx context.Context) error {
 	}
 	if !r.review && !r.artifact && r.branchClaim() == "" {
 		return fmt.Errorf("this run's Bitbucket access goes through the installation's credentials service (the published policy admits %s with proxy: true), and that service admits a push only for the branch the run's identity names (fb): this identity names none, so the launcher that started this run is older than fugaro %s. Upgrade Fugaro on the machine that launches this repository's runs (brew upgrade dimipaun/tap/fugaro), run 'fugaro update' to bring the installation and the job images to it, and launch it again — the run stops before anything is cloned, and nothing was pushed or changed",
-			r.spec.Repo, proxiedSince)
+			r.spec.Repo, branchClaimSince)
 	}
 	job, err := r.jobName()
 	if err != nil {
@@ -1669,11 +1669,20 @@ func (r *run) credentialVars(auth gitprov.GitAuth) (map[string]string, error) {
 // "https://bitbucket.org.evil.example/" out of it.
 const bitbucketOrigin = "https://bitbucket.org/"
 
-// proxiedSince is the Fugaro release the Bitbucket proxy shipped in (S1). The
-// launcher half of this fact is internal/cli's proxySince, which is the gate
-// that keeps a proxied run off an older image; this is the version a run names
-// when the identity it was handed predates it.
-const proxiedSince = "0.15.0"
+// branchClaimSince is the Fugaro release whose LAUNCHER writes the branch the
+// run may push into the run's identity (fb, B1.1): 0.14.0, the first release
+// that carries the claim (internal/cli's budgetBranch, and the commit that
+// added it is in no earlier tag). It is the version this run names when it
+// refuses an identity that names no branch -- the launcher that started such a
+// run predates the claim, whatever the run's own image is, and the fix is on
+// the machine that launches the repository's runs.
+//
+// It is deliberately not the release the proxy ships in (internal/cli's
+// proxySince, which names it for the image gate): the two facts are different
+// and a reader who conflated them would name the wrong command's version at
+// the operator. A launcher at any release between this one and the proxy's
+// mints the claim a proxied run needs; only the image has to be that new.
+const branchClaimSince = "0.14.0"
 
 // warnAuthRefresh logs a mid-run git-credential refresh failure once per
 // run: a persistent problem (an expiring provider, a misconfigured token)

@@ -235,7 +235,7 @@ func TestProxiedRefusesIdentityWithoutBranch(t *testing.T) {
 	if err == nil {
 		t.Fatal("a proxied push run with an identity that names no branch was admitted: the service refuses every push of it, one stage later and after the clone")
 	}
-	for _, want := range []string{"acme/app", "proxy: true", proxiedSince, "names none"} {
+	for _, want := range []string{"acme/app", "proxy: true", branchClaimSince, "names none"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
