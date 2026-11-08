@@ -35,7 +35,7 @@
     fugaro setup
 [repository/onboard] command: fugaro setup --onboard-repo acme/app
 [repository/onboard-odd] command: fugaro setup --onboard-repo 'acme/app;rm -rf'
-[repository/unusual-host] console: in your own terminal window, or in a fresh clone of the real remote, answer the question about git.example.com/acme/app at the prompt of
+[repository/unusual-host] console: in your own terminal window, where the gate confirms git.example.com/acme/app with nothing typed, or in a fresh clone of the real remote, run
     fugaro setup
 [repository/switch] command: git switch -- main
 [repository/switch-dash] command: git switch -- '-fix;rm -rf'

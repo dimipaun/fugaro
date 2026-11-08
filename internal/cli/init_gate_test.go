@@ -579,14 +579,14 @@ func TestUnknownRepoQuestionComesBeforeAnyPlan(t *testing.T) {
 }
 
 // An installation-only flag run inside a checkout of a repository the project
-// does not list yet gets one note, immediately before the guard's banner: the
-// converge in a checkout also onboards its repository, unless the question
-// about it is answered no (W3.4). The note is the wizard's question's own
-// introduction, so it is printed exactly where that question is asked — a run
-// of the update door, which asks none, prints nothing — and nothing else
-// prints it; the guard itself is unchanged.
+// does not list yet gets one note, immediately before the gate's banner: the
+// converge in a checkout also onboards its repository (W3.4, its question read
+// by nobody since T7: the gate confirms and asks nothing). The note is printed
+// exactly where the repository is confirmed — a run of the update door, which
+// does not enrol, prints nothing — and nothing else prints it; the gate itself
+// is unchanged.
 func TestInstallationFlagNoteInUnonboardedCheckout(t *testing.T) {
-	const note = "this checkout's repository is not onboarded; the converge in a checkout also onboards its repository, unless the question about it is answered no. To set up only the installation, run fugaro setup from outside the checkout."
+	const note = "this checkout's repository is not onboarded; the converge in a checkout also onboards its repository. To set up only the installation, run fugaro setup from outside the checkout."
 	const banner = "this checkout's repository is not one of the project's yet"
 	releaseBuild(t, "0.2.0")
 	checkout := func(t *testing.T) {

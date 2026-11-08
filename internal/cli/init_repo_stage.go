@@ -90,7 +90,7 @@ func (s *repositoryStage) Check(ctx context.Context) (initflow.Status, error) {
 	case err != nil:
 		return initflow.Status{}, err
 	case a == authAsk:
-		return initflow.Status{State: initflow.Todo, Detail: "onboards " + repo + ", which is not the project's yet: asks you to type its name first"}, nil
+		return initflow.Status{State: initflow.Todo, Detail: "onboards " + repo + ", which is not the project's yet: the gate confirms it with the person at the terminal"}, nil
 	case a == authNeeded && !s.e.r.o.enrolling():
 		// A door that does not enrol leaves one line naming the door that
 		// does, and never the typed question: there is nothing for this run to
