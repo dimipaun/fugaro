@@ -111,14 +111,25 @@ func archive(t *testing.T, top string, files map[string]string) []byte {
 	return archiveOf(t, top, bodies, hdrs...)
 }
 
-// archiveOf builds a gzipped tar whose entries are exactly hdrs. A regular
-// file's header must carry the size of its body in bodies; a header without
-// one is written as a single byte.
+// archiveOf builds a gzipped tar whose entries are exactly hdrs, under the
+// global pax header git archive opens a real source archive with: Go's tar
+// reader hands that header to the caller, so an archive without one is not
+// the shape this transport has to read. A regular file's header must carry
+// the size of its body in bodies; a header without one is written as a
+// single byte.
 func archiveOf(t *testing.T, top string, bodies map[string]string, hdrs ...*tar.Header) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(zw)
+	global := &tar.Header{
+		Name:       "pax_global_header",
+		Typeflag:   tar.TypeXGlobalHeader,
+		PAXRecords: map[string]string{"comment": strings.Repeat("0", 40)},
+	}
+	if err := tw.WriteHeader(global); err != nil {
+		t.Fatal(err)
+	}
 	if top != "" {
 		if err := tw.WriteHeader(&tar.Header{Name: top + "/", Typeflag: tar.TypeDir, Mode: 0o755}); err != nil {
 			t.Fatal(err)
@@ -942,6 +953,12 @@ func TestUnpackKeepsTheSource(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dest, name)); err != nil {
 			t.Fatalf("%s is not in the tree: %v", name, err)
 		}
+	}
+	// The global pax header every archive here opens with writes no file: it
+	// must not be taken for the archive's top-level directory, and it must
+	// not land in the tree under its own name.
+	if _, err := os.Stat(filepath.Join(dest, "pax_global_header")); err == nil {
+		t.Fatal("the archive's global pax header was unpacked as a file")
 	}
 }
 

@@ -387,7 +387,9 @@ func tarTree(ctx context.Context, o Options, root string, w want) (string, error
 
 // unpack writes a GitHub source archive into dest, which must exist and be
 // empty. Every entry goes through an os.Root, so no name can land outside
-// dest, and the archive's single top-level directory is stripped. An entry
+// dest, and the archive's single top-level directory is stripped. The global
+// pax header a git archive opens with holds no file, so it is skipped before
+// its name is judged. An entry
 // that escapes — an absolute name, a ".." component, a link whose target
 // leaves the tree — a second top-level directory, an entry that is not a
 // directory, a regular file or such a link, and an archive over max bytes
@@ -425,6 +427,12 @@ func unpack(body io.Reader, dest string, max int64) error {
 		}
 		if entries++; entries > maxEntries {
 			return fmt.Errorf("refusing the archive: more than %d entries", maxEntries)
+		}
+		if h.Typeflag == tar.TypeXGlobalHeader {
+			// A git archive opens with a global pax header — "pax_global_header"
+			// — which writes nothing; Go's reader hands it to the caller all
+			// the same, and its name is not the archive's top-level directory.
+			continue
 		}
 		rel, err := entryPath(h.Name, &top)
 		if err != nil {

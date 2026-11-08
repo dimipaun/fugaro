@@ -1,6 +1,6 @@
 # Diagnose (a local agent over a failed command's log)
 
-**Status (2026-11-07, later): one task of the plan below is written — T-DG5, the credential resolver (`internal/diagnoseagent/creds.go` and `creds_test.go`, on the branch `fugaro/20261107-212231-bc83`, with the in-run review round its tier requires); everything else the folder holds is plan only, and no other task is approved.** Spec owner: Dimi Paun. Written 2026-11-07. **Review rounds over the plan documents themselves have not run.**
+**Status (2026-11-07, later): two tasks of the plan below are written — T-DG4, the source cache (`internal/srctree/srctree.go` and `srctree_test.go`, on the branch `fugaro/20261107-212223-8492`, with the independent review rounds its tier requires), and T-DG5, the credential resolver (`internal/diagnoseagent/creds.go` and `creds_test.go`, on the branch `fugaro/20261107-212231-bc83`, with the in-run review round its tier requires); everything else the folder holds is plan only, and no other task is approved.** Spec owner: Dimi Paun. Written 2026-11-07. **Review rounds over the plan documents themselves have not run.**
 
 *The status as first written, kept:* **Status: plan only; nothing is implemented; no task is approved.** Spec owner: Dimi Paun. Written 2026-11-07. **Independent review rounds have not run.**
 
