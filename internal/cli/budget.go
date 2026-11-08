@@ -298,14 +298,23 @@ func raiseOwnerOnly(cmd *cobra.Command, what, command string) error {
 // ownerRaiseCommand is the invocation this run is, as the owner would type it:
 // the program, the command path, and the flags this run set, each with its
 // value quoted as one shell word. A flag that is not printed is one this run
-// did not set, which the command's own defaults answer for; the bare --repo of
-// this command family comes back as --repo=”, the empty value the argv
-// boundary rewrites the bare form to, and the scope it means.
-func ownerRaiseCommand(cmd *cobra.Command) string {
+// did not set, which the command's own defaults answer for.
+//
+// --repo is printed as the repository this run resolved it to and never as the
+// value that was typed: a bare --repo and a path both mean the checkout the
+// owner's terminal happens to be standing in, so a refusal handing either one
+// back would send the owner to another repository's caps than the one this run
+// was about. repo is that owner/name (namedRepo's answer), empty for a command
+// whose scope is not a repository.
+func ownerRaiseCommand(cmd *cobra.Command, repo string) string {
 	words := append([]string{selfCommand()}, strings.Fields(cmd.CommandPath())[1:]...)
 	cmd.Flags().Visit(func(f *pflag.Flag) {
 		if f.Value.Type() == "bool" && f.Value.String() == "true" {
 			words = append(words, "--"+f.Name)
+			return
+		}
+		if f.Name == "repo" && repo != "" {
+			words = append(words, "--repo="+quoteWord(repo))
 			return
 		}
 		words = append(words, "--"+f.Name+"="+quoteWord(f.Value.String()))
@@ -1384,7 +1393,7 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 			return nil
 		}
 		if raise {
-			if err := raiseOwnerOnly(cmd, "raising a cap", ownerRaiseCommand(cmd)); err != nil {
+			if err := raiseOwnerOnly(cmd, "raising a cap", ownerRaiseCommand(cmd, p.repo)); err != nil {
 				return err
 			}
 			ok, err := askConfirm(cmd, "raise a cap, so runs may spend more than before?")
@@ -1501,8 +1510,12 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 		return userErr("%v", err)
 	}
 	path, what := budget.PathKillGlobal, "project "+lc.Name
+	// repo is the repository this run resolved --repo to (empty for --all),
+	// kept for the refusal's own command: the flag's value may be empty or a
+	// path, and neither names the repository the way owner/name does.
+	repo := ""
 	if !o.all {
-		repo, err := namedRepo(ctx, o.cloud, o.repo)
+		repo, err = namedRepo(ctx, o.cloud, o.repo)
 		if err != nil {
 			return err
 		}
@@ -1521,7 +1534,7 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 			// A resume lets runs start spending again, which D1542 fences
 			// exactly as it fences a raise — and a kill, which halts them,
 			// asks nothing and is fenced by nothing.
-			return raiseOwnerOnly(cmd, "resuming "+what, ownerRaiseCommand(cmd))
+			return raiseOwnerOnly(cmd, "resuming "+what, ownerRaiseCommand(cmd, repo))
 		},
 		Conflict: func() { fmt.Fprintln(out, "changed by someone else meanwhile; reading it again") },
 		Now:      budgetNow,

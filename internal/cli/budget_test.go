@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/dimipaun/fugaro/internal/watch"
 )
 
@@ -400,6 +401,10 @@ func TestBudgetRaiseRefusesInAnAgentSession(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	seedCaps(f, 100, 20)
 	agentSession(t)
+	// A checkout of the fixture's own repository, so the bare --repo row below
+	// resolves to acme/app and not to whatever checkout this test runs in.
+	testutil.IsolateGit(t)
+	t.Chdir(repoArgCheckout(t, filepath.Join(t.TempDir(), "app"), githubOrigin))
 	old := selfCommand
 	selfCommand = func() string { return "fugaro" }
 	t.Cleanup(func() { selfCommand = old })
@@ -413,6 +418,10 @@ func TestBudgetRaiseRefusesInAnAgentSession(t *testing.T) {
 		{[]string{"budget", "set", "--global", "--per-run", "30", "--yes"}, "fugaro budget set --global --per-run=30 --yes"},
 		{[]string{"budget", "set", "--defaults", "--daily", "500"}, "fugaro budget set --daily=500 --defaults"},
 		{[]string{"budget", "set", "--defaults", "--daily", "500", "--yes"}, "fugaro budget set --daily=500 --defaults --yes"},
+		// The command handed back names the repository this run resolved, never
+		// the empty value a bare --repo carries or a path: either one would send
+		// the owner to another checkout's caps than the one this run was about.
+		{[]string{"budget", "set", "--repo", "--daily", "150"}, "fugaro budget set --daily=150 --repo=acme/app"},
 	} {
 		_, _, err := execute(t, c.args...)
 		if err == nil || ExitCode(err) != ExitUserError {
@@ -431,6 +440,9 @@ func TestBudgetRaiseRefusesInAnAgentSession(t *testing.T) {
 	}
 	if d := f.db.Value(budget.PathCapsDefaults); d != nil {
 		t.Fatalf("a refused raise wrote the defaults: %v", d)
+	}
+	if r := f.db.Value(budget.PathCapsRepo(appSlug)); r != nil {
+		t.Fatalf("a refused --repo raise wrote acme/app's caps: %v", r)
 	}
 	if _, _, err := execute(t, "budget", "set", "--global", "--daily", "50"); err != nil {
 		t.Fatalf("a tightening was refused in an agent session: %v", err)
@@ -661,6 +673,10 @@ func TestBudgetResumeRefusesInAnAgentSession(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.db.Set(budget.PathKillGlobal, map[string]any{"on": true, "by": "boss@example.com", "at": int64(1)})
 	agentSession(t)
+	// A checkout of the fixture's own repository, so the bare --repo row below
+	// resolves to acme/app and not to whatever checkout this test runs in.
+	testutil.IsolateGit(t)
+	t.Chdir(repoArgCheckout(t, filepath.Join(t.TempDir(), "app"), githubOrigin))
 	old := selfCommand
 	selfCommand = func() string { return "fugaro" }
 	t.Cleanup(func() { selfCommand = old })
@@ -677,6 +693,10 @@ func TestBudgetResumeRefusesInAnAgentSession(t *testing.T) {
 	}{
 		{[]string{"budget", "resume", "--all"}, "fugaro budget resume --all"},
 		{[]string{"budget", "resume", "--all", "--yes"}, "fugaro budget resume --all --yes"},
+		// acme/app is killed above, so this resume is a real one, and the
+		// command handed back names the repository this run resolved: the bare
+		// --repo it was typed with would point at the owner's own checkout.
+		{[]string{"budget", "resume", "--repo"}, "fugaro budget resume --repo=acme/app"},
 	} {
 		_, _, err := execute(t, c.args...)
 		if err == nil || ExitCode(err) != ExitUserError {
@@ -690,6 +710,9 @@ func TestBudgetResumeRefusesInAnAgentSession(t *testing.T) {
 	}
 	if k := f.db.Value(budget.PathKillGlobal).(map[string]any); k["on"] != true {
 		t.Fatalf("the switch moved: %v", k)
+	}
+	if k := f.db.Value(budget.PathKillRepo(appSlug)).(map[string]any); k["on"] != true {
+		t.Fatalf("a refused resume cleared acme/app's switch: %v", k)
 	}
 	// The owner's own terminal asks nothing for the resume either: the fence is
 	// the session, not the terminal.
