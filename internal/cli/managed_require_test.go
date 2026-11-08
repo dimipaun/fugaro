@@ -97,3 +97,34 @@ func TestUnmanagedProjectRefusesAndNamesTheFlagCommand(t *testing.T) {
 		t.Errorf("fugaro version carries the managed annotation %q", got)
 	}
 }
+
+// TestEveryManagedMutatingCommandResolves: root.go's table says the annotation
+// is applied by cobra path and that "the table is checked by a test" — this is
+// that check. A path that does not resolve is skipped silently (annotateManaged-
+// Mutating's own `continue`), so an entry that is misspelled or that names a
+// command the tree no longer has would leave the command refusing an unmanaged
+// project in managedRequired's generic words rather than in the clause the table
+// wrote for it, and the table would say a command is declared when it is not.
+// Every entry has to resolve, carry its own clause, and be a command a person
+// runs rather than a group of them.
+func TestEveryManagedMutatingCommandResolves(t *testing.T) {
+	if len(managedMutatingCommands) == 0 {
+		t.Fatal("the table is empty: a command that should refuse an unmanaged project carries no clause")
+	}
+	for path, clause := range managedMutatingCommands {
+		if clause == "" {
+			t.Errorf("%s is declared with no clause: its refusal would say nothing about what it declines", path)
+		}
+		c, _, err := NewRootCmd().Find(strings.Fields(strings.TrimPrefix(path, "fugaro ")))
+		if err != nil || c == nil {
+			t.Errorf("%s does not resolve in the tree (%v): annotateManagedMutating skips it, so it carries no clause", path, err)
+			continue
+		}
+		if got := c.Annotations[managedRequiresAnnotation]; got != clause {
+			t.Errorf("%s carries the annotation %q, want the table's clause %q", path, got, clause)
+		}
+		if !c.Runnable() {
+			t.Errorf("%s is not a runnable command: the table names the commands a person runs", path)
+		}
+	}
+}

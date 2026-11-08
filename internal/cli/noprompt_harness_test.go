@@ -292,7 +292,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro project policy show":    "prints that this installation has published no policy",
 	"fugaro project repos ls":       "prints the no-project-config refusal",
 	"fugaro project show":           "prints the no-project-config refusal",
-	"fugaro project sync":           "refuses before its ask: the deployed rules here carry no policy marker",
+	"fugaro project sync":           "refuses before its write: the deployed rules this world serves carry no policy marker",
 	"fugaro reaper":                 "prints the no-project-config refusal",
 	"fugaro recipes ls":             "prints the no-project-config refusal",
 	"fugaro report":                 "refuses: the edition is not in this build",
@@ -390,12 +390,6 @@ var closedStdinUnreached = map[string]closedStdinUnreachedAsk{
 	"fugaro project policy publish": {
 		file: "project_cmd.go", marker: "confirmRemoval(cmd, lc, o.yes,",
 		task: "T7", why: "asks after a deployed-rules read, which this world refuses",
-	},
-	// An un-enrollment asks once runs are in flight, or where it drops an
-	// approval the rules already carry.
-	"fugaro project sync": {
-		file: "project_enroll.go", marker: "confirmRemovalStrict(cmd, lc,",
-		task: "T6", why: "asks where the sync drops an approval the deployed rules hold",
 	},
 	// The rules deployment asks as the owner, through the database client this
 	// world keeps out of the dev-build path.

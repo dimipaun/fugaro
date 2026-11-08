@@ -878,8 +878,10 @@ func removeMarker(ctx context.Context, s *storage.Service, bucket, project strin
 //
 // Like WriteManagedLabelForFlag, the gate is the command's own and not this
 // function's: managed_unflag.go refuses a coding agent's session and any
-// Fugaro run's process before this is reached, and the confirmation is the
-// project's exact GCP project ID typed at the owner's own terminal. Nothing
+// Fugaro run's process before this is reached (agentMarker and
+// managedFlagRunMarker), and the consent is the project's exact GCP project ID
+// named as that command's argument — the owner's own declaration, with nothing
+// typed at a prompt (D1541, which replaced D58's typed confirmation). Nothing
 // but that command may call this.
 //
 // The error is one bounded field (safetext.FieldErr), exactly as the writer's
