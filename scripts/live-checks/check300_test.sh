@@ -568,6 +568,24 @@ case_restore_failed() {
   expect_contains "$out" "delete it yourself" "restore-failed: the row says what to do"
 }
 
+# A run that read the token and the database and then stopped before its write
+# — here the deployed document is not the object the reader parses, which is
+# step_subtree's own stop. The Restore still deletes this check's own id, and
+# its row has to say that this run wrote no node: a row claiming the write would
+# report a write that never happened, on the path a run that stops early takes.
+case_stopped_before_write() {
+  setup_case stopped-before-write
+  printf '["not a rules document"]\n' >"$dir/state/rules-broken.json"
+  write_store "$dir" 1 "$dir/state/rules-broken.json"
+  run300 --installation "$INSTALLATION"
+  expect_status "$status" 2 "stopped-before-write: the deployed document cannot be read"
+  expect_contains "$out" "the deployed rules are not the JSON document this check reads" "stopped-before-write: the block says why it stopped"
+  expect_fact restore PASS "stopped-before-write: the Restore row"
+  expect_contains "$out" "this run stopped before it wrote anything" "stopped-before-write: the row says no node was written"
+  expect_absent "$out" "the node this check wrote" "stopped-before-write: the row claims a write this run never made"
+  [ "$(node_in_store orchestrator/check300/state)" = absent ] || fail "stopped-before-write: a node is in the database"
+}
+
 # Sharding, so the package's Go test can run the cases of this file side by
 # side: CHECK_TEST_SHARD="i/n" runs every n-th case starting at i, and
 # CHECK_TEST_ONLY=name runs that one case alone. Neither set: all run.
@@ -602,6 +620,7 @@ t case_no_installation_arg
 t case_missing_tools
 t case_xtrace
 t case_restore_failed
+t case_stopped_before_write
 
 if [ "$failures" -ne 0 ]; then
   echo "check300_test: $failures failure(s)" >&2

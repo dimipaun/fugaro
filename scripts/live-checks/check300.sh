@@ -185,6 +185,12 @@ remove_scratch() {
 # recorded in RESTORE_* for the fact finish prints.
 RESTORE_STATE=untouched
 RESTORE_DETAIL=""
+# Set by step_person_write once its PUT answered 200, and read here so the row
+# says what this run actually did: the delete below is made either way, because
+# the id is this check's own and a leftover from an earlier failed run belongs
+# to it too, but a run that stopped before its write did not write this node,
+# and a row claiming it did would report a write that never happened.
+WROTE=no
 restore_node() {
   # Nothing to delete when the token or the database was never read: the run
   # stopped before it could have written anything.
@@ -201,10 +207,14 @@ restore_node() {
   [ -f "$SCRATCH/restore.get" ] && body=$(cat "$SCRATCH/restore.get" 2>/dev/null || true)
   if [ "$status" = 200 ] && [ "$back" = 200 ] && [ "$body" = "null" ]; then
     RESTORE_STATE=gone
-    RESTORE_DETAIL="the node this check wrote (/$ORCH_ID) is deleted and reads back as null"
+    if [ "$WROTE" = yes ]; then
+      RESTORE_DETAIL="the node this check wrote (/$ORCH_ID) is deleted and reads back as null"
+    else
+      RESTORE_DETAIL="this run stopped before it wrote anything and /$ORCH_ID reads back as null — the delete is made either way, because that id is this check's own"
+    fi
   else
     RESTORE_STATE=STILL_THERE
-    RESTORE_DETAIL="the delete of /$ORCH_ID answered $status and the read-back answered $back with '$body' (want 200 and null): the node this check wrote is STILL THERE, delete it yourself with curl -X DELETE against https://\$DB/$ORCH_ID.json and your own token"
+    RESTORE_DETAIL="the delete of /$ORCH_ID answered $status and the read-back answered $back with '$body' (want 200 and null): /$ORCH_ID, the node this check writes and the id it owns, is STILL THERE, delete it yourself with curl -X DELETE against https://\$DB/$ORCH_ID.json and your own token"
   fi
 }
 
@@ -462,6 +472,10 @@ step_person_write() {
   local status
   status=$(api PUT "/$ORCH_ID/state.json" "$SCRATCH/write.json") || status=000
   API_ARGS=()
+  # Recorded here and not after the read-back: a write that answered 200 wrote
+  # the node whatever the read-back then did, and the Restore's row is about
+  # what is in the database.
+  if [ "$status" = 200 ]; then WROTE=yes; fi
   if [ "$status" != 200 ]; then
     fact person-write FAIL "PUT /$ORCH_ID/state.json as you answered $status (want 200): your own credential cannot write the state node, which is D1241's answer and the half the daemon depends on"
     return 0
