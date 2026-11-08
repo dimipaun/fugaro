@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -322,6 +323,146 @@ func TestSubmitRebuildFallsBackOnEmptyGitSecretID(t *testing.T) {
 	}
 	if got := availableGitSecret(t, f.fb); got != gitSecretVersionName(f.rs.Secrets["bitbucket-token"]) {
 		t.Fatalf("the rebuild names %q, want the repository's own %q", got, f.rs.Secrets["bitbucket-token"])
+	}
+}
+
+// layeredCheckInstalledYAML is what fugaro update --repo would have seen
+// when it installed the check job: the same workflow name as
+// layeredCheckYAML (below), with its own commands and secrets, so
+// config.Parse (no layer) resolves it on its own -- newCheckJob only uses
+// it to compute the installed spec's env (FUGARO_CHECK_SPEC, base_images),
+// never what the job itself reads.
+const layeredCheckInstalledYAML = `version: 1
+project: aurora
+gcp_project: proj-1234
+git: { provider: bitbucket }
+workflows:
+  app: { commands: { build: sh build.sh, test: sh test.sh }, secrets: [{ name: npm-token, env: NPM_TOKEN }] }
+`
+
+// layeredCheckYAML is acme/app's actual fugaro.yaml for the layer test:
+// anchored (gcp_project, matching checkLC's project and GCP project), its
+// own full workflows: (not minimal), naming the layer's profile svc, which
+// only a layer can define -- so the job can resolve this file at all only
+// by reading builds/<slug>/project-layer.yaml.
+const layeredCheckYAML = `version: 1
+project: aurora
+gcp_project: proj-1234
+git: { provider: bitbucket }
+workflows:
+  app: { profile: svc, commands: { build: sh build.sh, test: sh test.sh }, secrets: [{ name: npm-token, env: NPM_TOKEN }] }
+`
+
+// layeredCheckLayer is the project layer layeredCheckYAML's workflow
+// names: profile svc supplies the cache key warm/*.txt, which the
+// repository's own file sets nowhere. cache is a surviving key (the
+// per-workflow image keys are removed ones), and it is one of the few a
+// profile may carry that the check job's own record reads: KeyFiles folds
+// the workflow's cache keys into the fingerprint, so the warm/notes.txt
+// this pattern matches appears in check.json only when the profile
+// applied.
+const layeredCheckLayer = `version: 1
+project: aurora
+gcp_project: proj-1234
+profiles:
+  svc:
+    cache: [{ key: ["warm/*.txt"], paths: ["~/.cache/warm"] }]
+default_profile: svc
+`
+
+// layeredCheckFiles is the remote's base branch: npmFiles plus the file
+// the layer's cache key matches, so a resolved cache entry has something
+// to fold in.
+func layeredCheckFiles() map[string]string {
+	files := npmFiles()
+	files["fugaro.yaml"] = layeredCheckYAML
+	files["warm/notes.txt"] = "kept warm\n"
+	return files
+}
+
+// Review fix: no test ran runImageCheckJob end to end with a layer
+// present. This one publishes the repository's copy
+// (builds/<slug>/project-layer.yaml) before running the job, against a
+// repository fugaro.yaml with its own full workflows: (not minimal) that
+// names the layer's profile svc. Both directions reflect the layer: the
+// submitted Cloud Build request's _PROJECT_LAYER_SHA256 equals the copy's
+// own sum (review item 2), and the job's own resolution applied the
+// profile -- proven through check.json's recorded KeyFiles, which carry
+// warm/notes.txt only because profile svc's cache key reached the
+// resolved config, matching the fingerprint of resolving the same bytes
+// over the same layer independently (review item 1).
+//
+// Mutation (run, restore): replace the jobHeadConfig(...) call in
+// runImageCheckJob with readHeadConfig(ctx, tree, nil,
+// layerOptions{NoBucket: true}) (resolves without ever reading the copy,
+// the shape before this PR's own fix), and this test fails: profile svc
+// is nowhere but the copy, so the job fails the workflow outright with
+// "names profile \"svc\", but the project layer ..." instead of
+// submitting a rebuild.
+func TestCheckJobResolvesAndSubmitsWithTheLayer(t *testing.T) {
+	f := newCheckJob(t, layeredCheckFiles(), layeredCheckInstalledYAML)
+	layerPath := filepath.Join(strings.TrimPrefix(f.bucket, "file://"), config.LayerCopyKey(f.slug))
+	if err := os.MkdirAll(filepath.Dir(layerPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layerPath, []byte(layeredCheckLayer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	lines, err := runCheckJob(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if buildPosts(f.fb) != 1 {
+		t.Fatalf("builds submitted = %d", buildPosts(f.fb))
+	}
+	if len(lines) != 1 || lines[0].Decision != imagecheck.Rebuild {
+		t.Fatalf("lines = %+v", lines)
+	}
+
+	got := f.fb.Last()
+	subs, _ := got["substitutions"].(map[string]any)
+	wantSHA := config.LayerSum([]byte(layeredCheckLayer))
+	if subs["_PROJECT_LAYER_SHA256"] != wantSHA {
+		t.Fatalf("_PROJECT_LAYER_SHA256 = %v, want %s", subs["_PROJECT_LAYER_SHA256"], wantSHA)
+	}
+
+	l, ps := config.ParseProjectLayer([]byte(layeredCheckLayer), config.LayerAnchor{})
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	wantCfg, _, ps := config.Resolve([]byte(layeredCheckYAML), l)
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	if len(wantCfg.Workflows["app"].Cache) != 1 || !slices.Equal(wantCfg.Workflows["app"].Cache[0].Key, []string{"warm/*.txt"}) {
+		t.Fatalf("test fixture itself does not resolve the layer: %+v", wantCfg.Workflows["app"].Cache)
+	}
+	testutil.Git(t, f.work, "pull", "--quiet", "--ff-only")
+	tree, err := imagecheck.Open(context.Background(), f.work, "HEAD", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantKeys, err := imagecheck.KeyFiles(wantCfg, "app", tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := wantKeys["warm/notes.txt"]; !ok {
+		t.Fatalf("test fixture's cache key matches nothing: %v", wantKeys)
+	}
+	st := f.checkState(t, "app")
+	if st == nil || st.BuildInputs == nil {
+		t.Fatalf("check.json = %+v", st)
+	}
+	if !maps.Equal(st.BuildInputs.KeyFiles, wantKeys) {
+		t.Fatalf("check.json KeyFiles = %v, want %v", st.BuildInputs.KeyFiles, wantKeys)
+	}
+	wantHash, err := imagecheck.ImageConfigHash(wantCfg, "app", tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.BuildInputs.ImageConfigHash != wantHash {
+		t.Fatalf("check.json = %+v, want ImageConfigHash %s", st, wantHash)
 	}
 }
 
