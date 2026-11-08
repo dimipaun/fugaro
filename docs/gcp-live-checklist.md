@@ -820,6 +820,7 @@ probe account carries predefined grants only).
 | 304 | The handoff between two people ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O17** and its Check 304 — the text O2 wrote, the `ee/` command O17 builds): an agent handed from one developer to another by an owner or an admin, on a real installation, with the two people in different sessions — the receiving person holding the agent, the giving person no longer able to act as it, and the project-owned agent that belongs to no person at all behaving as the registered extension it is | See "Check 304" below; **you** run it, on a real installation with a second person, and **no agent runs any step of it** | Two sessions and one handoff: no model call unless the agent is asked to work, and nothing billable in the handoff itself. **USER-RUN, NOT RUN.** |
 | 305 | The MCP state group and its scopes ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O16** and its Check 305 — **the text is written when O16's files are named**, and this row and the section below reserve the number, which is never renumbered): `get_state`, `get_events` and `apply_patch` over the state store, behind `state:read` and `state:write`, with `apply_patch` also gated by **D1225**, and with no `spawn_task` anywhere in it (T2) | Not written yet: O16 writes "Check 305" when the MCP registry and its scope files exist (M7, T3, T4), and the register's number is held for it | Nothing to run and nothing to expect until the files are named: the number is reserved so that a later task writes the check into the register rather than renumbering it. **USER-RUN, NOT RUN.** |
 | 340 | The prefix-limited listing grant ([`docs/periodic-reviews/`](periodic-reviews/implementation-plan.md) §P8, its Check 340; **R12's, and it gates R12**; `docs/design/bucket-iam.md` §4 — the H3 veto — and §11 item **V7**): which form the `storage.googleapis.com/objectListPrefix` request attribute carries — the request's own prefix (`runs/`, `reports/`) or the bucket's object path (`projects/_/buckets/<bucket>/objects/runs/`) — read as a throwaway service account holding R12's two conditioned bindings (objectViewer on `runs/`, objectUser on `reports/`, each carrying the `resource.name` read clause and the listing clause joined by `\|\|`): that account lists `runs/<slug>/` and `reports/`, reads a `runs/` object, and is refused the root listing, a `tokens/` read and a `tokens/` and a `cache/` listing. The design records the attribute as unverified and no code in this tree reads it, so this is the one reading no test can make: **the wrong form is a grant that lists nothing, and if neither form lists, R12's Terraform does not land and the plan stops and asks** (E4) | See "Check 340" below; `bash scripts/live-checks/check340.sh --project <project> --bucket <sandbox bucket>` is the whole of it — the script creates the throwaway account, grants the two bindings, seeds four objects of its own, reads **both** candidate forms (fourteen rows, the `reports/` row covering the bare prefix and the slug level under it as two calls) and tears every bit of it down again — and **you** run it, on a **sandbox bucket** only, never `belong` (a project or a bucket naming that installation is refused before a single call); **no agent runs any step of it** | Nothing billable and no model call: one throwaway service account, four small objects under `runs/`, `reports/`, `tokens/` and `cache/`, two bucket bindings and one impersonation grant, every one of them removed and read back as gone by the script's own Restore, which runs from its exit trap even on a failed assertion or a Ctrl-C. **USER-RUN, NOT RUN.** Two attempts have been made, both on 2026-11-07 and both exit `2`, aborted — the first with an unreadable block, the second by a `tokens/` listing whose refusal named `storage.objects.get` where the script then accepted only `storage.objects.list`, which stopped the run before the full-path form was ever tried — so **nothing is settled about the attribute and no `PASS` for `list-prefix`** is recorded; the section below records what each run did and did not measure. |
+| 360 | The managed screens show what the CLI says, on a managed project ([`docs/console-managed-screens/`](console-managed-screens/implementation-plan.md), its Check 360 and task **CM12**; **F3** and **D1489**, the owner's ask of 2026-11-07): the Project tab's five later sections — the managed state, the retirements, the account keys, the credentials service and the policy panel — drawn on a real managed project, each within its own read and from the document that read answers with, agreeing with `fugaro managed status --json`, `fugaro settings --json`, `fugaro project policy show --json` and `fugaro doctor`'s policy lines; **no section offers a control that changes anything**, and no token appears anywhere (**D1471**). Its hermetic half is `console/test/e2e/managed.spec.ts`, which walks the same tab against the stub — and the live reading is the one a stub cannot take | See "Check 360" below; there is **no script** — the check is three steps you do by hand in the console and the reading you take from them — and **you** run it, on your own machine, with an installation and a managed project; **no agent runs any step of it** | One `fugaro update` — the same run you would make anyway — plus two reads and one window: no model call, no run and nothing billable. Nothing is created or written by the check itself, so there is nothing to restore. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -11966,3 +11967,44 @@ this check exists to produce.
 **What waits on it.** R12, and behind R12 the reports job's first firing (Check 341) and `fugaro runs digest`'s
 own writing to `reports/` (R10, Open item 5 of [periodic-reviews/implementation-plan.md](periodic-reviews/implementation-plan.md)):
 neither the Terraform nor anything it enables may land before this check answers.
+
+## Check 360: the managed screens show what the CLI says, on a managed project (your own machine, an installation and a managed project; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **CM12** of the console-managed-screens plan
+([console-managed-screens/implementation-plan.md](console-managed-screens/implementation-plan.md), its
+§6 and its "Checks" — **F3**, the owner's ask of 2026-11-07, **D1489**). There is no script: the
+check is three steps the owner does by hand in the console and the reading they take from them, and
+**no agent runs any step of it**. It is the live half of a work whose hermetic half is
+`console/test/e2e/managed.spec.ts`: that spec walks the same tab against the stub and asserts the
+argv of every read, and this is the reading that says the tab draws the same thing when the
+documents come from a real CLI on a real managed project.
+
+**What the check confirms.** The Project tab's five later sections — the managed state, the
+retirements, the account keys, the credentials service and the policy panel — show **what the CLI
+says**: each within its own read, from the document that read answers with, the marks and the trail
+agreeing with `fugaro managed status --json`, the account keys with `fugaro settings --json`, the
+policy notes with `fugaro project policy show --json` and with `fugaro doctor`'s policy lines, and
+the retirements with what `fugaro update` printed. **No section offers a control that changes
+anything**, and no token appears anywhere: **D1471** puts no write on these screens, and this is the
+reading that says so of a screen rather than of a test.
+
+**What you do.**
+
+1. On a machine with an installation and a managed project, run `fugaro update` once and let it
+   finish. Record what it prints for the retirements and for the runs in flight.
+2. Run `fugaro managed status --json` and `fugaro project policy show --json`, and keep both
+   documents.
+3. Open the console, select the project, and open the Project tab.
+
+**Expected.** The five sections appear, each within its own read; the marks and the trail agree with
+the first document, the account keys with `fugaro settings --json`, the policy notes with the second
+document and with `fugaro doctor`'s policy lines, and the retirements with what step 1 printed.
+**No section offers a control that changes anything**, and no token appears anywhere.
+
+**Refutation.** Any figure that disagrees with the document it came from, any section that waits for
+a sibling before drawing, or any control that writes — the last of which fails the check outright
+rather than being noted.
+
+**Restore.** Nothing to undo beyond the `fugaro update` you would have run anyway: two reads and one
+window. No run is launched, no credential is minted and no project is written by the check itself,
+and the console holds no secret to paste back.
