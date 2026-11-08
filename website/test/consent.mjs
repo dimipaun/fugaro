@@ -2013,7 +2013,9 @@ test('the panel shows the answers the browser holds, which is what makes a withd
     'the withdrawal did not run the campaign cookie deletion: the pixel\'s own cookie was left in the browser',
   )
   assert.ok(!page.held().includes('_fbp'), 'the campaign cookie the withdrawal deleted is still in the jar')
-  assert.ok(page.held().includes(GA_CLIENT), 'withdrawing the campaign answer deleted the identifiers Google set, which the visitor did not withdraw')
+  for (const name of GA_NAMES) {
+    assert.ok(page.held().includes(name), `withdrawing the campaign answer deleted ${name}, which is not a cookie the campaign vendors set`)
+  }
 
   // The other switch runs the other deletion: a withdrawal through the panel is the gate's own
   // withdrawal, not a second path with its own idea of what to delete.
