@@ -159,12 +159,17 @@ func TestListTasksNamesOnlyTheProjectsRuns(t *testing.T) {
 		t.Errorf("the answer names another project's runs: %s", text)
 	}
 
-	err := f.refusal("get_task_status", `{"run_id":"`+testOtherSlug+`/`+testOtherRunID+`"}`)
-	if !errors.Is(err, runstore.ErrNotFound) {
-		t.Errorf("another project's run, asked for by its own ref, answered %v; want runstore.ErrNotFound", err)
-	}
-	if strings.Contains(err.Error(), testOtherSlug) {
-		t.Errorf("the refusal names another project's repository (%v): whether it exists is not this project's caller to learn", err)
+	// The other project's run is unreachable by both of the names it has: its
+	// own <repo-slug>/<run-id>, and the bare run ID, which exists in the
+	// bucket and is not looked for outside the project's own repositories.
+	for _, args := range []string{
+		`{"run_id":"` + testOtherSlug + `/` + testOtherRunID + `"}`,
+		`{"run_id":"` + testOtherRunID + `"}`,
+	} {
+		err := f.refusal("get_task_status", args)
+		if !errors.Is(err, runstore.ErrNotFound) {
+			t.Errorf("another project's run, asked for as %s, answered %v; want runstore.ErrNotFound", args, err)
+		}
 	}
 }
 
@@ -214,8 +219,8 @@ func TestResultNeverQuotesAToken(t *testing.T) {
 		PatchObject:  runstore.PatchName,
 		ChangedFiles: &runstore.ChangedFiles{Paths: []string{"x.go"}, Total: 1},
 	}, map[string][]byte{
-		runstore.PatchName: []byte("--- a/x.go\n+++ b/x.go\n+the run's own line\n"),
-		"session/session.json": []byte(`{"version":1,"id":"` + uuid + `","head_sha":"deadbeef","pushed":true,"workdir":"/work","bytes":123}`),
+		runstore.PatchName:           []byte("--- a/x.go\n+++ b/x.go\n+the run's own line\n"),
+		"session/session.json":       []byte(`{"version":1,"id":"` + uuid + `","head_sha":"deadbeef","pushed":true,"workdir":"/work","bytes":123}`),
 		"session/" + uuid + ".jsonl": []byte(sessionLine),
 	})
 

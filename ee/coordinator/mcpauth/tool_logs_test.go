@@ -4,6 +4,7 @@
 package mcpauth
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -16,9 +17,9 @@ import (
 // else.
 const testLogLine = "the run's own recorded progress, written into its transcript by a test"
 
-// transcript is one recorded line of a stage's transcript, in the shape the
+// transcriptLine is one recorded line of a stage's transcript, in the shape the
 // runner stores them: claude's own stream-json, one event per line.
-func transcript(text string) []byte {
+func transcriptLine(text string) []byte {
 	return []byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"` + text + `"}]}}` + "\n")
 }
 
@@ -34,13 +35,20 @@ func TestLogsComeFromTheRunsOwnArtefacts(t *testing.T) {
 	f := newRunsFixture(t)
 	f.seedRun(testSlug, testRunID, &runstore.Record{
 		Status: runstore.StatusRunning,
-		Stages: []runstore.StageTiming{{Name: "implement", StartedAt: testNow, DurationS: 12}},
+		Stages: []runstore.StageTiming{
+			{Name: "plan", StartedAt: testNow, DurationS: 30},
+			{Name: "implement", StartedAt: testNow, DurationS: 12},
+		},
 	}, map[string][]byte{
-		"transcripts/plan-1.jsonl":      transcript("a plan line no record names"),
-		"transcripts/implement-1.jsonl": transcript(testLogLine),
+		"transcripts/plan-1.jsonl":      transcriptLine("a plan line"),
+		"transcripts/implement-1.jsonl": transcriptLine(testLogLine),
+		// A stage the record has not caught up with: its transcript is the
+		// run's own progress all the same, and it follows the ones the record
+		// names.
+		"transcripts/fix-1.jsonl": transcriptLine("a line of the stage the record has not reached yet"),
 	})
 	f.seedRun(testSlug, testDeadRunID, &runstore.Record{Status: runstore.StatusRunning}, map[string][]byte{
-		"transcripts/plan-1.jsonl": transcript("a line of the run that died before its record named the stage"),
+		"transcripts/plan-1.jsonl": transcriptLine("a line of the run that died before its record named the stage"),
 	})
 
 	var logs runLogs
@@ -52,11 +60,11 @@ func TestLogsComeFromTheRunsOwnArtefacts(t *testing.T) {
 	if !strings.Contains(got, testLogLine) {
 		t.Fatalf("stream_logs answered %q; want the line the run's own transcripts/implement-1.jsonl recorded", got)
 	}
-	if !strings.Contains(got, "a plan line no record names") {
-		t.Errorf("stream_logs answered %q; want every transcript the run wrote, not only the record's last stage", got)
+	if !strings.Contains(got, "a line of the stage the record has not reached yet") {
+		t.Errorf("stream_logs answered %q; want every transcript the run wrote, not only the stages its record has caught up with", got)
 	}
-	if len(logs.Stages) != 2 || logs.Stages[0].Stage != "plan" || logs.Stages[1].Stage != "implement" {
-		t.Errorf("stream_logs answered the stages %+v; want each transcript under the name the run wrote it as", logs.Stages)
+	if names := stageNames(logs); !slices.Equal(names, []string{"plan", "implement", "fix"}) {
+		t.Errorf("stream_logs answered the stages %v; want each transcript under the name the run wrote it as, in the order its record names them", names)
 	}
 
 	logs = runLogs{}
@@ -85,8 +93,8 @@ func TestLogsAreRedactedAndTheRawTranscriptIsNeverServed(t *testing.T) {
 		// transcript is the run's own bytes and is not trusted to be, so a
 		// raw escape byte in one is escaped like the bidi override that a
 		// JSON encoder would have written raw.
-		"transcripts/plan-1.jsonl": transcript("a recorded line\x1b[31m with an escape and a ‮ reversal"),
-		"session/session.json":     []byte(`{"version":1,"id":"` + uuid + `","head_sha":"deadbeef","pushed":true,"workdir":"/work","bytes":123}`),
+		"transcripts/plan-1.jsonl":   transcriptLine("a recorded line\x1b[31m with an escape and a ‮ reversal"),
+		"session/session.json":       []byte(`{"version":1,"id":"` + uuid + `","head_sha":"deadbeef","pushed":true,"workdir":"/work","bytes":123}`),
 		"session/" + uuid + ".jsonl": []byte(sessionLine),
 	})
 
@@ -102,6 +110,15 @@ func TestLogsAreRedactedAndTheRawTranscriptIsNeverServed(t *testing.T) {
 	if strings.ContainsAny(got, "\x1b‮") || strings.ContainsAny(text, "\x1b‮") {
 		t.Errorf("a recorded line reached the answer unredacted: %q", text)
 	}
+}
+
+// stageNames is one answer's stages, in the order it answered them.
+func stageNames(logs runLogs) []string {
+	out := make([]string, 0, len(logs.Stages))
+	for _, s := range logs.Stages {
+		out = append(out, s.Stage)
+	}
+	return out
 }
 
 // logLines is one answer's recorded lines, in stage order, as one string to
