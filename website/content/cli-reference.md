@@ -36,6 +36,7 @@ Subcommands:
 - `fugaro completion` -- Generate the autocompletion script for the specified shell
 - `fugaro config` -- Work with fugaro.yaml
 - `fugaro coordinator` -- The coordinator's project view: what is in flight, and what collides
+- `fugaro craft` -- Show the model and the credential or pool each craft runs on
 - `fugaro creds` -- Set and list the credentials service's one bundle secret (the owner)
 - `fugaro diagnose` -- Explain how a run went: status, tests, review findings, the agent's last word, logs
 - `fugaro doctor` -- Check that Fugaro is set up and ready, without changing anything
@@ -1687,6 +1688,61 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | the repository to read (owner/name; default: the local config's, when it lists one) |
 | `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro craft`
+
+Show the model and the credential or pool each craft runs on
+
+Show the four crafts: the coder, the first-line review, the senior review
+and the security review.
+
+Each craft runs a model and sends its calls out on a credential or a pool, and
+the two halves inherit separately: the first-line review follows the coder and
+the security review follows the senior review, so a craft that sets only one
+half keeps the other half it follows. A craft that sets no access anywhere
+resolves to the project's default credential.
+
+Every half names where it came from: the layer that wrote it (repo, local or
+project), the craft it was inherited from, or default when nothing set it. A
+pool holding two or more Claude OAuth credentials serves nothing until the
+project's subscription-spread switch is on, and the row says so.
+
+The read is offline: it reads this checkout's fugaro.yaml, the installation's
+own config and the project layer file the last cloud read cached, and reaches
+no bucket, no database and no host.
+
+Usage: `fugaro craft`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for craft |
+
+Subcommands:
+
+- `fugaro craft ls` -- Show each craft's effective model and access, and where each came from
+
+## `fugaro craft ls`
+
+Show each craft's effective model and access, and where each came from
+
+Usage: `fugaro craft ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print the versioned document |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 

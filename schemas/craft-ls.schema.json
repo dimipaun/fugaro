@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/craft-ls.schema.json",
+  "title": "Fugaro craft ls",
+  "description": "The document `fugaro craft ls --json` prints: one row per craft -- the coder, the first-line review, the senior review and the security review -- with the model it runs, the credential or pool its calls go out on, the layer each half came from, and whether what it names serves anything yet (docs/model-crafts/spec.md §3, reconciliation MC8 and D1633). The read is offline: the layers it resolves are the checkout the command runs in (agent.crafts), the installation's own config (crafts, credentials, pools) and the project layer file the last cloud read cached (defaults.agent.crafts), so what it says about the cloud is what the local files already say. A credential is a NAME and a type in every document here and its value is stored nowhere a reader of this one can reach (spec §1), so no member of this document is a secret and no member is ever a secret's value. Members are only ever added within a version, so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document, which the same rule promises to keep readable under the same version.",
+  "type": "object",
+  "required": [
+    "version",
+    "crafts"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "$comment": "craftLsDocVersion in internal/cli/craft.go."
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The selected project's name. Absent when no project config was selected, which leaves every craft with the default credential and no model."
+    },
+    "crafts": {
+      "type": "array",
+      "description": "One row per craft, in config.CraftNames' order: the coder, the first-line review, the senior review and the security review. The four are always written, whether or not any layer sets them.",
+      "items": {
+        "$ref": "#/$defs/craft"
+      }
+    },
+    "problems": {
+      "type": "array",
+      "description": "The accesses that name no credential and no pool any layer holds, each as `internal/craft` reports it: the path of the key in the document that wrote it, and what is wrong with it. Absent when every access resolves. A craft that inherits such an access is not reported again -- the craft that wrote it is.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "$defs": {
+    "craft": {
+      "type": "object",
+      "required": [
+        "craft",
+        "model_from",
+        "access",
+        "access_from",
+        "inert"
+      ],
+      "properties": {
+        "craft": {
+          "type": "string",
+          "enum": [
+            "coder",
+            "review",
+            "senior-review",
+            "security-review"
+          ],
+          "description": "The craft this row is about (config.CraftNames)."
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The model ID this craft runs. Absent when no layer sets one and the craft it follows sets none either, which is a configuration no run can serve: naming a model no layer wrote would hide that."
+        },
+        "model_from": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Where `model` came from: `repo`, `local` or `project` for the layer that wrote it, `inherited from <craft>` for the craft it follows, and `default` when nothing set it (internal/craft's Effective.ModelFrom)."
+        },
+        "access": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The credential or pool this craft's calls go out on, as the layer that set it wrote the name. Never empty: an access no layer sets is the project's default credential (config.DefaultCredential, `vertex` today). The name is a reference and not a value -- the secret behind it is stored where no reader of this document can reach (spec §1)."
+        },
+        "access_from": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Where `access` came from, in `model_from`'s own vocabulary."
+        },
+        "inert": {
+          "type": "boolean",
+          "description": "Whether `access` names a pool that serves nothing yet: a pool holding two or more Claude OAuth subscription credentials while the project's subscription-spread switch is off (D1622). A credential, an undefined name and a pool of another shape are never inert."
+        }
+      }
+    }
+  }
+}
