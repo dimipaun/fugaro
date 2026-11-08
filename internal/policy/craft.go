@@ -68,8 +68,9 @@ type CraftPool struct {
 // could hand a run's calls to a credential the owner never admitted.
 type CraftLayer struct {
 	// Credentials are the credential names this layer makes available, in the
-	// order it lists them. A later layer's credentials are dropped and
-	// recorded.
+	// order it lists them, the built-in credentials (D1624) named like any
+	// other because a name is all this block ever compares. A later layer's
+	// credentials are dropped and recorded.
 	Credentials []string
 	// Pools are this layer's pools by name. A later layer may narrow one and
 	// may not introduce one.
@@ -83,25 +84,26 @@ type CraftLayer struct {
 	Access map[string]string
 }
 
-// The craft keys, as Effective.Sources and Ignored.Key spell them. A key of a
-// keyed value is built (CraftCredentialKey), the way a tier's is (TierKey), so
-// the vocabulary and the spelling cannot drift apart.
+// The two prefixes every keyed craft value is built from, under the same rule
+// a tier's is (TierKey): the name a craft's access speaks is what a key has to
+// carry, so a table of the spellings would be a second vocabulary to keep.
+//
+// There is no plain "crafts.credentials" or "crafts.pools" key: F12's "a
+// repository may never introduce one" is a rule over a name, and a key for a
+// whole block would read in the record as if the block itself had an effective
+// value.
 const (
-	// KeyCraftCredentials is the credentials of a layer: F12's "a repository
-	// may never introduce one" is one rule over the whole list, and a key per
-	// name would say a dropped list was a decision about each of it.
-	KeyCraftCredentials = "crafts.credentials"
-	// KeyCraftPools is a pool a later layer may not introduce at all.
-	KeyCraftPools = "crafts.pools"
+	craftCredentialsPrefix = "crafts.credentials"
+	craftPoolsPrefix       = "crafts.pools"
 )
 
 // CraftCredentialKey is the policy key of one credential
 // ("crafts.credentials.openrouter-main").
-func CraftCredentialKey(name string) string { return KeyCraftCredentials + "." + name }
+func CraftCredentialKey(name string) string { return craftCredentialsPrefix + "." + name }
 
 // CraftPoolKey is the policy key of a pool a layer may not introduce
 // ("crafts.pools.claude").
-func CraftPoolKey(name string) string { return KeyCraftPools + "." + name }
+func CraftPoolKey(name string) string { return craftPoolsPrefix + "." + name }
 
 // CraftPoolMembersKey is the policy key of a pool's members
 // ("crafts.pools.claude.members").
