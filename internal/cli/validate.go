@@ -698,8 +698,9 @@ const reviewArtifactTokens = 32000
 // (D886), the one ceiling a subscription run has beside the gateway's (F10),
 // and E7's precondition — the credentials service enabled for the installation,
 // and the admission of the review job's own caller that the launcher carries as
-// a constant (reviewJobAdmitted, true since 0.21.0) — which is the state
-// CSR2's launch refusal mirrors.
+// a constant (reviewJobAdmitted, true since 0.21.0) and also judges on the
+// installation's release when it launches (checkReviewAdmission) — which is the
+// state CSR2's launch refusal mirrors.
 //
 // All three speak for an installation that has named a Claude account, and are
 // silent without one: the review job is the first thing in this design that a
@@ -737,7 +738,15 @@ func reviewJobNotes(cfg *config.Config, lc *localcfg.Config) []config.Problem {
 // since 0.21.0 — so what supplies that one is upgrading Fugaro, and the note
 // says so rather than offering a command against the installation that would
 // change nothing. It never reads as "deploy the service and the review works":
-// the launch refuses until both hold, and so does this sentence.
+// the launch refuses until both hold, and so does this sentence. The admission
+// has a third face this note does not carry, because `fugaro validate` judges a
+// file rather than a release: the installation's own release, which
+// checkReviewAdmission refuses the launch on when it predates the release whose
+// service admits the class. A binary at that release answers both arms below the
+// same way (no note), so the note stays silent where a launch would refuse. The
+// two messages that name the binary's half stay what they are: they are the
+// sentences a binary built BEFORE the flip prints, and for that binary "rather
+// than reading it out of the installation" is exactly true.
 func reviewPreconditionNote(lc *localcfg.Config) string {
 	const launch = "fugaro review --pr N refuses until it holds"
 	enabled := lc.CredentialsService != nil && lc.CredentialsService.URL != ""
