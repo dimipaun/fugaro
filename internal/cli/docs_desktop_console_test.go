@@ -50,6 +50,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/plan"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -386,6 +387,9 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		// The rigor block and the rule inside it (docs/rigor-modes D24).
 		reflect.TypeOf(runstore.RigorRecord{}),
 		reflect.TypeOf(runstore.RigorArea{}),
+		// The owner-decision block and one decision inside it (OD1).
+		reflect.TypeOf(runstore.OwnerDecisions{}),
+		reflect.TypeOf(runstore.OwnerDecision{}),
 		// §6.11, the backlog index's rows (CLI 0.11.0).
 		reflect.TypeOf(backlogListDoc{}),
 		reflect.TypeOf(backlogRow{}),
@@ -414,9 +418,15 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(priceCatalog{}),
 		// §6.21, the managed screens' read (the managed-screens plan's CM2):
 		// the document and the bounded subset of the newest audit record,
-		// which is bounded because argv is not in it.
+		// which is bounded because argv is not in it — plus the retirement
+		// half CM8 reads there, which is the machine's own record of the last
+		// update carried as that record's types (localcfg.UpdateProject and
+		// its row shape) rather than as a second set of tags.
 		reflect.TypeOf(managedStatusDoc{}),
 		reflect.TypeOf(managedStatusAudit{}),
+		reflect.TypeOf(managedStatusRetirements{}),
+		reflect.TypeOf(localcfg.UpdateProject{}),
+		reflect.TypeOf(localcfg.UpdateRetirement{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command:
 		// ee/coordinator/cli/console_contract_test.go pins them against the
 		// tagged tree, which is the tree that still serves the console.
@@ -649,6 +659,9 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(runstore.ChangedFiles{}),
 		// The rigor block and the rule inside it (docs/rigor-modes D24).
 		reflect.TypeOf(runstore.RigorRecord{}), reflect.TypeOf(runstore.RigorArea{}),
+		// The owner-decision block and one decision inside it (OD1), the same
+		// two shapes as the test above.
+		reflect.TypeOf(runstore.OwnerDecisions{}), reflect.TypeOf(runstore.OwnerDecision{}),
 		// §6.10, the same three shapes as the test above (CLI 0.9.0).
 		reflect.TypeOf(userStatsDoc{}),
 		reflect.TypeOf(userstats.Row{}),
@@ -678,8 +691,13 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(settingsWriteDoc{}),
 		// §6.21, the managed screens' own document (the managed-screens plan's
 		// CM2): the marks' four facts and the bounded subset of the newest
-		// audit record, which is bounded because argv is not in it.
+		// audit record, which is bounded because argv is not in it — plus the
+		// last update's retirement, which CM8 reads there and which is the
+		// record's own shape (as above).
 		reflect.TypeOf(managedStatusDoc{}), reflect.TypeOf(managedStatusAudit{}),
+		reflect.TypeOf(managedStatusRetirements{}),
+		reflect.TypeOf(localcfg.UpdateProject{}),
+		reflect.TypeOf(localcfg.UpdateRetirement{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command,
 		// as in the test above.
 	}
@@ -1716,9 +1734,9 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //     request read to twenty-seven, console 0.119.0's totals read to
 //     twenty-eight, console 0.119.0's models read to twenty-nine, the
 //     settings-edit plan's C1 to thirty, the same plan's C3 to thirty-one, and
-//     the graph plan's CG9a to thirty-two; the managed screens' plan's CM4 --
-//     `managed.status` and `policy.show`, whose rule 6 rows CM3 already wrote --
-//     is the next, on thirty-four.
+//     the graph plan's CG9a to thirty-two, and the managed screens' plan's CM4
+//     -- `managed.status` and `policy.show`, whose rule 6 rows CM3 had already
+//     written -- to the thirty-four rule 5 carries today.
 //   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
 //     the row's own words lead some row of the design's table **and what that row
 //     carries after them is flags, nothing else**. The second half is the whole
@@ -1733,7 +1751,7 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //
 // The other direction -- a design row the console does not spawn yet -- is
 // deliberately **not** asserted: a fence may be ahead of the surface (that is
-// where rule 6's two managed rows stand until CM4), which is the safe direction
+// where rule 6's two managed rows stood between CM3 and CM4), which is the safe direction
 // for a permission, and the console's own test holds its copy that way.
 //
 // Mutations that prove it: add an entry to `CONSOLE_OPERATIONS` and leave rule 5's
@@ -2573,18 +2591,17 @@ func TestConsoleWorkflowJobIsGateable(t *testing.T) {
 		t.Errorf("%s's console job name %q interpolates: a matrix value in the name is a check name the gate cannot look up", consoleTestsWorkflowPath, job.Name)
 	}
 
-	// Triggers: every pull request and every push to main, which is ci.yml's
-	// pattern minus its docs-only skip.
-	if !slices.Equal(wf.On.Push.Branches, []string{"main"}) {
-		t.Errorf("%s's push trigger branches = %v, want [main]", consoleTestsWorkflowPath, wf.On.Push.Branches)
+	// Triggers: a manual dispatch only (owner's ruling 2026-11-07).
+	if len(wf.On.Push.Branches) != 0 {
+		t.Errorf("%s's push trigger branches = %v, want none: the console's tests run by hand", consoleTestsWorkflowPath, wf.On.Push.Branches)
 	}
 	keys := make([]string, 0, len(on))
 	for key := range on {
 		keys = append(keys, key)
 	}
 	slices.Sort(keys)
-	if !slices.Equal(keys, []string{"pull_request", "push"}) {
-		t.Errorf("%s triggers on %v, want exactly push and pull_request", consoleTestsWorkflowPath, keys)
+	if !slices.Equal(keys, []string{"workflow_dispatch"}) {
+		t.Errorf("%s triggers on %v, want exactly workflow_dispatch", consoleTestsWorkflowPath, keys)
 	}
 
 	// No `if:` on the job, in particular none on a `changes`/`docs_only` output:
@@ -7245,15 +7262,8 @@ func TestConsoleLinuxWorkflowIsBuildOnlyAndSecretless(t *testing.T) {
 	// A filter here is not the design section 9.4 bug (this job is in no gate's
 	// list) and it is still refused: the Linux packaging path is what rots when
 	// only a tag runs it.
-	if _, ok := rawOn["pull_request"]; !ok {
-		t.Errorf("%s does not run on pull_request: %v", path, rawOn)
-	}
-	push, ok := rawOn["push"].(map[string]any)
-	if !ok {
-		t.Fatalf("%s's push trigger is not a mapping: %v", path, rawOn["push"])
-	}
-	if branches, _ := push["branches"].([]any); len(branches) != 1 || branches[0] != "main" {
-		t.Errorf("%s's push trigger is %v, want branches: [main]", path, push["branches"])
+	if _, ok := rawOn["workflow_dispatch"]; !ok || len(rawOn) != 1 {
+		t.Errorf("%s triggers on %v, want only workflow_dispatch (owner's ruling 2026-11-07)", path, rawOn)
 	}
 	for name, trigger := range rawOn {
 		block, err := yaml.Marshal(trigger)
@@ -10089,6 +10099,22 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 		"it is the console's second",
 		"`settings set|unset KEY --layer <L> --dry-run --json",
 		"retried silently",
+		// The member the section had wrong: `target_layer` was written as
+		// "`project` or `local`, the two the generic path writes, or `""` when
+		// the generic path would not write the key at all", and the read answers
+		// `settingsDefaultLayer` instead -- the narrowest of the three the key may
+		// be set in, which is non-empty for a key the generic path refuses
+		// (`mailbox.keychain_item` is `local` on a `writable: false` row). Of the
+		// two phrases pinned below, the first is the schema's own
+		// (`schemas/settings.schema.json`, `$defs.row.target_layer`) and the
+		// second is this contract's: the schema's description does not carry it,
+		// and no test holds the two descriptions to each other -- the contract's
+		// claim is held to the read by TestSettingsConsoleFixtureOwnerAndWritable
+		// (internal/cli/settings_console_fixture_test.go), which asks
+		// settingsDefaultLayer for the fixture's own rows. The fixture the e2e
+		// draws is a document with it.
+		"the narrowest of `repo`, `project` and `local` the key may be set in",
+		"non-empty on a row the generic path refuses",
 	} {
 		if !strings.Contains(read, want) {
 			t.Errorf("%s's §6.19 does not state %q: the read's section is where a reader learns that the console also writes this group, and the screen C3 shipped does", path, want)

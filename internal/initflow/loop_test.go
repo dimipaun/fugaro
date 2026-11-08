@@ -194,10 +194,12 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 	// Ten stages of the installation's own plus the credentials service's
 	// owner-run apply (C1.20), the deployed security rules generation
 	// (init_rules_stage.go), the published policy node's migration in place
-	// (init_policy_migrate.go), the project layer and its one local file
-	// (init_layer_stage.go), the checkout's own steps inside fugaro update
-	// (init_checkout_upgrade.go) and the compute backend's provisioning, which
-	// the design puts last (compute-backend §8.1 task 6).
+	// (init_policy_migrate.go), the workspace record the owner's `fugaro
+	// update` publishes (update_workspace.go / D1292), the project layer
+	// and its one local file (init_layer_stage.go), the checkout's own steps
+	// inside fugaro update (init_checkout_upgrade.go) and the compute
+	// backend's provisioning, which the design puts last (compute-backend
+	// §8.1 task 6).
 	if len(names) != 16 {
 		t.Fatalf("the design has sixteen stages, got %v", names)
 	}
@@ -214,7 +216,7 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 		}
 	}
 	// The order the dogfooding run found by hand.
-	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Credentials, Repository, Rules, Policy, Layer, Checkout, Compute}
+	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Repository, Rules, Policy, Workspace, Layer, Checkout, Compute}
 	if !slices.Equal(names, want) {
 		t.Errorf("order = %v, want %v", names, want)
 	}
@@ -1140,6 +1142,159 @@ func TestAgentErrorFromAStageIsNeedsYou(t *testing.T) {
 	}
 }
 
+// What a step the managed gate did not admit leaves the user is decided by
+// WHAT refused it (GateRefusal), and the three answers are three sentences
+// about three different situations. A plan the gate's own rules would not
+// admit is nobody's to type past, so the stage's Left — which asks this reader
+// to type the project's name at a prompt that does not come, in a run already
+// stopped in the gate's sentence — is the one thing it must not print (the
+// deadlock CV1 is about: every new repository of the project blocked behind a
+// confirmation nobody can answer). A step the gate never reached a verdict on
+// says so rather than blaming a cover that read nothing. And a step whose
+// CLASS no plan gate covers (D1026) is the OWNER's own to run: that one keeps
+// the stage's Left, because "the one command the owner runs themselves" is
+// what spec §4.3 requires of a refusal and the whole of what an agent's report
+// to its owner is for.
+//
+// Both sessions the gate is asked in are driven, because they are two paths to
+// the same Left: a coding agent's session (agentStage) and the owner's own
+// terminal (the ruling of 2026-11-01). The control beside them is the other
+// half of the rule — a step that is genuinely the user's (a NeedsYouError with
+// a prompt) keeps the stage's own text, its kind and its command, so a change
+// that turned every left into a refusal fails here too.
+func TestARefusedStepIsNeverTheStagesOwnPrompt(t *testing.T) {
+	const reason = `the managed gate did not admit this step: nothing is written here (D1012) — refused by cover: module.installation.google_storage_bucket_iam_member.catalog_check_records["acme-app-1"]`
+	gate := func(string) bool { return true }
+	// The stage hands over the two things a refusal has to sort between: a
+	// prompt, which asks the reader for a confirmation the gate has already
+	// replaced, and a command, which is the owner's own to run.
+	promptLeft := Left{Kind: LeftPrompt, Text: "type the project's name to apply", Commands: []string{"fugaro update"}}
+	commandLeft := Left{Kind: LeftCommand, Text: "fugaro update"}
+	shared := []string{reason, "Nothing here is yours to type or to run"}
+	shapes := []struct {
+		what    string
+		refusal GateRefusal
+		left    Left
+		// wantKind is the kind of the left-for-you the refusal leaves, and
+		// wantText the refusal's own words when it has any ("" is the stage's
+		// Left, verbatim).
+		wantKind LeftKind
+		wantText []string
+		// notText is what this shape must not say: a claim that does not hold
+		// for it, or the confirmation the gate makes impossible.
+		notText []string
+	}{
+		{
+			what: "a plan the gate's own rules would not admit", refusal: GateRefusedPlan, left: promptLeft,
+			wantKind: LeftRefused,
+			wantText: append([]string{"managed gate refused this step", "fixed in Fugaro"}, shared...),
+			// No prompt to type, and no command either: the fix is a release,
+			// not anything this reader runs (CV1's deadlock was the prompt).
+			notText: []string{"type the project's name", "fugaro update"},
+		},
+		{
+			what: "a step whose confirmation class no plan gate covers", refusal: GateRefusedClass, left: commandLeft,
+			wantKind: LeftCommand,
+			wantText: []string{"fugaro update"},
+			// The class refusal is NOT a plan outside the cover (D1026 refused
+			// the step, not the document), and it must not be told to file an
+			// issue: the owner runs this one themselves (spec §4.3), which is
+			// the whole of what an agent's report to them is for.
+			notText: []string{"fixed in Fugaro", "Nothing here is yours to type"},
+		},
+		{
+			what: "a step the gate never judged", refusal: GateRefusedUnread, left: promptLeft,
+			wantKind: LeftRefused,
+			wantText: append([]string{"did not judge this step", "failure of the run rather than of your plan"}, shared...),
+			// No verdict was reached, so blaming the cover — and the issue
+			// that would send somebody to file — would be false.
+			notText: []string{"type the project's name", "fugaro update", "fixed in Fugaro"},
+		},
+	}
+	for _, session := range []struct {
+		name string
+		opts func(*Options)
+	}{
+		{"a coding agent's session", func(o *Options) { o.Agent = "CLAUDECODE"; o.Yes = true }},
+		{"the owner's own terminal", func(o *Options) { o.Terminal = true }},
+	} {
+		for _, sh := range shapes {
+			t.Run(session.name+" — "+sh.what, func(t *testing.T) {
+				var log []string
+				var out bytes.Buffer
+				f := &fake{name: Installation, log: &log, left: sh.left,
+					applyErr: &GatedError{Reason: reason, Err: errors.New(reason), Refusal: sh.refusal}}
+				o := Options{Out: &out, ManagedGate: gate}
+				session.opts(&o)
+				res, err := Run(context.Background(), []Stage{f}, o)
+				if err != nil || res.Failed != nil {
+					t.Fatalf("err %v res %+v", err, res)
+				}
+				if len(res.Left) != 1 {
+					t.Fatalf("the refused step left %d left-for-you, want one: %+v", len(res.Left), res.Left)
+				}
+				lf := res.Left[0]
+				if lf.Kind != sh.wantKind {
+					t.Errorf("the refusal left a %q, want %q (%+v)", lf.Kind, sh.wantKind, lf)
+				}
+				for _, want := range sh.wantText {
+					if !strings.Contains(lf.Text, want) {
+						t.Errorf("the refusal does not say %q: %q", want, lf.Text)
+					}
+				}
+				for _, bad := range sh.notText {
+					if strings.Contains(lf.Text, bad) {
+						t.Errorf("the refusal says %q, which is not true of this one or cannot help: %q", bad, lf.Text)
+					}
+				}
+				// A refusal that prints no command is a kind of its own, so
+				// the line itself says nothing is expected here; and every
+				// other shape keeps the command that finishes the step.
+				want := "left for you (" + Installation + ", " + string(sh.wantKind) + "): "
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("the printed block is not %q:\n%s", want, out.String())
+				}
+				if strings.Contains(out.String(), "left for you ("+Installation+", prompt)") {
+					t.Errorf("the refused step printed the stage's own prompt:\n%s", out.String())
+				}
+				if sh.refusal != GateRefusedClass {
+					if cmds := lf.PrintedCommands(); len(cmds) != 0 {
+						t.Errorf("the refused step printed the commands %q: no command helps, so listing one is the same mistake as the prompt", cmds)
+					}
+				}
+				if n := count(log, "apply"); n == 0 {
+					t.Error("the stage never reached its apply, so nothing here was judged")
+				}
+			})
+		}
+
+		// The control: the same gate, a step that IS the user's — no refusal
+		// at all, and the stage's own text, kind and command, untouched.
+		t.Run(session.name+" — a step that is the user's keeps its own text", func(t *testing.T) {
+			prompt := Left{Kind: LeftPrompt, Text: "type the project's name at the review to apply all of its steps", Commands: []string{"fugaro update"}}
+			var log []string
+			var out bytes.Buffer
+			f := &fake{name: Installation, log: &log, left: prompt, applyErr: &NeedsYouError{Left: prompt}}
+			o := Options{Out: &out, ManagedGate: gate}
+			session.opts(&o)
+			res, err := Run(context.Background(), []Stage{f}, o)
+			if err != nil || res.Failed != nil || len(res.Left) != 1 {
+				t.Fatalf("err %v res %+v", err, res)
+			}
+			lf := res.Left[0]
+			if lf.Kind != LeftPrompt || lf.Text != prompt.Text {
+				t.Errorf("a step left to the user was rewritten to %+v, want the stage's own %+v", lf, prompt)
+			}
+			if cmds := lf.PrintedCommands(); len(cmds) != 1 || cmds[0] != "fugaro update" {
+				t.Errorf("the user's own step lost the command that finishes it: %q", cmds)
+			}
+			if !strings.Contains(out.String(), "left for you ("+Installation+", prompt): "+prompt.Text) {
+				t.Errorf("the printed block is not the stage's own prompt:\n%s", out.String())
+			}
+		})
+	}
+}
+
 func TestNoTerminalErrorDropsTheYesHintForAnAgent(t *testing.T) {
 	plain := (&NoTerminalError{Stage: "installation"}).Error()
 	if !strings.Contains(plain, "--yes") {
@@ -1382,6 +1537,92 @@ func TestBillingPauseLetsLocalStagesFinish(t *testing.T) {
 			t.Errorf("--json lacks the status %s:\n%s", s, b)
 		}
 	}
+}
+
+// TestPlanViewPausedForBillingHoldsOnlyWhatNeedsBilling: the billing pause is
+// converge's `paused`, not its stops — the stages that need no billing run on
+// (NeedsBilling excludes the plugin and the checkout) — so the plan view may
+// not say they wait for the paused project, and --plan-only has to plan them.
+// What does wait for it is the stages that need billing, the same wait the run
+// reports as waiting-for-billing. The reading moved unnoticed once (#1836's
+// review): preview set its waiting stage for BillingPending as well, and no
+// test said either way.
+func TestPlanViewPausedForBillingHoldsOnlyWhatNeedsBilling(t *testing.T) {
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight, Project, Plugin, Repository)
+	stages[0].(*fake).status = Status{State: Done}
+	stages[1].(*fake).status = Status{State: BillingPending, Detail: "created; billing pending",
+		Left: &Left{Stage: Project, Kind: LeftCommand, Text: "link a billing account"}}
+	stages[2].(*fake).planSummary = "3 to write"
+	stages[3].(*fake).planSummary = "1 to onboard"
+	opts := yesOpts()
+	opts.PlanOnly, opts.Out = true, &out
+	opts.Project, opts.GCPProject, opts.Region = "aurora", "aurora-prod", "us-east5"
+	opts.Report = reporterTo(&out, report.Options{})
+	if _, err := Run(context.Background(), stages, opts); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	lineOf := func(stage string) string { return planLine(got, stage) }
+	if l := lineOf(Plugin); l == "" || strings.Contains(l, Project) {
+		t.Errorf("the plan view has the plugin waiting for the billing-pending %s, which converge runs it past: %q\n%s", Project, l, got)
+	}
+	if !strings.Contains(got, "3 to write") {
+		t.Errorf("--plan-only did not plan the stage that needs no billing:\n%s", got)
+	}
+	if l := lineOf(Repository); !strings.Contains(l, Project) || strings.Contains(l, "1 to onboard") {
+		t.Errorf("the stage that needs billing is %q, want it waiting for the billing-pending %s and not planned:\n%s", l, Project, got)
+	}
+}
+
+// TestPlanViewWaitsForAStageWithSomethingToDo: the plan view stops waiting for
+// a stage only when that stage is a stop this one's row runs past
+// (RunsPastStop) — a stop the run is not going to clear by applying anything.
+// A stage with something to do is one this run applies, and the checkout, the
+// one row with a tolerance, waits for a repository that is merely will-do like
+// every stage behind the repository does. Read the tolerance alone (without
+// asking whether the stage waited for is a stop at all), --plan-only plans the
+// checkout's own steps ahead of the repository and layer stages the run
+// applies first.
+func TestPlanViewWaitsForAStageWithSomethingToDo(t *testing.T) {
+	var log []string
+	var out bytes.Buffer
+	stages := fakes(&log, Preflight, Repository, Layer, Checkout)
+	stages[0].(*fake).status = Status{State: Done}
+	stages[1].(*fake).planSummary = "1 to onboard"
+	stages[2].(*fake).planSummary = "1 to publish"
+	stages[3].(*fake).planSummary = "2 to write"
+	opts := yesOpts()
+	opts.PlanOnly, opts.Out = true, &out
+	opts.Project, opts.GCPProject, opts.Region = "aurora", "aurora-prod", "us-east5"
+	opts.Report = reporterTo(&out, report.Options{})
+	if _, err := Run(context.Background(), stages, opts); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if l := planLine(got, Repository); !strings.Contains(l, "1 to onboard") {
+		t.Errorf("--plan-only did not plan the %s stage, the first with something to do: %q\n%s", Repository, l, got)
+	}
+	if l := planLine(got, Layer); !strings.Contains(l, Repository) || strings.Contains(l, "1 to publish") {
+		t.Errorf("the %s stage is %q, want it waiting for the %s stage the run applies first:\n%s", Layer, l, Repository, got)
+	}
+	// The checkout is the row with the tolerance, and it tolerates a stop: a
+	// stage with something to do is not one, and its own steps wait for it.
+	if l := planLine(got, Checkout); !strings.Contains(l, Repository) || strings.Contains(l, "2 to write") {
+		t.Errorf("--plan-only planned the checkout ahead of the %s stage, which the run applies first: %q\n%s", Repository, l, got)
+	}
+}
+
+// planLine is the plan view's line for one stage, "" when the view has none:
+// the line whose own fields name the stage.
+func planLine(view, stage string) string {
+	for _, l := range outputLines(view) {
+		if slices.Contains(strings.Fields(l), stage) {
+			return l
+		}
+	}
+	return ""
 }
 
 // convergeStages is a run with one stage already done, one to apply, one the
@@ -1724,7 +1965,11 @@ func TestLoopPlanOnlyViewUnchanged(t *testing.T) {
 func TestLoopNoReporterPrintsAsToday(t *testing.T) {
 	// A nil reporter is the loop's own account, word for word: every caller
 	// that has not moved onto the reporter prints exactly what it printed
-	// before, closing line and all.
+	// before, closing line and all. One word moved with the gating rule
+	// (RunsPastStop, #1836): the plan view's "after X" names the stage that
+	// gates the line rather than the first one that is not done, so repository
+	// reads "after secrets" here -- the stage this run stops at, which the
+	// account below then says in full ("waits for secrets").
 	var log []string
 	var out bytes.Buffer
 	opts := yesOpts()
@@ -1737,7 +1982,7 @@ func TestLoopNoReporterPrintsAsToday(t *testing.T) {
   [done]       preflight
   [will do]    installation
   [needs you]  secrets
-  [will do]    repository       after installation
+  [will do]    repository       after secrets
 fugaro: result
 fugaro: project aurora (GCP aurora-prod, us-east5)
   [done]       preflight

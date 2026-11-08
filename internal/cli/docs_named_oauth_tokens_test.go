@@ -91,17 +91,24 @@ func TestDocsNamedOAuthTokensSetupSkill(t *testing.T) {
 			t.Errorf("setup skill text no longer says %q", want)
 		}
 	}
-	// D2: the skill gives the command with no --repo, so the scope is the one
-	// the name has by default (project-wide when the account lists this
-	// repository). A --repo copy would win over the project copy from then on
-	// (design project-secrets.md §5), which is the state the default exists to
-	// make unnecessary.
-	namedSecretCmd := "fugaro secrets set " + config.ClaudeOAuthTokenPrefix + "<name>"
-	if !strings.Contains(string(skill), namedSecretCmd) {
-		t.Errorf("SKILL.md no longer shows %q (config.ClaudeOAuthTokenPrefix changed, or the command was dropped)", namedSecretCmd)
+	// The named account's own command is the one that stores it (spec
+	// accounts-add §8), and it leaves the reader no scope to pick: `accounts
+	// add` stores the token project-wide, where the shared job mounts it, so
+	// the `--repo` copy that would win over the project copy from then on
+	// (design project-secrets.md §5) is not a mistake the skill can hand
+	// anyone. The container it stores under is still the derived name, and
+	// the skill still says so: config.ClaudeOAuthTokenPrefix's shape is what
+	// the reader matches against `secrets ls`.
+	namedSecret := config.ClaudeOAuthTokenPrefix + "<name>"
+	namedAddCmd := "fugaro accounts add <name>"
+	if !strings.Contains(string(skill), namedAddCmd) {
+		t.Errorf("SKILL.md no longer shows %q (the one command that stores a named account's token)", namedAddCmd)
 	}
-	if strings.Contains(string(skill), namedSecretCmd+" --repo") {
-		t.Errorf("SKILL.md passes --repo to %q, which stores a repository copy that overrides the project copy for this repository", namedSecretCmd)
+	if !strings.Contains(string(skill), namedSecret) {
+		t.Errorf("SKILL.md no longer shows %q (config.ClaudeOAuthTokenPrefix changed, or the container's name was dropped)", namedSecret)
+	}
+	if strings.Contains(string(skill), "fugaro secrets set "+namedSecret) {
+		t.Errorf("SKILL.md still tells the reader to store %q by hand: `fugaro accounts add` owns that token, and the hand-run `secrets set` was the pair that made the owner pick a scope", namedSecret)
 	}
 	// U2 (the exact claude-setup-token multi-account sequence) is not
 	// answered yet (docs/gcp-live-checklist.md Check 35): the skill must

@@ -869,8 +869,10 @@ This is rule 1 and rule 2 written as prohibitions. A workspace:
 - **#1487's authorization server.** The exchange endpoint of §3 *is* the MCP design's authorization
   server. That design **landed on `main` on 2026-11-04** (merged as #1487, `docs/mcp-server/`), so
   the interface this design was written to is now a settled document rather than an open pull
-  request — but **none of its code is written**: its plan's tasks M1–M10 are all unbuilt, and its
-  M5 is gated on D921's library licence being confirmed. This design's SSO half therefore still
+  request — but **none of its code is written**: its plan's tasks M1–M10 are all unbuilt but for the
+  five merged on `main`, and its M5's licence gate was answered by the owner himself on 2026-11-07
+  ([licence-gate.md](../mcp-server/licence-gate.md) is the record), so what holds its front door back
+  is its own M5b, the paired-device approval. This design's SSO half therefore still
   cannot be built until that work is, and [implementation-plan.md](implementation-plan.md) §2 and §5
   carry that as the dependency that forces the release slot. Nothing here duplicates it: this design
   adds a workspace Firebase, a workspace signer endpoint and a member-bound assertion, and reuses

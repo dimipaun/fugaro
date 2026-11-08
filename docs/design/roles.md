@@ -33,7 +33,7 @@ Five things already name people, and none of them is a role model.
 | `terraform.operators` | `internal/localcfg/localcfg.go:511`, `fugaro setup --operator` (`internal/cli/init.go:363`) | IAM members who onboard repositories and apply Terraform |
 | The project's owners and editors (`admins`) | read from the project's IAM policy into `deploy/terraform/gcp/modules/firebase/variables.tf:92` | whoever Google Cloud already trusts with the whole project |
 | `terraform.budget_admins` | `internal/localcfg/localcfg.go:515`, `fugaro setup --budget-admin` (`internal/cli/init.go:372`) | further people who may change caps and kill switches; refuses `domain:` members (`internal/localcfg/localcfg_test.go:981`) |
-| The device allowlist `config/admin/devices/<uid>` | `internal/budget/rules/rules.go:458` (`PathDevices`), written over IAM by `fugaro pair` and `fugaro pair revoke` | paired phones; each entry carries a `role` child (`internal/mobileauth/mobileauth.go:144`, `NodeFieldRole`) |
+| The device allowlist `config/admin/devices/<uid>` | `internal/budget/rules/rules.go:458` (`PathDevices`), written over IAM by `fugaro pair` and `fugaro pair revoke` | paired phones; each entry carries a `role` child (`internal/mobileauth/mobileauth.go:117`, `NodeFieldRole`) |
 
 `localcfg`'s member grammar accepts `user:`, `group:`, `domain:` and `serviceAccount:`
 (`internal/localcfg/localcfg.go:830`). A `domain:` member therefore grants a whole domain whatever
@@ -121,9 +121,10 @@ Read together, that table says who can do what today:
 
 ## 2. The role model
 
-**viewer ⊂ operator ⊂ admin.** The rank order is not new: `internal/mobileauth` already encodes it
-as a closed set (`RoleViewer`, `RoleOperator`, `RoleAdmin`, `mobileauth.go:81`), with `Rank`
-(`:115`) and `AtLeast` (`:127`) over it, and `ParseRole` (`:98`) refusing every other spelling. This
+**viewer ⊂ operator ⊂ admin.** The rank order is not new: `internal/access` already encodes it
+as a closed set (`RoleViewer`, `RoleOperator`, `RoleAdmin`, `internal/access/access.go:66`), with
+`Rank` (`:105`) and `AtLeast` (`:118`) over it, and `ParseRole` (`:88`) refusing every other spelling.
+`internal/mobileauth` re-exports the type (`mobileauth.go:80`). This
 document proposes nothing about that type; it fixes what each rank would *hold*, which is the part no
 code states today.
 
@@ -307,7 +308,7 @@ enforcement beyond the lists".
 | --- | --- | --- |
 | The IAM grants for launchers, operators, admins and the new viewer list | **core (MIT)** | "the cloud keeps enforcing the launcher, operator and admin lists in MIT core" (T16); enforcement that protects a project stays free |
 | A read-only job role and the viewer's bucket/log grants | **core (MIT)** | T16's "small MIT core change for the viewer's cloud enforcement" |
-| The `viewer`/`operator`/`admin` rank type | **core (MIT)** | `internal/mobileauth` already holds it and is already core |
+| The `viewer`/`operator`/`admin` rank type | **core (MIT)** | `internal/access` holds it and is core, and `internal/mobileauth` re-exports it |
 | RTDB rules that read a role | **core (MIT)** | a rule is the deployment's own boundary, and the rules are core |
 | The action matrix as an actual check — which role may do which action, and the answers when one may not | **`ee/`** | this is the role model D637 puts beyond the lists |
 | The console's Members screen and its read-only gating | **`ee/`** | D637's "SSO and domain or workspace invites, roles enforcement beyond the lists" |

@@ -14,6 +14,8 @@ package cli
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -424,5 +426,101 @@ func TestBudgetRepoFlagHelpSaysWhichSubcommands(t *testing.T) {
 		if f == nil || strings.Contains(f.Usage, "no value") {
 			t.Errorf("budget %s --repo claims the optional form: %q", name, f.Usage)
 		}
+	}
+}
+
+// TestBudgetSetRepoAcceptsThisCheckoutsPath: RP1's path form is the same
+// command as the repository name it resolves to. `--repo .` in a checkout of
+// acme/app writes exactly what `--repo acme/app` writes.
+func TestBudgetSetRepoAcceptsThisCheckoutsPath(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.Checkout(t, "")
+	out, _, err := execute(t, "budget", "set", "--repo", ".", "--daily", "5", "--yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repoCapsOf(t, f, appSlug) == nil {
+		t.Fatalf("--repo . did not write this checkout's repository: %v", f.db.Value(budget.PathCapsRepo(appSlug)))
+	}
+	if !strings.Contains(out, "caps of acme/app") {
+		t.Errorf("--repo . names something else:\n%s", out)
+	}
+}
+
+// writeOtherProjectConfig writes a second installation's config, listing repo
+// and pointing at the same fake budget database -- and marks that database as
+// the second installation's, which is what lets the command write there at
+// all. It returns the config's path.
+func writeOtherProjectConfig(t *testing.T, f *budgetFixture, repo string) string {
+	t.Helper()
+	f.db.Set(budget.PathMark, installMark("other", "proj-1234"))
+	f.db.Set("fugaro/project", "other")
+	path := filepath.Join(f.dir, "other.yaml")
+	cfg := "version: 1\nname: other\ngcp_project: proj-1234\nregion: us-east5\n" +
+		"runs_bucket: unused-bucket\nbucket_url: file://" + filepath.Join(f.dir, "runs-other") + "\n" +
+		"user: someone@example.com\nmax_parallel: 2\n" +
+		"budget: { mode: observe, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: " + f.db.URL + " }\n" +
+		"endpoints: { no_auth: true }\n" +
+		"repos:\n  " + repo + ": { provider: github, base_branch: main, workflows: [web] }\n"
+	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestBudgetSetRepoPathIsJudgedAgainstTheProjectTheFlagsSelect: the repository
+// a --repo path resolves to is checked against the project the command acts on.
+// In a checkout of acme/other, with an installation that lists it in
+// other.yaml, `--config other.yaml --repo .` is the command for acme/other --
+// before this it was refused as "acme/other is not one of project aurora's
+// repositories", which judged it against the ambient config instead of the one
+// --config named.
+func TestBudgetSetRepoPathIsJudgedAgainstTheProjectTheFlagsSelect(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	testutil.IsolateGit(t)
+	checkout := repoArgCheckout(t, filepath.Join(t.TempDir(), "checkout"), "https://github.com/acme/other.git")
+	// The working directory is no checkout of its own, so nothing but the
+	// flags selects the installation: without them the ambient config
+	// (aurora, the fixture's) is what a --repo path would be judged against.
+	t.Chdir(t.TempDir())
+	cfg := writeOtherProjectConfig(t, f, "acme/other")
+	out, _, err := execute(t, "budget", "set", "--config", cfg, "--repo", checkout, "--daily", "5", "--yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherSlug := mustSlug("github", "acme/other")
+	if repoCapsOf(t, f, otherSlug) == nil {
+		t.Fatalf("the path did not write acme/other's caps: %v", f.db.Value(budget.PathCapsRepo(otherSlug)))
+	}
+	if !strings.Contains(out, "caps of acme/other") {
+		t.Errorf("--config other.yaml named something else:\n%s", out)
+	}
+	if repoCapsOf(t, f, appSlug) != nil {
+		t.Error("the path wrote the fixture's own repository instead")
+	}
+}
+
+// TestBudgetSetRepoRefusesAPathOutsideTheProject: a path is a checkout, and a
+// checkout of a repository this project does not list is refused with a
+// sentence naming the path -- never acted on, and never silently read as the
+// repository the command happens to run in.
+func TestBudgetSetRepoRefusesAPathOutsideTheProject(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "https://github.com/acme/other.git")
+	t.Chdir(dir)
+	_, _, err := execute(t, "budget", "set", "--repo", ".", "--daily", "5", "--yes")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	for _, want := range []string{"--repo .", "acme/other", "aurora"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if repoCapsOf(t, f, appSlug) != nil {
+		t.Error("a refused path wrote caps anyway")
 	}
 }

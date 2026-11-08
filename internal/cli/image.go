@@ -98,7 +98,12 @@ func newImageBuildCmd() *cobra.Command {
 			"the checkout's fugaro.yaml and origin say what to build.\n\n" +
 			"A Cloud Build is billable, so it asks for the project's name typed at a real\n" +
 			"terminal: --json, a pipe and a coding agent's session never confirm it (it\n" +
-			"prints the one line to run in your own terminal window and exits 1).\n" +
+			"prints the one line to run in your own terminal window and exits 1). One\n" +
+			"exception: building a catalog entry in a project whose marks say it is\n" +
+			"managed asks a person at a real terminal nothing, because the managed gate\n" +
+			"judges that build against the project's own bound on billable builds and\n" +
+			"records it. A derived image (--workflow, or a checkout with no catalog) is\n" +
+			"not that row and keeps the typed name.\n" +
 			"--local builds with your own Docker and costs nothing in the cloud.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -111,7 +116,7 @@ func newImageBuildCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.BoolVar(&o.local, "local", false, "build with the local Docker daemon from the checkout you are in")
-	f.StringVar(&o.repo, "repo", "", "owner/name of the repository to build with Cloud Build (default: the checkout's origin, which it must match)")
+	f.StringVar(&o.repo, "repo", "", "owner/name (or a path inside its checkout) of the repository to build with Cloud Build (default: the checkout's origin, which it must match)")
 	f.StringVar(&o.workflow, "workflow", "", "workflow to build; optional when fugaro.yaml defines one")
 	f.StringVar(&o.base, "base", "", "base image (default: for a Cloud Build build the local config's base_images entry for the workflow's base, else the published fugaro-base matching this fugaro version)")
 	f.StringVar(&o.tag, "tag", "", "tag for the built image (default fugaro-<dir>-<workflow>:local)")
@@ -226,6 +231,9 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 		return err
 	}
 	repo := o.repo
+	if repo, err = repoArg(ctx, o.cloud, repo); err != nil {
+		return err
+	}
 	if repo == "" {
 		repo = origin
 	}

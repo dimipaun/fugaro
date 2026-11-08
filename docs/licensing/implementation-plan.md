@@ -489,6 +489,18 @@ The key check lives in `ee/` and gates at the registration point (`ee/register`)
 reads, stores or knows about keys (D308 with D303 as amended).
 
 #### L3.1 — The licence-key design note
+
+**Superseded 2026-11-07: carried by the subscriptions plan's §S2.1, whose note is
+[licence-key.md](licence-key.md).** The task below is the earlier text of the same note, and it is
+not built: L3.1's three design rules (the signature over the raw bytes before any JSON is parsed,
+the key id that rotates the compiled-in public key, and the clock set back as a stated limit) are
+carried in the note that landed, which adds the rulings of 2026-10-27 — one key per organisation
+with a seat count (the key-binding ruling), expiry only (O4), the next key 30 days before expiry
+with the verifier taking the latest valid one (T26), a maximum lifetime per tier, the staging key
+id production verifiers refuse, where each product stores the key and how the console hands it to
+the CLI it spawns. It is written against `docs/subscriptions/implementation-plan.md`, not from here.
+The number is not reused.
+
 - **Files:** `docs/licensing/licence-key.md` (new): D308 as a design (Ed25519 over a JSON claim
   set: licensee, features, expiry, issued; base64url; verified offline in `ee/` code with the
   public key compiled in; the signature is verified over the **raw key bytes before** any JSON is

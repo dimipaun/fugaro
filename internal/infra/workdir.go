@@ -142,7 +142,7 @@ type Workdir struct {
 	//
 	// PrepareWorkdir rebuilds the tree afresh, so by the time a caller runs
 	// the file is gone — and a caller that has to carry ONE key of it forward
-	// (infra.CarriedCredentialsService, the credentials stage's opt-in) has
+	// (infra.CarriedCredentialsService, the credentials service's block) has
 	// only this copy. Reading it after the rebuild is the bug this field
 	// exists to prevent: the read answers "there is no tfvars", the key is
 	// dropped from the rewritten document, and the next plan is the service's
@@ -168,11 +168,11 @@ func ReadWorkdirVars(dir, root string) ([]byte, error) {
 // is not the same as Workdir.PrevVars — the snapshot PrepareWorkdir took
 // before it rebuilt the tree.
 //
-// The difference is the whole reason this exists: the credentials stage writes
-// its opt-in into these tfvars in the middle of a run, and a LATER stage that
-// rebuilds the document from its spec (prepare, called by the compute stage's
-// read of the installation's outputs) has to carry that key forward from the
-// document as it stands, not from the run's opening snapshot.
+// The difference is the whole reason this exists: the deploy writes the
+// credentials service's block into these tfvars in the middle of a run, and a
+// LATER stage that rebuilds the document from its spec (prepare, called by the
+// compute stage's read of the installation's outputs) has to carry that key
+// forward from the document as it stands, not from the run's opening snapshot.
 func (w *Workdir) Vars() ([]byte, error) {
 	return readVarsFile(filepath.Join(w.Root, VarsFile))
 }

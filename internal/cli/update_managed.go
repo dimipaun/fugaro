@@ -2,9 +2,12 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"slices"
+	"strings"
 
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -12,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/shellword"
 )
 
 // update_managed.go is `fugaro update` under the managed gate (M1, D1016):
@@ -84,6 +88,16 @@ import (
 // (`noYes` in the stage table today and under a managed project), the layer
 // stage and the checkout's own steps.
 //
+// The workspace stage is here with the policy one, and for the same reason: its
+// document is the node it publishes (docs/workspaces/spec.md §6 — W2's publish
+// "runs under the gate update already opens"), and its two questions are the
+// policy stage's two, the database is this installation's (D1017) and the node
+// is one this binary's own may write over. What the gate may never admit there
+// is a publish that admits more to the group than the node already carries:
+// that step is initflow.Typed (D846) and D1026 admits no plan gate's answer for
+// a Typed step, so the one write that decides who is in the group stays the
+// owner's own word and never a mark's (SEC, rule 1).
+//
 // The policy stage's own two branches that write NO node are outside the gate
 // as well, and they are the ones this map cannot express: D854's bare re-seed
 // writes this machine's file alone and the generation-record step writes it
@@ -96,6 +110,7 @@ var gatedStages = map[string]bool{
 	initflow.Repository:    true,
 	initflow.Rules:         true,
 	initflow.Policy:        true,
+	initflow.Workspace:     true,
 }
 
 // initGate is this run's use of the gate: M6's helper, and the one read of the
@@ -426,7 +441,7 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	// leaves open.
 	doc, err := t.ShowJSON(ctx, infra.PlanFile)
 	if err != nil {
-		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err}
+		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err, Refusal: initflow.GateRefusedUnread}
 	}
 	verdict, err := managedmode.Gate(ctx, infra.PlanFile, managedmode.Spec{
 		Project: r.projectName, GCPProject: r.gcpProject,
@@ -438,7 +453,7 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 		// the gate's words, because a session that read its own refusal here
 		// would be told to hand the step to someone else rather than what
 		// about the plan could not be read.
-		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err}
+		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err, Refusal: initflow.GateRefusedUnread}
 	}
 	class := gateClass()
 	conv := managedmode.ConvergeRefused(doc, class, refusedRules(verdict))
@@ -447,7 +462,7 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	}
 	m, err := g.g.admit(ctx, class, conv)
 	if err != nil {
-		return true, &initflow.GatedError{Reason: err.Error(), Err: err}
+		return true, r.gateRefused(err, doc, verdict, cover, imports)
 	}
 	// D55's one rule, asked with this run's conditions — a coding agent's
 	// session or the owner's own terminal, which is the whole of who may
@@ -488,12 +503,12 @@ func (s *rulesStage) gateStep(ctx context.Context) (bool, error) {
 	}
 	doc, err := rules.Generate()
 	if err != nil {
-		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err}
+		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err, Refusal: initflow.GateRefusedUnread}
 	}
 	class := gateClass()
 	m, err := r.gate.g.admit(ctx, class, managedmode.ConvergeAdmitted(doc, class, rulesAdmittedRules))
 	if err != nil {
-		return true, &initflow.GatedError{Reason: err.Error(), Err: err}
+		return true, &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: gateRefusalOf(err)}
 	}
 	if !initflow.GateConfirms(class, r.conditions(), m) {
 		return false, nil
@@ -554,12 +569,12 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 		// A node write with no bytes to write is the stage's own contract
 		// broken, and it is refused rather than published: an empty document is
 		// the one thing this gate must never hand to a write.
-		return true, &initflow.GatedError{Reason: gateUnreadable, Err: errors.New("the policy node this step would publish is empty")}
+		return true, &initflow.GatedError{Reason: gateUnreadable, Err: errors.New("the policy node this step would publish is empty"), Refusal: initflow.GateRefusedUnread}
 	}
 	conv := managedmode.ConvergeAdmitted(doc, class, policyAdmittedRules)
 	mg, err := r.gate.g.admit(ctx, class, conv)
 	if err != nil {
-		return true, &initflow.GatedError{Reason: err.Error(), Err: err}
+		return true, &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: gateRefusalOf(err)}
 	}
 	marker := agentMarker(os.Getenv, s.e.r.stdinTerminal())
 	if !initflow.GateConfirms(class, r.conditions(), mg) {
@@ -589,7 +604,7 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 		// inventory is not a verdict about this document either.
 		if class == initflow.Typed && marker != "" {
 			refused := conv.Refuse()
-			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused}
+			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused, Refusal: initflow.GateRefusedClass}
 		}
 		return false, nil
 	}
@@ -605,6 +620,91 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 var policyAdmittedRules = []string{
 	"the database is this installation's: budgetDBUnadopted admitted it (D1017)",
 	fmt.Sprintf("this machine's config is not behind the published node (D854), which is the state in which publishing writes version %d over a node this binary's own may write", projectpolicy.Version),
+}
+
+// gateStep judges the workspace node this stage is about to publish, and answers
+// whether the gate admitted it: the workspace stage's version of the policy
+// stage's gateStep, for the second stage of this command whose document is the
+// database node it writes rather than a plan.
+//
+// The document is p.body — the bytes the stage's conditional write puts at
+// workspaces/<name>, built once and confirmed against, so the document the gate
+// judged and the document that lands are the same bytes (the ETag the write is
+// conditional on is the read the diff was made from). The two questions are
+// workspaceAdmittedRules, which the stage answered before it built the
+// document: the database is this installation's (budgetDBUnadopted, D1017) and
+// the node in play is one this binary's own may write over.
+//
+// A publish that ADMITS something is initflow.Typed, the class D846 gives the
+// policy stage's raised ceiling and the one D1026 refuses whatever a plan gate
+// said: the record decides who is in the group, so a member this stage adds —
+// and the whole membership, on a workspace that has no published record yet —
+// may only be the owner's own word and never a mark's. A first publish is that
+// class for the policy stage's reason (M3): the document is chosen where none
+// was, and a session that edited `workspace_members` in the YAML by hand would
+// otherwise publish the group's whole membership behind a mark. Every other
+// publish — a plain rewrite, a migration, a removal — is the ordinary
+// YesOrTyped step the gate may stand in for, which is what the workspaces design
+// says of this write ("it runs under the gate `update` already opens", §6;
+// reconciliation F32 names it the cloud write of the two that the gate ADMITS).
+func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) (bool, error) {
+	r := s.e.r
+	if !r.gateUnderway() {
+		return false, nil
+	}
+	class := gateClass()
+	if len(p.widens) > 0 {
+		class = initflow.Typed
+	}
+	doc := p.body
+	if len(doc) == 0 {
+		// A node write with no bytes to write is the stage's own contract
+		// broken, and it is refused rather than published: an empty document is
+		// the one thing this gate must never hand to a write.
+		return true, &initflow.GatedError{Reason: gateUnreadable, Err: errors.New("the workspace node this step would publish is empty"), Refusal: initflow.GateRefusedUnread}
+	}
+	conv := managedmode.ConvergeAdmitted(doc, class, workspaceAdmittedRules)
+	mg, err := r.gate.g.admit(ctx, class, conv)
+	if err != nil {
+		return true, &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: gateRefusalOf(err)}
+	}
+	marker := agentMarker(os.Getenv, s.e.r.stdinTerminal())
+	if !initflow.GateConfirms(class, r.conditions(), mg) {
+		// The Typed class is the one not-admitted answer with a sentence of the
+		// gate's own, and it is given here rather than left to the caller's
+		// coding-agent refusal: this step's document WAS admitted by the rules
+		// above, so what refuses it is the class rule and nothing about the
+		// session. The marker is asked for beside the class, and it is what
+		// keeps this sentence inside the session the gate is about: it is the
+		// coding agent's alone. A person at a real terminal on a managed project
+		// is not asked for the typed name (the owner's ruling of 2026-11-06,
+		// workspacePublication.confirm), so the widening writes there on a note
+		// with the diff above it — what this admits is read in the added lines
+		// rather than in a sentence worded for a confirmation nobody is asked
+		// for — and every other not-admitted answer (a pipe, --json and
+		// --non-interactive carry no marker and no answer either) keeps the
+		// confirmation the caller would have asked.
+		if class == initflow.Typed && marker != "" {
+			refused := conv.Refuse()
+			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused, Refusal: initflow.GateRefusedClass}
+		}
+		return false, nil
+	}
+	fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
+	return true, nil
+}
+
+// workspaceAdmittedRules is what the record says admitted the workspace step:
+// the two questions the stage answered before its write, in the order it asked
+// them — the database is this installation's (D1017), and the node in play is
+// one this binary's own may write over (a first publish, where there is no node
+// to replace, or a node at the version this binary writes and the migration
+// carries). Neither the document's content nor a member it names is here: the
+// record's digest is what an owner checks the node against, and a record that
+// listed the group would be a second copy of the thing the node exists to be.
+var workspaceAdmittedRules = []string{
+	"the database is this installation's: budgetDBUnadopted admitted it (D1017)",
+	fmt.Sprintf("the published node is one this binary's own may write over: there is none, or it is at version %d (or at a version the migration carries to it in place)", projectpolicy.WorkspaceVersion),
 }
 
 // gateApplied records the step the gate admitted, AFTER the step's own write
@@ -631,6 +731,192 @@ func (r *initRun) gateApplied(ctx context.Context) error {
 // two judge a document the binary or the database holds, and the sentence a
 // session reads must not name a shape the step never had.
 const gateUnreadable = "the managed gate did not admit this step: the document it was to judge could not be produced, and a document nobody could read is never applied here (D1012)"
+
+// gateRefused is the GatedError of a step this gate did not admit, from the
+// error M6's admit answered with, the plan's own bytes, the verdict they were
+// judged by, and the cover and the imports the gate asked them with.
+//
+// It is one function rather than a struct literal at the call site because the
+// shape of the refusal is a decision about this command's own document, and it
+// takes all five: the plan and the verdict are what say whether the owner's
+// flag admits a removal here (gateDeleteLeft — which rule refused, and whether
+// the flag clears what they refused), the cover and its imports are what say
+// whether the same flag would apply something no rule read (a replace's create
+// half), and the error is what says whether the gate judged anything at all
+// (gateRefusalOf). The two stages whose document is not a plan can only ever be
+// the last, so they ask gateRefusalOf themselves.
+//
+// The plan's answer is asked only of a plan the gate REFUSED (gateRefusalOf's
+// plan answer, i.e. managed.ErrNotConverged): a step the gate reached no verdict
+// on — the plan could not be printed, the creation fact could not be read again
+// immediately before the write — is a failure of the run, and a run's failure
+// is not the owner's removal however many deletes the document it never judged
+// turns out to carry. A mark read that failed takes the same document down a
+// different road than a rule that refused it, and the two roads' answers must
+// not be handed one another's command.
+func (r *initRun) gateRefused(err error, doc []byte, verdict managedmode.Verdict, cover managedmode.Cover, imports []tf.ImportKey) *initflow.GatedError {
+	refusal := gateRefusalOf(err)
+	if refusal != initflow.GateRefusedPlan {
+		return &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: refusal}
+	}
+	if owner, ok := r.gateDeleteLeft(err.Error(), doc, verdict, cover, imports); ok {
+		return &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: initflow.GateRefusedDelete, Owner: owner}
+	}
+	return &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: refusal}
+}
+
+// gateRefusalOf is what a step's refusal leaves the person who reads it, read
+// off the error the gate answered with: a verdict against the document
+// (managed.ErrNotConverged, whether the cover, the cost list or a write's own
+// record failed beside it) or a failure with no verdict at all — a plan
+// terraform could not print, a mark that could not be read a second time
+// immediately before the write.
+//
+// The two are different LEFTS and not two spellings of one: a plan the rules
+// would not admit is nobody's to type past (initflow.GateRefusedPlan), while a
+// step the gate never judged says so rather than blaming a cover that read
+// nothing (GateRefusedUnread). It is decided here rather than in the loop
+// because only this side of the seam can match on managed's own sentinel, and
+// a guess would put a wrong sentence — "a person files an issue", or "the plan
+// is fine, the run failed" — in front of the owner.
+//
+// The one plan refusal it does not cover is gateDeleteLeft's (D1012's delete
+// rule): a removal the owner's own flag admits is theirs to approve, so the
+// refusal leaves them that command rather than an issue, and it is asked of
+// the plan's bytes rather than of the sentence — no error value says which
+// resource a plan removes.
+func gateRefusalOf(err error) initflow.GateRefusal {
+	if errors.Is(err, managedmode.ErrNotConverged) {
+		return initflow.GateRefusedPlan
+	}
+	return initflow.GateRefusedUnread
+}
+
+// gateDeleteLeft is the left-for-you of a refusal the owner's own --allow-delete
+// admits: the step is theirs and not a session's (spec §4.3's "For the owner"),
+// the command already exists, and a person who is told to file an issue about
+// a removal they can approve is being sent to work that does not close the loop
+// the refusal opened.
+//
+// Four questions come before it, and all of them are about the command being
+// one that can help rather than about the sentence: the verdict says whether
+// the delete rule is the only thing that refused the plan
+// (RefusedOnlyForRemovals — the flag turns the whole gate off, not one rule of
+// it), the plan's own bytes say whether the step the flag produces will apply
+// it (the guard it will run, and the project-job rule that runs beside it), and
+// the cover the gate itself asked says whether what the plan does BESIDES those
+// removals is judged at all (tf.WithoutRemovals, which is the create half of
+// every replace among them). Each of them, answered the other way, is a command
+// the owner would run and watch refuse — or worse, one that applies a change no
+// rule ever read.
+//
+// What it asks the plan, and not the gate's sentence: tf.Listable is exactly
+// the set --allow-delete admits — a removal (a delete, or a replace, whose
+// actions carry one) of an action the guard knows, at an address the plan does
+// not reach from another one — so a plan whose removals are all outside that
+// set (an object the plan moves, an action the guard does not know) is NOT this
+// shape: no flag admits them, and naming a command that cannot help is the same
+// mistake as offering the stage's prompt. The plan is read from the bytes the gate
+// itself judged, which are already in hand (D1022's document), so the addresses
+// in the command and the identity printed beside them are the ones that plan
+// carries.
+//
+// A replace is the one shape the addresses cannot tell from a removal, and the
+// cover is where the difference shows. --allow-delete admits a delete AND a
+// replace (tf.Listable), while the cover refuses a change carrying a delete as
+// ONE fact — "<address> (actions delete, create)" — and reads nothing inside it
+// (tf.Cover.NotCovered's first branch). So the create half of a replace at an
+// address on that list is a change no rule of the gate ever judged, and the run
+// that passes the flag applies it with the gate stood down. The owner's
+// approval is the removal, so the create half is asked here, as the create it
+// is, of the cover the gate itself asked (tf.WithoutRemovals): a replace whose
+// create half grants a role to somebody the review did not list, or to
+// allUsers, leaves no command, while one whose create half the cover admits
+// keeps the command a removal leaves.
+//
+// The identity is the promise §4.3 makes to the owner — "where the refusal is a
+// delete the owner did not approve, it prints the identity the plan's before
+// view carries" — and tf.RemoveIdentityText is where it comes from: the object
+// the plan takes away, or the reason the plan does not identify one. The
+// address is quoted with shellword, because it is the plan's text and it is
+// going onto a command line; --allow-delete takes the address alone (fugaro's
+// own roots are not the owner's delete list, D72/D74), so the identity is what
+// the owner reads to know which object they are approving.
+//
+// The address alone is also why a removal the plan identifies nothing for stays
+// in this shape rather than being filtered out of it: the guard the owner's own
+// flag reaches compares the address and nothing else, so it clears the removal
+// whether or not the before view names the object — and the reason
+// RemoveIdentityText gives is then the whole of what the owner has to go on,
+// which is why it is printed rather than dropped. What no flag reaches is what
+// tf.Listable already leaves out (the paragraph above), and nothing else.
+func (r *initRun) gateDeleteLeft(reason string, doc []byte, verdict managedmode.Verdict, cover managedmode.Cover, imports []tf.ImportKey) (initflow.Left, bool) {
+	var plan tf.Plan
+	if err := json.Unmarshal(doc, &plan); err != nil {
+		// A document this binary cannot read is not one whose removals can be
+		// named: the refusal keeps the shape the error gave it.
+		return initflow.Left{}, false
+	}
+	// What the flag would clear here: the removals --allow-delete admits, which
+	// is the set the questions below are both asked about.
+	admits := tf.Listable(&plan, nil)
+	if len(admits) == 0 {
+		return initflow.Left{}, false
+	}
+	// And only a plan the delete rule is the whole of: the flag this shape hands
+	// the owner shapes the installation, so the gate stands down for the run
+	// that passes it and nothing reads the plan again. A plan the cover or the
+	// cost list refused something else in — an outsider's grant, a GPU — is
+	// nobody's in the same way it was before this shape existed, and offering
+	// the flag for it would be offering a command that applies exactly what
+	// those rules refused. A removal's own refusal is not that, from either gate
+	// (RefusedOnlyForRemovals's doc says why the question is asked of the
+	// addresses).
+	if !verdict.RefusedOnlyForRemovals(admits) {
+		return initflow.Left{}, false
+	}
+	// And only where the flag clears the whole plan: what the run that passes
+	// it will ask is the step's own guard (initRun.guard), so the command
+	// offered has to be one that guard admits. Anything it still refuses — a
+	// removal the flag does not reach (tf.Guard's own rules), a project job the
+	// retirement rule holds whatever the list says (infra.RefuseProjectJobDeletes)
+	// — is a run the owner would make and watch refuse, which is the same
+	// mistake as an issue about work that does close the loop.
+	if err := infra.RefuseProjectJobDeletes(&plan); err != nil {
+		return initflow.Left{}, false
+	}
+	if err := tf.Guard(&plan, admits); err != nil {
+		return initflow.Left{}, false
+	}
+	// And only where what the flag applies BESIDE those removals is judged: the
+	// removals themselves are the owner's approval and nothing reads them
+	// again, but a replace carries a create beside its removal, and the gate's
+	// own cover never looked inside the change it refused for the delete
+	// (tf.Cover.NotCovered). The create half is asked of that same cover here,
+	// so a plan whose create half it refuses — a grant to somebody the review
+	// did not list, an allUsers one — leaves the owner no command rather than
+	// one that applies it with the gate stood down and no rule left to read it.
+	if why := cover.NotCovered(tf.WithoutRemovals(&plan, admits), imports); len(why) > 0 {
+		return initflow.Left{}, false
+	}
+	identities := make(map[string]string, len(admits))
+	for _, rc := range plan.ResourceChanges {
+		if slices.Contains(admits, rc.Address) {
+			identities[rc.Address] = tf.RemoveIdentityText(rc)
+		}
+	}
+	words, args := make([]string, 0, len(admits)), make([]string, 0, len(admits))
+	for _, addr := range admits {
+		words = append(words, addr+" — "+identities[addr])
+		args = append(args, "--allow-delete", shellword.Quote(addr))
+	}
+	return initflow.Left{
+		Kind: initflow.LeftCommand,
+		Text: "the managed gate refused this step and nothing was written: " + reason +
+			". The removal this plan carries is your own decision and not a session's, and no typed confirmation reaches past a refusal (D1012): the command below is the one you run yourself, at your own terminal, where the flag admits every removal named here and the step keeps its own confirmation. The plan removes " + strings.Join(words, ", "),
+		Commands: []string{selfCommand() + " " + r.o.doorName() + " " + strings.Join(args, " ")},
+	}, true
+}
 
 // gateClass is the confirmation class of a step the gate judges: these are the
 // ordinary applies of their stages, asked with confirmOrdinary, and an

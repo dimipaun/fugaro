@@ -25,7 +25,7 @@ func TestResolveMinimalTakesTheDefaultProfile(t *testing.T) {
 		t.Fatalf("workflows = %v", c.Workflows)
 	}
 	if w.Commands.Test != "./gradlew test" || w.Profile != "java-service" ||
-		w.Timeouts.Total.Duration != 2*time.Hour || w.Timeouts.Stage.Duration != 40*time.Minute {
+		w.Timeouts.Total.Duration != 2*time.Hour || w.Timeouts.Stage.Duration != 60*time.Minute {
 		t.Fatalf("workflow = %+v", w)
 	}
 	if c.Git.Provider != "github" || c.Agent.ReviewRounds != 3 || c.Agent.Recipe != "claude-solo" || c.Git.PR.EarlyDraftOn() {
@@ -133,7 +133,7 @@ func TestResolveTable(t *testing.T) {
 			},
 			want: map[string]want{
 				"workflows.web.resources.memory": {"8Gi", SourceDefault},
-				"workflows.web.timeouts.total":   {"1h30m0s", SourceDefault},
+				"workflows.web.timeouts.total":   {"3h0m0s", SourceDefault},
 			},
 		},
 		{

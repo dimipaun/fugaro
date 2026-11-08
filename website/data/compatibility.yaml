@@ -1,0 +1,281 @@
+# website/data/compatibility.yaml — what Fugaro supports today and what it does not
+# (docs/compatibility-matrix/implementation-plan.md, task CM1: the spec's own rows, as
+# docs/compatibility-matrix/reconciliation.md F1–F32 amends them, with the owner's answers
+# D1520–D1539 of 2026-11-07).
+#
+# **This file is the one place a compatibility claim is written.** The page renders it
+# verbatim, so a claim that is wrong is a row to fix here rather than a sentence to rewrite
+# in the page (D1537) — the same shape `website/data/mobile-claims.yaml` has for the phone
+# page. The site's own rule is that everything it would say that the product cannot back
+# today is held back (`docs/website/README.md`:25), and every row below is one of the spec's
+# rows as the reconciliation left it: the ones it found Wrong were reworded, and the three
+# it found nothing behind were removed (the mobile Web row, F7/D1521; Cloud Run gen 1,
+# F19/D1528).
+#
+#   - `version` is this file's own format version; the page and
+#     `website/test/compatibility.mjs` refuse a value they do not know.
+#   - `as_of` is the release each half of the matrix was last read against: `cli` names the
+#     newest `docs/releases/vX.Y.Z.md` and `console` the newest
+#     `docs/releases/console/vX.Y.Z.md` (D1538). The release procedure moves both in the
+#     release it cuts.
+#   - `never_say` is the phrases the page may not be made of — the ones the reconciliation
+#     marked Wrong, which a reader of the spec would otherwise expect to find here. The
+#     page-wide test reads this list rather than repeating it.
+#   - `groups` are the spec's own groups, in its order. Each carries an `id` (the page's
+#     anchor), a `title`, an optional `note` (the spec's prose, kept where F32 keeps it) and
+#     its `rows`.
+#   - a row's `status` is one of five and nothing else: `supported`, `coming-soon`,
+#     `built-not-enabled` (D1520: built, and not yet enabled or verified), `roadmap` and
+#     `not-planned`.
+#   - a row's `edition` is `core` (MIT) or `subscription` and nothing else (D1522; the
+#     console and the phone app have been under the Subscription licence since console
+#     0.113.0). It is written on the rows of the five groups whose spec table had an Edition
+#     column.
+#   - a row's `note` is the whole of what the row says besides its name, it carries no date
+#     (the schedule of anything unbuilt is the owner's, D1523), and no row carries a price.
+#   - a row's `evidence` is a path in this repository. Every `supported` and
+#     `built-not-enabled` row has one: those are the two statuses that claim something
+#     exists today, and a claim with no path behind it is a claim the page cannot back.
+version: 1
+as_of:
+  cli: v0.20.3
+  console: v0.120.0
+never_say:
+  - "any model"
+  - "via MCP"
+  - "Cloud Run (gen 1)"
+  - "Enterprise SSO"
+  - "mobile web"
+groups:
+  - id: local-environment
+    title: "Local environment (CLI)"
+    note: "One release builds macOS and Linux from the same source, and the released binary carries the Subscription Edition code compiled in beside the MIT core."
+    rows:
+      - name: "macOS"
+        status: supported
+        edition: core
+        note: "Apple silicon and Intel."
+        evidence: ".goreleaser.yaml"
+      - name: "Linux"
+        status: supported
+        edition: core
+        note: "amd64 and arm64."
+        evidence: ".goreleaser.yaml"
+      - name: "Windows (WSL)"
+        status: supported
+        edition: core
+        note: "The Linux binary inside WSL 2. Keep the checkout out of /mnt/c, install Claude Code in the distro, and sign in with gcloud there: its credentials are a file inside the distro, not the one on Windows."
+        evidence: "docs/windows-cli/wsl.md"
+      - name: "Windows (native)"
+        status: coming-soon
+        edition: core
+        note: "A native port is approved through its first slice; the release builds no Windows binary yet."
+        evidence: "docs/windows-cli/README.md"
+  - id: console
+    title: "Console (Electron)"
+    rows:
+      - name: "macOS"
+        status: supported
+        edition: subscription
+        note: "One universal build for Apple silicon and Intel."
+        evidence: "console/package.json"
+      - name: "Linux"
+        status: supported
+        edition: subscription
+        note: "AppImage and deb packages for x64."
+        evidence: "console/package.json"
+      - name: "Windows"
+        status: coming-soon
+        edition: subscription
+        note: "No Windows build exists; one is approved, running the Linux CLI through wsl.exe."
+        evidence: "docs/console-windows"
+      - name: "Sign-in"
+        status: supported
+        edition: subscription
+        note: "The console runs on top of the CLI and inherits its identity; there is no separate console login."
+        evidence: "docs/design/desktop-console.md"
+  - id: mobile
+    title: "Mobile app (Expo)"
+    rows:
+      - name: "iOS"
+        status: coming-soon
+        edition: subscription
+        note: "One global app published by Fugaro is planned; no release has been cut."
+        evidence: "docs/subscriptions/status-2026-11-07.md"
+      - name: "Android"
+        status: coming-soon
+        edition: subscription
+        note: "The same Expo codebase as iOS."
+        evidence: "mobile/app.json"
+  - id: agent-harness
+    title: "Agent harness"
+    rows:
+      - name: "Claude Code"
+        status: supported
+        note: "The only harness a run drives today."
+        evidence: "internal/agent"
+      - name: "OpenAI Codex"
+        status: roadmap
+        note: "No Codex code exists; it is a non-goal of the multi-model design."
+        evidence: "docs/design/m10-multi-model.md"
+      - name: "Others"
+        status: not-planned
+        note: "No current value in adding more harnesses."
+  - id: model-access
+    title: "Model access"
+    note: "Models are wired per role: a cheap model for the inner loop, frontier models for senior and security review."
+    rows:
+      - name: "OpenRouter"
+        status: supported
+        note: "OpenRouter or any Anthropic-compatible endpoint, for the coder and first-line reviewer."
+        evidence: "internal/config/providers.go"
+      - name: "Anthropic API key"
+        status: built-not-enabled
+        note: "The senior and security reviewers, e.g. Opus, on a project's own key. The path is built; the cloud review job is not admitted yet and its live check has not run."
+        evidence: "internal/cli/review.go"
+      - name: "Claude OAuth token (bring your own credentials)"
+        status: supported
+        note: "Several named accounts per project, chosen per profile or stage; automatic failover is not claimed. Use of a subscription is subject to the provider's own terms."
+        evidence: "internal/config/claude_accounts.go"
+      - name: "Direct keys for DeepSeek and other Anthropic-compatible endpoints"
+        status: supported
+        note: "A user-named provider entry with its own base URL, models and prices."
+        evidence: "docs/multi-model.md"
+      - name: "Native OpenAI"
+        status: roadmap
+        note: "No native OpenAI provider kind exists."
+      - name: "ChatGPT / Codex OAuth"
+        status: roadmap
+        note: "The token name is reserved in the OAuth-token design; no code."
+        evidence: "docs/design/project-named-oauth-tokens.md"
+      - name: "Vertex AI"
+        status: supported
+        note: "Claude on Vertex is the default auth, billed to the project's own GCP account. A dollar cap on Vertex is observe-only until Check 20's Vertex facts are recorded."
+        evidence: "internal/config/defaults.go"
+  - id: cloud
+    title: "Cloud"
+    note: "Fugaro runs in its own isolated GCP project, so it doesn't matter where your code or production lives."
+    rows:
+      - name: "Google Cloud (GCP)"
+        status: supported
+        note: "Deliberately GCP-only."
+        evidence: "docs/design/v1.md"
+      - name: "AWS, Azure"
+        status: not-planned
+        note: "No plan today, and no ruling against them: either would mean replacing Firebase."
+  - id: backends
+    title: "Execution backends"
+    rows:
+      - name: "Cloud Run jobs (gen 2)"
+        status: supported
+        note: "The default backend, on the gen 2 execution environment."
+        evidence: "internal/backend/gcp"
+      - name: "VM / Cloud Batch"
+        status: built-not-enabled
+        note: "Built behind the backend seam; the configuration validation still refuses the cloud-batch setting, so a run cannot select it."
+        evidence: "internal/backend/batch"
+  - id: forges
+    title: "Forges"
+    rows:
+      - name: "GitHub Cloud"
+        status: supported
+        edition: core
+        note: "Pull requests, comments and follow-ups."
+        evidence: "internal/gitprov/github"
+      - name: "Bitbucket Cloud"
+        status: supported
+        edition: core
+        note: "Pull requests, comments and follow-ups."
+        evidence: "internal/gitprov/bitbucket"
+      - name: "GitLab Cloud"
+        status: roadmap
+        edition: core
+        note: "GitLab appears in the test fixtures only."
+      - name: "GitHub Enterprise Server and GitLab self-managed"
+        status: roadmap
+        edition: subscription
+        note: "Self-hosted forges are a plan, not a build."
+      - name: "Bitbucket Data Center"
+        status: not-planned
+        edition: subscription
+        note: "Ruled out: the Bitbucket integration speaks the Cloud API roots only."
+        evidence: "docs/bitbucket-workspace-token"
+  - id: trackers
+    title: "Issue trackers"
+    rows:
+      - name: "Read and update issues in your own agent"
+        status: supported
+        note: "Your own agent reads the tracker through its own MCP servers and hands Fugaro a finished task."
+        evidence: "plugin/skills/working/SKILL.md"
+      - name: "Tracker access inside a run"
+        status: roadmap
+        note: "A run's agent gets no tracker server, and the review stages strip any MCP configuration."
+        evidence: "internal/runner/reviewmode.go"
+      - name: "Native triggers (label or assign to start a task)"
+        status: roadmap
+        note: "No webhook layer exists."
+  - id: notifications
+    title: "Notifications"
+    note: "None of this is built: there is no sender, no token store and no webhook."
+    rows:
+      - name: "Mobile push"
+        status: roadmap
+        note: "The primary channel for individuals."
+        evidence: "docs/mobile/design/push-notifications.md"
+      - name: "Slack, channel notifications"
+        status: roadmap
+        note: "Through an incoming webhook."
+      - name: "Microsoft Teams, channel notifications"
+        status: roadmap
+        note: "Alongside Slack."
+      - name: "Slack / Teams interactive threads"
+        status: roadmap
+        note: "One thread per task, with replies and buttons going back to the agent."
+      - name: "Email"
+        status: not-planned
+        note: "No plan for email."
+  - id: identity-and-roles
+    title: "Identity and roles"
+    rows:
+      - name: "Google identity via gcloud"
+        status: supported
+        edition: core
+        note: "The CLI and the console; there is no separate Fugaro login."
+        evidence: "docs/design/desktop-console.md"
+      - name: "Google identity with email or domain allowlists"
+        status: supported
+        edition: core
+        note: "The phone signs in with a Google account, and the installation's email or domain allowlists decide who gets in."
+        evidence: "docs/mobile-auth/spec.md"
+      - name: "QR pairing (CLI)"
+        status: supported
+        edition: core
+        note: "The CLI writes the pairing; the device's role is the issuer's own, and the flag may only lower it."
+        evidence: "internal/cli/pair.go"
+      - name: "QR pairing (app scanner)"
+        status: coming-soon
+        edition: subscription
+        note: "The app-side scanner is not built. The pairing records a role on the device, not yet enforced by the security rules."
+      - name: "Roles: Admin, Operator, Viewer"
+        status: coming-soon
+        edition: core
+        note: "The three roles the CLI, console and docs name; enforcement is design only."
+        evidence: "docs/design/roles.md"
+      - name: "Device management (CLI)"
+        status: supported
+        edition: core
+        note: "List and revoke paired devices."
+        evidence: "internal/cli/pair.go"
+      - name: "Device management (app and console)"
+        status: roadmap
+        edition: subscription
+        note: "No app or console screen exists."
+      - name: "SSO and workforce identity federation"
+        status: roadmap
+        edition: subscription
+        note: "No SSO or federation code exists."
+      - name: "Workspaces spanning several projects"
+        status: roadmap
+        edition: subscription
+        note: "Design answered, and the local layer and the CLI's reads are merged; no workspace service exists."
+        evidence: "docs/workspaces"

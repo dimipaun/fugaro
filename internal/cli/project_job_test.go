@@ -413,6 +413,27 @@ workflows:
     timeouts: { total: 5m, stage: 2m, verify: 1m, finalize_reserve: 30s }
 `
 
+// projectJobCascadeRepoYAML is the same clone checkout under agent.auth:
+// cascade, the one mode the credentials service serves (config.AuthCascade,
+// infra.CredentialsServiceServes). It is what a repository launched on an
+// installation whose switch is on carries, which is the shape a test about
+// everything else the switch reads has to spell.
+const projectJobCascadeRepoYAML = `version: 1
+project: aurora
+git:
+  provider: github
+  base_branch: main
+agent:
+  auth: cascade
+workflows:
+  web:
+    checkout: clone
+    commands:
+      build: sh build.sh
+      test: sh test.sh
+    timeouts: { total: 5m, stage: 2m, verify: 1m, finalize_reserve: 30s }
+`
+
 // projectJobCheckout puts a checkout of acme/app in the working directory, so
 // a launch of it reads the repository's own fugaro.yaml — which is what says
 // whether its workflow is a checkout: clone one, and so whether it runs on a
@@ -2080,6 +2101,7 @@ func addRepoAppIDToFixture(t *testing.T, f *cloudFixture) {
 func TestReviewJobVariantIsHandedNoToken(t *testing.T) {
 	f := newProjectJobServingFixture(t)
 	addRepoAppIDToFixture(t, f.cloudFixture)
+	markRepoCredentialsServiceReady(t, f.cloudFixture)
 	f.appendConfig(t, "credentials_service: { url: "+credentialsServiceFixtureURL+" }\n")
 	lc, err := localcfg.Parse([]byte(readFileString(t, os.Getenv("FUGARO_CONFIG"))))
 	if err != nil {
@@ -2092,10 +2114,12 @@ func TestReviewJobVariantIsHandedNoToken(t *testing.T) {
 	if len(deployed) == 0 {
 		t.Fatal("the fixture's installation deploys no review variant, so this pins nothing")
 	}
-	// The address is what an opted-in installation hands a launch: a
-	// repository's own job is told it, which is why the nil below is this
-	// rule and not a config with no service in it.
-	if env := credentialsServiceLaunchEnv(lc, ""); len(env) != 1 || env[0] != providers.EnvCredentialsServiceURL+"="+credentialsServiceFixtureURL {
+	// The address is what a switched-on installation hands a launch: a
+	// repository's own job, of a repository the service serves, is told it,
+	// which is why the nil below is this rule and not a config with no
+	// service in it. The other two halves of the switch are the record above
+	// and the cascade repository a checked-out launch reads its auth from.
+	if env := credentialsServiceLaunchEnv(lc, "", "acme/app", config.AuthCascade, false); len(env) != 1 || env[0] != providers.EnvCredentialsServiceURL+"="+credentialsServiceFixtureURL {
 		t.Fatalf("a repository launch on this config is handed %v, want the service's address alone: the fixture is not an opted-in installation", env)
 	}
 	for _, account := range []string{"acme-personal", ""} {
@@ -2112,7 +2136,7 @@ func TestReviewJobVariantIsHandedNoToken(t *testing.T) {
 			t.Errorf("the launcher resolves the review job %s, which the installation does not deploy (%v): a launcher cannot launch a job that does not exist", job.Name, slices.Sorted(maps.Keys(deployed)))
 			continue
 		}
-		if env := credentialsServiceLaunchEnv(lc, job.Name); env != nil {
+		if env := credentialsServiceLaunchEnv(lc, job.Name, "acme/app", config.AuthCascade, false); env != nil {
 			t.Errorf("a launch on the review job %s hands the execution %v: the variant carries the service's address from its deployment, and a per-launch entry is a value an execution object records", job.Name, env)
 		}
 		if got := v.Env[providers.EnvCredentialsServiceURL]; got != credentialsServiceFixtureURL {

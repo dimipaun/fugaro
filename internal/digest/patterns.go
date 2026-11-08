@@ -31,12 +31,15 @@ const (
 	// RuleHaltsHigh is halts above HaltShareNum/HaltShareDen of the runs,
 	// HaltWeeks weeks running.
 	RuleHaltsHigh = "halts_high"
+	// RuleCostPerRunRising is the billed cost per run rising across
+	// CostRiseMonths monthly reports.
+	RuleCostPerRunRising = "cost_per_run_rising"
 )
 
 // RuleNames is every rule, in the order a report lists them.
-var RuleNames = []string{RuleFlagRecurs, RuleReviewShare, RuleRecipeMedian, RuleHaltsHigh}
+var RuleNames = []string{RuleFlagRecurs, RuleReviewShare, RuleRecipeMedian, RuleHaltsHigh, RuleCostPerRunRising}
 
-// The rules' thresholds (D326).
+// The rules' thresholds (D326, D968).
 const (
 	// FlagWeeks of the last FlagWindow weekly reports must raise a flag.
 	FlagWeeks  = 3
@@ -53,6 +56,10 @@ const (
 	HaltShareNum = 1
 	HaltShareDen = 10
 	HaltWeeks    = 2
+	// CostRiseMonths is how many monthly reports the billed cost per run must
+	// rise across (D968): the last five committed monthly reports, each
+	// month's cost per run above the month before it.
+	CostRiseMonths = 5
 )
 
 // Pattern is one pattern a fixed rule found in the reports committed before
@@ -75,15 +82,16 @@ type Pattern struct {
 	// Periods are the period keys the rule read, oldest first, and Figures
 	// are its figures, one per period, as exact decimal strings: whether a
 	// week raised the flag, the review share of a month's cost, a recipe's
-	// median cost in dollars, or a week's halts over its runs.
+	// median cost in dollars, a week's halts over its runs, or a month's
+	// billed cost per run in dollars.
 	Periods []string `json:"periods"`
 	Figures []string `json:"figures"`
 }
 
-// Patterns is the fixed rules (D326) read over the summaries of the reports
-// committed before this one and this report's own. prev is in any order and
-// may repeat a period; the rules run in RuleNames order over periods in key
-// order, so the same summaries give the same patterns (G3).
+// Patterns is the fixed rules (D326, D968) read over the summaries of the
+// reports committed before this one and this report's own. prev is in any
+// order and may repeat a period; the rules run in RuleNames order over periods
+// in key order, so the same summaries give the same patterns (G3).
 //
 // The rules are a table, not a search: each reads the periods it names, and a
 // summary whose period key is not one this package writes is in none of them
@@ -98,6 +106,7 @@ func Patterns(prev []Summary, cur Summary) []Pattern {
 	out = append(out, reviewShareRising(series[ByMonth])...)
 	out = append(out, recipeMedianUp(series[ByMonth])...)
 	out = append(out, haltsHigh(series[ByWeek])...)
+	out = append(out, costPerRunRising(series[ByMonth])...)
 	return out
 }
 
@@ -336,6 +345,39 @@ func haltsHigh(weeks []Summary) []Pattern {
 		}
 		p.Periods = append(p.Periods, w.Period)
 		p.Figures = append(p.Figures, fmt.Sprintf("%d/%d", w.Halts, w.Runs))
+	}
+	return []Pattern{p}
+}
+
+// costPerRunRising is D968's fifth rule: the billed cost per run rose in each
+// of the last CostRiseMonths committed monthly reports. It is the long view
+// the four cannot give -- two read weeks and two read one month against the
+// month before it -- and, like them, it is a signal to look, never a verdict.
+//
+// The figure is the month's billed cost divided by its runs, truncated to the
+// micro-dollar the report prints: a rise smaller than a micro-dollar per run
+// reads as no rise, the way a share's millionth does (G3). A month that
+// counted no runs has no cost per run to compare and the rule does not fire on
+// it, and a figure outside what this package writes is no figure at all (G5).
+func costPerRunRising(months []Summary) []Pattern {
+	recent, ok := window(months, CostRiseMonths)
+	if !ok {
+		return nil
+	}
+	p := Pattern{Rule: RuleCostPerRunRising}
+	before := budget.Micros(0)
+	for i, m := range recent {
+		billed, ok := micros(m.Billed)
+		if !ok || m.Runs <= 0 || m.Runs > maxCount {
+			return nil
+		}
+		perRun := billed / budget.Micros(m.Runs)
+		if i > 0 && perRun <= before {
+			return nil
+		}
+		before = perRun
+		p.Periods = append(p.Periods, m.Period)
+		p.Figures = append(p.Figures, USD6(perRun))
 	}
 	return []Pattern{p}
 }

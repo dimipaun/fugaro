@@ -130,10 +130,29 @@ type Spec struct {
 	// spec — the skew every new task field has, and the reason launch.json,
 	// which its readers decode without that refusal, is not enough on its
 	// own for a run's own record of it.
-	PlanTask    string    `json:"plan_task,omitempty"`
-	Branch      string    `json:"branch,omitempty"`
-	PR          int       `json:"pr,omitempty"`
-	PreviousRun string    `json:"previous_run,omitempty"`
+	PlanTask    string `json:"plan_task,omitempty"`
+	Branch      string `json:"branch,omitempty"`
+	PR          int    `json:"pr,omitempty"`
+	PreviousRun string `json:"previous_run,omitempty"`
+	// OwnerRuled is the repository owner's ruling this follow-up was launched
+	// with (OD1, fugaro run --owner-ruled): their answer to the findings a run
+	// on the pull request left for them, which no code change could settle.
+	// The runner appends it to the follow-up's brief verbatim — it is the
+	// owner's own words and the whole reason the run exists — and echoes it
+	// onto the run's record, so a reader can see what the run was told.
+	//
+	// Empty (the common case, and every spec written before this release) is
+	// no ruling at all, and the field is written only when the flag is given.
+	// A launcher refuses a follow-up on a pull request whose last run stopped
+	// waiting on owner decisions unless this carries one, so the blind loop
+	// that spent the runs in the first place cannot start again: a reviewer
+	// that finds the same finding twice is a run nobody asked for.
+	//
+	// It is bounded (MaxOwnerRuledBytes) and must be text a terminal and a
+	// prompt can carry: a control character other than a newline or a tab is
+	// refused by Validate, since the ruling ends up in a brief and in a run
+	// record, and neither may be forged by the text of a ruling.
+	OwnerRuled  string    `json:"owner_ruled,omitempty"`
 	Overrides   Overrides `json:"overrides"`
 	RequestedBy string    `json:"requested_by,omitempty"`
 	Batch       string    `json:"batch,omitempty"`
@@ -384,6 +403,43 @@ type Spec struct {
 	// could be gated. The gate lands with the flag, before any launch can
 	// write the field.
 	Mutate []Mutate `json:"mutate,omitempty"`
+}
+
+// MaxOwnerRuledBytes bounds a task's owner ruling (Spec.OwnerRuled, fugaro
+// run --owner-ruled): a ruling is a person's answer to a handful of findings,
+// not a document. The cap is the one maxPrevAnswer sets for the previous
+// follow-up's own account, for the same reason — a brief that carried more
+// would bury the comments and the instructions beside it — and it is what
+// keeps a hand-written task.json from carrying a megabyte of text into a job
+// that reads it.
+const MaxOwnerRuledBytes = 4 << 10
+
+// ValidateOwnerRuled reports whether text is a ruling a brief and a record may
+// carry: text a terminal and a prompt can hold, no longer than
+// MaxOwnerRuledBytes and not blank. Empty is no ruling at all, and valid.
+//
+// Spec.Validate applies it to the ruling a launcher gave, and a reader of a run
+// record applies it to the ruling inherited from that record (internal/runner's
+// prepareFollowUp): a record is an object the job's service account writes, and
+// the text a later run's brief works from is held to the same rule the
+// launcher's own is. Text that fails it is no ruling at all, because a control
+// character in a brief can forge the structure around it.
+func ValidateOwnerRuled(text string) error {
+	if text == "" {
+		return nil
+	}
+	if len(text) > MaxOwnerRuledBytes {
+		return fmt.Errorf("owner_ruled is longer than %d bytes", MaxOwnerRuledBytes)
+	}
+	if strings.TrimSpace(text) == "" {
+		return errors.New("owner_ruled is blank")
+	}
+	for _, r := range text {
+		if r != '\n' && r != '\t' && (r < 0x20 || r == 0x7f) {
+			return errors.New("owner_ruled carries a control character: it is text a brief and a run record carry")
+		}
+	}
+	return nil
 }
 
 // Mutate is one mutation check a launch asked for: File is Go source in the
@@ -1044,6 +1100,20 @@ func (s *Spec) Validate() error {
 			if p := mutateProblem(s.Mutate[0]); p != "" {
 				bad("task spec: mutate %s", p)
 			}
+		}
+	}
+	// The owner's ruling (OD1) is a follow-up's, and a follow-up's alone: it
+	// answers findings a run on that pull request left, so a task carrying one
+	// without a pull request to continue is a task nobody could have meant.
+	// The text itself is held to ValidateOwnerRuled's rule, which is also what
+	// a reader of a run record applies to the ruling inherited from it.
+	switch {
+	case s.OwnerRuled == "":
+	case !allFollowUp:
+		bad("task spec: owner_ruled answers findings a run on a pull request left, so it needs branch, pr and previous_run")
+	default:
+		if err := ValidateOwnerRuled(s.OwnerRuled); err != nil {
+			bad("task spec: %v", err)
 		}
 	}
 	if s.Branch != "" && !BranchRE.MatchString(s.Branch) {

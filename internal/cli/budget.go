@@ -306,7 +306,7 @@ func newBudgetShowCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error { return runBudgetShow(cmd, &o) },
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name)")
+	f.StringVar(&o.repo, "repo", "", "only this repository (owner/name, or a path inside its checkout)")
 	f.BoolVar(&o.all, "all", false, "every repository in the database")
 	f.BoolVar(&o.json, "json", false, "print machine-readable output")
 	f.BoolVar(&o.compute, "compute", false, "also read each repository's compute dollars from the runs bucket (an estimate; null and n/a where the day's runs recorded none)")
@@ -496,6 +496,10 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 	ctx := cmd.Context()
 	if o.repo != "" && o.all {
 		return userErr("--repo and --all don't go together")
+	}
+	var err error
+	if o.repo, err = repoArg(ctx, o.cloud, o.repo); err != nil {
+		return err
 	}
 	lc, db, err := openBudget(ctx, o.cloud)
 	if err != nil {
@@ -948,7 +952,7 @@ func newBudgetSetCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.BoolVar(&o.global, "global", false, "the project's own caps")
 	f.BoolVar(&o.defaults, "defaults", false, "the default caps of repositories without their own")
-	f.StringVar(&o.repo, "repo", "", "one repository's caps, given as owner/name (no value: this checkout's origin)")
+	f.StringVar(&o.repo, "repo", "", "one repository's caps, given as owner/name or a path inside its checkout (no value: this checkout's origin)")
 	f.Float64Var(&o.daily, "daily", 0, "the daily cap, in US dollars")
 	f.Float64Var(&o.perRun, "per-run", 0, "the per-run cap, in US dollars")
 	f.Float64Var(&o.reserve, "max-reserve", 0, "the largest single lease, in US dollars (with --global)")
@@ -1271,9 +1275,12 @@ func buildEdits(ctx context.Context, db *rtdb.Client, p *setPlan, slug string) (
 // the value acme-app -- the argv rewrite leaves a --repo with a token after it
 // alone -- and it must never be read as "no value" and answered with the
 // checkout's repository instead.
-func namedRepo(ctx context.Context, repo string) (string, error) {
+func namedRepo(ctx context.Context, o cloudOptions, repo string) (string, error) {
+	var err error
+	if repo, err = repoArg(ctx, o, repo); err != nil {
+		return "", err
+	}
 	if repo == "" {
-		var err error
 		if repo, err = originRepo(ctx); err != nil {
 			return "", userErr("--repo with no value means the repository this checkout belongs to, and this is not a checkout with an origin remote that names one: pass --repo owner/name")
 		}
@@ -1299,7 +1306,7 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 	}
 	slug := ""
 	if p.scope == "repo" {
-		if p.repo, err = namedRepo(ctx, p.repo); err != nil {
+		if p.repo, err = namedRepo(ctx, o.cloud, p.repo); err != nil {
 			return err
 		}
 		if slug, err = repoSlugOf(ctx, lc, p.repo); err != nil {
@@ -1406,7 +1413,7 @@ func newBudgetKillCmd(kill bool) *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.BoolVar(&o.all, "all", false, "the whole project")
-	f.StringVar(&o.repo, "repo", "", "one repository, given as owner/name (no value: this checkout's origin)")
+	f.StringVar(&o.repo, "repo", "", "one repository, given as owner/name or a path inside its checkout (no value: this checkout's origin)")
 	f.StringVar(&o.reason, "reason", "", "why (recorded, shown by budget show and watch)")
 	f.BoolVar(&o.yes, "yes", false, "confirm without typing the project's name")
 	addCloudFlags(cmd, &o.cloud)
@@ -1440,7 +1447,7 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 	}
 	path, what := budget.PathKillGlobal, "project "+lc.Name
 	if !o.all {
-		repo, err := namedRepo(ctx, o.repo)
+		repo, err := namedRepo(ctx, o.cloud, o.repo)
 		if err != nil {
 			return err
 		}

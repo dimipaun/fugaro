@@ -126,6 +126,24 @@ func clampWarning(ig policy.Ignored) config.Problem {
 		msg = fmt.Sprintf("[%s] names models outside the project's allow-list; the runner will use [%s]",
 			strings.ReplaceAll(ig.Value, ",", ", "), strings.ReplaceAll(ig.Effective, ",", ", "))
 	default:
+		// The craft grant's own refusal: a credential or a pool a repository
+		// may not introduce, or a craft's access where the project selected
+		// nothing (F12, D1628). There is no running value to be measured
+		// against and none to fall back to, so the looser-than sentence would
+		// name nothing at all — and the rule a repository met is the one to
+		// say.
+		//
+		// An empty effective value is what tells that refusal apart, and it is
+		// a craft key that can carry one: the merge renders the value in force
+		// for everything it compares, a pool's strategy included, where the
+		// pool names none and the run's failover default answers for it
+		// (policy's poolStrategyText) — so a strategy that lost to the default
+		// is never read here as a credential the project does not define.
+		if strings.HasPrefix(ig.Key, "crafts.") && ig.Effective == "" {
+			msg = fmt.Sprintf("%s names nothing the project makes available: a repository selects among the credentials and the pools the project creates and never adds one, so the runner ignores this key",
+				pluginwire.Printable(ig.Value))
+			break
+		}
 		msg = fmt.Sprintf("%s is looser than %s; the runner will use %s", ig.Value, ig.Effective, ig.Effective)
 	}
 	return config.Problem{Path: runner.PolicyKeyPath(ig.Key), Message: msg}
@@ -739,9 +757,9 @@ func reviewPreconditionNote(lc *localcfg.Config) string {
 	enabled := lc.CredentialsService != nil && lc.CredentialsService.URL != ""
 	switch {
 	case !enabled && !reviewJobAdmitted:
-		return "a cloud review cannot launch on this installation, and both halves of its precondition are missing. The first is the credentials service itself: a review job mounts no credential of its own, so its read-only installation token and its account's model calls both come from the installation's service, and no credentials_service block is published for this project — run fugaro update --provision-credentials to deploy it, then fugaro creds set github-app-key, the App the review's read-only token is issued for. The second is the service's own admission of the review job's caller: the review's account belongs to a project-scoped job, which the service refuses whole, and no fugaro update supplies that half, because it is a change to the service's own admission (C3.9) — so " + launch + " either way"
+		return "a cloud review cannot launch on this installation, and both halves of its precondition are missing. The first is the credentials service itself: a review job mounts no credential of its own, so its read-only installation token and its account's model calls both come from the installation's service, and no credentials_service block is published for this project — an ordinary fugaro update deploys the service on every installation that can carry one (it needs the installation's Firebase backend, which fugaro update --firebase-project supplies, and at least one repository job), and fugaro creds set github-app-key then writes the App the review's read-only token is issued for. The second is the service's own admission of the review job's caller: the review's account belongs to a project-scoped job, which the service refuses whole, and no fugaro update supplies that half, because it is a change to the service's own admission (C3.9) — so " + launch + " either way"
 	case !enabled:
-		return "a cloud review cannot launch on this installation: a review job mounts no credential of its own, so its read-only installation token and its account's model calls both come from the installation's credentials service, and no credentials_service block is published for this project — run fugaro update --provision-credentials to deploy it, then fugaro creds set github-app-key, the App the review's read-only token is issued for, and " + launch
+		return "a cloud review cannot launch on this installation: a review job mounts no credential of its own, so its read-only installation token and its account's model calls both come from the installation's credentials service, and no credentials_service block is published for this project — an ordinary fugaro update deploys the service on every installation that can carry one (it needs the installation's Firebase backend, which fugaro update --firebase-project supplies, and at least one repository job), and fugaro creds set github-app-key then writes the App the review's read-only token is issued for, and " + launch
 	case !reviewJobAdmitted:
 		return "a cloud review cannot launch on this installation, and the half an update cannot supply is the one missing: the service is enabled, and it does not admit the review job's own caller — the review's account belongs to a project-scoped job, and the service refuses one whole (its admission is built for a repository's own job). No fugaro update supplies this half, because it is a change to the service's own admission (C3.9), which this release ships the command, the gate and the review-only job variant ahead of, and " + launch
 	default:

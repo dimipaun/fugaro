@@ -59,7 +59,11 @@
 // caller no role for an entry it has not validated.
 package mobileauth
 
-import "time"
+import (
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/access"
+)
 
 // Role is a role in the allowlist's closed set, in the order the spec names
 // it: viewer, operator, admin ("Allowlist and roles", spec.md). The order is
@@ -67,67 +71,36 @@ import "time"
 // what Role.AtLeast answers for the v1 question the spec states as "v1 only
 // checks admin and everyone else" (D225).
 //
-// The zero Role is RoleNone, which is deliberately not a role in the set: it is
-// what an address no entry admits resolves to, and what an entry written with
-// an absent or an unknown role carries. A caller that ignores Resolve's error
-// therefore still holds nothing that admits anybody, and a writer that stores
-// the zero value stores a value no reader can mistake for authority.
-type Role string
+// The type is access.Role, and this is an alias rather than a second
+// definition: the role vocabulary a device node carries and the role vocabulary
+// a grant carries are one closed set with one parser and one rank order, so a
+// value built from either name is one type (docs/roles-scopes F1, RS1 — the
+// resolver adds no second role set). The rank order, the parser and the
+// fail-closed reading of the zero value are documented there.
+type Role = access.Role
 
 const (
 	// RoleNone is the empty role: no admission. It is not in Roles().
-	RoleNone Role = ""
+	RoleNone = access.RoleNone
 	// RoleViewer hears summaries and sees job status and spending.
-	RoleViewer Role = "viewer"
+	RoleViewer = access.RoleViewer
 	// RoleOperator is a viewer who may also talk to agents and steer jobs.
-	RoleOperator Role = "operator"
+	RoleOperator = access.RoleOperator
 	// RoleAdmin is an operator who may also manage the allowlist and roles.
-	RoleAdmin Role = "admin"
+	RoleAdmin = access.RoleAdmin
 )
 
 // Roles is the closed set, in the order the spec names it. It is the list a
 // caller reads to offer a choice or to print one, and the only list ParseRole
 // accepts.
-func Roles() []Role { return []Role{RoleViewer, RoleOperator, RoleAdmin} }
+func Roles() []Role { return access.Roles() }
 
 // ParseRole returns the role s names, and whether s names one at all. It is
 // exact: only the three spellings of Roles() are accepted, with no trimming
 // and no case folding, because a role is written by this tree and a spelling
 // it does not write is a value this package must not guess at ("Admin" is not
 // admin, and neither is "administrator" — both are refused).
-func ParseRole(s string) (Role, bool) {
-	for _, r := range Roles() {
-		if s == string(r) {
-			return r, true
-		}
-	}
-	return RoleNone, false
-}
-
-// Valid reports whether r is one of Roles().
-func (r Role) Valid() bool {
-	_, ok := ParseRole(string(r))
-	return ok
-}
-
-// Rank is r's position in Roles(): 0 for viewer, 1 for operator, 2 for admin,
-// and -1 for anything else, including RoleNone.
-func (r Role) Rank() int {
-	for i, x := range Roles() {
-		if r == x {
-			return i
-		}
-	}
-	return -1
-}
-
-// AtLeast reports whether r holds everything min holds (operator is at least
-// viewer, admin is at least operator). It is false when either role is not in
-// the closed set, so an unknown or absent role is never "at least" anything.
-func (r Role) AtLeast(min Role) bool {
-	ri, mi := r.Rank(), min.Rank()
-	return ri >= 0 && mi >= 0 && ri >= mi
-}
+func ParseRole(s string) (Role, bool) { return access.ParseRole(s) }
 
 // The children the entry takes on the device node at config/admin/devices/<uid>
 // (D222, D225): the administered email and the resolved role. This package

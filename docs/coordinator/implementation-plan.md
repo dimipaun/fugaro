@@ -28,6 +28,38 @@ is the **five new decisions the planning found** — **D193–D197**, recorded i
 answers the owner passed this plan's **gate** (§11) for the parts that need only them, **P0–P6**;
 **P7 and P8 still wait**, and each part names what it waits on.
 
+**Re-planned 2026-11-07 (D434, D435; T10, T20): the parts still ahead are business-licensed, and
+land behind `ee/register`.** The owner's rulings of 2026-10-27 put this work in the
+business-licensed folder — the **command and the library** first (D434/T10, landed as the ee-reorg
+plan's E2.1b: `ee/coordinator/`, its `ee/coordinator/cli/` package and `ee/coordinator/testdata/`),
+and everything
+still ahead of it now (D435/T20). **P6, P7 and P8 are therefore re-targeted to `ee/`**, and this is
+what that changes:
+
+- **The Go half of each part lands under `ee/coordinator/`**, reached only through `ee/register`:
+  the seam is `cmd/fugaro/ee_on.go`, the one file the `ee` build tag compiles and whose blank import
+  runs the registry's `init`, and the registry is what fills the core's set-once setters
+  (`internal/cli/extend.go`'s `RegisterCommand` and `SetLaunchDeclarer`). An untagged build keeps the
+  core's stub for the name — it exits non-zero and says why (E1.1, D522) — so the console's sidecar
+  and a launch's declarer reach the real command only in the tagged binary.
+- **The Terraform does not move.** `deploy/terraform/` is embedded in the Go binary and applied by
+  the MIT `fugaro update`: the installation's own root is not licensed code, so the service a part
+  creates is written under `deploy/terraform/gcp/modules/installation/`, and the allow-list that
+  admits a resource type stays the core's own (`internal/infra/tf/cover.go`).
+- **The console half stays in `console/`**, which is business-licensed already, reading the moved
+  command through the CLI sidecar it spawns — which is why P6 still adds no credential, no network
+  surface and no CSP change.
+- **What the parts have been overtaken by is recorded under each of them**, in a dated note rather
+  than by rewriting the part: the front door's service, its authorization and its MCP half have all
+  moved on since P7 and P8 were written, and the MCP half is planned in
+  `docs/mcp-server/implementation-plan.md` rather than here. **A question the re-plan finds genuinely
+  open stays open** — the two P7 has are named under it rather than silently decided.
+- **#831 closes as superseded (T20), and that is OWNER-RUN.** The pull request is already closed —
+  the census of 2026-11-07 (`docs/subscriptions/status-2026-11-07.md`) records it closed on
+  2026-10-27 — but the comment T20 names is not on it, and posting one is a person's:
+  `gh pr close 831 --comment "Superseded: re-planned in ee/ (T20)"`. This re-plan neither posts it
+  nor records it as done.
+
 ## 1. What changed since the reconciliation, and what this plan does about it
 
 The reconciliation read the code at `c6009b5f` on 2026-10-19. Four things have landed or moved
@@ -689,6 +721,15 @@ existing allow-list and changes no CSP, and the review's job is to confirm exact
 
 **Commit.** `console: the project view, read through the CLI sidecar`
 
+**Re-planned 2026-11-07 (D435; T20).** The commands this window reads are the moved ones —
+`ee/coordinator/cli/coordinator.go`, registered by `ee/register` — so **the sidecar the console
+spawns has to be the tagged binary**: an untagged `fugaro coordinator` is the core's stub and
+refuses, which is the reading a console that spawns whatever `fugaro` it finds has to make
+explicitly (E1.1, D522). Nothing else about the part changes, and the move costs it nothing: it adds
+an IPC read beside an existing allow-list, computes nothing, holds no credential and leaves
+`console/src/main/protocol.ts`'s `connect-src 'none'` alone — and `console/` is itself
+business-licensed, so this half was already on the paid side of the line.
+
 ---
 
 ### P7 — The coordinator's own service: the type, the module, and the front door's credential (D196)
@@ -697,10 +738,15 @@ existing allow-list and changes no CSP, and the review's job is to confirm exact
 
 - **The type.** `google_cloud_run_v2_service` and its `*_iam_member` enter
   `internal/infra/tf/cover.go`'s `allowedTypes` and `internal/infra/tf/managed_cover.go`'s
-  `managedTypes`, which hold `google_cloud_run_v2_job` and its own `*_iam_member` today and **do
-  not hold the service** — that absence is finding #2, and admitting a type is exactly the act
-  its allow-list exists to make deliberate, so `internal/cli/init_review.go`'s `notCovered` must
-  still fire the typed confirmation the owner designed. **The cost table already knows the type**:
+  `managedTypes`, which hold `google_cloud_run_v2_job` and its own `*_iam_member` today and, when
+  this part was written, **did not hold the service** — that absence is finding #2, and admitting a
+  type is exactly the act its allow-list exists to make deliberate, so
+  `internal/cli/init_review.go`'s `notCovered` must still fire the typed confirmation the owner
+  designed. **The admission has since been made, by another root**: the credentials service's own
+  root (D146) put `google_cloud_run_v2_service` and its own `*_iam_member` into `allowedTypes`, and
+  `internal/infra/tf/managed_cover.go`'s `managedDropped` keeps both out of a managed plan with a
+  reason of its own — so this half is a **citation** now rather than an addition, which is what the
+  shared-admission sentence further down already rules. **The cost table already knows the type**:
   `internal/infra/tf/managed_cost.go` carries the service's rows, and its own comment says they
   *"become load-bearing the moment the allowlist admits a service"* — so this half adds the type
   to the two refusal lists and changes no cost row. **This admission is shared with the central
@@ -768,6 +814,30 @@ token is minted for and how the client checks it; and that every invoker member 
 
 **Commit.** `infra: the coordinator's own service, and its ID token`
 
+**Re-planned 2026-11-07 (D435; T20), and the three things that moved under it.** The part's Go half
+is `ee/`, reached through `ee/register` like every other part after P5: the minting and the
+per-person checks land in `ee/coordinator/cli/coordinator.go`, and an untagged build's `coordinator`
+is the core's stub that says why (E1.1, D522). Two questions the section above answers are recorded
+here as **open**, because the work re-plans a part and does not re-decide a front door:
+
+- **The service has been built, and not in a module of its own.** The coordinator's
+  `google_cloud_run_v2_service`, its own account and its public invoker binding are in
+  `deploy/terraform/gcp/modules/installation/coordinator.tf`, beside the aggregation job P5 added —
+  landed with the front-door work (`docs/mcp-server/`, its M4, #1716). The module the Files line
+  below names, `deploy/terraform/gcp/modules/coordinator/`, is **not in the tree**, and this re-plan
+  does not put it there: **which of the two layouts the remaining Terraform follows is a decision to
+  take with the owner**, and taking it changes the Files line, the module's goldens and
+  `coordinatorPlanNewDirs` in one commit.
+- **The front door's authorization is no longer settled by this part's reading.** The owner answered
+  **D920** on 2026-11-04 — a **public** endpoint whose gate is the bearer token, recorded in
+  `docs/mcp-server/reconciliation.md`, where that folder's finding F23 reads the Cloud Run IAM
+  invoker this part and P8 choose as unable to coexist with the owner's spec's OAuth flow on one
+  endpoint. Against that, `docs/mcp-server/implementation-plan.md` §7 leaves **P7's ID-token
+  minting, its per-person invoker grants and its IAM checks to this work** and forbids its own M4
+  from taking them over. The two cannot both be read as the plan of record, so **it is recorded here
+  rather than picked**: which one survives the front door's build is the front-door work's to settle
+  with the owner, and the sections above are kept as the reading they were written to.
+
 ---
 
 ### P8 — The MCP front door, its tools and the override log (D197)
@@ -813,6 +883,25 @@ where; which tools write and which read; the data-boundary convention and the te
 the override cap; and that no answer is markup.
 
 **Commit.** `coordinator: the MCP front door, its tools and the override log`
+
+**Re-planned 2026-11-07 (D435; T20), and half of this part is now another folder's.** The land is
+`ee/coordinator/` — the Files line above already reads that way, and the re-plan is what says out
+loud that the handler, the tools and the override log are reached only through `ee/register`, so an
+untagged build has none of them (E1.1, D522). Two things have moved since the section was written:
+
+- **The front door itself — its transport, its authorization server and its tool registry — is
+  planned in `docs/mcp-server/implementation-plan.md`**, whose tasks land under
+  `ee/coordinator/mcpauth/`, and whose §7 builds **no second surface** for the tools this part
+  defines: the coordinator's own tools are served by that front door, under the names written here.
+  The one thing of this part's that did not survive is its authorization: an IAM-invoked endpoint,
+  chosen here as a deliberate departure from the MCP specification (Q16 A, U1), is what **D920's**
+  answer of 2026-11-04 replaced with a public endpoint whose gate is the bearer token
+  (`docs/mcp-server/reconciliation.md`, finding F23).
+- **What stays this part's is what the front door calls**: the tools, the override log with its cap,
+  and the data-boundary rule they are built around — an instruction found in GitHub text or in an
+  intent signal is read as data, and every answer is text rather than markup (finding #28). And the
+  part is still the only place in this work that accepts a request from another process, so its
+  reviewer tier and the independent review §7 asks for are unchanged by any of this.
 
 ## 6. The critical path, and the effort
 

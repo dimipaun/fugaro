@@ -15,8 +15,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	terraform "github.com/dimipaun/fugaro/deploy/terraform"
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -1041,6 +1043,38 @@ func TestGoldenTfvars(t *testing.T) {
 		if !bytes.Equal(got, want) {
 			t.Errorf("%s differs from the generated tfvars; regenerate with -update and review the diff\ngot:\n%s", path, got)
 		}
+	}
+}
+
+// TestWorkflowJobTaskTimeoutFollowsTheTimeoutDefault: the job's Cloud Run task
+// timeout is the workflow's own timeouts.total plus the slack every backend
+// adds, derived here on every `fugaro update` from the config the CLI resolves
+// — it is never stored in the installation. So an installation deployed when
+// the default total was 90 minutes converges to the new one on the next
+// `fugaro update` alone, with no operator step: the api workflow below names no
+// timeouts (the previous default's shape, and the shape a repository written
+// before this release has), and what comes out is the current default plus the
+// slack. The previous default's own number is named so that a change to either
+// half fails here rather than silently leaving deployed jobs on the old clock.
+func TestWorkflowJobTaskTimeoutFollowsTheTimeoutDefault(t *testing.T) {
+	in := webappInputs(t)
+	// webappYAML's api workflow writes no timeouts, so what it resolves to is
+	// the engine default — the shape a repository written before this
+	// release's default change has, with its fugaro.yaml untouched by it.
+	if got := in.Cfg.Workflows["api"].Timeouts.Total.Duration; got != 3*time.Hour {
+		t.Fatalf("the fixture's api workflow resolves total to %s, not the 3h default: this test is about a workflow left at the default", got)
+	}
+	ws, err := Workflow(in, "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := int((3*time.Hour + backend.TaskTimeoutSlack) / time.Second)
+	if ws.TaskTimeoutS != want {
+		t.Errorf("task_timeout_s = %d, want %d (the 3h default plus the %s slack): a repository left at the default does not converge with `fugaro update` alone",
+			ws.TaskTimeoutS, want, backend.TaskTimeoutSlack)
+	}
+	if prev := int((90*time.Minute + backend.TaskTimeoutSlack) / time.Second); ws.TaskTimeoutS == prev {
+		t.Errorf("task_timeout_s is still %d, the previous 90-minute default's job timeout: `fugaro update` would leave deployed jobs on the old clock", prev)
 	}
 }
 
@@ -2302,16 +2336,53 @@ const repoRootMixedLC = repoRootAPIKeyLC + `stages:
   review: { claude_account: bmb }
 `
 
-// repoRootCredentialsAPIKeyInputs is the api-key shape of the opt-in fixture:
-// the installation has a credentials service, and the one workflow mounts the
-// Anthropic API key (agent.auth api-key) and a provider's key — the other two
-// clauses of the drop, which the oauth fixture never exercises.
-func repoRootCredentialsAPIKeyInputs(t *testing.T) Inputs {
+// repoRootCascadeAgent is the one agent block the credentials service serves
+// (config.AuthCascade, CredentialsServiceServes): the repository a switch-on
+// installation may turn onto the service at all.
+const repoRootCascadeAgent = `agent: { auth: cascade }`
+
+// serviceReady records on the local config's entry for repo what
+// `fugaro update` writes when the bundle it read holds a model credential
+// (localcfg.Repo.CredentialsServiceReady, internal/cli/init.go's
+// writeRepoConfig). It is the half of the switch a spec build cannot answer
+// for itself: internal/infra reads no cloud. A RECORD is what it writes and not
+// an absent one, which is the distinction the field's pointer makes: the switch
+// reads both as off (localcfg.Repo.CredentialsServiceOn), while MergeShared
+// carries a published record over a missing one.
+func serviceReady(t *testing.T, lc *localcfg.Config, repo string) {
 	t.Helper()
-	in := repoRootInputs(t, `agent: { auth: api-key }`)
-	in.LC = parseLC(t, repoRootAPIKeyLC)
-	in.Installation.CredentialsService = &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
-	return in
+	r, ok := lc.Repos[repo]
+	if !ok {
+		t.Fatalf("the fixture's local config has no repos.%s entry: %v", repo, slices.Sorted(maps.Keys(lc.Repos)))
+	}
+	r.CredentialsServiceReady = localcfg.RecordSwitch(true)
+	lc.Repos[repo] = r
+}
+
+// converged plans one repository's spec twice: as an installation that has not
+// deployed the credentials service leaves it (off — the block is absent
+// altogether) and as one that has converged on DON1 (on — the block written,
+// and the per-repository record the update read out of the bundle). The pair
+// is the whole of what DON1's own change is, which is why every caller asserts
+// what it moves for the agent.auth it spells: the switch is installed &&
+// ready && auth == config.AuthCascade (CredentialsServiceServes), so a
+// repository of any other auth may not move at all — the finding the switch
+// was written for (docs/credentials-service/default-on.md §1.4).
+func converged(t *testing.T, in Inputs, lc *localcfg.Config) (off, on RepoSpec) {
+	t.Helper()
+	in.LC = lc
+	offIn := in
+	offIn.Installation.CredentialsService = nil
+	var err error
+	if off, err = Repo(offIn); err != nil {
+		t.Fatal(err)
+	}
+	in.Installation.CredentialsService = credentialsService()
+	serviceReady(t, in.LC, in.Repo)
+	if on, err = Repo(in); err != nil {
+		t.Fatal(err)
+	}
+	return off, on
 }
 
 // repoRootSpec is the golden fixture's spec for the agent block given.
@@ -2451,6 +2522,12 @@ type repoRootFixture struct {
 	// credentialsService sets the fixture's Installation.CredentialsService,
 	// the installation output the repository root reads.
 	credentialsService bool
+	// credentialsReady writes the per-repository record `fugaro update` leaves
+	// when the bundle holds a model credential (localcfg.Repo.
+	// CredentialsServiceReady). It is the switch's second condition, and the
+	// one internal/infra cannot read for itself; a fixture that sets the block
+	// without it is a repository the service is deployed for and cannot serve.
+	credentialsReady bool
 	// catalogCheckServiceAccount sets the fixture's
 	// Installation.CatalogCheckServiceAccount, the second installation output
 	// a repository root reads: the project's catalog check job's account
@@ -2475,17 +2552,20 @@ type repoRootFixture struct {
 // Addresses() and regenerating the goldens from the real plan is what closed
 // that gap.
 //
-// repo_root_credentials is the opt-in fixture: the same oauth spec with the
-// installation's credentials service set, so the addresses the mirror drops
-// (the job's accessors on the model credentials) and the one it adds (the
-// job's invoker grant on the service) are both compared with a real plan.
+// repo_root_credentials is the switched-on fixture: a cascade repository of an
+// installation whose credentials service is deployed and whose bundle holds a
+// model credential (the record), so the one address the mirror adds for it —
+// the job's invoker grant on the service — is compared with a real plan.
 // Before it, google_cloud_run_v2_service_iam_member.credentials was a
-// conditionalResources hole and the drop was pinned by nothing at all
-// (independent security review of the implementation, m2).
+// conditionalResources hole and the invoker grant was pinned by nothing at all
+// (independent security review of the implementation, m2). The cascade is the
+// switch's own condition, not a preference: the drop of the job's accessors on
+// the model credentials happens only for a repository the service serves, and
+// a cascade job mounts none of them (D143, CredentialsServiceServes).
 var repoRootFixtures = map[string]repoRootFixture{
 	"repo_root":             {agent: repoRootOAuthAgent},
 	"repo_root_vertex":      {agent: repoRootVertexAgent},
-	"repo_root_credentials": {agent: repoRootOAuthAgent, credentialsService: true},
+	"repo_root_credentials": {agent: repoRootCascadeAgent, credentialsService: true, credentialsReady: true},
 	// repo_root_catalog_check is the D1148 fixture: the same oauth spec with
 	// the installation's catalog check job account set, so the one address the
 	// mirror adds (the actAs on the build account, modules/repo/catalogcheck.tf)
@@ -2509,13 +2589,16 @@ func repoRootFixtureSpec(t *testing.T, name string) RepoSpec {
 	}
 	in := repoRootInputs(t, f.agent)
 	if f.credentialsService {
-		in.Installation.CredentialsService = &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+		in.Installation.CredentialsService = credentialsService()
 	}
 	if f.catalogCheckServiceAccount != "" {
 		in.Installation.CatalogCheckServiceAccount = f.catalogCheckServiceAccount
 	}
 	if f.lc != "" {
 		in.LC = parseLC(t, f.lc)
+	}
+	if f.credentialsReady {
+		serviceReady(t, in.LC, in.Repo)
 	}
 	rs, err := Repo(in)
 	if err != nil {
@@ -2662,19 +2745,42 @@ func TestRepoAddressesMatchTheMixedGolden(t *testing.T) {
 	}
 }
 
-// TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn is the mirror's
-// own guard, and it needs no golden: it plans the same fixture twice, with the
-// opt-in off and on, and asserts the difference is exactly the two sets
-// modules/workflow/sa.tf moves — the job's accessors on the credentials the
-// service holds, gone, and the job's invoker grant on the service, added — in
-// both shapes the modules distinguish: the oauth token (once per Claude
-// account, the default and the named one) and, for an api-key workflow, the
-// Anthropic key and a provider's key. The build account's own accessor on the
-// App key is not the job's and does not move (D148, F3).
+// TestRepoAddressesFollowTheSwitch is the mirror's own guard, and it needs no
+// golden: it plans each fixture twice — as an installation that has not
+// deployed the credentials service leaves it, and as one that has converged on
+// DON1 — and asserts the difference is exactly the two sets
+// modules/workflow/sa.tf moves: the job's accessors on the credentials the
+// service holds, gone, and the job's invoker grant on the service, added. The
+// build account's own accessor on the App key is not the job's and does not
+// move (D148, F3).
+//
+// WHICH repository may move at all is the switch's own answer, and it is what
+// this test was rewritten for (docs/credentials-service/default-on.md §1.4 and
+// §3, DON8). The module's gate is `var.credentials_service == null` and reads
+// no auth: the repository root's own `installation.credentials_service` is the
+// only thing standing between an oauth job and a plan that takes its Claude
+// token away, and CredentialsServiceServes — the installation has the block,
+// the bundle is ready as the local config records it, and agent.auth is
+// config.AuthCascade — is what decides whether the root carries it. The rows
+// below are the three auths, and only the cascade one moves when DON1's block
+// appears:
+//
+//   - a cascade repository is switched on. Its job gains the invoker grant on
+//     the service (D135) and nothing else: a cascade job mounts no model
+//     credential in either state (SecretMounts' cascade case, D143), which is
+//     the reason the drop is inert for the one auth the service serves, and
+//     the assertion that no model accessor moves either way is what keeps the
+//     drop from being read as a drop for every repository;
+//   - an oauth job and an api-key job keep every accessor they have — the
+//     Claude token once per account, the Anthropic key and the provider's key
+//     — and gain no invoker grant. Their rows are the regression test for the
+//     release blocker §1.4 states: a converged installation's oauth repository
+//     that dropped its Claude token, while the service has no route that would
+//     serve it one, is a repository whose every run fails.
 //
 // The App key's rows are the gated half (review finding F1, 2026-10-21): with
 // the runner still reading the key — this branch, config.ServiceHeldSecretNames
-// empty — the opt-in takes only the model accessors away, because a job whose
+// empty — the switch takes only the model accessors away, because a job whose
 // account lost its accessor on a key its container still mounted is a job Cloud
 // Run refuses to create; and with the name in that list (the state C2.2's
 // release puts the tree in) the App key's accessor goes with them. Both states
@@ -2686,75 +2792,90 @@ func TestRepoAddressesMatchTheMixedGolden(t *testing.T) {
 // It then runs the same two address lists through Retirements, both
 // directions, because that is what the drop is FOR: the state an installation
 // applied with the service off must be read as exactly those accessors to
-// retire, and the state of one that turns the opt-in off again as exactly the
-// invoker grants — never a job, never a secret container. With the mirror's
+// retire, and the state of one that turns the switch off again as exactly the
+// invoker grants — never a job, never a secret container. A held-off
+// repository's two states must retire nothing at all, which is the other half
+// of the same finding: an update that reported a delete for a repository it did
+// not switch on would be asking the operator to allow one. With the mirror's
 // branch disabled every test stayed green (independent security review of the
 // implementation, m2), which is what this pins.
-func TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn(t *testing.T) {
-	svc := &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+func TestRepoAddressesFollowTheSwitch(t *testing.T) {
+	accessor := func(workflow, logical string) string {
+		return `module.repo.module.workflow["` + workflow + `"].google_secret_manager_secret_iam_member.job["` + logical + `"]`
+	}
 	appKey := func(workflows ...string) []string {
 		var out []string
 		for _, key := range workflows {
-			out = append(out, `module.repo.module.workflow["`+key+`"].google_secret_manager_secret_iam_member.job["github-app-key"]`)
+			out = append(out, accessor(key, "github-app-key"))
+		}
+		return out
+	}
+	invoker := func(workflows ...string) []string {
+		var out []string
+		for _, key := range workflows {
+			out = append(out, `module.repo.module.workflow["`+key+`"].google_cloud_run_v2_service_iam_member.credentials[0]`)
 		}
 		return out
 	}
 	for _, tc := range []struct {
-		name       string
-		in         Inputs
+		name string
+		in   Inputs
+		lc   *localcfg.Config
+		// holds are the addresses the repository really produces with no block
+		// at all: the fixture's own premise, so a row that asserts nothing
+		// moves cannot pass by producing nothing in the first place.
+		holds []string
+		// wantGone and wantAppKey are the two states of the drop: this branch,
+		// and C2.2's release with the App key in ServiceHeldSecretNames.
 		wantGone   []string
 		wantAppKey []string
 		wantAdd    []string
 	}{
 		{
-			name: "oauth",
-			in:   repoRootInputs(t, repoRootOAuthAgent),
-			wantGone: []string{
-				`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["claude-oauth-token"]`,
-				`module.repo.module.workflow["web_bmb"].google_secret_manager_secret_iam_member.job["claude-oauth-token-bmb"]`,
-			},
-			wantAppKey: appKey("web", "web_bmb"),
-			wantAdd: []string{
-				`module.repo.module.workflow["web"].google_cloud_run_v2_service_iam_member.credentials[0]`,
-				`module.repo.module.workflow["web_bmb"].google_cloud_run_v2_service_iam_member.credentials[0]`,
-			},
+			name:       "cascade, the auth the service serves",
+			in:         repoRootInputs(t, repoRootCascadeAgent),
+			lc:         parseLC(t, repoRootLC),
+			wantAdd:    invoker("web"),
+			wantAppKey: appKey("web"),
 		},
 		{
-			name: "api-key",
-			in:   repoRootCredentialsAPIKeyInputs(t),
-			wantGone: []string{
-				`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["anthropic-api-key"]`,
-				`module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["openrouter-api-key"]`,
-			},
-			wantAppKey: appKey("web"),
-			wantAdd: []string{
-				`module.repo.module.workflow["web"].google_cloud_run_v2_service_iam_member.credentials[0]`,
-			},
+			name:  "oauth",
+			in:    repoRootInputs(t, repoRootOAuthAgent),
+			lc:    parseLC(t, repoRootLC),
+			holds: []string{accessor("web", "claude-oauth-token"), accessor("web_bmb", "claude-oauth-token-bmb")},
+		},
+		{
+			name:  "api-key",
+			in:    repoRootInputs(t, `agent: { auth: api-key }`),
+			lc:    parseLC(t, repoRootAPIKeyLC),
+			holds: []string{accessor("web", "anthropic-api-key"), accessor("web", "openrouter-api-key")},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			off := tc.in
-			off.Installation.CredentialsService = nil
-			offSpec, err := Repo(off)
-			if err != nil {
-				t.Fatal(err)
-			}
-			on := tc.in
-			on.Installation.CredentialsService = svc
-			onSpec, err := Repo(on)
-			if err != nil {
-				t.Fatal(err)
-			}
+			offSpec, onSpec := converged(t, tc.in, tc.lc)
 			offAddrs := offSpec.Addresses()
-			// The fixture's own premises: the credentials really are mounted
-			// with the service off, or the deltas below would pass vacuously.
-			for _, a := range slices.Concat(tc.wantGone, tc.wantAppKey) {
+			for _, a := range tc.holds {
 				if !slices.Contains(offAddrs, a) {
-					t.Fatalf("the fixture does not produce %s with the service off: the test would be vacuous", a)
+					t.Fatalf("the fixture does not produce %s with no service at all: the test would be vacuous", a)
+				}
+			}
+			// The row that does move has its own premise, in the other
+			// direction: the invoker grant is not there yet, and neither is
+			// any model accessor for the drop to take away with it.
+			for _, a := range tc.wantAdd {
+				if slices.Contains(offAddrs, a) {
+					t.Fatalf("the fixture already produces %s with no service at all: there is no grant for the switch to add", a)
+				}
+			}
+			if len(tc.wantAdd) > 0 {
+				for _, a := range offAddrs {
+					if strings.Contains(a, "claude-oauth-token") || strings.Contains(a, "anthropic-api-key") {
+						t.Fatalf("the switched-on fixture's job holds %s with no service to serve it: the cascade mounts no model credential at all (D143), so this fixture is not the cascade the switch serves", a)
+					}
 				}
 			}
 
-			// check asserts the delta the opt-in makes in one state of the
+			// check asserts the delta the switch makes in one state of the
 			// service-held list, and both retirement directions over it.
 			check := func(well string, wantGone, wantAdd []string) {
 				t.Helper()
@@ -2774,14 +2895,14 @@ func TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn(t *testing.T) {
 				slices.Sort(wantGone)
 				slices.Sort(wantAdd)
 				if !slices.Equal(gone, wantGone) {
-					t.Errorf("with the credentials service on (%s), Addresses() drops %v, want exactly %v: the credentials the service holds are its to hold (D145, C2.3), and nothing else moves", well, gone, wantGone)
+					t.Errorf("with the credentials service deployed (%s), Addresses() drops %v, want exactly %v: the module's gate is auth-blind (modules/workflow/sa.tf's var.credentials_service), so the repository root's own block — CredentialsServiceServes — is what decides a job may give an accessor up, and only a cascade job of a ready installation may", well, gone, wantGone)
 				}
 				if !slices.Equal(added, wantAdd) {
-					t.Errorf("with the credentials service on (%s), Addresses() adds %v, want exactly %v: the job's one invoker grant on the service (D135)", well, added, wantAdd)
+					t.Errorf("with the credentials service deployed (%s), Addresses() adds %v, want exactly %v: the job's one invoker grant on the service (D135), and nothing else", well, added, wantAdd)
 				}
 				// The retirement directions: what an installation that applied
-				// with the service off must be told to retire when it turns it
-				// on, and the other way round.
+				// with the service off must be told to retire when the switch
+				// turns it on, and the other way round.
 				rets := Retirements(offAddrs, onSpec)
 				var retAddrs []string
 				for _, r := range rets {
@@ -2789,7 +2910,7 @@ func TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn(t *testing.T) {
 				}
 				slices.Sort(retAddrs)
 				if !slices.Equal(retAddrs, wantGone) {
-					t.Errorf("turning the service on (%s) retires %v, want exactly the service-held accessors %v: a retirement the mirror invents is a delete the operator is asked to allow", well, retAddrs, wantGone)
+					t.Errorf("turning the switch on (%s) retires %v, want exactly %v: a retirement the mirror invents is a delete the operator is asked to allow, and for a repository the switch holds off there is nothing to retire at all", well, retAddrs, wantGone)
 				}
 				back := Retirements(onAddrs, offSpec)
 				retAddrs = retAddrs[:0]
@@ -2798,7 +2919,7 @@ func TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn(t *testing.T) {
 				}
 				slices.Sort(retAddrs)
 				if !slices.Equal(retAddrs, wantAdd) {
-					t.Errorf("turning the service off (%s) retires %v, want exactly the invoker grants %v", well, retAddrs, wantAdd)
+					t.Errorf("turning the switch off (%s) retires %v, want exactly %v", well, retAddrs, wantAdd)
 				}
 				// And the grants that must never be a retirement candidate: the
 				// job itself and the secret containers.
@@ -2809,7 +2930,7 @@ func TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn(t *testing.T) {
 				}
 			}
 
-			// This branch: the job reads the App key, so the opt-in takes only
+			// This branch: the job reads the App key, so the drop takes only
 			// the model accessors away and the App key's stays (F1).
 			check("the job reads the key", tc.wantGone, tc.wantAdd)
 			// C2.2's release: the App key joins the list and its accessor goes
@@ -2820,58 +2941,55 @@ func TestRepoAddressesDropServiceHeldSecretsWhenTheServiceIsOn(t *testing.T) {
 	}
 }
 
-// TestNoModelMountsWithService is the mount half of the opt-in
-// (docs/credentials-service, D146, D147; C1.20). The addresses test above pins
-// which IAM records move; this one pins what the JOB is given, which is the
-// half that decides whether a deploy succeeds at all: modules/workflow/sa.tf
-// takes the job account's accessor off each model credential, and Cloud Run
-// checks the mounting account's read access on every secret handed to a job, so
-// a job that still MOUNTED the token would be refused to deploy.
+// TestTheDeployAloneDropsNoModelMount is the mount half of the switch, and it
+// is the regression test for the release blocker docs/credentials-service/
+// default-on.md §1.4 states in as many words: the deploy alone must not take
+// any repository's model mount away. The addresses test above pins which IAM
+// records move; this one pins what the JOB is given, which is the half that
+// decides whether a run has a credential at all: modules/workflow/sa.tf takes
+// the job account's accessor off each model credential for every repository
+// whose root carries the block, and a job that still MOUNTED the token while
+// its account kept no accessor would be refused to deploy.
 //
-// The shape of the drop is what the test is really for, in the two forms the
-// installation distinguishes (oauth: the shared subscription token, once per
-// Claude account; api-key: the Anthropic key and a provider's key):
+// The auth the module never reads is the point. DON1 writes the installation's
+// block on every installation; the repository root's own
+// `installation.credentials_service` — repoCredentialsService ->
+// CredentialsServiceServes — is what keeps the block out of a repository the
+// service cannot serve, and that is the authorization condition: the service
+// serves config.AuthCascade alone, so an oauth or api-key job that gave its
+// credential up would have nothing to replace it with (and no route at the
+// service that would serve it one).
 //
-//   - the MOUNT goes — no SecretEnv entry names a model credential
-//     (config.IsModelSecretEnv), and FUGARO_SECRET_ENVS, which is how the job
-//     knows what to redact from its logs, stops naming them with it;
-//   - the CONTAINER stays — rs.Secrets, the repository root's own
-//     google_secret_manager_secret.this, is the same map before and after. It
-//     carries prevent_destroy and may still hold the value the installation
-//     used before it opted in, so dropping it from the spec would plan its
-//     destruction (which prevent_destroy refuses, failing the whole plan) and
-//     make Retirements report a live container as retired;
-//   - everything that is not a model credential is untouched: the git
-//     credential and the workflow's own secrets stay mounted.
+// What each held-off row asserts, in the two forms the installations
+// distinguish (oauth: the shared subscription token, once per Claude account;
+// api-key: the Anthropic key and a provider's key):
 //
-// The mutation is the dropModelMounts call in repoCtx.workflow: without it the
-// service-on spec mounts the model credentials exactly like the service-off
-// one, and every clause below fails.
-func TestNoModelMountsWithService(t *testing.T) {
-	svc := &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+//   - the MOUNT stays — the same SecretEnv entries name the same model
+//     credentials (config.IsModelSecretEnv), and FUGARO_SECRET_ENVS, which is
+//     how the job knows what to redact from its logs, goes on naming them;
+//   - the CONTAINER stays — rs.Secrets is the same map in both states, which is
+//     what keeps an apply from planning a secret's destruction and
+//     Retirements from reporting a live container as retired;
+//   - everything else is untouched: the git credential and the workflow's own
+//     secrets stay mounted.
+//
+// The mutation is the auth half of CredentialsServiceServes (drop
+// `auth == config.AuthCascade`): every clause below fails, and the address
+// list grows the drop with it — which is the state DON1 alone would have
+// shipped in.
+func TestTheDeployAloneDropsNoModelMount(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		in   Inputs
+		lc   *localcfg.Config
 	}{
-		{name: "oauth", in: repoRootInputs(t, repoRootOAuthAgent)},
-		{name: "api-key", in: repoRootCredentialsAPIKeyInputs(t)},
+		{name: "oauth", in: repoRootInputs(t, repoRootOAuthAgent), lc: parseLC(t, repoRootLC)},
+		{name: "api-key", in: repoRootInputs(t, `agent: { auth: api-key }`), lc: parseLC(t, repoRootAPIKeyLC)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			off := tc.in
-			off.Installation.CredentialsService = nil
-			offSpec, err := Repo(off)
-			if err != nil {
-				t.Fatal(err)
-			}
-			on := tc.in
-			on.Installation.CredentialsService = svc
-			onSpec, err := Repo(on)
-			if err != nil {
-				t.Fatal(err)
-			}
+			offSpec, onSpec := converged(t, tc.in, tc.lc)
 			// The fixture's premise: with the service off the job really does
 			// mount a model credential, or the assertions below pass vacuously.
-			offWS := offSpec.Workflows["web"]
 			mounted := func(ws WorkflowSpec) []string {
 				var out []string
 				for env, logical := range ws.SecretEnv {
@@ -2882,34 +3000,109 @@ func TestNoModelMountsWithService(t *testing.T) {
 				slices.Sort(out)
 				return out
 			}
-			if offMounted := mounted(offWS); len(offMounted) == 0 {
-				t.Fatal("the fixture mounts no model credential with the service off: the test would be vacuous")
+			offWS, onWS := offSpec.Workflows["web"], onSpec.Workflows["web"]
+			offMounted := mounted(offWS)
+			if len(offMounted) == 0 {
+				t.Fatal("the fixture mounts no model credential with no service at all: the test would be vacuous")
 			}
-			onWS := onSpec.Workflows["web"]
-			if onMounted := mounted(onWS); len(onMounted) != 0 {
-				t.Errorf("with the credentials service on, the job still mounts %v: the service holds those credentials and the job account has no accessor left on them (D145, D146), so Cloud Run would refuse to deploy the job", onMounted)
+			if onMounted := mounted(onWS); !slices.Equal(onMounted, offMounted) {
+				t.Errorf("the converged installation's job mounts %v, want exactly %v, the credentials it mounted before the service was deployed: the service serves config.AuthCascade alone, so this job's own credential is the only one it can run on, and the module's accessor drop would refuse to deploy it (D145, D146)", onMounted, offMounted)
 			}
 			// The redaction list follows the mounts: it is built from them, and
-			// a name left in it that is not mounted is a redaction the runner
-			// would apply to nothing.
+			// a name left out of it that the job holds is a credential the
+			// runner would print.
 			if got, want := onWS.Env[runner.SecretEnvsVar], redactionEnvs(onWS.SecretEnv); got != want {
-				t.Errorf("%s = %q with the service on, want %q, the mounts that remain", runner.SecretEnvsVar, got, want)
+				t.Errorf("%s = %q with the service deployed, want %q, the mounts it still gives the job", runner.SecretEnvsVar, got, want)
 			}
 			for _, env := range config.ModelSecretEnvs {
-				if strings.Contains(onWS.Env[runner.SecretEnvsVar], env) {
-					t.Errorf("%s still redacts %s, which the job no longer mounts", runner.SecretEnvsVar, env)
+				if slices.ContainsFunc(offMounted, func(m string) bool { return strings.HasPrefix(m, env+"=") }) && !strings.Contains(onWS.Env[runner.SecretEnvsVar], env) {
+					t.Errorf("%s no longer redacts %s, which the job still mounts", runner.SecretEnvsVar, env)
 				}
 			}
 			// The containers: identical maps, so nothing plans a secret's
 			// destruction and nothing is reported as retired.
 			if !maps.Equal(offSpec.Secrets, onSpec.Secrets) {
-				t.Errorf("the secret containers moved with the mount: with the service off %v, on %v. Only the mount goes: the container carries prevent_destroy and may still hold the value the installation used before it opted in, so dropping it would plan a destruction the root refuses and report a live container as retired", offSpec.Secrets, onSpec.Secrets)
+				t.Errorf("the secret containers moved with the block: with no service %v, with one %v. Only a switched-on repository's mounts and accessors move, and a container carries prevent_destroy: dropping it would plan a destruction the root refuses and report a live container as retired", offSpec.Secrets, onSpec.Secrets)
 			}
 			if _, ok := onWS.SecretEnv["NPM_TOKEN"]; !ok {
-				t.Errorf("the workflow's own secret is no longer mounted with the service on: %v", onWS.SecretEnv)
+				t.Errorf("the workflow's own secret is no longer mounted with the service deployed: %v", onWS.SecretEnv)
 			}
 			if _, ok := onWS.SecretEnv[config.ReservedSecrets["github-app-key"]]; !ok {
-				t.Errorf("the git credential is no longer mounted with the service on: %v", onWS.SecretEnv)
+				t.Errorf("the git credential is no longer mounted with the service deployed: %v", onWS.SecretEnv)
+			}
+		})
+	}
+}
+
+// TestNoRepositoryRootGainsAServiceTheBundleCannotServe is the whole-predicate
+// guard docs/credentials-service/default-on.md §3 (DON8) names: no repository
+// root the fixtures can build carries `installation.credentials_service` unless
+// all three of CredentialsServiceServes' conditions hold.
+//
+// The two tests above each pin one half — which addresses move, and which
+// mounts the job keeps — and each of them spells out the agent.auth it is
+// about. This one is the guard against a fixture being the exception: it walks
+// every agent block the tree knows against every state of the other two
+// conditions, so a repository root that gained the block on the strength of the
+// installation's own outputs alone (the mutation: `repoCredentialsService`
+// returning the block regardless) is caught on a row no test named, and it
+// asserts the ON row's shape as well, because a root that carried the block
+// with the URL left in it would be a value the workflow module reads half of.
+//
+// The four states are the whole of what the three conditions can be, in the
+// order an installation reaches them: nothing deployed (every installation
+// before DON1); nothing deployed while a record says ready (a local config left
+// behind by an installation that turned the service off again — the record is
+// not the switch's authority on its own); the service deployed and its bundle
+// holding no model credential, which is the state EVERY installation is in the
+// moment its update deploys the service, because `fugaro creds set` is the
+// bundle's only writer; and all three holding, which is the one row that may
+// move, and only for the cascade.
+func TestNoRepositoryRootGainsAServiceTheBundleCannotServe(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		agent string
+		lc    string
+	}{
+		{name: "cascade, the auth the service serves", agent: repoRootCascadeAgent, lc: repoRootLC},
+		{name: "oauth", agent: repoRootOAuthAgent, lc: repoRootLC},
+		{name: "api-key", agent: `agent: { auth: api-key }`, lc: repoRootAPIKeyLC},
+		{name: "vertex", agent: repoRootVertexAgent, lc: repoRootLC},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			served := tc.agent == repoRootCascadeAgent
+			for _, st := range []struct {
+				name      string
+				installed bool
+				ready     bool
+			}{
+				{name: "no service at all"},
+				{name: "no service, a record that says ready", ready: true},
+				{name: "the service deployed, the bundle not ready", installed: true},
+				{name: "the service deployed, the bundle ready", installed: true, ready: true},
+			} {
+				in := repoRootInputs(t, tc.agent)
+				in.LC = parseLC(t, tc.lc)
+				if st.installed {
+					in.Installation.CredentialsService = credentialsService()
+				}
+				if st.ready {
+					serviceReady(t, in.LC, in.Repo)
+				}
+				rs, err := Repo(in)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := rs.Installation.CredentialsService
+				if want := served && st.installed && st.ready; want != (got != nil) {
+					if want {
+						t.Fatalf("%s: the repository root carries no credentials service, want the installation's: the installation has the block, the record vouches for the bundle and agent.auth is %s — all three conditions — so this is the one row the switch turns on, and without it no repository of any installation ever reaches the service", st.name, config.AuthCascade)
+					}
+					t.Errorf("%s: the repository root carries installation.credentials_service %+v, want none: modules/workflow/sa.tf's gate is `var.credentials_service == null` and reads no auth, so this root's next apply would take the job's model credential away and grant its account roles/run.invoker on a service that cannot hand it back — the release blocker §1.4 states", st.name, got)
+				}
+				if got != nil && (got.Name != credentialsService().Name || got.Region != credentialsService().Region) {
+					t.Errorf("%s: the repository root's credentials service is %+v, want name and region alone (%+v): a repository root reads those two and nothing else, and Terraform silently drops an attribute a variable's type does not carry rather than refusing it (repoCredentialsService)", st.name, got, credentialsService())
+				}
 			}
 		})
 	}
@@ -3107,12 +3300,21 @@ func publishedNode(t *testing.T, proxy bool, repos ...string) *projectpolicy.Pol
 }
 
 // proxiedSandboxInputs is the sandbox fixture — acme/sandbox on Bitbucket —
-// with the installation opted in to the credentials service and the node the
-// caller read. extraLC is the operator's local config, appended to the M5
-// additions.
+// with the installation's credentials service deployed, the repository
+// switched onto it and the node the caller read. extraLC is the operator's
+// local config, appended to the M5 additions.
+//
+// The repository is a CASCADE one because the switch is what a proxied token
+// needs: the service is the process that forwards it, so a repository the
+// switch holds off keeps the token mounted and keeps its account's accessor on
+// it (CredentialsServiceServes' auth condition). The sandbox's own fugaro.yaml
+// says oauth, so the auth is spelled over it here — the one field these tests
+// are not about.
 func proxiedSandboxInputs(t *testing.T, extraLC string, node *projectpolicy.Policy) Inputs {
 	t.Helper()
 	in := sandboxInputs(t, m5Additions+extraLC)
+	in.Cfg.Agent.Auth = config.AuthCascade
+	serviceReady(t, in.LC, in.Repo)
 	in.Installation.CredentialsService = credentialsService()
 	in.Policy = node
 	return in

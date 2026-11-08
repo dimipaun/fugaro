@@ -107,7 +107,6 @@ type initOptions struct {
 	// (managed_ask.go, initflow.AskDecision).
 	ask                                 bool
 	provisionBatch                      bool   // --provision-batch: provision the Batch backend's installation-level root (owner-run, typed confirmation)
-	provisionCredentials                bool   // --provision-credentials: turn the credentials service on in the installation root (owner-run, typed confirmation)
 	coordinator                         bool   // --coordinator: opt the installation in to the coordinator's aggregation job (owner-run, at a terminal, never --yes)
 	onboardRepo                         string // --onboard-repo owner/name: the explicit opt-in to onboard the checkout's repository
 	allowFork                           bool   // --allow-fork: the plugin-wiring stage may move a fork's marketplace ref
@@ -304,6 +303,16 @@ type initCreation struct {
 // separately is two names that drift.
 const retiredFirebaseFlag = "firebase"
 
+// retiredCredentialsFlag is the flag DON1 removed: `fugaro update` deploys the
+// credentials service on every installation now, so there is no opt-in left
+// for a flag to be (docs/credentials-service/default-on.md, the owner's ruling
+// of 2026-11-05). It is REMOVED rather than aliased, and the SetFlagErrorFunc
+// below is what says so by name instead of letting pflag's bare "unknown flag"
+// leave a user who read an older document guessing whether they mistyped it.
+// Written once, like retiredFirebaseFlag: the test that pins the removal reads
+// it from here.
+const retiredCredentialsFlag = "provision-credentials"
+
 func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	o.door = d.name
 	cmd := &cobra.Command{
@@ -355,6 +364,13 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 				r.res.Error = err.Error()
 				_ = r.printResult()
 			}
+			// The staleness line waits for the run that clears it (fugaro
+			// update, skillwarn.go): said here, after the pin and the plugin
+			// have moved, it reports only what is still stale, and a door that
+			// is itself the remedy never sends the reader to itself over work
+			// it is about to do. Every other door prints it before it runs,
+			// which this call leaves alone.
+			warnStaleSkillsAfter(cmd)
 			return err
 		},
 	}
@@ -378,6 +394,9 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
 		if err.Error() == "unknown flag: --"+retiredFirebaseFlag {
 			return userErr("--%s is --firebase-project now: pass --firebase-project <gcp-project-id> to build the budget backend in the installation's own GCP project, the only project Fugaro uses for it (fugaro %s --help)", retiredFirebaseFlag, c.Name())
+		}
+		if err.Error() == "unknown flag: --"+retiredCredentialsFlag {
+			return userErr("--%s is gone: fugaro update deploys the credentials service on every installation now, so there is no opt-in for the flag to be, and passing it does nothing a plain fugaro update does not do (fugaro update --help)", retiredCredentialsFlag)
 		}
 		return err
 	})
@@ -447,16 +466,21 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// such a session actually gets: the writes on this machine's own files are
 	// the only ones an apply there may make (the checkout's pin and plugin
 	// wiring; the checkout stage is LocalUnderAgent for exactly those two),
-	// and they are reached only when every stage before the checkout is done —
-	// the loop stops at the first stage that needs the user and blocks the
-	// rest. The plugin stage runs before the checkout on the same pin and is
-	// not LocalUnderAgent, so a stale plugin stops the run at the plugin
-	// (`fugaro update-skills`) with the checkout's local steps never reached
-	// (TestUpdateAgentSessionStopsAtThePluginBeforeTheCheckout). The help has
-	// to say that rather than promise a session a write it may not get to.
-	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — "+covers+" — and it never covers "+never+": each of those is typed at a real terminal, and no flag stands in for one. The single one a managed project does not type is a policy publish that would loosen its published node: at a real terminal the write prints one line saying what it does and the widening is read in the diff above it, a project's first node included — that diff names every member the node is created with. Under a coding agent's environment variable (CLAUDECODE and the like; CLAUDE_CODE_SSE_PORT alone is not one of them where standard input is a real terminal, because the Claude Code IDE extension sets it in a person's own terminal too, so it is a person's terminal and types the same confirmations, told in one line that they were accepted from an IDE terminal — another of those markers beside it, or no terminal, is what keeps a run a coding agent's session) "+d.name+" changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are "+d.name+" --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the checkout's own local steps (the .claude/settings.json wiring and pin), whose every write is on this machine's own files — and those are reached only where every stage before the checkout is done, because the first stage that needs you stops the run and blocks the rest: the plugin stage runs before the checkout on the same pin and is not local-under-agent, so a session whose plugin is stale stops there (`left for you`, exit 1) and the checkout is untouched. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint")
+	// and they are reached only where nothing before the checkout stops over
+	// them — the loop stops at the first stage that needs the user and blocks
+	// the rest, and the one need that does not is the repository stage's
+	// (#1836, initflow's RunsPastStop): the checkout's two local steps read no
+	// repository state, and its cloud step, which builds that repository's job
+	// images, is skipped rather than run over the stop
+	// (checkoutStage.planFor's repositoryStopped). The plugin stage runs before
+	// the checkout on the same pin
+	// and is not LocalUnderAgent, so a stale plugin stops the run at the
+	// plugin (`fugaro update-skills`) with the checkout's local steps never
+	// reached (TestUpdateAgentSessionStopsAtThePluginBeforeTheCheckout). The
+	// help has to say that rather than promise a session a write it may not
+	// get to.
+	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — "+covers+" — and it never covers "+never+": each of those is typed at a real terminal, and no flag stands in for one. The single one a managed project does not type is a policy publish that would loosen its published node: at a real terminal the write prints one line saying what it does and the widening is read in the diff above it, a project's first node included — that diff names every member the node is created with. Under a coding agent's environment variable (CLAUDECODE and the like; CLAUDE_CODE_SSE_PORT alone is not one of them where standard input is a real terminal, because the Claude Code IDE extension sets it in a person's own terminal too, so it is a person's terminal and types the same confirmations, told in one line that they were accepted from an IDE terminal — another of those markers beside it, or no terminal, is what keeps a run a coding agent's session) "+d.name+" changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are "+d.name+" --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the checkout's own local steps (the .claude/settings.json wiring and pin), whose every write is on this machine's own files — and those are reached only where nothing before the checkout stops over them, because a stage that needs you stops the run and blocks the rest: the plugin stage runs before the checkout on the same pin and is not local-under-agent, so a session whose plugin is stale stops there (`left for you`, exit 1) and the checkout is untouched. The one need that does not stop them is the repository stage's — the checkout's own pin and plugin steps read no repository state, and the plugin install is the one the reader of a stale line is stuck on — and the checkout's local steps run past it, while its cloud step, which builds that repository's job images, is skipped rather than run over it. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint")
 	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes also covers onboarding such a repository, and neither it nor this flag is honoured in a coding agent's session; any other origin takes the typed confirmation)")
-	f.BoolVar(&o.provisionCredentials, "provision-credentials", false, "after the installation's ordinary steps, turn ON the credentials service in the installation root (docs/credentials-service, D146): a Cloud Run service (its own account, one Secret Manager bundle secret) running this release's image pinned by digest through the installation's remote repository. It is the identity the REPOSITORY jobs' model credentials move to: every workflow job of every repository root re-applied after this drops its model credential — in every agent.auth mode, oauth and api-key as much as cascade — and its account's accessor on it, and gets an invoker grant on the service instead. It does NOT reach the shared project jobs, which keep mounting their provider keys and CLAUDE_CODE_OAUTH_TOKEN with their grants (C3.9 moves those). And it is wired from this run on: the service's address is recorded in the project's config and put on every per-repository launch, so a cascade run takes its model credential from the service and a GitHub run has its installation token minted there rather than in the job. A repository job in another agent.auth mode has no model credential to use and nothing yet to replace it (that half is not in this release), so a project that opts in runs its workflows with agent.auth: cascade; and the bundle has to hold the GitHub App's key (fugaro creds set github-app-key) before any GitHub run of the installation can mint. It needs the installation's Firebase rules (fugaro "+d.name+" --firebase-project) at the credentials generation first. --yes never covers it and it is typed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor), and it does NOT exclude --provision-batch: they are two applies of different roots, each with its own typed confirmation, and naming both means both")
 	f.BoolVar(&o.coordinator, "coordinator", false, "with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. --yes never covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
 	f.BoolVar(&o.allowFork, "allow-fork", false, "let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise")
 	// The flags --non-interactive only stops from prompting, worded for this
@@ -583,6 +607,18 @@ type initRun struct {
 	// their confirmation is the ruling of 2026-11-01 rather than a verdict.
 	refresh *refreshManaged
 
+	// credsRead, credsReady and credsRecord are the credentials service's
+	// bundle as this run read it (credentialsBundleReady, init_credentials.go):
+	// whether it holds a model credential, read once and recorded on the
+	// repository entry the run writes. Read once because it is one
+	// installation's bundle and one secret read; a read that FAILED answers
+	// nothing at all — the entry keeps the record the last reading left on it,
+	// and credsRecord is what carries that answer to this run's second door —
+	// and the warning it prints is why.
+	credsRead   bool
+	credsReady  bool
+	credsRecord bool
+
 	// managed is true once this run read that the project it installs into
 	// is managed (managedProject): a guard refusal's text is then the managed
 	// one. Only true is remembered; false and an error are read again.
@@ -599,6 +635,11 @@ type initRun struct {
 	// config — is written by this struct (writeConfig), from stages that all run
 	// before the policy stage applies.
 	policyStage *policyMigrateStage
+	// workspaceStage is the converge's workspace stage, held for the same reason
+	// and by the same write: the record it publishes names the database this
+	// struct writes into the local config, so a run that first names a backend
+	// gives the stage its database after the stage's read-only pass is over.
+	workspaceStage *workspaceStage
 	// The retirement (init_retire.go): what the run read before its first
 	// plan -- the state's addresses, the retirement set of design §3.1a and
 	// the notes Orphans returned -- and whether its flow ran and applied, so
@@ -1446,11 +1487,11 @@ func (o *initOptions) check() error {
 			return userErr("--anchor only writes the gcp_project line of an onboarded repository's checkout; it excludes %s", strings.Join(set, ", "))
 		}
 	}
-	if o.provisionBatch || o.provisionCredentials {
-		// Both are applies of the installation's own root, each confirmed by
-		// typing the project's name, so a flag that only reads or only stops
-		// has no room beside them: a run that named one and printed vars would
-		// look like it had provisioned something.
+	if o.provisionBatch {
+		// It is an apply of the installation's own root, confirmed by typing
+		// the project's name, so a flag that only reads or only stops has no
+		// room beside it: a run that named it and printed vars would look like
+		// it had provisioned something.
 		var set []string
 		for _, f := range []struct {
 			name string
@@ -1462,15 +1503,7 @@ func (o *initOptions) check() error {
 			}
 		}
 		if len(set) > 0 {
-			flags, what := "--provision-batch", "provisions the installation's Batch compute backend"
-			if o.provisionCredentials {
-				flags, what = "--provision-credentials", "turns the installation's credentials service on"
-				if o.provisionBatch {
-					flags = "--provision-batch and --provision-credentials"
-					what = "provision the installation's Batch compute backend and turn its credentials service on"
-				}
-			}
-			return userErr("%s %s, which is an apply: it excludes %s", flags, what, strings.Join(set, ", "))
+			return userErr("--provision-batch provisions the installation's Batch compute backend, which is an apply: it excludes %s", strings.Join(set, ", "))
 		}
 	}
 	if o.coordinator {
@@ -2305,33 +2338,36 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	//     point — PrepareWorkdir has already deleted the file it names,
 	//     and the read would answer "nothing to carry" for exactly the
 	//     installation that opted in.
-	//   - wd.Vars, the tfvars the workdir holds NOW. A LATER stage of the
+	//   - wd.Vars, the tfvars the workdir holds NOW. A LATER step of the
 	//     same run reaches prepare again — the compute stage's read of the
 	//     installation's outputs, on the same workdir — and the keys the
-	//     run's own stages wrote into that document are not in the
-	//     snapshot: the credentials stage's opt-in is the one that matters.
-	//     Without it, naming --provision-batch beside --provision-credentials
-	//     would drop the opt-in at the compute stage's first line, before
-	//     its own typed confirmation and therefore for an owner who
-	//     declines it as much as for one who accepts.
+	//     run's own writers put into that document are not in the
+	//     snapshot: the credentials service's block, which the
+	//     installation stage's own pinCredentialsImage writes before this
+	//     root is planned (init_stages.go), is the one that matters.
+	//     Without it, the compute stage's first line would rebuild the
+	//     document without the block and plan the service away — a plan
+	//     the bundle container's prevent_destroy refuses, so the run would
+	//     fail after the service had been deployed.
 	now, err := wd.Vars()
 	if err != nil {
 		return nil, userErr("reading the installation's tfvars: %v", err)
 	}
 	documents := [][]byte{wd.PrevVars, now}
 	if spec.CredentialsService == nil {
-		// The credentials service's opt-in is the credentials stage's alone
-		// (C1.20): this spec never carries it, and the tfvars are rewritten
-		// from the spec on every run, so an installation that has opted in
-		// would lose the key here and plan the service's removal — a plan the
-		// bundle container's prevent_destroy refuses, so every ordinary run of
-		// fugaro update after the opt-in would fail instead of applying. The key
-		// is carried forward exactly as the workdir had it, present or absent —
-		// except its verifier_accounts member, which is the effective list of
-		// THIS run (CSR14): the member is new, so an installation that opted in
-		// before this release carries a block without it, and one ordinary
-		// `fugaro update` has to leave that block naming the verifier account
-		// the same apply creates — or `[]`, when the owner cleared the list.
+		// The credentials service's block is written by the installation
+		// stage's own pinCredentialsImage (init_stages.go) and this spec never
+		// carries it: the tfvars are rewritten from the spec on every run, so
+		// an installation that has the service would lose the key here and plan
+		// its removal — a plan the bundle container's prevent_destroy refuses,
+		// so every ordinary run of fugaro update after the first would fail
+		// instead of applying. The key is carried forward exactly as the
+		// workdir had it, present or absent — except its verifier_accounts
+		// member, which is the effective list of THIS run (CSR14): the member
+		// is new, so an installation that has the block from before this
+		// release carries one without it, and one ordinary `fugaro update` has
+		// to leave that block naming the verifier account the same apply
+		// creates — or `[]`, when the owner cleared the list.
 		// asFound is the rollback's: it reads no cloud and has no effective list,
 		// and a nil list here would delete the member, so the module's default
 		// account would replace the owner's list at the live service in a plan
@@ -2389,6 +2425,27 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 	if err != nil || stop {
 		return err
 	}
+	// No credentials-service record is written here for a root this run does
+	// not apply, deliberately: the record says "THIS repository's root has been
+	// applied with the service on", and the grant that makes the service usable
+	// to a repository is made by that root's own apply (modules/workflow/sa.tf).
+	// A record written for a repository whose root has not been applied with
+	// the service on would tell a launch the service is ready while its job
+	// accounts hold no roles/run.invoker, and a `cascade` run has no credential
+	// of its own to fall back to (D143). The repository stage of this same run
+	// is the door that applies a root, and it records there
+	// (recordCredentialsServiceReady).
+	//
+	// The one write this door does make is the backfill an UPGRADE owes: a
+	// repository whose root a PREVIOUS release already applied with the service
+	// on carries no record, because the field did not exist then, and this
+	// release's launcher reads the record. The evidence is the installation's
+	// own state — the repository root's objects in the state bucket, which is
+	// the installation's one copy and not this machine's — so this vouches for
+	// a grant that was made and not for one this run's installation root never
+	// makes, and it holds for a root applied from another machine or another
+	// checkout, where this machine holds no tfvars at all.
+	r.backfillCredentialsServiceReady(ctx, c, spec.StateBucket, lc, outs)
 	// 8. The local config.
 	return r.writeConfig(ctx, lc, spec, outs, path, old, r.res.Applied)
 }
@@ -2562,7 +2619,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// what the gate refused rather than the guard's advice, which is what
 		// a managed project's refusal is about. Everything the guard's own
 		// path prints or records stays where it was, on the path that runs it.
-		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.notCovered))
+		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons))
 		if err != nil {
 			return outs, false, err
 		}
@@ -2722,13 +2779,13 @@ func nameFromOutputs(lc *localcfg.Config, outs infra.InstallationOutputs) (*loca
 // verifiers": it is the state the module's own default is for, the address of
 // the verifier account the same apply creates (verifier.tf).
 //
-// The node read is TOLERANT of exactly two states, and that is the whole
-// reason this is not the credentials stage's read. That stage is fail-closed —
-// publishedPolicyOf refuses a node an older Fugaro wrote, and the stage stops
-// rather than writing a tfvars from a value it could not read — while this one
-// runs on every ordinary `fugaro update`, including the one that upgrades an
-// installation whose node predates the key. The two states tolerated are the
-// two in which the node says nothing about a verifier and the config's own
+// The node read is TOLERANT of exactly two states, and that is deliberate:
+// this runs on every ordinary `fugaro update`, including the one that upgrades
+// an installation whose node predates the key, so it is the read that answers
+// for the credentials service's block too (init_stages.go's
+// deployCredentialsService writes the block, and this member is what that
+// block ends up carrying). The two states tolerated are the two in which the
+// node says nothing about a verifier and the config's own
 // list is the whole answer: nothing is published (a config naming no budget
 // backend, which is no error at all), and a node OLDER than this binary, which
 // the same run's policy stage migrates in place (olderPolicyNode). Stopping on
@@ -2882,13 +2939,14 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	}
 	next.Build.ServiceAccount = ""
 	// The credentials service, from the installation's own record: the
-	// module's output carries the service's URL once the stage that turns it
-	// on has filled the audience (init_credentials.go), and this is what puts
-	// it in the local config — and so in the published one — for `fugaro run`
-	// to hand to a job. An installation whose outputs carry no service (never
-	// opted in, or opted out) clears the block: the URL it named is not a
-	// service that exists any more, and a launch that carried it would put a
-	// dead address on a job.
+	// module's output carries the service's URL once the run has filled the
+	// audience (init_stages.go's fillCredentialsAudience), and this is what
+	// puts it in the local config — and so in the published one — for `fugaro
+	// run` to hand to a job. An installation whose outputs carry no service
+	// (an installation whose deploy could not happen, or one whose block the
+	// owner deleted) clears the block: the URL it named is not a service that
+	// exists any more, and a launch that carried it would put a dead address
+	// on a job.
 	//
 	// It is set from the OUTPUTS and not from a flag: there is no way for a
 	// person to write this value by hand, because there is no way for them to
@@ -2905,7 +2963,7 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	// The verifier account (CSR14): the address of the account the
 	// installation's own module creates, written here — and not read from an
 	// output — so that the SAME run's policy stage publishes a node that names
-	// it and the credentials stage hands the service a list that admits it. The
+	// it and the installation root hands the service a list that admits it. The
 	// address is a fact of the configuration, because the module's account ID
 	// is a literal (infra.VerifierAccountID): that is what lets one ordinary
 	// `fugaro update` create the account, name it for the service and publish
@@ -2920,18 +2978,17 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	// would replace the list another machine set, and an owner's clear would be
 	// undone by the next run.
 	//
-	// It is written on EVERY installation, one that never opted into the
-	// credentials service — whose module creates no such account — included,
-	// and that is deliberate. The state this write must serve is the FIRST
-	// opt-in, and its own run cannot be told apart from the others here: the
-	// installation stage writes this config before the credentials stage
-	// applies anything, so a gate on the service (its block, its outputs)
-	// would leave that run's own apply creating the account while the node
-	// still named nobody — the second run nobody was told to make (CLAUDE.md's
-	// HARD RULE). What the unconditional write costs is a name on an
-	// installation that never opts in: no service reads it and no caller can be
-	// admitted by it while the service does not exist, and the first opt-in
-	// turns it into the account it named all along.
+	// It is written on EVERY installation, and that is deliberate. The state
+	// this write must serve is the run that deploys the credentials service,
+	// and that run cannot be told apart from the others here: the installation
+	// stage writes this config before its own apply has created the account, so
+	// a gate on the service (its block, its outputs) would leave the run's own
+	// apply creating the account while the node still named nobody — the second
+	// run nobody was told to make (CLAUDE.md's HARD RULE). What the
+	// unconditional write costs is a name on an installation whose block the
+	// owner deleted: no service reads it and no caller can be admitted by it
+	// while the service does not exist, and the block's return turns it into
+	// the account it named all along.
 	verifiers, err := r.effectiveVerifiers(ctx, lc)
 	if err != nil {
 		return err
@@ -2957,8 +3014,8 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	}
 	// The engine's own view of the local config follows the file it just
 	// wrote, the way init_images.go's does after the pin: the stages that run
-	// after this one — the credentials stage, the policy stage, the layer
-	// stage — read this struct, and a value written here that they could not
+	// after this one — the policy stage, the layer stage — read this struct,
+	// and a value written here that they could not
 	// see would be one the same run contradicted. It is what makes the
 	// verifier account above reach the published node in the run that writes
 	// it (effectiveVerifiers reads this struct through the policy stage's
@@ -2977,6 +3034,12 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	// its own check, which the loop makes right before it applies.
 	if r.policyStage != nil {
 		r.policyStage.forget()
+	}
+	// The workspace stage's plan is made of the same file, and the same write
+	// gives it the database the config did not name a moment ago: its own
+	// comment says the rest (update_workspace.go).
+	if r.workspaceStage != nil {
+		r.workspaceStage.forget()
 	}
 	if !r.o.planOnly {
 		r.publishSharedConfig(ctx, &next)
@@ -3415,11 +3478,11 @@ func (r *initRun) printResult() error {
 }
 
 // checkCoordinator refuses the --coordinator opt-in where it cannot be what
-// the owner reads and confirms. It follows --provision-credentials: an apply
-// of the installation's own root, never covered by --yes, and excluding the
-// flags that only read or only stop. It also needs --firebase-project,
-// because the account's one database grant is the Firebase root's and the job
-// is deployed by that run.
+// the owner reads and confirms. Like --provision-batch, it is an apply of the
+// installation's own root, never covered by --yes, and it excludes the flags
+// that only read or only stop. It also needs --firebase-project, because the
+// account's one database grant is the Firebase root's and the job is deployed
+// by that run.
 func (o *initOptions) checkCoordinator() error {
 	if o.firebase == "" {
 		return userErr("--coordinator opts the installation in to the coordinator's aggregation job, whose account the Firebase root grants the database's admin: it needs --firebase-project (fugaro update --firebase-project <id> --coordinator)")
@@ -3460,13 +3523,6 @@ func (r *initRun) refuseCoordinatorUnattended() error {
 func (o *initOptions) checkRepo() error {
 	if o.coordinator {
 		return userErr("--coordinator opts the installation in to the coordinator's aggregation job, which is an apply of the installation's own root: it excludes --repo (run fugaro update --firebase-project <id> --coordinator for the installation)")
-	}
-	if o.provisionCredentials {
-		// Like --provision-batch, and for the same reason: this run validates
-		// here and never reaches check(). --repo onboards a repository's own
-		// root and --provision-credentials applies the installation's, which
-		// is why the flag's help says it excludes --repo.
-		return userErr("--provision-credentials turns the installation's credentials service on, which is an apply of the installation's own root: it excludes --repo (run fugaro update --provision-credentials for the installation, then fugaro update --repo in each checkout, which is the step that drops the jobs' model-secret accessors and grants their accounts an invoker on the service)")
 	}
 	if o.provisionBatch {
 		// This run validates here and never reaches check(), so the pair has
@@ -3596,7 +3652,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err != nil {
 		return err
 	}
-	cfg := rf.Cfg
+	// The auth the runs of this repository read, which is not necessarily the
+	// one this working tree writes (deploymentConfig): everything below —
+	// the gates, the spec and the record — is judged for the document a run
+	// checks out, so that the root deployed here is the root a launch hands
+	// the credentials service's address to.
+	cfg := deploymentConfig(ctx, root, rf.Cfg)
 	repo, err := checkoutRepo(ctx, root)
 	if err != nil {
 		return err
@@ -3780,6 +3841,27 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	for _, w := range infra.BaseImageWarnings(lc.BaseImages, outs) {
 		r.warn(w)
 	}
+	// The credentials service's switch, before the spec is built: the record
+	// is condition 2 of infra.CredentialsServiceServes and carries the third
+	// one with it (the auth below, cfg — the document a RUN reads, not this
+	// working tree), and the spec reads it out of the local config. Refreshing
+	// it afterwards would leave this run planning a held-off root — mounts
+	// kept, no invoker grant — while writing a record that tells the next
+	// launch the service is there to be used, which is the one state the
+	// switch exists to make impossible. The persisted write stays where it is,
+	// in writeRepoConfig after the apply, and it writes THIS value — the one
+	// the spec was built with — so the record cannot claim a grant the plan
+	// did not make. Only this repository's entry moves: it is the only root
+	// this door applies.
+	//
+	// A repository this config does not hold YET — a first onboarding — gets
+	// its entry made here, before infra.Repo below reads it, which is the one
+	// thing this call must not leave to writeRepoConfig: that runs after the
+	// apply, so an entry created there would leave this run planning a
+	// held-off root and only the NEXT run's plan switched on (the review of
+	// 2026-11-07's fourth round). On main one run sufficed, and one run still
+	// does.
+	r.recordCredentialsServiceReady(ctx, lc, outs, repo, cfg.Git.Provider, cfg.Agent.Auth)
 	if spec, err = infra.Repo(in); err != nil {
 		return initErr(err)
 	}
@@ -4450,7 +4532,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	// does not admit this plan (D1016, update_managed.go). A repository root
 	// is one of Fugaro's own too, so it is judged by the same cover and the
 	// same guard the installation's roots are.
-	gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.notCovered))
+	gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons))
 	if err != nil {
 		return infra.RepoSpec{}, nil, err
 	}
@@ -4701,21 +4783,51 @@ func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec
 	if next.Repos == nil {
 		next.Repos = map[string]localcfg.Repo{}
 	}
-	key := spec.Name
-	if want, err := task.CanonicalRepo(spec.Name); err == nil {
-		for _, k := range slices.Sorted(maps.Keys(lc.Repos)) {
-			if c, err := task.CanonicalRepo(k); err == nil && c == want {
-				key = k
-				break
-			}
-		}
+	key := repoConfigKey(lc, spec.Name)
+	// CredentialsServiceReady is the switch the SPEC below was built with:
+	// recordCredentialsServiceReady (init_credentials.go) refreshed this
+	// repository's entry a moment before infra.Repo read it, from this run's
+	// bundle reading AND the auth that plan is judged by, so this value IS
+	// what the plan, the launch and this write all see — true exactly when
+	// this root was applied to be served by the service.
+	//
+	// It is read back out of the entry and not from the bundle again here on
+	// purpose: the record means "this repository's root has been applied with
+	// the service on", and a fresh reading would let it say ready for a root
+	// whose plan was made held off — the state the switch exists to make
+	// impossible, since that job's account holds no roles/run.invoker and a
+	// `cascade` run has nothing of its own to fall back to (D143). A
+	// repository this config did not hold at all is not that case any more:
+	// recordCredentialsServiceReady makes its entry, with the provider, before
+	// infra.Repo reads it, so the run that onboards plans that root and records
+	// the switch the same way every later run does (the review of 2026-11-07's
+	// fourth round; before it, the first `fugaro update --repo` of a cascade
+	// repository deployed the held-off root and the run after it was the one
+	// that switched the service on).
+	//
+	// The value is written as false as well as true: a bundle that is later
+	// emptied switches the repository off again, which puts its mounts back,
+	// and that is the fail-safe direction.
+	//
+	// A NIL record is carried through as nil, deliberately, and it is the
+	// second half of the same care: the field tells "no machine has recorded
+	// this" from "a run recorded off" (localcfg.Repo.CredentialsServiceReady is
+	// a pointer, and MergeShared carries a published record over a missing one),
+	// so a run that read NOTHING — a coding agent's session, a run's own
+	// process, a bundle read that failed — must not turn another machine's
+	// record into a false one from here. recordCredentialsServiceReady leaves
+	// exactly those runs' entries alone, and this write owes the same.
+	var ready *bool
+	if entry, ok := lc.Repos[key]; ok {
+		ready = entry.CredentialsServiceReady
 	}
 	next.Repos[key] = localcfg.Repo{
-		Provider:    spec.Provider,
-		BaseBranch:  spec.BaseBranch,
-		Workflows:   slices.Sorted(maps.Keys(cfg.Workflows)),
-		GitHubAppID: spec.GitHubAppID,
-		Vertex:      spec.UsesVertex(),
+		Provider:                spec.Provider,
+		BaseBranch:              spec.BaseBranch,
+		Workflows:               slices.Sorted(maps.Keys(cfg.Workflows)),
+		GitHubAppID:             spec.GitHubAppID,
+		Vertex:                  spec.UsesVertex(),
+		CredentialsServiceReady: ready,
 	}
 	if spec.UsesVertex() && !lc.UsesVertex() {
 		// The installation enables the API from the recorded repositories,
@@ -4729,6 +4841,26 @@ func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec
 		r.publishSharedConfig(ctx, &next)
 	}
 	return nil
+}
+
+// repoConfigKey is the key repo holds in the local config's repos: the entry
+// already there whose canonical form (task.CanonicalRepo, which folds the
+// provider's spelling) is repo's, else repo itself. A repository is written
+// through the key it already has, so an entry written by another provider's
+// spelling is updated rather than duplicated, and the two readers of the
+// credentials-service record — the spec built from the local config and this
+// door's own write — name the same entry.
+func repoConfigKey(lc *localcfg.Config, repo string) string {
+	want, err := task.CanonicalRepo(repo)
+	if err != nil {
+		return repo
+	}
+	for _, k := range slices.Sorted(maps.Keys(lc.Repos)) {
+		if c, err := task.CanonicalRepo(k); err == nil && c == want {
+			return k
+		}
+	}
+	return repo
 }
 
 // forgetRepo is the repository's rollback: every address leaves

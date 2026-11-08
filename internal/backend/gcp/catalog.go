@@ -349,7 +349,7 @@ func catalogPinStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
 			"SELFTEST_B64=${_SELFTEST_B64}",
 		},
 		Args: []string{"-c", `set -eu
-generation=$$(gcloud storage objects describe "$$BUCKET/$$KEY" --format="value(generation)")
+generation=$$(gcloud storage objects describe "$$BUCKET/$$KEY" --format="value(generation)" --quiet)
 if [ "$$generation" != "$$GENERATION" ]; then
   echo "the copied catalog definition is not the one this build was submitted with: generation $$generation, not $$GENERATION" >&2
   exit 1
@@ -467,7 +467,7 @@ while [ "$$i" -lt "$${#KEY}" ]; do
 done
 url="https://storage.googleapis.com/upload/storage/v1/b/$${BUCKET#gs://}/o?uploadType=media&name=$$name"
 curl --fail -sS -X POST \
-  -H "Authorization: Bearer $$(gcloud auth print-access-token)" \
+  -H "Authorization: Bearer $$(gcloud auth print-access-token --quiet)" \
   -H "Content-Type: application/json" \
   --data-binary @"$$record" "$$url"
 rm -f "$$record"

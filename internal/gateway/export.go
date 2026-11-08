@@ -36,9 +36,10 @@ package gateway
 // the destination check that code carries. A tier-A upstream handed to
 // UpstreamHeaders is refused, not forwarded.
 //
-// The service's own retry is the one thing the gateway does not do: the
-// in-runner gateway never retries, and a forwarder built on these helpers
-// retries only before the first byte is streamed (internal/credsvc).
+// The service's retry is its own: a forwarder built on these helpers retries
+// only before the first byte is streamed (internal/credsvc), which is the
+// same rule the in-runner gateway's one retry keeps (forward.go,
+// sendRetryingOnce).
 
 import (
 	"errors"

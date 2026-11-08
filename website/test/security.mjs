@@ -106,6 +106,19 @@
 //      box the drawing is drawn in, the drawing's own aspect ratio, and the room above it, each
 //      read from the built page's own stylesheet and the drawing's own `viewBox`.
 //
+// The eight checks above are the page's, and one pin in this file is not. `SECURITY.md`'s
+// "Supported versions" section states which releases get fixes, and the Subscription Terms
+// state it too: "the current minor release of the Software and the minor release immediately
+// before it" (§8.2), where the document used to say "only the latest 0.x release is
+// supported" — the one supported-version rule the reconciliation settled on (T23, S0.5). The
+// page does not render that section (it renders four things and this is not one of them), so
+// no check on the built page can hold it, and it is a promise to a subscriber rather than a
+// note: a document still saying "latest release only" is a false claim about what a licence
+// buys. The pin therefore reads the document and the generated file it is mirrored into — the
+// plan's red step names both — because the site ships the generated one and `npm run check`
+// runs no test that reads its words: the Go suite that holds the copy to the document byte for
+// byte (`internal/cli/docs_website_security_test.go`) is not part of it.
+//
 // **Two readers, and why the text is read the hard way** (round 3 of the review, findings 3 and
 // 4). The text of the page is read with `test/lib/html.mjs`'s `verbatimText`, which invents
 // nothing between two neighbouring runs of text, and the comparison collapses runs of
@@ -165,8 +178,14 @@ const REPORTING_ID = 'reporting-a-vulnerability'
  * number. It is measured against the document's own section — the page adds no words of its
  * own to it — and it is re-derived in the commit that changes the section, the way the
  * README's byte budgets are re-derived in the commit that moves those bytes.
+ *
+ * Re-derived 2026-11-08: #1831's `What is not on by default` bullet, which states that
+ * `fugaro update` deploys the credentials service while a repository's jobs keep their model
+ * credentials until its own root is re-applied, took the section from 220 words to 244. The
+ * ceiling is the section's own count with a few words of room, and the section still renders
+ * as six bullets, which is what the brief's "at most about 8 short bullets" is about.
  */
-const MAX_SUMMARY_WORDS = 220
+const MAX_SUMMARY_WORDS = 250
 
 /**
  * The words the pointer to the document may spend around its link: "The full policy is … in
@@ -185,6 +204,17 @@ const POINTER_WORDS = 12
  */
 const MIN_DIAGRAM_LABELS = 8
 const MIN_DIAGRAM_FACTS = 3
+
+/**
+ * The document's supported-versions section and the rule it has to state. The rule is the
+ * Subscription Terms' own (§8.2), and the second pattern is the rule it replaced: the pin
+ * below refuses both a document that stopped saying the rule and a document that still says
+ * "only the latest release is supported", because a section carrying the old sentence beside
+ * the new one leaves the reader with the stricter of the two, which is the claim T23 removed.
+ */
+const SUPPORTED = 'Supported versions'
+const SUPPORTED_RULE = /the current minor release and the one before it are supported/i
+const SUPERSEDED_RULE = /\bonly the latest\b.{0,40}?\bis supported\b/i
 
 // ---------------------------------------------------------------------------------------
 // Reading the document, the page, and the text out of either of them.
@@ -209,6 +239,13 @@ function generatedSource(repo = REPO) {
   if (!existsSync(file)) return null
   const lines = readFileSync(file, 'utf8').split('\n')
   return /^<!--\s*source:\s*(.+?)\s*-->$/.exec(lines[1])?.[1] ?? null
+}
+
+/** The generated file the site ships, or null when the generator has not been run: the mirror
+ *  of `SECURITY.md` the page reads, which the supported-versions pin holds to the document. */
+function generatedDocument(repo = REPO) {
+  const file = path.join(repo, GENERATED)
+  return existsSync(file) ? readFileSync(file, 'utf8') : null
 }
 
 /** The built page, or null when the build did not produce one. */
@@ -1443,6 +1480,45 @@ export function securityFailures(dist = DIST) {
   return out
 }
 
+// ---- the one pin that is not the page's -------------------------------------------------
+
+/**
+ * The supported-versions rule, held on the document and on the file the site ships it as. Both
+ * are read, and neither from the other: the site renders `website/content/security.md`, so a
+ * rule changed in `SECURITY.md` and not regenerated is a false claim on the site, and a rule
+ * changed in the generated file alone is an edit to a file whose header says not to make one.
+ * The section is read the way this file reads every other one — `sectionLines` and `prose` —
+ * so a rule wrapped over two lines reads as one sentence, and the sentence is not pinned
+ * beyond the rule itself: the section says more than this, and only the rule is the promise.
+ */
+function supportedVersionFailures(document = sourceDocument(), mirror = generatedDocument()) {
+  const out = []
+  const fail = (why) => out.push(`security/: ${why}`)
+
+  for (const [what, text] of [
+    [SOURCE, document],
+    [GENERATED, mirror],
+  ]) {
+    if (text === null) {
+      fail(`${what} is not in the repository: it is the file this rule is stated in, and regenerate the mirror with \`go run ./internal/clidoc\` from the repository root when it is the missing one`)
+      continue
+    }
+    if (!text.split('\n').some((line) => line.trim() === `## ${SUPPORTED}`)) {
+      fail(`${what} has no "## ${SUPPORTED}" heading: the section states which releases get fixes, and the page and the licence point a reader at it by that name`)
+      continue
+    }
+    const rule = prose(sectionLines(text, SUPPORTED).join(' '))
+    if (!SUPPORTED_RULE.test(rule)) {
+      fail(`${what}'s "${SUPPORTED}" section reads ${JSON.stringify(rule)} and does not say the current minor release and the one before it are supported: that is the rule the Subscription Terms state (§8.2), and the reconciliation settled the document on it rather than on a stricter one (T23, S0.5)`)
+    }
+    if (SUPERSEDED_RULE.test(rule)) {
+      fail(`${what}'s "${SUPPORTED}" section still says ${JSON.stringify(SUPERSEDED_RULE.exec(rule)?.[0] ?? '')}: "only the latest release is supported" is the rule T23 replaced, and a section carrying both leaves a reader with the stricter one — which is the claim the Terms no longer make`)
+    }
+  }
+
+  return out
+}
+
 /**
  * One rendered section against the document's own: the heading, its id, and its text line by
  * line — bullets for the summary, paragraphs for the reporting section. The comparison is
@@ -1865,6 +1941,53 @@ test('the summary is rendered from the document, and is not written on the page'
       `website/src/pages/security.astro carries the document's own summary text (${JSON.stringify(opening)}…) and the built page's boundary diagram does not render it: the summary is rendered from ${SOURCE}'s "${SUMMARY}" section and never written on the page (D189), and the one place the page may carry the document's sentences is the diagram, which is the document's own words drawn (the owner's brief of 2026-10-20)`,
     )
   }
+})
+
+test('the supported versions are the current minor release and the one before it', () => {
+  assert.deepEqual(
+    supportedVersionFailures(),
+    [],
+    `${SOURCE} and ${GENERATED} do not state the supported-versions rule the Subscription Terms state (§8.2):\n  ${supportedVersionFailures().join('\n  ')}`,
+  )
+})
+
+test('the supported-versions pin refuses the rule it replaced', () => {
+  // The pin above is a claim about two files, so its red step is the rule those files used to
+  // carry. The section is put back to "only the latest 0.x release is supported" in memory —
+  // `SECURITY.md` is the owner's file and this gate does not edit it — and the refusal has to
+  // name both halves of the claim: the rule that went missing and the sentence that replaced
+  // it. The plant has to land, or this case passes for the wrong reason.
+  const current = sourceDocument()
+  const restored = current.replace(
+    'The current minor release and the one before it are supported.',
+    'Only the latest 0.x release is supported.',
+  )
+  assert.notEqual(
+    restored,
+    current,
+    `the fixture did not land: ${SOURCE}'s "${SUPPORTED}" section does not carry the rule T23 settled on, so this case would prove nothing about the pin that holds it`,
+  )
+
+  const refused = supportedVersionFailures(restored, restored).join('\n')
+  assert.match(
+    refused,
+    /does not say the current minor release and the one before it are supported/,
+    `the pin did not refuse a document that stopped stating the rule the Terms state:\n${refused}`,
+  )
+  assert.match(
+    refused,
+    /still says "Only the latest 0\.x release is supported"/,
+    `the pin did not refuse the sentence T23 replaced, which is the one that would leave a reader with the stricter rule:\n${refused}`,
+  )
+
+  // And the generated file is held on its own: a document regenerated into the site while the
+  // copy under `content/` was left behind is the drift the plan's red step names, and no test
+  // `npm run check` runs would read that copy's words.
+  assert.match(
+    supportedVersionFailures(current, restored).join('\n'),
+    /website\/content\/security\.md's "Supported versions" section still says/,
+    `the pin did not refuse a generated file left behind the document it is generated from:\n${supportedVersionFailures(current, restored).join('\n')}`,
+  )
 })
 
 test('a document the page cannot render stops the build', (t) => {
@@ -2409,7 +2532,7 @@ test('the gate refuses each planted defect', (t) => {
   )
   assert.match(
     verdict(t, scopeUnlinked).join('\n'),
-    /carries 5 links where SECURITY\.md's "In short" section writes 6/,
+    /carries 6 links where SECURITY\.md's "In short" section writes 7/,
     'a cross-reference with its link dropped is not refused',
   )
 

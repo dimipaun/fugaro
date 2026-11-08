@@ -68,6 +68,7 @@ func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 	fmt.Fprintf(&b, "### Fugaro run `%s`\n\n", rec.RunID)
 	if rec.Status == runstore.StatusHalted && rec.Halt != nil {
 		b.WriteString(haltLines(rec))
+		b.WriteString(ownerSection(rec))
 	}
 	switch rec.Outcome {
 	case runstore.OutcomeReady:
@@ -252,6 +253,40 @@ func rigorLine(rg *runstore.RigorRecord) string {
 // what was tolerated only where the round was let through whole (prflow.go
 // toleratedPart): a table over that half would claim a decision Decide never
 // made, and it is the round's own count printed above it that a reader goes by.
+// ownerSection is the report's Waiting-on-you list (OD1): the findings the
+// run's review left that only the repository's owner can settle, one line per
+// decision — the file the reviewer named and its own sentence — so the report
+// says what a person has to answer and not only that the run is waiting. The
+// same lines the pull request's status section carries (prflow.go ownerPart).
+//
+// "" for a record carrying no block, which is every run that is not waiting on
+// one: the reason above already says how many, and an empty list would claim
+// the run is waiting on nothing.
+//
+// Both fields are the reviewer's own text about an untrusted diff, so both go
+// through inlineText: a sentence carrying a newline would end its own bullet,
+// and a mention or a marker in one must not reach the report as either.
+func ownerSection(rec *runstore.Record) string {
+	od := rec.OwnerDecisions
+	if od == nil || len(od.Decisions) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("**Waiting on you**\n\n")
+	for _, d := range od.Decisions {
+		if d.File != "" {
+			fmt.Fprintf(&b, "- `%s`: %s\n", inlineText(d.File), inlineText(d.Summary))
+			continue
+		}
+		fmt.Fprintf(&b, "- %s\n", inlineText(d.Summary))
+	}
+	if od.Total > len(od.Decisions) {
+		fmt.Fprintf(&b, "- and %s more; the run's record lists %d of them\n", Plural(od.Total-len(od.Decisions), "decision"), len(od.Decisions))
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
 func toleratedSection(rec *runstore.Record) string {
 	tf := rec.Tolerated
 	if tf == nil || len(tf.Findings) == 0 {

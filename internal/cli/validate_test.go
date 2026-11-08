@@ -439,6 +439,18 @@ func TestClampWarningRendersEachKeysWords(t *testing.T) {
 			Value: "sonnet,opus", Effective: "sonnet", Source: policy.SourceCeiling},
 			"budget.allowed_models",
 			"[sonnet, opus] names models outside the project's allow-list; the runner will use [sonnet]"},
+		{"a credential a repository may not introduce", policy.Ignored{Key: policy.CraftCredentialKey("repo-key"),
+			Value: "repo-key", Source: policy.SourceCeiling},
+			"agent.crafts.credentials.repo-key",
+			"repo-key names nothing the project makes available: a repository selects among the credentials and the pools the project creates and never adds one, so the runner ignores this key"},
+		{"a member list that is not a narrowing", policy.Ignored{Key: policy.CraftPoolMembersKey("claude"),
+			Value: "c1,c2,c3", Effective: "c1,c2", Source: policy.SourceCeiling},
+			"agent.crafts.pools.claude.members",
+			"c1,c2,c3 is looser than c1,c2; the runner will use c1,c2"},
+		{"a pool strategy that is not tighter", policy.Ignored{Key: policy.CraftPoolStrategyKey("claude"),
+			Value: policy.PoolStrategyRoundRobin, Effective: policy.PoolStrategyFailover, Source: policy.SourceCeiling},
+			"agent.crafts.pools.claude.strategy",
+			"round-robin is looser than failover; the runner will use failover"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := clampWarning(tc.ig)
@@ -3318,7 +3330,7 @@ func TestValidateNotesTheCredentialsServicePrecondition(t *testing.T) {
 	}{
 		{
 			name: "both halves, on this tree", accounts: true,
-			want: []string{"both halves", "fugaro update --provision-credentials", "fugaro creds set github-app-key",
+			want: []string{"both halves", "fugaro update --firebase-project", "fugaro creds set github-app-key",
 				"the service's own admission of the review job's caller", "no fugaro update supplies that half"},
 		},
 		{
@@ -3328,7 +3340,7 @@ func TestValidateNotesTheCredentialsServicePrecondition(t *testing.T) {
 		},
 		{
 			name: "the service is off, and the admission is built", accounts: true, admitted: true,
-			want:  []string{"fugaro update --provision-credentials", "fugaro creds set github-app-key"},
+			want:  []string{"fugaro update --firebase-project", "fugaro creds set github-app-key"},
 			avoid: []string{"does not admit"},
 		},
 		{

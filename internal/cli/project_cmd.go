@@ -593,7 +593,7 @@ func publishedPolicyOf(raw []byte, exists bool) (*projectpolicy.Policy, error) {
 		// commands: a newer Fugaro knows the keys, and `fugaro update` is
 		// what carries the node over without a deletion.
 		return nil, userErr("%s lists %d key(s) this Fugaro does not know (%s): publishing would drop them; upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then run 'fugaro update' to migrate the node in place, or fix the node by hand",
-			projectpolicy.PathShared(), len(p.UnknownKeys), unknownPolicyKeysText(p.UnknownKeys))
+			projectpolicy.PathShared(), len(p.UnknownKeys), unknownKeysText(p.UnknownKeys))
 	}
 	return p, nil
 }
@@ -1010,6 +1010,20 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		// publishedPolicyOf before a publish gets here, and what this assignment
 		// re-encodes is therefore the whole of the operator's block.
 		pol.Credentials = old.Credentials
+		// The crafts' credentials, their pools and the crafts that choose among
+		// them are kept for the same reason (docs/model-crafts, plan MC1): no
+		// command of this release writes them, so the node's are the only ones,
+		// and a publish that dropped them would take away definitions the owner
+		// put there — silently, since this release reads none of them yet. They
+		// are copied as the typed values, the credentials block's way: each of
+		// the three is strict inside, so a member this Fugaro does not model is
+		// refused by publishedPolicyOf before a publish gets here, and what the
+		// assignment re-encodes is the whole of what the node held. MC4 is where
+		// the operator's config becomes their writer, and where they gain the
+		// diff lines the other operator-written blocks have.
+		pol.CraftCredentials = old.CraftCredentials
+		pol.CraftPools = old.CraftPools
+		pol.Crafts = old.Crafts
 	}
 	return pol, keepRouting, nil
 }
@@ -2853,7 +2867,7 @@ func boundedNames(names []string) []string {
 // other is refused. A name Field would change is therefore escaped (each of
 // those characters as \uXXXX) instead of dropped, so a name reads as what it
 // is — the same choice the CLI makes for a policy node's unknown keys
-// (unknownPolicyKeysText), whose provenance this shares.
+// (unknownKeysText), whose provenance this shares.
 //
 // The escape set is Field's *drop* set and not pluginwire's escape set, which
 // is a review finding. PrintableN escapes the controls and the format
@@ -2988,18 +3002,19 @@ func allowSources(ctx context.Context, lc *localcfg.Config) (map[string]string, 
 	return allowSourcesOf(ctx, lc, false)
 }
 
-// unknownPolicyKeysText renders a policy node's unknown top-level keys for a
-// message. They are raw JSON member names of the node, which is hand-writable
-// (projectpolicy.Policy.UnknownKeys is what the strict top-level decode could
-// not place), and a key carrying a bidi override, a zero-width joiner or a
-// line/paragraph separator is a legal JSON name that unicode.IsControl does not
-// catch (checkTopLevelNames refuses duplicates and case-variants of the keys
-// this Fugaro knows, never their shape). Printed raw, such a name can rewrite
-// the line it is printed in — the terminal's reading of everything after it is
-// the file's to choose — so every name goes through pluginwire.Printable, the
-// same escaped form config.ValidateClaudeAccounts and
+// unknownKeysText renders a node's unknown top-level keys for a message, for
+// either node a refusal names them of: the policy node and the workspace record
+// (projectpolicy.Policy.UnknownKeys and Workspace.UnknownKeys are what the
+// tolerant top-level decode could not place). They are raw JSON member names of
+// a hand-writable object, and a key carrying a bidi override, a zero-width
+// joiner or a line/paragraph separator is a legal JSON name that
+// unicode.IsControl does not catch (checkTopLevelNames refuses duplicates and
+// case-variants of the keys this Fugaro knows, never their shape). Printed raw,
+// such a name can rewrite the line it is printed in — the terminal's reading of
+// everything after it is the file's to choose — so every name goes through
+// pluginwire.Printable, the same escaped form config.ValidateClaudeAccounts and
 // providerConventionRefusal print a name of the same provenance with.
-func unknownPolicyKeysText(keys []string) string {
+func unknownKeysText(keys []string) string {
 	out := make([]string, len(keys))
 	for i, k := range keys {
 		out[i] = pluginwire.Printable(k)
@@ -3020,7 +3035,7 @@ func refuseUnknownPolicyKeys(p *projectpolicy.Policy) error {
 		return nil
 	}
 	return userErr("%s lists %s, which this Fugaro does not know: a key nobody reads is a policy that never takes effect; fix the policy, or upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then run 'fugaro update'",
-		projectpolicy.PathShared(), unknownPolicyKeysText(p.UnknownKeys))
+		projectpolicy.PathShared(), unknownKeysText(p.UnknownKeys))
 }
 
 // notAdmittedNote marks a repository that has run here and that the published
