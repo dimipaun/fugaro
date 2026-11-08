@@ -14,11 +14,12 @@ package gateway
 //   - It holds no credential, and that is structural rather than a rule: there
 //     is no field of GitForwardOptions a Bitbucket token could travel in, and
 //     the three values a forward writes are the job's Google ID token, the
-//     run's own identity and the job's name (G5). The caller's Authorization
-//     and Proxy-Authorization are dropped whatever they hold, and so is every
-//     X-Fugaro- header, by prefix: a caller that sent the run identity itself,
-//     or a job name of its own, cannot have it arrive as this job's answer —
-//     the forwarder writes those three over whatever arrived.
+//     run's own identity and the job's name (G5). The caller's Authorization,
+//     X-Serverless-Authorization and Proxy-Authorization are dropped whatever
+//     they hold, and so is every X-Fugaro- header, by prefix: a caller that
+//     sent the run identity itself, or a job name of its own, cannot have it
+//     arrive as this job's answer — the forwarder writes those three over
+//     whatever arrived.
 //   - It mints the job's ID token per request and reads the run's identity per
 //     request (G11, D495). That is the whole reason a forwarder exists rather
 //     than the run identity written into git's configuration (the rejected
@@ -350,14 +351,17 @@ func (f *GitForward) upstream(w http.ResponseWriter, r *http.Request) (*http.Req
 // dropForwardRequestHeaders are the headers of the caller's request that never
 // go to the service.
 //
-// Authorization is the credential the caller presented, and the job's own ID
-// token is written there instead (G5): that header is the one Cloud Run IAM
-// reads, so what reaches the service has to be this job's identity and never
-// whatever the caller put in it — a caller that minted the job's ID token
-// itself gains nothing here, and one that put anything else in the header does
-// not get to send it. The X-Fugaro- headers are the contract's own (the model
-// path's forward.go drops them from a request too, by the same prefix), plus
-// the hop-by-hop headers of
+// Authorization and X-Serverless-Authorization are the two headers Cloud Run
+// IAM reads an identity from — the second ahead of the first (reconciliation.md
+// U1, unverified, and the reason check190's callerCredential treats it as a
+// caller credential too) — so both are dropped and the job's own ID token is
+// written into Authorization (G5): what reaches the service has to be this
+// job's identity and never whatever the caller put in either header, or the
+// caller would be the one choosing the identity the service admits a call
+// under. A caller that minted the job's ID token itself gains nothing here, and
+// one that put anything else in either header does not get to send it. The
+// X-Fugaro- headers are the contract's own (the model path's forward.go drops
+// them from a request too, by the same prefix), plus the hop-by-hop headers of
 // RFC 9110, which describe this hop and not the next one, plus Host and
 // Content-Length: net/http writes those two itself from the request it is
 // given — Host from the URL, and the length from the request's own field, which
@@ -368,7 +372,7 @@ func (f *GitForward) upstream(w http.ResponseWriter, r *http.Request) (*http.Req
 // User-Agent, Git-Protocol, Accept-Encoding) — headers the protocol needs, none
 // of which names a host or carries a credential.
 var dropForwardRequestHeaders = map[string]bool{
-	"Authorization": true, "Proxy-Authorization": true,
+	"Authorization": true, "X-Serverless-Authorization": true, "Proxy-Authorization": true,
 	"Host": true, "Content-Length": true,
 	"Connection": true, "Keep-Alive": true, "Proxy-Connection": true, "Proxy-Authenticate": true,
 	"Te": true, "Trailer": true, "Transfer-Encoding": true, "Upgrade": true,

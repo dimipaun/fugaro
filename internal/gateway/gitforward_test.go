@@ -321,6 +321,11 @@ func TestGitForwardAttachesFreshTokens(t *testing.T) {
 // the job's ID token (the plan's attacker's view): everything it hand-writes
 // into the contract's own headers is dropped, by name and by the X-Fugaro-
 // prefix, and none of it reaches the service.
+//
+// The credential headers are both of the ones Cloud Run IAM reads an identity
+// from — Authorization, and X-Serverless-Authorization, which IAM takes ahead of
+// it — because a caller that put its own token in the second one would be the
+// one deciding which identity the service admits.
 func TestGitForwardDropsCallerAuthorization(t *testing.T) {
 	svc := newForwardService(t, nil)
 	f := startForward(t, svc.url, nil)
@@ -331,6 +336,12 @@ func TestGitForwardDropsCallerAuthorization(t *testing.T) {
 	resp, _ := forwardGet(t, f, func(r *http.Request) {
 		r.Header.Set("Authorization", "Bearer "+caller)
 		r.Header.Set("Proxy-Authorization", "Basic "+caller)
+		// Cloud Run IAM reads a Google ID token from this header ahead of
+		// Authorization, so a caller that put one here would be the one
+		// deciding which identity the service admits (reconciliation.md U1,
+		// and check190's callerCredential reads it the same way). It is a
+		// credential header and goes the way of the other two.
+		r.Header.Set("X-Serverless-Authorization", "Bearer "+caller)
 		r.Header.Set(HeaderRunIdentity, caller)
 		r.Header.Set(HeaderRunJob, caller)
 		r.Header.Set(HeaderTier, TierA)
