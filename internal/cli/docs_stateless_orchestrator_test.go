@@ -356,6 +356,14 @@ func TestDocsStatelessOrchestratorLongRunTriageIsFollowedThrough(t *testing.T) {
 		"waiting_on: person",
 		"TestTriageNeverCallsAModel",
 		"TestTriageMergesOnlyWithGreenCIAndANonCriticalFindingSet",
+		"TestTriageReadsCIThroughTheProvider",
+		"TestTriageFailsClosedWithoutACIAnswer",
+		"TestTriageNeverMergesWhileCIIsPending",
+		"TestGitHubCIStateFromChecks",
+		"TestBitbucketCIStateFromPipeline",
+		"TestFakeCIStateIsSettable",
+		"`gitprov.Provider.CI(ctx, number) (CIState, error)`",
+		"CIUnknown",
 		"TestTriageFailsClosedWithoutAFindingsFile",
 		"TestTriageFailsClosedOnAnUnknownSeverity",
 		"TestTriageUsesThePathClassifierForSecurity",
@@ -372,6 +380,13 @@ func TestDocsStatelessOrchestratorLongRunTriageIsFollowedThrough(t *testing.T) {
 	for _, want := range []string{"U10", "split into sub-tasks", "the owner's ruling"} {
 		if !strings.Contains(rec, want) {
 			t.Errorf("%s: BF2's %q is gone", soReconciled, want)
+		}
+	}
+	// The CI read is new code, not a read the tree already makes: D1244 must keep
+	// saying so, or the merge's one input reads as free when O14 has to write it.
+	for _, want := range []string{"and this CI read does not exist yet", "so **O14 adds it**"} {
+		if !strings.Contains(rec, want) {
+			t.Errorf("%s: the triage's CI read no longer reads as new code (%q)", soReconciled, want)
 		}
 	}
 	for _, want := range []string{"BF2, 2026-11-08", "D1244-D1247", "merge as-is with follow-ups"} {
