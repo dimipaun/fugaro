@@ -97,6 +97,18 @@ var patternCases = []struct {
 		leak: strings.Repeat("Zx9", 8),
 	},
 	{
+		name: "api key header with an underscore",
+		in:   "API_KEY: " + fake(strings.Repeat("Zx9", 8)) + "\n",
+		leak: strings.Repeat("Zx9", 8),
+	},
+	{
+		name: "underscore api key inside a json object",
+		in: `{"api_key":"` + fake(strings.Repeat("Zx9", 8)) +
+			`","message":"quota exceeded for project foo","step":"terraform apply"}`,
+		leak: strings.Repeat("Zx9", 8),
+		keep: `"step":"terraform apply"}`,
+	},
+	{
 		name: "header named inside a json object",
 		in: `{"severity":"ERROR","x-api-key":"` + fake(strings.Repeat("Zx9", 8)) +
 			`","message":"quota exceeded for project foo","step":"terraform apply"}`,
@@ -152,6 +164,18 @@ var patternCases = []struct {
 		keep: `"get token" step`,
 	},
 	{
+		name: "quoted token after the scheme word",
+		in:   `Authorization: Bearer "` + fake(strings.Repeat("A1b2C3d4", 3)) + `"`,
+		leak: strings.Repeat("A1b2C3d4", 3),
+	},
+	{
+		name: "quoted token after the scheme word inside a record",
+		in: `{"message":"Authorization: Bearer \"` + fake(strings.Repeat("A1b2C3d4", 3)) +
+			`\"","step":"terraform apply"}`,
+		leak: strings.Repeat("A1b2C3d4", 3),
+		keep: `","step":"terraform apply"}`,
+	},
+	{
 		name: "header over a nested object",
 		in: `{"authorization":{"token":"` + fake(strings.Repeat("A1b2C3d4", 3)) +
 			`"},"step":"terraform apply"}`,
@@ -201,6 +225,12 @@ var patternCases = []struct {
 	{
 		name: "token query parameter",
 		in:   "https://host/cb?access_token=" + fake(strings.Repeat("ef", 16)) + "&state=ok",
+		leak: strings.Repeat("ef", 16),
+		keep: "state=ok",
+	},
+	{
+		name: "token in a url fragment",
+		in:   "redirect to https://app.example.com/cb#access_token=" + fake(strings.Repeat("ef", 16)) + "&state=ok",
 		leak: strings.Repeat("ef", 16),
 		keep: "state=ok",
 	},

@@ -155,8 +155,10 @@ var (
 	// level deeper than this rule reads, whose body happens to end before the
 	// part that matters, so the second alternative takes the rest of the line
 	// instead of leaving the tail of a credential behind. A value that is
-	// never closed is caught by it too.
-	authHeaderEscaped = regexp.MustCompile(`(?i)(\\*"?\b(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api-key|private-token)\\*"?\s*:\s*)(?:(\\+")((?:\\\\.|[^"\\\r\n])*)(\\+")(?:([^A-Za-z0-9_])|\z)|(\\+")[^\r\n]*)`)
+	// never closed is caught by it too. The names are the header spellings
+	// plus the underscore ones (`api_key`, `private_token`), which is how an
+	// environment dump or a JSON body writes the same two words.
+	authHeaderEscaped = regexp.MustCompile(`(?i)(\\*"?\b(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api[_-]?key|private[_-]?token)\\*"?\s*:\s*)(?:(\\+")((?:\\\\.|[^"\\\r\n])*)(\\+")(?:([^A-Za-z0-9_])|\z)|(\\+")[^\r\n]*)`)
 
 	// authHeaderQuoted is a header whose value is a credential whatever it is,
 	// where that value is a quoted string: the whole value goes, scheme word
@@ -167,10 +169,10 @@ var (
 	// the right quote, and a value that is never closed ends at the line
 	// rather than escaping the rule. The name may carry the quotes of a JSON
 	// key.
-	authHeaderQuoted = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api-key|private-token)"?\s*:\s*)(")((?:\\.|[^"\\\r\n])*)("?)`)
+	authHeaderQuoted = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api[_-]?key|private[_-]?token)"?\s*:\s*)(")((?:\\.|[^"\\\r\n])*)("?)`)
 
 	// authHeader is the same header in plain text, where no closing quote
-	// bounds the value. Three shapes of value, each ending where the text
+	// bounds the value. Four shapes of value, each ending where the text
 	// around it can still be read:
 	//
 	//   - a plain value — a bearer token, a key — ends at a quote as well as
@@ -178,6 +180,13 @@ var (
 	//     string value of a record (`{"message":"… Authorization: Bearer
 	//     …","step":"…"}`); a rule that ran to the line would take the fields
 	//     after it, which are the diagnosis the record exists to carry.
+	//   - a quoted value behind a scheme word (`Bearer "<token>"`, and the
+	//     same with the quotes escaped inside a record) ends at its own
+	//     closing quote. Quoting only the value is a spelling neither rule
+	//     above reads — one wants the quote right after the name, the other an
+	//     escaped name — and the plain rule would end the value at the opening
+	//     quote and leave the token between the two. Only a scheme word can
+	//     start this shape, so no plain value is taken by it.
 	//   - a bracketed value with no quote in it ends at its own bracket. That
 	//     covers a list a log printed (`authorization: [1, 2]`) and, since
 	//     the marker is bracketed too, the rule's own replacement, which is
@@ -194,7 +203,7 @@ var (
 	// quote — a quoted value is the form above, already redacted — and a
 	// leading backslash counts only when what follows it is not a quote, or
 	// this rule would eat the line from the escaped form's `\"[REDACTED]\"`.
-	authHeader = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api-key|private-token)"?\s*:\s*)(?:\[[^"\r\n]*?\]|[\[{][^\r\n]*|(?:[^\s"\\\r\n\[{]|\\[^\s"\r\n])[^"\r\n]*)`)
+	authHeader = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api[_-]?key|private[_-]?token)"?\s*:\s*)(?:\[[^"\r\n]*?\]|[\[{][^\r\n]*|(?:bearer|basic)[ \t]+\\+"(?:\\.|[^"\\\r\n])*\\+"|(?:bearer|basic)[ \t]+"(?:\\.|[^"\\\r\n])*"|(?:[^\s"\\\r\n\[{]|\\[^\s"\r\n])[^"\r\n]*)`)
 
 	// authScheme is the same credential where no header name introduces it:
 	// a curl line or an error body prints `Bearer <token>` on its own. The
@@ -206,12 +215,13 @@ var (
 	authScheme = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{16,}`)
 
 	// signedParam is the query parameter of a signed URL — the one place
-	// these names are known to carry a credential. The signature and the
-	// credential it was made with are the secret part; the rest of the URL
-	// (the bucket, the object, the expiry) stays readable. An assignment
+	// these names are known to carry a credential — and of a URL fragment,
+	// which is where an OAuth callback prints its token. The signature and
+	// the credential it was made with are the secret part; the rest of the
+	// URL (the bucket, the object, the expiry) stays readable. An assignment
 	// elsewhere, such as `CLIENT_SECRET=...` in an environment dump, is not
 	// one of the shapes this pass claims.
-	signedParam = regexp.MustCompile(`(?i)([?&])(x-amz-signature|x-amz-credential|x-amz-security-token|x-goog-signature|x-goog-credential|googleaccessid|awsaccesskeyid|signature|sig|access_token|id_token|refresh_token|api_key|apikey|client_secret|password|token)=([^&\s"'<>]*)`)
+	signedParam = regexp.MustCompile(`(?i)([?&#])(x-amz-signature|x-amz-credential|x-amz-security-token|x-goog-signature|x-goog-credential|googleaccessid|awsaccesskeyid|signature|sig|access_token|id_token|refresh_token|api_key|apikey|client_secret|password|token)=([^&\s"'<>]*)`)
 
 	// keyBlock is a PEM private key, terminated or not: an unterminated block
 	// is still a key, so an END that never comes redacts to the end of the
