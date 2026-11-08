@@ -61,6 +61,16 @@ var corpus = []struct {
 		in:   "at " + "/home/" + "someone" + "/.config/fugaro.yaml the file is",
 		leak: "/home/" + "someone",
 	},
+	{
+		name: "home path in a file url",
+		in:   "at " + "file:///home/" + "someone" + "/x.yaml the file is",
+		leak: "/home/" + "someone",
+	},
+	{
+		name: "home path under var",
+		in:   "at " + "/var/home/" + "someone" + "/x.yaml the file is",
+		leak: "/var/home/" + "someone",
+	},
 }
 
 // TestRedactCorpus: the gate removes every kind the spec names, whoever wrote

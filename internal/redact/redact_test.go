@@ -467,6 +467,83 @@ var patternCases = []struct {
 		leak: strings.Repeat("Qw3", 5),
 		keep: "rejected by the server",
 	},
+	{
+		name: "password holding a hash in a connection string",
+		in:   "postgres://app:" + fake("ab#", "cd1234XYZ") + "@db.example.com:5432/app refused",
+		leak: fake("ab#", "cd1234XYZ"),
+		keep: "db.example.com:5432/app refused",
+	},
+	{
+		name: "password holding a question mark in a connection string",
+		in:   "postgres://app:" + fake("ab?", "cd1234XYZ") + "@db.example.com:5432/app refused",
+		leak: fake("ab?", "cd1234XYZ"),
+		keep: "db.example.com:5432/app refused",
+	},
+	{
+		name: "password holding a slash in a connection string",
+		in:   "postgres://app:" + fake("ab/", "cd1234XYZ") + "@db.example.com:5432/app refused",
+		leak: fake("ab/", "cd1234XYZ"),
+		keep: "db.example.com:5432/app refused",
+	},
+	{
+		name: "password holding an at sign in a connection string",
+		in:   "postgres://app:" + fake("p@", "ss1234XYZ") + "@db.example.com:5432/app refused",
+		leak: fake("ss1234XYZ"),
+		keep: "db.example.com:5432/app refused",
+	},
+	{
+		name: "password with a single quote inside double quotes",
+		in:   `{"password":"` + fake("ab'", "cdefgh12") + `"}`,
+		leak: fake("ab'", "cdefgh12"),
+	},
+	{
+		name: "password with a double quote inside single quotes",
+		in:   `{'password': '` + fake(`ab"`, "cdefgh12") + `'}`,
+		leak: fake(`ab"`, "cdefgh12"),
+	},
+	{
+		name: "password with an escaped quote inside double quotes",
+		in:   `{"password":"` + fake(`ab\"`, "cdefgh12") + `"}`,
+		leak: fake(`ab\"`, "cdefgh12"),
+	},
+	{
+		name: "password with an escaped quote after four bytes",
+		in:   `{"password":"` + fake("abcd", `\"`, "ijk45678") + `"}`,
+		leak: fake("ijk45678"),
+	},
+	{
+		name: "password with a single quote after an equals sign",
+		in:   `password="` + fake("abcd'", "lmn90123") + `"`,
+		leak: fake("lmn90123"),
+	},
+	{
+		name: "client secret field of a record after a colon",
+		in:   `{"client_secret":"` + fake(strings.Repeat("Qw3", 5)) + `"}`,
+		leak: strings.Repeat("Qw3", 5),
+	},
+	{
+		name: "bare secret field of a record after a colon",
+		in:   `{"secret": "` + fake(strings.Repeat("Qw3", 5)) + `"}`,
+		leak: strings.Repeat("Qw3", 5),
+	},
+	{
+		name: "client secret field of a yaml record",
+		in:   "client_secret: " + fake(strings.Repeat("Qw3", 5)) + " refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "refused",
+	},
+	{
+		name: "password name in capitals after a colon",
+		in:   "DB_PASS: " + fake(strings.Repeat("Qw3", 5)) + " psql: connection refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "psql: connection refused",
+	},
+	{
+		name: "secret name in capitals after a colon",
+		in:   "JWT_SECRET: " + fake(strings.Repeat("Qw3", 5)) + " the token is refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "the token is refused",
+	},
 }
 
 // TestRedactCorpus: a shape the exact pass cannot name is still a credential,
@@ -509,6 +586,8 @@ func TestReportRedactsThePerson(t *testing.T) {
 	for _, tc := range []struct{ name, in, leak string }{
 		{"email", "filed by " + fake("dimi", "@", "example.com") + " today", fake("dimi", "@", "example.com")},
 		{"home path", "at " + fake("/home/", "someone", "/.config/fugaro/fugaro.yaml") + " the file is", fake("/home/", "someone")},
+		{"home path in a file url", "at " + fake("file:///home/", "someone", "/x.yaml") + " it is", fake("/home/", "someone")},
+		{"home path under var", "at " + fake("/var/home/", "someone", "/x.yaml") + " it is", fake("/var/home/", "someone")},
 		{"mac home path", "at " + fake("/Users/", "someone", "/Library/logs") + " it is", fake("/Users/", "someone")},
 		{"root home", "reading " + fake("/root", "/.config/fugaro") + " now", fake("/root", "/.config/fugaro")},
 		{"windows home path", "at " + fake(`C:\\Users\\`, "someone", `\\AppData`) + " it is", fake(`C:\\Users\\`, "someone")},
@@ -667,7 +746,7 @@ func TestRedactPassesLeaveCleanTextAlone(t *testing.T) {
 		"see https://github.com/dimipaun/fugaro/pull/1918 for the change",
 		"retrying in 30s, attempt 3 of 5",
 		"the task-sk-1234567890abcdefghij note is not a key",
-		"see https://example.com/home/page and /var/home/user for the shape",
+		"see https://example.com/home/page for the shape",
 		"https://host/cb?token=&state=ok returned nothing",
 		"retrying with Bearer\nQWERTYUIOPASDFGHJKLZXCVBNM now",
 		"the password is wrong, so the update stops",
@@ -678,6 +757,8 @@ func TestRedactPassesLeaveCleanTextAlone(t *testing.T) {
 		"--- PASS: TestRunnerFinalize (0.00s)",
 		"Pass: TestRunnerFinalize (0.00s)",
 		"the secret: rotated by the operator",
+		"the pass: it was accepted by the runner",
+		"the word 'pass' in quotes: it is not a field",
 		"see https://api.example.com:8080/v1/runs for the endpoint",
 	} {
 		if got := Text(s, []string{"a-secret-value"}); got != s {

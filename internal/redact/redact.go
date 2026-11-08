@@ -131,15 +131,37 @@ func patternPass(s string) string {
 	s = authScheme.ReplaceAllString(s, "$1 "+redacted)
 	s = signedParam.ReplaceAllString(s, "$1$2="+redacted)
 	s = connString.ReplaceAllString(s, "$1:"+redacted+"@")
-	s = passwordValue.ReplaceAllString(s, "$1$2$3$4$5"+redacted)
-	s = passwordWord.ReplaceAllString(s, "$1$2$3$4$5"+redacted)
-	s = passwordCamel.ReplaceAllString(s, "$1$2$3$4$5"+redacted)
-	s = passwordFlag.ReplaceAllString(s, "$1 $2"+redacted)
+	s = passwordValue.ReplaceAllString(s, "$1$2$3$4$5$8$11"+redacted+"$7$10")
+	s = passwordWord.ReplaceAllString(s, "$1$2$3$4$5$8$11"+redacted+"$7$10")
+	s = passwordColon.ReplaceAllString(s, "$1$2$3$4$5$6$7$8$11$14"+redacted+"$10$13")
+	s = passwordCamel.ReplaceAllString(s, "$1$2$3$4$5$8$11"+redacted+"$7$10")
+	s = passwordFlag.ReplaceAllString(s, "$1 $2$5$8"+redacted+"$4$7")
 	for _, re := range tokenShapes {
 		s = re.ReplaceAllString(s, redacted)
 	}
 	return s
 }
+
+// passwordValueTail is how each password rule reads the value, written once
+// because five rules read it the same way. A quoted value is read to a closing
+// quote of its own kind: that is what lets it hold the other kind
+// (`{"password":"ab'cd"}`) and, escaped, its own (`{"password":"ab\"cd"}`),
+// where a class that stopped at either quote read three bytes and gave up,
+// leaving a value of four bytes or more half redacted — a leak of the half it
+// did not reach. The class reads an escaped quote as one character, so the
+// value runs past it to the quote that really closes it.
+//
+// The closing quote is required, and the third branch reads the value that
+// never closes: a truncated excerpt still holds a credential, so a value
+// running to the end of its line is one too. The quotes and the value are
+// groups because a replacement puts the quotes back around the marker and
+// drops what stood between them — the opener before it and the closer after —
+// so the tail's groups are numbered from whatever the rule's own prefix
+// captures, and each rule's replacement names them from there.
+const passwordValueTail = `(?:((?:\\+)?")` + `((?:\\"|[^"\n]){4,})` + `(")` +
+	`|((?:\\+)?')` + `((?:\\'|[^'\n]){4,})` + `(')` +
+	`|(["'])([^"'\n]{4,})(?m:$)` +
+	`|([^\s"',;&\\]{4,}))`
 
 var (
 	// authHeaderEscaped is the same header one encoding further in: a JSON
@@ -260,10 +282,17 @@ var (
 	// role rather than a credential. The user may be absent — a Redis URL with
 	// no user is written `redis://:<password>@host` — and the host has to
 	// follow, which is what keeps a URL that merely carries a port
-	// (`https://host:8080/x`) out of it: a password may itself hold a colon
-	// (`user:pa:ss@host`, which libpq reads up to the first one), so the `@` is
-	// the only thing that tells the password from what comes after it.
-	connString = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*://[^\s:/@?#]*):([^\s/@?#]+)@`)
+	// (`https://host:8080/x`) out of it.
+	//
+	// The password runs to the last `@` before a space or a quote, because
+	// the `@` that ends the userinfo is the only thing that tells it from the
+	// host: a password may hold a colon (`user:pa:ss@host`, which libpq reads
+	// up to the first one), a `#`, a `?`, a `/` or an `@` of its own
+	// (`user:p@ss@host`), and a rule that stopped at the first of any of them
+	// left the rest of the credential in place. A space or a quote is where
+	// the URL ends in the text around it — a record's field, a sentence — so
+	// the run does not reach past one into the next URL on the line.
+	connString = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*://[^\s:/@?#]*):([^\s"']+)@`)
 
 	// passwordValue is the credential a name introduces with a sign, wherever
 	// that is written: an environment dump (`PGPASSWORD=…`), a config or a
@@ -273,8 +302,8 @@ var (
 	// of the opening one reads. A quote on either side of the name and of the
 	// value may be a single one as well — a shell writes `PGPASSWORD='…'` and
 	// `--password '…'`, and a record written in Python or in YAML is
-	// `{'password': '…'}` — so the rules here read the two, and none of them
-	// requires the closing quote: an unterminated one still hides a value.
+	// `{'password': '…'}` — so the rules here read the two, and how each of
+	// them reads the value itself is passwordValueTail above.
 	// signedParam above knows the same name only where a URL query parameter
 	// puts it, which is the one place a delimiter tells the value from the text
 	// around it.
@@ -304,7 +333,7 @@ var (
 	// its password, and no rule that reads neither the word nor the value can
 	// tell the two apart. The field's name and the rest of the line still say
 	// what happened, which is the cheaper of the two mistakes to make.
-	passwordValue = regexp.MustCompile(`(?i)(^|(?-i:[^a-z]))(pass(?:word|phrase|wd)s?|pwd|secret(?:[_-]?(?:access[_-])?key))(\\*["']?)(\s*[:=]\s*)(?:((?:\\+)?["'])([^"'\n]{4,})|([^\s"',;&\\]{4,}))`)
+	passwordValue = regexp.MustCompile(`(?i)(^|(?-i:[^a-z]))(pass(?:word|phrase|wd)s?|pwd|secret(?:[_-]?(?:access[_-])?key))(\\*["']?)(\s*[:=]\s*)` + passwordValueTail)
 
 	// passwordWord is the same credential under a bare `pass` or `secret`,
 	// which is an English word as readily as a name: `--- PASS:
@@ -315,7 +344,22 @@ var (
 	// is the one an assignment uses — `PASS=…`, `JWT_SECRET=…`, `client_secret=…`
 	// — and a name with more to it than the word (`password`, `passwd`,
 	// `secret_key`) is passwordValue above, which reads either sign.
-	passwordWord = regexp.MustCompile(`(?i)(^|(?-i:[^a-z]))(pass|secret)(\\*["']?)(\s*=\s*)(?:((?:\\+)?["'])([^"'\n]{4,})|([^\s"',;&\\]{4,}))`)
+	passwordWord = regexp.MustCompile(`(?i)(^|(?-i:[^a-z]))(pass|secret)(\\*["']?)(\s*=\s*)` + passwordValueTail)
+
+	// passwordColon is the same bare word with a colon, which passwordWord
+	// above refuses because a colon is a sentence's punctuation as readily as
+	// a name's sign. What tells the two apart here is the name rather than the
+	// sign: a word an underscore joins to another (`client_secret:`,
+	// `DB_PASS:`, `JWT_SECRET:`) or a word in quotes (`{"secret": "…"}`, the
+	// client JSON of an OAuth installation) is a name and not English, while
+	// `the secret: rotated by the operator` and `--- PASS: TestRunnerFinalize`
+	// are a sentence and a test report with a space before the word.
+	// The quoted spelling requires its closing quote, so a word merely opened
+	// by one (`the word "pass in a sentence: it is not a field`) stays a
+	// sentence. Both spellings are captured rather than matched and dropped —
+	// the underscore and the name's opening quote are the text's, and the
+	// replacement writes them back before the marker.
+	passwordColon = regexp.MustCompile(`(?i)(?:(_)(pass|secret|pwd)(\\*["']?)|((?:\\+)?["'])(pass|secret|pwd)(\\*["']))(\s*:\s*)` + passwordValueTail)
 
 	// passwordCamel is the same name written inside another word, which is how
 	// a record, a config or a keyword connection string spells a field:
@@ -325,7 +369,7 @@ var (
 	// word it runs into is part of the rule: a name standing on its own is
 	// passwordValue's to read, and reading it here as well would claim the
 	// `Pass:` a test report opens a line with.
-	passwordCamel = regexp.MustCompile(`([A-Za-z0-9_]+)(Pass(?:word|Phrase|Wd)?s?|Pwd|Secret(?:[_-]?(?:Access[_-])?Key)?)(\\*["']?)(\s*[:=]\s*)(?:((?:\\+)?["'])([^"'\n]{4,})|([^\s"',;&\\]{4,}))`)
+	passwordCamel = regexp.MustCompile(`([A-Za-z0-9_]+)(Pass(?:word|Phrase|Wd)?s?|Pwd|Secret(?:[_-]?(?:Access[_-])?Key)?)(\\*["']?)(\s*[:=]\s*)` + passwordValueTail)
 
 	// passwordFlag is the same credential on a command line, where the value
 	// follows the flag after a space rather than a sign
@@ -334,7 +378,7 @@ var (
 	// This is the one spelling of it with nothing between the name and the
 	// value to read by, so the dashes before the name are what keeps a
 	// sentence out of the rule.
-	passwordFlag = regexp.MustCompile(`(?i)(-{1,2}(?:pass(?:word|phrase|wd)?s?|pwd|secret(?:[_-]?(?:access[_-])?key)?))\s+(?:((?:\\+)?["'])([^"'\n]{4,})|([^\s"',;&\\]{4,}))`)
+	passwordFlag = regexp.MustCompile(`(?i)(-{1,2}(?:pass(?:word|phrase|wd)?s?|pwd|secret(?:[_-]?(?:access[_-])?key)?))\s+` + passwordValueTail)
 
 	// keyBlock is a PEM private key, terminated or not: an unterminated block
 	// is still a key, so an END that never comes redacts to the end of the
@@ -363,11 +407,16 @@ var (
 	//
 	// homePath's leading delimiter is captured rather than looked behind (Go
 	// has no lookaround): without it a URL path such as
-	// `example.com/home/page` would be redacted, and with it only a path that
-	// starts a word goes. A Windows path may carry one backslash or, as it
-	// arrives inside JSON, two.
+	// `example.com/home/page` would be redacted, and with it only a path whose
+	// last segment starts a word goes — the character before the `/` is not a
+	// word character, which is what a URL's `home` segment fails. The
+	// delimiter may itself be a slash, because a file URL writes three of them
+	// (`file:///home/someone/x`) and the home directory is still the one the
+	// path names. `/var/home` is the layout a Fedora installation uses, where
+	// `/home` is a symlink to it, so the user's name is in the same place. A
+	// Windows path may carry one backslash or, as it arrives inside JSON, two.
 	email    = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+`)
-	homePath = regexp.MustCompile(`(?m)(^|[^\w/])(?:/(?:root|home|Users)\b|[A-Za-z]:\\{1,2}Users\b)(?:[/\\][^\s"'<>]*)?`)
+	homePath = regexp.MustCompile(`(?m)(^|[^\w])(?:/(?:root|home|Users)\b|/var/home\b|[A-Za-z]:\\{1,2}Users\b)(?:[/\\][^\s"'<>]*)?`)
 )
 
 // Forms returns the strings to redact for secrets, longest first so a secret
