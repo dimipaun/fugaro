@@ -253,6 +253,85 @@ func TestNewToleratedBoundsWhatItStores(t *testing.T) {
 	}
 }
 
+// TestRecordRoundTripsAcceptedFindings: what a stop accepted survives the round
+// trip with the two facts a tolerated entry does not carry — the round it was
+// left by and the half of the stop rule that ended the run (the owner's ruling
+// of 2026-11-08) — so a reader can tell a run merged at its time threshold from
+// one whose review let the finding go. A record written before the field
+// existed still decodes, which is what the unchanged version rests on.
+func TestRecordRoundTripsAcceptedFindings(t *testing.T) {
+	s := newStore(t)
+	accepted := NewAccepted(rigor.Startup, 3, StopTimeThreshold, []ToleratedFinding{
+		{Title: "the retry loop has no backoff", Mode: rigor.Startup, Likelihood: 3, Impact: 3, FixCost: 2, Class: rigor.Correctness},
+	})
+	rec := &Record{Version: 1, RunID: runID, Status: StatusSucceeded, Outcome: OutcomeReady,
+		StartedAt: time.Now().UTC(), Accepted: accepted}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Accepted, accepted) {
+		t.Fatalf("ReadRecord accepted = %+v, want %+v", got.Accepted, accepted)
+	}
+	if got.Accepted.At != StopTimeThreshold || got.Accepted.Round != 3 || got.Accepted.Total != 1 {
+		t.Errorf("accepted = %+v, want round 3 at the time threshold", got.Accepted)
+	}
+	if got.Accepted.Findings[0].Label != rigor.Medium {
+		t.Errorf("the accepted finding's label = %q, want the word its score reads", got.Accepted.Findings[0].Label)
+	}
+	data, err := json.Marshal(&Record{Version: 1, RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "accepted") {
+		t.Fatalf("a run that accepted nothing encoded the field: %s", data)
+	}
+	old := `{"version":1,"run_id":"` + runID + `","status":"succeeded","stage":"writeback","outcome":"draft","cost_usd":1,"tolerated":{"findings":[{"title":"t","mode":"pro","likelihood":1,"impact":1,"fix_cost":1,"class":"correctness","label":"nit"}],"total":1,"truncated":false},"started_at":"2026-09-26T22:15:30Z"}`
+	if err := s.PutFile(ctx, "result.json", []byte(old), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.ReadRecord(ctx)
+	if err != nil || got.Accepted != nil {
+		t.Fatalf("old record = %+v, %v, want no accepted block", got, err)
+	}
+	if got.Tolerated == nil || got.Tolerated.Total != 1 {
+		t.Fatalf("old record tolerated = %+v, want the block it carried", got.Tolerated)
+	}
+}
+
+// TestNewAcceptedBoundsWhatItStores: the block is built from a stop's own
+// answer and stores nothing a caller cannot have answered — a round the run
+// numbered from 1, one of the two halves of the stop rule, and a finding
+// Tolerated's own rules accept — so a record cannot claim an acceptance that
+// never happened. Everything else is nil, the way a run that accepted nothing
+// writes no block at all.
+func TestNewAcceptedBoundsWhatItStores(t *testing.T) {
+	entry := ToleratedFinding{Title: "t", Mode: rigor.Startup, Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Correctness}
+	ac := NewAccepted(rigor.Startup, 1, StopRoundsSpent, []ToleratedFinding{entry})
+	if ac == nil || ac.At != StopRoundsSpent || ac.Mode != rigor.Startup || ac.Round != 1 || ac.Total != 1 || len(ac.Findings) != 1 {
+		t.Fatalf("NewAccepted = %+v, want the round it was given", ac)
+	}
+	for _, tc := range []struct {
+		name   string
+		mode   rigor.Mode
+		round  int
+		at     string
+		findng []ToleratedFinding
+	}{
+		{"no findings", rigor.Startup, 1, StopRoundsSpent, nil},
+		{"a round the run never had", rigor.Startup, 0, StopRoundsSpent, []ToleratedFinding{entry}},
+		{"a half of the rule that does not exist", rigor.Startup, 1, "whenever", []ToleratedFinding{entry}},
+		{"a finding NewTolerated refuses", rigor.Startup, 1, StopTimeThreshold, []ToleratedFinding{{Title: "", Mode: rigor.Startup, Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Correctness}}},
+	} {
+		if got := NewAccepted(tc.mode, tc.round, tc.at, tc.findng); got != nil {
+			t.Errorf("%s: NewAccepted = %+v, want nil", tc.name, got)
+		}
+	}
+}
+
 // TestNewReviewScopeBoundsWhatItStores: the comparison's Outside is the
 // review range's paths less the implement set's, and the block is bounded —
 // each list at MaxReviewScopeFiles, the two lists together at
