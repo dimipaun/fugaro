@@ -451,7 +451,17 @@ type RTDBKills struct {
 }
 
 func (k RTDBKills) Stop(ctx context.Context, slug string) (bool, string, error) {
-	kills, err := budget.ReadKills(ctx, k.DB, slug)
+	var (
+		kills budget.Kills
+		err   error
+	)
+	if slug == "" {
+		// A person-facing route: the two git reads and the read mint name a
+		// person and no repository, and the global switch alone stops them.
+		kills, err = budget.ReadGlobalKill(ctx, k.DB)
+	} else {
+		kills, err = budget.ReadKills(ctx, k.DB, slug)
+	}
 	if err != nil {
 		return false, "", err
 	}

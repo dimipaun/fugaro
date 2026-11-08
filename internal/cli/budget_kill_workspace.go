@@ -8,12 +8,12 @@ package cli
 // service reads as its stop flag: `--all` on the workspace's own database,
 // which is `budget.PathKillGlobal` there, exactly as the project-wide switch is
 // the stop flag of the credentials service a member runs
-// (internal/credsvc/server.go:454, the read C1.11 gave the service). So the
-// stop reaches every member without any member being written to — a member's
-// runs that reach the workspace's shared credentials halt on the service's
-// refusal — and that is the whole of its reach, which is why the scope is
-// stated here rather than implied by the name: it touches nothing of a member's
-// own (spec.md §9).
+// (internal/credsvc/server.go's RTDBKills.Stop, the read C1.11 gave the
+// service). So the stop reaches every member without any member being written
+// to — a member's runs that reach the workspace's shared credentials halt on
+// the service's refusal — and that is the whole of its reach, which is why the
+// scope is stated here rather than implied by the name: it touches nothing of a
+// member's own (spec.md §9).
 //
 // The workspace is named, and the flags that name the project this command
 // would otherwise act on are refused rather than ignored: a `--project` beside

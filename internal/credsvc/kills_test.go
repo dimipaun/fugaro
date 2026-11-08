@@ -6,11 +6,12 @@ package credsvc
 // What this file holds is the read the person-facing routes make — the two git
 // reads and the read mint call Kills.Stop with no slug, because they name a
 // person and no repository — taken against a real database client rather than
-// the package's own fake. The difference is not cosmetic: budget.ReadKills
-// builds the repository's path out of the slug, and path building refuses an
-// empty one, so the real reader panicked on every well-formed call to those
-// routes while the fake answered it (review finding of 2026-11-08, fixed in
-// budget.ReadKills, whose own test is internal/budget/kill_test.go's).
+// the package's own fake. The difference is not cosmetic: the real reader builds
+// the repository's path out of the slug, and path building refuses an empty one,
+// so those routes panicked on every well-formed call while the fake answered it.
+// RTDBKills.Stop now reads budget.ReadGlobalKill for them, and the reader that
+// must go on refusing an empty slug is held to that in
+// internal/budget/kill_test.go.
 
 import (
 	"context"
@@ -30,8 +31,8 @@ func TestThePersonFacingReadIsTheGlobalSwitchAlone(t *testing.T) {
 	}
 	kills := RTDBKills{DB: client}
 
-	// A repository's switch is not the person's: the read names no repository,
-	// so it reads no repository node and answers off while one is on.
+	// A repository's switch is not the person's: the route names no repository,
+	// so its read reads no repository node and answers off while one is on.
 	db.Set(budget.PathKillRepo("acme/app"), budget.Kill{On: true, By: "operator@example.com"})
 	on, which, err := kills.Stop(ctx, "")
 	if err != nil {

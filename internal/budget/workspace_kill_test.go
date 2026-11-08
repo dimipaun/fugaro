@@ -3,8 +3,9 @@ package budget_test
 // The workspace scope of `fugaro budget kill` (W8, D1302) at the layer that
 // holds the read rather than the command: the stop of a workspace is
 // budget.ReadKills against the workspace's own database — the pair
-// internal/credsvc/server.go:454 asks as the workspace service's stop flag — so
-// this file pins what that read answers for the switch the CLI writes.
+// internal/credsvc/server.go's RTDBKills.Stop asks as the workspace service's
+// stop flag — so this file pins what that read answers for the switch the CLI
+// writes.
 //
 // The three things it holds are the three the spec's stop rests on (§6, §8,
 // §9): the answer the service refuses a call on, the fact that the switch is

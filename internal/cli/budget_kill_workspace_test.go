@@ -6,8 +6,9 @@ package cli
 // The switch it sets is the workspace's own service's stop flag, in the
 // workspace's own database: the node the credentials service deployed in the
 // workspace's own project reads with budget.ReadKills and refuses every call on
-// (internal/credsvc/server.go:454). So these tests hold the two halves of its
-// scope at once. It reaches a member: a member's call that pays with the
+// (internal/credsvc/server.go's RTDBKills.Stop). So these tests hold the two
+// halves of its scope at once. It reaches a member: a member's call that pays
+// with the
 // workspace's shared credentials is refused, and no member's operator can undo
 // that, because the switch is in a database no member can write. And it reaches
 // nobody else: no node of a member's own database, and no other workspace's.
@@ -35,9 +36,10 @@ func wsKillClient(t *testing.T, db *gcpfake.RTDB) *rtdb.Client {
 }
 
 // wsKillStop reads a workspace's stop flag the way the workspace's own service
-// reads it (internal/credsvc/server.go:454: budget.ReadKills against the
-// database the deployment serves), so "the stop reached a member" is asserted
-// through the read the refusal is made on and not through the raw node alone.
+// reads it (internal/credsvc/server.go's RTDBKills.Stop: budget.ReadKills
+// against the database the deployment serves), so "the stop reached a member"
+// is asserted through the read the refusal is made on and not through the raw
+// node alone.
 func wsKillStop(t *testing.T, db *gcpfake.RTDB, name string) (bool, string) {
 	t.Helper()
 	kills, err := budget.ReadKills(context.Background(), wsKillClient(t, db), name)
