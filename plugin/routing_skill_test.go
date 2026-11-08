@@ -107,7 +107,7 @@ func TestWorkingSkillStatusNamesWhoStartedEachRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(runs), `"RUN\tSTATUS\tSTAGE\tAGE\tCOST\tPR\tBY"`) {
+	if !strings.Contains(string(runs), `"RUN\tREPO\tSTATUS\tSTAGE\tAGE\tCOST\tPR\tBY"`) {
 		t.Fatal("internal/cli/runs.go no longer writes the listing header this test reads the BY column from; update it with the column")
 	}
 	if !strings.Contains(status, "`BY`") {

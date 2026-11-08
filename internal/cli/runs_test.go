@@ -863,14 +863,15 @@ func TestLsPRColumn(t *testing.T) {
 		}
 	}
 	// The BY cell follows the PR column, and none of these runs recorded a
-	// launcher (seedSpec's launch.json carries none): a dash.
-	if l := lines[appSlug+"/"+r.fu1]; !strings.Contains(l, "#7 https://github.com/acme/app/pull/7 (draft)") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
+	// launcher (seedSpec's launch.json carries none): a dash. The rows are
+	// keyed by their RUN cell, the run's short ID.
+	if l := lines["bbbb"]; !strings.Contains(l, "#7 https://github.com/acme/app/pull/7 (draft)") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
 		t.Fatalf("finished follow-up line = %q\n%s", l, human)
 	}
-	if l := lines[appSlug+"/"+waiting]; !strings.Contains(l, "#7") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
+	if l := lines["ffff"]; !strings.Contains(l, "#7") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
 		t.Fatalf("unlaunched follow-up line = %q\n%s", l, human)
 	}
-	if l := lines[appSlug+"/"+r.plain]; l != "" {
+	if l := lines["eeee"]; l != "" {
 		t.Fatalf("a run off the PR is listed: %q", l)
 	}
 }
@@ -981,19 +982,25 @@ func TestLsShowsDraftInProgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Each row is found by its RUN cell: the listing names a run by its short
+	// ID, the four characters its full ID ends with.
 	for _, line := range strings.Split(human, "\n") {
-		switch {
-		case strings.Contains(line, run):
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		switch fields[0] {
+		case task.ShortRun(run):
 			// The BY cell (a dash: seedRun's launch.json records no launcher)
 			// follows the PR column.
 			if !strings.Contains(line, "https://github.com/acme/app/pull/7 (draft)") || !strings.HasSuffix(strings.TrimSpace(line), "-") {
 				t.Errorf("running line: %q", line)
 			}
-		case strings.Contains(line, done):
+		case task.ShortRun(done):
 			if strings.Contains(line, "(draft") {
 				t.Errorf("ready PR marked draft: %q", line)
 			}
-		case strings.Contains(line, stale):
+		case task.ShortRun(stale):
 			if !strings.Contains(line, "(draft, stale)") {
 				t.Errorf("stale line: %q", line)
 			}
@@ -1027,14 +1034,16 @@ func TestLsRecipeColumnDefaultsEmpty(t *testing.T) {
 	var b strings.Builder
 	rows := []runview.Row{
 		{Run: "acme-app/20261007-100000-abcd", Status: "succeeded"},
-		{Run: "acme-app/20261007-110000-abcd", Status: "running", Recipe: "claude-solo"},
+		{Run: "acme-app/20261007-100001-abcd", Status: "running", Recipe: "claude-solo"},
 	}
 	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil {
 		t.Fatal(err)
 	}
 	var line string
 	for _, l := range strings.Split(b.String(), "\n") {
-		if strings.Contains(l, "100000") {
+		// The row whose RUN cell is 0-abcd: the two rows' IDs share their last
+		// four characters, so the listing extends them through the dash.
+		if fields := strings.Fields(l); len(fields) > 0 && fields[0] == "0-abcd" {
 			line = l
 		}
 	}
@@ -1050,13 +1059,14 @@ func TestLsAccountColumn(t *testing.T) {
 		t.Fatalf("no named account:\n%s", b.String())
 	}
 	b.Reset()
-	rows = append(rows, runview.Row{Run: "acme-app/20261007-110000-abcd", Status: "running", OAuthAccount: "acme-personal"})
+	rows = append(rows, runview.Row{Run: "acme-app/20261007-100001-abcd", Status: "running", OAuthAccount: "acme-personal"})
 	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil || !strings.Contains(b.String(), "ACCOUNT") || !strings.Contains(b.String(), "acme-personal") {
 		t.Fatalf("with a named account:\n%s", b.String())
 	}
 	var line string
 	for _, l := range strings.Split(b.String(), "\n") {
-		if strings.Contains(l, "100000") {
+		// The row whose RUN cell is 0-abcd (see TestLsRecipeColumnDefaultsEmpty).
+		if fields := strings.Fields(l); len(fields) > 0 && fields[0] == "0-abcd" {
 			line = l
 		}
 	}
@@ -1180,7 +1190,7 @@ func TestLsJSONRecipeOmitempty(t *testing.T) {
 	var b strings.Builder
 	rows := []runview.Row{
 		{Run: "acme-app/20261007-100000-abcd", Status: "succeeded"},
-		{Run: "acme-app/20261007-110000-abcd", Status: "running", Recipe: "claude-solo"},
+		{Run: "acme-app/20261007-100001-abcd", Status: "running", Recipe: "claude-solo"},
 	}
 	if err := printRows(&b, "aurora", rows, nil, time.Now(), true); err != nil {
 		t.Fatal(err)
@@ -1404,7 +1414,9 @@ func TestLsLauncherComesFromLaunchJSON(t *testing.T) {
 	}
 	var dashLine string
 	for _, l := range strings.Split(human, "\n") {
-		if strings.Contains(l, "091000") {
+		// The row of the run whose launch.json recorded no launcher, by its
+		// RUN cell (the run's short ID).
+		if fields := strings.Fields(l); len(fields) > 0 && fields[0] == "bbbb" {
 			dashLine = l
 		}
 	}
@@ -1467,9 +1479,10 @@ func TestLsLauncherShortFormAndClip(t *testing.T) {
 		"ffff": strings.Repeat("c", maxNameCellRunes) + "…"} {
 		found := false
 		for _, l := range strings.Split(out, "\n") {
-			if strings.Contains(l, "-"+id) {
+			// The row's RUN cell is the run's short ID, so the last four
+			// characters of its full ID are what the row is found by.
+			if f := strings.Fields(l); len(f) > 0 && f[0] == id {
 				found = true
-				f := strings.Fields(l)
 				if got := f[len(f)-1]; got != want {
 					t.Errorf("run %s: BY = %q, want %q\n%s", id, got, want, out)
 				}
@@ -2099,8 +2112,14 @@ func TestRunsLsLimitPrintsAPageAndTotalsTheWindow(t *testing.T) {
 	if !strings.Contains(out, "5 runs") {
 		t.Errorf("the text listing's totals line is not the window's:\n%s", out)
 	}
+	printed := map[string]bool{}
+	for _, l := range strings.Split(out, "\n") {
+		if f := strings.Fields(l); len(f) > 0 {
+			printed[f[0]] = true
+		}
+	}
 	for _, id := range ids[2:] {
-		if strings.Contains(out, id) {
+		if printed[task.ShortRun(id)] {
 			t.Errorf("the text listing printed run %s, which --limit 2 left out:\n%s", id, out)
 		}
 	}

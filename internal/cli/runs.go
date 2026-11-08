@@ -826,7 +826,13 @@ func printRowsWithTotals(w io.Writer, project string, rows []runview.Row, tot ru
 	// that died before bootstrap, has none and does not widen every other
 	// run's columns for it.
 	showMode := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.Rigor != nil })
-	header := "RUN\tSTATUS\tSTAGE\tAGE\tCOST\tPR\tBY"
+	// The RUN cell is the short ID a run is shown by, and the repository its
+	// `<slug>/` prefix carried moves to a column of its own (spec part 1). The
+	// endings are the shortest that tell the listed rows apart, computed over
+	// exactly these rows (F15); Row.Run keeps `<slug>/<run-id>` and --json
+	// carries it unchanged (D1705).
+	ends := shortRuns(rows)
+	header := "RUN\tREPO\tSTATUS\tSTAGE\tAGE\tCOST\tPR\tBY"
 	if showRecipe {
 		header += "\tRECIPE"
 	}
@@ -846,7 +852,7 @@ func printRowsWithTotals(w io.Writer, project string, rows []runview.Row, tot ru
 		header += "\tMODE"
 	}
 	fmt.Fprintln(tw, header)
-	for _, r := range rows {
+	for i, r := range rows {
 		cost := fmt.Sprintf("$%.2f", r.Cost.TotalUSD)
 		if r.Cost.ModelSubscriptionUSD() > 0 {
 			// The model spend -- or, in a mixed run, part of it -- was
@@ -856,7 +862,7 @@ func printRowsWithTotals(w io.Writer, project string, rows []runview.Row, tot ru
 		if !r.Cost.ComputeEstimated {
 			cost += ", compute not estimated" // never "free" (design §10.1)
 		}
-		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s", oneLine(r.Run), oneLine(statusCell(r)), oneLine(r.Stage), age(now.Sub(r.Created)), cost, prColumn(r), launcherCell(r))
+		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", oneLine(ends[i]), oneLine(runRef(r).Slug), oneLine(statusCell(r)), oneLine(r.Stage), age(now.Sub(r.Created)), cost, prColumn(r), launcherCell(r))
 		if showRecipe {
 			name := r.Recipe
 			if name == "" {
@@ -906,7 +912,39 @@ func printRowsWithTotals(w io.Writer, project string, rows []runview.Row, tot ru
 	if _, err := fmt.Fprintln(w, line); err != nil {
 		return err
 	}
-	return printOwnerWaiting(w, rows)
+	return printOwnerWaiting(w, rows, ends)
+}
+
+// runRef is a listing row as the pair the short-ID rule works on: the storage
+// slug Row.Run carries as its `<slug>/` prefix, and the run's full ID. Row.Run
+// is exactly that pair (runview.Join builds it as `slug + "/" + id`), so the
+// slug never holds a slash; a row built by hand with no prefix keeps its whole
+// value as the run ID and has no repository to show.
+func runRef(r runview.Row) task.Ref {
+	slug, id, ok := strings.Cut(r.Run, "/")
+	if !ok {
+		return task.Ref{RunID: r.Run}
+	}
+	return task.Ref{Slug: slug, RunID: id}
+}
+
+// shortRuns is the RUN cell of each row, in the rows' own order: the shortest
+// ending of its run ID that no other listed row's ID also ends with, never
+// shorter than four characters (task.DisplayRuns). A collision is a property of
+// what is shown together and not of the bucket, so it is computed over exactly
+// these rows -- one run may be shown as 3bb2 in one listing and as 8-3bb2 in
+// another (F15).
+func shortRuns(rows []runview.Row) []string {
+	refs := make([]task.Ref, len(rows))
+	for i, r := range rows {
+		refs[i] = runRef(r)
+	}
+	ends := task.DisplayRuns(refs)
+	out := make([]string, len(rows))
+	for i, ref := range refs {
+		out[i] = ends[ref]
+	}
+	return out
 }
 
 // printOwnerWaiting prints, under the table, what each listed run is waiting
@@ -915,8 +953,9 @@ func printRowsWithTotals(w io.Writer, project string, rows []runview.Row, tot ru
 // and one line per decision with the file and the reviewer's sentence. It
 // prints nothing when no listed run is waiting, which is every ordinary
 // listing. The sentences are untrusted text — a reviewer wrote them — so they
-// are clipped and escaped like every other cell.
-func printOwnerWaiting(w io.Writer, rows []runview.Row) error {
+// are clipped and escaped like every other cell. ends is the listing's own RUN
+// cells (shortRuns), so a run named here is named as its row names it.
+func printOwnerWaiting(w io.Writer, rows []runview.Row, ends []string) error {
 	waiting := 0
 	for _, r := range rows {
 		if r.OwnerDecisions != nil {
@@ -929,7 +968,7 @@ func printOwnerWaiting(w io.Writer, rows []runview.Row) error {
 	if _, err := fmt.Fprintln(w, "Waiting on you"); err != nil {
 		return err
 	}
-	for _, r := range rows {
+	for i, r := range rows {
 		od := r.OwnerDecisions
 		if od == nil {
 			continue
@@ -938,7 +977,7 @@ func printOwnerWaiting(w io.Writer, rows []runview.Row) error {
 		if reason == "" {
 			reason = "review is waiting on " + runner.Plural(od.Total, "owner decision")
 		}
-		if _, err := fmt.Fprintf(w, "  %s: %s\n", oneLine(r.Run), oneLine(reason)); err != nil {
+		if _, err := fmt.Fprintf(w, "  %s: %s\n", oneLine(ends[i]), oneLine(reason)); err != nil {
 			return err
 		}
 		for _, d := range od.Decisions {
