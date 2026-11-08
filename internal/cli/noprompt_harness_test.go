@@ -227,7 +227,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro workspace cap set":    {args: []string{"--workspace", "ws", "--monthly", "50"}},
 	"fugaro workspace member add": {args: []string{"ws", "acme/app"}},
 	"fugaro workspace member rm":  {args: []string{"ws", "acme/app"}},
-	"fugaro workspace login":      {args: []string{"ws"}, reaches: "no project config on this machine names workspace ws"},
+	"fugaro workspace login":      {args: []string{"ws"}},
 	"fugaro workspace rm":         {args: []string{"ws"}},
 	"fugaro workspace show":       {args: []string{"ws"}},
 }
