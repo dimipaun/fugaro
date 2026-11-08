@@ -1992,7 +1992,7 @@ test('Save with the analytics switch on loads the analytics origin alone, and Sa
 test('the panel shows the answers the browser holds, which is what makes a withdrawal there a withdrawal', () => {
   const page = runPage(pageOf(SHIPPED, 'privacy/index.html'), {
     storage: { [CONSENT_KEY]: 'granted', [MARKETING_CONSENT_KEY]: 'granted' },
-    cookies: ['_fbp=planted-by-the-pixel; path=/'],
+    cookies: [...plantedCookies(), '_fbp=planted-by-the-pixel; path=/'],
   })
   page.openSettings()
   const shown = page.switches().map((box) => [box.attrs.get('data-consent-switch'), box.checked])
@@ -2013,6 +2013,15 @@ test('the panel shows the answers the browser holds, which is what makes a withd
     'the withdrawal did not run the campaign cookie deletion: the pixel\'s own cookie was left in the browser',
   )
   assert.ok(!page.held().includes('_fbp'), 'the campaign cookie the withdrawal deleted is still in the jar')
+  assert.ok(page.held().includes(GA_CLIENT), 'withdrawing the campaign answer deleted the identifiers Google set, which the visitor did not withdraw')
+
+  // The other switch runs the other deletion: a withdrawal through the panel is the gate's own
+  // withdrawal, not a second path with its own idea of what to delete.
+  page.openSettings()
+  page.setSwitch('analytics', false)
+  page.pressSettings('consent-banner-save')
+  assert.equal(page.store[CONSENT_KEY], 'denied', 'turning the analytics switch off and saving did not withdraw the analytics answer')
+  assertForgotten(page, 'turning the analytics switch off in the settings panel')
 
   // No decision at all is a switch off, which is what the gate means by it: a missing answer
   // loads nothing, and the panel has to say so rather than showing a box ticked.
