@@ -17,9 +17,10 @@ are the only text here he wrote.
 **Spec owner:** the owner, 2026-11-07. [spec.md](spec.md) is his ask, verbatim; where
 [reconciliation.md](reconciliation.md) disagrees with it about the code, **reconciliation wins** — and
 it does, twice: the ask's `internal/projectpolicy` is the published policy node rather than the project
-layer (reconciliation F4); its task OD2 and pull request #1822 are **not in this tree**, and its task
-**OD1 was not in it either when this was read but landed on 2026-11-07** (`505718ab`, #1882: a finding
-marked `needs_owner` stops the loop rather than buying a fix round), which is F15.
+layer (reconciliation F4); its tasks **OD1 and OD2 were not in this tree when this was read** — **OD1
+landed the same day** (`505718ab`, #1882: a finding marked `needs_owner` stops the loop rather than
+buying a fix round) and OD2 has not — while the classifier its **pull request #1822** names **is in it**
+(`405dae8b`, an ancestor of the base this folder was read against), which is F15.
 
 | File | What it is |
 | --- | --- |
