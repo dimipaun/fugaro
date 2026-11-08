@@ -131,7 +131,7 @@ groups:
         evidence: "internal/config/providers.go"
       - name: "Anthropic API key"
         status: built-not-enabled
-        note: "The senior and security reviewers, e.g. Opus, on a project's own key. The path is built; the cloud review job is not admitted yet and its live check has not run."
+        note: "The senior and security reviewers, e.g. Opus, on a project's own key. The path is built; this api-key half is not enabled yet, and its live check has not run. The cloud review job the key would serve is admitted — what is still owed there is the live check rather than the code."
         evidence: "internal/cli/review.go"
       - name: "Claude OAuth token (bring your own credentials)"
         status: supported

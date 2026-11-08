@@ -25,10 +25,10 @@ import (
 // reviewJobAdmitted is E7's second half — whether the installation's
 // credentials service admits a review caller of a project-scoped job — and it
 // is TRUE since 0.21.0, on the owner's ruling of 2026-11-07 for that release.
-// It was false for three releases, because the admission was C3.9 and unbuilt
-// (§1): the service refused a caller whose account belongs to a shared project
-// job whole (internal/credsvc's Global Constraint 6), and the review caller is
-// exactly that.
+// It was false while the admission was C3.9 and unbuilt (§1): the service
+// refused a caller whose account belongs to a shared project job whole
+// (internal/credsvc's Global Constraint 6), and the review caller is exactly
+// that.
 //
 // What made it true is two merges and one property of `fugaro update`, all of
 // them on this tree: the service reads its review class out of
