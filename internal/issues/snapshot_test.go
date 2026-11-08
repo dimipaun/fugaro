@@ -34,8 +34,8 @@ func snapPtr(t *testing.T, s string) *time.Time {
 	return &at
 }
 
-// snapRows is a filled shared row and a filled local one: between them every
-// field of the type is set at least once.
+// snapRows is one shared row and one local one: the two shapes a row of the
+// table takes.
 func snapRows(t *testing.T) []SnapshotRow {
 	t.Helper()
 	return []SnapshotRow{
