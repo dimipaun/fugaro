@@ -278,8 +278,9 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) {
 // installation whose deployed rules predate the orchestrator subtree reaches it
 // with `fugaro update` alone, and the one run writes both halves — the
 // generation marker and the document the marker names — so the daemon's first
-// state write lands on rules that carry the subtree instead of failing as a
-// permission error (D1220, D1241; stateless orchestrator plan, O2).
+// state write lands on rules that carry the subtree, rather than on a document
+// under which the person's own phone may not read the state back (D1220,
+// D1241; stateless orchestrator plan, O2).
 //
 // The fixture is the release behind: the deployed rules are the previous
 // generation's document and carry no orchestrator marker at all, which is the

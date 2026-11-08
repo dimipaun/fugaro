@@ -207,10 +207,10 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 	// installation whose owner has not redeployed the rules yet — so the
 	// document generation cannot answer "does this database carry the
 	// orchestrator subtree". A marker above this binary's needs a future
-	// release's write, and deploying this binary's older document under it
-	// would leave the daemon's marker gate passing on rules that do not carry
-	// the subtree, so its first state write would fail as a permission error
-	// instead of a named refusal.
+	// release's write: it says this database runs under a document this binary
+	// does not generate, and deploying this binary's older one would take that
+	// release's rules — whatever it changed — out from under a daemon whose
+	// gate reads this same marker, with nothing naming the rewind.
 	var orchGen int
 	orchEtag, orchFound, err := d.c.GetETag(ctx, rules.PathOrchestratorRulesMarker(), &orchGen)
 	if err != nil {

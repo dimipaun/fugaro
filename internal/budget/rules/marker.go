@@ -100,18 +100,24 @@ const CredsRulesVersion = 1
 // the rules PUT succeeds, and also when no deploy is planned because the
 // deployed document already equals the generated one. The daemon's start-up
 // (O3) and the CLI (O5) read it and refuse to write the state node on an
-// installation whose rules predate the subtree, before a write is attempted
-// rather than as a permission error in the middle of one.
+// installation whose rules predate the subtree, naming the generation rather
+// than letting the write land: the write itself is the person's, over IAM,
+// which no rule binds, so a missing subtree does not refuse it — it lands the
+// state on a document under which no client the rules evaluate, the paired
+// phone above all, may read it back.
 //
 // KNOWN GAP — a rules downgrade, the same one the credentials marker records.
 // An older Fugaro running `fugaro update --firebase-project` reads
 // `config/limits/policyRules` at its own `RulesVersion`, so its downgrade
 // refusal does not fire; it redeploys its older document, which lacks the
 // orchestrator node, and leaves this marker at 1, which that release does not
-// know. A write then fails as a permission error instead of a named refusal.
-// The refusal below of a marker *above* `OrchestratorRulesVersion` guards only
-// future releases; a release that shipped before this one cannot be taught to
-// write this marker.
+// know. The state the daemon then writes lands over IAM all the same, and no
+// client the rules evaluate may read it: a silent divergence, not a named
+// refusal, and not a permission error either — which is the credentials
+// marker's gap and not this one, where the writer is a run token the rules do
+// bind. The refusal below of a marker *above* `OrchestratorRulesVersion` guards
+// only future releases; a release that shipped before this one cannot be taught
+// to write this marker.
 //
 // It sits under `config/limits`, whose `.read: TOKEN` grant every run token of
 // the project already has, so the location is cheap to read and impossible to
