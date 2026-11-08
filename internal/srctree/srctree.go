@@ -282,9 +282,11 @@ func newestTag(ctx context.Context, o Options, root string) (string, error) {
 // directory, of the kind this package's own "git init" makes, answers yes: the
 // tarball transport is the only other writer of a tree, and entryPath refuses
 // an archive that names .git at all, so a plain one found there is this
-// package's own. ChangesSince asks, before it reads a history: a "gitdir:"
-// file here would have had it log another repository's releases as this
-// source's, and fetch into it.
+// package's own. Both readers of a tree already there ask it: the warm path,
+// before it lets git say what commit the tree is at — a "gitdir:" file would
+// have another repository answer, and a tree of another version be served —
+// and ChangesSince, before it reads a history, which a "gitdir:" file would
+// have answered with another repository's releases.
 func isRepository(dir string) bool {
 	at := filepath.Join(dir, ".git")
 	fi, err := os.Lstat(at)
