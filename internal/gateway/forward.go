@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
@@ -892,7 +893,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 	}
 	if cut {
 		o.charge.streamCut = s.streamCutSide(r, end)
-		s.logStreamCut(p.model, resp.StatusCode, tee, o.charge.streamCut, time.Since(start))
+		s.logStreamCut(p.model, resp.StatusCode, tee, o.charge.streamCut, time.Since(start), streamEndError(end))
 	}
 	return o
 }
@@ -902,7 +903,10 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 // the status the upstream answered with, whether a terminal event arrived,
 // the bytes and events the agent was sent, the last event's own type name
 // (through the closed list: a provider cannot name an event in this line),
-// how long the call took, and which end stopped the stream (streamCutSide).
+// how long the call took, which end stopped the stream (streamCutSide), and
+// what the failing read or write failed with (streamEndError, a closed set;
+// "" when neither failed and the body simply ended, which is its own
+// answer).
 //
 // It names the stage and the model, as every call's line does, and nothing
 // else about the call: no header, no credential, no request and no byte of
@@ -911,11 +915,11 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 // or fully, and a call that settled unparsed may have had a whole stream
 // whose usage the gateway could not read. Both can name the same call when
 // a cut stream leaves nothing to settle on.
-func (s *Server) logStreamCut(model string, status int, t *usageTee, cut string, took time.Duration) {
+func (s *Server) logStreamCut(model string, status int, t *usageTee, cut string, took time.Duration, errKind string) {
 	s.log.Warn("budget: stream ended before its terminal event",
 		"stage", s.stageName(), "model", logValue(model), "status", status,
 		"terminal_event_seen", t.stopped, "events", t.eventCount, "last_event", t.lastEvent,
-		"bytes", t.bytes, "ms", took.Milliseconds(), "cut", cut)
+		"bytes", t.bytes, "ms", took.Milliseconds(), "cut", cut, "error", errKind)
 }
 
 // logUsageUnparsed warns once a 2xx call settles at its reservation
@@ -1344,12 +1348,16 @@ func isSSE(h http.Header, requested bool) bool {
 }
 
 // pumpEnd is how a response copy ended: which of the two ends of it stopped
-// the copy, and which way. It is three facts and no text, so nothing an
-// upstream wrote can travel in it.
+// the copy, and which way. err is that read's or write's own error, and it
+// never reaches a log line as it stands: it is the transport's text and can
+// carry words the peer chose (an HTTP/2 GOAWAY's debug data), so a cut
+// stream is reported by the closed set streamEndError makes of it and by
+// the side streamCutSide names.
 type pumpEnd struct {
-	eof      bool // the upstream's body ended (io.EOF)
-	readErr  bool // reading the upstream's body failed
-	writeErr bool // writing to the agent failed: it went away, or the flush did
+	eof      bool  // the upstream's body ended (io.EOF)
+	readErr  bool  // reading the upstream's body failed
+	writeErr bool  // writing to the agent failed: it went away, or the flush did
+	err      error // the read's or the write's error; nil when the body simply ended
 }
 
 // pump copies src to the client, flushing after every write, and hands
@@ -1366,14 +1374,17 @@ func pump(w io.Writer, rc *http.ResponseController, src io.Reader, tee func([]by
 			}
 			tee(buf[:n])
 			if werr != nil {
-				return pumpEnd{writeErr: true}
+				return pumpEnd{writeErr: true, err: werr}
 			}
 		}
 		if errors.Is(err, io.EOF) {
+			// The body ended where its sender meant it to, so there is no
+			// error to report: a stream cut here was cut by whatever the
+			// upstream decided to send, not by a failure.
 			return pumpEnd{eof: true}
 		}
 		if err != nil {
-			return pumpEnd{readErr: true}
+			return pumpEnd{readErr: true, err: err}
 		}
 	}
 }
@@ -1403,6 +1414,96 @@ func (s *Server) streamCutSide(r *http.Request, e pumpEnd) string {
 		return cutClient
 	}
 	return cutUpstream
+}
+
+// The values streamEndError reports, a closed set: what a `budget: stream
+// ended before its terminal event` line says in its `error` attribute about
+// the read or the write that ended the stream.
+const (
+	endUnexpectedEOF = "unexpected_eof"   // the body ended mid-message: the connection went away
+	endCanceled      = "context_canceled" // the call's own context ended
+	endDeadline      = "deadline"         // a clock on the call ran out
+	endReset         = "conn_reset"       // reset by the peer's end, or a broken pipe
+	endGoAway        = "http2_goaway"     // + ":" + the error code the peer sent
+	endStreamError   = "http2_stream"     // + ":" + the error code the peer sent
+	endWriteFailed   = "write_failed"     // the write to the agent failed, and nothing named why
+	endOther         = "other"
+)
+
+// The two HTTP/2 codes, and each is read from the one position the transport
+// writes it in and from nothing else: that slot holds ErrCode.String, a name
+// from the transport's fixed list, and every other word the message says --
+// the GOAWAY's `debug` data above all -- is the peer's text and is never
+// taken. Both patterns are anchored on the message's own first byte for that
+// reason, spelling out the transport's wording up to the code's slot: an
+// unregistered code prints as "unknown error code 0x.." and so matches at
+// neither, which leaves the code out, and a word shaped like one further
+// along (in the debug data, which follows the GOAWAY's slot, or in the cause
+// the stream message appends) is out of a roving scan's reach. A GOAWAY
+// spells its code two ways -- "ErrCode=" in the error a body read fails with,
+// "ErrCode:" in the one a stream is aborted with -- and each is fixed here to
+// the message that uses it.
+var (
+	goAwayCodeRE = regexp.MustCompile(
+		`^(?:http2: server sent GOAWAY and closed the connection; LastStreamID=[0-9]+, ErrCode=` +
+			`|http2: Transport received GOAWAY from server ErrCode:)([A-Z0-9_]{1,32})`)
+	streamCodeRE = regexp.MustCompile(`^stream error: stream ID [0-9]+; ([A-Z0-9_]{1,32})`)
+)
+
+// h2Code is the message's code as the attribute carries it, ":" and all, or
+// "" when the message names none.
+func h2Code(re *regexp.Regexp, s string) string {
+	if m := re.FindStringSubmatch(s); m != nil {
+		return ":" + m[1]
+	}
+	return ""
+}
+
+// streamEndError is what the read or the write that ended a streamed
+// response failed with, from the closed set above: "" when neither failed,
+// so a body that simply ended at an event boundary says so by saying
+// nothing.
+//
+// The set is closed, and the transport's own wording is never logged, for
+// the reason nothing else in that line is free text either: those words are
+// not this gateway's. An HTTP/2 GOAWAY is what makes that concrete -- the
+// transport prints the peer's own `debug` data into its message -- so a
+// provider could name anything it liked in the line, exactly as a provider
+// must not be able to name an event (usageTee.lastEvent). What is left is
+// the kind of failure, and for the two HTTP/2 failures that carry one, the
+// code the peer sent, which is a name from a fixed list.
+func streamEndError(e pumpEnd) string {
+	if e.err == nil {
+		return ""
+	}
+	switch {
+	case errors.Is(e.err, context.Canceled):
+		return endCanceled
+	case errors.Is(e.err, context.DeadlineExceeded):
+		return endDeadline
+	case errors.Is(e.err, io.ErrUnexpectedEOF):
+		return endUnexpectedEOF
+	case errors.Is(e.err, syscall.ECONNRESET), errors.Is(e.err, syscall.EPIPE):
+		return endReset
+	}
+	s := e.err.Error()
+	switch {
+	// The HTTP/2 transport's own words, and the openings it fixes them to:
+	// it is bundled unexported (net/http/internal/http2), so its errors
+	// cannot be matched as values and are recognized here as the text it
+	// writes. All three of its GOAWAY messages are this one case -- a server
+	// restarting or shutting down sends the frame and the body read fails
+	// with whichever of them the transport was in -- and the frame's word is
+	// the transport's, not the peer's, which is why it may be matched at all.
+	case strings.HasPrefix(s, "http2:") && strings.Contains(s, "GOAWAY"):
+		return endGoAway + h2Code(goAwayCodeRE, s)
+	case strings.HasPrefix(s, "stream error: stream ID "):
+		return endStreamError + h2Code(streamCodeRE, s)
+	}
+	if e.writeErr {
+		return endWriteFailed
+	}
+	return endOther
 }
 
 func isRedirect(status int) bool { return status >= 300 && status <= 399 }
