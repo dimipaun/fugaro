@@ -26,8 +26,8 @@
  *     the pair and in the pair's own grid, so it is the same target and never the nudged-to
  *     one — it carries the quiet fill, not the accent — and it opens a panel in the banner's
  *     own flow: no modal, no focus trap, and focus moves into the panel when it opens and
- *     back to this control when it closes. The panel holds one switch per decision this bar
- *     stores, and each switch is a native `<input type="checkbox" role="switch">` with its own
+ *     back to this control when it closes. The panel holds one switch per question this bar
+ *     asks, and each switch is a native `<input type="checkbox" role="switch">` with its own
  *     `<label>`: keyboard-reachable, labelled, and off in the markup — the panel is drawn with
  *     no box ticked, and `site.js` sets each switch from what the browser holds when the panel
  *     opens. "Save my choices" writes exactly what the switches say — `granted` for the ones
@@ -38,12 +38,15 @@
  *     loads nothing.
  *   - **What the panel says, and what it may answer.** Each switch carries one sentence naming
  *     what it loads and saying that nothing is loaded until it is on, so a visitor who turns
- *     one on has been told what it is — which is what lets the panel answer the campaign
- *     question on the privacy page, where the bar's own Accept may not (below): the bar never
- *     put the three vendors to the visitor in two words, and the panel names all three. The
- *     switches are the decisions this bar carries, so a bar that carries no campaign key
- *     renders no Marketing switch, and one that carries the key renders it whether or not it
- *     carries the campaign's configuration.
+ *     one on has been told what it is. The switches are the questions this bar asks, which is
+ *     narrower than the keys it carries: the privacy page carries the campaign decision's key
+ *     so that its refusal can take that answer back (below), and it asks the campaign question
+ *     nowhere — its panel draws the Analytics switch alone. A yes to the three vendors is given
+ *     on a campaign page and never by a press made on a page that does not carry them, which is
+ *     what the privacy statement says and what `site.js`'s `choose` already holds to; a panel
+ *     that could grant them from the privacy page would be a second place that statement does
+ *     not know about. So a bar renders a Marketing switch exactly where it carries the campaign
+ *     configuration, and a bar that carries the key without it renders none.
  *   - **Dismissal is a refusal.** Escape hides the banner and records `denied`, and a
  *     visitor who navigates away without choosing loads nothing either — the default when
  *     nobody chooses is that nothing is measured, because the gate needs a stored `granted`
@@ -65,8 +68,8 @@
  *     decision's key as well as the site's (`marketingKey`), so the refusal it offers takes
  *     back both answers — a campaign decision is made on a campaign page, where the bar is
  *     gone once it has been answered, and this is the page a visitor comes to to undo one.
- *     The settings panel works on that page too: its switches are set from what the browser
- *     holds, so a visitor sees the answers they gave, and turning one off and saving runs the
+ *     The settings panel works on that page too: its switch is set from what the browser
+ *     holds, so a visitor sees the answer they gave, and turning it off and saving runs the
  *     same withdrawal the pair's refusal runs — the same cookie deletion, from the same gate.
  *   - **One question, in two sentences.** The bar asks about measurement as a whole — cookies
  *     and identifiers, Google Analytics 4, and the marketing trackers and the booking widget
@@ -139,6 +142,14 @@ import { CONSENT_KEY } from '../lib/consent-key.mjs'
 // withdrawal). A bar that carries no key stores no campaign decision, so it renders no
 // Marketing switch either — the panel offers a switch only for a decision this bar can write.
 const marketingConsentKey = marketing?.key ?? marketingKey ?? null
+
+// And the switch itself is offered only where the bar asks the campaign question, which is
+// where it carries the configuration: `site.js` reads the same attribute (`data-marketing-path`)
+// for its own test. The privacy page carries the key without the question — its refusal may
+// take the campaign answer back and may not give one — so its panel draws Analytics alone, and
+// the privacy statement's "a yes to the campaign trackers is given on a campaign page" stays
+// true of every control the page carries.
+const asksCampaign = marketing?.path != null
 ---
 
 <aside
@@ -198,7 +209,7 @@ const marketingConsentKey = marketing?.key ?? marketingKey ?? null
           <label class="consent-banner__switch-label" for="consent-switch-analytics">Analytics</label>
           <p class="consent-banner__switch-note">Google Analytics, on every page — nothing is loaded from it until this is on.</p>
         </div>
-        {marketingConsentKey && (
+        {asksCampaign && (
           <div class="consent-banner__switch">
             <input type="checkbox" role="switch" id="consent-switch-marketing" data-consent-switch="marketing" />
             <label class="consent-banner__switch-label" for="consent-switch-marketing">Marketing</label>

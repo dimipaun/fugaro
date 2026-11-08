@@ -1599,6 +1599,31 @@ test('a bar that carries the campaign key without the question grants nothing wi
     'accepting on the privacy page granted the campaign measurement, which that page never asked about',
   )
   assert.deepEqual(campaignRequests(page), [], 'accepting on the privacy page loaded one of the campaign\'s three vendors')
+
+  // The panel is that same bar, so the rule is the gate's and not the markup's: a page that drew
+  // a Marketing switch on a key-only bar would still write no grant from it. The markup does not
+  // draw one there (the case above), and this is the half that holds if it ever did.
+  const planted = pageOf(SHIPPED, 'privacy/index.html').replace(
+    /(<p class="consent-banner__switch-note"[^>]*>Google Analytics[^<]*<\/p>\s*<\/div>)/,
+    '$1' +
+      '<div class="consent-banner__switch">' +
+      '<input type="checkbox" role="switch" id="consent-switch-marketing" data-consent-switch="marketing" />' +
+      '<label class="consent-banner__switch-label" for="consent-switch-marketing">Marketing</label>' +
+      '</div>',
+  )
+  assert.ok(
+    planted.includes('data-consent-switch="marketing"'),
+    'the fixture planted no Marketing switch, so the case below proves nothing',
+  )
+  const panel = runPage(planted)
+  panel.openSettings()
+  panel.setSwitch('marketing', true)
+  panel.pressSettings('consent-banner-save')
+  assert.ok(
+    !(MARKETING_CONSENT_KEY in panel.store),
+    'the panel granted the campaign measurement from a page that never put the question to the visitor',
+  )
+  assert.deepEqual(campaignRequests(panel), [], 'the panel loaded one of the campaign\'s three vendors from the privacy page')
 })
 
 
@@ -1741,9 +1766,11 @@ test('the banner asks one question about everything the site may load, and names
   // Cookie Settings panel of the same day: the bar's own paragraph states the measurement in
   // class terms ("personalize, measure and deliver ads and content") on every page, and the
   // three vendors are named one by one in the settings panel's Marketing switch — which is drawn
-  // only where the bar carries the campaign decision's key, the four campaign pages and the
-  // privacy page, because those are the pages where the question is asked or withdrawn. A page
-  // that carries no key names none of them, and the naming is still held in both directions.
+  // only where the bar asks the campaign question, the four campaign pages, because a yes to the
+  // three is given on a campaign page and never on one that does not carry them. The privacy
+  // page carries the campaign decision's key so its refusal can take that answer back, and it
+  // names none of them: its panel draws the site's switch alone. A page that asks nothing names
+  // none of them, and the naming is still held in both directions.
   const facts = siteFacts()
   const campaignVendors = [
     ['Meta', facts.marketing.metaPixelID],
@@ -1763,12 +1790,14 @@ test('the banner asks one question about everything the site may load, and names
     assert.match(text, /measure and deliver ads/i, `${page.rel}: the banner no longer describes the campaign pages' measurement, so a choice in it does not cover what those pages load`)
     assert.match(text, /until you accept/i, `${page.rel}: the banner does not say the load waits for the choice`)
 
-    // The vendors, where the question is asked: the panel's Marketing switch, named by the bar's
-    // own key. Its sentence is the one that tells a visitor what turning it on loads, so the
-    // three names and the "nothing yet" promise are read off it rather than off the paragraph.
+    // The vendors, where the question is asked: the panel's Marketing switch, on the bars that
+    // carry the campaign configuration (`data-marketing-path`, the same attribute `site.js` and
+    // the component read). Its sentence is the one that tells a visitor what turning it on
+    // loads, so the three names and the "nothing yet" promise are read off it rather than off
+    // the paragraph.
     const panel = findAll(banner, (el) => el.attrs.get('id') === 'consent-banner-settings')[0]
     assert.ok(panel, `${page.rel} carries no settings panel for the vendor names below to be read from`)
-    const asksCampaign = banner.attrs.has('data-marketing-consent-key')
+    const asksCampaign = banner.attrs.has('data-marketing-path')
     const panelText = textOf(panel)
     for (const [vendor, configured] of campaignVendors) {
       const names = panelText.includes(vendor)
@@ -1777,7 +1806,7 @@ test('the banner asks one question about everything the site may load, and names
         asksCampaign && configured.length > 0,
         asksCampaign && configured.length > 0
           ? `${page.rel}: the panel does not name ${vendor}, which the site is configured to load, so a switch turned on there does not say what it loads`
-          : `${page.rel}: the panel names ${vendor}, and either this page carries no campaign key or nothing in this repository supplies the value that would load it: a loader with no id fetches nothing, and the wording has to stay true while that is so (the owner's feedback of 2026-10-30)`,
+          : `${page.rel}: the panel names ${vendor}, and either this page asks no campaign question or nothing in this repository supplies the value that would load it: a loader with no id fetches nothing, and the wording has to stay true while that is so (the owner's feedback of 2026-10-30)`,
       )
     }
     if (asksCampaign) {
@@ -1808,7 +1837,7 @@ test('the banner asks one question about everything the site may load, and names
 // ---- the Cookie Settings panel (the owner's request of 2026-11-08) -----------------------
 //
 // The third control beside the pair, and the panel it opens in the banner's own flow: one
-// switch per decision this bar stores, each off in the markup, and two controls — Save my
+// switch per question this bar asks, each off in the markup, and two controls — Save my
 // choices, which writes exactly what the switches say, and Back, which decides nothing. The
 // cases below hold the three things the owner asked for that a reading of the markup cannot:
 // that nothing is loaded or stored before a choice, that each switch is what loads that one
@@ -1950,21 +1979,35 @@ test('Save with every switch off stores the refusals it draws and loads nothing'
   assert.equal(home.store[CONSENT_KEY], 'denied', 'saving with the analytics switch off did not write the refusal it draws')
   assert.deepEqual(home.analyticsRequests(), [], 'saving with the switch off loaded the analytics tag')
 
-  // The privacy page's bar carries both keys, so its panel draws both switches — and a save
-  // there writes both refusals, which is the whole of the withdrawal it offers.
+  // The privacy page's bar carries the campaign decision's key without asking the campaign
+  // question — it is where a visitor withdraws one — so its panel draws the site's switch alone.
+  // That page offers no press that could grant the three vendors, which is what the privacy
+  // statement says of it ("a yes to the campaign trackers is given on a campaign page").
   const privacy = runPage(pageOf(SHIPPED, 'privacy/index.html'))
   assert.equal(privacy.banner.hidden, false, 'the privacy page does not offer the choice again')
   privacy.openSettings()
   assert.deepEqual(
     privacy.switches().map((box) => box.attrs.get('data-consent-switch')),
-    ['analytics', 'marketing'],
-    'the privacy page\'s panel does not draw one switch per decision its bar carries: it carries both keys, and the campaign bar is gone by the time a visitor withdraws',
+    ['analytics'],
+    'the privacy page\'s panel draws a Marketing switch: that page carries the campaign key to take an answer back and asks the question nowhere, so a yes to the three vendors given there would be one the privacy statement does not know about',
   )
   privacy.pressSettings('consent-banner-save')
   assert.equal(privacy.store[CONSENT_KEY], 'denied', 'the analytics switch off did not write the refusal it draws')
-  assert.equal(privacy.store[MARKETING_CONSENT_KEY], 'denied', 'the marketing switch off did not write the refusal it draws')
-  assert.deepEqual(privacy.analyticsRequests(), [], 'saving two refusals on the privacy page loaded the analytics tag')
-  assert.deepEqual(campaignRequests(privacy), [], 'saving two refusals on the privacy page loaded a campaign vendor')
+  assert.ok(
+    !(MARKETING_CONSENT_KEY in privacy.store),
+    'saving the panel on the privacy page wrote the campaign decision, which that page never put to the visitor',
+  )
+  assert.deepEqual(privacy.analyticsRequests(), [], 'saving the refusal on the privacy page loaded the analytics tag')
+  assert.deepEqual(campaignRequests(privacy), [], 'saving the refusal on the privacy page loaded a campaign vendor')
+
+  // A bar that does ask the campaign question writes both refusals from the same press.
+  const campaign = runPage(CAMPAIGN_HTML, { location: CAMPAIGN_LOCATION })
+  campaign.openSettings()
+  campaign.pressSettings('consent-banner-save')
+  assert.equal(campaign.store[CONSENT_KEY], 'denied', 'the analytics switch off on a campaign page did not write the refusal it draws')
+  assert.equal(campaign.store[MARKETING_CONSENT_KEY], 'denied', 'the campaign switch off did not write the refusal it draws')
+  assert.deepEqual(campaign.analyticsRequests(), [], 'saving two refusals on a campaign page loaded the analytics tag')
+  assert.deepEqual(campaignRequests(campaign), [], 'saving two refusals on a campaign page loaded a campaign vendor')
 })
 
 test('Save with the analytics switch on loads the analytics origin alone, and Save with the campaign switch on loads the campaign\'s three on the page they were built for', () => {
@@ -1990,44 +2033,55 @@ test('Save with the analytics switch on loads the analytics origin alone, and Sa
 })
 
 test('the panel shows the answers the browser holds, which is what makes a withdrawal there a withdrawal', () => {
-  const page = runPage(pageOf(SHIPPED, 'privacy/index.html'), {
+  // The campaign question, on a bar that asks it: the visitor granted the three vendors here and
+  // has not answered the site's question, so the bar is still up and the panel is still
+  // reachable — which is the one place the campaign answer can be taken back from the panel.
+  const campaign = runPage(CAMPAIGN_HTML, {
+    location: CAMPAIGN_LOCATION,
+    storage: { [MARKETING_CONSENT_KEY]: 'granted' },
+    cookies: [...plantedCookies(), '_fbp=planted-by-the-pixel; path=/'],
+  })
+  campaign.openSettings()
+  assert.deepEqual(
+    campaign.switches().map((box) => [box.attrs.get('data-consent-switch'), box.checked]),
+    [['analytics', false], ['marketing', true]],
+    'the panel did not show the campaign grant the browser holds and the site question it has no answer to, so a visitor cannot see what they answered',
+  )
+  campaign.setSwitch('marketing', false)
+  campaign.pressSettings('consent-banner-save')
+  assert.equal(campaign.store[MARKETING_CONSENT_KEY], 'denied', 'turning the campaign switch off and saving did not withdraw the campaign answer')
+  assert.equal(campaign.store[CONSENT_KEY], 'denied', 'saving withdrew nothing from the site question, which the switch left off draws as a refusal')
+  assert.ok(
+    campaign.cookies.some((raw) => /^_fbp=/.test(raw) && /expires=Thu, 01 Jan 1970/.test(raw)),
+    'the withdrawal did not run the campaign cookie deletion: the pixel\'s own cookie was left in the browser',
+  )
+  assert.ok(!campaign.held().includes('_fbp'), 'the campaign cookie the withdrawal deleted is still in the jar')
+  for (const name of GA_NAMES) {
+    assert.ok(campaign.held().includes(name), `withdrawing the campaign answer deleted ${name}, which is not a cookie the campaign vendors set`)
+  }
+
+  // The site's question, on the page a visitor comes to undo one: the privacy page's panel draws
+  // that switch alone, shows the answer the browser holds, and runs the same withdrawal.
+  const privacy = runPage(pageOf(SHIPPED, 'privacy/index.html'), {
     storage: { [CONSENT_KEY]: 'granted', [MARKETING_CONSENT_KEY]: 'granted' },
     cookies: [...plantedCookies(), '_fbp=planted-by-the-pixel; path=/'],
   })
-  page.openSettings()
-  const shown = page.switches().map((box) => [box.attrs.get('data-consent-switch'), box.checked])
+  privacy.openSettings()
   assert.deepEqual(
-    shown,
-    [['analytics', true], ['marketing', true]],
-    'the panel did not show the two grants the browser holds, so a visitor cannot see what they answered',
+    privacy.switches().map((box) => [box.attrs.get('data-consent-switch'), box.checked]),
+    [['analytics', true]],
+    'the privacy page\'s panel did not show the analytics grant the browser holds',
   )
-
-  // Turning one off and saving is the withdrawal the pair makes: the decision is rewritten, and
-  // the cookies the tags set while the visitor had accepted are deleted.
-  page.setSwitch('marketing', false)
-  page.pressSettings('consent-banner-save')
-  assert.equal(page.store[MARKETING_CONSENT_KEY], 'denied', 'turning the campaign switch off and saving did not withdraw the campaign answer')
-  assert.equal(page.store[CONSENT_KEY], 'granted', 'saving withdrew the answer the visitor left switched on')
-  assert.ok(
-    page.cookies.some((raw) => /^_fbp=/.test(raw) && /expires=Thu, 01 Jan 1970/.test(raw)),
-    'the withdrawal did not run the campaign cookie deletion: the pixel\'s own cookie was left in the browser',
-  )
-  assert.ok(!page.held().includes('_fbp'), 'the campaign cookie the withdrawal deleted is still in the jar')
-  for (const name of GA_NAMES) {
-    assert.ok(page.held().includes(name), `withdrawing the campaign answer deleted ${name}, which is not a cookie the campaign vendors set`)
-  }
-
-  // The other switch runs the other deletion: a withdrawal through the panel is the gate's own
-  // withdrawal, not a second path with its own idea of what to delete.
-  page.openSettings()
-  page.setSwitch('analytics', false)
-  page.pressSettings('consent-banner-save')
-  assert.equal(page.store[CONSENT_KEY], 'denied', 'turning the analytics switch off and saving did not withdraw the analytics answer')
-  assertForgotten(page, 'turning the analytics switch off in the settings panel')
+  privacy.setSwitch('analytics', false)
+  privacy.pressSettings('consent-banner-save')
+  assert.equal(privacy.store[CONSENT_KEY], 'denied', 'turning the analytics switch off and saving did not withdraw the analytics answer')
+  assert.equal(privacy.store[MARKETING_CONSENT_KEY], 'granted', 'saving on the privacy page withdrew the campaign answer, which that page asks no question about')
+  assertForgotten(privacy, 'turning the analytics switch off in the settings panel')
+  assert.ok(privacy.held().includes('_fbp'), 'the withdrawal deleted the campaign cookie, which the visitor had not withdrawn')
 
   // No decision at all is a switch off, which is what the gate means by it: a missing answer
   // loads nothing, and the panel has to say so rather than showing a box ticked.
-  const fresh = runPage(pageOf(SHIPPED, 'privacy/index.html'))
+  const fresh = runPage(CAMPAIGN_HTML, { location: CAMPAIGN_LOCATION })
   fresh.openSettings()
   assert.deepEqual(
     fresh.switches().map((box) => box.checked),

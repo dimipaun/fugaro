@@ -1489,14 +1489,20 @@
 
       // The switches this bar carries, in the order the markup draws them. A decision the bar
       // has no key for — the campaign's, on every page but the four campaign pages and the
-      // privacy page — is a question this page does not ask, so it is not a switch here.
+      // privacy page — is a question this page does not ask, so it is not a switch here. And a
+      // key is not enough on its own: a bar that carries the campaign key without asking the
+      // question (the privacy page) may take that answer away and may not give one, which is
+      // the rule `choose` states and the rule the privacy statement states with it, so a
+      // Marketing switch is honoured only where the bar asks. The markup draws it in exactly
+      // those places; this is the same rule where the writing happens, which is where it has
+      // to hold.
       var boxes = []
       var found = panel.querySelectorAll('[' + SWITCH_ATTR + ']')
       for (var i = 0; i < found.length; i++) {
         var attribute = SWITCH_KEYS[found[i].getAttribute(SWITCH_ATTR)]
-        if (attribute && banner.getAttribute(attribute) !== null) {
-          boxes.push({ box: found[i], attribute: attribute })
-        }
+        if (!attribute || banner.getAttribute(attribute) === null) continue
+        if (attribute === MARKETING_KEY_ATTR && !asksCampaign) continue
+        boxes.push({ box: found[i], attribute: attribute })
       }
 
       // What the browser holds, into the switches. The panel is drawn with no box ticked (a

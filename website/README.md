@@ -107,9 +107,12 @@ planted second copy fails. The id, the audit trail and the choices behind them:
   carries no decision of its own). It opens a panel in the banner's own flow: no modal, no focus
   trap, focus into the panel on open and back to the control on close, and Escape is the bar's
   own refusal because the panel is part of the bar rather than a dialog over it.
-- **One switch per decision the bar can write**: **Analytics** on every page, and **Marketing**
-  wherever the bar carries the campaign key — the four campaign pages and the privacy page,
-  which is where that question is asked or withdrawn. Each switch is a native
+- **One switch per question the bar asks**: **Analytics** on every page, and **Marketing** only
+  where the bar carries the campaign configuration — the four campaign pages. The privacy page
+  carries the campaign decision's key so its refusal can take that answer back, and asks the
+  question nowhere, so its panel draws Analytics alone: a yes to the three vendors is given on a
+  campaign page and never on a page that does not carry them, which is what the privacy
+  statement says and what the bar's own `choose` holds to. Each switch is a native
   `<input type="checkbox" role="switch">` with its own `<label>` and one sentence naming what it
   loads and saying nothing loads until it is on; the panel's markup carries no script and names
   no fetched host. No box is ticked in the markup — the panel is drawn with nothing ticked and
