@@ -13,6 +13,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -161,7 +162,7 @@ var errNoReadOnlyToken = errors.New("no read-only installation token")
 // or commented on.
 func (r *run) refuseArm(reason string) error {
 	reason = r.redact(reason)
-	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, reason
+	r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, failure.Unclassified, reason)
 	r.d.Log.Warn("the challenger arm was refused", "reason", reason)
 	return errors.New(reason)
 }
@@ -373,16 +374,16 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	if halt != nil {
 		ready, reason = false, (&HaltError{*halt}).Error()
 	}
-	r.rec.Reason = reason
 	switch {
 	case halt != nil:
-		r.rec.Status, r.rec.Outcome, r.rec.Halt = runstore.StatusHalted, runstore.OutcomeNone, halt
+		r.rec.Halt = halt
+		r.recordEnd(runstore.StatusHalted, runstore.OutcomeNone, haltClass(halt.Reason), reason)
 	case r.isCancelled():
-		r.rec.Status, r.rec.Outcome = runstore.StatusCancelled, runstore.OutcomeNone
+		r.recordEnd(runstore.StatusCancelled, runstore.OutcomeNone, failure.Cancelled, reason)
 	case ready:
-		r.rec.Status, r.rec.Outcome = runstore.StatusSucceeded, runstore.OutcomeNone
+		r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeNone, "", reason)
 	default:
-		r.rec.Status, r.rec.Outcome = runstore.StatusFailed, runstore.OutcomeNone
+		r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, failure.Unclassified, reason)
 	}
 	r.updateCost()
 	r.narrowText = r.narrowSummary(ctx)
