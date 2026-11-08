@@ -132,14 +132,24 @@ func pairRunIn(t *testing.T, stdin string, args ...string) (string, string, erro
 // pairRunCtx is pairRunIn under a caller's context, which is the only way a
 // test can be the operator who interrupts: the command's context is the one
 // main.go cancels on a signal.
-//
-// The input is a terminal (fakeTerminal): the code is read as a value at the
-// operator's own terminal (readValue, D1540), so a test that puts the code on
-// the reader below is the operator typing it there. The one test that has no
-// terminal says so itself (noTerminal, after this).
 func pairRunCtx(t *testing.T, ctx context.Context, stdin string, args ...string) (string, string, error) {
 	t.Helper()
-	fakeTerminal(t)
+	return pairRunSession(t, ctx, stdin, true, args...)
+}
+
+// pairRunSession is the one body both doors share, and terminal is the fact
+// they differ in: the code is a value, and its entry asks whether the input is
+// a terminal before it reads anything (readValue, D1540) — so a test that puts
+// the code on the reader below is the operator typing it at their own terminal,
+// which is what every pairing here is, and the one test that has no terminal
+// says so.
+func pairRunSession(t *testing.T, ctx context.Context, stdin string, terminal bool, args ...string) (string, string, error) {
+	t.Helper()
+	if terminal {
+		fakeTerminal(t)
+	} else {
+		noTerminal(t)
+	}
 	root := &cobra.Command{Use: "fugaro", SilenceUsage: true, SilenceErrors: true}
 	root.AddCommand(newPairCmd())
 	var out, errOut bytes.Buffer
@@ -592,8 +602,7 @@ func TestPairWithoutATerminalRefusesAndReadsNothing(t *testing.T) {
 	f := newPairFixture(t, pairMe)
 	uid := pairFixedRand(t)
 	f.pairSeedRequest(uid, pairKey)
-	noTerminal(t)
-	out, _, err := pairRunIn(t, token.Fingerprint(pairKeyBytes), "--json")
+	out, _, err := pairRunSession(t, context.Background(), token.Fingerprint(pairKeyBytes), false, "--json")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("a pairing with no terminal: err = %v, want exit 1", err)
 	}
@@ -601,8 +610,8 @@ func TestPairWithoutATerminalRefusesAndReadsNothing(t *testing.T) {
 		t.Errorf("the refusal does not name the terminal it needs: %v", err)
 	}
 	events := pairLines(t, out)
-	if len(events) != 2 || events[0].Event != pairEventCode ||
-		events[1].Event != pairEventRefused || events[1].Code != pairRefusedCodeMissing {
+	if len(events) != 4 || events[2].Event != pairEventCode ||
+		events[3].Event != pairEventRefused || events[3].Code != pairRefusedCodeMissing {
 		t.Fatalf("events = %v, want the code event and a refusal of the missing code", events)
 	}
 	f.pairNoSideEffect(t, uid)
@@ -756,6 +765,7 @@ func TestPairWaitEndingsAreToldApart(t *testing.T) {
 // code that was never typed.
 func TestPairInterruptWhileTypingIsNotThePhone(t *testing.T) {
 	f := newPairFixture(t, pairMe)
+	fakeTerminal(t)
 	uid := pairFixedRand(t)
 	f.pairSeedRequest(uid, pairKey)
 
@@ -1182,14 +1192,17 @@ func TestPairCodeFromDecodedKey(t *testing.T) {
 	f.pairSeedRequest(uid, pairKey)
 	fingerprint := token.Fingerprint(pairKeyBytes)
 
-	out, _, err := pairRunIn(t, fingerprint)
+	out, errOut, err := pairRunIn(t, fingerprint)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{fingerprint, "type that code"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("the prompt does not print %q:\n%s", want, out)
-		}
+	if !strings.Contains(out, fingerprint) {
+		t.Fatalf("the phone's code is not printed:\n%s", out)
+	}
+	// The prompt is the value entry's, and it goes to the command's stderr
+	// (readValue), where a --json caller's events are not.
+	if !strings.Contains(errOut, "Type the code the phone shows: ") {
+		t.Fatalf("the value entry did not ask for the code:\n%s", errOut)
 	}
 
 	// The same 32 bytes, in the padded spelling the rules also admit.
@@ -1206,14 +1219,15 @@ func TestPairCodeFromDecodedKey(t *testing.T) {
 	f2.pairNoSideEffect(t, uid2)
 }
 
-func TestPairJSONReadsCodeFromStdinLine(t *testing.T) {
+func TestPairCodeIsOneLineTypedAtTheTerminal(t *testing.T) {
 	f := newPairFixture(t, pairMe)
 	uid := pairFixedRand(t)
 	f.pairSeedRequest(uid, pairKey)
 	fingerprint := token.Fingerprint(pairKeyBytes)
 
-	// The line a person types: lower case, no hyphen, the spaces a terminal
-	// leaves around it, and a second line that must never be read.
+	// The line a person types at the terminal: lower case, no hyphen, the
+	// spaces a terminal leaves around it, and a second line that must never be
+	// read (the code is one value, read once).
 	typed := "  " + strings.ToLower(strings.ReplaceAll(fingerprint, "-", "")) + "  \nthis line is not the code\n"
 	out, _, err := pairRunIn(t, typed, "--json")
 	if err != nil {
