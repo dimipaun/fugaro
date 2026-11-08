@@ -3093,7 +3093,7 @@ TASK='Do not change any file and do not open a pull request. Reply with the sing
 # COMMITS. Step 5's number is read from the reviewer stage's own `model call`
 # lines, and a run whose agent commits nothing is the wrong run to read one
 # from: `finalize` fails it — "the agent made no commits"
-# (internal/runner/runner.go, `r.fail("the agent made no commits")`) — and it is pushed as a draft rather than as
+# (internal/runner/runner.go, `r.failClass(failure.NoCommits, "the agent made no commits")`) — and it is pushed as a draft rather than as
 # a result. Whether the reviewer stage makes ANY model call for a no-change run
 # is UNVERIFIED, and this check does not assume it either way: the runs that
 # only have to prove a refusal or a restore keep the no-change $TASK, and the
