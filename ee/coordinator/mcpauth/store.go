@@ -378,6 +378,17 @@ type Store interface {
 	// family exists; a code that is not spent is refused rather than
 	// rewritten.
 	BindCodeFamily(ctx context.Context, hash, familyID string) error
+	// AppendAudit adds one entry to the audit record of one identity, newest
+	// first and bounded (audit_record.go). It is one method and not a caller's
+	// read composed with a write for the same reason RotateRefresh is: the read
+	// that decides the write has to be the read the write is matched against,
+	// or two calls of one person at once lose one of the two entries.
+	AppendAudit(ctx context.Context, identity string, entry AuditEntry) error
+	// GetAudit reads one identity's audit record. An identity no call has been
+	// served for has an empty record, which is an answer and not an error: the
+	// audit record is where D920's audit is at rest (D935), and the tool that
+	// serves it is the only reader of it a caller has (D933).
+	GetAudit(ctx context.Context, identity string) (AuditRecord, error)
 }
 
 // TokenHash is sha256 of a token value, hex: what the store keys a record by
