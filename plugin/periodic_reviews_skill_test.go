@@ -98,3 +98,78 @@ func TestWorkingSkillNeverSubmitsOnItsOwn(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkingSkillCarriesTheDueSignalAndTheReportsPlace (R3, D962, E1, E8):
+// the cadence is kept only if a reader can tell it lapsed, and the skill has
+// to say where a report lands in the CLI that ships. That is the checkout's
+// own `docs/fugaro-reviews/` today (`--dir` names the folder; the writer, the
+// reader and `--due` all work on it), with the commit as a separate opt-in
+// step.
+//
+// The sentence is R3's own, and R3's spec asks for the *bucket* one: the
+// rulings of 2026-11-05 (E1, E7, E8) move a report to the project's runs
+// bucket. The writer that would make that true is R10's, and no task carries
+// the correction with it: R10's file list is
+// `internal/cli/runs_digest.go`, `internal/cli/runs_digest_test.go`,
+// `docs/recipes.md` and `internal/digest/store.go`, the plugin skills are not
+// in it, and R6 -- the plan's other holder of the reference -- adds §7's
+// sentences and nothing here. So this pin is the tripwire instead: it holds
+// the shipped wording, and landing R10's default breaks it on purpose, which
+// is how whoever lands R10 learns that the skill, the reference and this test
+// move with the default rather than going on describing one the command no
+// longer has.
+func TestWorkingSkillCarriesTheDueSignalAndTheReportsPlace(t *testing.T) {
+	files := workingSkillFiles(t)
+	ref, ok := files["skills/working/reference/periodic-reviews.md"]
+	if !ok {
+		t.Fatal("the working skill has no reference/periodic-reviews.md")
+	}
+	// The cadence's own reading, the report's place and the fifth rule are
+	// the reference's, where the cadence and the rules are described.
+	for _, want := range []struct{ what, text string }{
+		{"the due signal with its command", "fugaro runs digest --due"},
+		{"the report's place, the checkout's report folder", "docs/fugaro-reviews/"},
+		{"`--dir` as the folder's name", "`--dir` names the folder"},
+		{"the commit as a separate opt-in run", "opt-in"},
+		{"the fifth rule's name, where the rules are listed", "cost_per_run_rising"},
+	} {
+		if !strings.Contains(ref, want.text) {
+			t.Errorf("reference/periodic-reviews.md never names %s (%q): a reader who never hears of `--due` cannot tell the cadence lapsed, a reader not told where a report lands looks in the wrong folder, and a report prints five rules", want.what, want.text)
+		}
+	}
+	// SKILL.md is what an agent always reads, so the two sentences a reader
+	// acts on are there as well as in the reference.
+	skill, ok := files["skills/working/SKILL.md"]
+	if !ok {
+		t.Fatal("the working skill has no SKILL.md")
+	}
+	for _, want := range []string{"fugaro runs digest --due", "docs/fugaro-reviews/", "opt-in"} {
+		if !strings.Contains(skill, want) {
+			t.Errorf("skills/working/SKILL.md never says %q: the due signal and where a report lands are the two things the review section is read for", want)
+		}
+	}
+}
+
+// TestSetupSkillNamesTheReviewCadence (R3, D965, F18): the reviews are the
+// user's cadence, and setup is the one moment it is cheapest to decide. The
+// skill prints the three ways to schedule a report -- a cron job or a CI
+// workflow of the repository, an agent routine, and a scheduled report run --
+// each with the command it runs, and writes no schedule itself: a workflow or
+// a crontab Fugaro wrote would commit into a repository it does not own,
+// under the user's identity.
+func TestSetupSkillNamesTheReviewCadence(t *testing.T) {
+	skill := setupFiles(t)["skills/setup/SKILL.md"]
+	for _, want := range []struct{ what, text string }{
+		{"a cron job of the repository", "cron job"},
+		{"a CI workflow of the repository", "CI workflow"},
+		{"an agent routine", "agent routine"},
+		{"a scheduled report run", "report run"},
+		{"the cadence's own command", "fugaro runs digest --period"},
+		{"the report run's recipe and its command", `fugaro run --recipe run-digest "periodic run review"`},
+		{"that the schedule is the user's to write, never the agent's", "without the user's word"},
+	} {
+		if !strings.Contains(skill, want.text) {
+			t.Errorf("skills/setup/SKILL.md never names %s (%q): the user installs the cadence, and the setup skill is where the three ways and the command for each are printed once, writing nothing without the user's word", want.what, want.text)
+		}
+	}
+}

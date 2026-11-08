@@ -1,8 +1,8 @@
 # A closed failure class on every run record, and a failures report — spec, reconciliation and plan
 
 **Status (2026-11-07): the decisions D1450–D1469 are answered 2026-11-07 and all tasks are approved
-2026-11-07 (owner: "All tasks approved. Jobmax"); of them, FC1 is built on `main` and FC2–FC9 are not
-started.** This is a plan for the owner to read. The design it reads is already merged
+2026-11-07 (owner: "All tasks approved. Jobmax"); of them, FC1 and FC2 are built on `main` and
+FC3–FC9 are not started.** This is a plan for the owner to read. The design it reads is already merged
 (`docs/design/failure-classes.md`, pull request **#1746**, docs only) and already pinned; what this
 folder adds is the reconciliation of that design against the code on `main`, the reader census it
 needs and does not carry, and a plan sliced so the tasks can run in parallel. It adds no code, no
@@ -12,7 +12,7 @@ below and approved them all on 2026-11-07 (owner: "All tasks approved. Jobmax"),
 still open, and the tasks are still built one at a time, in the order that file's §1 fixes. **The
 design's own decisions stay the design's:** §8 D1–D9 and §9 O1–O6 of `docs/design/failure-classes.md`
 are the owner's and this folder answers none of them — its decisions are D1450–D1469; the design's
-status line records only that FC1 of its §10 has shipped, which is what its pin holds.
+status line records that FC1 and FC2 of its §10 have shipped, which is what its pin holds.
 
 **Asked by:** the repository owner, in a message of **2026-11-07** that put the work in the **0.22.0**
 slot. The role is the one the design's own §2 describes: the person who owns the installation and
@@ -32,20 +32,23 @@ the digest. `reason` keeps its meaning byte for byte; the field is additive, so 
 
 | File | What it is |
 | --- | --- |
-| [spec.md](spec.md) | `docs/design/failure-classes.md` **as it stood at `56c91f66`**, byte for byte, with a header naming the owner by role, the pull request that merged it and the fact that the copy is dated. Where this file and the others disagree about what the design *says*, this file wins — and the design has moved since the copy: its status line now records that FC1 shipped and its §3 names `failure.Classes()`, both of which the copy predates |
+| [spec.md](spec.md) | `docs/design/failure-classes.md` **as it stood at `56c91f66`**, byte for byte, with a header naming the owner by role, the pull request that merged it and the fact that the copy is dated. Where this file and the others disagree about what the design *says*, this file wins — and the design has moved since the copy: its status line now records that FC1 and FC2 shipped, its §1 states the one writer `recordEnd` and its §3 names `failure.Classes()`, all of which the copy predates |
 | [reconciliation.md](reconciliation.md) | Every claim of the design against the code on `main`, read by path and symbol: how the record and its five readers work today (§2: `result.json` and the schema, `runs ls --json`, `diagnose`, the console, the phone, the history census, the plugin and `watch`), where a failure reason is produced today (§3: `internal/runner`, `internal/runstore`, `internal/cli`'s `diagnose`), the findings **F1–F36** (Wrong / Exists / Gap / Rule / Open), the closed-field rule applied (§5), the decisions **D1450–D1469** with **the owner's answer of 2026-11-07 each** (§6), the number block and how it was read (§7), the **UNVERIFIED** section (§8) and the owner's **Open items** (§9). **Where it disagrees with [spec.md](spec.md) about the code, it wins** |
 | [implementation-plan.md](implementation-plan.md) | The **six levels** and the tasks **FC1–FC9**, each with its files, its interfaces, its named tests **and the command that runs them**, what it depends on, its **red step**, its **reviewer tier**, whether it is owner-run and whether it is SEC, and its commit; the levels and the **critical path** (§1), the **shared-files table that holds no two writers of one file in a level** (§2), what is deliberately not in the plan (§4), the release slot the owner named (§5), the owner-run live check **Check 350** (§6) and the gates a task may not start without (§7) |
 | `README.md` | This file: the status, the asker, the shape in one paragraph, the numbers, and what a reader should not take from here |
 
 ## What this folder found, in one paragraph
 
-**The design's central claim is exactly true and already pinned: the runner writes a terminal status
-in 36 statements, in 24 functions across 8 files** — reproduced statement by statement from
-`grep -rn 'rec\.Status[^=!]*= runstore\.Status' internal/runner --include='*.go' | grep -v _test.go`,
-and held by `TestDocsFailureClassCensusMatchesTheRunner`
-(`internal/cli/docs_pr_state_test.go:303`), which counts it from the tree rather than trusting the
-document. Everything the design's §1–§5 rests on — the free-text `reason`, `fail`/`failLocked` and the
-three sites that overwrite the record's reason after them, the phrase-table classifier beside
+**The design's central claim is exactly true and already pinned, and FC2 is the task that made it
+true: one writer, `recordEnd`, and no statement of `internal/runner` outside
+`internal/runner/recordend.go` writes a record's `Status`, `Outcome`, `Reason` or `FailureClass`.** The
+census this folder reproduced — **36 statements, in 24 functions across 8 files**, from
+`grep -rn 'rec\.Status[^=!]*= runstore\.Status' internal/runner --include='*.go' | grep -v _test.go` —
+is what the tree held **before** FC2 rewrote it, and `TestDocsFailureClassCensusMatchesTheRunner`
+(`internal/cli/docs_pr_state_test.go:329`) reads the parsed package rather than trusting the document:
+the count the pin used to make is now the absence it holds. Everything the design's §1–§5 rests on —
+the free-text `reason`, `fail`/`failLocked` and the three sites that overwrite the record's reason
+after them, the phrase-table classifier beside
 `oauthLimitPhrases`, the six digest flags, the four pattern rules, the additive-schema precedent —
 **exists, by name, where the design says it does**. The largest of what the reconciliation adds,
 finding by finding (§4), are: **its line citations above `runner.go:3700` are four lines short** (F19) and the
@@ -92,8 +95,8 @@ reconciliation §2 reads **every reader** — the console (`console/docs/json-co
   and the owner took **every recommendation on 2026-11-07** ([reconciliation.md](reconciliation.md)
   §6, the dated answer in each row), approving every task in
   [implementation-plan.md](implementation-plan.md) the same day (owner: "All tasks approved.
-  Jobmax") — and, of those tasks, **FC1 is built on `main`, while FC2–FC9 are not started**: an
-  approved task is still built on its own, in its own run, in the order that file's §1 fixes.
+  Jobmax") — and, of those tasks, **FC1 and FC2 are built on `main`, while FC3–FC9 are not started**:
+  an approved task is still built on its own, in its own run, in the order that file's §1 fixes.
 - **It is not a second design.** The design is merged and pinned; this folder does not re-argue it. It
   reads it against the tree, and where a citation drifted or a claim does not match the code, the
   reconciliation says so and the plan is written against the correction.

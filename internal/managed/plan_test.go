@@ -1301,3 +1301,70 @@ func TestACoverWhyThatIsARemovalRuleKeepsItsIdentityWhole(t *testing.T) {
 		t.Errorf("the why is %d runes, past the %d a verdict carries", n, refusalWhyMax)
 	}
 }
+
+// RefusedOnlyForRemovals is the question internal/cli's gateDeleteLeft asks
+// before it hands the owner their own --allow-delete (the flag stands the whole
+// gate down, so it may only be offered for a plan nothing else refused), and
+// this is the pin on its answers: the addresses it is asked about are the
+// caller's own (tf.Listable), the two halves of the gate's refusal of one
+// removal both count as that removal's, and a refusal about anything else — a
+// cost refusal at the removal's own address included, or one about the plan
+// rather than a change of it — is not.
+//
+// The end-to-end arms of the same decision are internal/cli's
+// (TestUpdateManagedMixedRefusalsLeaveTheRemovalNoCommand and
+// TestUpdateManagedStageRefusesARemoval); what a test there cannot build is a
+// verdict by hand, which is what the last two rows need.
+func TestRefusedOnlyForRemovals(t *testing.T) {
+	const (
+		removal = "module.installation.google_storage_bucket.uploads"
+		grant   = `module.installation.google_storage_bucket_iam_member.runs_outsider["user:a@example.com"]`
+	)
+	// The cover refuses a removal too — "actions delete" is outside what a run
+	// announces — and that line is the same fact as the guard's, so a refusal by
+	// either of those two gates is the removal's. The cost list's is not, at any
+	// address: it refuses a change that creates, which the flag does not admit.
+	guardLine := Refusal{Gate: guardGate, Address: removal, Why: "delete"}
+	coverLine := Refusal{Gate: coverGate, Address: removal, Why: "actions delete"}
+	admits := []string{removal}
+	for _, tc := range []struct {
+		name    string
+		verdict Verdict
+		admits  []string
+		want    bool
+	}{
+		{"the guard's refusal alone", Verdict{Refusals: []Refusal{guardLine}}, admits, true},
+		{"the same removal as both gates refuse it", Verdict{Refusals: []Refusal{guardLine, coverLine}}, admits, true},
+		{"a grant beside the removal the cover refused", Verdict{Refusals: []Refusal{guardLine, coverLine,
+			{Gate: coverGate, Address: grant, Why: "a member the review did not list"}}}, admits, false},
+		{"a cost refusal beside the removal", Verdict{Refusals: []Refusal{guardLine, coverLine,
+			{Gate: costGate, Why: "nvidia-l4"}}}, admits, false},
+		// The one the addresses alone cannot tell: a replace is one address the
+		// delete rule refuses for its removal and the cost list refuses for what
+		// its create half states, so the address is on admits and the flag would
+		// apply the create the cost list blocked.
+		{"a cost refusal at the removal's own address", Verdict{Refusals: []Refusal{guardLine, coverLine,
+			{Gate: costGate, Address: removal, Why: "nvidia-l4: an attached GPU"}}}, admits, false},
+		{"a removal no list admits", Verdict{Refusals: []Refusal{guardLine, coverLine}}, nil, false},
+		{"a plan-level refusal", Verdict{Refusals: []Refusal{{Gate: coverGate, Why: "no plan"}}}, admits, false},
+		// The clause the row above cannot pin: its admits holds no empty
+		// address, so the containment test alone already answers no. An address
+		// is the plan's own text, and tf.Listable reads a change's actions and
+		// whether it moved and not the shape of the address — so a document
+		// carrying a change with an empty address puts "" on admits, and a
+		// refusal with no address at all (a gate that refused the plan and
+		// listed no change) then reads as that removal's on the addresses
+		// alone. Nothing an owner can type approves an empty address, so the
+		// clause answers no and the flag stays unoffered.
+		{"a plan-level refusal beside an address the plan left empty",
+			Verdict{Refusals: []Refusal{guardLine, coverLine, {Gate: coverGate, Why: "no plan"}}},
+			[]string{removal, ""}, false},
+		{"a verdict that refused nothing", Verdict{}, admits, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.verdict.RefusedOnlyForRemovals(tc.admits); got != tc.want {
+				t.Errorf("RefusedOnlyForRemovals(%v) = %v, want %v: the flag it is asked for stands the whole gate down, so a yes here applies whatever else the verdict refused", tc.admits, got, tc.want)
+			}
+		})
+	}
+}

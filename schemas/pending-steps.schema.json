@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/pending-steps.schema.json",
+  "title": "Fugaro pending steps",
+  "description": "The local document recording the steps a machine still owes for the management changes made on it (docs/composite-commands, D1562, D1567, D1570, D1575). It sits beside the project config it belongs to, at projects/<name>.pending.json under the config home, and `fugaro apply` is what reads it and runs what it names; `fugaro update` clears the entries of the stages it ran successfully and leaves the rest, a catalog build among them. It is written by the commands that save a change without running its steps (`--no-apply`) and by the steps that failed after the change was saved. Every object here is closed, unlike the schemas of documents a consumer outside this binary reads: the file is read by the same build that wrote it and is decoded strictly (a member this build does not know is an error, CLAUDE.md), so a closed object is what the reader actually does, and a version is what a document from another build is refused on. The one thing the document may never hold is a value: an entry names the change that asked for the step and never what was set (D1570), so the file can never become a second copy of the config or a place a secret is written down.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "steps"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "The document's own version. A file whose version is not this one is refused rather than read as this version's. The writer protects only a version newer than its own — that fugaro's record of what is owed survives an older one — and writes over anything else it finds at the path, a hand-edited or damaged file among them, because leaving one would refuse every later write, the clear `fugaro update` does among them.",
+      "$comment": "PendingVersion in internal/apply/pending.go."
+    },
+    "last_apply": {
+      "type": "string",
+      "description": "The stamp `doctor` compares: the hash of the project config's bytes at the last apply that finished, absent when none has. It is what tells a machine that owes nothing from one whose file was deleted or lost — a stamp that no longer matches the config, with no pending document, says the config changed since and that nothing owed is recorded (D1575). Neither written nor compared by internal/apply: the caller that has the config in hand does both."
+    },
+    "steps": {
+      "type": "array",
+      "description": "What is owed, written even when it is empty: `[]` is \"this machine owes nothing\", which is a different answer from a document still carrying an earlier change's steps. Two changes that owe the same step leave one entry, so the steps dedupe (spec rule 3).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "step",
+          "project",
+          "gcp_project",
+          "change"
+        ],
+        "properties": {
+          "step": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The step's name: one of internal/initflow's stage names, or `catalog-build`, the one step that is not a stage — the billable Cloud Build of a catalog image, which `fugaro update` never runs (D1577). The order the steps run in is not this array's: it is internal/initflow's own (Names, Needs), computed when the document is read. It is deliberately not an enum: the vocabulary is initflow's, and a copy of it here would be the second registry of stages D1561 rules out — a stage renamed there would leave this list refusing a step the binary can run.",
+            "$comment": "apply.CatalogBuild in internal/apply/steps.go, and initflow.Names in internal/initflow/stage.go."
+          },
+          "project": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The Fugaro project name the entry was queued for (config.ProjectNameRE). It is half of what makes a file that travelled refuse rather than run: `fugaro apply` compares it with the project it is acting on (D1575)."
+          },
+          "gcp_project": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The GCP project ID of the installation the entry was queued in, the other half of that binding (D1575). A document restored into another project's config directory holds entries bound to the installation the changes were made in, and the read refuses them by name."
+          },
+          "change": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "key"
+            ],
+            "description": "The change that asked for the step, shown to the person running `fugaro apply` so the step is not a mystery. It is the change's subject only, never its value (D1570).",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "setting",
+                  "resource"
+                ],
+                "description": "What `key` names: a key of the settings registry (internal/settings), or a resource type a management command manages.",
+                "$comment": "apply.Setting and apply.Resource in internal/apply/steps.go."
+              },
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The setting key as `fugaro settings` spells it (`image_catalog.entries.*.name`, `layer.defaults.agent.auth`), or a resource type (`image`, `repo`, `workspace`). The table in internal/apply/steps.go is what turns it into the steps the entry names."
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -59,7 +59,7 @@ Its own topic, never combined with the review rounds. Evidence: the CI configura
 
 ## 8. `agent.review_rounds` (and `timeouts`)
 
-Its own topic. `agent.review_rounds` (1 to 10, or left out): rounds before the PR. **Recommend leaving it out**: unwritten (or 0) it follows the rigor mode (poc 1, startup 2, pro 3, critical 5, hotfix 1), so a mode set later moves the loop with it, while a written number pins it. If the user wants one anyway, evidence is how risky the repository is (money, authentication, data migrations, production data) and what the code and its tests guard. Each extra round costs time and tokens. Ask only this. `timeouts`: the defaults (`total` 90m, `stage` 40m, `verify` 30m); the verify command should finish well inside `verify`.
+Its own topic. `agent.review_rounds` (1 to 10, or left out): rounds before the PR. **Recommend leaving it out**: unwritten (or 0) it follows the rigor mode (poc 1, startup 2, pro 3, critical 5, hotfix 1), so a mode set later moves the loop with it, while a written number pins it. If the user wants one anyway, evidence is how risky the repository is (money, authentication, data migrations, production data) and what the code and its tests guard. Each extra round costs time and tokens. Ask only this. `timeouts`: the defaults (`total` 3h, `stage` 60m, `verify` 30m); the verify command should finish well inside `verify`.
 
 ## 9. `agent.recipe`
 

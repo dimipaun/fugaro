@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -178,7 +179,7 @@ func (r *run) checkReviewAuthor(ctx context.Context, n int, h gitprov.PRHead) er
 // otherwise invisible to anyone but Fugaro's own logs.
 func (r *run) refuseReview(ctx context.Context, n int, reason string) error {
 	reason = r.redact(reason)
-	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, reason
+	r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, failure.Unclassified, reason)
 	if !r.reviewMayComment() {
 		// The independent review job holds a read-only installation token
 		// (CSR1's scope, minted for it by the credentials service), so this
@@ -700,7 +701,7 @@ func (r *run) reviewMode(ctx context.Context) {
 		return
 	}
 	r.postReviewComments(ctx, v)
-	r.rec.Status, r.rec.Outcome = runstore.StatusSucceeded, runstore.OutcomeReviewed
+	r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeReviewed, "", r.rec.Reason)
 	r.skipPR = true
 	r.storeReviewEnded(ctx)
 }
@@ -976,7 +977,7 @@ func (r *run) storeReviewEnded(ctx context.Context) {
 // cancelled, outcome none, never infra_error. finalize, which still runs
 // after, does nothing more (r.skipPR).
 func (r *run) endReviewCancelled(ctx context.Context, reason string) {
-	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusCancelled, runstore.OutcomeNone, reason
+	r.recordEnd(runstore.StatusCancelled, runstore.OutcomeNone, failure.Cancelled, reason)
 	r.skipPR = true
 	r.storeReviewEnded(ctx)
 }
@@ -985,8 +986,8 @@ func (r *run) endReviewCancelled(ctx context.Context, reason string) {
 // switch, the token cap) stopped. finalize, which still runs after, does
 // nothing more (r.skipPR).
 func (r *run) endReviewHalted(ctx context.Context, h *runstore.Halt) {
-	r.rec.Status, r.rec.Outcome, r.rec.Halt = runstore.StatusHalted, runstore.OutcomeNone, h
-	r.rec.Reason = (&HaltError{*h}).Error()
+	r.rec.Halt = h
+	r.recordEnd(runstore.StatusHalted, runstore.OutcomeNone, haltClass(h.Reason), (&HaltError{*h}).Error())
 	r.skipPR = true
 	r.storeReviewEnded(ctx)
 }
@@ -996,7 +997,7 @@ func (r *run) endReviewHalted(ctx context.Context, h *runstore.Halt) {
 // in review mode). finalize, which still runs after, does nothing more
 // (r.skipPR).
 func (r *run) failReviewInfra(ctx context.Context, err error) {
-	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusInfraError, runstore.OutcomeNone, r.redact(err.Error())
+	r.recordEnd(runstore.StatusInfraError, runstore.OutcomeNone, failure.InfraError, r.redact(err.Error()))
 	r.skipPR = true
 	r.d.Log.Warn("review mode failed", "err", r.rec.Reason)
 	r.storeReviewEnded(ctx)
@@ -1013,7 +1014,7 @@ func (r *run) endReviewFailed(ctx context.Context) {
 		reason = "the review stage ended without a verdict"
 	}
 	reason = r.redact(reason)
-	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, reason
+	r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, failure.Unclassified, reason)
 	r.skipPR = true
 	r.storeReviewEnded(ctx)
 }
@@ -1026,7 +1027,7 @@ func (r *run) endReviewFailed(ctx context.Context) {
 // verdict passes this; a failure here leaves no Reviewed entry and posts
 // no comment at all, rather than one claiming a keep that isn't real.
 func (r *run) endReviewInvalidVerdict(ctx context.Context, reason string) {
-	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, reason
+	r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, failure.Unclassified, reason)
 	r.skipPR = true
 	r.storeReviewEnded(ctx)
 }

@@ -4,17 +4,29 @@
 // can bound, reserves each call's worst case against the run's cap before
 // sending it, and settles the call from the usage the response reports.
 //
-// It never rewrites a body, never buffers a stream, never retries, and
-// never logs a header or a body. Money is integer micro-dollars throughout.
+// It never rewrites a body, never buffers a stream, and never logs a header
+// or a body. Money is integer micro-dollars throughout.
 //
-// The retry is the gateway's and not the forwarder's: the helpers this
-// package exports (export.go) are reused by the credentials service
-// (internal/credsvc), which forwards a run's calls to one of several
-// credentials and retries a call on the next one when a credential answers a
-// usage limit -- once per credential, and only before the first byte of the
-// answer has reached the client, so nothing a client has already seen is
-// replayed. The in-runner gateway itself still never retries: the service's
-// retry happens inside the one client request the gateway reserved for.
+// It retries one thing, once (forward.go, sendRetryingOnce): a Messages call
+// whose upstream failed before any byte of its answer had reached the agent
+// -- a transport error, or a 5xx or a 429 status -- is sent once more, after
+// a short fixed delay, with the same request, the same upstream, the same
+// credential and the same reservation. The rule is the client's own view:
+// nothing a client has already seen is ever replayed, so a stream cut after
+// its first byte is not retried (that is the runner's retry of a whole stage,
+// internal/runner), a 4xx other than 429 is never retried, and a service
+// upstream (KindService) is not retried here at all. A first attempt that
+// failed after its request had been written and before it answered is
+// charged the call's whole reservation whatever the retry answered: the
+// upstream may have generated for it, and nothing here read what that cost.
+//
+// The credentials service has a retry of its own, one layer out: the helpers
+// this package exports (export.go) are reused by internal/credsvc, which
+// forwards a run's calls to one of several credentials and retries a call on
+// the next one when a credential answers a usage limit -- once per
+// credential, and only before the first byte of the answer has reached the
+// client. Like this gateway's own, it happens inside the one client request
+// the gateway reserved for, so the call settles once either way.
 //
 // A halt's Detail (a Refusal's, or HaltExternal's) is shown to the agent in
 // the 403 every later call gets, as one line clipped to 300 bytes. The

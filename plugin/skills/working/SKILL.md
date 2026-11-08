@@ -74,9 +74,9 @@ Do not wait for the daily look. Whoever launched a run keeps watching the COST c
 
 ## Review your runs
 
-`fugaro runs digest --period day` (or `week`, `month`, `year`) writes one closed period's report of this repository into its own `docs/fugaro-reviews/`, for a person or an agent to commit through an ordinary pull request. It is in every build. Without `--date` it is the most recent closed period; a period holding today is still receiving runs, so it is refused. Fugaro schedules nothing: the cadence is the user's own cron job, CI workflow or agent routine, or a run launched to write the report.
+`fugaro runs digest --period day` (or `week`, `month`, `year`) writes one closed period's report of this repository into the checkout's `docs/fugaro-reviews/` (`--dir` names the folder), for a person or an agent to commit through an ordinary pull request: committing one is a separate opt-in step, never the command. It is in every build. Without `--date` it is the most recent closed period; a period holding today is still receiving runs, so it is refused. `fugaro runs digest --due` says whether the cadence has lapsed: it reads that report folder, offline, and names the closed periods that have no report beside the age of the newest one it found. Fugaro schedules nothing: the cadence is the user's own cron job, CI workflow or agent routine, or a run launched to write the report.
 
-The **daily report is the outlier sweep**: read its flagged runs and the dearest of the rest the way `reference/periodic-reviews.md` says, and write each lesson where the next run will read it. That file has the four periods and how to schedule them, how to read a report's patterns, the relaunch note, and the submission step that is the person's, never the agent's.
+The **daily report is the outlier sweep**: read its flagged runs and the dearest of the rest the way `reference/periodic-reviews.md` says, and write each lesson where the next run will read it. That file has the four periods, the due signal, how to schedule them, how to read a report's patterns, the relaunch note, and the submission step that is the person's, never the agent's.
 
 ## A usage limit on the Claude account
 

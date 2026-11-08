@@ -10,7 +10,7 @@ document Google publishes for the project that signs an ID token (M6, D923).
 Its modulus is a placeholder and the test that reads it puts one of its own
 in, so the file pins the shape and holds no key material — a fixture shaped
 like a real key is key material in a repository whatever it is called
-(`.claude/rules/ee.md`, R8).
+(`.claude/rules/ee.md`, subscriptions R5 as amended by D440).
 
 **Nothing here is a token, a client secret, or a value any record is written
 from.** The store's own records (M2, D935) live in a store of their own — the

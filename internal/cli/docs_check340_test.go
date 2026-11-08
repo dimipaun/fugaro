@@ -125,6 +125,57 @@ func TestDocsCheck340IsRegistered(t *testing.T) {
 	}
 }
 
+// TestDocsCheck340RecordsTheFirstRun: the check has been run once and the run
+// settled nothing, and the register has to say so in both halves — a row or a
+// section that reads "NOT RUN" with no account of the attempt beside it is a
+// record a reader has to take on trust, and one that reads "NOT RUN" while the
+// attempt is nowhere is how the same run gets made twice for the same
+// non-answer. What the first run measured and what it did not is pinned, because
+// a section that says only "it aborted" leaves the next reader unable to tell
+// whether the fallback was reached. And no PASS for `list-prefix` may be
+// recorded: an aborted run is not a reading about the attribute, and the whole
+// point of the row above is that this check has not answered.
+func TestDocsCheck340RecordsTheFirstRun(t *testing.T) {
+	register := readDoc(t, liveChecksDoc)
+	section := flattenDoc(check340Section(t, register))
+	lower := strings.ToLower(section)
+	for _, want := range []string{
+		// The date, the exit, and what exit 2 means here.
+		"2026-11-07",
+		"First run: 2026-11-07, exit `2`",
+		"it settled nothing about the attribute",
+		"aborted",
+		// What the run did measure, and what it did not: the fallback was never
+		// reached, and the reports/ listing is the failure that stopped it.
+		"full-path form was never reached",
+		"the `reports/` listing **failed**",
+		// The two faults the run's own block had, and the fixes, so a reader of
+		// the first run's paste-back knows what to expect from the next one.
+		"service-account impersonation",
+		"denied on resource (or it may not exist)",
+		"service-accounts list",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check %s's section does not say %q: the first run ended exit 2 and the register is where what it did and did not measure is recorded", check340Number, want)
+		}
+	}
+	// The row is where a reader looks first, and it has to carry the attempt as
+	// well as the standing "NOT RUN" — which is what it still reads.
+	row := check340Row(register)
+	if !strings.Contains(row, "2026-11-07") || !strings.Contains(row, "exit `2`") {
+		t.Errorf("Check %s's row does not record the 2026-11-07 attempt and its exit 2: the row and the section are one registration, and a reader who stops at the table has to see that the one attempt settled nothing", check340Number)
+	}
+	// No form is answered, anywhere in the check's own two halves.
+	for _, text := range []string{row, section} {
+		if strings.Contains(text, "`list-prefix` row is **PASS**") || strings.Contains(text, "list-prefix: PASS") {
+			t.Errorf("Check %s records a PASS for `list-prefix`: the run that was made ended exit 2 and measured nothing about the attribute, so a PASS here would be a live claim nobody made", check340Number)
+		}
+	}
+	if !strings.Contains(lower, "no `pass` is recorded for `list-prefix`") {
+		t.Errorf("Check %s's section does not say in as many words that no `PASS` is recorded for `list-prefix`: the first run aborted, and the sentence is what stops its block being read as one", check340Number)
+	}
+}
+
 // TestDocsCheck340CensusReadsTheRegister: the design's own census of the
 // register is a reading of the register, and the two move together — the same
 // rule docs/coordinator/README.md's row is held to. This design's row said the
