@@ -14,9 +14,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
-// The CLI's half of the build lease (T8; D1543, D1548, D1550, F19, F22). Every
-// image build a CLI submits reserves its estimated cost before the submission
-// and gives back what it did not spend after it, so the caps bound image builds
+// The CLI's half of the build lease (T8; D1543, D1548, D1550, F19, F22): the
+// writer that reserves a build's estimated cost before its submission and gives
+// back what the build did not spend after it, so the caps bound image builds
 // the way they bound runs. What it reserves is the price the Cloud Billing
 // catalog carries for the build's machine type and region, times the fixed
 // build timeout, and a price that is missing or unknown refuses the build

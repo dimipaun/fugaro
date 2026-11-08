@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// The build lease (D1543, F19, F22): an image build reserves its estimated
-// cost before it is submitted, the way a run reserves its own headroom.
+// The build lease (D1543, F19, F22): a build reserves its estimated cost
+// before it is submitted, the way a run reserves its own headroom.
 //
 // It lives under a key of its own — buildleases/<slug>/<id>, never runs/ — so
 // no record reader (runstore, watch, the console) mistakes it for a run, and
@@ -17,9 +17,9 @@ import (
 // Evaluate, the predicate the database rules are generated from, so a build
 // can never be bounded by something a run is not.
 //
-// The lease is taken, and given back, by the CLI that submits the build, on
-// the identity that submits it (a person's own credentials, or the catalog
-// check job's account). A lease the CLI never closes — the process died
+// The lease is taken and given back on the identity that submits the build —
+// a person's own credentials, or the catalog check job's account — the CLI's
+// writer being the one that does it (internal/cli/image_cost.go). A lease the CLI never closes — the process died
 // mid-build — is abandoned at its deadline and reclaimed, so a reservation
 // cannot be held forever; reclaiming gives all of it back, and the lease
 // records the deadline it was taken under.

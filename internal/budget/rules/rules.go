@@ -730,8 +730,8 @@ const PathMCPAuth = "mcpauth"
 
 // PathBuildLeases is the build lease's own family (T8 of
 // docs/no-prompt-policy/implementation-plan.md; D1543, F19, F22): one node per
-// submission, buildleases/<slug>/<id>, holding the reservation an image build
-// takes before it is submitted, what it really spent and what was given back.
+// submission, buildleases/<slug>/<id>, holding the reservation a build takes
+// before it is submitted, what it really spent and what was given back.
 // It is deliberately not under runs/: a lease keyed by a run id would be read
 // as a run by everything that reads runs/ (runstore, watch, the console,
 // internal/budget's own Outstanding), and F22 asks for a key space of its own
@@ -739,10 +739,10 @@ const PathMCPAuth = "mcpauth"
 //
 // The template carries it with `.read: false` and `.write: false`, written out
 // rather than left to the root's denial, for the reason PathMCPAuth gives above.
-// Its writers are IAM identities and never client tokens: `fugaro image build`
-// takes and closes a lease on the person's own credentials
+// Its writers are IAM identities and never client tokens. The CLI's lease
+// writer (internal/cli/image_cost.go) runs on the person's credentials
 // (internal/cli/cloud.go's newBudgetClient, ADC with the budget scopes), and the
-// project's catalog-check job takes its own on the job's service account, and
+// project's catalog-check job would hold its lease on the job's service account;
 // neither is a token these rules can bound. The one client token the document
 // knows how to bind — a run's, fs/fr — is not a build lease's writer: nothing in
 // the container submits a build. So the family may be named and denied and
