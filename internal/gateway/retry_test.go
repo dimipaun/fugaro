@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/oauth2"
+
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/pricing"
 )
@@ -488,6 +490,78 @@ func TestARetryThatLeftTheClientIsTheCallsAnswer(t *testing.T) {
 			}
 			if n := up.first.closes.Load(); n != 1 {
 				t.Errorf("the first attempt's body was closed %d times, want 1: it is dropped unread", n)
+			}
+		})
+	}
+}
+
+// tokenGoneAfterOneCall is a Vertex credential the run can present once: the
+// first attempt's request is built with it and the retry's cannot be -- a
+// token that expired between the two attempts, the one way this happens.
+type tokenGoneAfterOneCall struct {
+	calls atomic.Int32
+}
+
+func (s *tokenGoneAfterOneCall) Token() (*oauth2.Token, error) {
+	if s.calls.Add(1) > 1 {
+		return nil, errors.New("oauth2: token expired and refresh token is not available")
+	}
+	return &oauth2.Token{AccessToken: vertexAccessToken, TokenType: "Bearer"}, nil
+}
+
+// A retry the gateway cannot build is not a retry: nothing is sent again, so
+// the call is answered for exactly as the first attempt left it -- the status
+// the upstream sent, or the gateway's own error when that attempt was written
+// and lost -- and never as a call with no attempt behind it, which would
+// answer from a request that does not exist and lose the charge an attempt the
+// upstream may have received still owes. No second request was made, so no
+// line says one was.
+func TestARetryThatCannotBeBuiltIsNotARetry(t *testing.T) {
+	fastRetry(t)
+	for _, c := range []struct {
+		name        string
+		reply       anthropicfake.Reply
+		wantStatus  int
+		wantCharged bool
+	}{
+		{"a dropped connection", anthropicfake.Reply{DropBeforeHeaders: true}, http.StatusBadGateway, true},
+		{"a 503", anthropicfake.Error(http.StatusServiceUnavailable, "api_error", "busy"), http.StatusServiceUnavailable, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			tok := &tokenGoneAfterOneCall{}
+			h := newHarnessWith(t, func(o *Options) {
+				o.Upstream = vertexUpstream(o.Upstream.BaseURL)
+				o.Upstream.Token = tok
+			}, c.reply)
+			body := vertexBody(1000, `"stream":true`)
+			resp, b := h.vertexPost(vertexPath("proj-1234", "us-east5", sonnet, "streamRawPredict"), body)
+			if resp.StatusCode != c.wantStatus {
+				t.Fatalf("the agent got %d %q, want %d", resp.StatusCode, b, c.wantStatus)
+			}
+			if n := tok.calls.Load(); n != 2 {
+				t.Fatalf("the credential was asked %d times, want 2: the call and the retry it could not build", n)
+			}
+			if n := h.fake.Count(); n != 1 {
+				t.Fatalf("the upstream saw %d requests, want 1: nothing was sent again", n)
+			}
+			noRetryLine(t, h.logs)
+			w := worst(t, sonnet, body, 1000, "")
+			rep := h.gw.EndStage()
+			call := h.logs.lastCall(t)
+			if c.wantCharged {
+				if rep.Used != w || rep.Unreconciled != w {
+					t.Errorf("report %+v, want the reservation %d charged: the first attempt may have reached the upstream", rep, w)
+				}
+				if call["settled"] != "reserved" {
+					t.Errorf("log %v, want settled reserved", call)
+				}
+				return
+			}
+			if l := h.gw.Ledger(); l.Used != 0 || l.Reserved != 0 {
+				t.Errorf("ledger %+v, want nothing charged: the upstream answered the first attempt", l)
+			}
+			if call["settled"] != "zero" || num(call["status"]) != int64(c.wantStatus) {
+				t.Errorf("log %v, want the upstream's own %d settled zero", call, c.wantStatus)
 			}
 		})
 	}
