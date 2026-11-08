@@ -2836,11 +2836,32 @@ func (r *run) agentLoop(ctx context.Context) {
 	}
 	tier := ""
 	// The plan is read through the slice on every step, rather than ranged
-	// once, because a step may rebuild it: the security escalation appends
-	// level 3's step after the fix seam inside this loop, and a range would
-	// keep walking the plan it captured (security.go, D1507).
-	for i := 0; i < len(r.plan); i++ {
-		st := r.plan[i]
+	// once, because a step may rebuild it: the security escalation rebuilds it
+	// after the fix seam inside this loop, and a range would keep walking the
+	// plan it captured (security.go, D1507). The step the loop takes next is
+	// the first of the current plan it has not walked yet, and not the plan's
+	// next index, because a rebuild can also leave a step the loop has already
+	// walked out of the plan: level 1 runs at POC on the mode's own row and on
+	// no model of the run's, so a fix that raises the mode out of POC drops the
+	// first_line step (applyLevels writes a level that runs into the run's own
+	// configuration, and level 1 had no model to write), which moves every step
+	// after it up one place — an index would then step over the adversarial
+	// step the escalation just put in the plan. A kind names a step: a recipe
+	// carries at most one of each of the three (recipe.Parse).
+	walked := map[recipe.StepKind]bool{}
+	for {
+		next := -1
+		for i, st := range r.plan {
+			if !walked[st.Kind] {
+				next = i
+				break
+			}
+		}
+		if next < 0 {
+			return
+		}
+		st := r.plan[next]
+		walked[st.Kind] = true
 		switch st.Kind {
 		case recipe.StepFirstLine:
 			tier = runstore.TierSenior

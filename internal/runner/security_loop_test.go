@@ -4,10 +4,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // The escalation's activation wiring (D1507): the two seams the runner calls
@@ -119,6 +121,70 @@ func TestRunEscalationKeepsAPOCRunFromStoppingOnTheCheapLoop(t *testing.T) {
 	if rec.Outcome != runstore.OutcomeReady {
 		t.Fatalf("outcome = %s (reason %q), want ready: the adversarial round is the one that shipped", rec.Outcome, rec.Reason)
 	}
+}
+
+// TestRunEscalationRunsTheAdversarialStepWhenTheFixRaisesTheMode: the fix that
+// matches the list is the same fix that raises the rigor mode — roundRigor runs
+// first, then the escalation, so the escalation resolves the levels the raise
+// left (security.go, D22). At POC the mode's own row is what turns level 1 on
+// (rigor.defaultLevels), so a raise out of POC takes the first_line step away:
+// the plan the escalation rebuilds is the plan the loop is walking with a step
+// the loop has already run removed from the front, and every step after it
+// moves up one place. A loop that walks the plan by index therefore steps over
+// the adversarial step it just recorded: the escalation is on the record, level
+// 3 is on, and no round of it is ever asked — the run ends a draft, because the
+// level whose verdict readiness needs never ran.
+func TestRunEscalationRunsTheAdversarialStepWhenTheFixRaisesTheMode(t *testing.T) {
+	base := testutil.FixtureFiles(t)["fugaro.yaml"]
+	cfg := strings.Replace(base, "agent:\n",
+		"rigor:\n  default: poc\n  areas:\n    - { name: app, match: \"feature.txt\", mode: critical }\nagent:\n", 1)
+	if cfg == base {
+		t.Fatal("the fixture has no agent: block to put rigor: before, so the repository would not opt in")
+	}
+	// Level 2 is on at POC through a layer of its own (the mode's row turns it
+	// off), and the catalog's own `default` recipe supplies the first_line step
+	// the mode's row turns on. Level 1 is on by that row alone and on no model
+	// of the run's: the run names none, so nothing writes level 1 into its own
+	// configuration (applyLevels) and the raise out of POC takes the step with
+	// it.
+	raised := strings.Replace(cfg, "  review_rounds: 2\n",
+		"  review_rounds: 2\n  first_line_rounds: 1\n  levels: { l2: { model: senior-model } }\n", 1)
+	if raised == cfg {
+		t.Fatal("the fixture has no review_rounds line to put the levels beside")
+	}
+	h := newHarness(t, raised, nil)
+	rec, err := h.run(t,
+		implement("feature"),           // the file the area rule matches, and nothing on the list
+		review("ship", 0),              // review_first: the step the mode's POC row inserted
+		review("changes", 1),           // review round 1: asks for changes
+		fixRaisingTheModeOnAListedPath, // the fix matches the area and the list: the mode and level 3 move at once
+		review("ship", 0),              // review round 2
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review_first", "review", "fix", "review", "adversarial") {
+		t.Fatalf("stages = %v, want the escalation's adversarial step after the fix's review round", got)
+	}
+	if rec.Security == nil {
+		t.Fatal("the fix added a path on the list and the run recorded no escalation")
+	}
+	if rec.Security.At != runstore.SecurityAtFix || rec.Security.Pattern != "credentials" {
+		t.Errorf("the record's escalation = %+v, want the credentials row at the fix seam", rec.Security)
+	}
+	if rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("outcome = %s (reason %q), want ready: the adversarial round is the one that shipped", rec.Outcome, rec.Reason)
+	}
+}
+
+// fixRaisingTheModeOnAListedPath is the fix that moves both the rigor mode and
+// the security escalation at the same seam: it writes the file the area rule
+// matches, so roundRigor raises the mode, and commits a path on the list, so
+// the escalation beside it turns level 3 on.
+func fixRaisingTheModeOnAListedPath(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+	shell(t, req, "echo more >> feature.txt && mkdir -p internal/creds && echo 'package creds' > internal/creds/state.go && git add -A && git commit -qm 'Address review'")
+	verifyTest(t, ctx, req)
+	return agent.Result{}, nil
 }
 
 // TestRunEscalationRunsTheAdversarialStepThroughTheFixSeam: the second seam is
