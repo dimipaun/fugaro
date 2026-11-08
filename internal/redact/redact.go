@@ -132,6 +132,7 @@ func patternPass(s string) string {
 	s = signedParam.ReplaceAllString(s, "$1$2="+redacted)
 	s = connString.ReplaceAllString(s, "$1:"+redacted+"@")
 	s = passwordValue.ReplaceAllString(s, "$1$2$3$4$5"+redacted)
+	s = passwordCamel.ReplaceAllString(s, "$1$2$3$4$5"+redacted)
 	s = passwordFlag.ReplaceAllString(s, "$1 $2"+redacted)
 	for _, re := range tokenShapes {
 		s = re.ReplaceAllString(s, redacted)
@@ -271,18 +272,28 @@ var (
 	// tells the value from the text around it.
 	//
 	// What may stand before the name is anything but a lower-case letter: a
-	// name is written `DB_PASSWORD`, `PGPASSWORD`, `AWS_SECRET_ACCESS_KEY` or
-	// `MyPassword`, while a lower-case word that merely ends in one of these
-	// words — `bypass`, `compass`, `surpass` — is English, and redacting the
-	// value after it would eat the sentence instead. Two spellings are
-	// therefore not claimed, and both are a sentence read the same way: a
-	// name run together in lower case (`dbpassword=…`), and a value with
-	// neither a sign nor a dash before it (`PASSWORD hunter2`), which
+	// name is written `DB_PASSWORD`, `PGPASSWORD` or `AWS_SECRET_ACCESS_KEY`,
+	// while a lower-case word that merely ends in one of these words —
+	// `bypass`, `compass`, `surpass` — is English, and redacting the value
+	// after it would eat the sentence instead. A name run into the word before
+	// it is passwordCamel below, which reads it by the capital it starts with.
+	// Two spellings are therefore not claimed, and both are a sentence read the
+	// same way: a name run together in lower case (`dbpassword=…`), and a value
+	// with neither a sign nor a dash before it (`PASSWORD hunter2`), which
 	// passwordFlag below reads only where a flag's dashes introduce it. The
 	// value needs four bytes, the floor the exact pass uses and for its
 	// reason: a shorter one is not a credential, and replacing it mangles the
 	// text around it.
 	passwordValue = regexp.MustCompile(`(?i)(^|(?-i:[^a-z]))(pass(?:word|phrase|wd)?s?|pwd|secret(?:[_-]?(?:access[_-])?key)?)(\\*"?)(\s*[:=]\s*)((?:\\+)?")?([^\s"',;&\\]{4,})`)
+
+	// passwordCamel is the same name written inside another word, which is how
+	// a record, a config or a keyword connection string spells a field:
+	// `dbPassword`, `{"apiSecretKey":"…"}`, `smtpPassword:`. What tells it from
+	// English is the capital of the name's first letter — no word of a sentence
+	// carries one in its middle — so this rule reads the name case by case and
+	// lets anything precede it, where passwordValue above, whose name may be
+	// written in lower case, has to keep its boundary.
+	passwordCamel = regexp.MustCompile(`(^|[A-Za-z0-9_]*)(Pass(?:word|Phrase|Wd)?s?|Pwd|Secret(?:[_-]?(?:Access[_-])?Key)?)(\\*"?)(\s*[:=]\s*)((?:\\+)?")?([^\s"',;&\\]{4,})`)
 
 	// passwordFlag is the same credential on a command line, where the value
 	// follows the flag after a space rather than a sign

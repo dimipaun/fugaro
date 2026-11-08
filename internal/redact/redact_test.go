@@ -380,6 +380,19 @@ var patternCases = []struct {
 		leak: strings.Repeat("Qw3", 5),
 		keep: "aws s3 refused",
 	},
+	{
+		name: "password field of a record in camel case",
+		in: `{"dbPassword":"` + fake(strings.Repeat("Qw3", 5)) +
+			`","step":"terraform apply"}`,
+		leak: strings.Repeat("Qw3", 5),
+		keep: `"step":"terraform apply"}`,
+	},
+	{
+		name: "secret key a camel-case name introduces",
+		in:   "smtpSecretKey=" + fake(strings.Repeat("Qw3", 5)) + " smtp refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "smtp refused",
+	},
 }
 
 // TestRedactCorpus: a shape the exact pass cannot name is still a credential,
@@ -586,6 +599,7 @@ func TestRedactPassesLeaveCleanTextAlone(t *testing.T) {
 		"the password is wrong, so the update stops",
 		"the secret: it was rotated by the operator",
 		"compass: north, and bypass the cache to surpass it",
+		"a Compass: north, and the Surpass: 3 points",
 		"see https://api.example.com:8080/v1/runs for the endpoint",
 	} {
 		if got := Text(s, []string{"a-secret-value"}); got != s {
