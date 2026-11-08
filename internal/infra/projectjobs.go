@@ -639,14 +639,13 @@ func projectJobSecrets(lc *localcfg.Config, profile string, env map[string]strin
 // when the profile lists "default" (D5), which is the same rule that function
 // states — a profile that lists no account mounts no Claude token anywhere.
 //
-// The account axis's one non-account value never reaches here: account is one
-// entry of config.ProjectJobAccounts of a profile ProjectJobs has already
-// refused for naming it, in a check that stands ahead of the Bitbucket skip and
-// so covers every profile this loop is reached for. This function is
-// deliberately not a second reader of the value, because its container lookup
-// below would answer the sentinel with claude_accounts.<sentinel>.allow_data_to
-// — a key config.ValidateClaudeAccounts refuses — so an arm here could only
-// ever repeat, in a worse sentence, a refusal the caller has already made.
+// The account axis's one non-account value (config.AnthropicKeyAccount, the
+// project's own Anthropic API key) is one entry of config.ProjectJobAccounts
+// like any other, and the arm below is where it is answered: its job mounts no
+// token, because the credential is the platform's own — the container lookup
+// this function is otherwise made of would answer it with
+// claude_accounts.<sentinel>.allow_data_to, a key config.ValidateClaudeAccounts
+// refuses.
 //
 // The mount is refused, rather than granted, when the installation creates no
 // container for it: a job whose secret_env names a container the root does not
