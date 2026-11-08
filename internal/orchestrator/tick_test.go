@@ -196,6 +196,37 @@ func TestTickMarksAFinishedRunDone(t *testing.T) {
 		}
 	})
 
+	// The item a person moved while its run was going is what the fold's phase
+	// guard is for. The outcome is still the thing to record — it is what stops
+	// the attempt from being re-issued — while the phase is a move the table
+	// refuses, and a patch one op of which is refused fails the whole cycle
+	// before it plans anything: a fold that insisted on the phase would wedge
+	// the daemon on every tick, not once.
+	t.Run("a run that ends after a person cancelled the item records the outcome only", func(t *testing.T) {
+		w, it := o6OpenItem("wi-1", runID, now.Add(-time.Hour), now.Add(-30*time.Minute))
+		w.Phase = orchestrator.PhaseCancelled
+		// A node cannot carry a done item that keeps an approval (validate.go),
+		// so the approval a person's cancellation leaves behind is gone.
+		w.Approved = nil
+		h := newHarness(t, tickState(t, now, []orchestrator.WorkItem{w}, []orchestrator.Intent{it}), now)
+		h.reader.reports = []orchestrator.RunReport{{RunID: runID, Started: true, Finished: true, Outcome: orchestrator.OutcomeSucceeded}}
+
+		rep := h.step()
+		if rep.Folded != 1 {
+			t.Fatalf("the tick folded %d finished runs where one reported", rep.Folded)
+		}
+		got := h.state()
+		if w1 := got.WorkItems[0]; w1.Phase != orchestrator.PhaseCancelled {
+			t.Errorf("the item is %s, and a run's outcome is not what undoes a person's cancellation", w1.Phase)
+		}
+		if o := intentByID(t, got, "wi-1:1").Outcome; o != orchestrator.OutcomeSucceeded {
+			t.Errorf("the attempt ended %q, and its run reported succeeded", o)
+		}
+		if second := h.step(); second.Folded != 0 {
+			t.Errorf("a second tick folded %d runs, and the attempt it folded had reported", second.Folded)
+		}
+	})
+
 	// The mapping is the fold's whole decision, so it is pinned as a table
 	// rather than one case at a time: an outcome a run reports is a phase, and
 	// anything else is refused rather than guessed.
