@@ -21,6 +21,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	infraTF "github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
 // The credentials service's entry point (plan task C1.14) is not a command
@@ -348,6 +349,36 @@ func TestCredentialsServiceReviewJobAccountsReachTheAuthenticator(t *testing.T) 
 		if _, err := credsvc.NewServer(cfg); err != nil {
 			t.Fatalf("NewServer with %s = %q: %v", envReviewJobAccounts, raw, err)
 		}
+	}
+}
+
+// TestCredentialsServiceReviewJobAccountsAreOneTableWhateverTheDocumentsOrder:
+// the document is a deployment's own text, so its order is not a fact about the
+// installation and the same rows written twice are one account -- the table
+// this command builds is therefore the policy read's table, one row per account
+// in the table's own order (credsvc.ReviewJobAccountsFor, which is why the two
+// derivations share one function). Rows that name one account under two Claude
+// accounts are the one thing left alone here: that is a deployment disagreeing
+// with itself, and credsvc.NewAuthenticator is where it is refused.
+//
+// Mutation (verified, run and restored): dropping the de-duplication, or the
+// ordering, from credentialsServiceReviewJobAccounts -- FAIL.
+func TestCredentialsServiceReviewJobAccountsAreOneTableWhateverTheDocumentsOrder(t *testing.T) {
+	got, err := credentialsServiceReviewJobAccounts(`[
+		{"profile":"standard","provider":"github","account":"team-a"},
+		{"profile":"standard","provider":"github","account":""},
+		{"profile":"standard","provider":"github","account":"team-a"}]`, "proj-1234")
+	if err != nil {
+		t.Fatalf("credentialsServiceReviewJobAccounts: %v", err)
+	}
+	// The two rows the headline test pins by value, written in the other order
+	// and with one of them twice.
+	want := []credsvc.ReviewJobAccount{
+		{Email: "fugaro-p-standard-git-04644ca9@proj-1234.iam.gserviceaccount.com", Account: config.DefaultClaudeAccount},
+		{Email: "fugaro-p-standard-git-b5f51775@proj-1234.iam.gserviceaccount.com", Account: "team-a"},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("credentialsServiceReviewJobAccounts = %+v, want the table the policy read makes, %+v", got, want)
 	}
 }
 
@@ -726,8 +757,15 @@ func TestCredentialsServiceEnvIsTheDeploymentsOwn(t *testing.T) {
 	for _, m := range regexp.MustCompile(`name\s*=\s*"(FUGARO_[A-Z0-9_]+)"`).FindAllStringSubmatch(tf, -1) {
 		inModule[m[1]] = true
 	}
+	pending := infraTF.CredentialsServiceEnvAwaitingTheModule()
 	read := append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts, envPersonAccounts, envCoordinatorAccount, envReviewJobAccounts)
 	for _, n := range read {
+		if slices.Contains(pending, n) {
+			if inModule[n] {
+				t.Errorf("credentials.tf sets %s, so it is no longer a name the module does not render yet: drop it from internal/infra/tf's CredentialsServiceEnvAwaitingTheModule, which this test reads", n)
+			}
+			continue
+		}
 		if !inModule[n] {
 			t.Errorf("this command reads %s, which credentials.tf does not set on the service: the service would refuse to start on a deployment that is right", n)
 		}

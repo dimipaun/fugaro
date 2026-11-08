@@ -195,11 +195,27 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 	// carry would make this test pass on an environment every run refuses, and a
 	// name the allow-list carries that no plan renders is one the cover would
 	// admit without the module ever setting it.
+	//
+	// The cover admits a name before the module renders it
+	// (CredentialsServiceEnvAwaitingTheModule), so the plan plus that list is
+	// what the allow-list must hold — and each name on that list is checked
+	// against the plan first, which is the tripwire that fails once the module
+	// starts rendering it and the entry is left behind. The list is empty here:
+	// this branch is the module that renders its one entry, so the plan alone
+	// spells the allow-list.
 	names := slices.Sorted(maps.Keys(want))
 	allowed := slices.Clone(credentialsServiceEnv)
 	slices.Sort(allowed)
+	pending := CredentialsServiceEnvAwaitingTheModule()
+	for _, n := range pending {
+		if slices.Contains(names, n) {
+			t.Fatalf("the plan carries %s, so the module renders it now: drop it from CredentialsServiceEnvAwaitingTheModule (cover.go), which exists only for the names the module does not render yet", n)
+		}
+	}
+	names = append(names, pending...)
+	slices.Sort(names)
 	if !slices.Equal(names, allowed) {
-		t.Fatalf("this test spells %v as the service's environment, the cover allows %v", names, credentialsServiceEnv)
+		t.Fatalf("this test spells %v (the plan plus %v) as the service's environment, the cover allows %v", names, pending, credentialsServiceEnv)
 	}
 
 	got, fromSource := credentialsServiceEnvOf(t, rc)

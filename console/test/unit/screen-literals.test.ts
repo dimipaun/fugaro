@@ -88,8 +88,11 @@ const RENDERER = join(__dirname, '..', '..', 'src', 'renderer')
 
 /** SINKS are the functions whose argument is written to the screen unsanitized,
  * with the index of that argument. `note` is `projects.ts`'s wrapper around
- * `literal`, so its call sites are sinks of their own. */
-const SINKS: Readonly<Record<string, number>> = Object.freeze({ literal: 1, note: 2 })
+ * `literal` and `term` is `managed.ts`'s, so their call sites are sinks of their
+ * own: a wrapper around `literal` is a second door into the same slot, and a
+ * vocabulary entry that says "every call site passes a constant" is worth
+ * nothing unless the scan reads those call sites. */
+const SINKS: Readonly<Record<string, number>> = Object.freeze({ literal: 1, note: 2, term: 2 })
 
 /** Entry is why an argument is the console's own word: a reason, or a reason
  * that holds only inside one function's body (`within`). */
@@ -101,6 +104,10 @@ type Entry = string | { readonly within: string; readonly reason: string }
  * source text.
  */
 const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>>> = Object.freeze({
+  'accountkeys.ts': {
+    'model.because':
+      'every reason the section has not to draw a table -- the CLI\'s refusal sentence for its read (`settings.read`, the `SourceRefusal` channel), or one of this module\'s own sentences -- is put through `sanitizeRefusal` (`drawnRefusal`) in `buildAccountKeys`, before it is stored on the model, exactly as `projects.ts` does it for its panels. Design section 6.3 requires the CLI\'s sentence verbatim, so the pattern classes must not touch it: `roles/datastore.viewer` is `[redacted]` and the project\'s own config path is `<path>` under `sentence`, and the tab\'s settings panel draws the same refusal unedited. A sentence the sanitizer refuses is `REFUSAL_UNREADABLE` (`./degraded`), so the cell is never blank',
+  },
   'degraded.ts': {
     'state.installCommand': '`FUGARO_INSTALL_COMMAND` in `src/source/cli.ts`, which is the README\'s own `brew install dimipaun/tap/fugaro` rather than a string a document chose',
     'drawnOrNothing(state.operation)': '`OperationName`, the closed IPC allow-list union: the read the console asked for, in the console\'s own words, and passed through `sanitizeRefusal` again in `refused()` because `RefusedState` can be built without `refusedState`',
@@ -159,6 +166,15 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     'row.perRunCapSource': '`capSourceAt` keeps a word only when it is on `CAP_SOURCES`, else `unknown`',
     'panel.because':
       'every panel constructor draws its reason through `sanitizeRefusal` (`drawnRefusal`) before it is stored, or it is one of the two console constants (`POLICY_BECAUSE`, `ENROLLMENT_BECAUSE`); a document\'s own `note` takes the `putText` branch instead (`becauseKind`)',
+  },
+  'managed.ts': {
+    text: {
+      within: 'term',
+      reason:
+        'the parameter of the `term` helper itself; every call site passes one of this file\'s own term constants (`MANAGED_MARK_TERM`, `MANAGED_REASON_TERM`, ... `MANAGED_DIGEST_TERM`), which are the console\'s words for what the value beside them is',
+    },
+    'model.because':
+      'the section\'s one reason sentence: the CLI\'s own refusal, **through `sanitizeRefusal`** in `drawnRefusal` (the free-text rules would draw `roles/datastore.viewer` as `[redacted]` and the project as `<project>`, and the remedy is the whole value of a refusal), or one of this file\'s own sentences naming the command (`absent`), or `REFUSAL_UNREADABLE` when the CLI\'s sentence cannot be drawn at all -- the same three-way door `projects.ts`\'s `panel.because` and `degraded.ts` keep',
   },
   // The drawers outside `src/renderer/screens`: `src/shared/notice.ts` writes
   // the notice card's text slots, and `src/shared/version.ts` composes the
@@ -518,6 +534,11 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
       reason:
         'a `ProjectsTheme`, the closed theme tuple. The write is the frame\'s: it is the shell the entry mounts in the frame the tab is opened in, and `renderProjects` draws the whole screen by calling it (console 0.117.0)',
     },
+  },
+  'managed.ts': {
+    "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
+    'model.state':
+      '`ManagedState`, a closed union the model assigns (`read`, `unavailable`) and this file\'s own: there is no third, because the command answers with a document or it does not, and a document of a shape this build cannot read is a read that did not answer',
   },
   'degraded.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
@@ -1170,13 +1191,15 @@ const SHARED_DRAWER = '../../shared/notice.ts'
 const SKEW_MODULE = '../../shared/version.ts'
 
 describe('a screen writes only its own vocabulary through literal', () => {
-  it('reads the eleven screens', () => {
+  it('reads every screen module on the tree', () => {
     expect([...SCREEN_FILES]).toEqual([
+      'accountkeys.ts',
       'coordinator.ts',
       'degraded.ts',
       'graph.ts',
       'launch.ts',
       'live.ts',
+      'managed.ts',
       'nocheckout.ts',
       'policynotes.ts',
       'projects.ts',
@@ -1511,11 +1534,13 @@ describe('no module under src/renderer writes an inline style', () => {
       'graph/layout.ts',
       'graph/model.ts',
       'installations.ts',
+      'screens/accountkeys.ts',
       'screens/coordinator.ts',
       'screens/degraded.ts',
       'screens/graph.ts',
       'screens/launch.ts',
       'screens/live.ts',
+      'screens/managed.ts',
       'screens/nocheckout.ts',
       'screens/policynotes.ts',
       'screens/projects.ts',
