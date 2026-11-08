@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -44,6 +45,18 @@ const computeSocketGIDLabel = "socket-gid"
 func computeRig(t *testing.T) *initRig {
 	t.Helper()
 	r := newInitRig(t)
+	computeReady(t, r)
+	return r
+}
+
+// computeReady is what a rig needs beyond the installation for this stage: the
+// state bucket (this root has a state of its own), the pinned base image, the
+// run account a repository root would have created, the preload rebuild's job,
+// and the root's own outputs. It is apart from computeRig so a test whose
+// installation is a rig of its own -- one whose roles the grants node holds --
+// can have the same extras.
+func computeReady(t *testing.T, r *initRig) {
+	t.Helper()
 	r.stateBucket()
 	// The installation's pin, recorded by the run that pinned it.
 	r.appendConfig(t, "base_images:\n  "+config.BaseKind+": "+computePin+"\n")
@@ -64,7 +77,6 @@ func computeRig(t *testing.T) *initRig {
 	// script key's suffix).
 	r.script["output@compute"] = map[string]any{"stdout": computeOutputsJSON(t)}
 	r.save(t)
-	return r
 }
 
 // computeOutputsJSON is what the compute root's `terraform output -json`
@@ -227,6 +239,60 @@ func TestComputeStageProvisionsAfterATypedConfirmation(t *testing.T) {
 		if got := vars[k]; !equalJSON(got, want) {
 			t.Errorf("tfvars[%q] = %v, want %v", k, got, want)
 		}
+	}
+}
+
+// TestComputeRootTakesTheLaunchersTheModuleGrants: the compute root takes the
+// two role lists APART, and it is the only root that does (design
+// compute-backend §8.1 task 6): its var.launchers alone is what
+// roles/batch.jobsEditor and serviceAccountUser on the run accounts are for,
+// and its var.operators hold actAs on the preload account and nothing else
+// (modules/compute/iam.tf). The installation's own two lists are not that pair:
+// the derive keeps every admin in terraform.operators, because an admin operates
+// and the installation and repository roots want it there
+// (launchersWithOperators) -- so a root handed the derived spec's launchers
+// would grant roles/batch.jobsEditor to every admin the moment the rename
+// reached an installation, which is not the rename D1589 says this is: the
+// words move and the IAM does not (roles.go's launcherOnly).
+//
+// Mutation (pass e.spec.Launchers to this root): the admin is in the compute
+// root's launchers, the module for_eaches its Batch grant over them, and both
+// assertions below fail.
+func TestComputeRootTakesTheLaunchersTheModuleGrants(t *testing.T) {
+	const launcher, admin = "user:run@example.com", "user:root@example.com"
+	r, db := accessRig(t, nil, nil, nil, nil)
+	// An installation whose roles have moved to the grants node: one person who
+	// starts runs, and one admin, who the installation's launcher list holds too.
+	db.Set(accesslib.PathNode, accessNodeDoc(
+		projectGrant(launcher, accesslib.RoleOperator),
+		projectGrant(admin, accesslib.RoleAdmin)))
+	computeReady(t, r)
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "", "setup", "--yes", "--provision-batch")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	// The compute root's own variable: the launcher alone, and the admin where
+	// the module expects an operator.
+	vars := computeTfvars(t, r)
+	if got := members(vars["launchers"]); !slices.Equal(got, []string{launcher}) {
+		t.Errorf("the compute root's launchers are %v, want %v: the module grants roles/batch.jobsEditor and serviceAccountUser on the run accounts to this list alone\n%s",
+			got, []string{launcher}, out)
+	}
+	if got := members(vars["operators"]); !slices.Equal(got, []string{admin}) {
+		t.Errorf("the compute root's operators are %v, want %v: they hold actAs on the preload account\n%s", got, []string{admin}, out)
+	}
+	// And the installation's own apply is untouched by that reading: its
+	// launchers are the two lists unioned, which is what they were before the
+	// rename and what an operator who may cancel a run needs
+	// (launchersWithOperators).
+	v := r.tfvars(t)
+	if got := members(v["launchers"]); !slices.Equal(got, []string{admin, launcher}) {
+		t.Errorf("the installation's launchers are %v, want %v: the rename moves no IAM there either\n%s",
+			got, []string{admin, launcher}, out)
+	}
+	if got := members(v["operators"]); !slices.Equal(got, []string{admin}) {
+		t.Errorf("the installation's operators are %v, want %v\n%s", got, []string{admin}, out)
 	}
 }
 

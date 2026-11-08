@@ -377,7 +377,14 @@ func (s *computeStage) prepare(ctx context.Context) error {
 		Subnetwork:         infra.DefaultSubnetwork(e.spec.Project, e.spec.Region),
 		Names:              infra.ComputeNamesFor(),
 		ManageAPIs:         e.spec.ManageAPIs,
-		Launchers:          e.spec.Launchers,
+		// The launchers alone, and not the admins the roles' lists put beside
+		// them: this root's var.launchers is what roles/batch.jobsEditor and
+		// serviceAccountUser on the run accounts are for, and its var.operators
+		// hold actAs on the preload account and nothing else (modules/compute/
+		// iam.tf). The installation's own spec.Launchers is the union the
+		// derive builds, which is what the installation and repository roots
+		// want and what this one must not take (roles.go's launcherOnly).
+		Launchers:          launcherOnly(e.spec.Launchers, e.spec.Operators),
 		Operators:          e.spec.Operators,
 		RunAccounts:        runAccounts,
 		RegistryRepository: registryRepository(e.lc, outs),

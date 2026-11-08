@@ -143,6 +143,15 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 	if _, err := Parse(out); err != nil {
 		t.Errorf("published file does not parse: %v", err)
 	}
+	// The published document carries the version every Fugaro of this
+	// installation can read, whatever the file it came from says: ConfigVersion
+	// 2 renamed the two lists in the terraform block, and this copy has no
+	// terraform block, so a published 2 would stop an un-upgraded teammate's
+	// Fugaro with "version 2 is newer than the 1 this Fugaro writes" for a
+	// document that says nothing version 2 is about.
+	if got := lc.Shared().Version; got != SharedVersion {
+		t.Errorf("the published config is version %d, want %d", got, SharedVersion)
+	}
 	// The receiver is untouched — including the routing switch, which is the
 	// operator's own and stays in their config after it has been published to
 	// the node (nothing here reads it again, but Shared must not be the thing
