@@ -15,7 +15,7 @@ import (
 )
 
 // This file is the one write path of the settings commands: the diff, the
-// confirmation, the coding-agent-session refusal, the backup and the atomic
+// sentence, the coding-agent-session refusal, the backup and the atomic
 // write, in one place (settings plan F4, D847). S6–S9 of that plan and the
 // rigor design's R4 and R5 call it rather than carrying a copy, so `settings
 // set`, `rigor set` and `accounts add` cannot come to ask differently for the
@@ -35,9 +35,9 @@ type settingsEdit struct {
 	// by the caller. The helper writes nothing when the two are equal.
 	Old, New []byte
 	// What is the sentence naming what changes. It is printed before the write —
-	// the whole of what the y/N confirmation showed, minus the prompt itself
-	// (D1540) — and it is the sentence the one question a write may still ask is
-	// built from (announceSettingsWrite, D1544).
+	// the whole of what the y/N confirmation used to show, minus the prompt
+	// itself (D1540) — and it is the sentence the one question a write may still
+	// ask is built from (announceSettingsWrite, D1544).
 	What string
 	// Typed marks the widening directions: a loosened ceiling, a floor
 	// removed, a followup key turned on. They are the owner's own step, so
@@ -92,7 +92,7 @@ type settingsEdit struct {
 	DryRun *settingsDryRun
 }
 
-// settingsEditDiff is the line diff the confirmation shows. It is built here
+// settingsEditDiff is the line diff every settings write prints. It is built here
 // rather than at each caller so every settings write prints the same shape.
 func settingsEditDiff(old, new []byte) string {
 	return lineDiff(string(old), string(new))
@@ -110,10 +110,10 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	}
 	diff := settingsEditDiff(e.Old, e.New)
 
-	// The refusal comes before the confirmation and before anything is
-	// written (SD9). The bytes are the caller's — it read them to build the
-	// diff this prints — so what is refused here is the write and the
-	// confirmation, never the read. A session outside a repository writes
+	// The refusal comes before the sentence and before anything is written
+	// (SD9). The bytes are the caller's — it read them to build the
+	// diff this prints — so what is refused here is the write and the sentence,
+	// never the read. A session outside a repository writes
 	// nothing at all, `--yes` included; a session inside one writes the file
 	// it could edit anyway, except when the edit is the widening one — the
 	// owner's own hand, whose file decides the ceiling of every run the
@@ -136,7 +136,7 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	}
 
 	// The dry run stops here: the classification is the caller's, and what is
-	// left of this function is the confirmation, the backup and the write,
+	// left of this function is the sentence, the backup and the write,
 	// none of which a dry run does (D1106). It is after the refusal above on
 	// purpose — a dry run answers for the write, so it is refused wherever the
 	// write would be, and the fence stays the first thing either path meets.
@@ -148,8 +148,8 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	// No write asks anything (D1540), so what a person reads is one of three
 	// things. A managed project's own terminal reads the gate's sentence (the
 	// ruling of 2026-11-01): the gate read this edit's document, admitted it, and
-	// its verdict IS the confirmation — the diff above is the whole of what the
-	// owner reads. A widening reads what it widens (D1552, D1555):
+	// its verdict IS what the write proceeds on — the diff above is the whole of
+	// what the owner reads. A widening reads what it widens (D1552, D1555):
 	// initflow.GateConfirms is false for one whatever the verdict was (D1026, and
 	// settingsEdit's own editClass). Every other edit reads the sentence naming
 	// it, and the one question a write may still ask is the one --ask puts back
@@ -170,8 +170,8 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 		// asks nothing for it (D1552, D1555): a coding agent's session was
 		// refused above, whatever --yes said, and what is left here is the
 		// sentence saying what this write widens and the sentence saying what
-		// it writes — the whole of what the typed name's confirmation showed
-		// minus the prompt itself. The typed name this branch used to ask for
+		// it writes — the whole of what the typed name's confirmation used to
+		// show, minus the prompt itself. The typed name this branch used to ask for
 		// was the last prompt of a raise form, and it is gone with D1540: no
 		// command waits on stdin, and a question a session can answer is not a
 		// fence.
@@ -215,8 +215,8 @@ func (e settingsEdit) insideRepo() bool { return e.Kind == settingsDocRepo }
 // editClass is the confirmation class of this edit, which is the class the
 // managed gate reads: Typed is D846's widening form — a loosened ceiling, a
 // floor removed — and everything else is the ordinary y/N. It is derived here
-// and not passed beside Managed, because the two facts a confirmation is
-// decided under have to agree: a caller that could name a class of its own
+// and not passed beside Managed, because the two facts a write is decided
+// under have to agree: a caller that could name a class of its own
 // could name the one the gate covers for an edit that is Typed, and D1026's
 // rule is exactly that no plan gate admits one.
 func (e settingsEdit) editClass() initflow.ConfirmClass {

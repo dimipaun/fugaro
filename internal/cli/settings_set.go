@@ -223,8 +223,9 @@ type settingsWriteOptions struct {
 	yes     bool
 	// ask is --ask, the symmetric half of --yes (the owner's rule of
 	// 2026-11-04): in a project whose marks say it is managed, where this
-	// command would ask nothing, it asks the write's own confirmation —
-	// ordinary or typed — instead. Unmanaged, it says so and changes nothing;
+	// command would ask nothing, it asks the write's own question — the ordinary
+	// one, since a widening asks none with or without it — instead. Unmanaged,
+	// it says so and changes nothing;
 	// with no terminal, in a managed project, it refuses rather than proceeds
 	// (managed_ask.go is the whole of it). It is refused beside --yes.
 	ask    bool
@@ -1318,7 +1319,7 @@ func settingsListSubset(a, b string) bool {
 // settingsTypedWrite reports whether this write is one D846 reserves for the
 // owner's own hand, and the sentence saying what it widens: the write prints it
 // and the dry run carries it as `why`, and it no longer ends by naming a
-// confirmation, because a widening asks for none (settings_write.go, D1552).
+// question, because a widening asks none (settings_write.go, D1552).
 // mode is the edit being made: set, unset, add or remove. `remove` takes one
 // member out of a list, which narrows it, so it is never the typed form and has
 // no case below; `unset` always is, for a ceiling, because it hands the

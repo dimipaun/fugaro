@@ -91,12 +91,13 @@ import (
 // from content the session can write (spec §1, spec §7).
 //
 // Why the class the gate judges under is YesOrTyped and not the edit's own.
-// The edit's Typed form is what the confirmation asks a PERSON for, and it
-// stays the fence's (settingsEdit.editClass): nothing here touches it. What the
+// The edit's Typed form is the class no session writes and the owner's own hand
+// keeps, and it stays the fence's (settingsEdit.editClass): nothing here
+// touches it. What the
 // gate adds is the refusal the session reads instead of the marker's own — and
 // the typed edit is refused BY A RULE of the gate (settingsOwnerOnlyRule), so
 // the session reads which declaration it tried to move rather than "run this
-// yourself". Both halves hold at once: an edit the typed confirmation reserves
+// yourself". Both halves hold at once: an edit the Typed class reserves
 // is refused by the gate, and an edit the gate admitted without noticing the
 // typed form would still be refused by the fence, because the fence decides
 // `Typed` on its own (D1026's rule is asked there and is not restated here).
@@ -116,12 +117,11 @@ import (
 // and the write's own y/N was the question the gate stood in for. That y/N is
 // gone (D1540) and the terminal it was asked at is not, so the read is made
 // where the write is the owner's own: a real terminal
-// (settingsWriteOwnTerminal), which is the condition the prompt had. A run with
-// no terminal is refused before the file is touched and has no write for the
-// gate to answer for, so it pays for no read either; --ask does not narrow this
-// — the flag asks the confirmations of a run that has already been admitted,
-// and the gate's verdict is read before it. The aim is the write's own
-// condition, asked once, in settingsGateAsks.
+// (settingsWriteOwnTerminal), which is the condition the prompt had, or --ask,
+// which puts that one question back (D1544). A run with neither writes without
+// asking anything and has no question for the gate to stand in for, so it pays
+// for no read either. The aim is the write's own condition, asked once, in
+// settingsGateAsks.
 
 // settingsGateMarker is the coding agent's session this command was run in, ""
 // for a person at a terminal. It is read once per command, here, so the two
@@ -138,11 +138,11 @@ func settingsWriteOwnTerminal(cmd *cobra.Command) bool {
 	return stdinIsTerminal(cmd.InOrStdin())
 }
 
-// settingsGateAsks reports whether one edit is one this command would ask a
-// confirmation for — the coding agent's refusal SD9 makes, or the y/N a person
-// at a terminal is asked. applySettingsEdit reads exactly this condition, and a
-// gate consulted anywhere else would be reading marks for a write nobody would
-// have been asked about (D1025).
+// settingsGateAsks reports whether one edit is one made on the owner's own
+// word — the coding agent's refusal SD9 makes, or the write a person at a
+// terminal (or one --ask) is making. applySettingsEdit reads exactly this
+// condition, and a gate consulted anywhere else would be reading marks for a
+// write this condition does not cover (D1025).
 func settingsGateAsks(marker string, asks bool, kind settingsDocKind, typed bool) bool {
 	if marker != "" {
 		return kind != settingsDocRepo || typed
@@ -248,8 +248,8 @@ func settingsWriteGate(ctx context.Context, lc *localcfg.Config, marker, subcomm
 }
 
 // settingsManagedStep is the whole of one command's call of the gate: read,
-// judge, admit. It answers the value the step's confirmation is decided under
-// (the zero value is "not managed", which keeps today's refusal), the gate
+// judge, admit. It answers the value the step is decided under (the zero value
+// is "not managed", which keeps today's refusal), the gate
 // itself — whose recorded call the caller makes after its write, and whose zero
 // value records nothing — and the gate's own refusal, in the gate's own words,
 // when the gate refused the document.
@@ -303,7 +303,7 @@ func settingsManagedStep(ctx context.Context, lc *localcfg.Config, selPath strin
 
 // settingsManagedVerdict judges the document one settings write would land,
 // with this command's rules, and answers the verdict the gate decides the
-// session's confirmation under.
+// session's write under.
 //
 // The document is the bytes the write would put in the file (D1022's digest is
 // taken from them), judged against the bytes the file holds now — and it is the

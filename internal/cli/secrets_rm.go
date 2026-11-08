@@ -27,7 +27,7 @@ import (
 // secret (D1260).
 //
 // The config half is the settings commands' one write path (applySettingsEdit),
-// so the diff, the confirmation, the backup and the compare-and-swap are the
+// so the diff, the sentence, the backup and the compare-and-swap are the
 // same ones every other settings write pays. The order is that half first
 // because it is the one that can be undone: a deletion that fails puts the entry
 // back where it was (secretsRmUndo), so the command cannot leave a policy
@@ -118,9 +118,9 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 			strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", "), config.SecretNameRE)
 	}
 	// --yes is passed with the other two so the pair the settings write path
-	// refuses is refused here as well: a dry run and a confirmation answer
-	// different questions, and a --yes accepted beside --dry-run would be a
-	// confirmation the person believes they gave for a removal that never ran.
+	// refuses is refused here as well: a dry run and a write's own question
+	// answer different questions, and a --yes accepted beside --dry-run would be
+	// an approval the person believes they gave for a removal that never ran.
 	if err := settingsDryRunFlags(settingsWriteOptions{dryRun: o.dryRun, jsonOut: o.asJSON, yes: o.yes}); err != nil {
 		return err
 	}
@@ -334,9 +334,9 @@ func secretsRmUndo(id, path, block, name string, old, next []byte, changed bool,
 		id, failed, key)
 }
 
-// secretsRmWhat is the sentence the confirmation shows. It names both halves
-// this command removes, because the diff below it shows only one of them, and
-// it names the block the entry lives in: a confirmation that said
+// secretsRmWhat is the sentence the write prints. It names both halves this
+// command removes, because the diff below it shows only one of them, and it
+// names the block the entry lives in: a sentence that said
 // project_secrets.NAME for a workflow secret would describe a key the run does
 // not touch.
 //

@@ -21,7 +21,7 @@ import (
 )
 
 // This file is the local-config half of `fugaro accounts add`: the name, the
-// repositories, the profile, the subset rule and the one confirmation. It
+// repositories, the profile, the subset rule and the one sentence it prints.
 // writes the two keys that decide where a named account's token may be sent
 // and which profile serves it, and nothing else — the secret and the converge
 // are the second half. The edit is internal/yamledit's and the write is the
@@ -64,7 +64,7 @@ every repository on it: an account that covers less is refused before the file
 is touched, naming the repositories it is missing, because widening the account
 silently is what that rule exists to prevent.
 
-Then it converges, in one command and behind the one confirmation above: the
+Then it converges, in one command and behind the one sentence it prints: the
 token is stored project-wide as a new version of the account's own secret, the
 account's broken mark is cleared, and the publisher, the job set and this
 checkout's repository root are converged — the same stages fugaro update runs,
@@ -154,8 +154,7 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	}
 
 	// A name this file already defines is a rotation (spec §2.2 step 1): the
-	// token written for it replaces the one in use, and the confirmation says
-	// so. It is read from the config as it was, before the edit above.
+	// token written for it replaces the one in use, and the sentence says so. It is read from the config as it was, before the edit above.
 	_, rotation := lc.ClaudeAccounts[name]
 	beyond := accountsAddBeyond(cmd.Context(), repos)
 	what := accountsAddWhat(after, name, profile, beyond, rotation)
@@ -185,8 +184,8 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// ruling of 2026-11-02: everything that can refuse the login — a coding
 	// agent's session, a terminal that is not there, an exported credential, a
 	// claude fugaro will not run — happens before the diff and before the
-	// confirmation, so nobody is asked to answer for a login that cannot happen
-	// and every refusal leaves the file exactly as it was.
+	// sentence, so the run never announces a login that cannot happen and every
+	// refusal leaves the file exactly as it was.
 	var claudeBin string
 	if o.claude {
 		if claudeBin, err = accountsAddClaudePrepare(cmd, sel.Path, what, command); err != nil {
@@ -242,9 +241,9 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 			return err
 		}
 	}
-	// §3's act one itself, after the one confirmation and before the token is
-	// stored below: the login runs on the owner's own terminal because they
-	// answered for it, and what it prints is still not the value that is kept —
+	// §3's act one itself, after the one sentence and before the token is stored
+	// below: the login runs on the owner's own terminal, and what it prints is
+	// still not the value that is kept —
 	// the hidden prompt below remains the only token path.
 	if o.claude {
 		if err := accountsAddClaudeRun(cmd, claudeBin); err != nil {
@@ -424,7 +423,7 @@ func accountsAddCovers(covered []string, provider, pattern string) bool {
 }
 
 // accountsAddBeyond is the repositories --repos names beyond the checkout the
-// command runs in: the widening the confirmation says out loud. With no
+// command runs in: the widening the sentence says out loud. With no
 // checkout there is no default to be measured against, so every named
 // repository is one the token may reach from here.
 func accountsAddBeyond(ctx context.Context, repos []string) []string {
@@ -441,21 +440,21 @@ func accountsAddBeyond(ctx context.Context, repos []string) []string {
 	return out
 }
 
-// accountsAddWhat is the one confirmation's text (D868, spec §2.6): every
+// accountsAddWhat is the one sentence's text (D868, spec §2.6): every
 // change the command makes — the two keys it writes, the secret it stores
 // project-wide, the policy node it publishes, the job it deploys — and, only
 // when the token may reach a repository beyond this checkout, the sentence
 // saying what that widening means. The rest of the block is printed either way,
-// so the confirmation a person reads is never a bare y.
+// so what a person reads is never one bare line.
 //
-// It is one confirmation for the whole command and not two: the converge is
-// what --yes covers here, and a person who read this block and answered it has
-// answered for the stages too (spec §2.5).
+// It is one sentence for the whole command and not two: the converge is what
+// --yes covers here, and a person who read this block has read what the stages
+// below are for too (spec §2.5).
 //
 // The list is the one the account ends up with, read back from the config this
 // would write, and not the --repos it was given: re-declaring an account adds
-// to the list it already has, and a confirmation that named the flag would
-// print a shorter list than the file it asks to write. The published list is
+// to the list it already has, and a sentence built from the flag would print a
+// shorter list than the file it describes. The published list is
 // the derivation's — the account's repositories qualified with the provider of
 // the profile that serves it — so what the node will carry is stated, not
 // guessed.

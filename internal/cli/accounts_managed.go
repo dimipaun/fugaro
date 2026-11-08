@@ -32,7 +32,7 @@ import (
 //
 //   - A widening (`--repos` naming a repository beyond the checkout this
 //     command runs in, D868). The rule is the command's own — the sentence the
-//     owner's confirmation carries — and the gate is asked whether the step may
+//     owner's own write carries — and the gate is asked whether the step may
 //     pass WITHOUT that person. A session cannot answer for a widening on the
 //     owner's behalf, so the gate refuses it: the token of an account declared
 //     here may be sent to a repository the run cannot see, which is the one
@@ -53,11 +53,11 @@ import (
 //
 // Where the read happens, and why it is exactly where this command would ask
 // (D1015, and the owner's ruling of 2026-11-01). In a coding agent's session the
-// gate stands in for the refusal SD9 makes; in a person's own terminal it stands
-// in for the y/N the declaration is confirmed with, so it is read there too —
-// and only there: a run with --yes answers the declaration itself and a run with
-// no terminal is refused before anything is opened, so neither has a question
-// for the gate to answer. A run that asks nothing reads nothing, which is what
+// gate stands in for the refusal SD9 makes; in a person's own terminal the write
+// is the owner's own, so it is read there too — and only there: a run with no
+// terminal and no --ask (settingsWriteOwnTerminal, and settingsGateAsks) writes
+// without asking anything, so it has no question for the gate to answer. A run
+// that asks nothing reads nothing, which is what
 // keeps a project whose marks are stale, unreadable or on another machine from
 // slowing down or stopping a command that was never going to ask. Everywhere
 // else a read that does not answer fails closed: readManagedGate's own error, a
@@ -68,8 +68,8 @@ import (
 // accountsAddTypedEdit is whether any edit this command makes is a Typed class
 // one, and the answer is no: a widening is REFUSED rather than typed
 // (accountsAddRules) and a token entry is refused at its own step
-// (accountsAddTokenStep), so there is no confirmation here the gate has to
-// leave to the owner's own word.
+// (accountsAddTokenStep), so there is no Typed step here the gate has to leave
+// to the owner's own word.
 //
 // Why it is named rather than written as a literal at the call below. The value
 // reaches settingsGateAsks, whose answer for a coding agent's session is "read
@@ -82,8 +82,8 @@ import (
 const accountsAddTypedEdit = false
 
 // accountsAddGate is the whole of this command's call of the gate: read, judge,
-// admit. It answers the value the step's confirmation is decided under (the
-// zero value is "not managed", which keeps today's refusal), the gate itself —
+// admit. It answers the value the step is decided under (the zero value is
+// "not managed", which keeps today's refusal), the gate itself —
 // whose recorded call the caller makes after its write, and whose zero value
 // records nothing — and the gate's own refusal, in the gate's own words, when
 // the gate refused the document.
@@ -137,11 +137,11 @@ func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Confi
 	if len(refused) > 0 {
 		conv = managedmode.ConvergeRefused(doc, initflow.YesOrTyped, refused)
 	}
-	// YesOrTyped is the class of the confirmation this step is: the ordinary
-	// y/N the diff above is answered with. It is not a Typed step — the widening
-	// directions D846 reserves the typed name for are money and permanent
-	// changes, and what is written here is neither — and D1026's class rule
-	// reads this value rather than trusting the class to be one a plan judges.
+	// YesOrTyped is the class of the step this command makes: the ordinary edit
+	// the diff above describes, and not a Typed step — the widening directions
+	// D846 reserves the typed name for are money and permanent changes, and what
+	// is written here is neither — and D1026's class rule reads this value rather
+	// than trusting the class to be one a plan judges.
 	m, err := gate.admit(ctx, initflow.YesOrTyped, conv)
 	if err == nil {
 		return m, gate, nil
@@ -169,8 +169,8 @@ func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Confi
 // and the class they are judged under.
 //
 // The repository rules are the ones accountsAddBeyond and accountsAddSubsetRule
-// already decided, read back rather than re-derived: beyond is the widening the
-// confirmation names, and the profile's coverage was refused before this
+// already decided, read back rather than re-derived: beyond is the widening
+// the sentence names, and the profile's coverage was refused before this
 // command had a document at all. What the gate adds is the answer an agent's
 // session needs — that this step's own rules are the whole of what was judged
 // — and a rule that passed is written into the record beside the ones that did.
