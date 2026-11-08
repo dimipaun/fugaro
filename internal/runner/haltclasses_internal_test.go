@@ -17,11 +17,22 @@ import (
 // that answers again, never a cap raised; and the governance tripwires are
 // halted_governance, the slice the checkpoint schema is pinned to.
 //
-// It is the one home of that table, and it is a function rather than a
-// package-level map so that a test that mutates what it is handed cannot
-// reach the next one; both walks over it — the mapping itself and the record a
-// halt leaves — read this table, so neither can drift from the other and a
-// reason placed in the wrong family is red in both (D1455).
+// The two reasons whose names carry "budget" and whose family is not the
+// budget one are the design's row itself, not a reading of it:
+// halted_credential is "no credential became usable, or the budget database
+// refused", and it names budget_unavailable and budget_token_expired
+// (`docs/design/failure-classes.md:164`). F17 corrects only that row's line
+// citation — the four names span `runstore.go:54`–`71`, so the row's `:55–71`
+// starts one line late — and does not move the reason out of the family.
+//
+// It is the expected side of the walk below, written out from the design
+// rather than read off the switch it is compared with, and it is a function
+// rather than a package-level map so that a test that mutates what it is
+// handed cannot reach the next one. The two walks over it — the mapping itself
+// and the record a halt leaves — read the one table, so neither can drift from
+// the other. It cannot catch a family moved in both this table and the switch:
+// what holds the value itself is D1455's agreement with the reader, whose half
+// is FC5's (below).
 func haltFamilies() map[runstore.HaltReason]failure.Class {
 	return map[runstore.HaltReason]failure.Class{
 		runstore.HaltKillSwitch:         failure.HaltedKillSwitch,
@@ -53,9 +64,12 @@ func haltFamilies() map[runstore.HaltReason]failure.Class {
 // both directions, so a reason added without a family and a family kept for a
 // reason runstore no longer declares are both red.
 //
-// D1455's agreement test is the same walk read against the reader's mapping
-// (internal/runview's ClassOf, FC5): the writer's table is this one, and the
-// reader's half cannot be asserted before it exists.
+// D1455's agreement test is the same walk read against the reader's mapping,
+// and it cannot be written from here: the reader is internal/runview's ClassOf
+// (FC5), which does not exist yet, and its half of the agreement is asserted
+// there — TestLegacyClassFromReasonTable reads a legacy halt's reason through
+// the same families this table states. What this file owes that one is the
+// table itself, which is the one home of the mapping on the writer's side.
 func TestHaltReasonsMapToTheirFamily(t *testing.T) {
 	families := haltFamilies()
 	reasons := haltReasonConstants(t)
