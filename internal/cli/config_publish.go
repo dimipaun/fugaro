@@ -187,7 +187,7 @@ func newConfigPublishCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&executable, "executable-changes", false, "allow a change to a profile's commands, image.apt or image.setup (they run as shell in every repository that takes the profile); a managed project refuses such a change in a coding agent's session whatever this flag says")
+	cmd.Flags().BoolVar(&executable, "executable-changes", false, "allow a change to a profile's commands (they run as shell in every repository that takes the profile); a managed project refuses such a change in a coding agent's session whatever this flag says")
 	addCloudFlags(cmd, &o)
 	return cmd
 }
