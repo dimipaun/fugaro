@@ -263,10 +263,10 @@ lists; the three the lookup uses are:
 
 Two properties of that `description` the mapping has to carry, both readable from the two examples:
 
-- **It is per resource, not per machine type.** The catalog prices CPU utilization and RAM utilization
-  separately, inside a named family and region; no SKU in the probe is named for a Cloud Build machine
-  type. So the table T8 pins is machine type → the SKU(s) whose description matches it, and whether one
-  machine type is one row or a CPU row and a RAM row summed is T8's to pin, with
+- **It is per resource, not per machine type.** The descriptions the probe read price CPU utilization
+  and RAM utilization separately, inside a named family and region, and name no Cloud Build machine type
+  (`E2_HIGHCPU_8`). So the table T8 pins is machine type → the SKU(s) whose description matches it, and
+  whether one machine type is one row or a CPU row and a RAM row summed is T8's to pin, with
   `TestBuildCostIsAnUpperBound` freezing the ids and the arithmetic (§6, amendment 2).
 - **It can name a pool the build is not in.** `"(Private Pool)"` appears in a description, and Fugaro
   submits to the **default pool** (the bullet below), so a SKU whose description carries a pool marker
@@ -478,8 +478,9 @@ price refuses — with three amendments.**
    risk the GA catalog does not carry.
 2. **Pin the mapping, not the price.** A small reviewed table in `internal/budget/buildcost.go` maps
    Cloud Build's machine-type enum (`E2_HIGHCPU_8`, `e2-medium`, the `n1-highcpu-*` aliases) to the
-   **SKU id and its `description` predicate** per region family — the prose shape §1.5 verified, and
-   the reason a row is a named SKU and not a fuzzy match; the lookup supplies only the *number*.
+   **SKU id and its `description` predicate** per region family — the prose shape §1.5 verified, so a row
+   carries both the id it resolves to and what the description must say, and the test can freeze what the
+   runtime predicate matches; the lookup supplies only the *number*.
    `TestBuildCostIsAnUpperBound` freezes the SKU ids and the arithmetic. This is what turns
    a silent mapping bug into a failing test — and a silent mapping bug is the one way this design
    under-estimates.
