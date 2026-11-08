@@ -410,6 +410,13 @@ var patternCases = []struct {
 		keep: "Database=app",
 	},
 	{
+		name: "password holding a quote in a keyword connection string",
+		in: "Pwd=" + fake(`ab"`, strings.Repeat("Qw3", 3)) +
+			";Database=app refused",
+		leak: fake(`ab"`, strings.Repeat("Qw3", 3)),
+		keep: ";Database=app refused",
+	},
+	{
 		name: "secret key in an environment dump",
 		in:   "AWS_SECRET_ACCESS_KEY=" + fake(strings.Repeat("Qw3", 5)) + " aws s3 refused",
 		leak: strings.Repeat("Qw3", 5),
