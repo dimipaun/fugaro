@@ -2291,6 +2291,14 @@ func TestIssuesNudgeKeysDecodeStrictly(t *testing.T) {
 		t.Errorf("with only nudge_after_days written: %d and %d, want 30 and the default %d",
 			c.NudgeAfterDays(), c.NudgeRecurrence(), DefaultIssuesNudgeRecurrence)
 	}
+	// One is the boundary validate accepts: a day's wait and a single
+	// occurrence are figures the section can use, where zero and below are not.
+	if c, err = Parse([]byte(sample + "issues: { nudge_after_days: 1, nudge_recurrence: 1 }\n")); err != nil {
+		t.Fatalf("thresholds of one: %v", err)
+	}
+	if c.NudgeAfterDays() != 1 || c.NudgeRecurrence() != 1 {
+		t.Errorf("thresholds = %d and %d, want 1 and 1", c.NudgeAfterDays(), c.NudgeRecurrence())
+	}
 	for name, y := range map[string]string{
 		"unknown block field": "issues: { firm_after: 3 }\n",
 		"misnamed key":        "issues: { nudge_after_day: 3 }\n",

@@ -390,9 +390,11 @@ const (
 	// thresholds (docs/troubleshoot-issue/). The spec states the behaviour
 	// (§6: the wording gets firmer as an issue ages or recurs more often, at
 	// thresholds config may set) and leaves the keys unnamed, so the row
-	// points at the plan for docOrchestrator's reason: the key names and their
-	// defaults are stated there and nowhere else yet, and a spec of the
-	// section's own would be the document that takes the rows over.
+	// points at the plan for docOrchestrator's reason: the two keys are named
+	// there and nowhere else yet. The plan states no figure — it says the
+	// defaults are documented — so the values themselves are this table's
+	// DEFAULT column and the schema's keyDefaults, and a spec of the section's
+	// own would be the document that takes the rows over.
 	docTroubleshoot = "docs/troubleshoot-issue/implementation-plan.md"
 )
 
