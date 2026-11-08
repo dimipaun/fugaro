@@ -12,12 +12,16 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"regexp"
 	"strings"
 	"sync"
 	"testing"
 
+	"golang.org/x/oauth2"
+
 	"github.com/dimipaun/fugaro/internal/infra/managed"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 )
 
@@ -621,6 +625,54 @@ func TestRestoreKeepsNoTerraformTailInItsLog(t *testing.T) {
 	}
 	if !strings.Contains(log, "terraform apply exited 1") {
 		t.Errorf("the log's line does not name the failure the step ended with:\n%s", log)
+	}
+}
+
+// TestRestoreEndsItsApplyStepWhenTheApplyFailsBeforeItsPlan: the apply a
+// restore ends in opens its step before it reads anything, so a run the apply
+// turns away before the plan — the project number, the budget gate, the
+// owner's list, the caller's own credential, the workdir, the root copy, the
+// plugin cache, terraform on PATH — ends that step, and the restore's closing
+// line is a failure. Without it the restore had already marked config, project
+// and checkout done, so the same run closed with "Done in …, 3 steps" on the
+// screen and in its log while the command exited 1 (G3).
+//
+// The caller read is the one stubbed: it is one of the eight, it is the last of
+// the run's own reads, and managedCaller is the seam the package's own tests
+// use for it. Nothing the restore does before the apply reads it — the creating
+// path is the setup flow, not this one — so the refusal lands where the finding
+// says it does, between the opener and the plan.
+func TestRestoreEndsItsApplyStepWhenTheApplyFailsBeforeItsPlan(t *testing.T) {
+	r, _ := newRestoreRig(t)
+	restoreManagedOld(r)
+	oldCaller := managedCaller
+	managedCaller = func(context.Context, *localcfg.Config) (string, oauth2.TokenSource, error) {
+		return "", nil, userErr("no credential for this run")
+	}
+	t.Cleanup(func() { managedCaller = oldCaller })
+	_, root := restoreCheckout(t)
+	out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+	if err == nil {
+		t.Fatalf("the restore finished though the apply's caller read failed:\n%s", out)
+	}
+	if !strings.Contains(out, markFailed+" apply") {
+		t.Errorf("the apply that failed before its plan is not the step that failed:\n%s", out)
+	}
+	// The creating child is a run of its own and prints its own closing line to
+	// this terminal, so the question is the run's last line and not whether the
+	// words appear.
+	if lines := reportLines(out); !strings.HasPrefix(lines[len(lines)-1], "Failed in ") {
+		t.Errorf("the run's closing line is missing, or is not the failure it was:\n%s", out)
+	}
+	_, log := onlyLog(t, "restore")
+	if !strings.Contains(log, markFailed+" apply") {
+		t.Errorf("the run's log holds no failed apply step:\n%s", log)
+	}
+	if !strings.Contains(log, "no credential for this run") {
+		t.Errorf("the log's line does not name the failure the apply ended with:\n%s", log)
+	}
+	if lines := reportLines(log); !strings.HasPrefix(lines[len(lines)-1], "Failed in ") {
+		t.Errorf("the log's closing line is missing, or is not the failure it was:\n%s", log)
 	}
 }
 

@@ -228,12 +228,30 @@ func managedApplyWith(cmd *cobra.Command, o cloudOptions, rootArg string, newRep
 	// its own at the end of its whole sequence — so a sink closed here would
 	// lose that line. A caller closes what it opened.
 	rep, _ := newRep()
+	// One step for the whole apply: the project number and the budget gate, the
+	// owner's list and the inventory, the caller's own credential, the workdir
+	// copied from the root, and then the plan, the gate, the confirmation and
+	// the apply itself are one unit of work to the person watching. It is
+	// opened here, before the first of them, and not at the plan, because
+	// opening it there is what lets a run stop in one of them without a step:
+	// a restore marks its config, project and checkout done and then hands the
+	// apply over, so an apply refused before its plan printed "Done in …, 3
+	// steps" on the screen and in the log while the command exited 1 (G3).
+	step := rep.Step("apply")
+	fail := func(err error) error {
+		// This step's line never carries terraform's own stderr tail: this
+		// command has no redaction source, so what its log holds is the run's
+		// stage lines and never a provider's output (F6, D1352,
+		// withoutTerraformTail).
+		step.Failed(withoutTerraformTail(err), nil)
+		return err
+	}
 	// The project number is what says a bucket name is this project's (a
 	// bucket name is global), and both reads below prove it with.
 	number, err := infra.ProjectNumber(ctx, c, lc.GCPProject)
 	if err != nil {
 		// The API's own text can carry a body: one sanitised line.
-		return remote(fmt.Errorf("reading the number of GCP project %s: %s", safetext.Field(lc.GCPProject), safetext.Field(err.Error())))
+		return fail(remote(fmt.Errorf("reading the number of GCP project %s: %s", safetext.Field(lc.GCPProject), safetext.Field(err.Error()))))
 	}
 	// The apply-time budget read, and the gate it opens (Task 4.4). Both
 	// happen here, after the project and its number are known and before
@@ -241,7 +259,7 @@ func managedApplyWith(cmd *cobra.Command, o cloudOptions, rootArg string, newRep
 	// that did not open runs no terraform at all.
 	gate, fact, err := managedBudgetGate(ctx, c, lc)
 	if err != nil {
-		return userErr("nothing was applied: %v", err)
+		return fail(userErr("nothing was applied: %v", err))
 	}
 	// The addresses the owner approved, read fail-closed from the owner's own
 	// object. The applying command names none — this command registers no
@@ -251,7 +269,7 @@ func managedApplyWith(cmd *cobra.Command, o cloudOptions, rootArg string, newRep
 	// function that enforces the rule is still the one that runs it.
 	allowed, err := managed.GuardAllowList(ctx, c.Storage, bucket, lc.GCPProject, number, nil)
 	if err != nil {
-		return managedListErr(lc, bucket, err)
+		return fail(managedListErr(lc, bucket, err))
 	}
 	// The whole-project inventory (Task 4.5, D59), read here because this is
 	// the last moment the operator's own credential is the one in hand: the
@@ -268,32 +286,28 @@ func managedApplyWith(cmd *cobra.Command, o cloudOptions, rootArg string, newRep
 	// are made with.
 	self, ts, err := managedCaller(ctx, lc)
 	if err != nil {
-		return err
+		return fail(err)
 	}
 	// The workdir is this command's own, never the checkout (D76): terraform
 	// writes a plan file, a lock file and a provider directory, and the
 	// checkout belongs to the agent and to the user.
 	dir, err := infra.ManagedWorkdir(os.Getenv, lc.GCPProject)
 	if err != nil {
-		return userErr("%v", err)
+		return fail(userErr("%v", err))
 	}
 	wd, err := infra.CopyRoot(dir, root)
 	if err != nil {
-		return userErr("the root %s: %v", safetext.Field(rootArg), safetext.FieldErr(err))
+		return fail(userErr("the root %s: %v", safetext.Field(rootArg), safetext.FieldErr(err)))
 	}
 	cache, err := infra.PluginCache(os.Getenv)
 	if err != nil {
-		return userErr("%v", err)
+		return fail(userErr("%v", err))
 	}
 	bin, err := exec.LookPath("terraform")
 	if err != nil {
-		return userErr("fugaro managed apply needs terraform (>= 1.9, < 2) on PATH: %v", err)
+		return fail(userErr("fugaro managed apply needs terraform (>= 1.9, < 2) on PATH: %v", err))
 	}
 	imp := deployerImpersonator{self: self, ts: ts, endpoint: impersonationEndpoint, hc: impersonationHTTPClient()}
-	// One step for the whole apply: the plan, the gate, the owner's list, the
-	// credential and the apply itself are one unit of work to the person
-	// watching, and it is opened here so every outcome below ends it.
-	step := rep.Step("apply")
 	res, err := managedmode.Apply(ctx, managedmode.Request{
 		// The gate the budget read above opened, handed over rather than
 		// rebuilt: managed.Apply refuses a closed one as its own first step,
@@ -368,17 +382,14 @@ func managedApplyWith(cmd *cobra.Command, o cloudOptions, rootArg string, newRep
 		Out: sayThrough(rep, cmd.ErrOrStderr()),
 	})
 	if err != nil {
-		// The step is the account of the apply, so a refused or failed one
-		// ends it with a cross and the error under it (G8) rather than
-		// printing a line the run does not stand behind. The line the log keeps
-		// names the same failure without terraform's own stderr tail: this
-		// command has no redaction source, so what its log holds is its stage
-		// lines and never a provider's output (F6, D1352) — while the screen
-		// keeps the tail twice over, once as terraform streamed it (TF.Out) and
-		// once in the error this command returns.
-		werr := managedApplyErr(lc, rootArg, res, err)
-		step.Failed(withoutTerraformTail(werr), nil)
-		return werr
+		// The step is the account of the apply, so a refused or failed one ends
+		// it with a cross and the error under it (G8) rather than printing a
+		// line the run does not stand behind — the same ending fail gives the
+		// reads and the preparation above. Terraform's own stderr tail reaches
+		// the screen twice over and neither time through this line: it is
+		// streamed as terraform writes it (TF.Out) and it is in the error this
+		// command returns.
+		return fail(managedApplyErr(lc, rootArg, res, err))
 	}
 	if !res.Changed {
 		step.Skipped(fmt.Sprintf("no changes: the plan of %s is empty, so nothing was gated and nothing was applied", safetext.Field(rootArg)))
