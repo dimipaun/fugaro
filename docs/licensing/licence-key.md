@@ -24,8 +24,13 @@ lookup, no phone-home (D308). The key's text is three base64url parts, in this o
 The **key id** leads, in the clear, because the verifier has to choose the public key before it can
 verify anything: the keyring's keys are named by it, and an id the build does not hold is refused
 before either other part is decoded. That is what makes a compiled-in public key **rotate** — a new
-key id is added to the keyring and the old one stays until the last key it signed has expired — and
-it is what `TestVerifyUnknownKeyID` holds.
+key id is added to the keyring and the old one stays until the last key it signed has **passed its
+grace**, `expires + 30 days` and not bare `expires` — and it is what `TestVerifyUnknownKeyID` holds.
+The window is the grace's and not the expiry's because the grace is a state of the **key** rather
+than of the build: an id dropped at `expires` would refuse, under a build that rotated after that
+key was minted, a key the state table below reads as `grace` and the lapse section then keeps
+working read-only. An id may go once the grace is over: the store then holds a key nothing verifies,
+and what such an installation shows is S6.1's design rather than a fourth state here.
 
 The payload is the claim set, and its claims are the licence's own terms:
 

@@ -406,7 +406,11 @@ func TestDocsLicensingOneWording(t *testing.T) {
 //
 // Mutations (verified, run and restored): cut "raw bytes before any JSON is
 // parsed" out of the note -- TestDocsLicenceKeyDesign fails, naming that
-// claim; delete the rule that no claim is read out of an unverified payload,
+// claim; put back the rotation rule as "until the last key it signed has
+// expired" -- it fails, on a window that would refuse a key the state table
+// below reads as `grace` (an id the build does not hold is refused before the
+// payload is decoded, so an id has to outlive the grace and not only the term);
+// delete the rule that no claim is read out of an unverified payload,
 // the rule that a refusal names no claim, the rule that the signature is over
 // the bytes as they are spelled, the rule that an id the build does not hold is
 // refused before either other part is decoded, and the rule that the hand-off
@@ -441,7 +445,7 @@ var licenceKeyDesignGroups = []struct {
 }{
 	{
 		subject: "the key",
-		why:     "the format is what three verifiers agree on byte for byte, the claims are the licence's own terms, and the three boundary rules -- the key id is what decides before anything else is decoded, the signature is over the bytes as they are spelled, and a refusal names no attacker-chosen claim -- are where the scheme's safety rests",
+		why:     "the format is what three verifiers agree on byte for byte, the claims are the licence's own terms, and the boundary rules -- the key id is what decides before anything else is decoded, the signature is over the bytes as they are spelled, a refusal names no attacker-chosen claim, and a rotated build keeps an old id until the keys it signed have passed their grace, or it refuses a key the state table reads as grace -- are where the scheme's safety and its consistency rest",
 		phrases: []string{
 			"ed25519",
 			"base64url",
@@ -452,6 +456,8 @@ var licenceKeyDesignGroups = []struct {
 			"key id",
 			"refused before either other part is decoded",
 			"rotate",
+			"passed its grace",
+			"and not bare `expires`",
 			"| `tier` | `community`, `team` or `enterprise` |",
 			"| `features` |",
 			"| `seats` |",
