@@ -11408,7 +11408,9 @@ with it; and reads the deployed document twice, before and after its own write.
   document.
 - **`xtrace`** — this shell was not started with tracing on. `bash -x` prints the `Authorization` header this script builds, so a shell
   that arrived tracing is stopped before the token is read, with this row saying why.
-- **`restore`** — the node this check wrote is deleted and reads back as `null`, and the scratch directory is gone. A delete the
+- **`restore`** — the node this check wrote is deleted and reads back as `null`, and the scratch directory is gone; a run that stopped
+  before its write says so rather than reporting a write it never made, because the delete is made either way (the id is this
+  check's own, so a leftover from an earlier failed run belongs to it too). A delete the
   database refused, or a read-back that is not `null`, is a FAILed row naming the node to delete by hand and the exact command to do
   it with — never a silent pass — and that row's FAIL alone is enough to make the run exit 1.
 - **`aborted`** — present only when the run could not tell: a guard stopped it, a tool is missing, doctor did not answer, the config
