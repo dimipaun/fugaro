@@ -896,6 +896,71 @@ func TestLsShowsHalted(t *testing.T) {
 	}
 }
 
+// TestRunsLsHumanShortID: the text listing names a run by its short ID, and the
+// repository the `<slug>/` prefix carried moves to a column of its own. Two
+// runs whose IDs share their last four characters are shown with the shortest
+// endings that tell them apart, extended one character at a time through the
+// dash (task.DisplayRuns, F1), and no full ID appears in the listing at all
+// (spec part 1): the full ID stays in the record and in --json (D1705).
+func TestRunsLsHumanShortID(t *testing.T) {
+	f := newCloudFixture(t)
+	// The pair of the collision case: the IDs differ in the character before
+	// the dash, so the endings cross it rather than growing into a fifth hex
+	// digit.
+	older, newer := "20261107-010101-3bb2", "20261108-115248-3bb2"
+	seedRun(t, f, older, "", "someone@example.com", false)
+	seedRun(t, f, newer, "", "someone@example.com", false)
+
+	out, _, err := execute(t, "runs", "ls", "--since", "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("listing = %q, want a header, two rows and a totals line", out)
+	}
+	if hdr := strings.Fields(lines[0]); !slices.Equal(hdr, []string{"RUN", "REPO", "STATUS", "STAGE", "AGE", "COST", "PR", "BY"}) {
+		t.Fatalf("header = %v, want the RUN cell to carry the short ID with the repository in its own column", hdr)
+	}
+	rows := map[string]string{}
+	for _, l := range lines[1:3] {
+		fields := strings.Fields(l)
+		rows[fields[0]] = fields[1]
+	}
+	if len(rows) != 2 || rows["8-3bb2"] != appSlug || rows["1-3bb2"] != appSlug {
+		t.Fatalf("rows = %v, want 8-3bb2 and 1-3bb2, each with %s in REPO:\n%s", rows, appSlug, out)
+	}
+	for _, id := range []string{older, newer} {
+		if strings.Contains(out, id) {
+			t.Errorf("the listing prints the full ID %s:\n%s", id, out)
+		}
+	}
+}
+
+// TestRunsLsJSONKeepsFullID: the machine document is what the console, the
+// paging cursor and --after read, and the short-ID rule does not touch it: run
+// is still `<slug>/<run-id>` and run_id the full ID (D1705, F8). It passes
+// before the text listing changes, which is what it is for.
+func TestRunsLsJSONKeepsFullID(t *testing.T) {
+	f := newCloudFixture(t)
+	older, newer := "20261107-010101-3bb2", "20261108-115248-3bb2"
+	seedRun(t, f, older, "", "someone@example.com", false)
+	seedRun(t, f, newer, "", "someone@example.com", false)
+
+	got, _ := lsJSON(t, "--since", "0")
+	if len(got.Runs) != 2 {
+		t.Fatalf("runs = %v, want both", runIDs(got.Runs))
+	}
+	for _, r := range got.Runs {
+		if r.RunID != older && r.RunID != newer {
+			t.Errorf("run_id = %q, want a full ID", r.RunID)
+		}
+		if want := appSlug + "/" + r.RunID; r.Run != want {
+			t.Errorf("run = %q, want %q: --json carries the full ID whatever the text listing shows", r.Run, want)
+		}
+	}
+}
+
 func TestLsShowsDraftInProgress(t *testing.T) {
 	f := newCloudFixture(t)
 	const run, done, stale = "20260927-100000-abcd", "20260927-100100-bbbb", "20260927-100200-cccc"
