@@ -838,8 +838,9 @@ document says passed, `noted` for one `doctor` reports with `severity: "info"` a
 fail on, `failing` for any other. `false` therefore covers both a measurement and a
 finding, so a rule painted on `[data-ok='false']` would draw a healthy installation's
 informational check as a failure — which is what reading `ok` alone did before the review of
-2026-11-07 — and the stylesheet colours no `[data-ok]` at all (the same attribute and the
-same words are the credentials service's rows': `li.projects-credentials-service-row` with
+2026-11-07 — and the stylesheet colours no `[data-ok]` at all, here or on the credentials
+service's rows: the two sections draw the same attribute, and each has words of its own for
+it (`li.projects-credentials-service-row` with
 `span.projects-credentials-service-check-state`).
 
 **The retirements are a record and a set.** `section.projects-retirements-record` is the
