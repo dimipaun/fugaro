@@ -6,14 +6,15 @@ writes. It goes to counsel with the Subscription Terms
 [S8.4](implementation-plan.md#slice-s8-the-owners-counsels-and-the-accountants-steps) records, and it
 asks **only what the Terms' own list for counsel does not already ask**. The draft counsel was given
 carried eighteen numbered questions (#1146), of which 12–18 were added with the owner's answers;
-counsel's restructured text answers most of those and ends with its own list of eight open items,
-and none of the questions below repeats one of the eight. Nothing here is legal advice, and nothing
+counsel's restructured text answers most of those and ends with its own list of eight items for the
+owner and counsel, and none of the questions below repeats one of the eight. Nothing here is legal advice, and nothing
 here decides anything: every question is counsel's, and every ruling it cites is the owner's. The
 tensions T10 to T27 are in
 [reconciliation.md](reconciliation.md#rulings-on-the-tensions-2026-10-27), with T27's consequence
 [ruled 2026-10-29](reconciliation.md#a-consequence-the-rulings-create-ruled-2026-10-29), and O4 and
-the key binding are ruled in the same file; the two later rulings, the coordinator (2026-10-29) and
-crash reporting (2026-10-31), are in the Terms' own list for counsel, items 7 and 5.
+the key binding are ruled in the same file; crash reporting (2026-10-31, counsel approved) is the
+Terms' own list for counsel, item 5, and the coordinator (2026-10-29) is item 7, recorded there as
+the owner's resolution and not as counsel's — see the S0.4 list below.
 
 **It carries no figure (D430, T22).** An amount, a rate and a discount are named by the clause they
 sit in and never by their value — the two figures the owner ruled into the Terms (the liability cap
@@ -24,19 +25,22 @@ writes the scan that holds this over the folder, and the plan makes it this docu
 has not landed yet (the census of 2026-11-07 lists it NOT STARTED), so until it does this document
 holds the rule by construction and the Docs suite is its only test.
 
-**What has moved since the questions were written.** The Terms have changed five times since. Counsel
-restructured them on 2026-10-28 into Parts A–G and sections 1 to 34 (they were the draft's sections
-1 to 24). The owner's rulings that restructure did not carry were applied on 2026-10-29, with the
-two figures once held back and the provisions counsel's document had marked (the Terms' own list,
-items 1, 3, 4 and 7). The owner filled in the Licensor's name, jurisdiction, address, privacy notice
-URL and notice address on 2026-10-30. §7.3 was revised on 2026-10-31 so that crash reporting is
-opt-in and off by default (item 5). And on 2026-11-07 §7.1 stopped calling the credentials service
-optional — it now says plainly that the service is part of the Core and not of the Software, because
-`fugaro update` deploys it on every installation (the owner's ruling of 2026-11-05); the same day's
-other change to that file was the reading note above the agreement, which is not part of it and now
-records that the two figures go in as counsel wrote them. The Terms' own Status and list record the
-first four of those and not the fifth. So this packet opens with what is already settled, and asks
-the rest.
+**What has moved since the questions were written.** The Terms have changed since. The owner's ruling
+D531 (2026-10-29) took the coordinator out of the Core: §9.1 of the draft, now §7.1, stopped calling
+it part of the Core at once, with counsel not consulted — the one edit made before counsel answered,
+and the reason for the first item of the S0.4 list below. Counsel restructured the text on
+2026-10-28 into Parts A–G and sections 1 to 34 (they were the draft's sections 1 to 24), and the
+tree took that text on 2026-10-29, when the owner's rulings the restructure did not carry were
+applied, with the two figures once held back and the provisions counsel's document had marked (the
+Terms' own list, items 1, 3 and 4). The owner filled in the Licensor's name, jurisdiction, address,
+privacy notice URL and notice address on 2026-10-30. §7.3 was revised on 2026-10-31 so that crash
+reporting is opt-in and off by default (item 5). And on 2026-11-07 §7.1 stopped calling the
+credentials service optional — it now says plainly that the service is part of the Core and not of
+the Software, because `fugaro update` deploys it on every installation (the owner's ruling of
+2026-11-05); the same day's other change to that file was the reading note above the agreement,
+which is not part of it and now records that the two figures go in as counsel wrote them. The Terms'
+own Status and list record all of these but the 2026-11-07 change. So this packet opens with what is
+already settled, and asks the rest.
 
 ## How the clauses are numbered
 
@@ -65,8 +69,8 @@ The clauses named below:
 
 ## Settled since the questions were asked
 
-Counsel has applied and approved these, so this packet asks none of them again. All but T24 are the
-Terms' own list for counsel, items 4, 5 and 7; T24 is the owner's ruling in
+These are settled and this packet asks none of them again. All but T24 are the Terms' own list for
+counsel, items 4 and 5, applied with counsel's approval; T24 is the owner's ruling in
 [reconciliation.md](reconciliation.md#rulings-on-the-tensions-2026-10-27), which left the clauses as
 they stood, the draft having already printed those figures.
 
@@ -84,9 +88,8 @@ they stood, the draft having already printed those figures.
 - **T24 — the contract figures stay in the Terms.** The support targets and hours (§8.1), the annual
   renewal's cancellation notice (§14), the refund window (§15) and the seat reassignment period
   (§5.4) are printed, as the owner ruled.
-- **The coordinator** is part of the Software and not of the Core (§7.1; the owner's ruling of
-  2026-10-29), and **crash reporting** is opt-in, per User and off by default (§7.3; the owner's
-  ruling of 2026-10-31, counsel approved).
+- **Crash reporting** is opt-in, per User and off by default (§7.3; the owner's ruling of
+  2026-10-31, counsel approved).
 
 Two subjects are with counsel elsewhere and are not repeated: the seat rule's wording as a pricing
 rule (counsel question 13), and whether the licence files need a revision matching the Terms' own
@@ -230,11 +233,24 @@ cancellation today.
 
 [Subscriptions S0.4](implementation-plan.md#s04-the-one-terms-revision-after-counsels-feedback) is
 the one revision run of the Terms after counsel's feedback. Of its item list, these are already
-applied and counsel-approved: T12 (§9.1), the key binding (§§2, 5.3, 6.1, 6.3, 6.4, 7.5, 9.1), O4
-(§§6.1, 8.2), T15's first half (§§6.3, 7.5, 10.2(a)), the kept contract figures (§§8.1, 14, 15 and
-5.4) and the two figures the owner ruled in after they had been held back (§§10.5, 12.2).
+applied: T12 (§9.1), the key binding (§§2, 5.3, 6.1, 6.3, 6.4, 7.5, 9.1), O4 (§§6.1, 8.2) and
+T15's first half (§§6.3, 7.5, 10.2(a)) with counsel's approval, and the kept contract figures
+(§§8.1, 14, 15 and 5.4) and the two figures the owner ruled in after they had been held back
+(§§10.5, 12.2) on the owner's ruling.
 What is still open, and what A1–A6 feed:
 
+- **§7.1 and the coordinator (D531)** — the one edit the owner made before counsel answered, and
+  not one of A1–A6. On 2026-10-29 the owner ruled that the coordinator moves under `ee/` and had
+  §7.1 changed at once to say the coordinator is part of the Software, with counsel not consulted:
+  the plan's S0.4 records it as its one exception to "the Terms are not revised before counsel
+  answers" and says in as many words "counsel not yet consulted: tell counsel in the next revision
+  round" — this round, and the reason the item is here. The Terms' own list, item 7, records the
+  owner's resolution and no counsel approval, so the settled list above does not carry it. The move
+  has since landed (`LICENSING.md` has the coordinator in `ee/coordinator/`), so §7.1 now matches
+  the tree; counsel's text had classified the coordinator as Core, and counsel has still not been
+  asked. What S0.4 applies: counsel's word on §7.1 as it stands, and its answer on where the
+  coordinator's released MIT versions leave the licence's coverage sentence (T10, F38 — the draft's
+  question 18, part of the 12–18 this packet leaves to S8.4's round).
 - **§6.1** — whether the Software's key requirement is stated as behaviour or as the Customer's
   obligation, while no release enforces one (A1).
 - **§6.3** — T26's renewal 30 days before expiry, T13's hand minting, and the paid-key path (A6).
