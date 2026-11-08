@@ -349,7 +349,7 @@ answer back.**
   ordered patterns in exactly the shape `internal/digest`'s flags and `oauthLimitPhrases` have. It
   is consulted **only when the field is absent**, and its answer is a *reading*: the row and the
   report say which it is — the position the console already holds for
-  `runview.Derived`/`DerivedPreempted` (`runview.go:38`–`57`), *a derivation, never written back,
+  `runview.Derived`/`DerivedPreempted` (`internal/runview/runview.go:38`–`57`), *a derivation, never written back,
   derived anew on every read*.
 - **The patterns are the reasons the runner already writes**, not English: `no verified test run on
   the final commit` → `unverified_final_commit`; `tests failing on the final commit` →
