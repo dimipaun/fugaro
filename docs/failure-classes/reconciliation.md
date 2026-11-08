@@ -28,8 +28,8 @@ owner's; the decisions §6 does carry are the plan's own, D1450–D1469, and the
 of them on 2026-11-07 as this file recommended. The design's status line as **this folder's copy**
 carries it is the dated one — *"a design; nothing is built; no decision below is answered."* — and the
 design on `main` has moved past it: the copy's sentence speaks for the design's own decisions, which
-the design's own status now says stay the owner's, and the line records the one thing that has shipped
-— *"a design, and its FC1 has shipped; the rest of §10 is not built."*
+the design's own status now says stay the owner's, and the line records what has shipped —
+*"a design, and its FC1–FC3 have shipped; the rest of §10 is not built."*
 
 ---
 
@@ -525,8 +525,9 @@ stats` and every command the design's §6.3 does not name.
 **Every one of these is answered, as recommended, on 2026-11-07.** The owner's dated answer is in
 every row — put to him through `AskUserQuestion`, every option the recommended one, and he took all
 of them — and every task in [implementation-plan.md](implementation-plan.md) was approved the same day
-(owner: "All tasks approved. Jobmax"), so no gate the plan names is still open — **FC1's and FC2's
-included, and they are the two tasks of the nine that are built and merged; FC3–FC9 are not started.**
+(owner: "All tasks approved. Jobmax"), so no gate the plan names is still open — **FC1's, FC2's and
+FC3's included, and they are the three tasks of the nine that are built and merged; FC4–FC9 are not
+started.**
 Each row states the question, what this reconciliation recommends and why, the alternative, and what
 the alternative costs. **No row re-asks one of the design's §8 D1–D9 or §9 O1–O6**; where a question
 here touches one of them, the row says so and leaves that question to the design's own numbering.
