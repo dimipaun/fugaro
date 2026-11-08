@@ -337,6 +337,28 @@ func TestExchangeRefusesAnAssertionIssuedInTheFuture(t *testing.T) {
 	}
 }
 
+// TestExchangeRefusesAnAssertionLargerThanItParses: the size a presented
+// assertion may have is bounded before it is parsed, because the first thing a
+// stranger's document costs this member is the memory to read it. The assertion
+// below is otherwise one this member would admit — the free-form claim with no
+// length rule of its own is the `jti`, which is hashed and never compared — so
+// what refuses it is the bound and nothing else.
+func TestExchangeRefusesAnAssertionLargerThanItParses(t *testing.T) {
+	key := testKey(t)
+	member := newTestMember(t, testMemberA, testPin(t, testWorkspace, testProject, &key.PublicKey))
+
+	huge := assertionFor(t, key, testProject, member.url, func(a *assertion) {
+		a.JTI = strings.Repeat("j", maxAssertionBytes)
+	})
+	if len(huge) <= maxAssertionBytes {
+		t.Fatalf("the test's own assertion is %d bytes, and it must be over the %d this member parses", len(huge), maxAssertionBytes)
+	}
+	refuse(t, mustErr(member.ex.Admit(context.Background(), huge)), "an assertion larger than this member parses")
+	if len(jtisSpent(member)) != 0 {
+		t.Fatalf("the refused assertion spent %d ids, and a refusal must write none", len(jtisSpent(member)))
+	}
+}
+
 // TestExchangeNeverEchoesTheAssertion is the credsvc rule applied to this
 // endpoint: a refusal reaches a log line and an answer body, and neither is a
 // place for the document a stranger sent.

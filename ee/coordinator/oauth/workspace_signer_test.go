@@ -81,9 +81,16 @@ func assertionKeyPEM(t *testing.T, key *rsa.PrivateKey) string {
 // idTokenFields is one ID token's claims as a test writes them. The zero value
 // is not usable: defaultIDToken fills in the token every test shares.
 type idTokenFields struct {
-	Audience      string
-	Issuer        string
-	Subject       string
+	Audience string
+	Issuer   string
+	Subject  string
+	// UserID is the `user_id` claim, which Firebase writes beside `sub` and which
+	// both verifiers require to agree with it. Empty means f.Subject.
+	UserID string
+	// Alg is what the header claims the token is signed with. Empty means RS256.
+	// The signature is always a real RS256 signature under the key, whatever this
+	// says: the token under test is one whose header lies about it.
+	Alg           string
 	Email         string
 	EmailVerified any
 	Provider      string
@@ -119,11 +126,15 @@ func defaultIDToken(project string) idTokenFields {
 // the key the published set holds.
 func firebaseIDToken(t *testing.T, key *rsa.PrivateKey, f idTokenFields) string {
 	t.Helper()
+	uid := f.UserID
+	if uid == "" {
+		uid = f.Subject
+	}
 	claims := map[string]any{
 		"aud":     f.Audience,
 		"iss":     f.Issuer,
 		"sub":     f.Subject,
-		"user_id": f.Subject,
+		"user_id": uid,
 		"email":   f.Email,
 		"iat":     f.IssuedAt.Unix(),
 		"exp":     f.ExpiresAt.Unix(),
@@ -137,7 +148,11 @@ func firebaseIDToken(t *testing.T, key *rsa.PrivateKey, f idTokenFields) string 
 	if f.NotBefore != nil {
 		claims["nbf"] = f.NotBefore.Unix()
 	}
-	head, err := json.Marshal(map[string]string{"alg": "RS256", "kid": f.KeyID})
+	alg := f.Alg
+	if alg == "" {
+		alg = "RS256"
+	}
+	head, err := json.Marshal(map[string]string{"alg": alg, "kid": f.KeyID})
 	if err != nil {
 		t.Fatalf("encoding a test ID token header: %v", err)
 	}
@@ -453,6 +468,15 @@ func TestSignerVerifiesWhatTheFrontDoorVerifies(t *testing.T) {
 		"no uid":                     func(f *idTokenFields) { f.Subject = "" },
 		"an address nobody can read": func(f *idTokenFields) { f.Email = "not an address" },
 		"an unpublished key id":      func(f *idTokenFields) { f.KeyID = "kid-2" },
+		// The header's own algorithm, and the uid's two copies: the signer's twin
+		// of these rules is applied at the member (workspace_assertion.go), and
+		// they are rows here so that losing either on this side fails against the
+		// front door instead of passing quietly. The token is SIGNED with the
+		// published key in every one of them, so the signature is no help to
+		// either verifier.
+		"a header that names the HMAC family": func(f *idTokenFields) { f.Alg = "HS256" },
+		"a header that names no algorithm":    func(f *idTokenFields) { f.Alg = "none" },
+		"a user_id that is not the sub":       func(f *idTokenFields) { f.UserID = "uid-2" },
 	} {
 		f := defaultIDToken(testProject)
 		edit(&f)

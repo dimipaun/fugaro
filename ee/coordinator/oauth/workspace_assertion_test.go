@@ -48,11 +48,20 @@ func signToken(t *testing.T, key *rsa.PrivateKey, header map[string]string, clai
 	if err != nil {
 		t.Fatalf("encoding test claims: %v", err)
 	}
-	signing := base64.RawURLEncoding.EncodeToString(head) + "." + base64.RawURLEncoding.EncodeToString(body)
+	return signSegments(t, key, base64.RawURLEncoding.EncodeToString(head), base64.RawURLEncoding.EncodeToString(body))
+}
+
+// signSegments signs an already-encoded header and payload pair with key, the
+// way a real signer signs whatever bytes it is handed. It is how a test presents
+// a token whose segments are not what json.Marshal would write — a payload that
+// is one claim set and then another — with a signature that verifies over them.
+func signSegments(t *testing.T, key *rsa.PrivateKey, head, body string) string {
+	t.Helper()
+	signing := head + "." + body
 	sum := sha256.Sum256([]byte(signing))
 	sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, sum[:])
 	if err != nil {
-		t.Fatalf("signing test claims: %v", err)
+		t.Fatalf("signing test segments: %v", err)
 	}
 	return signing + "." + base64.RawURLEncoding.EncodeToString(sig)
 }
@@ -123,6 +132,32 @@ func TestAssertionRefusesAnotherAlgorithm(t *testing.T) {
 	for _, alg := range []string{"none", "HS256", "RS512"} {
 		raw := signToken(t, key, map[string]string{"alg": alg, "typ": assertionTyp}, claims)
 		refuse(t, mustErr(member.ex.Admit(context.Background(), raw)), "an assertion signed with "+alg)
+	}
+}
+
+// TestAssertionRefusesAPayloadCarryingMoreThanOneValue: a segment is exactly one
+// JSON object, and the second one is refused rather than half-read — a payload
+// that is one claim set and then another is not a payload whose claims are the
+// ones that were signed, and the two readers that disagree about which object
+// counts are the two ends of this very exchange. The token below is SIGNED with
+// the member's pinned key over both objects, so the signature is no help: what
+// refuses it is the segment rule alone.
+func TestAssertionRefusesAPayloadCarryingMoreThanOneValue(t *testing.T) {
+	key := testKey(t)
+	member := newTestMember(t, testMemberA, testPin(t, testWorkspace, testProject, &key.PublicKey))
+	honest := assertionFor(t, key, testProject, member.url, nil)
+	parts := strings.Split(honest, ".")
+
+	body, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatalf("decoding a test assertion's payload: %v", err)
+	}
+	body = append(append([]byte(nil), body...), body...)
+
+	raw := signSegments(t, key, parts[0], base64.RawURLEncoding.EncodeToString(body))
+	refuse(t, mustErr(member.ex.Admit(context.Background(), raw)), "an assertion whose payload is two claim sets")
+	if len(jtisSpent(member)) != 0 {
+		t.Fatalf("the refused assertion spent %d ids, and a refusal must write none", len(jtisSpent(member)))
 	}
 }
 
