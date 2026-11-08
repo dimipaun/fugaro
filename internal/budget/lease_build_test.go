@@ -150,6 +150,32 @@ func TestAnAbandonedBuildLeaseIsReclaimed(t *testing.T) {
 	}
 }
 
+// TestABuildLeaseOutlastsTheQueue: the deadline covers the wait a build spends
+// queued as well as the timeout it is priced at. Cloud Build starts counting
+// that timeout when the build starts, so a build still waiting for a worker can
+// bill the whole estimate after the timeout alone would have expired the lease
+// — the window this test pins is the one where another command's reclaim would
+// release a reservation the build is about to spend, and the settle that would
+// count it is refused.
+func TestABuildLeaseOutlastsTheQueue(t *testing.T) {
+	want := leaseNow.Add(BuildLeaseGrace + time.Duration(MaxBuildQueueSeconds+MaxBuildSeconds)*time.Second)
+	if got := BuildLeaseDeadline(leaseNow); !got.Equal(want) {
+		t.Fatalf("BuildLeaseDeadline = %v, want the queue TTL, the timeout and the grace past %v", got, leaseNow)
+	}
+	// The whole point: at the moment the queue wait and the build's own timeout
+	// have both run out, the lease is still open — and only the grace after it
+	// abandons the lease.
+	l := openLease(leaseNow, 936_000)
+	l.Exp = BuildLeaseDeadline(leaseNow).UnixMilli()
+	ranOut := leaseNow.Add(time.Duration(MaxBuildQueueSeconds+MaxBuildSeconds) * time.Second)
+	if l.Abandoned(ranOut) {
+		t.Error("a lease is abandoned while its build may still be running its own timeout")
+	}
+	if !l.Abandoned(ranOut.Add(BuildLeaseGrace + time.Second)) {
+		t.Error("a lease is still open past its deadline: the reservation could be held forever")
+	}
+}
+
 // TestBuildLeaseCountsAgainstTheRunCaps: the build lease is judged by the same
 // predicate the rules are generated from, with the lease's own ledger standing
 // in for a run's — so a build is bounded by the per-run cap, by the day

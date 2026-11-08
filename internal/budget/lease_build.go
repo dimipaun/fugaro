@@ -58,9 +58,18 @@ const (
 // second build reserve the same money.
 const BuildLeaseGrace = 10 * time.Minute
 
-// BuildLeaseDeadline is when a lease taken at now is abandoned.
+// BuildLeaseDeadline is when a lease taken at now is abandoned: the wait the
+// submission may spend queued before Cloud Build starts it, the build's own
+// timeout, and the grace.
+//
+// The queue wait is in the deadline because Cloud Build's own timeout starts
+// only when the build does: a build still waiting for a worker has billed
+// nothing and may bill the whole estimate once it starts, so a deadline that
+// counted only the timeout would let another command reclaim the reservation
+// under it — and the settle that would record what the build really spent is
+// then refused, leaving the spend uncounted.
 func BuildLeaseDeadline(now time.Time) time.Time {
-	return now.Add(BuildLeaseGrace + MaxBuildSeconds*time.Second)
+	return now.Add(BuildLeaseGrace + (MaxBuildQueueSeconds+MaxBuildSeconds)*time.Second)
 }
 
 // BuildLease is /buildleases/<slug>/<id>. Times are epoch milliseconds, as
