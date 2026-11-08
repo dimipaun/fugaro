@@ -50,6 +50,14 @@ expect_absent() {
   *"$2"*) fail "$3: found '$2' where it must never appear" ;;
   esac
 }
+# expect_no_request DIR WHAT — the fake Bitbucket answered nothing for that run.
+# Every request it answers is appended to the run's fake.log, so this is the
+# reading of "the token was never sent anywhere": a guard that refused only after
+# a read would leave a line here, and one that is checked by a file nothing
+# writes proves nothing at all.
+expect_no_request() { # dir what
+  [ ! -s "$1/fake.log" ] || fail "$2: a request reached the API: $(cat "$1/fake.log" | tr '\n' ' ')"
+}
 expect_status() { # status want what
   [ "$1" = "$2" ] || fail "$3: expected exit $2, got $1; the rows read: $(rows_of_block "${out:-}")"
 }
@@ -68,6 +76,14 @@ expect_last_line() { # out want what
 # token, and the assertions below hold that they never survive a run.
 TOKEN_SENTINEL='FAKE-PROJECT-TOKEN-FOR-CHECK-180-TESTS-NOT-A-CREDENTIAL'
 TOKEN2_SENTINEL='FAKE-ROTATED-TOKEN-FOR-CHECK-180-TESTS-NOT-A-CREDENTIAL'
+
+# What the fake installation's own doctor reports (the fake `fugaro` below), and
+# the project-wide container's id as the CLI writes it — the name carries a hash
+# suffix, so the check has to find the container rather than compose it. The
+# fakes read both out of the run's state directory, so the secrets and versions
+# they answer for are that project's and that container's and no other's.
+GCP_PROJECT_NAME='sandbox-p'
+SECRET_ID='fugaro-project-sandbox-bitbucket-token-9f3c1a'
 
 # Every fact key the run's block must carry, whatever it measured.
 BLOCK_KEYS=(installation inputs xtrace U1 U2 store update run-a run-b author-a author-b
@@ -101,6 +117,14 @@ secrets)
     echo "bitbucket-token has no project_secrets.bitbucket-token.allow_data_to entry in this local config" >&2
     exit 1
   fi
+  # A store is a NEW VERSION of the container, not a call: the fake `gcloud`
+  # below answers `versions list <container>` from this file, so the check's own
+  # "N version(s) before, M after" is a reading of what the store did. Without
+  # it the count would be of how often the listing was called, and a check that
+  # listed the wrong container — or stored into one — would read the same.
+  id=$(cat "$state/secret-id" 2>/dev/null || echo fugaro-project-sandbox-bitbucket-token-9f3c1a)
+  n=$(cat "$state/versions-$id" 2>/dev/null || echo 0)
+  printf '%s' "$((n + 1))" >"$state/versions-$id"
   echo "stored bitbucket-token project-wide"
   exit 0
   ;;
@@ -214,26 +238,42 @@ FUGARO_EOF
 set -u
 state=${FAKE180_STATE:-/tmp}
 mode=${FAKE180_MODE:-ok}
-id=fugaro-project-sandbox-bitbucket-token-9f3c1a
-full=projects/sandbox-p/secrets/$id
+id=$(cat "$state/secret-id" 2>/dev/null || echo fugaro-project-sandbox-bitbucket-token-9f3c1a)
+# The GCP project the installation's doctor named: every read has to be of THAT
+# project, and a read of any other one is refused the way gcloud would answer
+# nothing for it (the check then stops rather than measuring another project's
+# secret).
+project_want=$(cat "$state/gcp-project" 2>/dev/null || echo "")
+full=projects/${project_want:-sandbox-p}/secrets/$id
 labels="fugaro=managed fugaro_project=sandbox fugaro_secret=bitbucket-token"
 
 filter=""
 format=""
-read_args() { # read_args [args...] — the two options the check passes
+project=""
+read_args() { # read_args [args...] — the options the check passes
   while [ $# -gt 0 ]; do
     case "$1" in
     --filter=*) filter=${1#--filter=} ;;
     --format=*) format=${1#--format=} ;;
-    --filter | --format) shift ;;
+    --project=*) project=${1#--project=} ;;
+    --project) project=${2:-} ;;
+    --filter | --format | --project) shift ;;
     esac
     shift
   done
 }
 
+check_project() {
+  [ -z "$project_want" ] && return 0
+  [ "${project:-}" = "$project_want" ] && return 0
+  echo "fake gcloud: this read names --project '${project:-none}', and the installation is in '$project_want'" >&2
+  exit 1
+}
+
 if [ "${1:-}" = "secrets" ] && [ "${2:-}" = "list" ]; then
   shift 2
   read_args "$@"
+  check_project
   [ "$mode" = no-container ] && exit 0
   # Every whitespace-separated term of a gcloud filter has to hold (that is
   # AND), against the resource as a whole. A term this fake does not know
@@ -265,18 +305,28 @@ if [ "${1:-}" = "secrets" ] && [ "${2:-}" = "list" ]; then
 fi
 if [ "${1:-}" = "secrets" ] && [ "${2:-}" = "versions" ]; then
   shift 2
+  # The container the versions are listed FROM — `gcloud secrets versions list
+  # <container>` — and a secret's own versions are what this answers: a listing
+  # of another container (or of the full path where the check means the id) has
+  # no versions, which is what the check's "1 version(s) before" reads as `0`
+  # instead of as the store's own result.
+  shift # the `list` verb of `secrets versions list`
+  container=${1:-}
+  shift || true
   read_args "$@"
-  n=$(cat "$state/version-calls" 2>/dev/null || echo 0)
-  n=$((n + 1))
-  printf '%s' "$n" >"$state/version-calls"
+  check_project
+  n=$(cat "$state/versions-$container" 2>/dev/null || echo 0)
   one_version() { # one_version NUMBER STATE
     case "$format" in
     *name.basename*) printf '%s %s\n' "$1" "$2" ;;
     *) printf '%s/versions/%s %s\n' "$full" "$1" "$2" ;;
     esac
   }
-  one_version 1 ENABLED
-  if [ "$n" -gt 1 ]; then one_version 2 ENABLED; fi
+  i=1
+  while [ "$i" -le "$n" ]; do
+    one_version "$i" ENABLED
+    i=$((i + 1))
+  done
   exit 0
 fi
 echo "fake gcloud: unknown call $*" >&2
@@ -370,6 +420,15 @@ would fail this suite rather than pass it.
 import json, os, sys, http.server
 
 TOKEN = os.environ.get("FAKE180_TOKEN", "")
+# The rotated value: the check never sends it (the new version is written to the
+# secret and the API is not asked with it), so a request that carries it is a
+# request the check built from the wrong file — and it is accepted here rather
+# than refused, so such a check reads as a check that measured nothing.
+TOKEN2 = os.environ.get("FAKE180_TOKEN2", "")
+# Every request this fake answers, appended as `<method> <path>`. The test's
+# "no request was sent" cases (the `belong` guards, the dry run) read this file:
+# a guard that refused only after reading something would leave a line here.
+APILOG = os.environ.get("FAKE180_API_LOG", "")
 MODE = os.environ.get("FAKE180_API_MODE", "ok")
 UUID = "{9f1d0c2a-0000-0000-0000-000000000001}"
 USERS = {}
@@ -412,21 +471,35 @@ class Handler(http.server.BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0)
         if n:
             self.rfile.read(n)
+        if APILOG:
+            with open(APILOG, "a", encoding="utf-8") as fh:
+                fh.write("%s %s\n" % (method, path))
 
-        if MODE == "wrong-token" or self.bearer() != TOKEN:
+        bearer = self.bearer()
+        # The rotated value is valid at Bitbucket and the check never sends it:
+        # the new version goes into the secret, and the polling below asks with
+        # the OLD config. So a request carrying it is a check asking with the
+        # wrong value — one that would loop against the real API until its cap —
+        # and it is ANSWERED here rather than refused, so the wait runs out the
+        # way the real one would instead of the test reading a pass for it.
+        if TOKEN2 and bearer == TOKEN2:
+            self.reply(200, {"uuid": UUID, "display_name": "Fugaro sandbox", "nickname": "fugaro-sandbox"})
+            return
+
+        if MODE == "wrong-token" or bearer != TOKEN:
             self.refuse(401, "invalid_token")
             return
 
         if path == "/2.0/user":
             # The rotation's probe of the OLD value. The register's step 8 has
             # the owner revoke the old token before the run after the rotation,
-            # and this fake stands in for that state — it cannot tell the two
-            # /user calls apart by what they carry (both send the same token),
-            # so it counts: the first is step_identity's, with a live token, and
-            # a later one is the rotation's, which is REFUSED as a revoked
-            # value would be. In mode `old-token-live` every call is accepted,
-            # which is the owner who has not revoked: the check then waits out
-            # its cap and the row reads UNVERIFIED.
+            # and this fake stands in for that state. The probe carries the value
+            # step_identity asked with, so the two calls are told apart by
+            # counting: the first is step_identity's, with a live token, and a
+            # later one is the rotation's, REFUSED as a revoked value would be.
+            # In mode `old-token-live` every call is accepted, which is the owner
+            # who has not revoked — the check then waits out its cap and the row
+            # reads UNVERIFIED.
             if MODE != "old-token-live":
                 USERS["n"] = USERS.get("n", 0) + 1
                 if USERS["n"] > 1:
@@ -492,6 +565,7 @@ start_fake() { # start_fake DIR — the fakes go in DIR/bin, which is put on PAT
   write_fakes "$1/bin"
   : >"$1/fake.log"
   FAKE180_API_MODE=${RUN180_API_MODE:-ok} FAKE180_TOKEN="$TOKEN_SENTINEL" \
+    FAKE180_TOKEN2="$TOKEN2_SENTINEL" FAKE180_API_LOG="$1/fake.log" \
     python3 "$1/bin/fake.py" >"$1/fake.out" 2>"$1/fake.err" &
   local pid=$!
   pids+=("$pid")
@@ -523,12 +597,22 @@ run180() {
   local dir=$work/$1
   mkdir -p "$dir/tmp" "$dir/checkout-a/.git" "$dir/checkout-b/.git" "$dir/bin" "$dir/state" "$dir/gcloudconfig"
   mkdir -p "$dir/source/internal/gitprov/bitbucket"
+  # What the fakes are agreeing about: the id the project-wide container has
+  # (the CLI's own, hash suffix and all) and the GCP project the installation's
+  # doctor names. The fake `gcloud` reads the secrets and their versions of that
+  # project and no other, and the fake `fugaro`'s store adds a version to that
+  # container — so a check that listed or stored under any other name reads a
+  # listing with no versions in it rather than a convenient one.
+  printf '%s\n' "$SECRET_ID" >"$dir/state/secret-id"
+  printf '%s\n' "$GCP_PROJECT_NAME" >"$dir/state/gcp-project"
   write_token "$dir/token"
   write_token "$dir/token2" "$TOKEN2_SENTINEL"
   start_fake "$dir" || return 1
   status=0
   out=""
-  env PATH="$dir/bin:$PATH" TMPDIR="$dir/tmp" \
+  # RUN180_UNSET_HOME=yes runs the check with HOME gone, the one environment in
+  # which its cleanup has to still work (see test_cleanup_survives_an_unset_home).
+  env ${RUN180_UNSET_HOME:+-u HOME} PATH="$dir/bin:$PATH" TMPDIR="$dir/tmp" \
     CHECK180_API_URL="http://127.0.0.1:$FAKE_PORT/2.0" \
     CHECK180_CURL_SECONDS=20 CHECK180_RUN_SECONDS=30 CHECK180_RUN_POLL_SECONDS=1 \
     CHECK180_ROTATION_SECONDS=2 CHECK180_ROTATION_POLL_SECONDS=1 \
@@ -550,6 +634,7 @@ run180() {
   RUN180_NAME_A=""
   RUN180_NAME_B=""
   RUN180_PROBE=""
+  RUN180_UNSET_HOME=""
 }
 
 # assert_no_secret DIR WHAT — nothing the run printed, and no file it left
@@ -740,8 +825,39 @@ test_dry_run_touches_nothing() {
   expect_absent "$out" "CHECK 180 RESULT" "dry run: no block for a plan"
   expect_absent "$out" "FACT " "dry run: no facts"
   [ ! -s "$work/dry/fugaro.log" ] || fail "dry run: fugaro was called: $(cat "$work/dry/fugaro.log")"
+  expect_no_request "$work/dry" "dry run"
   [ ! -d "$work/dry/tmp" ] || [ -z "$(ls -A "$work/dry/tmp" 2>/dev/null)" ] \
     || fail "dry run: something was written under the run's TMPDIR"
+}
+
+# The plan and the usage are the two answers an owner can want before anything is
+# installed, and neither reaches for a cloud tool: the tool lookup is after both
+# endings. This runs the check with the shell's own tools on PATH and neither
+# `fugaro` nor `gcloud` anywhere: with the lookup first, `--dry-run` on a machine
+# that has nothing installed is refused with "Check 180 needs ... on PATH and it
+# is not there" instead of the plan it promised to print, and the promise at the
+# top of the script ("--dry-run prints the plan and touches nothing") would be
+# the one thing the script could not do.
+test_the_plan_and_the_usage_need_no_cloud_tools() {
+  local tools=/usr/bin:/bin
+  mkdir -p "$work/plan-no-tools/home"
+  status=0
+  out=$(env PATH="$tools" HOME="$work/plan-no-tools/home" GOOGLE_APPLICATION_CREDENTIALS= CLOUDSDK_CONFIG= \
+    bash "$script" --dry-run \
+    --installation sandbox --token-file "$work/plan-no-tools/token" \
+    --repo "sandbox/one=$work/plan-no-tools/one" --repo "sandbox/two=$work/plan-no-tools/two" \
+    --probe-repo sandbox/probe 2>"$work/plan-no-tools/err") || status=$?
+  expect_status "$status" 0 "the plan without the cloud tools"
+  expect_contains "$out" "This is the PLAN" "the plan without the cloud tools: the plan"
+  expect_absent "$(cat "$work/plan-no-tools/err")" "on PATH and it is not there" \
+    "the plan without the cloud tools: a refusal for a tool the plan never uses"
+
+  status=0
+  out=$(env PATH="$tools" HOME="$work/plan-no-tools/home" bash "$script" --help 2>"$work/plan-no-tools/err-help") || status=$?
+  expect_status "$status" 0 "the usage without the cloud tools"
+  expect_contains "$out" "usage: check180.sh --installation" "the usage without the cloud tools: the usage line"
+  expect_absent "$(cat "$work/plan-no-tools/err-help")" "on PATH and it is not there" \
+    "the usage without the cloud tools: a refusal for a tool the usage never uses"
 }
 
 test_belong_is_refused_everywhere() {
@@ -751,31 +867,36 @@ test_belong_is_refused_everywhere() {
   as_installation=$status
   expect_status "$as_installation" 2 "belong as the installation"
   expect_contains "$out" "names 'belong'" "belong as the installation: the refusal"
-  expect_status "$as_installation" 2 "belong as the installation"
-  [ ! -s "$work/belong-install/fake.log" ] || fail "belong as the installation: a request was sent"
+  # The refusal is BEFORE anything is sent: the token may never reach the API on
+  # a run pointed at belong, and the fake's request log is what says so.
+  expect_no_request "$work/belong-install" "belong as the installation"
 
   RUN180_NAME_A=belong/one
   run180 belong-repo
   as_repo=$status
   expect_status "$as_repo" 2 "belong as a repository's workspace"
   expect_contains "$out" "names 'belong'" "belong as a repository's workspace: the refusal"
+  expect_no_request "$work/belong-repo" "belong as a repository's workspace"
 
   RUN180_NAME_B=belong/two
   run180 belong-repo-b
   expect_status "$status" 2 "belong as the second repository's workspace"
   expect_contains "$out" "names 'belong'" "belong as the second repository's workspace: the refusal"
+  expect_no_request "$work/belong-repo-b" "belong as the second repository's workspace"
 
   RUN180_PROBE=belong/probe
   run180 belong-probe
   as_probe=$status
   expect_status "$as_probe" 2 "belong as the probe repository"
   expect_contains "$out" "names 'belong'" "belong as the probe repository: the refusal"
+  expect_no_request "$work/belong-probe" "belong as the probe repository"
 
   # And in any case, including the mixed one a typo produces.
   RUN180_ARGS=(--installation BELONG)
   run180 belong-upper
   expect_status "$status" 2 "BELONG in upper case"
   expect_contains "$out" "names 'belong'" "BELONG in upper case: the refusal"
+  expect_no_request "$work/belong-upper" "BELONG in upper case"
 }
 
 test_endpoint_override_shapes_are_refused() {
@@ -813,11 +934,38 @@ test_token_file_complaints() {
   assert_no_secret "$work/token-mode-missing" "a token file at mode 644"
 }
 
+# HOME unset is the one environment where the cleanup still has to work: the
+# removal guard compares the scratch directory against $HOME, and reading that
+# unguarded aborts the shell under `set -u` — from inside cleanup, which the EXIT
+# trap has already disarmed, so the scratch directory (where this run's files
+# are) survives and no block is printed at all. The run below stops with a
+# scratch directory made and a token file that is not there, so what is read is
+# exactly what a leftover would hide: the block printed, and the scratch gone.
+test_cleanup_survives_an_unset_home() {
+  local scratch
+  RUN180_UNSET_HOME=yes
+  RUN180_ARGS=(--token-file "$work/no-home/token-absent")
+  run180 no-home
+  expect_status "$status" 2 "a run with HOME unset"
+  expect_contains "$out" "could not be read" "a run with HOME unset: the reason it stopped"
+  expect_contains "$out" "CHECK 180 RESULT:" "a run with HOME unset: the block it printed"
+  scratch=$(scratch_of "$work/no-home")
+  [ -n "$scratch" ] || fail "a run with HOME unset: the run never announced a scratch directory"
+  [ ! -e "$scratch" ] || fail "a run with HOME unset: the scratch directory survived the run: $scratch"
+}
+
 test_store_refused() {
   RUN180_MODE=store-refused
   run180 store-refused
   expect_status "$status" 2 "a store that is refused"
-  expect_contains "$out" "FACT store: FAIL" "a store that is refused: the fact"
+  # The store is where the run stops, so the block says so in the row that names
+  # what stopped it — and the store's own row is the not-reached one, because the
+  # step wrote no fact. Asserting only "FACT store: FAIL" would be satisfied by
+  # that placeholder, which reads the same whatever the run did.
+  expect_contains "$out" "FACT aborted: FAIL — fugaro secrets set bitbucket-token --project-wide was REFUSED" \
+    "a store that is refused: what stopped the run"
+  expect_contains "$out" "FACT store: FAIL — not reached" \
+    "a store that is refused: the row the store could not write"
   expect_contains "$out" "allow_data_to" "a store that is refused: the reason the CLI gave"
   expect_absent "$out" "$TOKEN_SENTINEL" "a store that is refused: the value"
   # Nothing after the store ran: no update, no run.
@@ -963,17 +1111,35 @@ test_second_machine() {
   expect_contains "$log" "config-only-cloudsdk=$work/second-machine/gcloudconfig" \
     "the second machine: the credentials it was seeded with, by path"
   # And never the scratch home's own, which is empty: a check that pointed the
-  # CLI there would measure nothing and could not tell. Nothing was copied
-  # either — the owner's directory is the only one the run ever names, and the
-  # scratch home it might have been copied into is gone with the rest of the
-  # scratch directory.
-  expect_absent "$log" "home/.gcloud" \
+  # CLI there would measure nothing and could not tell. The needle is the path
+  # the CLI's own order falls back to ($HOME/.config/gcloud, adcpath.go), with
+  # HOME the scratch home — a needle near it rather than that path would hold
+  # for free. Nothing was copied either: the owner's directory is the only one
+  # the run ever names, and the scratch home it might have been copied into is
+  # gone with the rest of the scratch directory.
+  expect_absent "$log" "home/.config/gcloud" \
     "the second machine: a gcloud config inside the scratch home"
   # `update --repo` is a bool whose positional PATH defaults to the current
   # directory: the plan has to be about the allow-listed checkout, not about
   # whatever directory the check was launched from.
   expect_contains "$log" "plan-cwd=$work/second-machine/checkout-a" \
     "the second machine: the plan's own directory"
+
+  # The flag has to WIN over an inherited $GOOGLE_APPLICATION_CREDENTIALS, not
+  # merely be passed beside it: the CLI reads that variable BEFORE the gcloud
+  # config directory (internal/cli/adcpath.go), so an owner who has one exported
+  # — for another project, another machine — would otherwise be measuring with
+  # credentials they did not name, and the flag would decide nothing. The fake
+  # records both variables, so an empty one is a reading of that: the line ends
+  # at the variable, which a value in it would not.
+  RUN180_ARGS=(--gcloud-config "$work/second-shadowed/gcloudconfig")
+  RUN180_ENV=("GOOGLE_APPLICATION_CREDENTIALS=$work/second-shadowed/elsewhere.json")
+  run180 second-shadowed
+  expect_contains "$(cat "$work/second-shadowed/fugaro.log")" \
+    "config-only-cloudsdk=$work/second-shadowed/gcloudconfig" \
+    "the second machine with an inherited GOOGLE_APPLICATION_CREDENTIALS: the flag's own directory"
+  grep -q 'config-only-adc=$' "$work/second-shadowed/fugaro.log" \
+    || fail "the second machine with an inherited GOOGLE_APPLICATION_CREDENTIALS: it shadowed --gcloud-config, so the credentials the seeded machine was handed are not the ones the owner named: $(cat "$work/second-shadowed/fugaro.log")"
 
   # Without the flag, CLOUDSDK_CONFIG is what the check passes through — the
   # order of internal/cli/adcpath.go, and the flag only exists for an ADC
@@ -1151,9 +1317,11 @@ t() {
 t test_happy_path
 t test_unmeasured_criteria_are_not_a_pass
 t test_dry_run_touches_nothing
+t test_the_plan_and_the_usage_need_no_cloud_tools
 t test_belong_is_refused_everywhere
 t test_endpoint_override_shapes_are_refused
 t test_token_file_complaints
+t test_cleanup_survives_an_unset_home
 t test_store_refused
 t test_update_asking_for_a_token_is_a_fail
 t test_a_run_that_does_not_push_is_a_fail

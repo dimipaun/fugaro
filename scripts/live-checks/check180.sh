@@ -54,7 +54,9 @@
 #             outputs and the step measures nothing. The owner's own ADC is
 #             handed to it BY PATH and never copied anywhere: this flag if it is
 #             given, else $GOOGLE_APPLICATION_CREDENTIALS, else $CLOUDSDK_CONFIG,
-#             else `~/.config/gcloud` — the CLI's own order
+#             else `~/.config/gcloud`. The flag is the one that wins, and the
+#             check clears the inherited $GOOGLE_APPLICATION_CREDENTIALS for the
+#             two commands it is about, which the CLI would otherwise read first
 #             (internal/cli/adcpath.go). Pass the flag only if your ADC is
 #             somewhere else than those name.
 # Needs:      bash, mktemp, python3 (the reader), curl, git, gcloud, fugaro,
@@ -237,7 +239,10 @@ cleanup() {
 remove_scratch() {
   case "$SCRATCH" in
   "") return 0 ;;
-  / | "$HOME" | "$HOME"/)
+  # ${HOME:-}: this guard is what keeps the removal from ever reaching the
+  # owner's home, and reading it unguarded would abort cleanup under `set -u` on
+  # a machine where HOME is unset, leaving the scratch directory behind.
+  / | "${HOME:-}" | "${HOME:-}"/)
     say "refusing to remove a scratch directory of '$SCRATCH'"
     return 0
     ;;
@@ -1101,6 +1106,10 @@ step_live_test() {
     return 0
   fi
   local rc=0 token=""
+  # This is the one command of the check whose own environment holds the value,
+  # so its output is a credential file like the rest of them: removed by name
+  # before the scratch directory is, and its removal is read.
+  CREDENTIAL_FILES+=("$SCRATCH/live-test.log")
   IFS= read -r token <"$TOKEN_FILE" || true
   ( cd "$SOURCE" && FUGARO_LIVE_REPO="$REPO_A" FUGARO_BITBUCKET_TOKEN="$token" \
     go test -tags live -run TestLiveBitbucket -count=1 ./internal/gitprov/bitbucket/ ) \
@@ -1222,11 +1231,15 @@ TASK_EOF
 # copied: `fugaro update --config-only` reads the installation's outputs out of
 # the state bucket, so it needs the owner's own ADC, and this step replaces HOME
 # with a scratch home — with nothing said, the CLI would look for ADC inside the
-# scratch home, find none, and the step would measure nothing at all. The order
-# is the CLI's own (internal/cli/adcpath.go): --gcloud-config if it was given,
-# else $GOOGLE_APPLICATION_CREDENTIALS, else $CLOUDSDK_CONFIG, else
-# $HOME/.config/gcloud. Nothing is copied into the scratch home, so no
-# credential of the owner's is left lying in a directory this check created.
+# scratch home, find none, and the step would measure nothing at all. What is
+# named for it, in order: --gcloud-config if it was given, else
+# $GOOGLE_APPLICATION_CREDENTIALS, else $CLOUDSDK_CONFIG, else
+# $HOME/.config/gcloud. The CLI's own order is the same (internal/cli/adcpath.go)
+# except that it reads $GOOGLE_APPLICATION_CREDENTIALS BEFORE the gcloud config
+# directory, so the flag only decides anything with that variable cleared, which
+# is what step_second_machine does for the one command the flag is about.
+# Nothing is copied into the scratch home, so no credential of the owner's is
+# left lying in a directory this check created.
 second_machine_adc() {
   if [ -n "$GCLOUD_CONFIG" ]; then
     printf 'CLOUDSDK_CONFIG=%s\n' "$GCLOUD_CONFIG"
@@ -1253,6 +1266,12 @@ step_second_machine() {
   local adc
   adc=$(second_machine_adc)
   local env=(HOME="$home" XDG_CONFIG_HOME="$home/.config" GIT_CONFIG_GLOBAL="$home/.gitconfig")
+  # --gcloud-config names a gcloud config DIRECTORY, and the CLI reads
+  # $GOOGLE_APPLICATION_CREDENTIALS before it, so an inherited file would win
+  # over the flag and the flag would decide nothing — the owner would be measuring
+  # with credentials they did not name. Clearing it for these two commands is what
+  # makes the directory above the one the CLI reads.
+  [ -z "$GCLOUD_CONFIG" ] || env+=("GOOGLE_APPLICATION_CREDENTIALS=")
   [ -z "$adc" ] || env+=("$adc")
   # The seed is a WRITE, not a read: it writes the scratch home's local config
   # from the installation's outputs, and the CLI confirms that write
@@ -1533,7 +1552,6 @@ parse_args() {
 }
 
 main() {
-  need_tools
   parse_args "$@"
   guard_endpoints
   # The endpoint is Bitbucket Cloud's own API, and nothing else: a redirect is
@@ -1557,6 +1575,12 @@ main() {
     exit 0
   fi
 
+  # After the two endings above rather than before the arguments are read: a run
+  # that only prints the plan, or only the usage, calls none of these tools, and
+  # refusing it for a missing `fugaro` or `gcloud` would deny the owner the one
+  # output they can have without an installation at all. Every step from here on
+  # runs one of them.
+  need_tools
   scratch_up
   CURL_CONF="$SCRATCH/api.conf"
   GIT_CONF="$SCRATCH/gitconfig"

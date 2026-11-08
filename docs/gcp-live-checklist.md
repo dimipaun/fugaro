@@ -11305,8 +11305,11 @@ launcher of an allow-listed repository hold the token's value (F7), which is why
    own `XDG` and git config, so the one thing it has to borrow is the owner's Application Default
    Credentials: `--gcloud-config <dir>` names the directory to read them from, and without the flag
    the script falls back to `$GOOGLE_APPLICATION_CREDENTIALS`, then `$CLOUDSDK_CONFIG`, then
-   `~/.config/gcloud` — the CLI's own order (`internal/cli/adcpath.go`). The path is passed
-   through and **no credential is copied** into the scratch home. That seed is a write as well as a
+   `~/.config/gcloud`. The flag is the one that wins: the CLI reads
+   `$GOOGLE_APPLICATION_CREDENTIALS` before the gcloud config directory (`internal/cli/adcpath.go`),
+   so the script clears that variable for the two commands the flag is about — an inherited file
+   would otherwise be read instead, and the flag would decide nothing. The path is passed through
+   and **no credential is copied** into the scratch home. That seed is a write as well as a
    read — it writes the scratch home's local config — and the CLI confirms that write: a terminal,
    or `--yes`. The script passes `--yes`, because its scratch home has no terminal and a seed that
    refuses would leave the second-machine row UNVERIFIED on every run; run it by hand and your own
