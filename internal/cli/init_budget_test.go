@@ -453,13 +453,26 @@ func TestManagedFactIsNotWrittenWhenTheInstallationApplyFails(t *testing.T) {
 
 // TestAResumedCreationIsNeverMarkedWithoutATypedID: fugaro_created=true is a
 // label anyone with resourcemanager.projects.update can set, so it alone never
-// marks a project managed. A resumed creation is marked only after its ID is
-// typed at the person's own terminal (the bar fugaro managed flag keeps): under
+// marks a project managed. A resumed creation is marked only at the person's
+// own terminal, --yes and every way of running that is not one excluded (the
+// bar fugaro managed flag keeps, stepConfirmation(Typed)): under --yes, with
 // --yes --non-interactive, or in a coding agent's session, nothing is written —
 // neither the object nor the fugaro_managed label — and the run says how to
 // mark it.
 func TestAResumedCreationIsNeverMarkedWithoutATypedID(t *testing.T) {
-	for name, agent := range map[string]bool{"--yes --non-interactive": false, "a coding agent's session": true} {
+	cases := map[string]struct {
+		args  []string
+		agent bool
+	}{
+		"--yes at a terminal":     {args: []string{"--create-project", "--yes"}},
+		"--yes --non-interactive": {args: []string{"--create-project", "--yes", "--non-interactive"}},
+		"a coding agent's session": {
+			args:  []string{"--create-project", "--yes", "--non-interactive"},
+			agent: true,
+		},
+	}
+	for name, tc := range cases {
+		agent := tc.agent
 		t.Run(name, func(t *testing.T) {
 			r := newProjectRig(t)
 			const number = 424242
@@ -484,7 +497,7 @@ func TestAResumedCreationIsNeverMarkedWithoutATypedID(t *testing.T) {
 			if agent {
 				t.Setenv("CLAUDECODE", "1")
 			}
-			out, errOut, err := r.run(t, true, newProj+"\n", "--create-project", "--yes", "--non-interactive")
+			out, errOut, err := r.run(t, true, newProj+"\n", tc.args...)
 			all := refusalText(out, errOut, err)
 			if got, ok := markerAt(t, r.gcs, bucket); ok {
 				t.Errorf("a resumed creation was marked with no typed ID: gs://%s/%s = %s\n%s", bucket, managed.MarkerObject, got, all)

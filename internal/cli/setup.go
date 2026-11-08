@@ -30,7 +30,7 @@ import (
 const setupLong = `setup plans the installation's shared resources (the runs bucket, registries,
 custom roles, the scheduler account, log isolation, an optional budget) with
 Terraform, importing what the bootstrap already made, and applies the plan it
-showed once you confirm by typing the project's name (or pass --yes). It
+showed once a person at the terminal confirms it (or pass --yes). It
 then writes the project config from the installation's outputs. With no
 project config yet, --name, --gcp-project and --region say what to create:
 projects/<name>.yaml.
@@ -40,8 +40,8 @@ the project's number through it before Terraform can enable it), creates
 the Terraform state bucket first when it doesn't exist, and offers to remove
 project Viewers' read access to the runs bucket, each after its own
 confirmation. --plan-only never takes --yes: what the plan needs made first
-(the state bucket, the API) takes the project's name typed at a terminal, or
-the run stops and says so. A plan that would delete or replace anything is
+(the state bucket, the API) takes a person at the terminal, or the run stops
+and says so. A plan that would delete or replace anything is
 refused unless --allow-delete names the address.
 
 A new project config grants the launcher and operator roles to you, the
@@ -122,7 +122,8 @@ it names is: that removal when needed, fugaro image refresh --repo
 base image and pins it by digest, points the daily image check job at it and
 rebuilds the image), then fugaro setup --anchor. The image checks trust the build records (written by
 the builds, unsigned: the same trust as the shared config), and a hand-pushed
-image under a release-looking tag passes them. Then the diff; --yes writes, a terminal asks, and otherwise it
+image under a release-looking tag passes them. Then the diff; --yes writes, a person at the
+terminal confirms it there (nothing is typed), and a run that is neither
 prints the line and writes nothing. Exit codes: 0 written or already present
 and safe, 1 a check failed or nothing was written, 2 a build record could not
 be read from the cloud (missing credentials included). A coding agent's
@@ -145,9 +146,10 @@ mark, project name, mode (--budget-mode; an absent one is seeded observe) and
 largest lease, after a confirmation of their own, then writes the local
 config. The same step creates the Firestore database for the spend history
 (fugaro report) if the project has none: its location, us-east5, is permanent
-(chosen once, never changed or deleted by Fugaro), so setup asks you to type
-the location to confirm it, at a real terminal (--yes, --non-interactive,
---json and a pipe never confirm it: the step is then left for you), and it
+(chosen once, never changed or deleted by Fugaro), so the location's
+confirmation is the person at a real terminal (nothing is typed; --yes,
+--non-interactive, --json and a pipe never confirm it, and the step is then
+left for you), and it
 refuses a database that holds data or is in another location; it also deploys
 deny-everything Firestore rules and the Fugaro mark. --plan-only stops after the installation's plan. Each repository then
 needs fugaro setup --repo to pick up the jobs' environment.
@@ -157,12 +159,12 @@ the current directory), whose fugaro.yaml says what it needs, into the
 installation fugaro setup applied. It imports what the bootstrap made for it
 (checking each resource's marks and live grants first), creates the rest,
 and deploys each workflow's job once its secrets are stored and its image is
-built. It offers each workflow's first image build (billable: --yes covers it, and
-at a terminal without --yes the project's name is typed), then deploys the built image and unpauses the daily check. It
+built. It offers each workflow's first image build (billable: --yes covers it, and a
+person at a terminal without --yes confirms it there), then deploys the built image and unpauses the daily check. It
 prints the fugaro secrets set commands still needed, and adds the
 repository to the local config. A repository the local config does not list
-takes the same opt-in as the converge's stages (below): its owner/name typed at
-your own terminal, or --onboard-repo.
+takes the same opt-in as the converge's stages (below): the confirmation of a
+person at your own terminal, or --onboard-repo.
 
 One confirmation per run, in a project Fugaro owns. A project is Fugaro's own
 when this run created it (a first run) or its runs bucket carries Fugaro's
@@ -173,15 +175,16 @@ installation, the Firebase root, the history job and the repository, the state
 bucket, the Cloud Resource Manager API, the Viewer-read removal, image copies
 and base-image pins that only add tags, the Firestore marks and rules, the
 local config) share one
-review screen and ONE typed project name, asked when the first of them has
-something to change (so a rerun with nothing to do asks nothing). Each step
+review screen and one confirmation, taken by the person at the terminal and
+shown when the first of them has something to change (nothing is typed, so a
+rerun with nothing to do shows nothing). Each step
 still prints its own exact plan. It never covers creating a project, linking
 billing, the Firestore database's permanent location, a Cloud Build, replacing
 a registry tag (--replace-image), an unlisted repository or a secret. Those are
 their own steps: the build, the tag and onboarding an unlisted repository are
 covered by --yes in either door (D12's answer of 2026-10-20), and a project's
-creation, the billing link, the location and a secret value keep a typed
-confirmation of their own. The state bucket and the API enable are fixed, announced, free steps; every
+creation, the billing link, the location and a secret value keep a
+confirmation of their own, taken with the person at the terminal. The state bucket and the API enable are fixed, announced, free steps; every
 Terraform plan is shown as it runs and is covered only if it is creates and
 in-place updates of the installation's own resource kinds, granting only the
 modules' roles to the listed launchers, operators and budget admins (the review
@@ -190,10 +193,10 @@ its attributes are the modules' (images in this project's registry, jobs of
 this project, logs to this project, private buckets), and a Firebase project
 other than the installation's is covered only if verified as Fugaro's; any other
 plan (a destroy or replace, an IAM binding or policy, an unlisted member, a
-widened role) stops that step, which asks its own typed name. A wrong name applies nothing.
-The confirmation is per run and never stored. Any other project (one an
-earlier run created and this one resumed, unmarked, or a mark that fails to
-read) keeps a typed name at each step;
+widened role) stops that step, which asks for its own confirmation rather than
+the run's one. The confirmation is per run and never stored. Any other project
+(one an earlier run created and this one resumed, unmarked, or a mark that
+fails to read) keeps its own confirmation at each step;
 --yes covers the ordinary steps as ever and takes no review; --non-interactive,
 --json, a pipe and a coding agent never take it; --plan-only shows the review
 and applies nothing.
@@ -205,7 +208,8 @@ does not list included — a billable first image build and replacing a tag in
 your registry (--replace-image KIND names the intent). D12's answer of
 2026-10-20 is what makes those last three ordinary: they are covered in either
 door, while a repository whose origin git config rewrites, or whose host is not
-a provider's own, takes the typed owner/name whatever the run was given. What
+a provider's own, takes the confirmation of a person at the terminal whatever
+the run was given. What
 --yes still never covers: creating a project or linking billing, a secret, and
 the Firestore database's permanent location, this door's first-time question.
 With --yes, --non-interactive, --json or a pipe each of those is left for you,
@@ -245,18 +249,18 @@ setup --repo's Terraform imports (fugaro, fugaro_repo, fugaro_secret).
 
 A first run creates its GCP project; --create-project says so explicitly and
 changes nothing else. --gcp-project <id> is the new project's ID: the run
-creates it and adds Firebase to it, as you, after you type its ID at a
-terminal; --link-billing <account> then links that billing account (it may
-incur charges), after you type the account's ID. Each is its own typed
-confirmation, never given by --yes, --non-interactive or --json, and the ID is
-never the gcloud default project. Without a billing link, setup pauses at
+creates it and adds Firebase to it, as you, at your own terminal, where being
+at it is what confirms the step; --link-billing <account> then links that
+billing account (it may incur charges), at your own terminal too. Each is its
+own confirmation, never given by --yes, --non-interactive or --json, and the ID
+is never the gcloud default project. Without a billing link, setup pauses at
 billing (above) and the rerun resumes the project it created. The project is labelled fugaro_created=true at its creation, and the
 run that created it marks it Fugaro-managed (its runs bucket's
 fugaro/managed.json and the label fugaro_managed=true) once it has applied the
 installation; --managed with --budget, --budget-currency and --billing-account
 also records the monthly budget the managed apply needs. A creation that a
-later run finished is marked by that run only after you type the project's ID
-at your own terminal: the fugaro_created=true label anyone may set says which
+later run finished is marked by that run only where the person at your own
+terminal confirms it: the fugaro_created=true label anyone may set says which
 project to ask about, and never marks one by itself (--yes, --json,
 --non-interactive and a coding agent's session leave it for fugaro managed
 flag). Marking any other project the owner runs an installation in is fugaro
@@ -276,7 +280,7 @@ In a checkout whose repository the local config does not list yet, the converge
 asks first whether to onboard it ("Onboard owner/name?", Enter takes yes, before
 any plan): no leaves the repository as it is for the rest of the run — no later
 stage asks for it again — and says how to enrol it later. The question
-authorizes nothing — yes goes on to the same typed owner/name every unlisted
+authorizes nothing — yes goes on to the same confirmation every unlisted
 repository needs — and a run that cannot ask (--yes, --non-interactive, --json,
 a pipe, a coding agent's environment) asks nothing and is unchanged. Run outside
 a checkout there is nothing to ask about, so setup prints the one line saying
@@ -284,7 +288,8 @@ how a repository is enrolled later: setup --repo, in a checkout of it.
 
 Both stages act only on a repository the project's local config already lists,
 or one you opt in: a repository not listed yet is onboarded when you opt it in
-— its owner/name typed at your own terminal (naming the checkout's path), or
+— the confirmation of a person at your own terminal (naming the checkout's
+path), or
 --onboard-repo owner/name, which must equal the origin (setup --repo takes both
 too) — or by the run's own --yes, which covers onboarding one whose origin git
 config does not rewrite and whose host is a provider's own (D12's answer of

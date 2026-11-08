@@ -219,7 +219,7 @@ func (s *projectStage) billingForAdminBecause(why string) initflow.Left {
 		Text: why + "Billing is not linked to " + s.id + " yet, so setup paused here: the project and Firebase exist, and what needs billing (Cloud Run, Cloud Build, Artifact Registry, Secret Manager, the buckets) waits for it. " +
 			"If you cannot link it yourself, forward this to whoever administers billing in your organization: they run the first line below with their billing account's id " +
 			"(theirs to supply; they find it with gcloud billing accounts list; see docs/gcp-setup.md#not-an-owner). " +
-			"Then run the second line at your own terminal: it resumes " + s.id + " and finishes the setup, and marks the project managed once you type its ID",
+			"Then run the second line at your own terminal: it resumes " + s.id + " and finishes the setup, and marks the project managed when the person at the terminal confirms it there",
 		Commands: []string{
 			billing.GcloudBin + " billing projects link " + quoteWord(s.id) + " --billing-account=<billing-account-id>",
 			selfCommand() + " setup --name " + quoteWord(name) + " --gcp-project " + quoteWord(s.id),
