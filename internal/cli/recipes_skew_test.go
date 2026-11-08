@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -379,12 +380,16 @@ func TestRecipesSkewRefusesReviewLevelsOnOldImage(t *testing.T) {
 }
 
 // TestRecipesSkewRefusesReviewJobOnAnOldImage is E6: a review launch is gated
-// on reviewJobSince, the release that deploys the review-only job variant and
-// whose runner reads the launch's marker. An older image has no variant beside
-// its coding job and no runner that would branch on the marker, so a review it
-// accepted in silence would run the coder's own job, with the App key the
-// review container exists to be without — the one failure this gate's wording
-// has to make impossible to mistake.
+// on reviewJobSince, the release whose runner can serve one — the variant
+// deployed beside the coding job, the marker the launch sets, and (CSR13) the
+// model path a tokenless container needs to reach a model at all. The two
+// failures are not the same image: below the variant's release there is no job
+// beside the coding one, so a review it accepted would run the coder's own
+// job, with the App key the review container exists to be without; on a 0.19.0
+// image the variant is there and the model path is not, so the launch starts
+// and dies in the job. Both are why 0.19.0 is a refused base here and not an
+// admitted one — it was the admitted row until CSR11's flip made this gate the
+// only thing standing between a launch and a runner that cannot serve it.
 func TestRecipesSkewRefusesReviewJobOnAnOldImage(t *testing.T) {
 	f := newCloudFixture(t)
 	env := fileEnv(t, f)
@@ -396,10 +401,10 @@ func TestRecipesSkewRefusesReviewJobOnAnOldImage(t *testing.T) {
 		err := checkReviewJobImage(context.Background(), env, appSlug, spec, "base", &warn)
 		return warn.String(), err
 	}
-	for _, baseRef := range []string{"ghcr.io/dimipaun/fugaro-base:0.15.0", "ghcr.io/dimipaun/fugaro-base:0.18.9"} {
+	for _, baseRef := range []string{"ghcr.io/dimipaun/fugaro-base:0.15.0", "ghcr.io/dimipaun/fugaro-base:0.18.9", "ghcr.io/dimipaun/fugaro-base:0.19.0"} {
 		warn, err := check(baseRef)
 		if err == nil || ExitCode(err) != ExitUserError ||
-			!strings.Contains(err.Error(), "a review launch needs a job image whose runner knows "+reviewJobKnows+" (fugaro 0.19.0 or later)") {
+			!strings.Contains(err.Error(), "a review launch needs a job image whose runner knows "+reviewJobKnows+" (fugaro 0.20.0 or later)") {
 			t.Fatalf("%s: warn = %q, err = %v", baseRef, warn, err)
 		}
 		if !strings.Contains(err.Error(), "fugaro update") {
@@ -409,8 +414,8 @@ func TestRecipesSkewRefusesReviewJobOnAnOldImage(t *testing.T) {
 			t.Errorf("%s: warning %q, want none", baseRef, warn)
 		}
 	}
-	if warn, err := check("ghcr.io/dimipaun/fugaro-base:0.19.0"); err != nil {
-		t.Fatalf("0.19.0: warn = %q, err = %v", warn, err)
+	if warn, err := check("ghcr.io/dimipaun/fugaro-base:0.20.0"); err != nil {
+		t.Fatalf("0.20.0: warn = %q, err = %v", warn, err)
 	}
 	warn, err := check("us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c")
 	if err != nil {
@@ -427,13 +432,17 @@ func TestRecipesSkewRefusesReviewJobOnAnOldImage(t *testing.T) {
 	var cloneWarn bytes.Buffer
 	err = checkCloneReviewJobImage(&lc, spec, &cloneWarn)
 	if err == nil || ExitCode(err) != ExitUserError ||
-		!strings.Contains(err.Error(), "a review launch needs a job image whose runner knows "+reviewJobKnows+" (fugaro 0.19.0 or later)") ||
+		!strings.Contains(err.Error(), "a review launch needs a job image whose runner knows "+reviewJobKnows+" (fugaro 0.20.0 or later)") ||
 		!strings.Contains(err.Error(), "release 0.18.0") {
 		t.Fatalf("clone 0.18.0: warn = %q, err = %v", cloneWarn.String(), err)
 	}
 	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:0.19.0"
+	if err := checkCloneReviewJobImage(&lc, spec, &bytes.Buffer{}); err == nil {
+		t.Fatalf("clone 0.19.0: the checkout's own base image was admitted, and 0.19.0's runner has no model path for a review container")
+	}
+	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:0.20.0"
 	if err := checkCloneReviewJobImage(&lc, spec, &bytes.Buffer{}); err != nil {
-		t.Fatalf("clone 0.19.0: %v", err)
+		t.Fatalf("clone 0.20.0: %v", err)
 	}
 }
 
@@ -903,6 +912,91 @@ func TestReviewLevelsSinceHasAReleaseBullet(t *testing.T) {
 		if !strings.Contains(bullet, want) {
 			t.Errorf("docs/release.md's reviewLevelsSince bullet does not say %q", want)
 		}
+	}
+}
+
+// TestReviewJobSinceHasAReleaseBullet: reviewJobSince names 0.20.0, the release
+// whose runner can serve a review launch, and docs/release.md's Before-you-tag
+// list is the only reader that holds the constant to a release — every other
+// *Since constant has the same bullet doing the same job for it
+// (TestReviewLevelsSinceHasAReleaseBullet). Nothing else ties the number the
+// gate accepts to a runner that can serve the launch, which is what CSR11's
+// flip made decide something: while reviewJobAdmitted was false the gate was
+// never reached, which is how 0.19.0 — a release that deploys the variant and
+// has no model path to serve a launch on it — stayed the value for two
+// releases, and how the drift was invisible.
+//
+// Mutation (run, restored): leave the constant at "0.19.0" and change nothing
+// else — this fails naming the bullet, which carries 0.20.0.
+func TestReviewJobSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `reviewJobSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no reviewJobSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+reviewJobSince+"\"`") {
+		t.Errorf("docs/release.md's reviewJobSince bullet does not carry the constant's release (%q): the checklist would verify a release the gate does not judge with", reviewJobSince)
+	}
+	for _, want := range []string{"0.19.0", "0.20.0", "model path"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's reviewJobSince bullet does not say %q: the bullet is what tells a release why this value and not the release that first deployed the variant", want)
+		}
+	}
+}
+
+// TestReviewJobSinceCitationsPointAtItsOwnLine: the plan cites this constant by
+// line, three times, in the section that moves it — and the citation checks
+// (TestDocsCloudSeniorReviewCitationsResolve) hold a cited line only to being a
+// line of the named file, so a number that drifted with an edit above it keeps
+// passing while sending a reader to a paragraph about something else. That is
+// how this constant's own citations went stale in the change that moved it: the
+// numbers were checked, and they were wrong. A paragraph that names the
+// constant and cites one of its two homes has to cite the line that holds it.
+func TestReviewJobSinceCitationsPointAtItsOwnLine(t *testing.T) {
+	declLine := 0
+	for i, line := range strings.Split(readDoc(t, "internal/cli/recipes_skew.go"), "\n") {
+		if strings.HasPrefix(line, "const reviewJobSince ") {
+			declLine = i + 1
+			break
+		}
+	}
+	if declLine == 0 {
+		t.Fatal("internal/cli/recipes_skew.go declares no reviewJobSince: this test holds the plan's citations to the line that does")
+	}
+	bulletLine := 0
+	for i, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `reviewJobSince`") {
+			bulletLine = i + 1
+			break
+		}
+	}
+	if bulletLine == 0 {
+		t.Fatal("docs/release.md's Before-you-tag list has no reviewJobSince bullet for the plan's citations to name")
+	}
+	want := map[string]int{"internal/cli/recipes_skew.go": declLine, "docs/release.md": bulletLine}
+	cited := 0
+	for _, block := range strings.Split(readDoc(t, "docs/cloud-senior-review/implementation-plan.md"), "\n\n") {
+		if !strings.Contains(block, "reviewJobSince") {
+			continue
+		}
+		for _, m := range csrCitationRE.FindAllStringSubmatch(block, -1) {
+			line, ok := want[m[1]]
+			if !ok {
+				continue
+			}
+			cited++
+			if got := strings.TrimPrefix(m[2], ":"); got != strconv.Itoa(line) {
+				t.Errorf("the plan cites %s%s in a paragraph about reviewJobSince: %s holds the constant at line %d, so the citation sends a reader to another paragraph", m[1], m[2], m[1], line)
+			}
+		}
+	}
+	if cited < 3 {
+		t.Fatalf("only %d citations into the constant's two homes were checked: the plan cited it three times when this test was written, and a paragraph that stopped citing it is a paragraph whose number this test no longer holds", cited)
 	}
 }
 

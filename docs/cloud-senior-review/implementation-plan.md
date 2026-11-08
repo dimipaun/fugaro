@@ -782,8 +782,11 @@ cutting.** CSR8–CSR16 are what makes the command reachable (`fugaro review` wa
 nowhere), the container placeable, the reviewer's calls reachable at all and the verdict verified; the
 release that deploys the variant is also
 the release `reviewJobSince` must name, and **Open item 3's answer of 2026-11-05 settles it as 0.20.0
-"Quokka"** — the 0.19.0 release in flight does not carry this work, so that release's own change moves
-`reviewJobSince` to `"0.20.0"` and writes the `### For operators` sentence (§6.5) for it.
+"Quokka"** — the 0.19.0 release in flight does not carry this work. **The constant itself waited for
+CSR11's flip**: it named `"0.19.0"` while `reviewJobAdmitted` was `false` and this gate was never
+reached, and the commit that made it decide anything (2026-11-08) is the one that moved it to
+`"0.20.0"` — 0.19.0's image holds the variant and has no model path for a container that carries no
+token (§6.5).
 
 ## 6. Follow-up after CSR1–CSR7: what still stands between this plan and a review that runs
 
@@ -1174,10 +1177,27 @@ that is still the check's step 3.
 
 - **Files:** `internal/cli/review.go`, `internal/cli/review_test.go`, `internal/cli/validate.go`,
   `internal/cli/validate_test.go`, `internal/cli/root.go`, `internal/cli/root_test.go`,
+  `internal/cli/recipes_skew.go`, `internal/cli/recipes_skew_test.go`, `docs/release.md`,
   `docs/c39-review-identity/live-check.md`, `docs/cloud-senior-review/implementation-plan.md`.
-  **8 files** (the plan's two named files plus the refusal the flip leaves behind: `validate.go`'s
+  **11 files** (the plan's two named files plus the refusal the flip leaves behind: `validate.go`'s
   precondition note, which said a fugaro update could not supply the admission half, and the two
-  documents that told a reader to set the switch).
+  documents that told a reader to set the switch; plus the gate and its release bullet, below).
+- **The gate the flip made load-bearing, and the value it moved with it.** `reviewJobSince`
+  (`internal/cli/recipes_skew.go:418`) named `"0.19.0"` — the release that deploys the review-only
+  variant — and no launch ever reached it while `reviewJobAdmitted` was `false`; the flip is what makes
+  the value decide anything, and a `"0.19.0"` value then admits an image that **cannot serve the
+  launch**: the variant is there and the review run's own model path (CSR13, PR #1777, first tagged in
+  0.20.0) is not, so the review starts, bills for the container and dies inside the job on the runner's
+  missing-token refusal — the one failure a launch refusal exists to keep in front of the spend. So the
+  commit that admits the class moves the value to `"0.20.0"`, taking **CSR6's own file** and nothing else
+  (§2's rule, §6.4's note): the constant and its comment, `TestRecipesSkewRefusesReviewJobOnAnOldImage`
+  (whose `0.19.0` row is a refused one now and whose admitted row is `"0.20.0"`, derived image and clone
+  alike), two new tests — `TestReviewJobSinceHasAReleaseBullet`, the reader this constant never had,
+  since `docs/release.md:225`'s checklist bullet is what holds it to a release and every sibling
+  `…Since` constant has that test and this one did not, and `TestReviewJobSinceCitationsPointAtItsOwnLine`,
+  because the citation checks resolve a line against its file and never against its subject, which is
+  how this constant's own citations here went stale in the change that moved it — the same file's
+  `run.go` comment, and the bullet itself.
 - **Interfaces:** `reviewJobAdmitted` (`internal/cli/review.go:55`) is `true`, with its comment rewritten
   to say **what made it true** — C3.9's merge, CSRW1's and CSRW2's, the owner's ruling of 2026-11-07 and
   the release the variant deploys in — rather than deleted: the next reader's question is why a constant
@@ -2184,12 +2204,14 @@ one writer per level is what keeps the two reviews apart.
 **Two files this section does not take, deliberately.** `internal/cli/recipes_skew.go` and
 `internal/cli/validate.go` remain **CSR6's** (§2), and no task here books them: CSR8–CSR16 add **no
 `fugaro.yaml`, task, recipe or wire key**, so the `…Since` rule (E6) gives them nothing to gate. The one
-constant whose *value* this section's release moves — `reviewJobSince`
-(`internal/cli/recipes_skew.go:379`, today `"0.19.0"`) — is **not** moved by CSR8–CSR16: it is the release
-slot's consequence, and **Open item 3's answer of 2026-11-05 is 0.20.0 "Quokka"**, so the release's own
-change moves it to `"0.20.0"` and takes that file alone under §2's rule. **§6.7's CSR17 and CSR18 are not
-in this table and not in these levels**: their own release books their files, and the only 0.20.0 file they
-could have touched — `internal/credsvc`'s class — is nobody's in 0.20.0.
+constant whose *value* the release slot decides — `reviewJobSince`
+(`internal/cli/recipes_skew.go:418`, `"0.20.0"` since CSR11's flip of 2026-11-08) — is **not** moved by
+CSR8–CSR16: it is the release slot's consequence, and **Open item 3's answer of 2026-11-05 is 0.20.0
+"Quokka"**, so the value names that release — and **CSR11's flip of 2026-11-08 is the change that moved
+it**, taking that file alone under §2's rule: 0.20.0's own change had nothing to move while every launch
+was refused, since this gate was never reached. **§6.7's CSR17 and CSR18 are not in this table and not in
+these levels**: their own release books their files, and the only 0.20.0 file they could have touched —
+`internal/credsvc`'s class — is nobody's in 0.20.0.
 
 ### 6.5 The release, the HARD RULE and the operator step
 
@@ -2271,8 +2293,11 @@ could have touched — `internal/credsvc`'s class — is nobody's in 0.20.0.
   scope, and the account is CSR14's — but the next reader who checks one against the other should find the
   difference named here rather than discover it.
 - **Release actions, for the 0.20.0 "Quokka" release Open item 3 answered:** the release's own
-  `fugaro update`, that one conditional operator sentence, and **`reviewJobSince` moved to `"0.20.0"` in
-  the release's own change** (the file is CSR6's, and the release takes it as §6.4 says). **CSR11's flip
+  `fugaro update`, that one conditional operator sentence, and the file §6.4 says the slot decides. That
+  file's constant names **`"0.20.0"`** and **CSR11's change of 2026-11-08 is what moved it, not 0.20.0's
+  own change**: while `reviewJobAdmitted` was `false` the gate was never reached, and 0.19.0's image
+  holds the variant with no model path to serve a launch on it (§6.4), so the flip took CSR6's file as
+  §2's rule allows. **CSR11's flip
   is not a release action**: it is a commit that lands in whichever release carries it — **it landed on
   2026-11-08**, on the owner's ruling of 2026-11-07 that lifted its live-check gate, and 0.21.0 is the
   release that carries it — and it is the commit that took CSR12's switch out. **The owner's live checks
@@ -2340,12 +2365,14 @@ recommendation). **Why, in one line:** the 0.19.0 release in flight carries none
 release that carries the flip has to carry the tasks that make the flip work — the placement, the
 registration, the verifier and the switch's own removal. Two consequences, settled together as the item
 said: the release note's `### For operators` sentence is written for that release (§6.5), and
-**`reviewJobSince` moves to `"0.20.0"`** in that release's own change — `docs/release.md:165`'s bullet
-verifies it against the tag
-actually cut, `internal/cli/recipes_skew.go:379` holds it today as `"0.19.0"`, and a wrong value refuses
-too late (a launch names a variant the installation has not deployed) or too early (an installation that
-holds one stays blocked). The release's own change takes that file alone, under §2's rule and §6.4's
-note.
+**`reviewJobSince` is `"0.20.0"`** — `docs/release.md:225`'s bullet verifies it against the release
+whose runner can serve the launch, `internal/cli/recipes_skew.go:418` holds it, and a wrong value refuses
+too late (a launch names a variant the installation has not deployed, or a runner that cannot serve one)
+or too early (an installation that holds both stays blocked). **The move waited for CSR11's flip**:
+0.20.0's own change did not take it, because while `reviewJobAdmitted` was `false` this gate was never
+reached, and 0.19.0's image holds the variant with no model path to serve a launch on it — a value that
+admits it starts the review, bills for it and kills it inside the job. **CSR11's change of 2026-11-08
+moved it**, taking that file alone, under §2's rule and §6.4's note.
 
 **4. *(found while writing this section)* The review run's model path. — ANSWERED 2026-11-05: a FOURTH
 RUNNER TASK, `CSR13`, and not reading 1.** O1 says the reviewer's model

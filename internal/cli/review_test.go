@@ -51,8 +51,9 @@ func reviewCLI(t *testing.T, args ...string) (string, string, error) {
 // newReviewFixture is the installation a review is launched against: the
 // project whose standard profile serves acme-personal and the default account,
 // with both accounts' review-only variants deployed beside their coding jobs,
-// the base image at the release the variant ships in (reviewJobSince, which
-// every review launch is gated on), and the credentials service opted in.
+// the base image at the release whose runner can serve a review launch
+// (reviewJobSince, which every review launch is gated on), and the credentials
+// service opted in.
 //
 // E7's two halves hold in it — the service is published, and the launcher's
 // constant admits the class since 0.21.0 — so a launch from it reaches the

@@ -390,21 +390,32 @@ const noneModelSince = "0.21.0"
 // "needs a job image whose runner knows <this>".
 const noneModelKnows = "a level's model named none as the level's own switch"
 
-// reviewJobSince is the first fugaro release that deploys and launches the
-// review-only job variant (design docs/cloud-senior-review, CSR7): the second
-// job per (profile, provider, account), with its own service account and no
-// secret at all, which is what a senior review runs on. An image older than it
-// has no variant beside its coding job, so a launch naming one resolves a job
-// the installation does not hold.
+// reviewJobSince is the first fugaro release whose runner can serve a review
+// launch, which is two things and not one: it deploys the review-only job
+// variant (design docs/cloud-senior-review, CSR7 — the second job per
+// (profile, provider, account), with its own service account and no secret at
+// all, which is what a senior review runs on) and it carries the review run's
+// own model path (CSR13, PR #1777, first tagged in 0.20.0), which is how a
+// container holding no token reaches a model at all. The variant shipped in
+// 0.19.0 and the model path in 0.20.0, so an image older than this one fails
+// in one of two ways: with no variant beside its coding job, a launch naming
+// one resolves a job the installation does not hold; on a 0.19.0 image the
+// variant is there and the launch starts, pays for the container and dies on
+// the runner's own missing-token refusal.
+//
+// It named 0.19.0 until CSR11's flip of 2026-11-08, because reviewJobAdmitted
+// was false and refused every launch before this gate was ever reached: the
+// value only decides anything once a launch is admitted, and the commit that
+// admits it is the one that moves the value.
 //
 // It is declared here, by the task that ships the variant, and read by the
 // tasks that gate on it — the launch refusal (CSR2: an image older than this
 // one would otherwise be accepted in silence) and the release's own checklist
 // entry (CSR6) — which is what the plan means by declaring the constant to
-// that task. It names the release this work is slotted for; docs/release.md's
-// ("Before you tag") list verifies the number against the tag actually cut,
-// the way digestSince's and reviewLevelsSince's bullets record.
-const reviewJobSince = "0.19.0"
+// that task. docs/release.md's ("Before you tag") list verifies the number
+// against the release whose runner can serve the launch, the way
+// digestSince's and reviewLevelsSince's bullets record.
+const reviewJobSince = "0.20.0"
 
 // gitSecretIDSince is the first fugaro release whose runner reads
 // CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
@@ -1507,11 +1518,13 @@ func checkCloneNoneModelImage(lc *localcfg.Config, spec *task.Spec, cfg *config.
 	return checkCloneImageSince(lc, spec, noneModelSince, subject, noneModelKnows, "; or "+alt, warn)
 }
 
-// reviewJobKnows names, for the gate's messages, what the job image's runner
-// has to know: the review-only variant of the job it is in, and the marker a
+// reviewJobKnows names, for this gate's messages, what the job image's runner
+// has to know: the review-only variant of the job it is in, the marker a
 // launch on it sets, which is the whole of what a review run branches on
-// (internal/runner's reviewJob).
-const reviewJobKnows = "the review-only job variant and the review job's own marker (FUGARO_REVIEW_JOB, mode: review)"
+// (internal/runner's reviewJob), and the model path the review class serves —
+// the last of the three is why an image that has the other two can still be
+// refused, since a container holding no token reaches a model only through it.
+const reviewJobKnows = "the review-only job variant, the review job's own marker (FUGARO_REVIEW_JOB, mode: review) and the review run's own model path"
 
 // reviewJobAlt is the refusal's other way out, as reviewLevelsAlt's is: the
 // update deploys the variants beside the coding jobs and rebuilds this
@@ -1520,11 +1533,16 @@ const reviewJobAlt = "; or run fugaro update, which is the whole upgrade: it bri
 
 // checkReviewJobImage refuses a launch that carries mode: review (fugaro
 // review): the launch starts CSR7's review-only variant and marks the
-// execution, and an installation older than reviewJobSince has neither the
-// variant deployed beside its coding job nor a runner that reads the marker —
-// so a review it accepted would run the coder's own job, with the App key the
-// review container exists to be without. Judged from the deployed job's build
-// record, as every checkImageSince gate's is.
+// execution, and the two releases that satisfy it are not one. An image older
+// than the variant's has no such job beside its coding job, so a launch naming
+// one resolves a job the installation does not hold, and the review would run
+// on the coder's own container with the App key the review container exists to
+// be without; a 0.19.0 image holds the variant and no model path for a
+// container that carries no token, so the launch starts, bills and dies inside
+// the job. reviewJobSince's value is what has to keep this gate ahead of both,
+// which is why it names the release whose runner can serve the launch rather
+// than the release that first deployed the variant. Judged from the deployed
+// job's build record, as every checkImageSince gate's is.
 func checkReviewJobImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
 	return checkImageSince(ctx, env, slug, spec, kind, reviewJobSince, "a review launch", reviewJobKnows, reviewJobAlt, warn)
 }
@@ -1921,7 +1939,7 @@ func checkCloneGovernanceImage(ctx context.Context, env *cloudEnv, spec *task.Sp
 // It names 0.22.0, the release the key ships in ("Sloth",
 // docs/periodic-reviews/implementation-plan.md §P7), which is not tagged yet:
 // the release that tags it holds this number to the tag it cuts, as it does for
-// sharedSince's 0.14.0 and reviewJobSince's 0.19.0. docs/release.md ("Before
+// sharedSince's 0.14.0 and reviewJobSince's 0.20.0. docs/release.md ("Before
 // you tag") has the checklist verify it.
 const jobsSince = "0.22.0"
 

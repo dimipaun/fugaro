@@ -1033,9 +1033,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		}
 		if spec.Mode == recipe.ModeReview {
 			// The review job's gate: a review launch starts the review-only
-			// variant, which an image older than reviewJobSince has neither
-			// deployed beside its coding job nor a runner that reads the
-			// launch's marker. Judged from the deployed job's build record as
+			// variant, and an image older than reviewJobSince cannot serve
+			// one — below the variant's release there is no such job beside
+			// its coding job, and between the two (0.19.0) there is one with
+			// no model path for the tokenless container it is. Judged from
+			// the deployed job's build record as
 			// the gates above are, and on the mode alone — the field only
 			// `fugaro review` writes — so a review never reaches a job that
 			// would run it on the coder's container.
