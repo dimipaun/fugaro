@@ -545,6 +545,41 @@ func TestHaltedRunCarriesItsHaltsClass(t *testing.T) {
 	}
 }
 
+// TestStoreUnpostedClassesItsCopyFromItsError: the report a follow-up stores
+// when it stops before updating its pull request (storeUnposted) is rendered
+// from a copy of the record ended with the class the ending itself is written
+// with, read off the error (endClassOf) — not with a family written down at the
+// call site. The record beside it, which is what a reader of the run reads, is
+// ended by Run's fallback with the class the same error carries, and the two
+// agreeing is the whole property: a stored report that named a family other
+// than its record's is two readings of one run's cause.
+//
+// This guard reads the call rather than an outcome, and it has to: the copy's
+// class reaches no reader at all. The report prints the outcome and the reason
+// and never the class — a report rendered from one record with two different
+// classes is byte for byte the same text — so no assertion on the stored bytes
+// can tell a class read off the error from one written at the site, and every
+// test that walks a follow-up ending of this shape passes either way. What
+// keeps the two readings one is this argument, so this is where it is held.
+//
+// Mutation: hand reportCopy a literal class (failure.InfraError) → this test
+// fails, and nothing else in the tree does.
+func TestStoreUnpostedClassesItsCopyFromItsError(t *testing.T) {
+	classes := 0
+	for _, call := range endingCalls(t) {
+		if call.fn != "storeUnposted" {
+			continue
+		}
+		classes++
+		if call.class != "endClassOf(err)" {
+			t.Errorf("%s:%d hands the stored copy the class %s: the class is the one the ending is written with, read off the error (endClassOf), because a stored report filed under a family its own record contradicts is two readings of one run's cause", call.file, call.line, call.class)
+		}
+	}
+	if classes != 1 {
+		t.Fatalf("storeUnposted ends %d records, want 1: a walk that read none says nothing about the class the copy is handed", classes)
+	}
+}
+
 // haltReasonConstants is the closed set of halt reasons, read from runstore's
 // own source in the order it declares them: every constant of a block whose
 // type is HaltReason, whether the spec spells the type or inherits it from the
