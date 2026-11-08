@@ -361,6 +361,104 @@ func TestGitForwardDropsCallerAuthorization(t *testing.T) {
 	}
 }
 
+// TestGitForwardRefusesToStart: every check validate makes is a forwarder that
+// could not work, refused at the start rather than once per git command. What
+// each one would cost is the reason it is a check and not a comment: without a
+// run-identity func the first request panics reading it (upstream), and that
+// panic lands in a handler whose ErrorLog is discarded; without a job name the
+// header the service reads this job's claim from is written empty; a service
+// URL with a path on it sends every fetch somewhere no route of the service is.
+// The last case pins the other half — the options the rest of this file starts
+// a forwarder with are admitted, so the guard is these four and not everything.
+func TestGitForwardRefusesToStart(t *testing.T) {
+	valid := func() GitForwardOptions {
+		return GitForwardOptions{
+			Service: "http://127.0.0.1:1",
+			Identity: Service{
+				IDToken:    func(context.Context) (string, error) { return forwardIdentity(t, "job-id-token"), nil },
+				RunIDToken: func() string { return forwardIdentity(t, "run-identity") },
+				Job:        serviceJob,
+			},
+			Log: slog.New(slog.DiscardHandler),
+		}
+	}
+	cases := []struct {
+		name  string
+		edit  func(*GitForwardOptions)
+		start bool
+		want  string
+	}{
+		{
+			name: "no service URL",
+			edit: func(o *GitForwardOptions) { o.Service = "" },
+			want: "no service URL",
+		},
+		{
+			name: "a service URL with a path on it",
+			edit: func(o *GitForwardOptions) { o.Service = "https://creds.example/fugaro/v1" },
+			want: "scheme and a host only",
+		},
+		{
+			name: "a service URL that is http on a routable host",
+			edit: func(o *GitForwardOptions) { o.Service = "http://creds.example" },
+			want: "http on a loopback address",
+		},
+		{
+			name: "no job identity",
+			edit: func(o *GitForwardOptions) { o.Identity.IDToken = nil },
+			want: "no job identity",
+		},
+		{
+			name: "no run identity",
+			edit: func(o *GitForwardOptions) { o.Identity.RunIDToken = nil },
+			want: "no run identity",
+		},
+		{
+			name: "no job name",
+			edit: func(o *GitForwardOptions) { o.Identity.Job = "" },
+			want: "no Cloud Run job name",
+		},
+		{
+			name: "a job name that is not one",
+			edit: func(o *GitForwardOptions) { o.Identity.Job = "Not A Job Name" },
+			want: "no Cloud Run job name",
+		},
+		{
+			name:  "the options this file's other cases use",
+			start: true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			o := valid()
+			if c.edit != nil {
+				c.edit(&o)
+			}
+			f, err := StartGitForward(context.Background(), o)
+			if c.start {
+				if err != nil {
+					t.Fatalf("StartGitForward refused the options this file's other cases start with: %v", err)
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if err := f.Close(ctx); err != nil {
+					t.Errorf("Close: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				_ = f.Close(ctx)
+				t.Fatalf("StartGitForward started a forwarder for %s", c.name)
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("StartGitForward = %q, want it to name %q", err, c.want)
+			}
+		})
+	}
+}
+
 // TestGitForwardRefusesWithoutIdentity: a forward that cannot present the run
 // is refused here, before anything is sent — an unauthenticated call to the
 // service under this job's identity is not a call this forwarder makes, and
