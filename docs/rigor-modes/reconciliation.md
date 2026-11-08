@@ -117,7 +117,7 @@ half), whose zero value is the draft every mode left before it.
 
 The key is a repository and project layer row (`agent.review_stop_fraction`,
 [project-layer.md](../project-layer.md) §5), so an installation or a repository
-can move the threshold; nothing else about the ruling needs an operator step.
+can move the threshold; nothing else about the ruling needs an operator step. The key itself needs fugaro 0.22.0 or later in the job image that runs it: an older runner's strict decoder refuses `review_stop_fraction` at bootstrap whatever it says, so `fugaro run` refuses that launch and names the image to move, and `fugaro update --repo` refuses to converge the repository onto an older base image.
 
 ## 2. Corrections to the premises this task was given
 
@@ -801,7 +801,7 @@ stale has found a merge that did not.
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 28 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 29 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
 | Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 113 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |

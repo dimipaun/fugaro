@@ -114,6 +114,15 @@ type Config struct {
 	// reads the literal as a model ID. Like the fields above it is never part
 	// of the file or of SHA256.
 	RepoLevelsNoneModelSet bool `yaml:"-" json:"-"`
+	// RepoStopFractionSet is whether the repository's own file wrote the
+	// agent.review_stop_fraction key at all, at any value: the question
+	// RepoRigorSet answers for rigor:, and Agent.ReviewStopFraction cannot
+	// answer it — the key written 0 (`review_stop_fraction: 0`, which resolves
+	// to the default) decodes to the same field as the key being absent, and a
+	// runner older than stopFractionSince refuses the key itself, whatever it
+	// says (internal/cli). Like the fields above it is never part of the file
+	// or of SHA256.
+	RepoStopFractionSet bool `yaml:"-" json:"-"`
 }
 
 // Rigor is fugaro.yaml's rigor: block and the project layer's defaults.rigor
@@ -468,7 +477,9 @@ type Agent struct {
 	// own timeouts.total, which a project or a repository sets per workflow
 	// (docs/in-job-review/reconciliation.md finding 20). A value of 1 stops
 	// the loop only when the whole budget is spent, which is what a repository
-	// that wants the old behaviour writes.
+	// that wants the old behaviour writes. Binaries before 0.22.0 refuse the
+	// key (strict decoder), whatever it says, which is what the launch's own
+	// gate judges the job image on (internal/cli's stopFractionSince).
 	ReviewStopFraction float64 `yaml:"review_stop_fraction"`
 	// Recipe names the task loop that follows implement
 	// (docs/design/recipes.md): a recipe in .fugaro/recipes/, the project's,

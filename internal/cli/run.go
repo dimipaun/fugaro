@@ -932,6 +932,13 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if err := checkCloneNoneModelImage(env.lc, spec, fileCfg, warn); err != nil {
 				return launchResult{}, err
 			}
+			// The stop rule's key, on the same configuration read: a runner
+			// older than stopFractionSince refuses agent.review_stop_fraction
+			// at bootstrap, whatever it says, so the launch is judged on the
+			// text the run will read (checkCloneStopFractionImage).
+			if err := checkCloneStopFractionImage(env.lc, spec, fileCfg, warn); err != nil {
+				return launchResult{}, err
+			}
 		} else {
 			if needsRecipeImage(spec, agentRecipe) {
 				if err := checkRecipeImage(ctx, env, slug, spec, kind, warn); err != nil {
@@ -1031,6 +1038,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			// The same gate as the clone branch's above, and for the same
 			// reason: see checkNoneModelImage.
 			if err := checkNoneModelImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
+				return launchResult{}, err
+			}
+			// The same gate as the clone branch's above, and for the same
+			// reason: see checkStopFractionImage.
+			if err := checkStopFractionImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
 				return launchResult{}, err
 			}
 			// The digest drift, last of this branch's image reads, and the

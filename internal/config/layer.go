@@ -325,7 +325,9 @@ type LayerAgent struct {
 	// ReviewStopFraction, the owner's ruling of 2026-11-08); a repository's own
 	// value replaces it. The project layer is where a share that suits every
 	// repository of a project belongs, since it is the layer that knows the
-	// workflows' timeouts.
+	// workflows' timeouts. Fugaro before 0.22.0 refuses the key (strict
+	// decoder), in every repository of the project, which is what the launch's
+	// own gate judges the job image on (internal/cli's stopFractionSince).
 	ReviewStopFraction float64 `yaml:"review_stop_fraction"`
 	Recipe             string  `yaml:"recipe"`
 	// Crafts sets each craft's model and access for every repository of the

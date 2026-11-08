@@ -3720,6 +3720,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gateGitAuthor(o, repo, lc, cfg); err != nil {
 		return err
 	}
+	// agent.review_stop_fraction is the same kind of break on
+	// stopFractionSince, in either file: a launch from outside a checkout
+	// cannot judge the repository's own half, so the converge does.
+	if err := r.gateStopFraction(o, repo, lc, cfg); err != nil {
+		return err
+	}
 	if !o.forget {
 		w := r.w
 		if o.printVars {
@@ -4223,6 +4229,22 @@ func (r *initRun) gateGitAuthor(o *initOptions, repo string, lc *localcfg.Config
 		w = r.cmd.ErrOrStderr()
 	}
 	return refuseGitAuthorSkew(repo, cfg.RepoGitAuthorSet, lc.BaseImage(config.BaseKind), w)
+}
+
+// gateStopFraction is fugaro update --repo's gate for stopFractionSince:
+// refuseStopFractionSkew, with gateRigor's escapes and for its reason. Both
+// files can write the key — the repository's agent.review_stop_fraction and the
+// project layer's defaults.agent.review_stop_fraction — and both are decoded
+// with KnownFields, so each is judged where it is set and the subject names it.
+func (r *initRun) gateStopFraction(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseStopFractionSkew(repo, cfg.RepoStopFractionSet, cfg.Layer.SetsDefault("agent.review_stop_fraction"), lc.BaseImage(config.BaseKind), w)
 }
 
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates
