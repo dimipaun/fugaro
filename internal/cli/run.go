@@ -1062,6 +1062,15 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		if err := env.sealGate(ctx, slug, spec, kind, clone, warn); err != nil {
 			return launchResult{}, err
 		}
+		// The proxy's gate (G14): a run of a repository whose Bitbucket
+		// access is brokered is launched neither onto a job image whose
+		// runner predates the proxy nor on the Batch backend. Judged beside
+		// the seal's, from the same build record and the same local config,
+		// and before the claim and the task like every gate here — a launch
+		// that is not proxied is not judged at all (G9).
+		if err := env.proxyGate(ctx, slug, spec, kind, clone, warn); err != nil {
+			return launchResult{}, err
+		}
 		if err := checkMaxParallel(ctx, env); err != nil {
 			return launchResult{}, err
 		}

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -1291,6 +1293,189 @@ func TestProxiedRepoPolicyInput(t *testing.T) {
 	} {
 		if got := repoPolicyInput(lc, nil, false, nil); got != nil {
 			t.Errorf("%s = %v, want nil: no node was read", name, got)
+		}
+	}
+}
+
+// proxiedRepo is the Bitbucket repository the launches below are for, and
+// proxiedServiceURL the installation's credentials service as the fixture's
+// local config names it. Nothing is called at the address: what these tests
+// are about is decided from the two documents a launcher reads (the local
+// config's block and the published node), not from the service.
+const proxiedRepo = "workspace-a/repo-a"
+const proxiedServiceURL = "https://fugaro-credentials-abc-uc.a.run.app"
+
+// proxiedBlock is the credentials_service block that opts an installation in
+// (credentialsServiceLaunchEnv is what puts its address on a repository's
+// job), and proxiedPolicy the published node that admits proxiedRepo with
+// proxy: true — the ONE source of that half (G15), and the pair that makes a
+// run of the repository proxied.
+const proxiedBlock = "credentials_service: { url: " + proxiedServiceURL + " }\n"
+const proxiedPolicy = `{"version":4,"allow_repos":["bitbucket/workspace-a/repo-a"],"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true}}`
+const notProxiedPolicy = `{"version":4,"allow_repos":["bitbucket/workspace-a/repo-a"],"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":false}}`
+
+// addProxiedRepo enrolls proxiedRepo in a launch fixture: the local config
+// entry (inside the repos block the fixture writes, which is why the file is
+// rewritten rather than appended to), the installation's credentials service,
+// the deployed job and the build record of its job image, whose base image is
+// `base`.
+func addProxiedRepo(t *testing.T, f *launchBudgetFixture, base string) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchor := "  acme/app: { provider: github, base_branch: main, workflows: [web] }\n"
+	if !strings.Contains(string(data), anchor) {
+		t.Fatalf("the fixture's config no longer enrolls its own repository as this helper expects (%q is missing): the entry below would land outside the repos block", anchor)
+	}
+	updated := strings.Replace(string(data), anchor, anchor+"  "+proxiedRepo+": { provider: bitbucket, workflows: [app] }\n", 1)
+	updated += proxiedBlock
+	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	slug := mustSlug("bitbucket", proxiedRepo)
+	f.run.AddJob(gcp.JobName(slug, "app"), "4", "8Gi")
+	writeBuildRecord(t, f.cloudFixture, slug, "app", base)
+}
+
+// proxiedLaunchSpec is the task these tests launch: the Bitbucket repository,
+// on the workflow its local config entry names.
+func proxiedLaunchSpec() (string, *task.Spec) {
+	return mustSlug("bitbucket", proxiedRepo), &task.Spec{Version: 1, RunID: budgetRun, Repo: proxiedRepo, Ref: "main", Workflow: "app", Task: "Add a feature"}
+}
+
+// TestLaunchRefusesProxiedRunOnOldImage is G14's first half: a run of a
+// proxied repository is not launched onto a job image whose runner predates
+// the proxy. The job such a run starts holds no Bitbucket token (G1 — the
+// flip takes the mount off it), so a runner that knows no forwarder has no
+// credential to reach Bitbucket with and dies at bootstrap with a repository
+// it cannot even clone. The judge is the one every *Since gate uses, against
+// the release the proxy ships in (proxySince, which is the release this work
+// is slotted for and not the plan's spent 0.15.0 number).
+//
+// The two cases beside it are what makes the refusal proxiedness' and not the
+// image's: a repository the published node does not proxy is launched on the
+// very same image (G9), and a proxied repository on an image at proxySince or
+// later is launched too.
+func TestLaunchRefusesProxiedRunOnOldImage(t *testing.T) {
+	const old = "ghcr.io/dimipaun/fugaro-base:0.20.3"
+	for _, tc := range []struct {
+		name    string
+		policy  string
+		base    string
+		refused bool
+	}{
+		{"the node proxies the repository", proxiedPolicy, old, true},
+		{"the node does not proxy it", notProxiedPolicy, old, false},
+		{"the job image is at the proxy's release", proxiedPolicy, "ghcr.io/dimipaun/fugaro-base:" + proxySince, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLaunchBudget(t, "enforce")
+			addProxiedRepo(t, f, tc.base)
+			publishPolicy(t, f, tc.policy)
+			_, _, err := execute(t, "run", "--repo", proxiedRepo, "--run-id", budgetRun, "Add a feature")
+			slug := mustSlug("bitbucket", proxiedRepo)
+			switch {
+			case tc.refused && err == nil:
+				t.Fatal("a proxied repository's run was launched onto a job image whose runner predates the proxy: it would start with no credential and no forwarder to reach Bitbucket with (G1, G14)")
+			case tc.refused && err != nil:
+				for _, want := range []string{proxySince, "Bitbucket proxy", "proxy: true", "credentials service"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not name %q: %v", want, err)
+					}
+				}
+				if launchedAny(f) {
+					t.Error("the refused launch started an execution")
+				}
+				if storedTaskFor(t, f.cloudFixture, slug) {
+					t.Error("the refused launch stored a task")
+				}
+			case !tc.refused && err != nil:
+				t.Fatalf("a launch that is not proxied (or is on a current image) was refused: %v", err)
+			}
+			if !tc.refused && !launchedAny(f) {
+				t.Error("an admitted launch started no execution")
+			}
+		})
+	}
+}
+
+// TestLaunchRefusesProxiedRunOnBatch is G14's second half: a proxied
+// repository's run is never launched on cloud-batch. A Batch task runs as the
+// installation's VM account, which is not an account the credentials service
+// admits as a repository's job, and Batch takes its secrets from the
+// installation's own config rather than from the job — so a run there could
+// not reach the service at all, while its job no longer mounts the token.
+//
+// Batch is not selectable in this build, so the gate is called with the env a
+// launcher's own would carry (backendNamed, as checkArtifactLaunch's tests
+// do). What refuses is proxiedness and the backend together: the same gate
+// admits the same launch on the Cloud Run backend, and a repository the node
+// does not proxy is not refused on either.
+func TestLaunchRefusesProxiedRunOnBatch(t *testing.T) {
+	const current = "ghcr.io/dimipaun/fugaro-base:" + proxySince
+	for _, tc := range []struct {
+		name    string
+		policy  string
+		backend backend.Codec
+		refused bool
+	}{
+		{"a proxied repository on Batch", proxiedPolicy, backend.BatchCodec(), true},
+		{"a proxied repository on Cloud Run", proxiedPolicy, backend.CloudRunCodec(), false},
+		{"a repository the node does not proxy, on Batch", notProxiedPolicy, backend.BatchCodec(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLaunchBudget(t, "enforce")
+			addProxiedRepo(t, f, current)
+			publishPolicy(t, f, tc.policy)
+			slug, spec := proxiedLaunchSpec()
+			// fileEnv, not memEnv: the build record the image gate reads is
+			// written into the fixture's file bucket, which is where
+			// recordReadURL sends a launch whose bucket_url is off GCS.
+			env := fileEnv(t, f.cloudFixture)
+			env.be = backendNamed{codec: tc.backend}
+			err := env.proxyGate(context.Background(), slug, spec, "", false, io.Discard)
+			switch {
+			case tc.refused && err == nil:
+				t.Fatal("a proxied repository's run was admitted on cloud-batch: it would start with no token on its job and no account the credentials service admits (G14)")
+			case tc.refused:
+				for _, want := range []string{"cloud-batch", "credentials service", proxiedRepo} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not name %q: %v", want, err)
+					}
+				}
+			case err != nil:
+				t.Fatalf("a launch that is not proxied (or is not on Batch) was refused: %v", err)
+			}
+		})
+	}
+}
+
+// TestProxySinceHasAReleaseBullet: proxySince names 0.21.0, which is not
+// tagged, so docs/release.md's Before-you-tag list is what holds the constant
+// to the release actually cut — the job every other *Since constant's bullet
+// does, and the only thing that would catch the plan's spent 0.15.0 number
+// coming back. Nothing else ties the number the gate refuses on to the release
+// whose runner serves Bitbucket through the forwarder.
+func TestProxySinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `proxySince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no proxySince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+proxySince+"\"`") {
+		t.Errorf("docs/release.md's proxySince bullet does not carry the constant's release (%q)", proxySince)
+	}
+	for _, want := range []string{"bitbucket_token", "proxy: true", "not tagged yet"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's proxySince bullet does not say %q", want)
 		}
 	}
 }
