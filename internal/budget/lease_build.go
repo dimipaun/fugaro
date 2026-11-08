@@ -67,9 +67,14 @@ func BuildLeaseDeadline(now time.Time) time.Time {
 // everywhere else in the database.
 type BuildLease struct {
 	State string `json:"state"`
-	// Repo is the slug the lease belongs to (the node's own key, written into
-	// the value so a lease read on its own says which repository it is).
+	// Repo is the slug the lease belongs to, and ID the id it was taken under:
+	// both are the node's own key (PathBuildLease), written into the value so a
+	// lease read on its own says which repository and which submission it is,
+	// and so a writer that was handed the value alone can name the path it
+	// belongs at. A writer refuses a lease whose two names do not match the
+	// path it is about to write.
 	Repo string `json:"repo"`
+	ID   string `json:"id,omitempty"`
 	// By is the identity that took the lease, for a person reading the day's
 	// counter back.
 	By string `json:"by,omitempty"`
@@ -95,6 +100,16 @@ type BuildLease struct {
 // Outstanding is what the lease still counts against the day and per-run caps:
 // reserved less released.
 func (l BuildLease) Outstanding() Micros { return l.Reserved - l.Released }
+
+// Path is the lease's own node, from its two names. A lease whose names are
+// empty is at no node at all, which is what a writer gets for a value that did
+// not come from this package and refuses rather than guesses about.
+func (l BuildLease) Path() string {
+	if l.Repo == "" || l.ID == "" {
+		return ""
+	}
+	return PathBuildLease(l.Repo, l.ID)
+}
 
 // Day is the UTC day the lease's money is counted in: the day it was taken.
 // A build that crosses midnight is settled into the day it reserved from, not
