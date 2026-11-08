@@ -17,12 +17,12 @@ Owner answers that shaped the plan: D1700 refuse and list on a non-terminal (an 
 
 | Input or failure mode | Pinned by |
 | --- | --- |
-| A short ID that matches two runs is never resolved silently, on any command, least of all `cancel` | SR3 and SR14 (red test: two fake runs with one ending, `cancel` off a terminal refuses and lists, cancels nothing; an agent marker or `--json` on a pty refuses too) |
+| A short ID that matches two runs is never resolved silently on the read commands | SR3 (an agent marker or `--json` on a pty refuses the pick list too) |
 | An ending shorter than four characters is refused | SR2 (resolver) and SR3 |
 | A unique active match wins over a finished run with the same ending; a finished run older than 7 days does not resolve by ending | SR2 |
 | The console never sends a suffix to the CLI | SR9 (the door reads the attribute, a test with a colliding pair) |
 | The full ID stays in the branch, marker, commit trailer, `task.json`, `--json`, `filed_in`; `run --retry` takes a full ID | SR11, SR14 |
-| A planted or finished-run match never becomes a unique wrong target of `cancel` | SR3 (active matches confirmed in the bucket), SR14 (`cancel` is active-only and prints what it resolved) |
+| `cancel` never acts on an ending (D1710); a planted active match is not shown unless the bucket confirms it | SR14, SR3 (active matches confirmed in the bucket) |
 | `digestSubmitRuns`'s `run-N` rows are not mangled | SR6 |
 | The collision extension crosses the dash and stays a valid ending | SR1 |
 | An active-feed read failure is said, never a silent narrowing | SR3 |
@@ -60,7 +60,7 @@ Owner answers that shaped the plan: D1700 refuse and list on a non-terminal (an 
 ### SR3. `resolveRun`: an ending to a run, with the pick list or the refusal
 
 - **Files:** `internal/cli/cloud.go`, `internal/cli/cloud_test.go` (or the file the existing `locateRun` tests live in).
-- **Interfaces:** consumes SR2, `stdinIsTerminal` and `agentMarker`. `locateRun` is left exactly as it is (it keeps serving `run --retry`, which stays full-ID); SR3 adds `resolveRun(ctx, env, ref, opts)` beside it, with options for the input and output streams, `--json` and whether the lookup is active-only, because `locateRun` has none of them. Nothing calls `resolveRun` until SR14, so the build is whole at L2. Produces: on a terminal (stdin and stdout terminals, no `--json`, empty `agentMarker`) a numbered list showing repository, title, status, start time and the `task.DisplayRuns` ending; anywhere else a user error listing the same candidates; the "no run ending ... among the active runs and the last 7 days; pass the full ID" sentence (D1709); the active feed read from the budget database (one new read per lookup), each active match confirmed as a valid run ID with a `task.json` in the bucket, and a stderr line when the feed could not be read. A full ID or `<slug>/<run-id>` behaves as `locateRun` does.
+- **Interfaces:** consumes SR2, `stdinIsTerminal` and `agentMarker`. `locateRun` is left exactly as it is (it keeps serving `run --retry`, which stays full-ID); SR3 adds `resolveRun(ctx, env, ref, opts)` beside it, with options for the input and output streams, `--json` and whether the lookup is active-only (used by `cancel`'s list-only refusal), because `locateRun` has none of them. Nothing calls `resolveRun` until SR14, so the build is whole at L2. Produces: on a terminal (stdin and stdout terminals, no `--json`, empty `agentMarker`) a numbered list showing repository, title, status, start time and the `task.DisplayRuns` ending; anywhere else a user error listing the same candidates; the "no run ending ... among the active runs and the last 7 days; pass the full ID" sentence (D1709); the active feed read from the budget database (one new read per lookup), each active match confirmed as a valid run ID with a `task.json` in the bucket, and a stderr line when the feed could not be read. A full ID or `<slug>/<run-id>` behaves as `locateRun` does.
 - **Schema/rules/config change:** none.
 - **Tests:** `TestResolveRunEnding`, `TestResolveRunAmbiguousNonTerminalRefuses`, `TestResolveRunAmbiguousTerminalPicks`, `TestResolveRunAgentMarkerRefuses`, `TestResolveRunJSONRefuses`, `TestResolveRunPlantedActiveMatchIgnored`, `TestResolveRunFeedUnreadable`, `TestLocateRunStillRefusesAnEnding`.
 - **Command:** `go test ./internal/cli/ -run 'TestResolveRun|TestLocateRun' -count=1`
@@ -108,7 +108,7 @@ Owner answers that shaped the plan: D1700 refuse and list on a non-terminal (an 
 ### SR7. The agent rule: the job prompts and the plugin skills
 
 - **Files:** `internal/runner/prompts.go`, `internal/runner/prompts_test.go`, `plugin/skills/working/SKILL.md`, `plugin/skills/working/reference/launch.md`, `followup.md`, `logs.md`, `status.md`, `diagnose.md`, `periodic-reviews.md`, `plugin/skills/parallelism/SKILL.md`, the plugin tests that read them.
-- **Interfaces:** consumes SR3 (a skill that says "pass the short ID" ships only with the CLI that accepts it). Adds to the standing instructions: "Refer to runs only by their short ID, the last 4 characters of the run ID; refer to plan tasks by their plan name. Pass the short ID to `logs`, `cancel`, `diagnose` and `artifacts` (the commands that accept it; `run --retry`, `--review-run`, `review show` and `--run-id` take full IDs), and never print the full run ID in anything you write for a person." The skills' text: tell the user a run by its short ID, keep `--json` full IDs for commands.
+- **Interfaces:** consumes SR3 (a skill that says "pass the short ID" ships only with the CLI that accepts it). Adds to the standing instructions: "Refer to runs only by their short ID, the last 4 characters of the run ID; refer to plan tasks by their plan name. Pass the short ID to `logs`, `diagnose` and `artifacts` (the commands that accept it; `cancel`, `run --retry`, `--review-run`, `review show` and `--run-id` take full IDs, which `--json` output carries), and never print the full run ID in anything you write for a person." The skills' text: tell the user a run by its short ID, keep `--json` full IDs for commands.
 - **Schema/rules/config change:** none (prompt text).
 - **Tests:** `TestPromptsCarryShortIDRule`, the plugin tests (`go test ./plugin/... -count=1`), `-run Docs` for any pinned sentence.
 - **Command:** `go test ./internal/runner/ -run 'TestPromptsCarryShortIDRule' -count=1 && go test ./plugin/... -count=1`
@@ -158,13 +158,13 @@ Owner answers that shaped the plan: D1700 refuse and list on a non-terminal (an 
 ### SR14. The other CLI printers and the command help
 
 - **Files:** `internal/cli/cancel.go`, `logs.go`, `diagnose.go`, `artifacts.go`, `run.go` (the launch output and the print sites a sweep finds; `retrySpec` is untouched and keeps calling `locateRun`), `followup.go`, and their tests.
-- **Interfaces:** consumes SR1 and SR3. `logs`, `cancel`, `diagnose` and `artifacts` switch from `locateRun` to `resolveRun` (`cancel` active-only, D1710). Human messages print `task.ShortRun` (the `cancel` messages, the launch output, notes and errors that name a run); `--json` unchanged. `cancel` prints the resolved `<slug>/<full run ID>` and title before it acts (D1710). The `RUN` argument help of `logs`, `cancel`, `diagnose`, `artifacts` reads "a run ID, `<repo-slug>/<run-id>`, or the last four or more characters of a run ID"; `run --retry`'s help says it takes a full ID. `artifacts --repo` resolves an ending within that repository (it checked the shape with `runstore.RunTime` before).
+- **Interfaces:** consumes SR1 and SR3. `logs`, `diagnose` and `artifacts` switch from `locateRun` to `resolveRun`; `cancel` keeps `locateRun` for the act and, given an ending, calls `resolveRun` active-only to **list** the matches as `<slug>/<full run ID>` plus title and exit as a user error without cancelling (D1710). Human messages print `task.ShortRun` (the `cancel` messages, the launch output, notes and errors that name a run); `--json` unchanged. The `RUN` argument help of `logs`, `diagnose`, `artifacts` reads "a run ID, `<repo-slug>/<run-id>`, or the last four or more characters of a run ID"; `cancel`'s and `run --retry`'s help say they take a full ID. `artifacts --repo` resolves an ending within that repository (it checked the shape with `runstore.RunTime` before).
 - **Schema/rules/config change:** none.
-- **Tests:** `TestCancelPrintsResolvedRun`, `TestCancelEndingNeverGuesses` (two runs, one ending: nothing cancelled), `TestCancelActiveOnly`, `TestArtifactsRepoEnding`, `TestLaunchOutputShortID`, `TestRetryEndingRefused`, `TestReviewRunEndingRefused`, `TestReviewShowEndingRefused`, `TestRunIDFlagKeepsFullID` (D1705's input side), plus `-run Docs`.
+- **Tests:** `TestCancelEndingListsAndNeverActs` (an ending, one or two matches: nothing cancelled, each full `slug/id` listed), `TestCancelEndingIgnoresFinishedRuns`, `TestCancelFullIDStillCancels`, `TestArtifactsRepoEnding`, `TestLaunchOutputShortID`, `TestRetryEndingRefused`, `TestReviewRunEndingRefused`, `TestReviewShowEndingRefused`, `TestRunIDFlagKeepsFullID` (D1705's input side), plus `-run Docs`.
 - **Command:** `go test ./internal/cli/ -run 'TestCancel|TestArtifactsRepoEnding|TestLaunchOutputShortID|TestRetryEndingRefused|TestReviewRunEndingRefused|TestReviewShowEndingRefused|TestRunIDFlagKeepsFullID|Docs' -count=1`
 - **Depends on:** SR3.
 - **Commit:** `cli: run commands print short IDs and say they take an ending`
-- **Red step:** `TestCancelEndingNeverGuesses` fails until `cancel` goes through the new lookup.
+- **Red step:** `TestCancelEndingListsAndNeverActs` fails against today's `cancel`, which rejects an ending as malformed and lists nothing.
 - **Reviewer tier:** `opus + mandatory independent review` with a mutation check on the cancel tests (a destructive command).
 
 ### SR11. The sweep: no full run ID in human output
@@ -193,7 +193,7 @@ Owner answers that shaped the plan: D1700 refuse and list on a non-terminal (an 
 
 ### SR13. OWNER-RUN checks 440 and 441
 
-- **Check 440 (live; owner-run).** On the dev installation, launch two runs with `--run-id` values chosen to share their last four characters (so the collision is certain) and note their IDs; the owner types `fugaro logs <last 4 of one>`, `fugaro cancel <ending shared by two>` (expect the pick list on a terminal, the refusal when piped: `fugaro cancel <ending> < /dev/null | cat`), `fugaro cancel abc` (expect "at least four characters"); `fugaro cancel <ending of a finished run>` (expect "no active run"), and `fugaro diagnose <short of an 8-day-old run>` (expect "pass the full ID"). It measures the resolution latency over the last 7 days (the UNVERIFIED cost in F5). No agent performs any step.
+- **Check 440 (live; owner-run).** On the dev installation, launch two runs with `--run-id` values chosen to share their last four characters (so the collision is certain) and note their IDs; the owner types `fugaro logs <last 4 of one>`, `fugaro diagnose <ending shared by two>` (expect the pick list on a terminal, the refusal when piped: `fugaro diagnose <ending> < /dev/null | cat`), `fugaro diagnose abc` (expect "at least four characters"), `fugaro cancel <ending of an active run>` (expect that nothing is cancelled and the full `slug/id` is listed), `fugaro cancel <ending of a finished run>` (expect "no active run"), and `fugaro diagnose <short of an 8-day-old run>` (expect "pass the full ID"). It measures the resolution latency over the last 7 days (the UNVERIFIED cost in F5). No agent performs any step.
 - **Check 441 (owner-run, visual).** Open the console live tab beside `fugaro watch` and compare IDs, ordering and wording. The owner also re-records the live screenshots (SR9). No agent performs any step.
 - **Depends on:** SR3 and SR9 released.
 
