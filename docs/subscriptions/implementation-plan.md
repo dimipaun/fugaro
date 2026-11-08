@@ -113,6 +113,7 @@ The owner's answers and rulings that shape it (non-price; figures are private, D
 | No key is given a term longer than its tier's maximum — the tier's term plus the 30-day issue lead a renewal key needs | S2.1, S2.3 (`TestKeyBeyondTheTierLifetimeIsRefused`) |
 | A leaked signing key's horizon is an accepted limit, not one the tier's maximum bounds: `issued` is the minter's to choose, so a future-dated `issued` passes the length check | S2.1 |
 | The key reaches the CLI it is handed to and no further: the CLI removes `FUGARO_LICENCE_KEY` from its own environment at the registration point, so every child it starts inherits none | S2.1, S2.3 (`TestTheEnvironmentKeyIsRemovedBeforeAnyChildStarts`) |
+| The licence key does not join the app's two-item secret store: `SECRET_ITEMS` (`idToken`, `macKey`) stays two items (D111, D232), so the app keeps its key in its own store | S2.1, S2.8 |
 | The base and history images build `fugaro` with the `ee` tag; the credentials image does not; no key is mounted until enforcement (R1 as amended by D524) | E1.4 (ee-reorg) |
 | The core never imports `ee/`; paid code reaches the binary only through `ee/register` | S1.2, S1.3 (existing boundary tests) |
 | An untagged build still launches; the launch declares to the coordinator only when `ee/` registered a declarer | S1.2, S1.4 (`TestUntaggedBuildStillLaunches`) |
@@ -669,9 +670,11 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
 #### S2.8 The app's key entry
 
 - **Files:** `mobile/src/licence/store.js` (new), `mobile/src/licence/store.test.js` (new),
-  `mobile/src/licence/index.js`, the settings screen S2.1 names. Storage goes through
-  `mobile/src/accounts/expo-secure-store.js`.
-- **Tests:** the key is kept in the secure store; a bad key is refused.
+  `mobile/src/licence/index.js`, the settings screen S2.1 names. Storage goes through the app's own
+  store and **not** `mobile/src/accounts/secure-store.js`, whose `SECRET_ITEMS` list D111/D232 keeps
+  at two items (`idToken`, `macKey`) and `website/test/privacy.mjs` pins.
+- **Tests:** the key is kept where this task stores it and survives a restart; a bad key is
+  refused; `SECRET_ITEMS` is still exactly `idToken,macKey`.
 - **Command:** `cd mobile && npm test`.
 - **Red step:** the bad-key case fails before the store exists.
 - **Depends on:** S2.5. **Reviewer:** opus + mandatory independent review.

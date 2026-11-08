@@ -145,6 +145,16 @@ code.
 - **The source is visible**, so the check is a switch and can be removed by a determined user.
 - **Nothing compares the organisation with the installation**, so a key can be shared beyond its
   organisation (F47). Seats are compared and shown, never enforced (D439).
+- **The hand-off reaches one child only where the build has the check.** The removal the storage
+  section states is the registration point's, so an **untagged build** — no store, no key check and
+  therefore no removal — passes `FUGARO_LICENCE_KEY` on to every child it starts, the same four the
+  storage section names; and the console hands the variable to whichever `fugaro` rule 4 resolved
+  (S2.7), which is the tagged build in a Subscription Edition installation and can be the MIT one
+  elsewhere. Closing it takes one of two things, neither of them this note's: an edition check in the
+  console before the hand-off — the `version` line the handshake already reads carries no edition
+  today, so that half is a CLI change as well — or the removal in the core for **every** build, which
+  would put one variable *name* into the core, where this design puts none. Until one of the two is
+  ruled, the limit stands as written.
 
 ## Test-mode keys
 
@@ -167,8 +177,22 @@ it in a command line: **a key in argv is a key every local process reads.**
 | --- | --- | --- |
 | the CLI | one file in the CLI's own config directory (`licence.key`, the directory `internal/localcfg` already returns), one key per line, at most two, mode 0600 | the operator writing the file, or a console that hands the key to the child it spawns |
 | the console | the console's own store on the machine, one per installation (S2.7) | pasted into the console's key screen (S2.7) |
-| the mobile app | the platform **secure store**, through `mobile/src/accounts/expo-secure-store.js`, the module every credential the app keeps goes through (S2.8) | pasted into the app's settings screen (S2.8) |
+| the mobile app | **not the app's two-item secret store**: the app's platform secure storage is `mobile/src/accounts/secure-store.js` (the platform itself, behind `mobile/src/accounts/expo-secure-store.js`), it holds what `secret.js`'s `SECRET_ITEMS` allows and nothing else — `idToken` and `macKey`, a list D232 keeps at two — and the key's own place is S2.8's decision (S2.8) | pasted into the app's settings screen (S2.8) |
 | the coordinator job | a **Secret Manager** secret of the installation, mounted into the job and never typed by a person (S1.9, T10) | `fugaro update`, which stores it per installation |
+
+**The app's row is deliberately not the Keychain**, and it cannot become one without a ruling this
+note does not make. `SECRET_ITEMS` (`mobile/src/accounts/secret.js`) is the whole of what the app may
+hold: a closed, frozen list of exactly two names — the Firebase Auth ID token and the per-pairing MAC
+key — that `isSecretItem` refuses every other name against, that `secure-store.js` and the accounts
+store enforce, that `secret.test.js` pins at two, and that `website/test/privacy.mjs` fails unless it
+is exactly `idToken,macKey`. **The owner's D232 ruling of 2026-10-29 keeps it at two**, against the
+telemetry plan's four-item list, and D111's exception is written "in these words and no wider ones".
+So this note does not add a licence key to it: where the app keeps its key is **S2.8's** decision, in
+the app's own storage, and putting it in platform secure storage would take an owner ruling that
+widens D111 — S2.8's review is where that would be raised, not here. What the key is, is why the
+ordinary place is the admissible one: it binds to an **organisation** rather than to a person, every
+installation of that organisation holds the same one, and nothing compares it with the installation
+(one of the limits above), so the app's copy is a licence rather than an account credential.
 
 The console spawns the CLI, and the one route to a spawned child is its **environment**: the console
 hands the key to the CLI it spawns in a single environment variable (`FUGARO_LICENCE_KEY`), never in
@@ -177,8 +201,8 @@ console's child environment is an exact allow-list (`CHILD_ENV_KEYS` in `console
 so the hand-off is one new entry in it with its own tests and its own independent review — that is
 S2.7's security-sensitive half, not an incidental one.
 
-**The variable reaches one child and stops there**, and it is never written to a file, a log or an
-error message. The console's allow-list is only one half of that, because the CLI starts children of
+**The variable reaches one child and stops there where the build that receives it has the check**,
+and it is never written to a file, a log or an error message. The console's allow-list is only one half of that, because the CLI starts children of
 its own — git, the plugin install, Terraform, the runner in `fugaro exec` — and each of them inherits
 the environment as it stands at the moment it is started: a CLI that only read the variable would
 hand the organisation's key to every one of them, which is F41's point in the other direction. The
@@ -187,7 +211,9 @@ other half is therefore a rule of this design, not an implementation detail: **t
 its own environment in the same step** (`os.Unsetenv`), so no child and no grandchild inherits a key
 it has no business holding. S2.3's `TestTheEnvironmentKeyIsRemovedBeforeAnyChildStarts` holds it. The
 read belongs there rather than in the core for the reason the section above gives: the store
-(`ee/licence/store.go`) is the CLI's own keeper of the key, and nothing in the core reads one.
+(`ee/licence/store.go`) is the CLI's own keeper of the key, and nothing in the core reads one. **A
+build with no registration point has no such step**, which is one of the limits below rather than a
+hole this paragraph closes.
 
 **Hand minting is OWNER-RUN** (R8): the **private signing key** never enters this repository, a
 document, a test or a log, it lives off every machine an agent reaches, and no agent mints, holds or

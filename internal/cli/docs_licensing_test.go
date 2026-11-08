@@ -422,6 +422,12 @@ func TestDocsLicensingOneWording(t *testing.T) {
 // the environment it holds when they start: internal/gitops/gitops.go,
 // internal/claudeplugin/claudeplugin.go, internal/cli/managed_apply.go and
 // internal/cli/exec.go all pass os.Environ() to a child);
+// put the hand-off back as the unqualified "reaches exactly one child" and cut
+// the limit it leaves for an untagged build -- it fails; put the app's row back
+// as `expo-secure-store.js`, "the module every credential the app keeps goes
+// through" -- it fails, on a module that is the platform adapter and not the
+// gate (`secure-store.js` refuses every name `secret.js`'s two-item
+// `SECRET_ITEMS` does not carry, and D232 keeps that list at two);
 // rewrite the test-mode sentence so it keeps "staging key id",
 // "refused" and "production" while flipping the rule (a staging key is
 // accepted, a test key can license a customer) -- it fails on the two
@@ -527,6 +533,8 @@ var licenceKeyDesignGroups = []struct {
 			"no revocation",
 			"a refunded buyer keeps a working key until it expires",
 			"a clock set back extends `expires`",
+			"the hand-off reaches one child only where the build has the check",
+			"carries no edition today",
 		},
 	},
 	{
@@ -541,17 +549,21 @@ var licenceKeyDesignGroups = []struct {
 	},
 	{
 		subject: "storage and hand-off",
-		why:     "a key that reaches a child in argv is a key every local process reads (F41), each product stores it where its own platform keeps a credential, and the hand-off is one child: the console's allow-list is not enough on its own, because the CLI's own children -- git, the plugin install, Terraform and the runner in exec -- inherit the environment it holds when they start",
+		why:     "a key that reaches a child in argv is a key every local process reads (F41), each product stores it where its own platform keeps a credential -- and for the app that is not the two-item secret store D111/D232 keep closed -- and the hand-off is one child where the build has the check: the console's allow-list is not enough on its own, because the CLI's own children -- git, the plugin install, Terraform and the runner in exec -- inherit the environment it holds when they start",
 		phrases: []string{
 			"licence.key",
 			"never in argv",
 			"fugaro_licence_key",
 			"the one route to a spawned child is its **environment**",
-			"the variable reaches one child and stops there",
+			"the variable reaches one child and stops there where the build that receives it has the check",
 			"reads `fugaro_licence_key` once",
 			"takes it out of its own environment in the same step",
 			"testtheenvironmentkeyisremovedbeforeanychildstarts",
-			"expo-secure-store.js",
+			"a build with no registration point has no such step",
+			"not the app's two-item secret store",
+			"secure-store.js",
+			"secret_items",
+			"d232",
 			"secret manager",
 			"mounted into the job and never typed by a person",
 			"never written to a file, a log or an error message",
@@ -659,6 +671,7 @@ func TestDocsSubscriptionsPlanBoundsWhatTheTierMaximumBounds(t *testing.T) {
 		"no key is given a term longer than its tier's maximum",
 		"a leaked signing key's horizon is an accepted limit",
 		"the key reaches the cli it is handed to and no further",
+		"the licence key does not join the app's two-item secret store",
 	} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("%s's constraint table never says %q: its S2.1 row is the note's own claim, and a constraint row that asks the verifier for more than the ruled check does is how TestKeyBeyondTheTierLifetimeIsRefused gets written against a property it cannot hold", plan, want)
