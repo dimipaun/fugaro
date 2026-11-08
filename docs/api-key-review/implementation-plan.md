@@ -51,12 +51,12 @@ task.
 **No level has two writers of one file, with one exception this plan declares rather than hides.**
 A file that two *levels* touch is fine — the levels run in order — and the table says which level each
 is booked in, so a task that wants to move a file between levels has to say so here first. The
-exception is `internal/infra/projectjobs.go` and its test, which L2 books for **AK4 and then AK5**:
-AK4 fails a profile that names the sentinel with a sentence the operator can act on, and AK5 replaces
-that arm with the route that deploys the variant. AK4 landed first in this branch, so the two never
-edit the file at once; a task that needs another such exception states it here before it starts, and
-the review of AK4's own change asked for exactly this one (the refusal would otherwise prescribe a
-`claude_accounts` key `ValidateClaudeAccounts` refuses, in a file that only AK5 could touch).
+exceptions are the ones the last paragraph of this section lists: two tasks of the **same** level
+that must touch one file, each declared here rather than hidden. The earlier task landed first in this
+branch, so the two never edit the file at once. A task that needs another such exception states it
+here before it starts; the review of AK4's own change asked for the first of them (the refusal would
+otherwise prescribe a `claude_accounts` key `ValidateClaudeAccounts` refuses, in a file that only AK5
+could touch).
 
 | File | Level | Task |
 | --- | --- | --- |
@@ -74,8 +74,8 @@ the review of AK4's own change asked for exactly this one (the refusal would oth
 | `internal/credsvc/review_test.go` | L2 | AK4 |
 | `internal/credsvc/cascade.go` | L2 | AK4, then AK6 |
 | `internal/credsvc/cascade_test.go` | L2 | AK4 |
-| `internal/config/claude_accounts.go` | L2 | AK4 |
-| `internal/config/claude_accounts_test.go` | L2 | AK4 |
+| `internal/config/claude_accounts.go` | L2 | AK4, then AK5 |
+| `internal/config/claude_accounts_test.go` | L2 | AK4, then AK5 |
 | `internal/config/project_secrets.go` | L2 | AK4 (the project's own key's reach) |
 | `internal/config/project_secrets_test.go` | L2 | AK4 (the same) |
 | `internal/projectpolicy/accounts.go` | L2 | AK4 (the sentinel's `accounts` entry) |
@@ -87,10 +87,14 @@ the review of AK4's own change asked for exactly this one (the refusal would oth
 | `internal/runner/routing.go` | L2 | AK5, then AK7 |
 | `internal/runner/routing_internal_test.go` | L2 | AK5, then AK7 |
 | `internal/cli/run.go` | L2 | AK5 |
+| `internal/cli/project_job.go` | L2 | AK5 (the sentinel's own job) |
+| `internal/cli/project_job_test.go` | L2 | AK5 (the same) |
+| `internal/credsvc/sharedjobs_test.go` | L2 | AK4, then AK5 |
 | `internal/infra/projectjobs.go` | L2 | AK4 (the sentinel's refusal), then AK5 |
 | `internal/infra/projectjobs_test.go` | L2 | AK4 (the same), then AK5 |
 | `deploy/terraform/gcp/modules/project/variables.tf` | L2 | AK5 (the `job.account` validation) |
 | `schemas/task.schema.json` | L2 | AK5 (if the axis value reaches a task's `oauth_token`) |
+| `schemas/schemas_test.go` | L2 | AK5 (the same) |
 | `internal/task/task.go` | L2 | AK5 (the same) |
 | `internal/task/task_test.go` | L2 | AK5 (the same) |
 | `docs/project-layer.md` | L2 | AK5 (the axis's prose) |
@@ -103,13 +107,19 @@ the review of AK4's own change asked for exactly this one (the refusal would oth
 | `internal/gateway/gateway.go` | L3 | AK7, if the upstream kind moves |
 | `docs/gcp-live-checklist.md` | L4 | AK8 |
 
-Three files are booked twice, each across two levels: `internal/credsvc/cascade.go` (AK4's candidate
-list, AK6's tier map), `internal/runner/routing.go` (AK5's admission, AK7's upstream) and
-`internal/runner/routing_internal_test.go` (the same two tasks' tests). A fourth is listed once and
-conditionally — `internal/gateway/gateway.go`, AK7 only, and only if the upstream kind moves — put
-here so a later task knows it is taken. Two files are booked twice **within** one level —
-`internal/infra/projectjobs.go` and its test, AK4 and then AK5 — which is the exception the preamble
-above declares. A task that needs a file another **level** holds adds itself to this table in the same
+`internal/credsvc/cascade.go` is booked twice across two levels — AK4's candidate list and AK6's tier
+map — and `internal/runner/routing.go` with `internal/runner/routing_internal_test.go` twice within
+one: AK5's admission and AK7's upstream over it. A fourth is listed once and conditionally —
+`internal/gateway/gateway.go`, AK7 only, and only if the upstream kind moves — put here so a later
+task knows it is taken. The rest of the files two tasks of one **level** share are the exception the
+preamble above declares, and AK5 is where the plan's inventory of them was short: AK4 and AK5 both
+touch `internal/infra/projectjobs.go` and its test (AK4 answers what the sentinel is, AK5 deploys it),
+`internal/config/claude_accounts.go` and its test (the same: AK4's prose says the sentinel is not
+deployable, AK5 makes it deployable) and `internal/credsvc/sharedjobs_test.go` (AK4's agreement test
+gains the axis value). AK5 also books `internal/cli/project_job.go` and its test, which no task booked
+and which the placement it makes is unreachable without: the account axis is resolved there, so a
+sentinel the launcher cannot place on its own job is a sentinel the deployer deploys and no launch
+reaches. A task that needs a file another **level** holds adds itself to this table in the same
 commit.
 
 ## 3. The tasks
@@ -375,13 +385,22 @@ security-sensitive surface (`internal/credsvc/review.go` says so in its header).
 **Slice:** cloud, Anthropic key (L2). **Depends on:** AK4 (a runner path to a service that cannot
 serve it is a halt), **D1422**.
 
-**Files (9):** `internal/runner/routing.go`, `internal/runner/routing_internal_test.go`,
+**Files (16):** `internal/runner/routing.go`, `internal/runner/routing_internal_test.go`,
 `internal/cli/run.go`, `internal/infra/projectjobs.go`, `internal/infra/projectjobs_test.go`,
 `deploy/terraform/gcp/modules/project/variables.tf`, `internal/task/task.go`,
 `internal/task/task_test.go` and `schemas/task.schema.json` — the last four because AK4 makes the
 sentinel publishable and servable and **not deployable**, and this is the task that deploys it (AK4's
 own section lists the four readers of the account axis that must yield; the last three only if the
-axis value is to reach a task's `oauth_token` at all).
+axis value is to reach a task's `oauth_token` at all) — plus `docs/project-layer.md` (§2 books it for
+this task's prose and the list above left it out) and six files the plan did not book at all, which
+this task adds to §2 in this commit, each because the deployment is unreachable or dishonest without
+it: `internal/cli/project_job.go` and `internal/cli/project_job_test.go` (the account axis is resolved
+there, and a sentinel the launcher cannot place on the job the deployer builds is a job no launch ever
+runs on), `internal/config/claude_accounts.go` and `internal/config/claude_accounts_test.go` (AK4's
+prose there says the sentinel is deployable by no installation, and its definition message carries the
+same claim), `internal/credsvc/sharedjobs_test.go` (the deployer-and-service agreement test gains the
+new axis value, so the review variant's name is held to the deployer's) and `schemas/schemas_test.go`
+(the task schema's `oauth_token` rule is asserted against the Go rules it mirrors).
 
 **Interfaces:** `internal/runner/routing.go`'s `checkReviewClassModelPath` admits the review class's
 new credential — the pairing's sentinel — beside `"oauth"` and `config.AuthCascade`, and refuses
@@ -586,9 +605,11 @@ The launch is **`fugaro review --pr N`**, or equivalently `fugaro run --pr N --r
 the review-only job, and the fallback the launcher's own refusal names. It is **not**
 `fugaro run --review-run`: that flag carries an existing review's findings into a **fix round's**
 brief (`internal/cli/run.go`) and needs `--pr` besides, which is a different thing entirely.
-**This step cannot be run before E7** (**F10**):
-`reviewJobAdmitted` is `false`, so the launch is refused outright until the service admits the review
-caller, and the check is written to be run *after* that, not instead of it. Read off: the review job
+**This step was written for a tree on which E7's second half was not built** (**F10**):
+`reviewJobAdmitted` was `false`, so the launch was refused outright until the service admitted the
+review caller — **the flip of 2026-11-08 made it `true` (`docs/cloud-senior-review` §6's CSR11)**, so
+the launch is admitted and what this step measures is the service's own answer on a live installation.
+Read off: the review job
 was launched for the variant the sentinel names; its model calls were served by the project's
 Anthropic key; the job's own environment held no credential of the repository's; and a repository
 whose `agent.auth` is `api-key` **without** the pairing naming the key is still refused, with the
@@ -624,31 +645,49 @@ may not start and the cloud path is not launchable. A reader must take those two
    CLAUDE.md allows an additive field there but not a changed meaning.
 6. **The security review owed before AK4–AK7 land**, not after: each is SEC, and the review is
    mandatory rather than advisory.
-7. **AK4–AK7 are gated on E7, and it is not this plan's to meet** (**F10**, **U6**;
-   `docs/cloud-senior-review` §1): `internal/cli/review.go`'s `reviewJobAdmitted` is `false`, so every
-   `fugaro review --pr N` is refused until the credentials service admits the review job's own
-   caller — **C3.9**'s code, unscheduled — and the constant is flipped by **CSR11** only after the
-   owner's live checks. Those tasks make the cloud path *served by a key*; they do not make it
-   *launchable*, and a plan that implied otherwise would be selling a path nobody can run. Nothing
-   here takes E7, and no release of this design is worth anything to a user until it is met.
-8. **AK5 is gated on the sentinel's job shape, and AK4 does not take it.** AK4 makes the sentinel
-   publishable and servable; no installation can *deploy* it, and the readers of the account axis that
-   must yield — plus the account-choice keys AK4 refuses outright — are listed in AK4's section and
-   booked in §2. What is **not** decided
-   anywhere yet, and is a product question rather than a mechanical one: whether a profile that names
-   the sentinel gets a coding job at all, what that job's account segment is
-   (`modules/project`'s `job.account` validation admits an empty account or a Claude account name,
-   and the sentinel is neither), and what `credsvc.ReviewJobAccountsFor` and the deployer then agree
-   the review variant's account segment is. An installation that publishes a profile naming the
-   sentinel is refused by `fugaro update` — fail-closed, for **every** profile and not only the
-   shared-job ones a Bitbucket profile is skipped from deploying, and with AK4's own sentence in
-   `internal/infra/projectjobs.go` that names the move that works (take the key off the profile),
-   which AK5 replaces with the route's own answer — so the state is safe and honest, but it is not a
-   state to ship a release on.
+7. **AK4–AK7 were gated on E7, and it was not this plan's to meet** (**F10**, **U6**;
+   `docs/cloud-senior-review` §1) — **that gate is lifted, because E7's second half reached the tree
+   on 2026-11-08**: `internal/cli/review.go`'s `reviewJobAdmitted` is `true` (CSR11's flip, resting on
+   **CSRW1** and **CSRW2**), so a `fugaro review --pr N` is admitted where it was refused. What the
+   flip did not do is measure a live installation — the owner's live checks are still unrun — and what
+   these tasks add is the cloud path *served by a key*: a plan that read the flip as having given an
+   owner a working api-key review would be selling a path nobody has measured. Nothing here takes
+   E7's live measurement, and no release of this design is worth anything to a user until it is met.
+8. **AK5 was gated on the sentinel's job shape, and AK5 takes it — taken 2026-11-07.** AK4 made the
+   sentinel publishable and servable and no installation could *deploy* it, and the readers of the
+   account axis that had to yield — plus the account-choice keys AK4 refuses outright — are listed in
+   AK4's section and booked in §2. What was not decided anywhere, and was a product question rather
+   than a mechanical one, is decided here: **a profile that names the sentinel gets a coding job**,
+   its account segment **is** the sentinel (`gcp.ProjectJobName(profile, provider, sentinel)`, the
+   module's own `job.account` validation admitting the literal, pinned in Go by the deployer's test),
+   nothing is mounted on it (`config.ProjectJobTokenAccount` answers `("", false)`, so it is a job no
+   Claude token reaches, exactly as a profile that lists no `default` has), and beside it the
+   installation deploys **that job's review-only variant** — the segment
+   `credsvc.ReviewJobAccountsFor` and the deployer agree on, `ReviewVariantAccount(sentinel)`, and the
+   name the launcher resolves through `credsvc.ReviewJobName`. That variant is the job the pairing's
+   key is served from, and it is what gives a project with no Claude account a review job at all
+   (**F17**, **D1422**). Two answers come with it. The **launcher** places the sentinel on that job
+   and not on the profile's no-account one (`internal/cli/project_job.go`, a file §2 does not book and
+   AK5 adds), and a **stage** of a run may still not be served by the project's own key: AK4's
+   choice-key refusal stands, because a stage's account is a token the job's environment already
+   carries, while the key reaches a run only as the class's own pairing. The gate, before this task
+   started: an installation that published a profile naming the sentinel was refused by
+   `fugaro update` — fail-closed, for **every** profile and not only the shared-job ones a Bitbucket
+   profile is skipped from deploying, with AK4's own sentence in `internal/infra/projectjobs.go`
+   naming the move that worked (take the key off the profile) — so the state was safe and honest, but
+   not a state to ship a release on.
 
 **One answer leaves work that no gate and no task carries yet, and it is named here so it is not
 lost:** **D1413** settles *that* the key wins when the owner asks for it explicitly, and **the
 spelling of that request is this plan's to design** (reconciliation §7, §9.3), but **no task in
 AK1–AK8 names it** (§4). It is not an owner decision waiting to be taken and it blocks no task: it is
 design work this plan still owes, and the task that writes the explicit-request path is the one that
-will have to spell it.
+will have to spell it. **What AK5 does about it, on the mechanism's side only:** the sentinel is
+admissible at the account flag `--token` (and by inheritance from a launch that used one, which is
+what `--retry` and a follow-up read), because that is the chain `claudeAccountFor` resolves a launch's
+account through — and it is still refused by `config.Validate` where a *repository's* own
+`fugaro.yaml` writes it in `agent.oauth_token`, which is the document rule AK4 did not book either: a
+document is not where the owner asks for the project's platform-held key, and a repository that wrote
+it would put every one of its runs, coding runs included, on the key's job. The user-facing spelling
+stays owed, and it is not yet owed to anyone in a hurry: no review launches at all until C3.9
+(§6.7), so there is no door for the request to be spelled at yet.

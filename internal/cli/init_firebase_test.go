@@ -502,15 +502,16 @@ func TestRulesDeployedAfterSecondApply(t *testing.T) {
 	}
 	// The rules go in last of the database's own writes, over a database that
 	// is already marked and configured: the mark is written before them. The
-	// two writes after them are the generation markers, which exist to say the
-	// deploy above succeeded and must not be there otherwise
+	// three writes after them are the generation markers, which exist to say
+	// the deploy above succeeded and must not be there otherwise
 	// (TestRulesMarkerOnlyAfterTheRulesDeploy): the document's generation and,
 	// beside it, the credentials children's own (credentials-service plan, task
-	// C1.3), which the same deploy carries because they ride on the same
-	// document.
-	if len(puts) < 3 || puts[0] != "/fugaro/mark" || puts[len(puts)-3] != "/.settings/rules" ||
-		puts[len(puts)-2] != "/"+projectpolicy.PathRulesMarker() ||
-		puts[len(puts)-1] != "/"+rules.PathCredsRulesMarker() {
+	// C1.3) and the orchestrator subtree's (stateless orchestrator plan, O2),
+	// which the same deploy carries because they ride on the same document.
+	if len(puts) < 4 || puts[0] != "/fugaro/mark" || puts[len(puts)-4] != "/.settings/rules" ||
+		puts[len(puts)-3] != "/"+projectpolicy.PathRulesMarker() ||
+		puts[len(puts)-2] != "/"+rules.PathCredsRulesMarker() ||
+		puts[len(puts)-1] != "/"+rules.PathOrchestratorRulesMarker() {
 		t.Errorf("PUT order = %v", puts)
 	}
 }
@@ -526,10 +527,15 @@ func TestRulesDeployedAfterSecondApply(t *testing.T) {
 // The credentials children's marker (`config/limits/credsRules`, plan task
 // C1.3) is written by the same deploy and for the same reason, so it is pinned
 // here too: absent after a refused deploy, at this binary's generation after
-// one that succeeded, and beside — never on top of — the largest lease.
+// one that succeeded, and beside — never on top of — the largest lease. The
+// orchestrator subtree's own (`config/limits/orchestratorRules`, stateless
+// orchestrator plan, O2) is the third of them, written after the same deploy
+// for the same reason: the daemon's gate reads it before it writes any state,
+// so it must not survive a deploy that did not happen.
 func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
 	marker := func(r *fbRig) any { return r.db.Value(projectpolicy.PathRulesMarker()) }
 	credsMarker := func(r *fbRig) any { return r.db.Value(rules.PathCredsRulesMarker()) }
+	orchMarker := func(r *fbRig) any { return r.db.Value(rules.PathOrchestratorRulesMarker()) }
 
 	// A refused rules deploy: init fails and leaves no marker.
 	refused := newFBRig(t)
@@ -547,6 +553,13 @@ func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
 	// children, so it must not survive a deploy that did not happen.
 	if got := credsMarker(refused); got != nil {
 		t.Errorf("%s = %#v after a refused rules deploy, want it absent: a cascade launch would pass the marker gate on rules that do not carry the children", rules.PathCredsRulesMarker(), got)
+	}
+	// The orchestrator subtree's marker is the same claim about a third
+	// generation (stateless orchestrator plan, O2): the daemon reads it before it
+	// writes any state, so a marker left behind by a deploy that did not happen
+	// is a daemon writing into a subtree the deployed rules do not carry.
+	if got := orchMarker(refused); got != nil {
+		t.Errorf("%s = %#v after a refused rules deploy, want it absent: the daemon's gate would pass on rules that carry no orchestrator subtree", rules.PathOrchestratorRulesMarker(), got)
 	}
 	if n := refused.db.RulePuts(); n != 0 {
 		t.Errorf("rules deployed %d times, want 0", n)
@@ -569,10 +582,14 @@ func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
 	if !ok || credsNum.String() != strconv.Itoa(rules.CredsRulesVersion) {
 		t.Errorf("%s = %#v, want %d (CredsRulesVersion)", rules.PathCredsRulesMarker(), credsMarker(r), rules.CredsRulesVersion)
 	}
-	// Both sit beside the largest lease, not on top of it.
+	orchNum, ok := orchMarker(r).(json.Number)
+	if !ok || orchNum.String() != strconv.Itoa(rules.OrchestratorRulesVersion) {
+		t.Errorf("%s = %#v, want %d (OrchestratorRulesVersion)", rules.PathOrchestratorRulesMarker(), orchMarker(r), rules.OrchestratorRulesVersion)
+	}
+	// All three sit beside the largest lease, not on top of it.
 	lim, _ := r.db.Value("config/limits").(map[string]any)
-	if len(lim) != 3 || lim["maxReserveMicros"] == nil {
-		t.Errorf("config/limits = %v, want the two markers beside maxReserveMicros", lim)
+	if len(lim) != 4 || lim["maxReserveMicros"] == nil {
+		t.Errorf("config/limits = %v, want the three markers beside maxReserveMicros", lim)
 	}
 }
 

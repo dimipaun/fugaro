@@ -1297,10 +1297,27 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 	if err != nil {
 		return err
 	}
+	// The database is opened first, and the run's account follows it. Every
+	// refusal above and inside it is answered from the command line, the
+	// environment or this installation's config and reaches no API:
+	// parsePlan's scope, the credential leak refuseHTTP2Debug refuses and the
+	// project selectProject refuses. A run any of them turns away is a run
+	// that never began, so it files no log, not even an empty one, which would
+	// be one of the fifty this name keeps (CL3's pruneLogs).
 	lc, db, err := openBudget(ctx, o.cloud)
 	if err != nil {
 		return err
 	}
+	// This run's account and its log (D1352): one line per unit of work with
+	// the reporter's closing line last, and nothing of the run is printed
+	// before it.
+	rep, sink := reporterFor(cmd, "budget-set", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	// The run's closing line, on every way out of it: a step's own line is the
+	// account and the summary is what says how the run ended (G3).
+	defer rep.Summary()
 	if err := requireOwnBudgetDB(ctx, lc, db, "nothing was set"); err != nil {
 		return err
 	}
@@ -1333,7 +1350,7 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 			changed = changed || !e.noop
 		}
 		if !changed {
-			fmt.Fprintln(out, "nothing changed")
+			rep.Step("budget").Skipped("nothing changed")
 			return nil
 		}
 		if raise {
@@ -1365,16 +1382,23 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 				if len(written) > 0 {
 					err = fmt.Errorf("%w\nthe update was only partly applied. written: %s; not written: %s", err, strings.Join(written, ", "), strings.Join(pending, ", "))
 				}
+				// The node's own step, so the failure names which write it was
+				// (G8): a partly applied budget is read off the screen, not
+				// inferred from the paths in the sentence under it.
+				rep.Step(e.path).Failed(err, nil)
 				return err
 			}
 			written = append(written, e.path)
 			pending = pending[1:]
-			fmt.Fprintf(out, "set %s\n", e.path)
+			rep.Step(e.path).Done(oneLine(strings.Join(e.lines, "; ")))
 		}
 		if !stale {
 			return nil
 		}
-		fmt.Fprintln(out, "changed by someone else meanwhile; reading it again")
+		// The retry says so on the screen and in the log (sayThrough): a run
+		// that read the database twice is a run a person may have to explain,
+		// and the log is where they look after it.
+		fmt.Fprintln(sayThrough(rep, out), "changed by someone else meanwhile; reading it again")
 	}
 	return remote(fmt.Errorf("the budget database kept changing under the write (%d attempts); nothing further was written; run it again", setAttempts))
 }
@@ -1420,6 +1444,16 @@ func newBudgetKillCmd(kill bool) *cobra.Command {
 	return cmd
 }
 
+// budgetKillLogName is the name kill and resume file their logs under: one
+// builder is two commands, and the log is filed under the name a person types
+// (CL3's rule is the command's own name).
+func budgetKillLogName(kill bool) string {
+	if kill {
+		return "budget-kill"
+	}
+	return "budget-resume"
+}
+
 func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 	ctx := cmd.Context()
 	// The flag's presence names the scope, not the string it carries: a bare
@@ -1430,10 +1464,23 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 	if utf8.RuneCountInString(o.reason) > maxKillReason {
 		return userErr("--reason is %d characters; keep it to %d", utf8.RuneCountInString(o.reason), maxKillReason)
 	}
+	// The database is opened first, and the run's account follows it: the
+	// scope, the reason, the credential leak refuseHTTP2Debug refuses and the
+	// project selectProject refuses are all answered from the command line,
+	// the environment or this installation's config, reaching no API, so a
+	// refused kill or resume files no log — not even an empty one, which would
+	// be one of the fifty this name keeps (CL3's pruneLogs).
 	lc, db, err := openBudget(ctx, o.cloud)
 	if err != nil {
 		return err
 	}
+	// This run's account and its log (D1352), under the name a person typed:
+	// one line per unit of work with the reporter's closing line last.
+	rep, sink := reporterFor(cmd, budgetKillLogName(kill), nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	defer rep.Summary()
 	declined := "nothing was resumed"
 	if kill {
 		declined = "nothing was killed"
@@ -1469,7 +1516,7 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 			}
 			return nil
 		},
-		Conflict: func() { fmt.Fprintln(out, "changed by someone else meanwhile; reading it again") },
+		Conflict: func() { fmt.Fprintln(sayThrough(rep, out), "changed by someone else meanwhile; reading it again") },
 		Now:      budgetNow,
 	})
 	var ke *budget.KillError
@@ -1482,22 +1529,27 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 		return err
 	}
 	cur := res.Previous
+	// One step for the switch this run moved, in one state or the other: the
+	// scope is the step's own name, so a killed project and a resumed
+	// repository read the same way (G3's three outcomes, and "already killed"
+	// is a skip rather than a tick).
+	s := rep.Step(what)
 	if res.Already {
 		if kill {
-			fmt.Fprintf(out, "%s is already killed (by %s at %s: %s); nothing changed\n", what, oneLine(cur.By), ms(cur.At), oneLine(cur.Reason))
+			s.Skipped(fmt.Sprintf("is already killed (by %s at %s: %s); nothing changed", oneLine(cur.By), ms(cur.At), oneLine(cur.Reason)))
 		} else {
-			fmt.Fprintf(out, "%s is not killed; nothing changed\n", what)
+			s.Skipped("is not killed; nothing changed")
 		}
 		return nil
 	}
 	if kill {
-		fmt.Fprintf(out, "killed %s (by %s). Running runs halt within seconds; undo with fugaro budget resume\n", what, oneLine(me))
+		s.Done(fmt.Sprintf("killed (by %s). Running runs halt within seconds; undo with fugaro budget resume", oneLine(me)))
 	} else {
-		fmt.Fprintf(out, "resumed %s (by %s)\n", what, oneLine(me))
+		s.Done(fmt.Sprintf("resumed (by %s)", oneLine(me)))
 		if !o.all {
 			var g budget.Kill
 			if _, err := db.Get(ctx, budget.PathKillGlobal, &g); err == nil && g.On {
-				fmt.Fprintf(out, "warning: the project-wide kill switch is still on (by %s): %s stays halted until fugaro budget resume --all\n", oneLine(g.By), what)
+				fmt.Fprintf(sayThrough(rep, out), "warning: the project-wide kill switch is still on (by %s): %s stays halted until fugaro budget resume --all\n", oneLine(g.By), what)
 			}
 		}
 	}

@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -733,6 +734,7 @@ func TestRestoreCreatingPathRemarksTheProjectAndRebuildsTheDeployer(t *testing.T
 	cmd, out := restoreTestCmdIn(in)
 	rr := &restoreRun{cmd: cmd, o: restoreOptions{billingAccount: billingAcc, displayName: "Fugaro Restored"},
 		lc: lc, newID: newProj, path: r.cfg, old: mustRead(t, r.cfg),
+		rep:    restoreTestReporter(t, cmd),
 		budget: &managed.Budget{Amount: 7, Currency: "USD"}}
 
 	if err := rr.confirm(cmd); err != nil {
@@ -810,7 +812,8 @@ func TestRestoreWritesTheNewProjectIDIntoTheCheckout(t *testing.T) {
 		}
 		terminal(t, true)
 		cmd, out := restoreTestCmd("y\n")
-		rr := &restoreRun{lc: &localcfg.Config{Name: initProjectName, GCPProject: initProject}, newID: restoreNewProj, checkout: root}
+		rr := &restoreRun{cmd: cmd, lc: &localcfg.Config{Name: initProjectName, GCPProject: initProject}, newID: restoreNewProj, checkout: root,
+			rep: restoreTestReporter(t, cmd)}
 		if err := rr.anchor(cmd); err != nil {
 			t.Fatalf("writing the line: %v", err)
 		}
@@ -835,7 +838,8 @@ func TestRestoreWritesTheNewProjectIDIntoTheCheckout(t *testing.T) {
 		}
 		terminal(t, true)
 		cmd, _ := restoreTestCmd("n\n")
-		rr := &restoreRun{lc: &localcfg.Config{Name: initProjectName, GCPProject: initProject}, newID: restoreNewProj, checkout: root}
+		rr := &restoreRun{cmd: cmd, lc: &localcfg.Config{Name: initProjectName, GCPProject: initProject}, newID: restoreNewProj, checkout: root,
+			rep: restoreTestReporter(t, cmd)}
 		if err := rr.anchor(cmd); err != nil {
 			t.Fatalf("a refused line edit is not an error: %v", err)
 		}
@@ -856,7 +860,8 @@ func TestRestoreWritesTheNewProjectIDIntoTheCheckout(t *testing.T) {
 		}
 		terminal(t, true)
 		cmd, _ := restoreTestCmd("y\n")
-		rr := &restoreRun{lc: &localcfg.Config{Name: initProjectName, GCPProject: initProject}, newID: restoreNewProj, checkout: root}
+		rr := &restoreRun{cmd: cmd, lc: &localcfg.Config{Name: initProjectName, GCPProject: initProject}, newID: restoreNewProj, checkout: root,
+			rep: restoreTestReporter(t, cmd)}
 		if err := rr.anchor(cmd); err != nil {
 			t.Fatal(err)
 		}
@@ -1049,7 +1054,8 @@ func TestRestoreAnchorWithoutATerminal(t *testing.T) {
 	}
 	terminal(t, false)
 	cmd, out := restoreTestCmd("y\n") // a yes on a pipe confirms nothing
-	rr := &restoreRun{lc: &localcfg.Config{Name: initProjectName, GCPProject: initProject}, newID: restoreNewProj, checkout: root}
+	rr := &restoreRun{cmd: cmd, lc: &localcfg.Config{Name: initProjectName, GCPProject: initProject}, newID: restoreNewProj, checkout: root,
+		rep: restoreTestReporter(t, cmd)}
 	if err := rr.anchor(cmd); err != nil {
 		t.Fatalf("no terminal is not an error: %v", err)
 	}
@@ -1166,6 +1172,19 @@ func restoreTestCmdIn(in io.Reader) (*cobra.Command, *bytes.Buffer) {
 	return cmd, buf
 }
 
+// restoreTestReporter is the reporter a test hands a restoreRun it builds
+// itself: a phase of the sequence prints its step through one, and restoreSteps
+// is what opens the run's own. It is the same call a whole run makes, so the
+// step a phase prints lands in the test's buffer like any other line.
+func restoreTestReporter(t *testing.T, cmd *cobra.Command) *report.Reporter {
+	t.Helper()
+	rep, sink := reporterFor(cmd, "restore", nil)
+	if sink != nil {
+		t.Cleanup(func() { _ = sink.Close() })
+	}
+	return rep
+}
+
 // restoreTestTerminal makes stdinIsTerminal a terminal for exactly the reader
 // in, and for nothing else: a *bufio.Reader wrapped around it is not, exactly
 // as production's seam (a type assertion on an *os.File) says. terminal(t,
@@ -1257,7 +1276,18 @@ func recordRestoreApply(t *testing.T, r *projectRig) *[]restoreApplyCall {
 	t.Helper()
 	var calls []restoreApplyCall
 	old := restoreManagedApply
-	restoreManagedApply = func(cmd *cobra.Command, o cloudOptions, rootArg string) error {
+	restoreManagedApply = func(cmd *cobra.Command, o cloudOptions, rootArg string, newRep reporterOpener) error {
+		// The apply a restore ends in is this run's own: it prints its step
+		// through the restore's reporter, which is what keeps one log and one
+		// closing line for the whole sequence. The body opens nothing of its
+		// own here, which is why the opener's sink is the restore's to close.
+		rep, sink := newRep()
+		if rep == nil {
+			t.Error("the restore reached the apply with no reporter: its step would print nowhere")
+		}
+		if sink != nil {
+			t.Error("the restore's apply opened a sink of its own: the run would file two logs")
+		}
 		call := restoreApplyCall{cloud: o, root: rootArg}
 		if lc, err := localcfg.Load(r.cfg); err == nil {
 			call.configGCP = lc.GCPProject
@@ -2072,10 +2102,13 @@ func TestRestorePutBackThatFailsSaysSo(t *testing.T) {
 }
 
 // TestRestoreSeamsAreProductionsFunctions is LOW 7: the variables tests swap
-// are, in production, exactly the functions they stand for.
+// are, in production, exactly the functions they stand for. The apply a restore
+// ends in is pinned to managedApplyWith — the body, not the command — which is
+// what makes a restore's apply print through the restore's own reporter: one
+// run, one log, one closing line.
 func TestRestoreSeamsAreProductionsFunctions(t *testing.T) {
 	for name, pair := range map[string][2]any{
-		"restoreManagedApply": {restoreManagedApply, managedApply},
+		"restoreManagedApply": {restoreManagedApply, managedApplyWith},
 		"restoreInitCmd":      {restoreInitCmd, newSetupCmdWith},
 	} {
 		if reflect.ValueOf(pair[0]).Pointer() != reflect.ValueOf(pair[1]).Pointer() {

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -218,6 +220,36 @@ func TestUpdateConvergesFromThePreviousRelease(t *testing.T) {
 func converge(t *testing.T, node map[string]any, stale []string) {
 	t.Helper()
 	r := newConvergeRig(t, node)
+	convergeOn(t, r, stale)
+	if got := upgradeRead(t, r.settings); !strings.Contains(got, `"ref": "v`+convergeRelease+`"`) {
+		t.Errorf("the plugin pin is still not this release's:\n%s", got)
+	}
+	// The checkout's cloud step is the third step of its stage, and this run
+	// onboarded the repository itself (it is the run the anchor writes
+	// fugaro.yaml's gcp_project: line in, which leaves the working tree
+	// different from the default branch): the job images are built here, from
+	// the repository this run converged, and a skipped cloud step would be a
+	// run refusing to build from a file it did onboard.
+	//
+	// Four builds reach Cloud Build: the repository stage's own first builds
+	// first (the first build of each workflow is billable, and it is confirmed
+	// as every other step of this --yes run is), and then the checkout's cloud
+	// step, which builds the same two because the record it reads is still the
+	// previous release's base -- this rig's, and the whole of what the count
+	// below is.
+	if n := len(r.builder.specs); n != 4 {
+		t.Errorf("%d job image(s) reached Cloud Build, want the checkout's two workflows, built by the repository stage and then by the checkout: the job images of a repository this run onboarded are refreshed here", n)
+	}
+}
+
+// convergeOn is converge over a rig the caller built and can go on reading:
+// the fixture is asserted stale, `fugaro update` is run once, and doctor is
+// clean afterwards. converge is this plus the two checks about the checkout, so
+// a test that has to look at the database the run left behind — the rules it
+// deployed, the markers it wrote — reaches it through here rather than building
+// a rig of its own and then running the door against another one.
+func convergeOn(t *testing.T, r *convergeRig, stale []string) {
+	t.Helper()
 	currentRelease(t)
 
 	before := doctorChecks(t, r.root)
@@ -257,28 +289,108 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 			t.Errorf("after fugaro update, doctor's %s check still fires: %s", c.ID, c.Problem)
 		}
 	}
-	if got := upgradeRead(t, r.settings); !strings.Contains(got, `"ref": "v`+convergeRelease+`"`) {
-		t.Errorf("the plugin pin is still not this release's:\n%s", got)
-	}
 	if !strings.Contains(out, convergeRelease) {
 		t.Errorf("the run never names the release it converged to:\n%s", out)
 	}
-	// The checkout's cloud step is the third step of its stage, and this run
-	// onboarded the repository itself (it is the run the anchor writes
-	// fugaro.yaml's gcp_project: line in, which leaves the working tree
-	// different from the default branch): the job images are built here, from
-	// the repository this run converged, and a skipped cloud step would be a
-	// run refusing to build from a file it did onboard.
-	//
-	// Four builds reach Cloud Build: the repository stage's own first builds
-	// first (the first build of each workflow is billable, and it is confirmed
-	// as every other step of this --yes run is), and then the checkout's cloud
-	// step, which builds the same two because the record it reads is still the
-	// previous release's base -- this rig's, and the whole of what the count
-	// below is.
-	if n := len(r.builder.specs); n != 4 {
-		t.Errorf("%d job image(s) reached Cloud Build, want the checkout's two workflows, built by the repository stage and then by the checkout: the job images of a repository this run onboarded are refreshed here\n%s", n, out)
+}
+
+// TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration: an
+// installation whose deployed rules predate the orchestrator subtree reaches it
+// with `fugaro update` alone, and the one run writes both halves — the
+// generation marker and the document the marker names — so the daemon's first
+// state write lands on rules that carry the subtree, rather than on a document
+// under which the person's own phone may not read the state back (D1220,
+// D1241; stateless orchestrator plan, O2).
+//
+// The fixture is the release behind: the deployed rules are the previous
+// generation's document and carry no orchestrator marker at all, which is the
+// state every installation is in until this release's update runs.
+func TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration(t *testing.T) {
+	r := newConvergeRig(t, v4Node())
+	currentRelease(t)
+	// The fixture is the previous generation, or the assertions below prove
+	// nothing: no marker, and a document this binary does not generate.
+	if got := r.db.Value(rules.PathOrchestratorRulesMarker()); got != nil {
+		t.Fatalf("the fixture already carries %s = %v: it is not an installation whose rules predate the orchestrator subtree",
+			rules.PathOrchestratorRulesMarker(), got)
 	}
+	if infra.SameJSON(r.db.Rules(), generatedRules(t)) {
+		t.Fatal("the fixture's deployed rules are already the document this binary generates, so nothing has to converge")
+	}
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	// One run, and the marker records this binary's generation. A marker left
+	// absent here is the daemon's own gate refusing to start on a database the
+	// owner was told was up to date.
+	if got := r.db.Value(rules.PathOrchestratorRulesMarker()); fmt.Sprint(got) != fmt.Sprint(rules.OrchestratorRulesVersion) {
+		t.Errorf("after one fugaro update, %s = %v, want %d", rules.PathOrchestratorRulesMarker(), got, rules.OrchestratorRulesVersion)
+	}
+	// And the deployed document is the one the marker names: the subtree, with
+	// the person's read and the explicit refusal of every token writer.
+	var doc struct {
+		Rules map[string]json.RawMessage `json:"rules"`
+	}
+	if err := json.Unmarshal(r.db.Rules(), &doc); err != nil {
+		t.Fatalf("the deployed rules are not JSON: %v", err)
+	}
+	raw, ok := doc.Rules[rules.PathOrchestrator]
+	if !ok {
+		t.Fatalf("the rules this run deployed carry no /%s subtree: the marker claims a generation the document does not have", rules.PathOrchestrator)
+	}
+	var node map[string]any
+	if err := json.Unmarshal(raw, &node); err != nil {
+		t.Fatalf("the deployed /%s node is not an object: %v", rules.PathOrchestrator, err)
+	}
+	if v, has := node[".write"]; !has || v != false {
+		t.Errorf("the deployed /%s carries .write = %v, want false", rules.PathOrchestrator, v)
+	}
+	if cond, _ := node[".read"].(string); !strings.Contains(cond, "auth.token.mu") {
+		t.Errorf("the deployed /%s .read = %v, want the expanded USER predicate", rules.PathOrchestrator, node[".read"])
+	}
+}
+
+// TestUpdateRefusesToRewindTheOrchestratorMarker: a marker above this binary's
+// generation is a database whose rules came from a newer Fugaro, and the deploy
+// path refuses before anything is planned, so this binary's older document is
+// never written over the newer one and the newer marker is never recorded over
+// (stateless orchestrator plan, O2; the credentials marker's own rule).
+//
+// The refusal is what makes the marker a boundary rather than a note: without
+// it `fugaro update` on an older binary would take the subtree out from under a
+// daemon whose own gate reads the same marker.
+func TestUpdateRefusesToRewindTheOrchestratorMarker(t *testing.T) {
+	r := newConvergeRig(t, v4Node())
+	currentRelease(t)
+	ahead := rules.OrchestratorRulesVersion + 1
+	r.db.Set(rules.PathOrchestratorRulesMarker(), ahead)
+	puts := r.db.RulePuts()
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	if err == nil {
+		t.Fatalf("fugaro update deployed this binary's rules over a newer orchestrator generation:\n%s", out)
+	}
+	if !strings.Contains(out+errOut, rules.PathOrchestratorRulesMarker()) {
+		t.Errorf("the refusal does not name the marker it read (%s), so the owner cannot tell which generation refused:\n%s\n%s",
+			rules.PathOrchestratorRulesMarker(), out, errOut)
+	}
+	if got := r.db.Value(rules.PathOrchestratorRulesMarker()); fmt.Sprint(got) != fmt.Sprint(ahead) {
+		t.Errorf("the refusal wrote the marker: %s = %v, want the newer %d left alone", rules.PathOrchestratorRulesMarker(), got, ahead)
+	}
+	if n := r.db.RulePuts(); n != puts {
+		t.Errorf("the refusal deployed the rules anyway (%d deployment(s), want the %d the fixture started with)", n, puts)
+	}
+}
+
+// generatedRules is the document this binary deploys, for a test that has to
+// tell a fixture's rules apart from the current generation's.
+func generatedRules(t *testing.T) []byte {
+	t.Helper()
+	gen, err := rules.Generate()
+	if err != nil {
+		t.Fatalf("generating the rules: %v", err)
+	}
+	return gen
 }
 
 // stoppedStage is the stage `fugaro update`'s own summary names as the one it

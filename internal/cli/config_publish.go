@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
@@ -72,11 +73,28 @@ func newConfigPublishCmd() *cobra.Command {
 					return userErr("nothing was published: %v", err)
 				}
 			}
+			// The cloud is opened first, and the run's account follows it. The
+			// layer file given on the command line is read above, and openCloud
+			// makes this command's other two refusals — the credential leak
+			// refuseHTTP2Debug refuses and the project selectProject refuses —
+			// which are answered from the environment and this installation's
+			// config and reach no API. A run any of them turns away is a run
+			// that never began, so it files no log, not even an empty one,
+			// which would be one of the fifty this name keeps (CL3's
+			// pruneLogs).
 			env, err := openCloud(ctx, open)
 			if err != nil {
 				return err
 			}
 			defer env.Close()
+			// This run's account and its log (D1352): one line per unit of work
+			// with the reporter's closing line last, and the full output of a
+			// run that printed one kept beside it.
+			rep, sink := reporterFor(cmd, "config-publish", nil)
+			if sink != nil {
+				defer func() { _ = sink.Close() }()
+			}
+			defer rep.Summary()
 			var gate *managedGate
 			if marker != "" {
 				gate = configPublishGate(ctx, env, marker)
@@ -153,7 +171,19 @@ func newConfigPublishCmd() *cobra.Command {
 			if len(ps) > 0 {
 				return userErr("nothing was published: %s is invalid: %s", file, pluginwire.Printable(layerProblemsText(ps)))
 			}
+			// The layer is one step: the object's write and the generation
+			// record beside it. Its line in flight is taken down around
+			// publishLayer's own output (G1) — the diff and the
+			// executable-change banner are what the operator reads, and the
+			// refusal of a change says "shown above".
+			step := rep.Step("layer")
+			fail := func(err error) error {
+				step.Failed(err, nil)
+				return err
+			}
+			rep.Pause()
 			gen, err := publishLayer(ctx, cmd.ErrOrStderr(), env.bucket, l, executable, at, rec, nil)
+			rep.Resume()
 			if err != nil {
 				// A failure that came after the write means the step APPLIED
 				// and only the record beside it failed: the admission is
@@ -162,10 +192,10 @@ func newConfigPublishCmd() *cobra.Command {
 				// exactly on the runs that end badly.
 				if gate != nil && errors.Is(err, errLayerWritten) {
 					if rerr := gate.recorded(ctx); rerr != nil {
-						return fmt.Errorf("%w: %w", err, rerr)
+						err = fmt.Errorf("%w: %w", err, rerr)
 					}
 				}
-				return err
+				return fail(err)
 			}
 			if gate != nil {
 				// The record of the admission, after the write it is about and
@@ -173,13 +203,16 @@ func newConfigPublishCmd() *cobra.Command {
 				// the state D1014 exists to end, so a record that cannot be
 				// written fails this command rather than being a note beside it.
 				if err := gate.recorded(ctx); err != nil {
-					return err
+					return fail(err)
 				}
 			}
 			bucket := "fugaro-runs-" + env.lc.GCPProject
 			_ = localcfg.SaveLayerCache(os.Getenv, env.lc.Name, localcfg.SharedCacheEntry{GCPProject: env.lc.GCPProject, Bucket: bucket, Generation: gen, CheckedAt: time.Now(), YAML: string(data)})
-			fmt.Fprintf(cmd.OutOrStdout(), "published the project layer of %s to gs://%s/%s (generation %d, sha256 %s)\n", env.lc.Name, bucket, config.LayerKey, gen, l.SHA256)
-			failed := fanOutLayer(ctx, cmd.OutOrStdout(), env, l, gen)
+			step.Done(fmt.Sprintf("published the project layer of %s to gs://%s/%s (generation %d, sha256 %s)", env.lc.Name, bucket, config.LayerKey, gen, l.SHA256))
+			// The fan-out is one step per repository, reported by the fan-out
+			// itself: the layer's step is already ended above, because the
+			// object IS published whatever the copies do.
+			failed := fanOutLayer(ctx, rep, nil, env, l, gen)
 			warnOldImages(ctx, cmd.ErrOrStderr(), env)
 			if failed > 0 {
 				return remote(fmt.Errorf("the project layer is published, but %d repository copy(ies) failed (listed above); run fugaro config publish again", failed))
@@ -587,7 +620,13 @@ func profileClause(name string) string {
 // writeLayerCopy's own conditional write catches that (errNewerLayerCopy),
 // and this fan-out stops the same way, rather than let a slower publisher's
 // older copy clobber the faster one's newer one.
-func fanOutLayer(ctx context.Context, w io.Writer, env *cloudEnv, l *config.ProjectLayer, gen int64) (failed int) {
+//
+// Each repository's copy is a unit of work, so it is reported by layerSays:
+// the door's run, whose account IS the reporter, gets a step per repository
+// and one for a fan-out that stopped, and the update stage's layer — whose
+// own step is the stage — passes a nil rep and gets the same sentences as
+// lines of its own output, which is what it printed before this task.
+func fanOutLayer(ctx context.Context, rep *report.Reporter, w io.Writer, env *cloudEnv, l *config.ProjectLayer, gen int64) (failed int) {
 	repos := slices.Sorted(maps.Keys(env.lc.Repos))
 	for i, repo := range repos {
 		_, curGen, err := env.bucket.ReadMaxStrict(ctx, config.LayerKey, config.LayerMaxBytes)
@@ -596,16 +635,16 @@ func fanOutLayer(ctx context.Context, w io.Writer, env *cloudEnv, l *config.Proj
 		case err == nil && curGen == gen:
 			// unchanged since this publish wrote it: proceed.
 		case err == nil:
-			fmt.Fprintf(w, "  stopped: another publisher changed %s while this fan-out ran; run fugaro config publish again to fan out the current layer (%d of %d repositories not yet copied)\n",
-				config.LayerKey, remaining, len(repos))
+			layerSays(rep, w, "stopped", fmt.Sprintf("another publisher changed %s while this fan-out ran; run fugaro config publish again to fan out the current layer (%d of %d repositories not yet copied)",
+				config.LayerKey, remaining, len(repos)), true)
 			return failed + remaining
 		case errors.Is(err, blobx.ErrNotExist):
-			fmt.Fprintf(w, "  stopped: %s is gone (something else deleted the project layer while this fan-out ran); run fugaro config publish again (%d of %d repositories not yet copied)\n",
-				config.LayerKey, remaining, len(repos))
+			layerSays(rep, w, "stopped", fmt.Sprintf("%s is gone (something else deleted the project layer while this fan-out ran); run fugaro config publish again (%d of %d repositories not yet copied)",
+				config.LayerKey, remaining, len(repos)), true)
 			return failed + remaining
 		default:
-			fmt.Fprintf(w, "  stopped: could not confirm %s is still the layer this fan-out published: %s; run fugaro config publish again (%d of %d repositories not yet copied)\n",
-				config.LayerKey, oneLineCLI(err.Error()), remaining, len(repos))
+			layerSays(rep, w, "stopped", fmt.Sprintf("could not confirm %s is still the layer this fan-out published: %s; run fugaro config publish again (%d of %d repositories not yet copied)",
+				config.LayerKey, oneLineCLI(err.Error()), remaining, len(repos)), true)
 			return failed + remaining
 		}
 		// The provider resolves exactly as a launch's own env.repoSlug
@@ -615,23 +654,41 @@ func fanOutLayer(ctx context.Context, w io.Writer, env *cloudEnv, l *config.Proj
 		// and guessing wrong would write a copy under the wrong slug.
 		slug, err := env.repoSlug(repo, checkoutOf(ctx, repo))
 		if err != nil {
-			fmt.Fprintf(w, "  %s: skipped: provider of %s is not known here: set repos.<name>.provider in the local config or publish from its checkout; its copy was not written\n", repo, repo)
+			layerSays(rep, w, repo, fmt.Sprintf("skipped: provider of %s is not known here: set repos.<name>.provider in the local config or publish from its checkout; its copy was not written", repo), true)
 			failed++
 			continue
 		}
 		if err := writeLayerCopy(ctx, env.bucket, slug, l.Raw); err != nil {
 			if errors.Is(err, errNewerLayerCopy) {
-				fmt.Fprintf(w, "  stopped: another publisher's fan-out already wrote %s's copy; run fugaro config publish again to fan out the current layer (%d of %d repositories not yet copied)\n",
-					repo, remaining, len(repos))
+				layerSays(rep, w, "stopped", fmt.Sprintf("another publisher's fan-out already wrote %s's copy; run fugaro config publish again to fan out the current layer (%d of %d repositories not yet copied)",
+					repo, remaining, len(repos)), true)
 				return failed + remaining
 			}
-			fmt.Fprintf(w, "  %s: not copied: %s\n", repo, oneLineCLI(err.Error()))
+			layerSays(rep, w, repo, "not copied: "+oneLineCLI(err.Error()), true)
 			failed++
 			continue
 		}
-		fmt.Fprintf(w, "  %s: copied to %s\n", repo, config.LayerCopyKey(slug))
+		layerSays(rep, w, repo, "copied to "+config.LayerCopyKey(slug), false)
 	}
 	return failed
+}
+
+// layerSays reports one line of the fan-out: a repository's copy, or the
+// fan-out's own stop. A run with a reporter gets a step of that name — the
+// cross and the error's text for bad, the tick and detail otherwise — and a run
+// whose writer is its own stage's gets the one sentence both forms carry, so
+// the two accounts never drift apart.
+func layerSays(rep *report.Reporter, w io.Writer, name, detail string, bad bool) {
+	if rep != nil {
+		step := rep.Step(name)
+		if bad {
+			step.Failed(errors.New(detail), nil)
+			return
+		}
+		step.Done(detail)
+		return
+	}
+	fmt.Fprintf(w, "  %s: %s\n", name, detail)
 }
 
 // warnOldImages names every listed workflow whose build record says its job
