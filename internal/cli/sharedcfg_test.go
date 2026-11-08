@@ -659,6 +659,33 @@ func TestSharedConfigRefusesImageCatalog(t *testing.T) {
 	}
 }
 
+// TestSharedConfigRefusesIssues: the issues block holds the Issues section's
+// two nudge thresholds (T-IS15, docs/troubleshoot-issue/ F14), and they are the
+// printing machine's own — the section is printed on whichever terminal runs
+// the digest, and the committed report carries no part of it — so the block is
+// local-only and localcfg.Config.Shared nils it, the way update_check is, which
+// is refused for the same shape of choice: a machine's own decision about the
+// nag. A writer of the runs bucket publishing one would be choosing when every
+// teammate's machine is told its issues have waited too long, and on a machine
+// with no local config for the project the fetched shared config is the one the
+// commands read, so the reader refuses the key by name before the file is
+// parsed, the way review_floor and the catalog are refused.
+func TestSharedConfigRefusesIssues(t *testing.T) {
+	if !slices.Contains(sharedForbidden, "issues") {
+		t.Fatal("sharedForbidden does not name issues, so a published block would be read")
+	}
+	data := validShared() + "issues:\n    nudge_after_days: 1\n"
+	_, err := ParseShared([]byte(data), sharedAnchor)
+	if err == nil {
+		t.Fatal("a published shared config carrying issues: was accepted")
+	}
+	for _, want := range []string{"issues", "never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+}
+
 // TestSharedConfigRefusesOrchestrator: the orchestrator block is the owner's
 // policy too (D1239, D1234) and travels the floor's way into the policy node —
 // the daemon reads the caps there — rather than being read from the shared

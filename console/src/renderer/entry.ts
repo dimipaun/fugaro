@@ -3454,18 +3454,24 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * wireRuns makes each drawn run row a door to the Run screen (plan 3.4c step
    * 2: "Run detail: reached from a run row").
    *
-   * The row's own drawn id is the only thing read. `live-run-id` is written
-   * through `putText`, so a run id the sanitizer refused is drawn as the
-   * unavailable mark and matches no run in the model -- and a row whose id
-   * cannot be drawn is a row with nothing to ask about, rather than one that
-   * asks about whatever the mark happens to be.
+   * **The cell's `data-run-id` is the only thing read** (D1707). The drawn text
+   * is the run's short ID -- four characters, extended over the rows of its
+   * table when two of them collide (`live.ts`'s `putRunId`) -- and that is a
+   * display: `fugaro` takes four or more characters as an *ending to resolve*,
+   * so a door that handed one over would be asking about a different question
+   * than the row shows, and one that could match two runs. The whole ID travels
+   * in the attribute, written through the same `runId` class the cell's text
+   * used to go through, so a run ID the sanitizer refused leaves the attribute
+   * off and matches no run in the model -- a row whose ID cannot be drawn is a
+   * row with nothing to ask about, rather than one that asks about whatever the
+   * mark happens to be.
    *
    * **The review inbox's rows are the same door** (v2 plan Task V2.7.1):
-   * `live-review-run-id` is a run id drawn the same way, and `model.review` is
-   * where it is checked. A finished run is a run -- `fugaro diagnose RUN` reads
-   * it from the runs bucket precisely because its registry entry is gone -- so
-   * a ready row that could not be opened would be the one run row on this
-   * screen with nothing behind it.
+   * `live-review-run-id` carries the same attribute, over the same short ID,
+   * and `model.review` is where it is checked. A finished run is a run --
+   * `fugaro diagnose RUN` reads it from the runs bucket precisely because its
+   * registry entry is gone -- so a ready row that could not be opened would be
+   * the one run row on this screen with nothing behind it.
    */
   const wireRuns = (drawn: Drawn, model: LiveModel): void => {
     const known = new Set<string>()
@@ -3474,7 +3480,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     for (const row of model.review) known.add(row.run)
     const door = (rowClass: string, idClass: string): void => {
       for (const row of classed(drawn, rowClass)) {
-        const id = classed(row, idClass)[0]?.textContent ?? ''
+        const id = classed(row, idClass)[0]?.getAttribute('data-run-id') ?? ''
         if (!known.has(id)) continue
         surface.nodeOf(row).addEventListener('click', (event: Event) => {
           // **A write the row draws is not the door.** A lost run's Reap is

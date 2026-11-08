@@ -13,32 +13,43 @@
 //    and the newest file is published last, so a date taken from a release's own history does
 //    not exist for the entry a reader sees first. The page prints the tag and links the entry
 //    to its GitHub release, where the date is GitHub's.
-//  * **Standard library only** (node:fs, node:path), so it runs under `node --test` before
-//    the site's toolchain exists, and no npm dependency is added.
+//  * **No npm dependency**, and the one file outside `docs/releases/` it reads is read by the
+//    site's own reader (`parseYAML`, `src/content.ts`, the same one `src/lib/landing.mjs`
+//    imports), so it runs under `node --test` before the site's toolchain exists.
 //
-// The one field that reads a file outside `docs/releases/` is `released`, and it reads the
-// **plugin's own version** (`plugin/.claude-plugin/plugin.json`): an entry is released when
-// its version is at or below that one. The release process merges the plugin's version bump to
-// `main` (`scripts/release.sh`'s "release: vX.Y.Z" PR) and only then pushes the tag, so on
-// `main` the version equals the latest published release — and a release file written ahead of
-// its bump is correctly not yet released. The number is a file in this repository rather than a
-// tag, which is deliberate: the deploy build checks out without tags, and a changelog that read
-// `git tag --list` printed "not yet released" for every release on the deployed site.
+// **Which files are releases at all** is the one question the module asks outside the directory,
+// and `docs/release-streams.yaml` answers it: the CLI stream carries a `current` version, the
+// release the stream is at, and a file for a version above it is the hand-written highlights of
+// the *next* release, written ahead of it (docs/releases/README.md asks for exactly that: the
+// notes land in the pull request that makes the change). Such a file is a draft, and this module
+// leaves it out rather than rendering it or asking it for a summary line — which is also why an
+// entry carries no published/unpublished flag: the flag said a file was above the version it was
+// held to, and every entry here is at or below `current`, so none is left to carry it. (The rule
+// before this filter held files to the plugin's version, and there the flag did fire: `v0.22.0`
+// came back marked unpublished while the plugin was at 0.21.0.)
+//
+// The version is a file in this repository rather than a tag, which is deliberate: the deploy
+// build checks out without tags, and a changelog that read `git tag --list` printed "not yet
+// released" for every release on the deployed site.
 
 import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { asList, asMap, asString, parseYAML } from '../content.ts'
 
 // website/src/lib/changelog.mjs -> website/src/lib -> website/src -> website -> the root.
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 
 export const RELEASES_DIR = path.join(REPO_ROOT, 'docs', 'releases')
 
-// The CLI plugin's own manifest: the one fact that says which release is the newest one
-// published. `scripts/release.sh` bumps it in the commit that cuts a release, which lands on
-// `main` before the tag exists — so the version here IS the latest released version, and a
-// release file for a higher version is one written ahead of its release.
-export const PLUGIN_FILE = path.join(REPO_ROOT, 'plugin', '.claude-plugin', 'plugin.json')
+// The catalogue of the release streams: the CLI stream's own version line, which is the fact
+// that says which CLI release is out (`internal/streams` refuses a file that breaks the
+// catalogue's rules, and scripts/release.sh takes the CLI's next name and current version from
+// it). A release file above that version is the next release's notes, written ahead of their
+// release, and it is left out here rather than rendered as one (see the header).
+export const STREAMS_FILE = path.join(REPO_ROOT, 'docs', 'release-streams.yaml')
+
+const CLI_STREAM = 'cli'
 
 // `docs/releases/README.md` describes the format; it is the one file in the directory that
 // is not a release, and it is skipped by name rather than by the pattern below. Every other
@@ -110,29 +121,43 @@ function atOrBelow(parts, other) {
   return true
 }
 
-// The plugin's version, read from its manifest. This is the number every entry's `released`
-// is compared with, so a manifest that is missing, is not JSON or carries no `x.y.z` version
-// stops the build naming the file: an unreadable version is not "nothing is released", and
-// guessing one would put a wrong "not yet released" on the page.
-function releasedVersion(pluginFile) {
-  let manifest
+/**
+ * The version triple the CLI stream is at, read from the release streams catalogue at
+ * `streamsFile`. A catalogue that cannot be read, that carries no `cli` stream or whose
+ * `current` is not `x.y.z` stops the build naming the file: "no current version" is not "every
+ * release file is a draft", and a changelog that guessed one would either render a draft as a
+ * release or drop a released one off the page.
+ */
+function cliCurrent(streamsFile) {
+  let raw
   try {
-    manifest = JSON.parse(readFileSync(pluginFile, 'utf8'))
+    raw = readFileSync(streamsFile, 'utf8')
   } catch (cause) {
     throw new Error(
-      `${pluginFile} cannot be read as JSON: the changelog reads the plugin's own version ` +
-        `to decide which releases are published, and a version it cannot read is not a ` +
-        `changelog with nothing released (${cause.message}).`,
+      `${streamsFile} cannot be read (${cause.message}): the changelog reads the CLI stream's ` +
+        `current version from it to tell a release file written ahead of its release from a ` +
+        `released one, and a catalogue it cannot read is not a changelog whose drafts are all ` +
+        `left out.`,
     )
   }
-  const parts = partsOf(manifest.version)
-  if (parts === null) {
-    throw new Error(
-      `${pluginFile} carries the version ${JSON.stringify(manifest.version)}: the changelog ` +
-        `compares each release's version with this one, and it is x.y.z.`,
-    )
+  const document = asMap(parseYAML(raw, streamsFile), streamsFile, 'the release streams catalogue')
+  for (const value of asList(document.streams, streamsFile, 'the `streams` list')) {
+    const stream = asMap(value, streamsFile, 'a stream of the `streams` list')
+    if (stream.name !== CLI_STREAM) continue
+    const parts = partsOf(asString(stream.current, streamsFile, `the \`${CLI_STREAM}\` stream's \`current\` version`))
+    if (parts === null) {
+      throw new Error(
+        `${streamsFile}: the \`${CLI_STREAM}\` stream's current version is ` +
+          `${JSON.stringify(stream.current)}, and it is x.y.z — every release file's version is ` +
+          `compared with it.`,
+      )
+    }
+    return parts
   }
-  return parts
+  throw new Error(
+    `${streamsFile}: no \`${CLI_STREAM}\` stream. The changelog reads the CLI's current release ` +
+      `from that stream, and without it every release file would read as a draft of the next one.`,
+  )
 }
 
 // The lines a reader is meant to see: the file's own lines, with the authoring notes an
@@ -174,14 +199,14 @@ function splitSections(lines) {
 // text and nothing else: `highlights` is what the file says before its first section
 // heading (the 3 to 6 user-facing bullets), and `sections` is every section it writes after
 // that — its title, and its lines verbatim, in the order the file writes them — so no
-// sentence here is one the file does not carry.
+// sentence here is one the file does not carry. Nothing here reads the checkout the build
+// runs in, and nothing says whether a release is published: the entries ARE the releases.
 //
-// `released` is the one field that is not the file's text, and it is the whole of what a
-// reader needs to tell a published release from a file written ahead of its release: the
-// entry's version against the plugin's own (see the header). Nothing here reads the checkout
-// the build runs in.
-export function buildChangelog({ releasesDir = RELEASES_DIR, pluginFile = PLUGIN_FILE } = {}) {
-  const published = releasedVersion(pluginFile)
+// A file for a version above the CLI stream's `current` is not an entry at all: it is the next
+// release's notes, written ahead of their release, so it is left out before the entries are
+// built — not rendered, and not asked for a summary line.
+export function buildChangelog({ releasesDir = RELEASES_DIR, streamsFile = STREAMS_FILE } = {}) {
+  const current = cliCurrent(streamsFile)
 
   // Only the named stream directories are skipped (NON_RELEASE_DIRS, above), and only as
   // directories: every other entry here, file or directory, is held to the rule below — a
@@ -206,6 +231,7 @@ export function buildChangelog({ releasesDir = RELEASES_DIR, pluginFile = PLUGIN
     })
 
   return files
+    .filter((file) => atOrBelow(file.parts, current))
     .sort((a, b) => newestFirst(a, b))
     .map((file) => {
       const lines = contentLines(readFileSync(path.join(releasesDir, file.fileName), 'utf8'))
@@ -214,7 +240,6 @@ export function buildChangelog({ releasesDir = RELEASES_DIR, pluginFile = PLUGIN
       return {
         tag: file.tag,
         version: file.version,
-        released: atOrBelow(file.parts, published),
         highlights,
         sections,
       }

@@ -836,3 +836,32 @@ func TestMergeSharedNeverCarriesTheAccountChoiceKeys(t *testing.T) {
 		t.Error("Shared/MergeShared cleared the local account-choice keys")
 	}
 }
+
+// TestIssuesNudgeKeysAreNeverPublished: the nudge thresholds are the printing
+// machine's own setting (T-IS15, F14) — the Issues section is printed on the
+// terminal that runs the digest, after the digest's own output, and the
+// committed report carries none — so a published threshold would be a value no
+// other machine acts on, written by anyone who can write the runs bucket.
+// Shared drops the block; the receiver keeps it, as it does for every key
+// dropped only on the way out.
+func TestIssuesNudgeKeysAreNeverPublished(t *testing.T) {
+	lc := sharedBase(t, "issues:\n  nudge_after_days: 14\n  nudge_recurrence: 5\n")
+	if lc.Issues == nil || lc.NudgeAfterDays() != 14 || lc.NudgeRecurrence() != 5 {
+		t.Fatalf("the fixture records no thresholds to drop: %+v", lc.Issues)
+	}
+	out, err := lc.Shared().Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"issues:", "nudge_after_days", "nudge_recurrence"} {
+		if strings.Contains(string(out), forbidden) {
+			t.Errorf("the published file carries %q:\n%s", forbidden, out)
+		}
+	}
+	if _, err := Parse(out); err != nil {
+		t.Errorf("the published file does not read back: %v", err)
+	}
+	if lc.Issues == nil || lc.NudgeAfterDays() != 14 || lc.NudgeRecurrence() != 5 {
+		t.Errorf("Shared cleared the receiver's own thresholds: %+v", lc.Issues)
+	}
+}

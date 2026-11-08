@@ -788,10 +788,14 @@ test.describe('the renderer entry, in the real window', () => {
       await expect(panel.locator('span.live-repo-name')).toHaveText('r-4c25cf20/r-f1aa9214')
       // The last frame of the recording carries both runs.
       await expect(panel.locator('tr.live-run')).toHaveCount(2)
-      await expect(panel.locator('tr.live-run td.live-run-id')).toHaveText([
+      // The RUN cell draws the run's short ID -- the last four characters, which
+      // is what a person types back into the CLI -- and the whole ID is on the
+      // cell as `data-run-id`, which is the door a click opens.
+      await expect(panel.locator('tr.live-run td.live-run-id')).toHaveText(['aa01', 'aa03'])
+      await expect(panel.locator('tr.live-run td.live-run-id').first()).toHaveAttribute(
+        'data-run-id',
         '20261015-120000-aa01',
-        '20261015-120400-aa03',
-      ])
+      )
       // The navigation, and Live as the view on screen.
       await expect(launched.page.locator('nav.console-views button.console-view')).toHaveText([
         'Live',
@@ -830,7 +834,10 @@ test.describe('the renderer entry, in the real window', () => {
     try {
       const panel = launched.page.locator('div.console-panel')
       const row = panel.locator('tr.live-run').first()
-      await expect(row.locator('td.live-run-id')).toHaveText('20261015-120000-aa01')
+      // The cell draws the run's short ID; the whole one is the attribute the
+      // click reads, and the Run screen below is where that is checked.
+      await expect(row.locator('td.live-run-id')).toHaveText('aa01')
+      await expect(row.locator('td.live-run-id')).toHaveAttribute('data-run-id', '20261015-120000-aa01')
 
       const frame = await launched.page.evaluate(() => {
         const row = document.querySelector('tr.live-run')

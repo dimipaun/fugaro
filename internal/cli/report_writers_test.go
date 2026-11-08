@@ -573,7 +573,7 @@ func TestRestoreDefaultIsShort(t *testing.T) {
 	restoreManagedOld(r)
 	recordRestoreApply(t, r)
 	_, root := restoreCheckout(t)
-	out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+	out, err := restoreStepsWith(t, r, createStdin, root)
 	if err != nil {
 		t.Fatalf("the restore: %v\n%s", err, out)
 	}
@@ -585,7 +585,7 @@ func TestRestoreWritesALog(t *testing.T) {
 	restoreManagedOld(r)
 	recordRestoreApply(t, r)
 	_, root := restoreCheckout(t)
-	if _, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root); err != nil {
+	if _, err := restoreStepsWith(t, r, createStdin, root); err != nil {
 		t.Fatal(err)
 	}
 	log := writesALog(t, "restore")
@@ -612,7 +612,7 @@ func TestRestoreKeepsNoTerraformTailInItsLog(t *testing.T) {
 	_, root := restoreCheckout(t)
 	r.script["apply"] = map[string]any{"exit": 1, "stderr": tail}
 	r.save(t)
-	out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+	out, err := restoreStepsWith(t, r, createStdin, root)
 	if err == nil {
 		t.Fatalf("the restore finished though the creating run's apply failed:\n%s", out)
 	}
@@ -651,7 +651,7 @@ func TestRestoreEndsItsApplyStepWhenTheApplyFailsBeforeItsPlan(t *testing.T) {
 	}
 	t.Cleanup(func() { managedCaller = oldCaller })
 	_, root := restoreCheckout(t)
-	out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+	out, err := restoreStepsWith(t, r, createStdin, root)
 	if err == nil {
 		t.Fatalf("the restore finished though the apply's caller read failed:\n%s", out)
 	}
