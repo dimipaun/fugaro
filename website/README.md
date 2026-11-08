@@ -1833,14 +1833,19 @@ release file with no entry in `data/release-summaries.yaml` stops the build nami
 rather than rendering an entry with nothing under its heading. **That holds for every release
 file, and not only for the three the page renders** (D1647): the page asks for a summary line
 for every entry the generator returns, before it makes its cut, so an older release losing its
-line stops the build rather than going unmentioned. `website/test/changelog.mjs` holds the
-generator to the files, and `website/test/changelog-page.mjs` holds the page to both sources:
-every release file has a summary entry and none is empty, the three entries the page renders
-are the newest three and each one renders the summary its own entry in the data file carries,
-and the page writes only the words a sentence cannot come from a file: its title, the notes
-block's label, the "not yet released" marker, the tags (which come from the filenames), and
-the words it adds for the three things beside the entries — the link to the full list and the
-label of each stream's line.
+line stops the build rather than going unmentioned. **A release file is a file at or below the
+CLI stream's `current` version in `docs/release-streams.yaml`**, and one above it is the next
+release's notes, written ahead of their release: the generator leaves those out, so they are
+neither rendered nor asked for a summary line, and no entry carries a "not yet released"
+state (D1649 — the flag and its marker went with the filter, because the release process
+records `current` and bumps the plugin in the same commit, so an entry could never be the file
+ahead of it). `website/test/changelog.mjs` holds the generator to the files, and
+`website/test/changelog-page.mjs` holds the page to both sources: every release file has a
+summary entry and none is empty, the three entries the page renders are the newest three and
+each one renders the summary its own entry in the data file carries, and the page writes only
+the words a sentence cannot come from a file: its title, the notes block's label, the tags
+(which come from the filenames), and the words it adds for the three things beside the
+entries — the link to the full list and the label of each stream's line.
 
 ## The console's downloads are derived, never written down
 
