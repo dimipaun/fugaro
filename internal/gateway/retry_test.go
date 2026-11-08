@@ -3,8 +3,10 @@ package gateway
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -396,6 +398,96 @@ func TestARetryThatNeverLeftTheClientIsNotAnAttempt(t *testing.T) {
 			}
 			if call["settled"] != "zero" || num(call["status"]) != int64(c.wantStatus) {
 				t.Errorf("log %v, want the upstream's own %d settled zero", call, c.wantStatus)
+			}
+		})
+	}
+}
+
+// retryWroteThenFails is an upstream the gateway reaches twice where the retry
+// is written and then lost: the first request goes to the fake as usual, and
+// the second gets as far as its request headers before the connection dies --
+// the shape of a retry that left the client and came back with nothing. The
+// first attempt's answer is wrapped so the test can see it closed.
+type retryWroteThenFails struct {
+	tries atomic.Int32
+	first *countedCloser // the first attempt's body, nil when it answered none
+}
+
+func (d *retryWroteThenFails) RoundTrip(r *http.Request) (*http.Response, error) {
+	if d.tries.Add(1) > 1 {
+		if tr := httptrace.ContextClientTrace(r.Context()); tr != nil && tr.WroteHeaders != nil {
+			tr.WroteHeaders() // the request was written before the connection died
+		}
+		return nil, &net.OpError{Op: "read", Net: "tcp", Err: errors.New("connection reset by peer")}
+	}
+	resp, err := http.DefaultTransport.RoundTrip(r)
+	if err != nil {
+		return nil, err
+	}
+	d.first = &countedCloser{ReadCloser: resp.Body}
+	resp.Body = d.first
+	return resp, nil
+}
+
+// countedCloser counts the Close calls on a response body.
+type countedCloser struct {
+	io.ReadCloser
+	closes atomic.Int32
+}
+
+func (c *countedCloser) Close() error {
+	c.closes.Add(1)
+	return c.ReadCloser.Close()
+}
+
+// A retry that left the client is the call's answer, whatever it came back
+// with: the attempt whose request was written is the one that may have reached
+// the upstream, and the first attempt's answer is the gateway's to discard --
+// never relayed, its body closed where it is dropped. Answering for the call
+// from the first attempt instead would hand the agent a 503 this gateway has
+// decided not to use, and settle an attempt that was written at zero, which is
+// the under-charge the reservation exists to prevent.
+func TestARetryThatLeftTheClientIsTheCallsAnswer(t *testing.T) {
+	fastRetry(t)
+	for _, c := range []struct {
+		name        string
+		first       anthropicfake.Reply
+		wantBodyOut bool // the first attempt answered, so it had a body to close
+	}{
+		{"a 503 first attempt", anthropicfake.Error(http.StatusServiceUnavailable, "api_error", "busy"), true},
+		{"a dropped first attempt", anthropicfake.Reply{DropBeforeHeaders: true}, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			up := &retryWroteThenFails{}
+			h := newHarnessWith(t, func(o *Options) { o.Client = &http.Client{Transport: up} }, c.first)
+			body := msg(sonnet, 1000, `"stream":true`)
+			resp, b := h.post(body)
+			if resp.StatusCode != http.StatusBadGateway {
+				t.Fatalf("the agent got %d %q, want the gateway's 502: the retry left the client and answered nothing", resp.StatusCode, b)
+			}
+			if n := up.tries.Load(); n != 2 {
+				t.Fatalf("the gateway made %d requests, want 2: the call and its one retry", n)
+			}
+			if n := h.fake.Count(); n != 1 {
+				t.Fatalf("the upstream saw %d requests, want 1: the retry died in the transport", n)
+			}
+			onlyRetryLine(t, h.logs)
+			w := worst(t, sonnet, body, 1000, "")
+			rep := h.gw.EndStage()
+			if rep.Calls != 1 || rep.Used != w || rep.Unreconciled != w {
+				t.Errorf("the stage recorded %d calls using %d (%d unreconciled), want 1 call at the reservation %d: the written attempt may have reached the upstream", rep.Calls, rep.Used, rep.Unreconciled, w)
+			}
+			if call := h.logs.lastCall(t); call["settled"] != "reserved" {
+				t.Errorf("the call settled %v, want settled reserved", call["settled"])
+			}
+			if !c.wantBodyOut {
+				return
+			}
+			if up.first == nil {
+				t.Fatalf("the first attempt's body never reached the gateway")
+			}
+			if n := up.first.closes.Load(); n != 1 {
+				t.Errorf("the first attempt's body was closed %d times, want 1: it is dropped unread", n)
 			}
 		})
 	}
