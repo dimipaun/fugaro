@@ -333,7 +333,11 @@ func (f *GitForward) upstream(w http.ResponseWriter, r *http.Request) (*http.Req
 // path's forward.go drops them from a request too, by the same prefix), plus
 // the hop-by-hop headers of
 // RFC 9110, which describe this hop and not the next one, plus Host and
-// Content-Length, which net/http recomputes from the URL and the body. What is
+// Content-Length: net/http writes those two itself from the request it is
+// given — Host from the URL, and the length from the request's own field, which
+// upstream fills in with the caller's — and never from a header map, so
+// dropping them here loses nothing a push needs (a body of unknown length stays
+// chunked). What is
 // left is what git and the REST adapter actually send (Content-Type, Accept,
 // User-Agent, Git-Protocol, Accept-Encoding) — headers the protocol needs, none
 // of which names a host or carries a credential.
