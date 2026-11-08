@@ -112,6 +112,7 @@ The owner's answers and rulings that shape it (non-price; figures are private, D
 | A key verifier makes no network call | S2.3 (`TestLicencePackageImportsNoNetwork`), S7.3 (privacy rule 5 over `ee/`) |
 | No key is given a term longer than its tier's maximum — the tier's term plus the 30-day issue lead a renewal key needs | S2.1, S2.3 (`TestKeyBeyondTheTierLifetimeIsRefused`) |
 | A leaked signing key's horizon is an accepted limit, not one the tier's maximum bounds: `issued` is the minter's to choose, so a future-dated `issued` passes the length check | S2.1 |
+| The key reaches the CLI it is handed to and no further: the CLI removes `FUGARO_LICENCE_KEY` from its own environment at the registration point, so every child it starts inherits none | S2.1, S2.3 (`TestTheEnvironmentKeyIsRemovedBeforeAnyChildStarts`) |
 | The base and history images build `fugaro` with the `ee` tag; the credentials image does not; no key is mounted until enforcement (R1 as amended by D524) | E1.4 (ee-reorg) |
 | The core never imports `ee/`; paid code reaches the binary only through `ee/register` | S1.2, S1.3 (existing boundary tests) |
 | An untagged build still launches; the launch declares to the coordinator only when `ee/` registered a declarer | S1.2, S1.4 (`TestUntaggedBuildStillLaunches`) |
@@ -571,7 +572,8 @@ stays MIT with its own copy of the period helpers.*
   - **Limits:** a maximum lifetime per tier; no revocation; refund leakage accepted (T25).
   - **Keys for test mode:** a staging key id that production verifiers refuse.
   - **Storage and hand-off:** each product's storage; the console hands the key to the CLI it
-    spawns, never in argv.
+    spawns, never in argv, and the CLI takes it out of its own environment there so none of its own
+    children inherits it.
   - **States and minting:** the no-key state; interim hand minting (T13); the coordinator job's
     key (T10).
 - **Tests:** none beyond the Docs suite (a design).
@@ -587,7 +589,8 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
 
 #### S2.3 The Go verifier
 
-- **Files:** `ee/licence/key.go` (new), `ee/licence/store.go` (new; the CLI's key file per S2.1),
+- **Files:** `ee/licence/key.go` (new), `ee/licence/store.go` (new; the CLI's key file and the
+  `FUGARO_LICENCE_KEY` read per S2.1),
   `ee/licence/key_test.go` (new), `ee/licence/testdata/vectors.json` (new; public keys and signed
   claims only) and `vectors.json.license` (new).
 - **Interfaces:** produces `Verify(raw []byte, now time.Time) (Claims, State, error)` with the states
@@ -602,6 +605,7 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
   - `TestTestKeyIDIsNotInTheProductionKeyring`
   - `TestStagingKeyIDIsRefused`
   - `TestLicencePackageImportsNoNetwork`
+  - `TestTheEnvironmentKeyIsRemovedBeforeAnyChildStarts`
   - `TestVectorsRoundTrip`
   - the negative vectors: non-canonical signature, foreign key id, truncated claims
 - **Command:** `go test -tags ee ./ee/licence/ -count=1 && go test ./internal/eeboundary/ -count=1`.

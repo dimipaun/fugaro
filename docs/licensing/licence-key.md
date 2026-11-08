@@ -170,8 +170,19 @@ hands the key to the CLI it spawns in a single environment variable (`FUGARO_LIC
 argv, and the CLI prefers the environment over its own file so the console's installation wins. The
 console's child environment is an exact allow-list (`CHILD_ENV_KEYS` in `console/src/main/spawn.ts`),
 so the hand-off is one new entry in it with its own tests and its own independent review — that is
-S2.7's security-sensitive half, not an incidental one. The variable reaches exactly one child and is
-never written to a file, a log or an error message.
+S2.7's security-sensitive half, not an incidental one.
+
+**The variable reaches one child and stops there**, and it is never written to a file, a log or an
+error message. The console's allow-list is only one half of that, because the CLI starts children of
+its own — git, the plugin install, Terraform, the runner in `fugaro exec` — and each of them inherits
+the environment as it stands at the moment it is started: a CLI that only read the variable would
+hand the organisation's key to every one of them, which is F41's point in the other direction. The
+other half is therefore a rule of this design, not an implementation detail: **the CLI reads
+`FUGARO_LICENCE_KEY` once, at the registration point and before any command runs, and takes it out of
+its own environment in the same step** (`os.Unsetenv`), so no child and no grandchild inherits a key
+it has no business holding. S2.3's `TestTheEnvironmentKeyIsRemovedBeforeAnyChildStarts` holds it. The
+read belongs there rather than in the core for the reason the section above gives: the store
+(`ee/licence/store.go`) is the CLI's own keeper of the key, and nothing in the core reads one.
 
 **Hand minting is OWNER-RUN** (R8): the **private signing key** never enters this repository, a
 document, a test or a log, it lives off every machine an agent reaches, and no agent mints, holds or

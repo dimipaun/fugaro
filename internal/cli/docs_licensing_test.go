@@ -411,7 +411,13 @@ func TestDocsLicensingOneWording(t *testing.T) {
 // the bytes as they are spelled, the rule that an id the build does not hold is
 // refused before either other part is decoded, and the rule that the hand-off
 // variable is never written to a file, a log or an error message -- it fails on
-// each, which none of those five sentences did before they were pinned;
+// each, which none of those five sentences did before they were pinned; put
+// back the "reaches exactly one child" claim in place of the rule that the CLI
+// takes the variable out of its own environment -- it fails, on a claim the
+// console's allow-list alone does not make true (the CLI's own children inherit
+// the environment it holds when they start: internal/gitops/gitops.go,
+// internal/claudeplugin/claudeplugin.go, internal/cli/managed_apply.go and
+// internal/cli/exec.go all pass os.Environ() to a child);
 // rewrite the test-mode sentence so it keeps "staging key id",
 // "refused" and "production" while flipping the rule (a staging key is
 // accepted, a test key can license a customer) -- it fails on the two
@@ -529,12 +535,16 @@ var licenceKeyDesignGroups = []struct {
 	},
 	{
 		subject: "storage and hand-off",
-		why:     "a key that reaches a child in argv is a key every local process reads (F41), and each product stores it where its own platform keeps a credential",
+		why:     "a key that reaches a child in argv is a key every local process reads (F41), each product stores it where its own platform keeps a credential, and the hand-off is one child: the console's allow-list is not enough on its own, because the CLI's own children -- git, the plugin install, Terraform and the runner in exec -- inherit the environment it holds when they start",
 		phrases: []string{
 			"licence.key",
 			"never in argv",
 			"fugaro_licence_key",
 			"the one route to a spawned child is its **environment**",
+			"the variable reaches one child and stops there",
+			"reads `fugaro_licence_key` once",
+			"takes it out of its own environment in the same step",
+			"testtheenvironmentkeyisremovedbeforeanychildstarts",
 			"expo-secure-store.js",
 			"secret manager",
 			"mounted into the job and never typed by a person",
@@ -628,6 +638,11 @@ func TestDocsLicenceKeyNoteIsInTheLicensingReadme(t *testing.T) {
 // sentences the note holds for it are held here too: the constraint the check
 // does satisfy, and the horizon as an accepted limit.
 //
+// The hand-off row is read here beside them because it is the other constraint
+// this note is the pin for, and because the S2.3 test it names is what makes the
+// console's allow-list entry sufficient: the CLI's own children inherit the
+// environment it holds when they start, and none may inherit the key.
+//
 // The withdrawn claim is asserted absent rather than left unpinned: the plan is
 // where a verifier author looks for what to implement, and a sentence that reads
 // as a security property the design does not have is worse than no sentence.
@@ -637,6 +652,7 @@ func TestDocsSubscriptionsPlanBoundsWhatTheTierMaximumBounds(t *testing.T) {
 	for _, want := range []string{
 		"no key is given a term longer than its tier's maximum",
 		"a leaked signing key's horizon is an accepted limit",
+		"the key reaches the cli it is handed to and no further",
 	} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("%s's constraint table never says %q: its S2.1 row is the note's own claim, and a constraint row that asks the verifier for more than the ruled check does is how TestKeyBeyondTheTierLifetimeIsRefused gets written against a property it cannot hold", plan, want)
