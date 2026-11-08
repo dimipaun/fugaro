@@ -115,10 +115,18 @@ variable "job" {
   # The account a job runs as is part of its name, and the name is what the
   # runner matches (there is no parse): a job whose account is not the one it
   # was built for would run every repository admitted to its profile as the
-  # wrong Claude account.
+  # wrong Claude account. One value of that axis is not a Claude account at
+  # all — the project's own Anthropic API key (config.AnthropicKeyAccount),
+  # which a profile may list and whose job mounts no token — and it is spelled
+  # here as a literal because HCL cannot import the Go constant; internal/infra
+  # pins the two against each other.
   validation {
-    condition     = length(var.job.account) == 0 || can(regex("^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$", var.job.account))
-    error_message = "job.account must be empty (a job that runs as no Claude account) or a Claude account name."
+    condition = (
+      length(var.job.account) == 0 ||
+      var.job.account == "anthropic-api-key--project" ||
+      can(regex("^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$", var.job.account))
+    )
+    error_message = "job.account must be empty (a job that runs as no Claude account), the project's own Anthropic API key (anthropic-api-key--project), or a Claude account name."
   }
 }
 
