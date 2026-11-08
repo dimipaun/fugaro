@@ -20,6 +20,17 @@ const BreakerThreshold = 3
 // question once in the life of a node and never again — the next streak would
 // pause the daemon with nothing for a person to look at. Two trips inside one
 // second are the only collision, and a streak takes three cycles.
+//
+// It is the whole of what BreakerOpen recognises the pause by, and writing a
+// decision takes no class: applyDecisionAdd checks who is asking for nothing —
+// the class gates in that file are the approval, the resolution, the goal and
+// the daemon-only work-item fields. So anyone who may add a decision, a session
+// included, can add one carrying this prefix and stop every spawn until a
+// person resolves it. That residual is the state layer's and D1241/D1242 accept
+// it (the node is written with the person's own credential, and a person at a
+// terminal is the person); what limits it here is that the question waits on a
+// person, so a writer who is not one cannot lift it either. Narrowing who may
+// add a decision is O0's change, not this read's.
 const BreakerDecisionID = "breaker-tripped"
 
 // CycleOutcome is how one cycle ended, as the breaker reads it. It is the
@@ -62,6 +73,15 @@ type Breaker struct {
 //
 // An outcome this release does not know neither counts nor clears, so the
 // streak stays where it was rather than being read as progress.
+//
+// The count belongs to this process and the answer belongs to the node, so the
+// loop that owns a Breaker has to re-arm it: Reset once BreakerOpen says the
+// answer landed. Nothing here can do that itself — an answered question is not
+// something the process can see without the state — and a breaker that is never
+// re-armed reports once and then nothing, because the streak stands at the
+// threshold from that cycle on and this reports only on the cycle that reaches
+// it. A guard that can ask once per process is a guard a crash loop outlives
+// (D1228).
 func (b *Breaker) Observe(o CycleOutcome) bool {
 	switch o {
 	case CycleFailed, CycleEmpty:
@@ -78,7 +98,10 @@ func (b *Breaker) Observe(o CycleOutcome) bool {
 
 // Tripped reports whether this process's streak has reached the threshold. It
 // is not the pause: the pause outlives the process, and BreakerOpen is what
-// reads it off the node.
+// reads it off the node. It stays true until the streak is cleared — by a cycle
+// that did work, or by the Reset the loop owes a breaker whose question a
+// person has answered (see Observe) — so it is the thing to read before asking
+// a question a second time, and not on its own a reason to hold a start back.
 func (b *Breaker) Tripped() bool { return b.consecutive >= BreakerThreshold }
 
 // Reset starts the count again, which is what a person's answer is.

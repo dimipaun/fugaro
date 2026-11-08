@@ -17,8 +17,13 @@ const (
 // hour and day, and the switch that stops every start at once.
 //
 // A cap of zero is no room at all, and so is a negative one. A caller that
-// never set a field, or set it to nonsense, gets a plan that starts nothing
-// rather than one that starts without a bound; O8 fills these from the
+// never set a field, or set it to nonsense, gets a plan that starts nothing new
+// rather than one that starts without a bound: the launches and retries a cycle
+// plans carry every one of these, and a number nobody set holds them all back.
+// What no cap bounds is the other half of a plan — a re-issue, which starts the
+// attempt that was already committed and counted, and an abandonment, which
+// closes one that may not start: both are decided before the caps are read, and
+// neither spends the allowance a cap exists to bound. O8 fills these from the
 // policy's orchestrator block, whose defaults are what a person who never
 // touched them gets.
 type Caps struct {

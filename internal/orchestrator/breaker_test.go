@@ -160,6 +160,73 @@ func TestBreakerPausesAcrossARestart(t *testing.T) {
 	}
 }
 
+// TestBreakerAsksAgainAfterAnAnswer: a daemon is long-lived, and the count is
+// the process's while the answer is the node's, so a breaker that tripped and
+// was answered by a person has to be re-armed by the loop that owns it. Without
+// it the streak stands at the threshold for the life of the process, Observe
+// never reports again, and the guard is spent after one trip — a daemon that
+// spins on empty cycles for hours and asks nobody.
+func TestBreakerAsksAgainAfterAnAnswer(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Hour)
+	s := o6Node(t, now, o6Item("wi-1", orchestrator.PhaseQueued, approvedAt))
+	var b orchestrator.Breaker
+
+	// One cycle of the driver's loop: re-arm a breaker whose question a person
+	// has answered — nothing else does — observe how the cycle ended, and
+	// commit the question when this is the cycle that reached the threshold.
+	cycles := func(at time.Time, n int, rearm bool) int {
+		raised := 0
+		for range n {
+			if rearm && !orchestrator.BreakerOpen(s) && b.Tripped() {
+				b.Reset()
+			}
+			if b.Observe(orchestrator.CycleEmpty) {
+				s = o6Apply(t, s, b.Decision(at), orchestrator.Actor{Class: orchestrator.Daemon, Now: at})
+				raised++
+			}
+		}
+		return raised
+	}
+
+	if n := cycles(now, orchestrator.BreakerThreshold, true); n != 1 {
+		t.Fatalf("the first streak raised %d question(s)", n)
+	}
+	if !orchestrator.BreakerOpen(s) {
+		t.Fatal("the node carries the trip's question and does not read as open")
+	}
+
+	// A person answers, and the daemon plans again.
+	s = o6Apply(t, s, orchestrator.Op{Op: orchestrator.OpDecisionResolve, Resolve: &orchestrator.ResolveOp{
+		ID: s.Decisions[0].ID, Answer: "carry on",
+	}}, orchestrator.Actor{Class: orchestrator.Person, Name: "owner", Now: now.Add(time.Minute)})
+	if orchestrator.BreakerOpen(s) {
+		t.Fatal("the answered question still reads as the breaker being open")
+	}
+
+	// The same process, unarmed: ten more empty cycles raise nothing, because
+	// the report belongs to the cycle that reaches the threshold and this
+	// breaker reached it an hour ago. This is the state the re-arm is for.
+	if n := cycles(now.Add(time.Hour), 10, false); n != 0 {
+		t.Fatalf("a breaker nobody re-armed raised %d question(s) after the answer", n)
+	}
+	if got := orchestrator.Plan(s, orchestrator.RunView{}, o6Caps(), now.Add(time.Hour)); len(got) != 1 {
+		t.Fatalf("the plan after the answer is %+v, and nothing is holding it back", got)
+	}
+
+	// The re-arm the loop owes it: the next run of empty cycles asks again, and
+	// the question is its own rather than the answered one's.
+	if n := cycles(now.Add(time.Hour), orchestrator.BreakerThreshold, true); n != 1 {
+		t.Fatalf("the streak after the answer raised %d question(s), and the guard has to be usable more than once per process", n)
+	}
+	if len(s.Decisions) != 2 || s.Decisions[1].ID == s.Decisions[0].ID || !orchestrator.BreakerOpen(s) {
+		t.Fatalf("the second trip left %+v, and an answered decision keeps its id in the list", s.Decisions)
+	}
+	if got := orchestrator.Plan(s, orchestrator.RunView{}, o6Caps(), now.Add(time.Hour)); len(got) != 0 {
+		t.Fatalf("the second trip planned %+v over its own question", got)
+	}
+}
+
 // TestStillInFlightTicksDoNotTripTheBreaker: a run takes as long as it takes,
 // and every tick while it does ends "still in flight". Counting those would
 // stop a daemon that is working exactly as it should, so they count toward
