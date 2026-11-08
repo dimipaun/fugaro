@@ -96,9 +96,14 @@ const ArtifactSuffix = ".graph.json"
 // Document is the graph artifact: the plan it came from, the tasks as nodes,
 // the dependencies as edges, and the schema version all of it is written in.
 //
-// Every slice is emitted as an array even when it is empty — an empty array is
-// a fact ("this plan has no edges yet") and a null is not, which is the
-// console's own availability rule, which its JSON contract states (§1).
+// The required slices — nodes and edges — are emitted as an array even when
+// they are empty: an empty array is a fact ("this plan has no edges yet") and a
+// null is not, which is the console's own availability rule, which its JSON
+// contract states (§1). The optional ones are a different statement and carry
+// omitempty: the decoupling record, the change requests and a node's stubs are
+// absent from the document when the planner recorded none, rather than present
+// as an empty array, so a v1 or v2 artifact prints exactly the keys it always
+// did.
 type Document struct {
 	SchemaVersion int    `json:"schema_version"`
 	Plan          string `json:"plan"`

@@ -242,12 +242,12 @@ func TestContractChangeReferencesMustExistAndMatchKinds(t *testing.T) {
 	const entry = `{"change": "R1", "contract": "C1", "raised_by": "B", "reason": "the interface moved", "affects": ["B"]}`
 	t.Run("a change that is not a node", func(t *testing.T) {
 		refused(t, v3Doc(t, entry, `{"change": "ghost", "contract": "C1", "raised_by": "B", "reason": "the interface moved", "affects": ["B"]}`),
-			`the contract change "C1" names the node "ghost"`, "not a contract_change node")
+			`the contract change "ghost" is not a contract_change node`, "not a contract_change node of this graph")
 	})
 
 	t.Run("a change that is a task", func(t *testing.T) {
 		refused(t, v3Doc(t, entry, `{"change": "B", "contract": "C1", "raised_by": "B", "reason": "the interface moved", "affects": ["B"]}`),
-			`names the node "B"`, "not a contract_change node")
+			`the contract change "B" is not a contract_change node`, "not a contract_change node")
 	})
 
 	t.Run("a contract that is not a contract", func(t *testing.T) {
@@ -358,6 +358,24 @@ func TestContractFilesBelongToTheContractAndItsChanges(t *testing.T) {
 			`{"id": "B", "title": "the dependent", "footprint": {"prediction": true, "paths": ["internal/contract/**"]}}`),
 			`node "B"'s footprint covers "internal/contract/types.go"`)
 	})
+
+	// The same file written differently is the same file: a check that matched
+	// the literal spelling alone would let F10's rule be evaded by respelling
+	// the path, which is the whole of the rule's mechanical content (O1/D1823
+	// leave no runtime guard behind it).
+	for _, spelling := range []string{
+		"./internal/contract/types.go",      // a leading element
+		"internal//contract/types.go",       // a doubled separator
+		"internal/dep/../contract/types.go", // a `..` that comes back
+		`internal\contract\types.go`,        // a Windows separator
+		"./internal/contract/*.go",          // the same, through a glob
+	} {
+		t.Run("a task naming a contract file as "+spelling, func(t *testing.T) {
+			refused(t, v3Doc(t, `{"id": "B", "title": "the dependent", "footprint": {"prediction": true, "paths": ["internal/dep/**"]}}`,
+				fmt.Sprintf(`{"id": "B", "title": "the dependent", "footprint": {"prediction": true, "paths": [%q]}}`, spelling)),
+				`node "B"'s footprint covers "internal/contract/types.go"`, "F10")
+		})
+	}
 
 	t.Run("the integration node on a file that is not a stub", func(t *testing.T) {
 		refused(t, v3Doc(t, `{"id": "I1", "title": "the integration", "kind": "integration", "footprint": {"prediction": true, "paths": ["internal/contract/stub.go"]}}`,

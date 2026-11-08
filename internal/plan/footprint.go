@@ -1,6 +1,11 @@
 package plan
 
-import "github.com/bmatcuk/doublestar/v4"
+import (
+	"path"
+	"strings"
+
+	"github.com/bmatcuk/doublestar/v4"
+)
 
 // Footprint is a task's expected set of paths — what the planner thinks this
 // task will touch, before anything has run.
@@ -52,13 +57,32 @@ func NewFootprint(patterns []string) Footprint {
 // relative to the checkout's root, never an absolute one and never a filesystem
 // path, which is the other reason this package takes no filesystem walk: the
 // console compares two documents, and neither of them has a tree.
+//
+// Two spellings of one file are one file, so both sides are read the way a
+// checkout reads them (`repoPath`): "./internal/a.go", "internal//a.go",
+// "internal/b/../a.go" and a backslash-separated "internal\a.go" all name
+// internal/a.go and all match a pattern naming it. That matters beyond
+// tidiness — the one refusal that turns on this question is F10's rule that a
+// merged contract's files belong to the contract, and a check that matched the
+// literal spelling alone would let a task name a contract's file simply by
+// spelling it differently.
 func (f Footprint) Matches(path string) bool {
+	path = repoPath(path)
 	for _, pattern := range f.Paths {
-		if ok, err := doublestar.Match(pattern, path); err == nil && ok {
+		if ok, err := doublestar.Match(repoPath(pattern), path); err == nil && ok {
 			return true
 		}
 	}
 	return false
+}
+
+// repoPath is a path or a pattern as a checkout reads it: a backslash is a
+// separator, "." and ".." elements collapse and a repeated slash is one slash.
+// It is not a filesystem call — nothing is stat'd and no tree is opened — so a
+// pattern that steps outside the checkout stays a pattern that steps outside
+// it rather than becoming one this package resolves.
+func repoPath(p string) string {
+	return path.Clean(strings.ReplaceAll(p, `\`, "/"))
 }
 
 // validateFootprint refuses a footprint whose patterns are not globs this

@@ -411,7 +411,7 @@ func validateSchema3(path string, doc Document) error {
 
 	for _, c := range doc.ContractChanges {
 		if kinds[c.Change] != KindContractChange {
-			return refuse(path, "the contract change %q names the node %q, which is not a contract_change node of this graph", c.Contract, c.Change)
+			return refuse(path, "the contract change %q is not a contract_change node of this graph", c.Change)
 		}
 		if kinds[c.Contract] != KindContract {
 			return refuse(path, "the contract change %q is against %q, which is not a contract node of this graph", c.Change, c.Contract)

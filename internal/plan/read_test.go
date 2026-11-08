@@ -424,6 +424,9 @@ func TestPlanFootprintMatchesTheRepositorysGlobSemantics(t *testing.T) {
 		{"docs/plans/sub/x.md", false},
 		{"fugaro.yaml", true},
 		{"/work/repo/internal/plan/read.go", false}, // a repository path, not a filesystem one
+		{"./internal/plan/read.go", true},           // two spellings of one file are one file
+		{"internal//plan/read.go", true},
+		{`internal\plan\read.go`, true}, // a Windows separator is a separator
 	} {
 		if got := fp.Matches(tc.path); got != tc.want {
 			t.Errorf("Matches(%q) = %v, want %v", tc.path, got, tc.want)
