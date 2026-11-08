@@ -71,7 +71,7 @@
 
 **F26. Gap (the failed command is a secret and data carrier; "troubleshoot never checks for duplicates").** Arguments can hold paths, URLs, project names and secret-shaped values; `fugaro update` must not prompt (D1544). *Consequence:* D1732: the header stores the command name and flags with values redacted (`internal/redact`, then values that look like a path, URL or identifier replaced by a placeholder); it is never part of the public post (D1722) and `update` only prints it. Duplicate matching runs only inside upload (T-IS10); T-IS8's `Record` and the troubleshoot path call no matcher and read no shared store (T-IS8 test with a spy).
 
-**F27. Scope (amended 2026-11-08).** The owner: `resolved_in` will be filled in by the `update` command, a separate spec. This plan therefore builds no `issue resolve` and no `update` retry hint; it stores `resolved_in` (empty until that spec writes it) and compares it at upload. The "used later by `fugaro update`" use of the failed command is also that spec's.
+**F27. Scope (clarified 2026-11-08).** The owner: `resolved_in` will be filled in by the `update` command in a separate spec, and this plan assumes the field is there. It builds no `issue resolve`; it stores `resolved_in` (empty until that spec writes it), compares it at upload (F25), and builds the `update` retry hint (D1733, T-IS19), which prints nothing while the field is empty. (An earlier edit wrongly moved the hint out of this plan; the owner said it stays.) After a successful update, for this reporter's issues whose `resolved_in` is at or below the version just installed and not yet notified, `update` prints `You can retry: <redacted command>` and marks them notified; it runs nothing, reads no stdin, prints without marking in an agent session, and never fails the update (the hard rule).
 
 ## 2. Decisions
 
@@ -92,8 +92,8 @@ All answered by the owner on 2026-11-08 through `AskUserQuestion`; every answer 
 
 | **D1730** | Local `dismiss` in an agent session (O3) | Refuse, same guard as upload | Allow and log: a hidden bug is easy to bury | **Refuse, 2026-11-08 (recommended).** |
 | **D1731** | Where the resolved state and fix version come from (F25) | The shared record gains `resolved_in`, written by a later spec on `update` (F27, owner 2026-11-08: not this plan); upload compares versions offline; a match at or above `resolved_in` is a regression linked to the original URL | Ask GitHub at upload: a network call and rate limits per upload, no regression detection offline | **Recorded at submit/close, 2026-11-08 (recommended); amended: the writer is left to the `update` spec.** |
-| **D1732** | The stored failed command and update's use of it (F26) | Redacted argv, values replaced by placeholders, kept for the `update` spec to print, never run, never posted | Command name only: the hint is often incomplete | **Redacted argv, print only, 2026-11-08 (recommended).** |
-| **D1733** | Which issues `update` suggests retrying (F27) | Left to the `update` spec | Every pending issue: noisy | **Answered 2026-11-08, then moved out of this plan: the `update` spec owns it.** |
+| **D1732** | The stored failed command and update's use of it (F26) | Redacted argv, values replaced by placeholders, printed by `update`, never run, never posted | Command name only: the hint is often incomplete | **Redacted argv, print only, 2026-11-08 (recommended).** |
+| **D1733** | Which issues `update` suggests retrying (F27) | This reporter's issues resolved at or below the installed version, once (assuming `resolved_in` is filled by the other spec) | Every pending issue: noisy | **Only this user's, resolved by the new version, 2026-11-08 (recommended); stays in this plan.** |
 
 Spec owner recorded: Dimi Paun (asked, answered 2026-11-08).
 

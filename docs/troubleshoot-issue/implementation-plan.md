@@ -2,7 +2,7 @@
 
 **Status: plan only; nothing is implemented; no task is approved.** Each task below needs the owner's explicit go, by name; answering a decision approved none. This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (which wins). **Two independent review rounds over these documents have run and their findings are applied (PR description).**
 
-**Owner answers that shaped it (2026-11-08, all recommended; D1720, D1721 and D1605 re-ruled after the first review round):** D1720 (amended after review) preview, then `--ask` on the owner's terminal, never `--yes` (D1544); D1721 (amended after review, D1729) the Issues section is terminal-only, after `runs digest`'s own output; D1731 (amended 2026-11-08: the owner leaves who fills `resolved_in` to a later spec on the `update` command; this plan stores the field and compares it at upload, and builds no writer); D1732 the failed command is stored redacted for that later use; D1733 `update`'s retry hint is that later spec's, not this plan's; D1727 the shared store is a new prefix `issues/` with a launcher grant; D1728 the diagnose plan's D1605 is amended; D1722 the public post strips identity and is re-redacted; D1723 files named by run stem, renamed on upload; D1724 duplicates by fingerprint; D1725 sync only in `troubleshoot` and the issue commands; D1726 slices: local, shared, digest.
+**Owner answers that shaped it (2026-11-08, all recommended; D1720, D1721 and D1605 re-ruled after the first review round):** D1720 (amended after review) preview, then `--ask` on the owner's terminal, never `--yes` (D1544); D1721 (amended after review, D1729) the Issues section is terminal-only, after `runs digest`'s own output; D1731 (amended 2026-11-08: the owner leaves who fills `resolved_in` to a later spec on the `update` command; this plan stores the field and compares it at upload, and builds no writer); D1732 the failed command is stored redacted and only printed; D1733 `update` suggests a retry only for this reporter's issues whose `resolved_in` (assumed present, written by the other spec) is at or below the installed version; D1727 the shared store is a new prefix `issues/` with a launcher grant; D1728 the diagnose plan's D1605 is amended; D1722 the public post strips identity and is re-redacted; D1723 files named by run stem, renamed on upload; D1724 duplicates by fingerprint; D1725 sync only in `troubleshoot` and the issue commands; D1726 slices: local, shared, digest.
 
 ## Conventions
 
@@ -53,6 +53,9 @@
 ### T-IS8: the recording seam
 - **Files:** `internal/issues/record.go` (new), `internal/issues/record_test.go` (new). **Interfaces:** consumed T-IS1, T-IS2, T-IS3; produced `Record(v Verdict, run RunMeta, secrets) (Saved, error)`: `configuration` and `fixed_in_newer_release` print nothing and write nothing and return the fix steps; `bug` and `unclear` redact, save and return `Saved issue local-<stem>. Run 'fugaro issue submit local-<stem>' to file it on GitHub.` before an upload and `Saved issue #0007. Run 'fugaro issue submit 7' ...` after. T-DG8's output calls it once per verdict (an amendment to that task, T1). **Tests:** `TestRecordLocalOutcomesWriteNothing`, `TestRecordBugAndUnclearSaveRedacted`, `TestRecordLineNamesTheSubmitCommand`, `TestRecordNeverSubmits`, `TestRecordChecksNoDuplicates` (a spy store and bucket see no read of the shared side). **Command:** `go test ./internal/issues/ -run 'TestRecord' -count=1`. **Depends on:** T-IS1, T-IS2, T-IS3. **Commit:** `issues: record a verdict as a saved issue`. **Red step:** `TestRecordLocalOutcomesWriteNothing` fails against a store spy while the function saves every outcome. **Reviewer tier:** standard.
 
+### T-IS19: `fugaro update` suggests a retry
+- **Files:** `internal/cli/update.go`, `internal/cli/update_retry.go` (new), `internal/cli/update_retry_test.go` (new). **Interfaces:** consumed T-IS10 (`ListShared`), T-IS1; the `resolved_in` field is assumed to be filled by the other spec (F27), so with it empty nothing is printed; after a successful update prints `You can retry: <redacted command>` for this reporter's issues with `resolved_in` at or below `cli.Version` and not notified, then marks them notified; runs nothing, reads no stdin, prints without marking in an agent session; a read failure prints nothing and never fails the update. **Tests:** `TestUpdatePrintsRetryForResolvedIssue`, `TestUpdateRetryIgnoresEmptyResolvedIn`, `TestUpdateRetryOnlyOwnIssues`, `TestUpdateRetryOnce`, `TestUpdateRetryReadFailureDoesNotFailUpdate`, `TestUpdateRetryRunsNothing`. **Command:** `go test ./internal/cli/ -run 'TestUpdate(Prints|Retry)' -count=1`. **Depends on:** T-IS1, T-IS10. **Commit:** `cli: update suggests retrying a command a new release fixed`. **Red step:** the first test fails until the line is printed. **Reviewer tier:** `opus + mandatory independent review` (touches the update path the hard rule protects).
+
 ### T-IS13: the `doctor` line and the `setup` hint
 - **Files:** `internal/cli/doctor_issues.go` (new), `internal/cli/doctor_issues_test.go` (new), `internal/cli/doctor.go` (calls it), `internal/cli/setup.go` (one printed line recommending `gh` and `gh auth login`, never required). **Interfaces:** consumed the store (T-IS1); one line only when issues are unsynced or pending (the "doctor is one screen" rule). **Tests:** `TestDoctorIssuesLineOnlyWhenUnsynced`, `TestSetupPrintsGhHintOnce`. **Command:** `go test ./internal/cli/ -run 'TestDoctorIssues|TestSetupPrintsGhHint' -count=1`. **Depends on:** T-IS1. **Commit:** `cli: a doctor line for unsynced issues and a gh hint in setup`. **Red step:** both fail until the line is printed. **Reviewer tier:** standard.
 
@@ -82,17 +85,17 @@
 - **Files:** `internal/cli/runs_digest.go`, `internal/cli/runs_digest_test.go`. **Interfaces:** consumed T-IS10, T-IS14, T-IS15; after the digest's own output on a terminal the CLI prints the section; the committed file's bytes are identical with and without issues; a shared-read failure omits the section with one stderr line, never failing the report; skipped in an agent session. **Tests:** `TestRunsDigestPrintsIssuesSectionOnTerminal`, `TestRunsDigestFileUnchangedByIssues`, `TestRunsDigestOmitsSectionOnReadFailure`. **Command:** `go test ./internal/cli/ -run 'TestRunsDigest(Prints|File|Omits)' -count=1`. **Depends on:** T-IS10, T-IS14, T-IS15. **Commit:** `cli: runs digest prints the issues section`. **Red step:** the file-unchanged test fails if the section is written into the file. **Reviewer tier:** standard.
 
 ### T-IS9: docs, plugin and release notes
-- **Files:** `docs/issues.md` (new), `plugin/skills/working/SKILL.md` (one paragraph; lint), `docs/releases/` (the next release's notes: the new command, `### For operators`: "run `fugaro update`" for T-IS17's grant), `internal/cli/docs_issue_test.go` (new). **Tests:** `TestDocsIssueNamesEveryCommand` and the plugin command-and-flag check. **Command:** `go test ./internal/cli/ -run 'TestDocsIssue' -count=1` and `go test ./plugin/... -count=1`. **Depends on:** T-IS7, T-IS11, T-IS12, T-IS16. **Commit:** `docs: fugaro issue`. **Red step:** the docs test fails on a missing page. **Reviewer tier:** standard (the plugin skill is a prompt-class path: `opus` if the router says so by path). Shares `plugin/skills/working/SKILL.md` with T-DG8 (T1).
+- **Files:** `docs/issues.md` (new), `plugin/skills/working/SKILL.md` (one paragraph; lint), `docs/releases/` (the next release's notes: the new command, `### For operators`: "run `fugaro update`" for T-IS17's grant), `internal/cli/docs_issue_test.go` (new). **Tests:** `TestDocsIssueNamesEveryCommand` and the plugin command-and-flag check. **Command:** `go test ./internal/cli/ -run 'TestDocsIssue' -count=1` and `go test ./plugin/... -count=1`. **Depends on:** T-IS7, T-IS11, T-IS12, T-IS16, T-IS19. **Commit:** `docs: fugaro issue`. **Red step:** the docs test fails on a missing page. **Reviewer tier:** standard (the plugin skill is a prompt-class path: `opus` if the router says so by path). Shares `plugin/skills/working/SKILL.md` with T-DG8 (T1).
 
 ## Parallel execution
 
-**Edges (from "Depends on"):** T-IS3 ← T-IS1; T-IS4 ← T-IS3; T-IS5 ← T-IS1, T-IS3; T-IS6 ← T-IS1, T-IS2; T-IS7 ← T-IS5, T-IS6; T-IS8 ← T-IS1, T-IS2, T-IS3; T-IS10 ← T-IS1; T-IS11 ← T-IS7, T-IS10; T-IS12 ← T-IS7, T-IS10, T-IS11; T-IS13 ← T-IS1; T-IS14 ← T-IS1; T-IS16 ← T-IS10, T-IS14, T-IS15; T-IS9 ← T-IS7, T-IS11, T-IS12, T-IS16.
+**Edges (from "Depends on"):** T-IS3 ← T-IS1; T-IS4 ← T-IS3; T-IS5 ← T-IS1, T-IS3; T-IS6 ← T-IS1, T-IS2; T-IS7 ← T-IS5, T-IS6; T-IS8 ← T-IS1, T-IS2, T-IS3; T-IS10 ← T-IS1; T-IS11 ← T-IS7, T-IS10; T-IS12 ← T-IS7, T-IS10, T-IS11; T-IS13 ← T-IS1; T-IS19 ← T-IS1, T-IS10; T-IS14 ← T-IS1; T-IS16 ← T-IS10, T-IS14, T-IS15; T-IS9 ← T-IS7, T-IS11, T-IS12, T-IS16.
 
 | Level | Tasks (run concurrently) |
 | --- | --- |
 | 0 | T-IS1, T-IS2, T-IS15, T-IS17 |
 | 1 | T-IS3, T-IS6, T-IS10, T-IS13, T-IS14 |
-| 2 | T-IS4, T-IS5, T-IS8 |
+| 2 | T-IS4, T-IS5, T-IS8, T-IS19 |
 | 3 | T-IS7, T-IS16 |
 | 4 | T-IS11 |
 | 5 | T-IS12 |
@@ -108,6 +111,7 @@
 | `internal/cli/issue_list.go`, `issue_show.go`, `issue_dismiss.go` | T-IS5 (2), T-IS11 (4) |
 | `internal/cli/issue_submit.go`, `issue_submit_test.go` | T-IS7 (3), T-IS12 (5) |
 | `internal/cli/root.go` | T-IS5 (2) |
+| `internal/cli/update.go` | T-IS19 (2) |
 | `internal/cli/doctor.go`, `internal/cli/setup.go` | T-IS13 (1) |
 | `internal/cli/runs_digest.go` | T-IS16 (3) |
 | `internal/redact/redact.go` | T-IS2 (0) |
