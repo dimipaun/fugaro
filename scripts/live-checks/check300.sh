@@ -40,10 +40,13 @@
 #             when the run could not tell (a guard stopped it, a tool is
 #             missing, the installation did not answer).
 #
-# The credential is the operator's own: `gcloud auth print-access-token`, held
-# in a variable, sent as an Authorization header, never printed, never written
-# to a file and never pasted — the same token every `gcloud`-backed check in
-# this file uses. IAM bypasses the security rules, which is exactly why the
+# The credential is the operator's own: `gcloud auth print-access-token`, read
+# once into a variable only long enough to write it into a 0600 curl config file
+# in the scratch directory, named by every request with curl's --config and
+# never spelled out on a command line — the argv of a running process is
+# readable by every user of the machine, and the header would sit there for the
+# length of the call. It is never printed, never pasted, and never an argument
+# of anything. IAM bypasses the security rules, which is exactly why the
 # write below is the person's: D1241's answer is that the person's own
 # credential writes this node, and this script's job is to say whether that is
 # true of the installation in front of it. What it can NOT do live is mint the
@@ -132,8 +135,14 @@ SCRATCH=""
 SCRATCH_MARKER=".chk300-mine"
 SCRATCH_REMOVED=no
 PRINTED=""
-# The token is read once, held in this variable, and never printed.
-PERSON_TOKEN=""
+# The token is read once, written into a 0600 curl config file inside the
+# scratch directory, and never held in a variable longer than it takes to write
+# it there. It is not on a command line either: `ps` shows a process's argv to
+# every user on the machine for as long as the process lives, and a token there
+# is a token already read. Every request names the file with curl's --config,
+# the way check91.sh's and check190.sh's requests name theirs.
+AUTH_CONF=""
+AUTH_READ=no
 DB=""
 FP=""
 INSTALLATION=""
@@ -194,7 +203,7 @@ WROTE=no
 restore_node() {
   # Nothing to delete when the token or the database was never read: the run
   # stopped before it could have written anything.
-  if [ -z "$PERSON_TOKEN" ] || [ -z "$DB" ]; then
+  if [ "$AUTH_READ" = no ] || [ -z "$DB" ]; then
     RESTORE_STATE=untouched
     RESTORE_DETAIL="the run stopped before it read the token and the database, so it wrote nothing and there is nothing to delete"
     return 0
@@ -317,11 +326,14 @@ parse_args() {
 # person's own credential D1241's answer is about. The path is relative to the
 # database root and carries its .json suffix. The status is printed and the body
 # lands in OUTFILE; the URL is built from $DB, which step_config read out of the
-# project's own config, so no address is remembered here.
+# project's own config, so no address is remembered here. The credential is the
+# one `step_config` wrote into $AUTH_CONF, and it is named rather than spelled
+# out: the header is never an argument of this call, so it is never in the argv
+# another user can read.
 api() {
   local method=$1 path=$2 out=$3
   curl -sS -X "$method" -o "$out" -w '%{http_code}' \
-    -H "Authorization: Bearer $PERSON_TOKEN" \
+    --config "$AUTH_CONF" \
     ${API_ARGS[@]+"${API_ARGS[@]}"} \
     "https://$DB$path"
 }
@@ -387,12 +399,19 @@ step_config() {
   [ -n "$url" ] || stop "$cfg carries no budget.rtdb_url, so this check has no database to read: the installation's rules live in the Firebase Realtime Database that field names"
   [ -n "$FP" ] || stop "$cfg carries no budget.firebase_project"
   DB=$(printf '%s' "$url" | sed -e 's|^https://||' -e 's|/*$||')
-  PERSON_TOKEN=$(gcloud auth print-access-token 2>"$SCRATCH/token.err") || {
+  local tok
+  tok=$(gcloud auth print-access-token 2>"$SCRATCH/token.err") || {
     sed -n '1,3p' "$SCRATCH/token.err" >&4 || true
     stop "gcloud auth print-access-token did not answer: this check writes as you (project owner, editor or budget admin), which is D1241's answer — run 'gcloud auth login' and try again"
   }
-  [ -n "$PERSON_TOKEN" ] || stop "gcloud auth print-access-token answered nothing"
-  fact database PASS "the installation's own database is $DB (Firebase project $FP) and your access token was read and never printed"
+  [ -n "$tok" ] || stop "gcloud auth print-access-token answered nothing"
+  AUTH_CONF="$SCRATCH/auth.conf"
+  (umask 077 && printf 'header = "Authorization: Bearer %s"\n' "$tok" >"$AUTH_CONF") \
+    || stop "the access token cannot be written into $AUTH_CONF, and this check makes no request carrying it on a command line — where another user could read it out of ps"
+  chmod 600 "$AUTH_CONF" || stop "$AUTH_CONF cannot be made mode 0600, and a token file another user can read is a token that has already leaked"
+  unset tok
+  AUTH_READ=yes
+  fact database PASS "the installation's own database is $DB (Firebase project $FP) and your access token was read, written into a 0600 config file no request spells out on its command line, and never printed"
 }
 
 # step_update runs the one command the check is about. The plan lines are the

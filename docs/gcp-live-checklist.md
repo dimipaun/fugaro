@@ -11356,8 +11356,11 @@ failure, not a pass. **No agent runs any step of it.**
 **D1220** and **D1241**, both answered 2026-11-04; **D166** for the device conjunct the person's read carries). The rules are
 **built** — the subtree, the marker of its own and the update step that writes both are on `main` — and **no run of it has met a real
 installation yet**, so nothing here is a claim that it works. It is **OWNER-RUN**: **no agent runs any step of it**, every step is
-yours, and **no step types, prints or pastes a credential** — the access token is read once into a variable, sent as an
-`Authorization` header, never written to a file and never pasted, and the block carries a row about it and never the token.
+yours, and **no step types, prints or pastes a credential** — the access token is read once, written into a mode-0600 `curl` config
+file inside the check's own mode-0700 scratch directory, and named by every request with `curl --config` rather than spelled out on a
+command line (a process's argument list is readable by every user on the machine while it runs, which is why the siblings
+`check91.sh` and `check190.sh` carry theirs the same way), never printed and never pasted, and the block carries a row about it and
+never the token.
 
 **Run it:**
 
@@ -11382,7 +11385,7 @@ with it; and reads the deployed document twice, before and after its own write.
 - **`installation`** — which installation this run is looking at, from `fugaro doctor --json` and held to the name you typed, with
   `belong` refused either way. A run against the wrong installation is a stop, not a reading.
 - **`database`** — the installation's own database and its Firebase project, read out of the project's config file, and that your
-  access token was read and never printed.
+  access token was read, written into a 0600 config file **no request spells out on its command line**, and never printed.
 - **`update`** — `fugaro update --yes` exited 0, and whether its plan named `config/limits/orchestratorRules`: a plan that names it is
   the run that converged the subtree's generation, and a plan that names nothing is what a database already on this generation
   prints, which is why the marker row below, and not this one, is what says the generation is there. A non-zero exit is a FAIL that
@@ -11434,8 +11437,8 @@ shape and size are never the rules' business, because a value that passes a shap
 would make anyway — plus a handful of RTDB REST calls, which cost nothing. No model call, no run, no Cloud Build of its own.
 
 **Restore.** The script runs it itself, **from the exit trap too**, so a failed assertion or a Ctrl-C still leaves nothing behind:
-`/orchestrator/check300` is deleted and read back as gone, and the scratch directory (mode 0700, holding the token's own file
-descriptors and nothing of yours) is removed. The `restore` row says both, and a node that is still there is a FAIL that names it and
+`/orchestrator/check300` is deleted and read back as gone, and the scratch directory (mode 0700, holding the token's own 0600
+config file and nothing of yours) is removed. The `restore` row says both, and a node that is still there is a FAIL that names it and
 the `curl` command to delete it with. What the check does **not** undo is the `fugaro update` it ran, which is the point of it.
 
 **Paste back:** the whole block into row 300 above and to the coordinator. The block carries no token, no secret and no document it

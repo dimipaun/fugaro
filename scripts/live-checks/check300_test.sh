@@ -163,6 +163,22 @@ def save(store):
         json.dump(store, fh)
 
 
+def config_headers(path):
+    # curl's --config: the fake reads the one option check300.sh writes into it,
+    # the Authorization header, so a request that names that file is the IAM
+    # request the real curl would make -- and nothing else of the file is read.
+    found = []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line.lower().startswith("header") and "=" in line:
+                    found.append(line.split("=", 1)[1].strip().strip('"'))
+    except OSError:
+        pass
+    return found
+
+
 args = sys.argv[1:]
 method, out, fmt, headers, body, url = "GET", None, None, [], None, None
 i = 0
@@ -181,11 +197,17 @@ while i < len(args):
         i += 2
     elif a in ("-d", "--data"):
         body, i = args[i + 1], i + 2
+    elif a in ("-K", "--config"):
+        headers.extend(config_headers(args[i + 1]))
+        i += 2
     else:
         url, i = a, i + 1
 
+# The whole argument list, verbatim: this is what `ps` shows another user of the
+# machine while the call runs, so a check that spelled the token out as -H would
+# leave it in this log -- which is the leak the test asserts is not there.
 with open(log, "a", encoding="utf-8") as fh:
-    fh.write("curl %s %s\n" % (method, url))
+    fh.write("curl %s\n" % " ".join(args))
 
 if url is None:
     sys.stderr.write("fake curl: no URL\n")
@@ -349,6 +371,13 @@ run300() {
   # check read is either.
   expect_absent "$out$(cat "$dir/err" 2>/dev/null || true)" "$TOKEN_MARKER" \
     "case $dir: the access token reached the block or the log"
+  # And the token is in no command line: the fake curl logs the argument list it
+  # was called with verbatim, which is what any user of the machine reads out of
+  # `ps` or /proc/<pid>/cmdline while a call runs -- so a check that spelled the
+  # token out as `-H "Authorization: Bearer ..."` is caught here, by the same
+  # block of the run that made the call.
+  expect_absent "$(cat "$dir/state/calls" 2>/dev/null || true)" "$TOKEN_MARKER" \
+    "case $dir: the access token is on a command line"
   expect_absent "$out" "$RULES_SENTINEL" "case $dir: a document the check read reached the block"
 }
 
