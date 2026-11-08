@@ -426,3 +426,52 @@ func TestRemovedKeysOut(t *testing.T) {
 		}
 	})
 }
+
+// TestTheMigrateStateNamesEveryWriteItMakes: the migrate state rewrites the
+// published object in place and this machine's layer file with it, in one apply
+// behind one confirmation — migrateLocal asks nothing of its own when there is
+// an object half — so its plan, its status, the sentence it is confirmed with
+// and the report of what it did all name the file too. A sentence naming only
+// the object would rewrite the owner's own file behind a confirmation that
+// never mentioned it, which is the one thing this stage does not do.
+func TestTheMigrateStateNamesEveryWriteItMakes(t *testing.T) {
+	const path = "/home/x/.config/fugaro/config.yaml"
+	keys := []layerRemovedKey{{Profile: "svc", Key: "image.apt"}}
+	removal := func() *layerRemoval { return &layerRemoval{Keys: keys} }
+
+	both := &layerPlan{path: path, migrate: true, objectRemoval: removal(), localRemoval: removal()}
+	for what, got := range map[string]string{
+		"the plan":         both.planDetail(),
+		"the status":       both.migrateDetail(),
+		"the confirmation": both.fileRewriteWhat(layerMigrateWhat),
+	} {
+		if !strings.Contains(got, path) {
+			t.Errorf("%s does not name the file the same apply rewrites: %s", what, got)
+		}
+	}
+	if got := both.rewroteWhat(); !strings.Contains(got, "local layer file") || !strings.Contains(got, "published project layer") {
+		t.Errorf("the report names one of the two sides this apply wrote: %s", got)
+	}
+
+	objectOnly := &layerPlan{path: path, migrate: true, objectRemoval: removal()}
+	for what, got := range map[string]string{
+		"the plan":         objectOnly.planDetail(),
+		"the status":       objectOnly.migrateDetail(),
+		"the confirmation": objectOnly.fileRewriteWhat(layerMigrateWhat),
+	} {
+		if strings.Contains(got, "local layer file") {
+			t.Errorf("%s names a file this run does not rewrite: %s", what, got)
+		}
+	}
+	if got := objectOnly.rewroteWhat(); strings.Contains(got, "local layer file") {
+		t.Errorf("the report names a file this run did not rewrite: %s", got)
+	}
+
+	fileOnly := &layerPlan{path: path, migrate: true, localRemoval: removal()}
+	if got := fileOnly.migrateDetail(); strings.Contains(got, "published project layer") {
+		t.Errorf("the status names an object this run does not write: %s", got)
+	}
+	if got := fileOnly.rewroteWhat(); strings.Contains(got, "published project layer") {
+		t.Errorf("the report names an object this run did not write: %s", got)
+	}
+}

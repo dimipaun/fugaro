@@ -476,7 +476,12 @@ func objectRefusalFolded(r *layerRemoval) string {
 }
 
 // layerMigrateWhat is the fourth thing this stage asks before it writes: the
-// published object is rewritten in place, not replaced from a file.
+// published object is rewritten in place, not replaced from a file. The write
+// to this machine's file — from the same bytes, right after it — is part of
+// this confirmation rather than a second one (fileRewriteWhat adds it), because
+// migrateLocal does not ask again: a sentence naming only the object would
+// rewrite the owner's own layer file behind a confirmation that never
+// mentioned it.
 const layerMigrateWhat = "this rewrites the published project layer in place: the keys the repository-image removal refuses are taken out of it, and nothing else about it changes. Every repository of the project resolves against it, and so does every run of them"
 
 // objectAt is config.LayerKey as this run read it, for the write that replaces
@@ -503,7 +508,7 @@ func (p *layerPlan) objectAt() *layerAt {
 func (s *layerStage) migrateObject(ctx context.Context, env initflow.Env, p *layerPlan) error {
 	cmd, w := s.e.r.cmd, s.e.r.w
 	printLayerRemoval(w, "the published project layer", p.objectRemoval)
-	if err := s.e.r.asking(func() error { return confirmRemoval(cmd, p.lc, env.Yes, layerMigrateWhat) }); err != nil {
+	if err := s.e.r.asking(func() error { return confirmRemoval(cmd, p.lc, env.Yes, p.fileRewriteWhat(layerMigrateWhat)) }); err != nil {
 		return err
 	}
 	b, err := openRecordBucket(ctx, p.url)
@@ -558,8 +563,9 @@ func (p *layerPlan) fileRewriteWhat(base string) string {
 // written from the object's own bytes (after a migrateObject the two sides are
 // the same layer), and the generation the object is at is recorded beside it.
 //
-// The object's half is what this stage confirmed (migrateObject), and it is
-// only asked for when there is one: a file that is the only side still holding
+// The object's half is what this stage confirmed (migrateObject, whose sentence
+// names this file's write as well when there is one), and it is only asked for
+// when there is one: a file that is the only side still holding
 // the removed keys — the object was published by a run that already took them
 // out, or by another machine's — writes nothing but the file, so it is asked
 // for on its own. The file is printed and a copy of it kept either way, the way
@@ -585,11 +591,15 @@ func (s *layerStage) migrateLocal(env initflow.Env, p *layerPlan) (initflow.Outc
 }
 
 // rewroteWhat names the side the migrate state rewrote, for the report of it:
-// the published object in place, or this machine's file alone when the object
-// already holds none of the removed keys.
+// the published object in place — with this machine's file beside it when that
+// file was written from the same bytes in the same apply — or that file alone
+// when the object already holds none of the removed keys.
 func (p *layerPlan) rewroteWhat() string {
-	if p.objectRemoval == nil {
+	switch {
+	case p.objectRemoval == nil:
 		return "your local layer file"
+	case p.localRemoval != nil:
+		return "the published project layer and your local layer file"
 	}
 	return "the published project layer"
 }

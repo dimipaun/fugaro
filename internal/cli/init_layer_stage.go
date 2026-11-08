@@ -366,13 +366,14 @@ func (s *layerStage) Check(ctx context.Context) (initflow.Status, error) {
 
 // migrateDetail is the migrate state's sentence for the side the removal still
 // has to rewrite: the published object, with this machine's file beside it when
-// that file holds the keys too, or that file alone when the object has already
-// lost them.
+// that file holds the keys too (the one confirmation migrateObject takes covers
+// the file's write, which follows it and asks for nothing of its own), or that
+// file alone when the object has already lost them.
 func (p *layerPlan) migrateDetail() string {
 	if p.objectRemoval == nil {
 		return fmt.Sprintf("your local layer file holds %s: this run rewrites it without them, after your confirmation", p.localRemoval.text())
 	}
-	return fmt.Sprintf("the published project layer holds %s: this run rewrites it in place without them, after your confirmation", p.objectRemoval.text())
+	return p.fileRewriteWhat(fmt.Sprintf("the published project layer holds %s: this run rewrites it in place without them, after your confirmation", p.objectRemoval.text()))
 }
 
 // removalClause is the half of a state's sentence for a run that also rewrites
@@ -437,7 +438,7 @@ func (p *layerPlan) planDetail() string {
 		if p.objectRemoval == nil {
 			return fmt.Sprintf("rewrite your local layer file without %s, after your confirmation", p.localRemoval.text())
 		}
-		return fmt.Sprintf("rewrite the published project layer in place without %s, after your confirmation", p.objectRemoval.text())
+		return p.fileRewriteWhat(fmt.Sprintf("rewrite the published project layer in place without %s, after your confirmation", p.objectRemoval.text()))
 	case p.publish:
 		return fmt.Sprintf("publish the project layer from %s%s%s, after your confirmation", p.path, p.fileClause(), p.objectRefusalClause())
 	case p.recordGen:
