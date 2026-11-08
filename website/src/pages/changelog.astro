@@ -75,7 +75,8 @@ import { loadMobileReleaseSummaries, loadReleaseSummaries, loadSite, REPO_ROOT }
 // generator itself is left as W0.6 wrote it.
 const releasesDir = path.join(REPO_ROOT, 'docs', 'releases')
 const pluginFile = path.join(REPO_ROOT, 'plugin', '.claude-plugin', 'plugin.json')
-const entries = buildChangelog({ releasesDir, pluginFile })
+const streamsFile = path.join(REPO_ROOT, 'docs', 'release-streams.yaml')
+const entries = buildChangelog({ releasesDir, pluginFile, streamsFile })
 
 // The end-user summaries below each release's heading: the per-release lines the owner's
 // brief of 2026-10-19 asked for, read from the site's own data through the content pipeline

@@ -109,6 +109,7 @@ const MAX_PARALLEL = 20
 const latestCli = buildChangelog({
   releasesDir: path.join(REPO_ROOT, 'docs', 'releases'),
   pluginFile: path.join(REPO_ROOT, 'plugin', '.claude-plugin', 'plugin.json'),
+  streamsFile: path.join(REPO_ROOT, 'docs', 'release-streams.yaml'),
 }).find((entry) => entry.released)
 if (latestCli === undefined) {
   throw new Error('website/src/components/Hero.astro: no release file under docs/releases/ is at or below the version in plugin/.claude-plugin/plugin.json, and the latest-release line names the newest published one.')
