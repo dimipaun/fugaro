@@ -70,13 +70,25 @@ default_profile: svc
 // style — `svc: { … image: { apt: [libvips-dev] } }` — which is a document
 // yamledit has no edit for: it splices a member out of a flow mapping only
 // while the member's value is a plain value, and this one's is a collection.
-// Every reader refuses the document all the same, so the key stays where it is
-// and the run has to say so.
+// The removal falls back to the document's own tree for it, and this is the
+// document both sides of the migration are measured on.
 const flowLayer = `version: 1
 project: aurora
 gcp_project: proj-1234
 profiles:
   svc: { commands: { build: sh build.sh }, image: { apt: [libvips-dev] } }
+default_profile: svc
+`
+
+// flowLayerMigrated is flowLayer as the removal writes it: the text editor has
+// no splice for a member whose value is a collection, so the document is written
+// from its own tree — the key out, the rest of it as the owner wrote it, its
+// flow style and its spacing the tree's own.
+const flowLayerMigrated = `version: 1
+project: aurora
+gcp_project: proj-1234
+profiles:
+  svc: {commands: {build: sh build.sh}}
 default_profile: svc
 `
 
@@ -210,105 +222,133 @@ default_profile: svc
 	}
 }
 
-// TestUpdateRefusesALayerTheRemovalCannotCutFromTheFile: the removal has no edit
-// for a removed key written in a flow mapping whose value is a collection, and
-// the local layer file is where that side of the refusal is recoverable: the
-// file is the owner's, so the run stops and says which key it could not take out
-// and why.
-func TestUpdateRefusesALayerTheRemovalCannotCutFromTheFile(t *testing.T) {
-	newLayerRig(t, "")
-	path := localLayerPath(t)
-	recordLayer(t, flowLayer, "0")
+// TestUpdateMigratesAFlowStyledLayer: the removal's convergence on the document
+// it has no splice for — `svc: { … image: { apt: […] } }`, the shape a release
+// before this one published. The object is what every repository of the project
+// resolves against and the local file is beside it, so neither may be left
+// holding a key every reader refuses: the keys go out of the document's own tree
+// and `fugaro update` alone writes both sides, on every state they are found in.
+func TestUpdateMigratesAFlowStyledLayer(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		local  string // "" writes no local layer file
+		record string
+	}{
+		{"both sides hold them", flowLayer, "0"},
+		{"there is no local layer file to seed", "", ""},
+		{"the local file is from another generation", migratedLayer, "9"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newLayerRig(t, flowLayer)
+			path := localLayerPath(t)
+			if tc.local != "" {
+				recordLayer(t, tc.local, tc.record)
+			}
+
+			out, errOut, err := executeStdin(t, "", "update", "--yes")
+			if err != nil {
+				t.Fatalf("fugaro update left the published project layer holding a key every reader refuses: %v\n%s%s", err, out, errOut)
+			}
+			all := out + errOut
+			for _, want := range []string{"profiles.svc.image.apt", "repository-image removal", "written from its own tree"} {
+				if !strings.Contains(all, want) {
+					t.Errorf("the run does not say %q:\n%s", want, all)
+				}
+			}
+			if got, ok := layerObject(t, r); !ok || got != flowLayerMigrated {
+				t.Errorf("the published object is not the layer the removal wrote from its tree:\n%q", got)
+			}
+			data, rerr := os.ReadFile(path)
+			if rerr != nil || string(data) != flowLayerMigrated {
+				t.Errorf("the local layer file is not the layer the object now holds:\n%s%v", data, rerr)
+			}
+			if _, ps := config.ParseProjectLayer(data, config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}); len(ps) > 0 {
+				t.Errorf("the layer this run wrote is still refused: %v", ps)
+			}
+			if tc.local != "" {
+				if matches, _ := filepath.Glob(path + ".bak-*"); len(matches) == 0 {
+					t.Error("the local layer file was rewritten and no copy of it was kept")
+				}
+			}
+		})
+	}
+}
+
+// TestUpdateStopsWhenAPublishWouldLeaveAFlowStyledObject: the flow-styled object
+// as the baseline of a publish. The local layer file is a document this Fugaro
+// reads and it drops a command the object carried, which is an executable change
+// the gate refuses (L7) — and `fugaro update` has no flag to bless it. The run
+// stops with a non-zero error instead of reporting a converge, and the object is
+// left as it is rather than written from a layer nobody reviewed.
+func TestUpdateStopsWhenAPublishWouldLeaveAFlowStyledObject(t *testing.T) {
+	r := newLayerRig(t, flowLayer)
+	recordLayer(t, localOnlyMigrated, "0")
 
 	out, errOut, err := executeStdin(t, "", "update", "--yes")
 	if err == nil || ExitCode(err) != ExitUserError {
-		t.Fatalf("fugaro update reported a layer converged that still holds a removed key: %v\n%s%s", err, out, errOut)
+		t.Fatalf("fugaro update published a layer that drops a command of the object it replaces: %v\n%s%s", err, out, errOut)
 	}
-	all := out + errOut + err.Error()
-	if !strings.Contains(all, "profiles.svc.image.apt") || !strings.Contains(all, "flow collection") || !strings.Contains(all, "by hand") {
-		t.Errorf("the refusal does not say which key the removal could not take out, why, and that the file is the owner's to fix:\n%s", all)
+	if !strings.Contains(out+errOut+err.Error(), "--executable-changes") {
+		t.Errorf("the refusal does not name the flag that reviews such a write:\n%s%s", out, errOut)
 	}
-	if data, rerr := os.ReadFile(path); rerr != nil || string(data) != flowLayer {
-		t.Errorf("the local layer file was rewritten with the keys still in it: %s%v", data, rerr)
+	if got, ok := layerObject(t, r); !ok || got != flowLayer {
+		t.Errorf("the object was written from a layer this run may not publish: %q", got)
 	}
 }
 
-// TestUpdateHandlesALayerTheRemovalCannotCutInTheObject: the same document on
-// the published side, which is not a file the owner can edit by hand. The
-// removal is not one this run can make, so nothing writes those bytes into this
-// machine's file — a seed and a re-seed both would, and a file holding them is a
-// config no reader resolves — and the run says what repairs the object instead:
-// a layer published over it, which is the door that owns --executable-changes,
-// because the published object cannot be read and the executable-key gate counts
-// every executable key of the layer that replaces it as changed (L7).
-func TestUpdateHandlesALayerTheRemovalCannotCutInTheObject(t *testing.T) {
-	t.Run("a local layer file this Fugaro reads is published over it", func(t *testing.T) {
-		r := newLayerRig(t, flowLayer)
-		recordLayer(t, localOnlyMigrated, "0")
-
-		out, errOut, err := executeStdin(t, "", "update", "--yes")
-		if err != nil {
-			t.Fatalf("fugaro update refused to publish a layer this Fugaro reads over an object it cannot rewrite: %v\n%s%s", err, out, errOut)
-		}
-		if got, ok := layerObject(t, r); !ok || got != localOnlyMigrated {
-			t.Errorf("the local layer file was not published over the object:\n%q", got)
-		}
-		all := out + errOut
-		if !strings.Contains(all, "config publish --executable-changes") {
-			t.Errorf("the run publishes over a project layer it does not read without naming the door that reviews such a write:\n%s", all)
-		}
-	})
-
-	t.Run("there is no local layer file to publish", func(t *testing.T) {
-		r := newLayerRig(t, flowLayer)
-		path := localLayerPath(t)
-
-		out, errOut, err := executeStdin(t, "", "update", "--yes")
-		if err != nil {
-			t.Fatalf("fugaro update failed a run whose layer stage has nothing it may write: %v\n%s%s", err, out, errOut)
-		}
-		all := out + errOut
-		for _, want := range []string{"profiles.svc.image.apt", "flow collection", "config publish --executable-changes"} {
-			if !strings.Contains(all, want) {
-				t.Errorf("the run does not say %q:\n%s", want, all)
+// TestUpdateRefusesAPublishedLayerTheRemovalCannotLeaveValid: the state on the
+// object side that no write of this run answers — every key of the profile its
+// `default_profile` names is a removed one, so the document the removal makes is
+// not a project layer this Fugaro reads. The object is the layer every
+// repository of the project resolves against, so the run stops with a non-zero
+// error rather than skipping the stage: a skip would report an installation
+// converged that no repository of it can use.
+func TestUpdateRefusesAPublishedLayerTheRemovalCannotLeaveValid(t *testing.T) {
+	const onlyRemovedKeysFlow = `version: 1
+project: aurora
+gcp_project: proj-1234
+profiles:
+  svc: {image: {apt: [libvips-dev]}}
+default_profile: svc
+`
+	for _, tc := range []struct{ name, local, record string }{
+		{"there is no local layer file to seed", "", ""},
+		{"the local file is from another generation", migratedLayer, "9"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newLayerRig(t, onlyRemovedKeysFlow)
+			if tc.local != "" {
+				recordLayer(t, tc.local, tc.record)
 			}
-		}
-		if got, ok := layerObject(t, r); !ok || got != flowLayer {
-			t.Errorf("the object was written from a layer this run cannot migrate: %q", got)
-		}
-		if _, rerr := os.Stat(path); !errors.Is(rerr, os.ErrNotExist) {
-			t.Errorf("a local layer file was seeded from an object this Fugaro does not read: %v", rerr)
-		}
-	})
 
-	t.Run("the file was written from another generation", func(t *testing.T) {
-		r := newLayerRig(t, flowLayer)
-		path := localLayerPath(t)
-		recordLayer(t, migratedLayer, "9")
-
-		out, errOut, err := executeStdin(t, "", "update", "--yes")
-		if err != nil {
-			t.Fatalf("fugaro update failed a run whose layer stage has nothing it may write: %v\n%s%s", err, out, errOut)
-		}
-		all := out + errOut
-		for _, want := range []string{"generation 9", "config publish --executable-changes"} {
-			if !strings.Contains(all, want) {
-				t.Errorf("the run does not say %q:\n%s", want, all)
+			out, errOut, err := executeStdin(t, "", "update", "--yes")
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("fugaro update reported a project layer converged that every reader refuses: %v\n%s%s", err, out, errOut)
 			}
-		}
-		if data, rerr := os.ReadFile(path); rerr != nil || string(data) != migratedLayer {
-			t.Errorf("the file was re-seeded from an object this Fugaro does not read: %s%v", data, rerr)
-		}
-		if got, ok := layerObject(t, r); !ok || got != flowLayer {
-			t.Errorf("the object was written from a layer this run cannot migrate: %q", got)
-		}
-	})
+			all := out + errOut + err.Error()
+			for _, want := range []string{"profiles.svc.image.apt", "default_profile", "config publish --executable-changes"} {
+				if !strings.Contains(all, want) {
+					t.Errorf("the refusal does not say %q:\n%s", want, all)
+				}
+			}
+			if got, ok := layerObject(t, r); !ok || got != onlyRemovedKeysFlow {
+				t.Errorf("the object was written from a layer this Fugaro refuses: %q", got)
+			}
+			data, rerr := os.ReadFile(localLayerPath(t))
+			switch {
+			case tc.local == "" && !errors.Is(rerr, os.ErrNotExist):
+				t.Errorf("a local layer file was seeded from an object this Fugaro does not read: %v", rerr)
+			case tc.local != "" && (rerr != nil || string(data) != tc.local):
+				t.Errorf("this machine's layer file was written from an object this Fugaro does not read: %s%v", data, rerr)
+			}
+		})
+	}
 }
 
 // TestRemovedKeysOut pins the strip itself: what it takes out, what it leaves
-// byte for byte, the two documents it refuses to write, and the third state
-// that is neither — a key yamledit will not cut out at all, which is not the
-// same as a document with nothing to take out.
+// byte for byte, the documents it refuses to write, and the two states that are
+// neither — a key no splice of yamledit measures, which is taken out of the
+// document's own tree instead, and a document with nothing to take out at all.
 func TestRemovedKeysOut(t *testing.T) {
 	lc := &localcfg.Config{Name: "aurora", GCPProject: "proj-1234"}
 
@@ -348,16 +388,30 @@ func TestRemovedKeysOut(t *testing.T) {
 		}
 	})
 
-	t.Run("a key the editor cannot cut out", func(t *testing.T) {
+	t.Run("a key no splice of the editor measures is taken out of the tree", func(t *testing.T) {
 		r := removedKeysOut([]byte(flowLayer), lc)
-		if r == nil {
-			t.Fatal("a layer holding a removed key was read as a document with nothing to take out")
+		if r == nil || r.unwritable() {
+			t.Fatalf("the removal made no writable document of a flow-styled layer: %+v", r)
 		}
-		if r.Refused == "" || len(r.Problems) != 0 {
-			t.Fatalf("the editor's own refusal is not kept apart from a removal that was made: %+v", r)
+		if !r.Reencoded {
+			t.Error("the removal does not report that the document was written from its own tree")
 		}
 		if len(r.Keys) != 1 || r.Keys[0].Path() != "profiles.svc.image.apt" {
-			t.Errorf("the keys the removal could not take out are %v", r.Keys)
+			t.Errorf("the keys the removal took out are %v", r.Keys)
+		}
+		if string(r.Data) != flowLayerMigrated {
+			t.Errorf("the document the tree write left is not the layer minus the key:\n%s", r.Data)
+		}
+	})
+
+	t.Run("the comments a flow-style document carries survive the tree write", func(t *testing.T) {
+		const commented = "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  svc: {commands: {build: sh build.sh}, image: {apt: [libvips-dev]}} # why this package\ndefault_profile: svc\n"
+		r := removedKeysOut([]byte(commented), lc)
+		if r == nil || r.unwritable() || !r.Reencoded {
+			t.Fatalf("the removal made no writable document of a commented flow-styled layer: %+v", r)
+		}
+		if !strings.Contains(string(r.Data), "# why this package") {
+			t.Errorf("the tree write dropped a comment of the document's:\n%s", r.Data)
 		}
 	})
 

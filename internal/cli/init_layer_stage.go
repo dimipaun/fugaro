@@ -103,11 +103,14 @@ type layerPlan struct {
 	objectLayer   *config.ProjectLayer
 	// objectRefusal is the removal of the published object when it is one this
 	// run may not write: the object holds keys the repository-image removal
-	// refuses and has no edit that takes them out of it as it is written, so
-	// its bytes are a document every reader refuses. The states that would
-	// write those bytes into this machine's file are held back, and the ones
-	// that write a layer this Fugaro reads — a publish, which replaces the
-	// object whole — are what this run can still do about it.
+	// refuses, and either the document left behind is not a project layer this
+	// Fugaro reads (a profile the removal empties is the one default_profile
+	// names) or there is no removal of it at all, on its text or on its tree.
+	// Its bytes are a document every reader refuses, and the object is what
+	// every repository of the project resolves against: what repairs it is a
+	// layer published over it, so the states that would write those bytes into
+	// this machine's file are refused, and so is the run — a skip here would
+	// report an installation converged that no repository of it can use.
 	objectRefusal *layerRemoval
 
 	// recorded is the generation this machine's config records as the one its
@@ -234,8 +237,8 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config) (*layerPlan, error) 
 			// very bytes into this machine's file. It is not the local file's
 			// refusal either, which stops the run because that file is the
 			// owner's to edit: this side is an object in the project's bucket,
-			// so what is left is decided below, with the file and the record in
-			// hand, and said in the words of the door that repairs it.
+			// and the removal that cannot write it is a refusal of the run,
+			// said in the words of the door that repairs it.
 			if r := removedKeysOut(data, lc); r != nil {
 				if r.unwritable() {
 					p.objectRefusal = r
@@ -254,9 +257,12 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config) (*layerPlan, error) 
 		if p.objectRefusal != nil {
 			// There is nothing to seed the file from: the object's bytes are
 			// a document every reader refuses, and a seed writes them at the
-			// path this machine's layer is read from.
-			p.skip = fmt.Sprintf("there is no local layer file at %s, and nothing this run can seed it from: %s", p.path, objectRefusalFolded(p.objectRefusal))
-			break
+			// path this machine's layer is read from. The object is not this
+			// machine's file, and no write of this run repairs it, so the run
+			// stops: a stage that skipped here would report an installation
+			// converged while every repository of the project still resolves
+			// against a document no reader accepts.
+			return nil, userErr("%s: there is no local layer file at %s, and nothing this run can seed it from: %s", config.LayerKey, p.path, objectRefusalFolded(p.objectRefusal))
 		}
 		p.seed = true
 	case !p.pubExists:
@@ -288,10 +294,11 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config) (*layerPlan, error) 
 			if p.objectRefusal != nil {
 				// D854's remedy is the re-seed, and the re-seed writes the
 				// object's own bytes — the document every reader refuses.
-				// Neither side is written, and the sentence names the door
-				// that repairs the object.
-				p.skip = fmt.Sprintf("the published project layer is not the generation this machine's layer file was written from (%s), so neither side of it is written: %s", state.text(), objectRefusalFolded(p.objectRefusal))
-				break
+				// Neither side is written, and this is not a state to skip
+				// from: the object is the layer every repository of the
+				// project resolves against, and the run says so and stops
+				// rather than reporting it converged.
+				return nil, userErr("%s: the published project layer is not the generation this machine's layer file was written from (%s), so neither side of it is written: %s", config.LayerKey, state.text(), objectRefusalFolded(p.objectRefusal))
 			}
 			p.stale = state
 			break

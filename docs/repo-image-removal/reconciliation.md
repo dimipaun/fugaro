@@ -526,24 +526,25 @@ its `Recommendation` and both costs, so the answer and the price of the other re
   the operator to remember, or (b) it ships the step and says so in `### For operators`. **Picking
   between them is a new decision, not one of these nineteen**, and no task of the plan may land before
   it is picked.
-- **A published layer whose removed key sits in a flow-style profile has no edit at all, and only the
-  publish door repairs that object.** `yamledit` splices a member out of a flow mapping only while the
-  member's value is a plain value, so a layer written as `svc: { … image: { apt: […] } }` — a shape a
-  release before this one published — holds `image.apt` where no edit of the removal takes it out
-  (`internal/cli/init_layer_migration.go:315`). The local layer file that holds it is the owner's to fix
-  by hand, and `fugaro update` says so and stops; the **published object** is not a file anyone edits,
-  and it is what every repository of the project resolves against, so the run says what repairs it
-  (`internal/cli/init_layer_stage.go:241`) and names the command — a layer published over the object
-  with `fugaro config publish --executable-changes`, the flag being what that gate needs whenever the
-  layer replacing it names commands or image steps, because the object it replaces is a document no
-  reader here parses and so every executable key of the new layer counts as changed (L7). `fugaro
-  update` has no such flag. That is a second operator step beyond `fugaro update` — the second place
-  this design meets the HARD RULE — and, like the `--retire` step above, it is a step this design
-  cannot teach `update` to take, because the edit the removal would need does not exist for that
-  document. The readings are (a) the removal's release carries the step and its refusal names the
-  command, or (b) a later release teaches `yamledit` to cut a collection out of a flow member, and
-  `update` migrates that object in place like every other. **Picking between them is a new decision, not
-  one of these nineteen.**
+- **A layer whose removed key sits where no splice of the text editor measures it is written from the
+  document's own tree, and a layer the removal cannot leave valid stops the run.** `yamledit` splices a
+  member out of a flow mapping only while the member's value is a plain value, so a layer written as
+  `svc: { … image: { apt: […] } }` — a shape a release before this one published — holds `image.apt`
+  where no splice of the removal takes it out. The removal falls back to the document's node tree for
+  every shape the splices do not measure: the same edits are made on the tree and it is encoded again,
+  so the order, the styles and the comments survive and the exact spacing and quoting may not
+  (`internal/cli/init_layer_migration.go:307`). Both sides are therefore migrated by `fugaro update`
+  alone — the published object rewritten in place against the generation it read, and this machine's
+  file with it — where an object left holding the keys is what every repository of the project resolves
+  against and so a run that skipped it would report an installation converged that no repository of it
+  can use. What remains is the layer the removal cannot leave valid, the profile its `default_profile`
+  names holding nothing but removed keys: no write of the run is the owner's answer there, so the run
+  stops with a non-zero error naming the door that does repair the object — a layer published over it
+  with `fugaro config publish --executable-changes` (`internal/cli/init_layer_stage.go:265`) — rather
+  than skipping the stage. That is an operator step beyond `fugaro update` for a broken layer, and it
+  is the HARD RULE's own boundary: the run says it has not converged instead of pretending, and the
+  reading still open is whether the removal should decide that state itself (choose a `default_profile`
+  for the owner). **Picking between them is a new decision, not one of these nineteen.**
 - **Unit tests cannot show the deploy path.** The registry, the build account, the job and the run are
   one artefact, and the hermetic fakes are written from the API documentation. That is why the 0.20.0
   tag waits for the owner's live check rather than for a green suite, and why the check is a step of the

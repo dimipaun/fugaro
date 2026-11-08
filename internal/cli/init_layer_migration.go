@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -26,7 +27,11 @@ import (
 //
 // The migration is the removal applied to the layer: the keys go, everything
 // else stays byte for byte (yamledit edits the text, so the owner's comments
-// and order survive), the object is rewritten in place against the generation
+// and order survive), and a document yamledit has no splice for at all — a
+// member whose value is a collection, written inside a flow mapping — is
+// written from its own tree instead, where the comments, the order and the
+// styles survive and the exact spacing may not. The object is rewritten in
+// place against the generation
 // this run read (never "delete it and publish again", which would leave the
 // project with no layer at all for as long as it takes), and the same strip is
 // what this machine's local layer file gets, because a file the release that
@@ -71,15 +76,21 @@ type layerRemoval struct {
 	// left of the document is not a project layer it reads, so the caller
 	// publishes nothing from it. Empty is the removal being writable.
 	Problems []config.Problem
-	// Refused is why the editor made no removal at all — a key written in a
-	// flow mapping whose value is a collection has no edit that takes it out,
-	// and yamledit splices nothing else — and "" when every edit landed. It is
-	// not Problems: Problems is what the document a removal DID make says, and
-	// this is the removal there is none of. Refused and Problems must both stay
-	// apart from a nil result, which is a document with nothing to take out: a
-	// caller that read either as nil would report a layer converged while the
-	// document still holds keys every reader refuses.
+	// Refused is why no removal was made at all: the document has a shape
+	// neither the text editor's splices nor its own tree can be edited to take
+	// the keys out of, which is the last resort and not the flow member above,
+	// whose tree does have the edit. It is not Problems: Problems is what the
+	// document a removal DID make says, and this is the removal there is none
+	// of. Refused and Problems must both stay apart from a nil result, which is
+	// a document with nothing to take out: a caller that read either as nil
+	// would report a layer converged while the document still holds keys every
+	// reader refuses.
 	Refused string
+	// Reencoded is the removal having been made on the document's own tree
+	// rather than on its text (nodeRemoval): the keys are out and the layer is
+	// the one it was, while its exact spelling may not be. A caller that prints
+	// what it wrote says so.
+	Reencoded bool
 }
 
 // unwritable is why this run does not write this removal — the editor's own
@@ -98,6 +109,15 @@ func (r *layerRemoval) text() string {
 		names = append(names, k.Path())
 	}
 	return fmt.Sprintf("%d %s the repository-image removal refuses (%s)", len(r.Keys), noun, strings.Join(names, ", "))
+}
+
+// pronoun is the keys of a sentence about the removal: one key is it, and more
+// than one are them.
+func (r *layerRemoval) pronoun() string {
+	if len(r.Keys) == 1 {
+		return "it"
+	}
+	return "them"
 }
 
 // layerProfiles is a project layer document read as what each profile of it
@@ -188,43 +208,40 @@ func removalTakesTheBlock(block string, sub map[string]any) bool {
 }
 
 // removedKeysOut takes the keys the repository-image removal refuses out of a
-// project layer document, leaving every other byte as it is. It returns nil
-// when there is nothing to do: a document holding no removed key, one whose
-// profiles the doc does not decode, and one whose every edit leaves the bytes
-// as they were.
+// project layer document, leaving every other byte as it is — or, for a document
+// no splice of the text editor measures, writing the document again from its own
+// tree (nodeRemoval). It returns nil when there is nothing to do: a document
+// holding no removed key, one whose profiles the doc does not decode, and one
+// whose every edit leaves the bytes as they were.
 //
 // The result is not always one a caller may write, and the two ways it is not
-// are kept apart — Refused for the key yamledit will not cut out of the
-// document at all, Problems for the document the removal does make and this
-// Fugaro does not read (a profile is emptied and `default_profile` named it,
-// say) — because a caller that read either as "nothing to do" would report a
-// layer converged while the document still holds keys every reader refuses. Data
-// and Layer are what the side is written from, and mean nothing when unwritable.
+// are kept apart — Refused for a document neither the text editor's splices nor
+// its own tree can be edited, which is the last resort, and Problems for the
+// document the removal does make and this Fugaro does not read (a profile is
+// emptied and `default_profile` named it, say) — because a caller that read
+// either as "nothing to do" would report a layer converged while the document
+// still holds keys every reader refuses. Data and Layer are what the side is
+// written from, and mean nothing when unwritable.
 func removedKeysOut(data []byte, lc *localcfg.Config) *layerRemoval {
 	var doc layerProfiles
 	if err := yaml.Unmarshal(data, &doc); err != nil || len(doc.Profiles) == 0 {
 		return nil
 	}
-	r := &layerRemoval{}
-	out := data
-	for _, name := range slices.Sorted(maps.Keys(doc.Profiles)) {
-		held, _ := doc.Profiles[name].(map[string]any)
-		for _, e := range layerRemovalEdits(name, held) {
-			next, err := yamledit.RemoveKeyWithOptions(out,
-				append([]string{"profiles", name}, e.path...), yamledit.RemoveOptions{DropEmptyParents: true})
-			if err != nil {
-				// The keys of this edit go with the ones already taken out of
-				// the report, because this run writes neither: what the sentence
-				// names is what the removal would take out of the side.
-				r.Keys = append(r.Keys, e.keys...)
-				r.Refused = spliceRefusal(err)
-				return r
-			}
-			if yamledit.Changed(out, next) {
-				r.Keys = append(r.Keys, e.keys...)
-			}
-			out = next
+	out, keys, err := textRemoval(data, doc)
+	r := &layerRemoval{Keys: keys}
+	if err != nil {
+		// yamledit measures bytes, and a document it has no splice for is
+		// still one this migration has to repair: the side it is on is what
+		// every repository of the project resolves against (or the file the
+		// owner reads), and `fugaro update` is the whole upgrade. The same
+		// edits are made again on the document's own tree, which has a member
+		// for every shape the splices do not.
+		var ok bool
+		if out, keys, ok = nodeRemoval(data, doc); !ok {
+			r.Refused = spliceRefusal(err)
+			return r
 		}
+		r.Keys, r.Reencoded = keys, true
 	}
 	if len(r.Keys) == 0 {
 		return nil
@@ -245,6 +262,143 @@ func removedKeysOut(data []byte, lc *localcfg.Config) *layerRemoval {
 	return r
 }
 
+// textRemoval makes the removal's edits on the document's bytes, which is the
+// removal itself: yamledit splices them, so every byte the edits do not name —
+// the owner's comments, the order, the quoting — is left as it was written. It
+// reports the editor's own refusal, with the keys of the edit that met it,
+// when the document has a shape no splice of this package measures; the caller
+// then has the document's own tree to fall back on.
+func textRemoval(data []byte, doc layerProfiles) ([]byte, []layerRemovedKey, error) {
+	out := data
+	var keys []layerRemovedKey
+	for _, name := range slices.Sorted(maps.Keys(doc.Profiles)) {
+		held, _ := doc.Profiles[name].(map[string]any)
+		for _, e := range layerRemovalEdits(name, held) {
+			next, err := yamledit.RemoveKeyWithOptions(out,
+				append([]string{"profiles", name}, e.path...), yamledit.RemoveOptions{DropEmptyParents: true})
+			if err != nil {
+				// The keys of this edit go with the ones already taken out of
+				// the report, because this run writes neither: what the sentence
+				// names is what the removal would take out of the side.
+				return out, append(keys, e.keys...), err
+			}
+			if yamledit.Changed(out, next) {
+				keys = append(keys, e.keys...)
+			}
+			out = next
+		}
+	}
+	return out, keys, nil
+}
+
+// nodeRemoval makes the same edits on the document's own tree, for a document
+// the text editor has no splice for: the members the removal refuses are taken
+// out of the nodes that hold them, and the tree is encoded again. What the tree
+// carries is what the document said — the order of the members, their styles
+// and the comments written between them, which yaml.v3 keeps on the nodes — and
+// what it does not carry is the exact spelling, the spacing around a separator
+// and the quoting a value did not need. That is why this is the fallback and
+// the text path is the removal.
+//
+// A profile whose every key went goes with them, the way DropEmptyParents takes
+// it in the text path, and so does `profiles` itself when nothing is left of
+// it: the report of the profiles the removal emptied is made from the two
+// documents either way. False is a tree this could not be done to at all, which
+// leaves the editor's refusal as the answer.
+func nodeRemoval(data []byte, doc layerProfiles) ([]byte, []layerRemovedKey, bool) {
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil || len(root.Content) == 0 {
+		return nil, nil, false
+	}
+	top := root.Content[0]
+	profiles, ok := mappingValue(top, "profiles")
+	if !ok {
+		return nil, nil, false
+	}
+	var keys []layerRemovedKey
+	for _, name := range slices.Sorted(maps.Keys(doc.Profiles)) {
+		held, _ := doc.Profiles[name].(map[string]any)
+		profile, ok := mappingValue(profiles, name)
+		if !ok {
+			return nil, nil, false
+		}
+		for _, e := range layerRemovalEdits(name, held) {
+			if !removeNodeEdit(profile, e) {
+				return nil, nil, false
+			}
+			keys = append(keys, e.keys...)
+		}
+		if len(profile.Content) == 0 {
+			deleteMember(profiles, name)
+		}
+	}
+	if len(profiles.Content) == 0 {
+		deleteMember(top, "profiles")
+	}
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&root); err != nil {
+		return nil, nil, false
+	}
+	if err := enc.Close(); err != nil {
+		return nil, nil, false
+	}
+	return buf.Bytes(), keys, true
+}
+
+// removeNodeEdit takes one edit's members out of a profile's tree: the key
+// itself, or the key under the block the edit names, and the block with it when
+// that leaves the block holding nothing.
+func removeNodeEdit(profile *yaml.Node, e layerRemovalEdit) bool {
+	switch len(e.path) {
+	case 1:
+		return deleteMember(profile, e.path[0])
+	case 2:
+		block, ok := mappingValue(profile, e.path[0])
+		if !ok || !deleteMember(block, e.path[1]) {
+			return false
+		}
+		if len(block.Content) == 0 {
+			deleteMember(profile, e.path[0])
+		}
+		return true
+	}
+	return false
+}
+
+// mappingValue is the mapping a mapping node writes under key, and false when
+// the node is not a mapping, writes no such member, or writes one that is not a
+// mapping itself.
+func mappingValue(m *yaml.Node, key string) (*yaml.Node, bool) {
+	if m == nil || m.Kind != yaml.MappingNode {
+		return nil, false
+	}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Kind != yaml.ScalarNode || m.Content[i].Value != key {
+			continue
+		}
+		v := m.Content[i+1]
+		if v.Kind != yaml.MappingNode {
+			return nil, false
+		}
+		return v, true
+	}
+	return nil, false
+}
+
+// deleteMember takes a key and its value out of a mapping node, and reports
+// whether it was written there.
+func deleteMember(m *yaml.Node, key string) bool {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Kind == yaml.ScalarNode && m.Content[i].Value == key {
+			m.Content = append(m.Content[:i], m.Content[i+2:]...)
+			return true
+		}
+	}
+	return false
+}
+
 // printLayerRemoval says what the removal took out of one place and what a
 // repository that needed those keys does now, before the write it belongs to:
 // the keys are gone from the layer rather than refused, so the reader is told
@@ -261,13 +415,16 @@ func printLayerRemoval(w io.Writer, place string, r *layerRemoval) {
 	for _, name := range r.Profiles {
 		fmt.Fprintf(w, "  the profile %s held nothing else, so it goes with them: a repository whose profile: names it has to select another one\n", name)
 	}
+	if r.Reencoded {
+		fmt.Fprintf(w, "  this document writes a removed key where no splice of this editor measures it, so it is written from its own tree: the order, the styles and the comments stay, the spacing and the quoting may not\n")
+	}
 }
 
 // spliceRefusal is yamledit's own refusal in the owner's words, the way a
-// models write renders it: the class, never the document's bytes. The removal
-// meets it on a layer whose profile writes a removed key inside a flow mapping
-// whose value is a collection — `image: { apt: [...] }` written as one member
-// of a `{ ... }` line — which has no edit that takes the key out.
+// models write renders it: the class, never the document's bytes. It is the
+// removal's last resort — a document no splice of the editor measures, whose
+// own tree could not be edited either (nodeRemoval) — because a caller never
+// reads a refusal as a removal that was made.
 func spliceRefusal(err error) string {
 	reason := yamledit.ReasonOf(err)
 	if reason == "" {
@@ -313,8 +470,9 @@ func removedKeysFolded(r *layerRemoval) string {
 // that replaces it as changed (L7) and refuses without --executable-changes —
 // which `fugaro update`, the command that brought the reader here, has not got.
 func objectRefusalFolded(r *layerRemoval) string {
-	return fmt.Sprintf("the published project layer holds %s and this run does not take them out of it: %s; it is not a file to edit by hand — publish a layer without them over it with %s, and run %s again",
-		pluginwire.Printable(r.text()), r.why(), selfCommand()+" config publish --executable-changes", selfCommand()+" update")
+	return fmt.Sprintf("the published project layer holds %s and this run does not take %s out of it: %s; it is not a file to edit by hand — publish a layer without %s over the object with %s, and run %s again",
+		pluginwire.Printable(r.text()), r.pronoun(), r.why(), r.pronoun(),
+		selfCommand()+" config publish --executable-changes", selfCommand()+" update")
 }
 
 // layerMigrateWhat is the fourth thing this stage asks before it writes: the
