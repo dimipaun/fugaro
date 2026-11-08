@@ -21,7 +21,10 @@
  * four campaign pages, the three key events G2.4 names; no user id, Google Signals and ads
  * personalisation off, GA4's own IP anonymisation — and it does not restate Google's policy for
  * Google. Four of its claims are held to the
- * artifact by `website/test/consent.mjs`: that no page carries a form or a field; that the
+ * artifact by `website/test/consent.mjs`: that no page carries a form or a field — the consent
+ * banner's own settings panel excepted, since its switches are the visitor telling the site what
+ * NOT to do rather than a form the site collects through: they carry no `name` and sit in a
+ * `<fieldset>`, a grouping; that the
  * tool it names is the tool the build would load (the page names Google Analytics, and the
  * origin the gate loads from must be Google's); that the withdrawal it describes deletes the
  * cookies it says it does (the script touches `document.cookie`, and the sentence and the
@@ -155,6 +158,13 @@ const repo = site.facts.repository
               declining stops reporting at once, on this page too, and deletes Google's cookies
               (<code>_ga</code> and the rest) from this browser, with the campaign trackers'
               cookies listed below where they were set.
+            </p>
+            <p>
+              The banner also carries <strong>Cookie Settings</strong>: a switch for{' '}
+              <strong>Analytics</strong> and, where that question applies, one for{' '}
+              <strong>Marketing</strong>, each naming what it loads, drawn with nothing ticked and
+              set from what this browser already holds. <strong>Save my choices</strong> writes
+              exactly what the switches say, so turning one off withdraws that answer here too.
             </p>
             <p>
               Accepting here is narrower: it answers the site's question alone and leaves the

@@ -48,8 +48,8 @@ const reviewerPinPath = "agent.models.reviewer"
 // infrastructure failing under it, and it carries whether the coder pin was
 // one of the models refused. The coder is the one pin an A/B arm moves
 // (D555): a challenger arm's own model refused is the arm's own refusal
-// (D556), while the pins both arms share, and every infrastructure failure
-// (a Vertex budget, a managed settings directory, a price table), are the
+// (D556), while the pins both arms share, and every failure that is no model
+// refusal at all (a Vertex budget, a managed settings directory), are the
 // champion's conditions too and are never recorded as the arm's decision.
 type modelRefusal struct {
 	msg      string
@@ -120,9 +120,10 @@ const (
 // metadataClient is the client the metadata request is made with: a bound on
 // the whole exchange, because the metadata server is the platform's own
 // link-local address and an answer that takes longer than this is not one
-// this run waits for. (Nothing is retried: the gateway never retries, and a
-// call that cannot present its identity fails like any other upstream
-// error.)
+// this run waits for. (Nothing is retried here: the gateway's one retry is
+// for an upstream whose answer never began (internal/gateway,
+// sendRetryingOnce), and a call that cannot present its identity fails like
+// any other upstream error -- or halts the run, D143.)
 var metadataClient = &http.Client{Timeout: 10 * time.Second}
 
 // modelAuth is the run's answer to which auth its model path takes: the
