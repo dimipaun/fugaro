@@ -43,9 +43,9 @@ func layerName(i int) string {
 // off), the intersection of allow-lists, a craft that selects among the
 // project's credentials and pools and narrows a pool. A key a layer leaves
 // unset passes the earlier layers through. A value a later layer sets that does
-// not tighten is
-// dropped and recorded in Ignored (equal values are not ignored; the ceiling
-// is never ignored). Later layers are compared to the running effective value.
+// not tighten is dropped and recorded in Ignored (equal values are not ignored;
+// the ceiling is never ignored). Later layers are compared to the running
+// effective value.
 func Merge(ceiling Layer, tighten ...Layer) Effective {
 	e := Effective{Sources: map[string]string{}}
 	layers := append([]Layer{ceiling}, tighten...)
