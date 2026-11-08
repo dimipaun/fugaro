@@ -281,12 +281,16 @@ func newestTag(ctx context.Context, o Options, root string) (string, error) {
 // person's, say — while the call looks like a cache being read. Only a plain
 // directory, of the kind this package's own "git init" makes, answers yes: the
 // tarball transport is the only other writer of a tree, and entryPath refuses
-// an archive that names .git at all, so a plain one found there is this
-// package's own. Both readers of a tree already there ask it: the warm path,
-// before it lets git say what commit the tree is at — a "gitdir:" file would
-// have another repository answer, and a tree of another version be served —
-// and ChangesSince, before it reads a history, which a "gitdir:" file would
-// have answered with another repository's releases.
+// an archive that names .git at all. What that buys is a repository this
+// package may read without writing into somebody's: it is not provenance. A
+// copy of a clone's ".git" is a plain directory too and answers yes, and
+// nothing here authenticates the bytes of a tree — the record is a note beside
+// it, not a signature, against anything that can write both. Both readers of a
+// tree already there ask it: the warm path, before it lets git say what commit
+// the tree is at — a "gitdir:" file would have another repository answer, and a
+// tree of another version be served — and ChangesSince, before it reads a
+// history, which a "gitdir:" file would have answered with another
+// repository's releases.
 func isRepository(dir string) bool {
 	at := filepath.Join(dir, ".git")
 	fi, err := os.Lstat(at)
