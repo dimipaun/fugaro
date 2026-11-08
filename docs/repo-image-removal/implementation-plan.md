@@ -6,13 +6,15 @@ files, its interface, its **red step**, its named tests and its **SEC** flag. Ev
 against the tree of 2026-11-04 (`777b902d`, the merge of `main` this round read) and every citation in
 it was resolved while writing. **The owner answered the decisions in
 [reconciliation.md](reconciliation.md) §4 on 2026-11-04**, so each task's block is settled and none of
-them waits on a question. The one question its residual raises is still open — whether the removal's
-release may ship the per-repository `--retire`, and the repair of a layer the removal cannot leave
-valid, as an operator step ([reconciliation.md](reconciliation.md) §5) — and the answer decides whether
-the removal release needs the retirement folded into `update`'s own converge, which is a change to a
-task rather than a detail inside it. Until it is picked, a task whose subject is an operator step does
-not land. The plan's own slot, **0.20.0**, is not the release that carries the removal: 0.20.0 through
-0.20.3 all shipped without it ([README.md](README.md) says so in its status line).
+them waits on a question. The questions its residual raises are still open — whether the removal's
+release may ship the per-repository `--retire`, the repair of a layer the removal cannot leave valid,
+and (since R2) the hand conversion a repository's own `fugaro.yaml` meets, as operator steps
+([reconciliation.md](reconciliation.md) §5) — and the answers decide whether
+the removal release needs the retirement folded into `update`'s own converge and what the release that
+carries the removal owes a repository's own file, which is a change to a task rather than a detail
+inside it. Until they are picked, a task whose subject is an operator step does not land. The plan's own
+slot, **0.20.0**, is not the release that carries the removal: 0.20.0 through 0.20.3 all shipped
+without it ([README.md](README.md) says so in its status line).
 
 ## 1. What this plan does not own
 

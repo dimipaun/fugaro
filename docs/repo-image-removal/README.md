@@ -18,15 +18,18 @@ folder was opened by a **design-only** pull request that wrote four documents, n
 Terraform and no `go.mod`; the removal's code landed after it. **All nineteen decisions
 D1190–D1208 are answered** — seven of them as recommended, the other twelve as the design's default
 that the owner did not object to, each with the date and the reason it rests on
-([reconciliation.md](reconciliation.md) §4) — and the one question its residual raises is still open:
+([reconciliation.md](reconciliation.md) §4) — and the questions its residual raises are still open:
 whether the removal's release may ship the per-repository `--retire` as an operator step, or has to fold
-the retirement into `fugaro update`'s own converge. The built half answers that for the layer the
-removal touches in the only way it can without a new decision. A profile whose every key was a removed
-one is not left to the owner: the removal keeps the name with an empty mapping, so the layer's
-`default_profile` and every repository's `profile:` go on resolving, which is what a repository needs
-of a profile it takes no commands from. For the layer it still cannot leave valid — one wrong about
-something else as well — `fugaro update` stops and says so rather than pretending, and the sentence it
-stops with names a command the reader can carry out from the state they are in.
+the retirement into `fugaro update`'s own converge; and, since R2, what a repository's own
+`fugaro.yaml` is owed, which every door refuses while it still writes a removed key and which no
+converge of this installation migrates — a hand conversion (D1192, as 0.7.0 shipped it) against
+`docs/release.md`'s "Before you tag" item, which calls a hand repair a change that does not ship. The
+built half answers the layer's half in the only way it can without a new decision. A profile whose
+every key was a removed one is not left to the owner: the removal keeps the name with an empty mapping,
+so the layer's `default_profile` and every repository's `profile:` go on resolving, which is what a
+repository needs of a profile it takes no commands from. For the layer it still cannot leave valid —
+one wrong about something else as well — `fugaro update` stops and says so rather than pretending, and
+the sentence it stops with names a command the reader can carry out from the state they are in.
 
 | File | Role |
 | --- | --- |

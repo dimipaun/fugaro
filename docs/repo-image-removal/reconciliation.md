@@ -501,6 +501,27 @@ its `Recommendation` and both costs, so the answer and the price of the other re
   (F24); nothing enumerates the rest, because a per-repository image is invisible outside its own
   repository. Everyone else meets the refusal at `fugaro.yaml` validation and converts by hand
   (D1192). There is no inventory to check, and this design does not invent one.
+- **The refusal a repository's own `fugaro.yaml` meets is an operator step, and the release that carries
+  the removal is where it is answered.** From R2 on, a repository still writing one of the eleven keys
+  is refused by `config.Resolve` at every door that reads its file — a run, the in-job runner, the image
+  check, the layer resolve and `fugaro update --repo` itself (`internal/config/resolve.go:100`) — and
+  the only migration this work ships is the **project layer's**: a repository's own file lives in the
+  repository's git, which this installation's converge does not rewrite, and D1192 answered that its
+  owner converts it by hand, with the refusal naming `fugaro image add` and the setup skill walking the
+  catalog entry through. 0.7.0 shipped the same shape of change — `base:`, `image.node`, `image.jdk` —
+  with the same answer: `### For operators` step 2, "Migrate each repository before merging anything
+  else … (the `/fugaro:setup` skill does it)" (`docs/releases/v0.7.0.md`); there is no converge test for
+  a repository at the previous version, and none is possible while the conversion is a person's. What is
+  **not** settled is `docs/release.md`'s "Before you tag" item, which reads that same step as a **hand
+  repair** and says a change needing one **does not ship in this release**. The readings are (a) the
+  refusal stays and the release that carries the removal pays for it in its `### For operators`, as
+  0.7.0 did, or (b) `update` learns to write a repository's file off these keys inside its own converge
+  — which needs the entry's name, its tags and a billable build, which D1192's own cost note calls the
+  compatibility shim the ruling forbids, and which is new ground either way: the file is the
+  repository's, not the installation's, and a converge that rewrites it is a capability this migration
+  does not have. **Picking between them is a new decision, not one of these nineteen**, and it has to be
+  picked before the release that carries the removal is cut: the refusal is user-visible the moment one
+  ships.
 - **The catalog entry is coupled to its source repository (D1202).** A project-level entry whose source
   is a Dockerfile in repository X is built as X's build account, with X's credential and secrets. Retire
   X, or remove X's build account, and the entry can no longer be rebuilt — a project-level artifact with

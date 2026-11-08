@@ -147,6 +147,14 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 		// removal: the tag waits for a check the owner runs.
 		"**An owner-run live check gates the 0.20.0 tag.**",
 		"findings **F1–F25**",
+		// The repository's own file, which is the second operator step the
+		// residual names: a repository still writing a removed key is refused at
+		// every door and no converge of this installation migrates it, so the
+		// release that carries the removal has to answer for it. Without this
+		// sentence the index reads as though the layer's migration were the whole
+		// of what `fugaro update` owes an installation at the previous version.
+		"what a repository's own `fugaro.yaml` is owed",
+		"a hand conversion (D1192, as 0.7.0 shipped it) against `docs/release.md`'s \"Before you tag\" item",
 	} {
 		if !strings.Contains(readme, want) {
 			t.Errorf("%s lacks %q", rirReadme, want)
@@ -199,6 +207,11 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 		// the first removal task's failing test, and no other test names it.
 		"| `internal/cli/docs_repo_image_removal_test.go` | **R2**, **R3**, R4 (and R10 reads it) |",
 		"**R2 moves `Config scope rows` (93 → 82)**",
+		// The plan's own guard on the operator steps its residual raises: the
+		// subject does not land until the owner picks, which is why the
+		// repository-side refusal this branch ships is reported rather than
+		// answered here.
+		"Until they are picked, a task whose subject is an operator step does not land.",
 		"## R0. The dogfood repository's entry, its build and its pin",
 		"## R10. The owner-run live check, and the 0.20.0 tag (the final task)",
 	} {
