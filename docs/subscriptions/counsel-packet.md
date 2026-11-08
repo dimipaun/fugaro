@@ -7,9 +7,9 @@ writes. It goes to counsel with the Subscription Terms
 asks **only what the Terms' own list for counsel does not already ask**. The draft counsel was given
 carried eighteen numbered questions (#1146), of which 12–18 were added with the owner's answers;
 counsel's restructured text answers most of those and ends with its own list of eight items for the
-owner and counsel, and none of the questions below repeats one of the eight. Nothing here is legal advice, and nothing
-here decides anything: every question is counsel's, and every ruling it cites is the owner's. The
-tensions T10 to T27 are in
+owner and counsel, and none of the questions below repeats one of the eight. Nothing here is legal
+advice, and nothing here decides anything: every question is counsel's, and every ruling it cites is
+the owner's. The tensions T10 to T27 are in
 [reconciliation.md](reconciliation.md#rulings-on-the-tensions-2026-10-27), with T27's consequence
 [ruled 2026-10-29](reconciliation.md#a-consequence-the-rulings-create-ruled-2026-10-29), and O4 and
 the key binding are ruled in the same file; crash reporting (2026-10-31, counsel approved) is the
