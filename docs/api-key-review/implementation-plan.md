@@ -629,7 +629,8 @@ any installation whose budget mode is `off` — the review class refuses a run w
 
 **Items 1–5 below are satisfied as of 2026-11-07**, each recording what the owner's answer settled or
 the approval of that day gave. **Item 6 is not the owner's answer to give and is not satisfied**: the
-security review is owed before AK4–AK7 land, so those four tasks landed under it rather than past it.
+security review is owed before AK4–AK7 land, so the two that have landed — AK4 and AK5, and no task
+past AK5 is started — landed under it rather than past it.
 **Item 7's gate is lifted** — E7's second half reached the tree on 2026-11-08 (**U6**) — so the launch
 is admitted where it was refused, though no live installation has been measured against it. A reader
 must take item 6 as standing.
@@ -692,5 +693,6 @@ account through — and it is still refused by `config.Validate` where a *reposi
 `fugaro.yaml` writes it in `agent.oauth_token`, which is the document rule AK4 did not book either: a
 document is not where the owner asks for the project's platform-held key, and a repository that wrote
 it would put every one of its runs, coding runs included, on the key's job. The user-facing spelling
-stays owed, and it is not yet owed to anyone in a hurry: no review launches at all until C3.9
-(§6.7), so there is no door for the request to be spelled at yet.
+stays owed, and the door for it is open as of 2026-11-08: the launch it would be spelled at is
+admitted since E7's second half reached the tree (item 7, **U6**), so a `fugaro review --pr N` runs,
+while what the owner still cannot do is ask for the project's key on that launch explicitly.
