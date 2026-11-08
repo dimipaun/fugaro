@@ -1030,12 +1030,12 @@ is untouched by anything here.
     review run's own task**, whose `agent.oauth_token` (`internal/task/task.go:169`) *is* that account and
     whose **absence is the default** — the field may never spell `default` itself
     (`internal/task/task.go:1094`) — so the fix-round launcher reads the review run's task with
-    `ReadTask` (`internal/runstore/runstore.go:1347`, which validates what it reads), maps "" through the
+    `ReadTask` (`internal/runstore/runstore.go:1549`, which validates what it reads), maps "" through the
     rule the launch already prints with (`reviewAccount`, `internal/cli/review.go:210`), and puts
     `config.DefaultClaudeAccount` on the wire: `readVerifyRequest` refuses an empty account as a bad
     **call**, not as a `valid:false` about an artifact.
     **`oauth_account` in the run's record is deliberately not that source**
-    (`internal/runstore/runstore.go:656`): it is documented as informational, never read by anything that
+    (`internal/runstore/runstore.go:852`): it is documented as informational, never read by anything that
     makes a security decision, and the **job** writes it itself from the credential name the service
     answered with (`recordCredential`, `internal/runner/runner.go:808`) — so it may be "" or a credential
     name, and a value that is neither the account nor always there cannot key a verify call.

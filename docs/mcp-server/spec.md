@@ -507,7 +507,7 @@ model credentials**. That contradicts D923's own "the coordinator mints nothing"
 `TestTheCoordinatorMintsNoCustomToken`. **So the first slice is the authorization server plus
 `get_task_status`, `stream_logs`, `get_result` and `list_tasks`; `cancel_task` goes with `spawn_task`
 into the later design item rather than into the first slice**, because the marker it writes is an
-object in the runs bucket (`internal/runstore/runstore.go:1379`, `fugaro cancel`'s own write) and so
+object in the runs bucket (`internal/runstore/runstore.go:1581`, `fugaro cancel`'s own write) and so
 needs the same runs-bucket write the coordinator does not hold — "without the launch path" is not a
 condition it can meet. No task in [implementation-plan.md](implementation-plan.md) starts a run.
 **What a later `spawn_task` design item has to answer** is written in
