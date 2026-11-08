@@ -1423,7 +1423,7 @@ func newBudgetKillCmd(kill bool) *cobra.Command {
 	f := cmd.Flags()
 	f.BoolVar(&o.all, "all", false, "the whole project")
 	f.StringVar(&o.repo, "repo", "", "one repository, given as owner/name or a path inside its checkout (no value: this checkout's origin)")
-	f.StringVar(&o.workspace, "workspace", "", "one workspace, named as its own project is; its own service's stop flag, in the workspace's own database")
+	f.StringVar(&o.workspace, "workspace", "", "one workspace, named as its own project is; its own service's stop flag, in the workspace's own database, so the project it names has to declare one (workspace_members)")
 	f.StringVar(&o.reason, "reason", "", "why (recorded, shown by budget show and watch)")
 	f.BoolVar(&o.yes, "yes", false, "confirm without typing the project's name")
 	addCloudFlags(cmd, &o.cloud)

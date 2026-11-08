@@ -239,6 +239,62 @@ func TestWorkspaceKillDoesNotStopAnotherWorkspace(t *testing.T) {
 	}
 }
 
+// TestWorkspaceScopeRefusesAProjectThatIsNotAWorkspace: --workspace names a
+// workspace, and the name is all this scope resolves before it addresses a
+// project's config — so without a check of its own, any project this machine
+// has configured would do, and both directions of the scope would write that
+// project's own stop.
+//
+// The switch is budget.PathKillGlobal, the node the --all scope writes, so the
+// bypass is the confirmation and not the node: `budget resume --workspace <a
+// plain project>` would lift a project's whole stop at a bare prompt, while
+// --all lifts it only after the typed project name (or --yes), and `budget
+// kill --workspace <a plain project>` would halt it while --all asks for the
+// typed name. Nothing here is refused by the agent fence either — a person at
+// their own terminal reaches it — which is why the refusal has to be the
+// scope's own.
+//
+// The claim a config makes is the workspace_members key, whose presence
+// localcfg documents as the claim that the project declares a workspace, and
+// the question is asked before the database is opened: the plain project's
+// database is asserted byte for byte unchanged, so a refused run read nothing
+// and wrote nothing.
+func TestWorkspaceScopeRefusesAProjectThatIsNotAWorkspace(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTable)
+	plain := h.add(t, "plain-proj", "plain-gcp", "")
+	plain.db.Set(budget.PathProject, "plain-proj")
+	// And the fixture's own workspace, beside it: the same command line has to
+	// keep working for a project that does declare one.
+	h.project(t, "workspace-alpha").db.Set(budget.PathProject, "workspace-alpha")
+	before := plain.db.Value("")
+
+	for _, verb := range []string{"kill", "resume"} {
+		_, _, err := execute(t, "budget", verb, "--workspace", "plain-proj")
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("budget %s --workspace plain-proj: %v, want the refusal of a project that is not a workspace", verb, err)
+		}
+		// The refusal has to name the scope that owns this write, or the person
+		// reading it has a project they still cannot stop from here.
+		if !strings.Contains(err.Error(), "workspace_members") || !strings.Contains(err.Error(), "--all") {
+			t.Errorf("budget %s --workspace plain-proj: the refusal does not name the config key and the scope that owns the write:\n%v", verb, err)
+		}
+	}
+	if after := plain.db.Value(""); !reflect.DeepEqual(before, after) {
+		t.Errorf("a refused --workspace run touched the plain project's database:\nbefore %v\nafter  %v", before, after)
+	}
+	if on, _ := wsKillStop(t, plain.db, "plain-proj"); on {
+		t.Error("a refused --workspace run left the plain project's own switch on")
+	}
+
+	// The workspace the fixture does declare is still the scope it was.
+	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha"); err != nil {
+		t.Fatalf("budget kill --workspace workspace-alpha: %v", err)
+	}
+	if on, _ := wsKillStop(t, h.project(t, "workspace-alpha").db, "workspace-alpha"); !on {
+		t.Error("the kill of a config that does declare a workspace wrote no switch")
+	}
+}
+
 // TestWorkspaceKillRefusesHTTP2Debug: every cloud command of this repository
 // refuses to run while GODEBUG holds http2debug, because Go then prints
 // requests — the person's ADC bearer token included — to stderr, and GODEBUG is

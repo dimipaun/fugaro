@@ -18,6 +18,12 @@ package cli
 // The workspace is named, and the flags that name the project this command
 // would otherwise act on are refused rather than ignored: a `--project` beside
 // `--workspace` would be read as one scope and acted on as another.
+//
+// The name is a workspace's, and the config it resolves has to declare one
+// (workspace_members): the switch written here is the project's own global one,
+// the node the --all scope writes, so a plain project's name would be that
+// scope's write — the whole of a project's stop — made through a flag that asks
+// nothing and takes no typed word.
 
 import (
 	"errors"
@@ -62,6 +68,26 @@ func runBudgetKillWorkspace(cmd *cobra.Command, o *budgetKillOptions, kill bool)
 	lc, _, err := workspaceOwnerConfig(o.workspace)
 	if err != nil {
 		return err
+	}
+	// A workspace is a project that declares one, and this scope acts on the
+	// workspace and not on whatever project its name resolves to. The switch
+	// it writes is budget.PathKillGlobal, which is the same node the --all
+	// scope writes, so a name that is any project this machine has configured
+	// would be a second, quieter way to the whole of a project's stop: `budget
+	// resume --workspace <a plain project>` would lift it while only the typed
+	// project name (or --yes) lifts it through --all, and `budget kill
+	// --workspace <a plain project>` would halt it without the typed name --all
+	// asks for. The workspace_members key's presence is the config's own claim
+	// to be a workspace's (localcfg.Config.WorkspaceMembers: an absent key is a
+	// config that declares no workspace at all), and the question is asked
+	// here, before the database is opened, so a project the scope has no
+	// business in is never read or written.
+	if lc.WorkspaceMembers == nil {
+		verb := "kill"
+		if !kill {
+			verb = "resume"
+		}
+		return userErr("--workspace %s names a workspace, and the config of the project it names declares no workspace (its workspace_members key is absent): that project's own stop is what the --all scope writes, with the confirmation it asks for, so this is the wrong scope for it; run 'fugaro budget %s --all --project %s' instead, or name a workspace's own project", o.workspace, verb, o.workspace)
 	}
 	_, db, err := budgetDBFor(ctx, lc)
 	if err != nil {

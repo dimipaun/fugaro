@@ -813,7 +813,7 @@ Flags:
 | `--reason` | string | "" | no | why (recorded, shown by budget show and watch) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | one repository, given as owner/name or a path inside its checkout (no value: this checkout's origin) |
-| `--workspace` | string | "" | no | one workspace, named as its own project is; its own service's stop flag, in the workspace's own database |
+| `--workspace` | string | "" | no | one workspace, named as its own project is; its own service's stop flag, in the workspace's own database, so the project it names has to declare one (workspace_members) |
 | `--yes` | bool | `false` | no | confirm without typing the project's name |
 
 Subcommands:
@@ -950,7 +950,7 @@ Flags:
 | `--reason` | string | "" | no | why (recorded, shown by budget show and watch) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | one repository, given as owner/name or a path inside its checkout (no value: this checkout's origin) |
-| `--workspace` | string | "" | no | one workspace, named as its own project is; its own service's stop flag, in the workspace's own database |
+| `--workspace` | string | "" | no | one workspace, named as its own project is; its own service's stop flag, in the workspace's own database, so the project it names has to declare one (workspace_members) |
 | `--yes` | bool | `false` | no | confirm without typing the project's name |
 
 Subcommands:
