@@ -1190,6 +1190,73 @@ func TestRunsLsIsTheOldLs(t *testing.T) {
 	}
 }
 
+// TestRunsLsJSONKeepsFullID: the machine document is what the console, the
+// paging cursor and --after read, and no short-ID rule touches it: run is
+// still `<slug>/<run-id>` and run_id the full ID (D1705, F8). It passes with
+// the text listing either way, which is what it is for.
+func TestRunsLsJSONKeepsFullID(t *testing.T) {
+	f := newCloudFixture(t)
+	older, newer := "20261107-010101-3bb2", "20261108-115248-3bb2"
+	seedRun(t, f, older, "", "someone@example.com", false)
+	seedRun(t, f, newer, "", "someone@example.com", false)
+
+	got, _ := lsJSON(t, "--since", "0")
+	if len(got.Runs) != 2 {
+		t.Fatalf("runs = %v, want both", runIDs(got.Runs))
+	}
+	for _, r := range got.Runs {
+		if r.RunID != older && r.RunID != newer {
+			t.Errorf("run_id = %q, want a full ID", r.RunID)
+		}
+		if want := appSlug + "/" + r.RunID; r.Run != want {
+			t.Errorf("run = %q, want %q: --json carries the full ID whatever the text listing shows", r.Run, want)
+		}
+	}
+}
+
+// TestRunsLsRUNCellResolves: the RUN cell the text listing prints is a name the
+// CLI resolves to that run, so taking it out of a listing and into a command
+// works -- the working skill tells an agent to run `fugaro logs RUN` with it,
+// and the waiting block under the table names runs the same way. A run is shown
+// by the last four characters of its ID only once a lookup accepts an ending
+// (SR3's resolveRun, wired by SR14), so until that lands the cell is the full
+// name locateRun takes; this test is what fails if the cell is shortened ahead
+// of it.
+func TestRunsLsRUNCellResolves(t *testing.T) {
+	f := newCloudFixture(t)
+	id := recentRunID(t, time.Minute, "abcd")
+	seedRun(t, f, id, "", "someone@example.com", true)
+
+	out, _, err := execute(t, "runs", "ls", "--since", "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cell := ""
+	for _, l := range strings.Split(out, "\n") {
+		if fields := strings.Fields(l); len(fields) > 0 && strings.Contains(fields[0], "abcd") {
+			cell = fields[0]
+		}
+	}
+	if cell == "" {
+		t.Fatalf("the listing has no row for %s:\n%s", id, out)
+	}
+	// logs is the command the skill sends the cell to: it answers with the
+	// run's own lines, so the resolution is proved by its handing the run over
+	// rather than by an error.
+	if _, errOut, err := execute(t, "logs", cell); err != nil {
+		t.Fatalf("fugaro logs %q -- the RUN cell runs ls printed -- = %v (%s): the listing has to print a name a command resolves", cell, err, errOut)
+	}
+	// diagnose names the run it resolved to, so the cell is that run and not
+	// another one the lookup happened to reach.
+	got, errOut, err := execute(t, "diagnose", "--json", cell)
+	if err != nil {
+		t.Fatalf("fugaro diagnose %q = %v (%s)", cell, err, errOut)
+	}
+	if !strings.Contains(got, id) {
+		t.Fatalf("fugaro diagnose %q named no run of %s:\n%s", cell, id, got)
+	}
+}
+
 // TestLsIsGone: the 0.7.0 tombstone was deleted by #350 in 0.7.5 (design
 // generic-tool §5, G17, P3; the owner's 2026-10-14 ruling moved the deletion
 // from 0.8.0 to the next release, which #370 renamed 0.7.5), so there is no
