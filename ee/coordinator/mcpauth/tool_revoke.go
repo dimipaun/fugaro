@@ -6,6 +6,7 @@ package mcpauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -61,6 +62,16 @@ func RevokeFamilyTool(store Store) Tool {
 			}
 			if err := argumentsOf(call.Arguments, &args); err != nil {
 				return nil, err
+			}
+			// The family id is checked here as well as in the store, because
+			// the store answers a key it cannot hold and a bucket it cannot
+			// reach with one error: an id that cannot name a family would
+			// otherwise be answered — and durably recorded — as this
+			// installation's fault rather than as the caller's own argument.
+			// It is the store's own predicate and not a second rule, so a
+			// store that tightens what a key segment may be tightens this too.
+			if err := keySegment(args.FamilyID); err != nil {
+				return nil, errors.New("the family id is not one this installation can name a family by: it is the id the audit record's entries carry, and it holds no path separator")
 			}
 			if err := store.RevokeFamily(ctx, args.FamilyID); err != nil {
 				// The store's own error stays out of what the caller reads: it

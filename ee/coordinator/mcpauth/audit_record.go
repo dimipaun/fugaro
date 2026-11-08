@@ -259,6 +259,16 @@ func AuditRecordTool(store Store) Tool {
 			if err := argumentsOf(call.Arguments, &args); err != nil {
 				return nil, err
 			}
+			// The identity is checked here as well as in the store, because
+			// the store answers a record it cannot hold and a store it cannot
+			// reach with one error: an identity that is not one person would
+			// otherwise be answered — and durably recorded — as this
+			// installation's fault rather than as the caller's own argument.
+			// It is the store's own predicate and not a second rule, so a
+			// store that tightens what an identity may be tightens this too.
+			if _, ok := userEntry(args.Identity); !ok {
+				return nil, errors.New("the identity is not one person written as user:<email>: this tool reads one person's record and nobody else's")
+			}
 			rec, err := store.GetAudit(ctx, args.Identity)
 			if err != nil {
 				// As revoke_family's: the store's own error is not the

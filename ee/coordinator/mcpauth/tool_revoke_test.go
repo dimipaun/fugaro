@@ -175,6 +175,51 @@ func TestAToolWhoseStoreCouldNotBeAnsweredIsAuditedAsFailed(t *testing.T) {
 	}
 }
 
+// TestAMalformedArgumentIsTheCallersRefusalAndNotTheStoresFault is the row
+// above read from the other side, and it is why each tool checks its own
+// argument before it hands the argument to the store: the store answers a key
+// it cannot hold with the same error it answers a bucket it could not reach
+// with, so a family id carrying a path separator, or an identity that is not
+// one person, would be answered and durably recorded as a fault of the
+// installation — an operator sent to the store by a caller's typo. A refused
+// argument is the tool's own answer (isError inside a result), not the door's
+// codeInternal, and its line says refused.
+func TestAMalformedArgumentIsTheCallersRefusalAndNotTheStoresFault(t *testing.T) {
+	for _, tc := range []struct{ tool, args string }{
+		{"revoke_family", `{"family_id":"family/other"}`},
+		{"get_audit_record", `{"identity":"not-a-user-entry@example.com"}`},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			var audit bytes.Buffer
+			ts := newResourceServer(t, auditTo(t, &audit), WithRoster(rosterOf(Members{
+				Launchers: []string{testIdentity},
+				Operators: []string{testIdentity},
+			})))
+			for _, tool := range []Tool{AuditRecordTool(ts.store), RevokeFamilyTool(ts.store)} {
+				if err := ts.tools.Register(tool); err != nil {
+					t.Fatalf("registering %s: %v", tool.Name, err)
+				}
+			}
+			_, tokens := ts.runFlow(t, testClientRedirect)
+
+			ans := wantResult(t, ts.rpc(t, tokens.AccessToken, auditCallBody(t, tc.tool, tc.args)))
+			text, isError := wantToolText(t, ans)
+			if !isError {
+				t.Fatalf("%s answered an argument it cannot serve with %s; want the tool's own refusal, because the caller is the one that can fix it", tc.tool, text)
+			}
+			lines := auditLines(t, &audit)
+			if len(lines) != 1 {
+				t.Fatalf("%s wrote %d lines; want exactly one:\n%s", tc.tool, len(lines), audit.String())
+			}
+			for _, want := range []string{"outcome=" + OutcomeRefused, "reason=" + ReasonToolRefused} {
+				if !strings.Contains(lines[0], want) {
+					t.Errorf("the line %q does not carry %q: an argument this door would not take is not a fault of the installation, and a monitor counting installation faults must not count it", lines[0], want)
+				}
+			}
+		})
+	}
+}
+
 // TestRevokedFamilyIsRefusedOnTheNextCall is the whole of D930's answer read
 // from the front door: an operator reads a family in a person's record, revokes
 // it, and the access token that family minted stops working at the next call —
