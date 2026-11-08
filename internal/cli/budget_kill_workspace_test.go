@@ -77,18 +77,14 @@ func TestWorkspaceKillStopsAMemberRunInFlight(t *testing.T) {
 	// test for a database that does not hold it is beside this one.
 	wsDB.Set(budget.PathProject, "workspace-alpha")
 
-	// The word asked for is the workspace's own name (confirmTyped compares
-	// against the config the switch is written from), and a different word
-	// writes nothing, as it does for --all.
-	typed(t)
-	if _, _, err := executeStdin(t, "aurora\n", "budget", "kill", "--workspace", "workspace-alpha", "--reason", "runaway spend"); err == nil {
-		t.Fatal("the workspace kill accepted a word that is not the workspace's name")
-	}
-	if on, _ := wsKillStop(t, wsDB, "workspace-alpha"); on {
-		t.Fatal("the refused confirmation killed the workspace")
-	}
-
-	out, _, err := executeStdin(t, "workspace-alpha\n", "budget", "kill", "--workspace", "workspace-alpha", "--reason", "runaway spend")
+	// The kill asks nothing and reads no stream: it halts runs, so there is no
+	// word to type and nothing stands in for one (T3 of
+	// docs/no-prompt-policy/implementation-plan.md: "Remove confirmTyped",
+	// and the ask belongs to the raise). It is run here with no --yes and with
+	// no stdin worth reading — the command's own input, which is what
+	// confirmTyped used to read — so the write is the assertion that the stop
+	// waits for nobody.
+	out, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha", "--reason", "runaway spend")
 	if err != nil {
 		t.Fatalf("budget kill --workspace: %v", err)
 	}
@@ -115,8 +111,10 @@ func TestWorkspaceKillStopsAMemberRunInFlight(t *testing.T) {
 		t.Errorf("the member's own stop read is on (%s): a workspace reached into a member", which)
 	}
 
-	// The undo is the same scope, in the same database.
-	if _, _, err := execute(t, "budget", "resume", "--workspace", "workspace-alpha", "--yes"); err != nil {
+	// The undo is the same scope, in the same database, and it asks nothing
+	// either: what holds a resume back is not a word but who is running (see
+	// TestWorkspaceResumeRefusesInAnAgentSession).
+	if _, _, err := execute(t, "budget", "resume", "--workspace", "workspace-alpha"); err != nil {
 		t.Fatalf("budget resume --workspace: %v", err)
 	}
 	if on, _ := wsKillStop(t, wsDB, "workspace-alpha"); on {
@@ -124,6 +122,43 @@ func TestWorkspaceKillStopsAMemberRunInFlight(t *testing.T) {
 	}
 	if after := member.db.Value(""); !reflect.DeepEqual(before, after) {
 		t.Errorf("the member's database changed across the resume:\nbefore %v\nafter  %v", before, after)
+	}
+}
+
+// TestWorkspaceResumeRefusesInAnAgentSession: the resume is this scope's raise,
+// and a raise is the one form a coding agent's session may not make — a limit
+// the session it bounds can lift is not a limit (D1542, the fence T3 of
+// docs/no-prompt-policy/implementation-plan.md puts on every raise form: "List
+// and fence every raise form ... budget resume"). The kill is the other
+// direction, and it stays open to the session: halting spend is the safe way
+// round, so a kill asks nothing and is fenced by nothing.
+func TestWorkspaceResumeRefusesInAnAgentSession(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTable)
+	db := h.project(t, "workspace-alpha").db
+	db.Set(budget.PathProject, "workspace-alpha")
+	t.Setenv("CLAUDECODE", "1")
+
+	// The stop itself is the session's own control, as it is for --all.
+	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha"); err != nil {
+		t.Fatalf("budget kill --workspace in a coding agent's session: %v, want the stop to be open to the session", err)
+	}
+	if on, _ := wsKillStop(t, db, "workspace-alpha"); !on {
+		t.Fatal("the kill in a coding agent's session did not stop the workspace")
+	}
+
+	// The raise is not: it is refused, not prompted, and the refusal carries
+	// the command its owner runs themselves (an agent's report has to be
+	// actionable without the flags reconstructed from a transcript).
+	_, _, err := execute(t, "budget", "resume", "--workspace", "workspace-alpha")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("budget resume --workspace in a coding agent's session: %v, want the owner-only refusal", err)
+	}
+	if !strings.Contains(err.Error(), "CLAUDECODE") ||
+		!strings.Contains(err.Error(), "fugaro budget resume --workspace workspace-alpha") {
+		t.Errorf("the refusal does not name the session and the owner's own command:\n%v", err)
+	}
+	if on, _ := wsKillStop(t, db, "workspace-alpha"); !on {
+		t.Error("the refused resume lifted the workspace's stop: the raise happened without being made")
 	}
 }
 

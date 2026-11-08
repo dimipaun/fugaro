@@ -20,7 +20,6 @@ package cli
 // `--workspace` would be read as one scope and acted on as another.
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"os"
@@ -28,6 +27,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -96,7 +96,6 @@ func runBudgetKillWorkspace(cmd *cobra.Command, o *budgetKillOptions, kill bool)
 		return userErr("%v", err)
 	}
 	out := cmd.OutOrStdout()
-	in := bufio.NewReader(cmd.InOrStdin())
 	what := "workspace " + lc.Name
 	// The switch is the workspace's own global one and never a repository's: a
 	// workspace's service answers its members, and the stop has to reach all of
@@ -104,9 +103,28 @@ func runBudgetKillWorkspace(cmd *cobra.Command, o *budgetKillOptions, kill bool)
 	res, err := budget.SetKill(ctx, db, budget.PathKillGlobal, kill, me, o.reason, budget.KillHooks{
 		Confirm: func(budget.Kill) error {
 			if kill {
-				return confirmTyped(cmd, in, lc, o.yes, "this stops the runs of every member of "+what+": its own service refuses every shared-credential call, and nothing of a member's own — its credentials, its caps, its sign-in, a run that never reaches the workspace — is touched")
+				// A kill halts runs and asks nothing: it reads no stream and
+				// waits for nobody, and the direction that would need holding
+				// back is the one that lets them run again (D1542 as
+				// docs/no-prompt-policy/implementation-plan.md T3 states it,
+				// "Remove confirmTyped/confirmTypedStrict" and "List and fence
+				// every raise form").
+				return nil
 			}
-			return confirmTyped(cmd, in, lc, o.yes, "this lets "+what+"'s members reach its shared credentials and run again")
+			// A resume is that raise: this scope's form of it is the one T3's
+			// list did not have when it was written, because the scope is new
+			// — so it is fenced here, in the same words and on the same
+			// question every other raise form is fenced on (agentMarker, the
+			// one classification the package's agent refusals ask). The
+			// refusal carries the exact command its owner runs themselves,
+			// because a session that reads only the refusal has to be able to
+			// act on it. When T3's own helper (raiseOwnerOnly, budget.go)
+			// reaches this branch this becomes its call, with the fence in one
+			// place.
+			if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
+				return userErr("resuming %s is the owner's own step: %s; nothing was changed. Run this yourself at your own terminal: fugaro budget resume --workspace %s", what, initflow.AgentRefusal(m), lc.Name)
+			}
+			return nil
 		},
 		Conflict: func() { fmt.Fprintln(out, "changed by someone else meanwhile; reading it again") },
 		Now:      budgetNow,

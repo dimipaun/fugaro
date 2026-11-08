@@ -399,7 +399,17 @@ type PolicyReader interface {
 	Admissions(ctx context.Context, slug string) (*projectpolicy.RepoPolicy, bool, error)
 }
 
-// KillReader is the operator's two stop switches as the service reads them.
+// KillReader is the operator's stop switches as the service reads them.
+//
+// Stop reads the switches its caller honours, and the slug is what says which:
+// a route that names a repository passes it and gets budget's pair (the global
+// switch and that repository's own), and a route that names a person and no
+// repository passes "" and gets the global switch alone. The empty slug means
+// exactly that and is not a wildcard: a caller that has a repository always
+// passes it, because the two reads are two, and the reader that builds a
+// repository's path refuses an empty slug rather than answer "is this
+// repository stopped" by leaving the repository's switch out of the read
+// (budget.ReadKills).
 type KillReader interface {
 	Stop(ctx context.Context, slug string) (on bool, which string, err error)
 }
@@ -440,11 +450,13 @@ func (p RTDBPolicy) Admissions(ctx context.Context, slug string) (*projectpolicy
 	return rp, true, err
 }
 
-// RTDBKills is the operator's stop flag read from the database. It is
-// budget.ReadKills — the same pair a run honours and `fugaro budget kill`
-// writes — so the service's stop flag is the switch an operator already has,
-// and an unreadable switch is ON in both readers because the rule is one rule
-// in one place (budget's fail-closed decode).
+// RTDBKills is the operator's stop flag read from the database: budget.ReadKills
+// for a route that names a repository (the pair a run honours and `fugaro budget
+// kill` writes) and budget.ReadGlobalKill for one that names a person and no
+// repository (KillReader.Stop's empty slug). Either way the service's stop flag
+// is the switch an operator already has, and an unreadable switch is ON in both
+// readers because the rule is one rule in one place (budget's fail-closed
+// decode).
 type RTDBKills struct {
 	// DB is the database; *rtdb.Client is one.
 	DB budget.KillGetter

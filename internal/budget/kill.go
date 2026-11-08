@@ -65,8 +65,8 @@ func ReadKills(ctx context.Context, db KillGetter, slug string) (Kills, error) {
 // repository in hand: the credentials service's person-facing routes — the two
 // git reads and the read mint — name a person and no repository, and they are
 // stopped by the global switch only (docs/bitbucket-credentials/
-// reconciliation.md §3, where "the read mint has no slug" is the route's own
-// fact).
+// reconciliation.md §4, F34: "The read mint has no slug, so it is stopped by
+// the global switch only").
 //
 // It is not ReadKills with an empty slug, and it must not become that.
 // ReadKills builds the repository's path out of the slug and PathKillRepo
