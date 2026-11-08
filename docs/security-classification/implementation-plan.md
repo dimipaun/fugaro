@@ -545,8 +545,10 @@ this work's to claim now and to prove later.
   orchestrator's own plan builds it, and this plan does not wait for it.
 - **`settings set` for the list** (D1515). The list is edited in the layer file and the repository's
   `fugaro.yaml`, published by `config publish`; the managed allow-list admits nothing new.
-- **OD1, OD2, the needs_owner work** (F15). None is in this tree; D1518 makes the design independent of
-  them, and SC11 is the only task whose *content* depends on OD2's intent.
+- **OD1, OD2, the needs_owner work** (F15). Neither was in this tree when this was read — **OD1 landed
+  the same day** (`505718ab`, #1882) and touches no pattern list, so no task here changes for it, while
+  OD2 is still absent. D1518 makes the design independent of them, and SC11 is the only task whose
+  *content* depends on OD2's intent.
 - **A publish or a migration of its own** (F13). The key rides `fugaro update`'s existing stages,
   including `policyMigrateStage`; an additive optional key means no migrator and no policy version bump.
 - **Any new dependency.** The matcher is `doublestar`, already imported (F21).

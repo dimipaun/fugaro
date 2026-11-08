@@ -17,8 +17,9 @@ are the only text here he wrote.
 **Spec owner:** the owner, 2026-11-07. [spec.md](spec.md) is his ask, verbatim; where
 [reconciliation.md](reconciliation.md) disagrees with it about the code, **reconciliation wins** — and
 it does, twice: the ask's `internal/projectpolicy` is the published policy node rather than the project
-layer (reconciliation F4), and the ask's tasks OD1, OD2 and pull request #1822 are **not in this tree**
-(F15).
+layer (reconciliation F4); its task OD2 and pull request #1822 are **not in this tree**, and its task
+**OD1 was not in it either when this was read but landed on 2026-11-07** (`505718ab`, #1882: a finding
+marked `needs_owner` stops the loop rather than buying a fix round), which is F15.
 
 | File | What it is |
 | --- | --- |
@@ -79,8 +80,10 @@ section and the cited number — rather than claiming all four.
   arrival moved `docs/rigor-modes/reconciliation.md`'s census row **112 → 113**, as that row's own
   amendment sentence records. The three census re-check tests in other folders' files (F17) re-derive
   the count from the tree and needed no edit.
-- It **implements neither OD1 nor OD2 nor any part of the needs_owner work**; **none of the three exists
-  in this tree** (F15), and the design is written to be independent of them (D1518).
+- It **implements no part of OD1's or OD2's work** and is written to be independent of both (D1518):
+  **OD1 landed while this folder was being read** (2026-11-07, `505718ab`: a finding marked `needs_owner`
+  stops the loop), and this design neither consumes nor changes it — no pattern list is read or written
+  by it — while **OD2 is still not in this tree** (F15).
 - It **builds no console screen** (D1514): the ask defers it and the console's own rule agrees — a read
   is an exact-argv row on two fences held equal by a Go test (F24).
 - It **adds nothing to `settings set`'s allow-list** (D1515): the list is edited in the layer file and
