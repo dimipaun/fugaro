@@ -28,12 +28,11 @@ import (
 // identifiers a workspace does publish reach this member nowhere: nothing here
 // reads a workspace's record, and there is no constructor that takes one.
 //
-// **Refusals are one refusal.** An address the lists do not name, an address
-// that is off them and one that was never in a list at all are refused with
-// ErrUnverifiedAssertion, the exchange's own refusal, and the sentence names no
-// address: whoever holds the assertion is the person it is about, and a refusal
-// that told them apart would be a way to ask this member whether somebody is a
-// member here.
+// **Refusals are one refusal.** An address the lists do not name is refused
+// with ErrUnverifiedAssertion, the exchange's own refusal, and the sentence
+// names no address: whoever holds the assertion is the person it is about, and
+// a refusal that told one off-list address from another would be a way to ask
+// this member whether somebody is a member here.
 //
 // **A member that cannot read its lists admits nobody.** The lists are read
 // before the assertion is verified, so a host whose own configuration cannot be
@@ -41,6 +40,15 @@ import (
 // id is burnt by the member's own fault. That is the fail-closed half of W5's
 // rule: a member with no route to its lists, and a member wired with none at
 // all (NewAdmission), refuse rather than falling back on a value read earlier.
+//
+// **The decision is two halves, and this is the second one.** Verifying what a
+// workspace asserted is a function of the assertion and the member's pin, and
+// it belongs to the exchange alone: this file adds no claim and re-checks none.
+// What it decides is a different question — whether the person the exchange
+// verified may do anything HERE — and that question is the member's own lists'.
+// A single function that verified and admitted at once would answer both from
+// one place, and the second answer would be the one that could be widened by a
+// later change to the first.
 //
 // **What this file does not do: the front door.** It mounts no route and holds
 // no PKCE state, exactly as the exchange does not (its own note). W5's answer
@@ -54,19 +62,19 @@ import (
 // person presenting the assertion may be exactly the person the lists name.
 var ErrMemberListsUnreadable = errors.New("oauth: this member's own launcher and operator lists could not be read")
 
-// Lists is the member's own admission lists as the exchange reads them: every
+// Lists is the member's own admission lists as the admission reads them: every
 // address the launcher and operator entries `fugaro user` wrote name, in the
-// spellings the operator wrote them in (projectpolicy.MemberLists.Addresses
-// reads which entries are one person's address; the folding below is the
-// comparison's own).
+// spellings the operator wrote them in — which entries are one person's address
+// is the reader's own rule (projectpolicy.MemberLists.Addresses), and the
+// folding that compares them with a verified address is namesAddress's, below.
 //
 // It is a source and not a value the caller hands over once, and it is read on
 // every request rather than at startup (the MCP door's own Roster rule): an
 // address the operator added this morning is admitted without a restart, and a
 // host that cannot read its lists now refuses rather than answering from what
-// it read earlier. Nothing that could read a workspace's record may implement
-// it, and nothing in this package does: this is the member's own configuration,
-// and the member's own wiring is what supplies one.
+// it read earlier. This package holds no path to a configuration file and reads
+// none: the lists are the member's own, and the member's own wiring is what
+// supplies one.
 type Lists interface {
 	Addresses(ctx context.Context) ([]string, error)
 }
