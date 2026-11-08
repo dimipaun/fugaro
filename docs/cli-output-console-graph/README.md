@@ -30,7 +30,7 @@ None. The file is byte-identical to the text received (`cmp` against the Downloa
 
 ## Waiting on the owner
 
-Tensions **T1 to T6** (reconciliation section 3a) were all ruled on 2026-11-06, each the recommendation. Each task still needs the owner's explicit go. The graph plan's orchestrator slice waits on `docs/stateless-orchestrator/` (three of whose tasks are written, all merged on `main` on 2026-11-07: O0, O1 and O3; nothing else there is), and its endpoint slice is conditional. When both plans run at once, `docs/design/v1.md` has two writers (CL11 and CG3): sequence them.
+Tensions **T1 to T6** (reconciliation section 3a) were all ruled on 2026-11-06, each the recommendation. Each task still needs the owner's explicit go. The graph plan's orchestrator slice waits on `docs/stateless-orchestrator/` (five of whose tasks are written, all merged on `main`, O0, O1 and O3 on 2026-11-07 and O2 and O6 on 2026-11-08; nothing else there is), and its endpoint slice is conditional. When both plans run at once, `docs/design/v1.md` has two writers (CL11 and CG3): sequence them.
 
 ## Cross-plan shared files, in the order they are written
 

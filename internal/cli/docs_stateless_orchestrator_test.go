@@ -314,11 +314,18 @@ func TestDocsStatelessOrchestratorCacheAnswerIsFollowedThrough(t *testing.T) {
 // BF2 (2026-11-08) is the newest addition to the folder and it is plan only:
 // the long-run triage rule (D1244-D1247, task O14) has to stay readable as the
 // code rule it is — a local threshold under the run's budget, three reads (the
-// run record, the pull request's state and BF1's open-findings file), three
+// run record, the pull request's state and BF1's open-findings file), four
 // outcomes with the merge automatic only on positive evidence, the fail-closed
 // reading of everything it cannot read, the audit id and a read-only print. A
 // rewrite that turns the rule into a model call, or that lets it merge on a
 // finding set it could not read, is the change this design cannot afford.
+// The merge is also fenced to a run that is **over** and a pull request that is
+// **ready**, and the four outcomes are decided by a fixed order, so a run still
+// in flight is never merged and a finished, stalled one is not restarted by
+// accident; the local-only key is pinned to the four files that make it local
+// (the shared block's field, its registry row, its schema entry and the
+// project-path refusal), and the built-task status names O2 and O6 beside O0,
+// O1 and O3.
 func TestDocsStatelessOrchestratorLongRunTriageIsFollowedThrough(t *testing.T) {
 	plan := soRead(t, soPlan)
 	rec := soRead(t, soReconciled)
@@ -395,6 +402,50 @@ func TestDocsStatelessOrchestratorLongRunTriageIsFollowedThrough(t *testing.T) {
 	for _, want := range []string{"the **recommend-only** outcome", "an input nobody read is not evidence that the run is bad", "**the whole changed-path set is `Routine`**"} {
 		if !strings.Contains(rec, want) {
 			t.Errorf("%s: the triage's fail-closed reading lost %q", soReconciled, want)
+		}
+	}
+	// The merge is only for a run that is over and a pull request a person could
+	// read, and the four outcomes are decided by a fixed order rather than by the
+	// order a tick happens to check: without both, a run still in flight (or a
+	// finished, stalled one) can be merged or restarted by accident.
+	for _, want := range []string{
+		"the record's status is **terminal**",
+		"`gitprov.PRInfo.Draft` false",
+		"the first that matches is the one taken",
+		"a signal that counts only while the run is still in flight",
+	} {
+		if !strings.Contains(rec, want) {
+			t.Errorf("%s: the triage's merge gate lost %q", soReconciled, want)
+		}
+	}
+	for _, want := range []string{
+		"**The four are tried in one fixed order and the first that matches wins",
+		"**`MergeAsIs` also requires the run to be over and its pull request ready**",
+		"TestTriageNeverMergesAnInFlightRun",
+		"TestTriageNeverMergesADraftPullRequest",
+		"TestTriagePrefersEscalateOverEveryOtherOutcome",
+		"TestTriageMergesAFinishedStalledRunRatherThanRestartingIt",
+		// The key is local-only because four named files make it so, not because
+		// the plan says so: the field on the shared block, its registry row, its
+		// settings-schema entry and the by-name refusal on the project path.
+		"TestProjectPolicyRefusesTheLocalOnlyTriageKey",
+		"`locLocal`",
+		"`internal/settings/registry.go`",
+		"`schemas/settings.schema.json`",
+		"$defs.keyDefaults",
+		"`checkOrchestratorMembers` refuses `triage_after` **by name**",
+	} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("%s: BF2's follow-through %q is gone", soPlan, want)
+		}
+	}
+	// The status is what rots first: O2 and O6 are built on main beside O0, O1 and
+	// O3, so the three documents that state it name their commits.
+	for _, f := range []struct{ name, text string }{{soPlan, plan}, {soReconciled, rec}, {soReadme, readme}} {
+		for _, want := range []string{"5053cbce", "6145e445", "five"} {
+			if !strings.Contains(f.text, want) {
+				t.Errorf("%s: the built-task status lost %q", f.name, want)
+			}
 		}
 	}
 	// The CI read is new code, not a read the tree already makes: D1244 must keep

@@ -1,10 +1,10 @@
 # The stateless orchestrator
 
-**Status (2026-11-08): three tasks of the [implementation plan](implementation-plan.md) are built, all merged on `main`.** Task **O0**, the state schema,
+**Status (2026-11-08): five tasks of the [implementation plan](implementation-plan.md) are built, all merged on `main`.** Task **O0**, the state schema,
 the typed patch and the validator (#1823, `36abeffc`, 2026-11-07): `internal/orchestrator/state.go`, `patch.go`, `validate.go`, `summary.go`, their tests,
-`testdata/state-a.json` and the two `schemas/` documents. Task **O1**, the deterministic security-sensitive classifier (#1822, `405dae8b`, 2026-11-07), is
-`internal/orchestrator/sensitivity/`'s four files; task **O3**, the state store, the daemon lease and the audit log (#1954, `70ec7800`, 2026-11-07), is
-`internal/orchestrator/{store,lease,audit}.go` with their tests. Every other task is plan only, including **BF2's long-run triage rule (2026-11-08): task O14 and the decisions D1244-D1247, design only, no task approved.**
+`testdata/state-a.json` and the two `schemas/` documents. Task **O1**, the deterministic security-sensitive classifier (#1822, `405dae8b`, 2026-11-07), is its
+own four files in `internal/orchestrator/sensitivity/` (the package also holds SC1's `floor` and `pattern` files); **O2** (#1945, `5053cbce`), the `orchestrator/` subtree, its rules and the `fugaro update` convergence, **O3** (#1954, `70ec7800`), the state store, the daemon lease and the audit log, and **O6** (#1950,
+`6145e445`), the dependency-driven launcher, are merged too. Every other task is plan only, including **BF2's long-run triage rule (2026-11-08): task O14 and the decisions D1244-D1247, design only, no task approved.**
 
 *The status as first written, kept:* **Status: plan only; nothing is implemented; no task approved. Every decision D1220-D1243 and every question the plan raised (Q1-Q4) is answered — Q2 twice — and the last tension the answers left open, T7, was ruled on 2026-11-05, so nothing is left for the owner to rule** (reconciliation section 6).
 
@@ -38,14 +38,14 @@ All of D1220-D1243 were answered on 2026-11-04. Most are the recommendation; **t
   self-restart on a changed binary (it exits when the binary the unit names differs from the one it is running, so launchd or systemd starts the new
   one) and its start-up state migration stay as the plan has them.
 - **BF2, 2026-11-08: the long-run triage rule (D1244-D1247), all four the recommendation.** One task, **O14**, and it adds no ruling that is not a
-  recommendation; the two defaults it rests on are the owner's: **merge as-is with follow-ups** — a long run whose whole diff is inside the routine trees,
-  with green CI, no critical finding and none high in a security path, is merged by code and the findings it leaves become a follow-up task — and **a run
+  recommendation; the four outcomes are tried in a fixed order — escalate, then merge-as-is, then restart, then recommend-only. The two defaults it rests on are the owner's:
+  **merge as-is with follow-ups** — a **finished** run (never one still in flight) whose pull request is **ready**, its whole diff inside the routine trees, green CI,
+  no critical finding and none high in a security path, is merged by code and the findings it leaves become a follow-up task — and **a run
   that produced nothing usable is split into follow-up sub-tasks** rather than re-run on the same spec. A **readable critical** finding, or a **high** one
   in a security path, stops the run and asks the owner (a `waiting_on: person` decision). Everything else **fails closed** into the fourth,
   **recommend-only** outcome — BF1's file absent, `CIUnknown`, a truncated path set, a severity the triage does not know — which merges nothing, cancels
-  nothing and restarts nothing, and prints what it could not read. Every triage is written to the orchestrator audit log under `<run>:triage` and printed
-  read-only by **`fugaro runs watch`**; until BF1 lands that is every long run (U10), and the threshold it fires on is the person's own local key
-  (`orchestrator.triage_after`, default `2h`, refused when it is not under the run's budget).
+  nothing and restarts nothing, and prints what it could not read. Every triage is written to the orchestrator audit log under `<run>:triage` and printed read-only by
+  **`fugaro runs watch`**; until BF1 lands that is every long run (U10), and the threshold it fires on is the person's own local key (`orchestrator.triage_after`, default `2h`, refused when it is not under the run's budget).
 
 D1241 (the person's own credential writes the `orchestrator/` node), D1242 (the terminal Typed confirmation now, a paired-device channel later) and
 D1243 (the session-start print reads a local cache the daemon writes) are all the recommendation, and the gates the plan had put on them are lifted.
