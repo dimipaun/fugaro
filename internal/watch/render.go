@@ -7,6 +7,7 @@ import (
 	"github.com/mattn/go-runewidth"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The screen of `fugaro watch`: a pure function from a View (plus what the
@@ -233,6 +234,9 @@ func Render(v View, o RenderOptions) Frame {
 		return Frame{Lines: []string{r.clipW(tooNarrow, o.Width)}}
 	}
 	live := v.Conn.Kind == ConnLive || v.Conn.Kind == ConnPolling
+	// One table for the frame: the endings its rows are shown by, and the RUN
+	// column wide enough to hold the longest of them.
+	table := tableOf(v)
 
 	// Header: identity, then the connection.
 	var top []string
@@ -262,7 +266,7 @@ func Render(v View, o RenderOptions) Frame {
 	}
 
 	if tier >= 2 && !o.Help {
-		top = append(top, r.colHeader(tier))
+		top = append(top, r.colHeader(tier, table.runW))
 	}
 
 	// Body.
@@ -280,7 +284,7 @@ func Render(v View, o RenderOptions) Frame {
 	} else {
 		for _, b := range v.Repos {
 			before := len(body)
-			lines, rowTop, rowBottom := r.repo(tier, b, sel, o.Expanded, o.Collapsed[b.Slug])
+			lines, rowTop, rowBottom := r.repo(tier, b, sel, o.Expanded, o.Collapsed[b.Slug], table)
 			body = append(body, lines...)
 			if rowTop >= 0 {
 				selTop, selBottom = before+rowTop, before+rowBottom
@@ -559,6 +563,48 @@ func (r *rend) scope(tier int, label string, b Bar, counted, spent, notional bud
 	return []string{r.line(segs...)}
 }
 
+// runTable is what every row of one frame shares: the RUN column's width and
+// the ending each run of the frame is shown by. Both come from one
+// task.DisplayRuns call over the frame's rows, because the rows a frame prints
+// are the set that is shown together: a person reads one screen and one text
+// frame, across the repository blocks in it, so an ending that is unique in its
+// own block is not enough (spec.md §3, D1706) — and a run id that exists in two
+// repositories has no ending that tells the two rows apart at all, which the
+// rule answers with `<slug>/<ending>` (F15).
+type runTable struct {
+	runW    int
+	endings map[task.Ref]string
+}
+
+// tableOf resolves a frame's rows — every block's active runs and its finished
+// ones — to the table they are drawn with.
+func tableOf(v View) runTable {
+	var refs []task.Ref
+	for _, b := range v.Repos {
+		for _, run := range b.Runs {
+			refs = append(refs, task.Ref{Slug: b.Slug, RunID: run.Run})
+		}
+		for _, run := range b.Finished {
+			refs = append(refs, task.Ref{Slug: b.Slug, RunID: run.Run})
+		}
+	}
+	endings := task.DisplayRuns(refs)
+	// The RUN column holds the longest ending of the frame, so an ending a
+	// collision extended is never clipped, and never less than task.MinEnding.
+	// The table has one header, so the cell is one width for every block and
+	// fit pads the shorter endings back.
+	w := task.MinEnding
+	for _, ending := range endings {
+		w = max(w, dw(ending))
+	}
+	return runTable{runW: w, endings: endings}
+}
+
+// ending is the cell a run of slug is shown by.
+func (t runTable) ending(slug, run string) string {
+	return t.endings[task.Ref{Slug: slug, RunID: run}]
+}
+
 // runCols are the widths of the run table (tiers 2 and 3).
 type runCols struct{ run, title, stage, round, age, spend, by, flags int }
 
@@ -583,8 +629,8 @@ const launcherColNarrow = 8
 // TestRunRowsFitAtEachTiersEntryWidth pins that.
 //
 // The BY column is the one cell the budgets had to absorb, and it comes out
-// of the cells with room to give: run is exactly shortRunLen, because the
-// tail form (shortRun) is never longer, so the column the old eight-wide run
+// of the cells with room to give: run is runW, and that is task.MinEnding for
+// every frame but one whose rows collide, so the column the old eight-wide run
 // cell kept for an ellipsis was dead weight; tier 3's flags gives up one of
 // its thirty columns; and the rest is the title's, the elastic cell: five of
 // the fifteen columns it had at 120 columns of screen, where the row was
@@ -596,16 +642,24 @@ const launcherColNarrow = 8
 // their columns to the title, the cell the clip was eating: at 120 columns the
 // tier-3 title is 33 wide where its floor of 10 was binding.
 //
+// An extension (a collision, runW past task.MinEnding) is the title's to give
+// up like the BY column was: the ending is what a person types back, so it is
+// never clipped, and where the title's floor binds first the row is cut at the
+// screen's edge like any other that does not fit. A frame whose rows collide is
+// rare, and each extension step costs the row one character; the one cell wider
+// still is the repository in front of an ending two repositories share, which
+// runW measures and the title pays for as any other.
+//
 // The trailing constants leave the elastic row one column short of the
 // screen's edge, so a cell is clipped by its own width and never by the
 // screen: a tail cell keeps its last column whatever the row holds.
-func colsOf(tier, w int) runCols {
+func colsOf(tier, w, runW int) runCols {
 	if tier == 3 {
-		c := runCols{run: shortRunLen, stage: 9, round: 3, age: 7, spend: 15, by: launcherCol, flags: 29}
+		c := runCols{run: runW, stage: 9, round: 3, age: 7, spend: 15, by: launcherCol, flags: 29}
 		c.title = max(10, w-(2+c.run+c.stage+c.round+c.age+c.spend+c.by+c.flags+9))
 		return c
 	}
-	c := runCols{run: shortRunLen, stage: 8, round: 3, age: 7, spend: 9, by: launcherColNarrow, flags: 13}
+	c := runCols{run: runW, stage: 8, round: 3, age: 7, spend: 9, by: launcherColNarrow, flags: 13}
 	c.title = max(8, w-(2+c.run+c.stage+c.round+c.age+c.spend+c.by+c.flags+8))
 	return c
 }
@@ -659,7 +713,7 @@ func flagColour(run RunRow) string {
 // selected row). selTop and selBottom are the first and last line of the
 // selected row within the returned lines (selBottom past an expanded
 // selected run's own detail), or -1 when sel names no row of this block.
-func (r *rend) repo(tier int, b RepoBlock, sel Cursor, expanded map[Cursor]bool, collapsed bool) (lines []string, selTop, selBottom int) {
+func (r *rend) repo(tier int, b RepoBlock, sel Cursor, expanded map[Cursor]bool, collapsed bool, table runTable) (lines []string, selTop, selBottom int) {
 	headerSel := sel.Slug == b.Slug && sel.Run == ""
 	cur, nameC := " ", ""
 	if headerSel {
@@ -690,11 +744,11 @@ func (r *rend) repo(tier int, b RepoBlock, sel Cursor, expanded map[Cursor]bool,
 	if collapsed {
 		return out, selTop, selBottom
 	}
-	c := colsOf(tier, r.w)
+	c := colsOf(tier, r.w, table.runW)
 	for _, run := range b.Runs {
 		runSel := sel.Slug == b.Slug && sel.Run != "" && sel.Run == run.Run
 		idx := len(out)
-		out = append(out, r.runRows(tier, c, run, runSel)...)
+		out = append(out, r.runRows(tier, c, run, runSel, table.ending(b.Slug, run.Run))...)
 		last := len(out) - 1
 		if expanded[Cursor{Slug: b.Slug, Run: run.Run}] {
 			out = append(out, r.detail(run)...)
@@ -707,7 +761,7 @@ func (r *rend) repo(tier int, b RepoBlock, sel Cursor, expanded map[Cursor]bool,
 	for _, run := range b.Finished {
 		runSel := sel.Slug == b.Slug && sel.Run != "" && sel.Run == run.Run
 		idx := len(out)
-		out = append(out, r.finishedRow(run, runSel))
+		out = append(out, r.finishedRow(run, runSel, table.ending(b.Slug, run.Run)))
 		if runSel {
 			selTop, selBottom = idx, idx
 		}
@@ -716,16 +770,16 @@ func (r *rend) repo(tier int, b RepoBlock, sel Cursor, expanded map[Cursor]bool,
 }
 
 // finishedRow is one line for a run whose result.json already exists (design
-// generic-tool §10.3): the run id, its outcome and, once it has one, its PR
-// link, coloured to flag a failure or a review-ready success. The RUN cell is
-// the same short form every row of the table shows (shortRun, owner request
-// 2026-10-24): the id's leading characters are the launch stamp, so a whole
-// id here read unlike every row above it. Unlike an active run, a finished row
-// cannot be expanded — repo draws the detail for b.Runs alone — so the whole
-// id, the only form `fugaro logs RUN` and `fugaro diagnose RUN` accept, is not
-// on this screen for a finished run at all: `--json` and `--plain` print it
-// (design generic-tool §10.3).
-func (r *rend) finishedRow(run RunRow, selected bool) string {
+// generic-tool §10.3): the run's short id, its outcome and, once it has one,
+// its PR link, coloured to flag a failure or a review-ready success. The id is
+// the same ending every row of the table shows (task.DisplayRuns over the
+// block's rows, owner request 2026-10-24): the id's leading characters are the
+// launch stamp, so a whole id here read unlike every row above it. Unlike an
+// active run, a finished row cannot be expanded — repo draws the detail for
+// b.Runs alone — so the whole id is not on this screen for a finished run at
+// all: it is `--json`'s, and `runs ls` prints `<slug>/<full id>` (design
+// generic-tool §10.3).
+func (r *rend) finishedRow(run RunRow, selected bool, ending string) string {
 	cur := " "
 	if selected {
 		cur = r.g.cur
@@ -746,7 +800,7 @@ func (r *rend) finishedRow(run RunRow, selected bool) string {
 		// succeeded implement run does (design artifact-runs.md §3).
 		word, c = "artifacts, no PR", cOK
 	}
-	segs := []seg{{cur + " " + shortRun(run.Run) + " ", ""}, {dash(run.Title) + " ", cBold}, {word, c}}
+	segs := []seg{{cur + " " + ending + " ", ""}, {dash(run.Title) + " ", cBold}, {word, c}}
 	if run.PRURL != "" {
 		segs = append(segs, seg{" " + run.PRURL, ""})
 	}
@@ -812,27 +866,7 @@ func (r *rend) readyForReview(ready []ReadyRow) []string {
 	return out
 }
 
-// shortRunLen is how many characters of a run id a table shows: the last four
-// (shortRun).
-const shortRunLen = 4
-
-// shortRun is a run's id as a table cell shows it: its LAST four characters.
-// A run id is a launch stamp plus a random suffix (20261023-021512-abcd), so
-// any prefix is shared — the first eight columns are the day, the first
-// thirteen the minute — and two runs started together would read the same.
-// The suffix is what tells them apart (owner spec 2026-10-22, item 1). The
-// expanded detail and --json carry the id whole, so this is what the column
-// shows, never all the screen knows. An id of four characters or fewer is its
-// own short form.
-func shortRun(run string) string {
-	r := []rune(run)
-	if len(r) <= shortRunLen {
-		return run
-	}
-	return string(r[len(r)-shortRunLen:])
-}
-
-func (r *rend) runRows(tier int, c runCols, run RunRow, selected bool) []string {
+func (r *rend) runRows(tier int, c runCols, run RunRow, selected bool, ending string) []string {
 	rnd := "-"
 	if run.Round != "-" {
 		rnd = "r" + run.Round
@@ -844,7 +878,7 @@ func (r *rend) runRows(tier int, c runCols, run RunRow, selected bool) []string 
 		cur = r.g.cur
 	}
 	if tier == 1 {
-		l1 := r.line(seg{cur + " " + r.fit(shortRun(run.Run), c.run) + " ", ""}, seg{run.Title, cBold})
+		l1 := r.line(seg{cur + " " + r.fit(ending, c.run) + " ", ""}, seg{run.Title, cBold})
 		segs := []seg{{"    " + run.Stage + " " + rnd + " " + ageText(run), ""}}
 		if fl != "" {
 			segs = append(segs, seg{" " + fl, fc})
@@ -864,7 +898,7 @@ func (r *rend) runRows(tier int, c runCols, run RunRow, selected bool) []string 
 		}
 	}
 	segs := []seg{
-		{cur + " " + r.fit(shortRun(run.Run), c.run) + " ", ""}, {r.fit(run.Title, c.title) + " ", cBold},
+		{cur + " " + r.fit(ending, c.run) + " ", ""}, {r.fit(run.Title, c.title) + " ", cBold},
 		{r.fit(run.Stage, c.stage) + " ", ""}, {r.fit(rnd, c.round) + " ", ""},
 		{r.fit(ageText(run), c.age) + " ", ""}, {r.fit(sp, c.spend) + " ", ""},
 		{r.fit(launcherText(run), c.by) + " ", ""},
@@ -913,9 +947,9 @@ func (r *rend) detail(run RunRow) []string {
 	// launch.json recorded no launcher shows the dash, like every other line
 	// with nothing to say.
 	rows := [][2]string{
-		// The whole run id: the table's RUN column shows only its last four
-		// characters (shortRun), so this is where the id a viewer needs for
-		// `fugaro logs <run>` and the like is on the screen at all.
+		// The whole run id: the table's RUN column shows the short form, so
+		// this is where the id a viewer needs for the branch, the PR and the
+		// run record is on the screen at all.
 		{"run", run.Run},
 		{"stage", run.Stage + " " + rnd},
 		{"by", dashIfEmpty(run.LaunchedBy)},
@@ -944,8 +978,8 @@ func (r *rend) detail(run RunRow) []string {
 	return out
 }
 
-func (r *rend) colHeader(tier int) string {
-	c := colsOf(tier, r.w)
+func (r *rend) colHeader(tier, runW int) string {
+	c := colsOf(tier, r.w, runW)
 	return r.line(seg{"  " + r.fit("RUN", c.run) + " " + r.fit("TITLE", c.title) + " " + r.fit("STAGE", c.stage) + " " +
 		r.fit("R", c.round) + " " + r.fit("AGE", c.age) + " " + r.fit("SPENT", c.spend) + " " +
 		r.fit("BY", c.by) + " " + r.fit("FLAGS", c.flags), cFaint})

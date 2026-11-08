@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -431,6 +432,116 @@ func sealDevNote(spec *task.Spec, clone bool) string {
 	return fmt.Sprintf("if that base predates the seal, its runner puts this launch's seal key into the run's record, where peer runs of the repository can read it; "+
 		"rebuild the base image from a checkout that has the seal and the job image from it with fugaro image build --repo %s --workflow %s (its record then says sealed_budget_token and this warning goes)",
 		spec.Repo, spec.Workflow)
+}
+
+// proxyGate refuses a launch of a proxied repository that the job it would
+// start could not carry (G14): the job image's runner has to know the proxy,
+// and the backend has to be one the credentials service can serve at all.
+//
+// Whether a repository is proxied has ONE source, the published node's
+// bitbucket_token block (G15) — the document the credentials service itself
+// reads when a job asks it for the token — and this gate reads it through the
+// launch's own memoized read, beside the allow-list's. What it asks of the node
+// is what internal/infra's resolveBitbucketProxied asks of it for a repository
+// root: this installation carries the service (its credentials_service block —
+// the address `fugaro update` writes wherever it deploys one, and the one fact
+// that puts it on a repository's job) and the node admits this repository with
+// proxy: true. The operator's local project_secrets entry is
+// deliberately not a second input: an entry that disagrees with the node is
+// refused by `fugaro update --repo`, and answering the same question twice on
+// the launch path is what G15 forbids.
+//
+// The node's answer is not the whole of proxiedness, and this gate asks the
+// other half the way the launch itself does: a run is proxied only if its
+// execution is handed the service's address, which is
+// credentialsServiceLaunchEnv's answer — the installation has the service, the
+// repository's own switch is on (its record, or the root this machine's tfvars
+// deploy), and its auth is one the service serves
+// (infra.CredentialsServiceServes). A gate reading the node alone refuses a
+// repository whose node says proxy: true while its own switch is off, and the
+// refusal is then a claim about a credential the job in fact holds: no address
+// is written for that repository, its provider is opened with the ordinary
+// Bitbucket token, and the run works. Asked this way the gate is the runner's
+// own rule (proxiedBitbucket, which reads the same variable off the job's
+// environment) and not a superset of it.
+//
+// The job half of that answer is asked with no job name, because a Bitbucket
+// repository is never launched onto a shared project job: internal/infra's
+// SharedJobProvider serves GitHub alone, so launchProjectJobFor answers nil for
+// one and the execution is always the repository's own job (D505).
+//
+// A launch that is not proxied is judged by every gate it always was and
+// nothing about it changes (G9): an installation that carries no service, no
+// node, no block, a repository the block does not admit, and a repository
+// whose own switch is off all answer "not proxied" here. The run's
+// own bootstrap decides the same fact from the same documents and refuses an
+// identity it cannot work with (startProxiedGit), so a launch whose image this
+// gate could not judge — one built from a base with no release tag — fails
+// there rather than silently doing nothing.
+func (e *cloudEnv) proxyGate(ctx context.Context, slug string, spec *task.Spec, kind string, clone bool, warn io.Writer) error {
+	if !e.proxiedRepo(ctx, slug, spec) {
+		return nil
+	}
+	if launchBackend(e.be) == backend.CloudBatch {
+		return userErr("%s", proxiedOnBatchMessage(spec.Repo))
+	}
+	const subject = "a run of a repository whose Bitbucket access is brokered (the published policy admits it with proxy: true, so its job holds no Bitbucket token)"
+	const knows = "the Bitbucket proxy (the run's loopback forwarder and the git environment that points at it, both of which reach Bitbucket through the installation's credentials service)"
+	if clone {
+		return checkCloneImageSince(e.lc, spec, proxySince, subject, knows, "", warn)
+	}
+	return checkImageSince(ctx, e, slug, spec, kind, proxySince, subject, knows, "", warn)
+}
+
+// proxiedRepo is whether the run this launch starts is a proxied one: the
+// installation's local config carries the credentials service, the repository
+// is a Bitbucket one, the published node admits it with proxy: true, and the
+// launch hands the service's address to the job it starts. The kind is
+// derived from the pair the run itself trusts (the slug it is stored under and
+// the repository the task names), never from the local config's own provider,
+// as launchPolicyGates does for the allow-list.
+//
+// Every unreadable or absent answer is a "no": a read that failed, or a node
+// nothing published, leaves the launch to the gates that own those refusals
+// (launchPolicyGates words them, and cascadeLaunchRefusal the read's own).
+func (e *cloudEnv) proxiedRepo(ctx context.Context, slug string, spec *task.Spec) bool {
+	if e.lc == nil || e.lc.CredentialsService == nil || e.lc.CredentialsService.URL == "" {
+		return false
+	}
+	kind, ok := runner.ProviderForSlug(slug, spec.Repo)
+	if !ok || kind != gitprov.KindBitbucket {
+		return false
+	}
+	p, found, err := e.policy.read(ctx, e.lc)
+	if err != nil || !found || p == nil || p.BitbucketToken == nil || !p.BitbucketToken.Proxy {
+		return false
+	}
+	canonical, err := projectpolicy.Canonical(kind, spec.Repo)
+	if err != nil {
+		return false
+	}
+	if !projectpolicy.AdmitRepo(p.BitbucketToken.AllowRepos, canonical) {
+		return false
+	}
+	// The last question is asked of the function that answers it for the
+	// launch, and not of a copy of its conditions: whether this execution is
+	// handed the service's address is what makes the run it starts a proxied
+	// one, and credentialsServiceLaunchEnv is the only place that is decided.
+	// io.Discard because the launch reads the same two documents and words the
+	// one warning this read can report (repoServiceAuth).
+	auth, deployed := e.repoServiceAuth(ctx, spec, io.Discard)
+	return len(credentialsServiceLaunchEnv(e.lc, "", spec.Repo, auth, deployed)) > 0
+}
+
+// proxiedOnBatchMessage is the Batch arm of G14's launch check, built with the
+// repository in it: the operator has to hear which of its repositories the
+// refusal is about, and the refusal is one repository's, since only that
+// repository's runs are brokered (G9). What the message says is why the
+// backend and the proxy cannot meet: a Batch task's account is not one the
+// credentials service admits, and its secrets are the installation's rather
+// than the job's.
+func proxiedOnBatchMessage(repo string) string {
+	return fmt.Sprintf("a proxied Bitbucket run of %s is never launched on cloud-batch: a Batch task runs under the installation's VM account, which is not an account the credentials service admits as a repository's job, and Batch takes its secrets from the installation's own config rather than from the job's environment, so such a run could neither reach the service nor hold the token its job no longer mounts (docs/secrets-brokering/implementation-plan.md, Global Constraint 14). Until the service admits that account class, a repository whose Bitbucket access is brokered stays on backend: cloud-run, and nothing in this build removes the refusal", repo)
 }
 
 // newSealKey draws the seal key of one launch (token.NewKey). Tests replace

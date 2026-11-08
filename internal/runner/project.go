@@ -10,6 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -480,6 +481,24 @@ func remoteAdmissionErr(remote, kind, repo, slug string) error {
 	// cause (every one of them is a sentence about this run's own
 	// environment), so there is nothing for a %w to preserve.
 	return errors.New(safetext.OneLine(err.Error()))
+}
+
+// proxiedBitbucket decides whether this run's Bitbucket access goes through
+// the installation's credentials service (B1.7). See the call site for what
+// the two facts are; this is where they are read, once, from the one read of
+// the published node.
+func (r *run) proxiedBitbucket(p *projectpolicy.Policy, found, project bool, kind, repo string) bool {
+	if project || kind != gitprov.KindBitbucket || !found || p == nil || p.BitbucketToken == nil || !p.BitbucketToken.Proxy {
+		return false
+	}
+	if envLookup(r.d.Env, providers.EnvCredentialsServiceURL) == "" {
+		return false
+	}
+	canonical, err := projectpolicy.Canonical(kind, repo)
+	if err != nil {
+		return false
+	}
+	return projectpolicy.AdmitRepo(p.BitbucketToken.AllowRepos, canonical)
 }
 
 // remoteAdmissionRefusal refuses a remote that is not exactly the repository
@@ -1175,6 +1194,19 @@ func (r *run) admissionCheck(ctx context.Context) error {
 		return fmt.Errorf("the git provider in the job's environment is %s (the --provider flag, or %s), and the run's slug %s is the slug of %s under %s: the flag may only tighten the run's admission, never change which repository it is for, so the run stops before any git credential is requested",
 			envKind, GitProviderEnv, slug, repo, kind)
 	}
+	// Whether this run's Bitbucket access goes through the installation's
+	// credentials service (B1.7, G9, G15). Two facts, both required and both
+	// read here, at the run's one read of the published node: the node's
+	// bitbucket_token block admits this repository with proxy: true, and the
+	// installation has the service on -- the job carries its URL, which is
+	// the only thing that says so (D146/D147). A per-repository job only
+	// (D505): a project job serves every repository of its profile, and its
+	// job account is the one the service admits, so a proxied repository is
+	// never launched onto one. Everything downstream reads this fact -- the
+	// forwarder, the credential URL, the provider and the git environment --
+	// so that no second reader can disagree with this one about which of
+	// them a repository is.
+	r.proxied = r.proxiedBitbucket(p, found, project, kind, repo)
 	if !project {
 		// The remote is where the clone comes from, and on a per-repository job
 		// it is the job's own environment (Deps.Remote, RemoteEnv) or the origin

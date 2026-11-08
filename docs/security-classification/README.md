@@ -83,7 +83,7 @@ section and the cited number — rather than claiming all four.
   (F25), so a folder may be documents alone — `docs/image-env/` is the four-document precedent this
   folder follows — and the brief's DOCS ONLY left the pin to the plan's tasks, which name the one each
   adds: this folder's is `internal/cli/docs_security_classification_test.go` (SC2, D1519), and its
-  arrival moved `docs/rigor-modes/reconciliation.md`'s census row **112 → 113**, as that row's own
+  arrival moved `docs/rigor-modes/reconciliation.md`'s census row **113 → 114**, as that row's own
   amendment sentence records. The three census re-check tests in other folders' files (F17) re-derive
   the count from the tree and needed no edit.
 - It **implements no part of OD1's or OD2's work** and is written to be independent of both (D1518):
