@@ -398,8 +398,8 @@ func catalogPathMessage(f string) string {
 // "" when nothing is. It is catalogPathMessage's rules, held for a directory
 // rather than for one file: the rules the two share read the same whichever key
 // carries the value, except the .. segment one, which names the context because
-// that is the key the operator wrote it on. The two that read differently are
-// exactly what a directory is allowed and a file is not. A file has no
+// that is the key the operator wrote it on. The values the two keys disagree
+// about are exactly what a directory is allowed and a file is not. A file has no
 // repository root and no trailing slash, so the path refuses both; a context
 // names the directory a build runs on, so the root is a legitimate one — the
 // value the issue's own example spells (D1392) — and a directory is written

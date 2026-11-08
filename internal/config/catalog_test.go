@@ -398,7 +398,7 @@ func catalogContextYAML(context string) string {
 
 // TestCatalogContextIsADirectoryPath pins the context grammar (D1391, D1392):
 // the key names a directory of the source's own repository, so it is held to
-// the path's rules, with the two exceptions a directory is what makes — the
+// the path's rules, with the two exceptions naming a directory makes — the
 // repository root is a legitimate context and a file has no root to name, and a
 // directory is written with its own trailing slash and a file is not. The keys
 // therefore disagree about those two values and about nothing else, and both
