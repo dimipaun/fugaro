@@ -796,7 +796,8 @@ its work first) and new runs refuse. --all asks you to type the project's name
 stop flag of the workspace's own service, in the workspace's own database, so
 every member's runs that reach it with its shared credentials halt, and nothing
 of a member's own — its credentials, its caps, its sign-in, its runs that never
-reach the workspace — is touched; it asks you to type the workspace's name.
+reach the workspace — is touched; it asks nothing: halting runs spends
+nothing, and only a resume is a raise.
 
 Usage: `fugaro budget kill (--all | --repo [owner/name] | --workspace <name>) [--reason TEXT]`
 
@@ -931,7 +932,9 @@ Clear the project's kill switch (--all), one repository's (--repo [owner/name])
 or one workspace's (--workspace <name>), recording who and when. --repo with
 no value means the repository this checkout belongs to, as it does for set.
 Asks you to type the project's name (or pass --yes): runs start again. A
-workspace is asked for by its name alone and takes neither of the other scopes.
+workspace is named by its own name alone and takes neither of the other
+scopes; resuming one asks nothing and is refused in a coding agent's session,
+as a raise is (D1542).
 
 Usage: `fugaro budget resume (--all | --repo [owner/name] | --workspace <name>) [--reason TEXT]`
 

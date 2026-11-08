@@ -1397,7 +1397,9 @@ func newBudgetKillCmd(kill bool) *cobra.Command {
 			"or one workspace's (--workspace <name>), recording who and when. --repo with\n"+
 			"no value means the repository this checkout belongs to, as it does for set.\n"+
 			"Asks you to type the project's name (or pass --yes): runs start again. A\n"+
-			"workspace is asked for by its name alone and takes neither of the other scopes."
+			"workspace is named by its own name alone and takes neither of the other\n"+
+			"scopes; resuming one asks nothing and is refused in a coding agent's session,\n"+
+			"as a raise is (D1542)."
 	if kill {
 		use, short, long = "kill (--all | --repo [owner/name] | --workspace <name>) [--reason TEXT]", "Halt every run of the project, of one repository or of one workspace (budget admins)",
 			"Set the project's kill switch (--all), one repository's (--repo [owner/name]) or\n"+
@@ -1411,7 +1413,8 @@ func newBudgetKillCmd(kill bool) *cobra.Command {
 				"stop flag of the workspace's own service, in the workspace's own database, so\n"+
 				"every member's runs that reach it with its shared credentials halt, and nothing\n"+
 				"of a member's own — its credentials, its caps, its sign-in, its runs that never\n"+
-				"reach the workspace — is touched; it asks you to type the workspace's name."
+				"reach the workspace — is touched; it asks nothing: halting runs spends\n"+
+				"nothing, and only a resume is a raise."
 	}
 	cmd := &cobra.Command{
 		Use: use, Short: short, Long: long, Args: cobra.NoArgs,
