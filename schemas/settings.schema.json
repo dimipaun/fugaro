@@ -1319,10 +1319,10 @@
           "default": "unset = what verify gets"
         },
         "workflows.*.timeouts.stage": {
-          "default": "unset = 40m, or the total when it is shorter"
+          "default": "unset = 60m, or the total when it is shorter"
         },
         "workflows.*.timeouts.total": {
-          "default": "unset = 90m"
+          "default": "unset = 3h"
         },
         "workflows.*.timeouts.verify": {
           "default": "unset = 30m, or the total when it is shorter"

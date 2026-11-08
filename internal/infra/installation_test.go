@@ -12,6 +12,7 @@ import (
 
 	terraform "github.com/dimipaun/fugaro/deploy/terraform"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
@@ -156,9 +157,15 @@ func TestInstallationLogIsolation(t *testing.T) {
 // the way a real one does.
 func credentialsLC(t *testing.T) *localcfg.Config {
 	t.Helper()
-	return parseLC(t, m4LocalConfig+m5Additions+`budget: {mode: observe, per_run_usd: 5, firebase_project: `+credentialsFP+`, rtdb_url: "https://`+credentialsFP+`-default-rtdb.firebaseio.com"}
-`)
+	return parseLC(t, m4LocalConfig+m5Additions+credentialsBudgetLC)
 }
+
+// credentialsBudgetLC is the budget block `fugaro update --firebase` writes:
+// the Firebase project and the database the credentials service's own
+// environment carries, and the two facts Credentials refuses to write the key
+// without.
+const credentialsBudgetLC = `budget: {mode: observe, per_run_usd: 5, firebase_project: ` + credentialsFP + `, rtdb_url: "https://` + credentialsFP + `-default-rtdb.firebaseio.com"}
+`
 
 // credentialsFP is the Firebase project the credentials fixture records: the
 // one a run's identity is verified against (budget.firebase_project).
@@ -302,6 +309,123 @@ claude_accounts: {bmb: {allow_data_to: ["acme/sandbox"]}}
 `)
 	if _, err := CredentialsJobAccounts(noRepos); err == nil || !strings.Contains(err.Error(), "no repository job") {
 		t.Errorf("an installation with no repository job = %v, want a refusal", err)
+	}
+}
+
+// CredentialsReviewJobAccounts is the review class's admitted set as the
+// service's environment carries it (FUGARO_REVIEW_JOB_ACCOUNTS), and it is
+// read off the deployment's own derivation rather than spelled a second time:
+// one row per review job ProjectReviewJobs creates, the (profile, provider,
+// account) triple the variant's job name and service account are hashed from.
+// The account is the policy's spelling and never the empty string the job
+// axis uses for a profile's no-account job, because it is the name the
+// service's own pairing looks a review call up by
+// (credsvc.ReviewJobAccount.Account) and a service configured with an empty
+// one refuses to bind a port at all.
+//
+// This is the half PR #1915's finding is about: the class's code is on main,
+// the variants deploy, and a deployment that carries the coding table alone
+// admits no review caller — so every review launch is refused by a service
+// that looks healthy. The claim is the pair below, not one side of it: the
+// rows are the variants' own triples, so the accounts this service admits are
+// the accounts the deployment runs.
+//
+// Mutations (each run and restored): deriving the rows from ProjectJobs
+// instead of ProjectReviewJobs names the coding jobs and their empty accounts
+// rather than the variants, and carrying Account as "" drops the account the
+// service pairs a review call by. Both fail the first assertion, so neither
+// reaches a deployment as a service that binds and refuses every review.
+func TestCredentialsReviewJobAccountsDerivesTheReviewVariants(t *testing.T) {
+	// An installation that names no profile deploys no project job and so no
+	// variant: no rows, and no error. The empty review set is the fail-closed
+	// state — a service that admits no review caller — and not the refusal
+	// the coding table's own empty case is.
+	plain := credentialsLC(t)
+	if got, err := CredentialsReviewJobAccounts(plain); err != nil || got != nil {
+		t.Errorf("CredentialsReviewJobAccounts of an installation with no profile = %v, %v, want none and no error: it deploys no review job, and the service that admits no review caller is the fail-closed state", got, err)
+	}
+	// ... and the spec the stage writes leaves the key out for it, so an
+	// installation that deploys no variant writes the document it wrote
+	// before this field existed.
+	image := "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3@sha256:" + strings.Repeat("ab", 32)
+	svc, err := Credentials(plain, image, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if svc.ReviewJobAccounts != nil {
+		t.Errorf("credentials_service.review_job_accounts = %+v, want none for an installation with no profile", svc.ReviewJobAccounts)
+	}
+	doc, err := json.Marshal(svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(doc), "review_job_accounts") {
+		t.Errorf("the opt-in's document carries review_job_accounts for an installation with no profile:\n%s", doc)
+	}
+
+	// A config with two profiles on the account axis: one serving no Claude
+	// account (its job's account segment is empty) and one serving a named
+	// account beside the default one, which the axis writes as the empty
+	// string and the admissions spell config.DefaultClaudeAccount.
+	lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+credentialsBudgetLC+projectAccountLCBlock)
+	variants, err := ProjectReviewJobs(lc, "fugaro-runs-proj-1234", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := CredentialsReviewJobAccounts(lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []CredentialsReviewJob{
+		{Profile: "apikey", Provider: "github", Account: config.DefaultClaudeAccount},
+		{Profile: "standard", Provider: "github", Account: "acme-personal"},
+		{Profile: "standard", Provider: "github", Account: config.DefaultClaudeAccount},
+	}
+	if !slices.Equal(rows, want) {
+		t.Fatalf("CredentialsReviewJobAccounts = %+v, want %+v (one row per review variant, the account as the admissions spell it, sorted)", rows, want)
+	}
+	// The rows are the deployment's own set, and every row is a variant that
+	// exists: a row naming a triple no job was created for is an account the
+	// service admits and nothing ever calls as, and a variant with no row is
+	// the review job that is refused.
+	deployed := make([]CredentialsReviewJob, 0, len(variants))
+	for _, v := range variants {
+		deployed = append(deployed, CredentialsReviewJob{Profile: v.Profile, Provider: v.Provider, Account: v.Account})
+	}
+	slices.SortFunc(deployed, func(a, b CredentialsReviewJob) int {
+		if c := strings.Compare(a.Profile, b.Profile); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.Provider, b.Provider); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Account, b.Account)
+	})
+	if !slices.Equal(rows, deployed) {
+		t.Errorf("the review set %+v is not the set of review jobs the deployment creates %+v: the accounts the service admits must be the accounts the deployer ran", rows, deployed)
+	}
+	for _, r := range rows {
+		if r.Profile == "" || r.Provider == "" || r.Account == "" {
+			t.Errorf("the row %+v leaves a field empty: the service derives a review job's account from the triple and serves a call by the account it names, and a row missing either is one it refuses at start-up", r)
+		}
+	}
+	// And the spec carries them, under the key the module reads
+	// (review_job_accounts, credentials.tf's FUGARO_REVIEW_JOB_ACCOUNTS): the
+	// builder filling a field the stage then drops is a service that still
+	// admits no review caller.
+	svc, err = Credentials(lc, image, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(svc.ReviewJobAccounts, want) {
+		t.Errorf("credentials_service.review_job_accounts = %+v, want the derived rows %+v", svc.ReviewJobAccounts, want)
+	}
+	doc, err = json.Marshal(svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(doc), `"review_job_accounts":[{"profile":"apikey"`) {
+		t.Errorf("the opt-in's document does not carry the rows under review_job_accounts:\n%s", doc)
 	}
 }
 

@@ -469,11 +469,23 @@ func TestUpstreamErrorEchoingKeyIsRedacted(t *testing.T) {
 
 // An error body that is not an Anthropic error still maps to a usable type.
 func TestUpstreamErrorWithoutTypeGetsOneFromStatus(t *testing.T) {
+	fastRetry(t)
 	for status, want := range map[int]string{401: "authentication_error", 403: "permission_error", 404: "not_found_error", 429: "rate_limit_error", 500: "api_error", 502: "api_error", 503: "overloaded_error", 422: "invalid_request_error"} {
-		r := newRouted(t, "bearer", routedStage, anthropicfake.Reply{Status: status, Body: "<html>" + providerKey + "</html>"})
+		rep := anthropicfake.Reply{Status: status, Body: "<html>" + providerKey + "</html>"}
+		// A 429 or a 5xx from a routed provider is the gateway's one retry
+		// too (issue #1827, SC2), so the provider answers twice; the answer the
+		// agent gets is the second attempt's, mapped the same way.
+		script := []anthropicfake.Reply{rep}
+		if status == 429 || status/100 == 5 {
+			script = append(script, rep)
+		}
+		r := newRouted(t, "bearer", routedStage, script...)
 		resp, b := r.post(msg(dsModel, 100))
 		if typ, _ := apiError(t, b); resp.StatusCode != status || typ != want || strings.Contains(b, providerKey) {
 			t.Errorf("%d: got %d %q %s", status, resp.StatusCode, typ, b)
+		}
+		if n := r.prov.Count(); n != len(script) {
+			t.Errorf("%d: the provider saw %d requests, want %d", status, n, len(script))
 		}
 	}
 }

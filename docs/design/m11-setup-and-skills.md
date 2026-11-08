@@ -79,7 +79,7 @@ fugaro init: project aurora (GCP aurora-prod, us-east5)
 Type the project name to apply the installation: 
 ```
 
-`--plan-only` prints this view plus each reachable stage's real Terraform plan and changes nothing (as today, it can still create the state bucket behind its confirmation). `--json` prints the same as data, with `left_for_you` as an array of `{stage, kind: command|prompt|console, text}`.
+`--plan-only` prints this view plus each reachable stage's real Terraform plan and changes nothing (as today, it can still create the state bucket behind its confirmation). `--json` prints the same as data, with `left_for_you` as an array of `{stage, kind: command|prompt|console|refused, text}`.
 
 **Confirmations.** Unchanged in spirit: typed project name for applies, extra typed confirmations for what is permanent or irreversible (Firestore location, project creation, billing linkage), separate confirmations for billable builds. `--yes` keeps its meaning ("confirm every step without asking, only after reading what it will do") but **never** covers project creation or billing linkage (those need their own flags) and **never** supplies a secret.
 

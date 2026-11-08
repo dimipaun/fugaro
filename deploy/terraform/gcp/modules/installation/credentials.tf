@@ -367,16 +367,17 @@ resource "google_cloud_run_v2_service" "credentials" {
       # it spells. `h2c` is HTTP/2 cleartext, which is what B1.0 is for — the
       # plan made that task conditional on the owner's Check 190 failing a large
       # push, because the hop in front of this process buffers an HTTP/1 request
-      # body and refuses one a large git pack exceeds (413). None of that is
-      # measured on this tree: the checklist still records Check 190 as not run,
-      # and the reconciliation marks the reading it rests on (U2: that HTTP/2
-      # streaming keeps the pack off that buffer) unverified. So the name is
-      # what the plan expects to turn that hop's HTTP/2 on, not a result. The
-      # service's own server speaks both protocols on its one listener
-      # (internal/cli/credentials_serve.go), so the HTTP/1.1 callers it has
-      # today keep working. 8080 is the number the process itself falls back to
-      # when Cloud Run's PORT is unset (servePort), and it is Cloud Run's own
-      # default.
+      # body and refuses one a large git pack exceeds (413). The register now
+      # records that run, and it is the FAIL: a 33 MiB pack on HTTP/1.1 was
+      # answered 413, so refusing an oversized HTTP/1 body is measured. The
+      # other half is not — the reconciliation still marks it (U2: that HTTP/2
+      # streaming keeps the pack off that buffer) unverified, and no live step
+      # has read it. So the name is what the plan expects to turn that hop's
+      # HTTP/2 on, not a result. The service's own server speaks both protocols
+      # on its one listener (internal/cli/credentials_serve.go), so the HTTP/1.1
+      # callers it has today keep working. 8080 is the number the process itself
+      # falls back to when Cloud Run's PORT is unset (servePort), and it is
+      # Cloud Run's own default.
       #
       # The name follows the image: an unnamed port is HTTP/1.1, and a front end
       # told h2c in front of a process that cannot answer it serves nothing at
@@ -403,12 +404,12 @@ resource "google_cloud_run_v2_service" "credentials" {
       # reads exactly these names, and internal/infra/tf's
       # credentialsServiceEnv is the allow-list that refuses anything else at
       # plan time). Seven of them are always set and the process REQUIRES
-      # them; the two below, the verifier list and the read mint's admitted
-      # people, are rendered only when the installation names the accounts they
-      # carry and are read as optional values. No
-      # credential is among them: it reads the one bundle secret as
-      # its own account, by the name it derives from FUGARO_PROJECT (the
-      # project-wide container of the logical name "creds-bundle",
+      # them; the rest are read as optional values, and — the verifier list
+      # alone excepted, which is rendered in every state of its own list
+      # (CSR14) — are rendered only when the installation names the accounts
+      # they carry. No credential is among them: it reads the one bundle
+      # secret as its own account, by the name it derives from FUGARO_PROJECT
+      # (the project-wide container of the logical name "creds-bundle",
       # internal/backend/gcp's ProjectSecretID — the same value
       # var.credentials_service.bundle_secret carries, which is what the
       # container above is created with), so no secret ID and no secret value
@@ -463,6 +464,30 @@ resource "google_cloud_run_v2_service" "credentials" {
       env {
         name  = "FUGARO_JOB_ACCOUNTS"
         value = jsonencode(var.credentials_service.job_accounts)
+      }
+      # The review class's admitted set (C3.9a): the installation's
+      # review-only job variants, as the same kind of document — the
+      # {profile, provider, account} triple each variant's job and service
+      # account are derived from, plus the Claude account the variant's calls
+      # are served by. It is the same rule as the table above and the same
+      # reason: the emails are that derivation's output, so a list of them
+      # here would be a second spelling that can drift from the accounts the
+      # deployer creates. The one thing the triple cannot carry is the Claude
+      # account the pairing serves a review call by, and the service cannot
+      # read the published policy for it (D143: a revision's start-up depends
+      # on no installation state), so it travels here.
+      #
+      # It is rendered only on an installation that deploys a variant, for the
+      # reason the three lists below are: the process reads the name as an
+      # optional value, so an installation with no review job starts with an
+      # EMPTY review set — a service that admits no review caller, which is the
+      # fail-closed state — rather than refusing to bind a port.
+      dynamic "env" {
+        for_each = length(var.credentials_service.review_job_accounts) == 0 ? [] : [jsonencode(var.credentials_service.review_job_accounts)]
+        content {
+          name  = "FUGARO_REVIEW_JOB_ACCOUNTS"
+          value = env.value
+        }
       }
       # The verifier list: the addresses that may ask the verify route whether
       # a verdict's signature is this service's (C3.9g1, D1068).

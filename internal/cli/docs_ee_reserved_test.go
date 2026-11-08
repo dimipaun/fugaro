@@ -35,6 +35,28 @@ var eeNotice = [2]string{
 	"See ee/LICENSE for the terms.",
 }
 
+// eeRulesFile is the path-scoped rule that loads when a change touches `ee/**`,
+// read from the module root the way every other document this package pins is.
+// It sits outside `ee/` because it is the core's instruction to an agent rather
+// than a file of the folder it governs.
+const eeRulesFile = ".claude/rules/ee.md"
+
+// eeRuleCountWords is how `ee/README.md`'s sentence above its rules spells each
+// count, so that the sentence and the bullets under it are one pin rather than
+// two spellings that drift apart. It is a table because English has no rule
+// here -- one rule HOLDS and two rules HOLD -- and a count the table does not
+// carry is one the sentence cannot spell, which the caller reports rather than
+// reading past.
+var eeRuleCountWords = map[int]string{
+	0: "no rules hold for everything placed here",
+	1: "one rule holds for everything placed here",
+	2: "two rules hold for everything placed here",
+	3: "three rules hold for everything placed here",
+	4: "four rules hold for everything placed here",
+	5: "five rules hold for everything placed here",
+	6: "six rules hold for everything placed here",
+}
+
 // eeNoticeExempt are the two paths R3 exempts, matched on the whole path
 // relative to ee/: `ee/README.md` and `ee/LICENSE`. A README.md that lands
 // inside a feature's own directory is a file like any other and carries the
@@ -90,23 +112,90 @@ var eeNoticeStylesByName = map[string]eeNoticeStyle{
 // TestDocsEELicensed: the README says what the folder is -- the home of the
 // business-licensed features, new and moved, with the released MIT versions
 // staying MIT -- the licence names the Software, the seats and the SPDX
-// identifier every ee/ file's notice carries, and every other file under ee/ is
-// admitted by that notice.
+// identifier every ee/ file's notice carries, every other file under ee/ is
+// admitted by that notice, and the rule file that loads for ee/ says who may
+// write what lands there and what may never land there (the subscriptions
+// plan's R5 as amended by D440).
 func TestDocsEELicensed(t *testing.T) {
-	flat := strings.ToLower(flattenDoc(readRealEE(t, "README.md")))
+	readme := readRealEE(t, "README.md")
+	flat := strings.ToLower(flattenDoc(readme))
+	// The sentence the folder's two statements share, written once because
+	// both files have to carry it word for word: the README's opening
+	// paragraph says which features are born here, and so does the rule file's
+	// first sentence, so the phrase is one constant read against the two rather
+	// than two literals that can drift apart. D435/T20 puts the central
+	// orchestrators and the hosted MCP server in the folder from the start
+	// (S0.3).
+	const eeBornHere = "the central orchestrators and the hosted mcp server are born here"
 	for _, want := range []string{
 		"business-licensed features",
 		"moved out of the core",
 		"released mit versions stay mit",
+		// The other half of what the folder holds: the features born here,
+		// which the orchestrator work is the first of (S0.3, D435, T20).
+		eeBornHere,
 		"their own licence",
 		"](license)",
 		"not published yet",
 		"nothing outside `ee/` imports anything under `ee/`",
 		"spdx-license-identifier: licenseref-fugaro-subscription",
+		// The key rule, stated for a reader of the folder (S0.6, the
+		// subscriptions plan's R5 as amended by D440).
+		"never holds or reaches a signing key",
+		"never operates the service",
+		"the private half of a licence key never enters a file here",
+		"a public key and a signature vector",
 	} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("ee/README.md lacks %q", want)
 		}
+	}
+
+	// The sentence above the rules counts them, so the two are read together:
+	// the count comes off the list and the sentence has to spell it, and a rule
+	// added or removed without the sentence moving fails here rather than
+	// leaving the README claiming four rules over five bullets. S0.6 added the
+	// fourth, which is why the count moved with it.
+	bullets := strings.Count(readme, "\n- **")
+	if word, ok := eeRuleCountWords[bullets]; !ok || !strings.Contains(flat, word) {
+		t.Errorf("ee/README.md holds %d rule bullet(s) and its sentence does not count them: the sentence above the list and the bullets under it are one claim, so a rule added or removed moves both", bullets)
+	}
+
+	// The rule file is the other half of the same statement: what the README
+	// says to a reader of the folder, `.claude/rules/ee.md` says to an agent
+	// whose change touches it. S0.6 moves the licensing plan's R8 to the
+	// subscriptions plan's R5 as amended by D440, which is three things rather
+	// than one -- an agent writes the code here, no agent holds or reaches a
+	// signing key, and no agent operates the service -- and the flat "no key
+	// material" becomes "no private half", so that a public key and a signature
+	// vector, which a verifier's tests need, are admitted. Both files are read
+	// here because the two sentences have to say the same thing: one without the
+	// other leaves the folder's rule and the folder's public statement apart.
+	//
+	// The plan is named beside the number because this file's neighbours cite
+	// the licensing plan's own R3 and R6: a bare "R5" would resolve there to the
+	// release-notes rule, which has nothing to do with keys.
+	rules := strings.ToLower(flattenDoc(readDoc(t, eeRulesFile)))
+	for _, want := range []string{
+		"subscriptions r5 as amended by d440",
+		"never holds or reaches a signing key",
+		"never operates the service",
+		"no private half",
+		"a public key and a signature vector",
+	} {
+		if !strings.Contains(rules, want) {
+			t.Errorf("%s lacks %q: the rule the folder is under is the subscriptions plan's R5 as amended by D440, and an agent that writes here reads it as a rule rather than as the README's sentence (S0.6)", eeRulesFile, want)
+		}
+	}
+
+	// What the folder holds is the first thing the rule file's first bullet
+	// says, and it says the half the README's list above pins for a reader:
+	// the features born here as well as the ones that moved. An agent about to
+	// write the orchestrators reads this file rather than the folder's page, so
+	// the same sentence is read against both, and one without the other leaves
+	// the two statements apart (S0.3, D435, T20).
+	if !strings.Contains(rules, eeBornHere) {
+		t.Errorf("%s lacks %q: the sentence the README states for a reader of the folder, stated for the agent whose change touches it, so a change landing the orchestrators here reads the rule that puts them here rather than a folder that only describes what moved (S0.3)", eeRulesFile, eeBornHere)
 	}
 
 	licence := strings.ReplaceAll(readRealEE(t, "LICENSE"), "\r\n", "\n")

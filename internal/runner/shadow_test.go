@@ -16,6 +16,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -497,6 +498,21 @@ func TestShadowChallengerCoderOnly(t *testing.T) {
 	}
 }
 
+// refusedArm asserts the record of a run whose arm the runner may not carry:
+// failed/none, because the boundary held and nothing about the runner broke,
+// with the class the resolved configuration's own refusals carry, because what
+// is refused is the arm the task and the layers name, before any stage could
+// run (refuseArm, shadow.go).
+func refusedArm(t *testing.T, rec *runstore.Record) {
+	t.Helper()
+	if rec == nil || rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v, want a refusal", rec)
+	}
+	if rec.FailureClass != failure.ConfigInvalid {
+		t.Errorf("failure_class = %q, want %q: the class is what a report prints and its remedy is the arm's own — change the task or the layer — and a refused arm left unclassified names no remedy at all", rec.FailureClass, failure.ConfigInvalid)
+	}
+}
+
 // TestShadowChallengerPolicyRechecked: a replayed or hand-edited task names
 // a challenger the run's own policy does not admit — the owner lists it, but
 // no route of this run serves it — and the run refuses it at bootstrap,
@@ -510,9 +526,7 @@ func TestShadowChallengerPolicyRechecked(t *testing.T) {
 	if err == nil {
 		t.Fatal("a challenger the run's policy does not admit was run")
 	}
-	if rec == nil || rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
-		t.Fatalf("record = %+v, want a refusal", rec)
-	}
+	refusedArm(t, rec)
 	if !strings.Contains(rec.Reason, unroutedChallenger) {
 		t.Fatalf("the reason does not name the challenger: %q", rec.Reason)
 	}
@@ -538,9 +552,7 @@ func TestShadowChallengerNotInOwnerListHalts(t *testing.T) {
 	if err == nil {
 		t.Fatal("a challenger the owner did not list for this repository was run")
 	}
-	if rec == nil || rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
-		t.Fatalf("record = %+v, want a refusal", rec)
-	}
+	refusedArm(t, rec)
 	if !strings.Contains(rec.Reason, "ab.challengers") {
 		t.Fatalf("the reason does not name the owner's list: %q", rec.Reason)
 	}
@@ -620,6 +632,14 @@ func TestShadowModelRefusalIsCoderPinsAlone(t *testing.T) {
 		if !strings.Contains(rec.Reason, unroutedChallenger) {
 			t.Fatalf("the reason does not name the refused pin: %q", rec.Reason)
 		}
+		// The refused pin is the one both arms share, so this is not the
+		// arm's own refusal (the status stays infra_error) — but the cause is
+		// a resolved configuration the run may not run, which is the class
+		// the arm's own coder-pin refusal carries too (refuseArm, and the
+		// checkBudget branch in runner.go).
+		if rec.FailureClass != failure.ConfigInvalid {
+			t.Errorf("failure_class = %q, want %q: the refused pin is the resolved configuration's, whichever arm carries it", rec.FailureClass, failure.ConfigInvalid)
+		}
 		if len(g.agent.calls) != 0 || pushes() != 0 {
 			t.Fatalf("a run that stopped at bootstrap ran a stage or pushed: calls %d, pushes %d", len(g.agent.calls), pushes())
 		}
@@ -632,6 +652,9 @@ func TestShadowModelRefusalIsCoderPinsAlone(t *testing.T) {
 		}
 		if !strings.Contains(rec.Reason, unroutedChallenger) {
 			t.Fatalf("the reason does not name the refused pin: %q", rec.Reason)
+		}
+		if rec.FailureClass != failure.ConfigInvalid {
+			t.Errorf("failure_class = %q, want %q: the same refused pin, and a run with no arm must not be the one that names it differently", rec.FailureClass, failure.ConfigInvalid)
 		}
 	})
 }
@@ -673,9 +696,7 @@ func TestShadowBitbucketHalts(t *testing.T) {
 	if err == nil {
 		t.Fatal("a challenger arm ran against a provider that mints no read-only token")
 	}
-	if rec == nil || rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
-		t.Fatalf("record = %+v, want a refusal", rec)
-	}
+	refusedArm(t, rec)
 	if !strings.Contains(rec.Reason, "read-only") {
 		t.Fatalf("the reason does not say what was missing: %q", rec.Reason)
 	}
@@ -1070,9 +1091,7 @@ func TestShadowReviewRunPostsNothing(t *testing.T) {
 	if c := g.harness.provider.State.PRs[0].Comments; len(c) != 0 {
 		t.Fatalf("a challenger review run commented on PR 7: %q", c)
 	}
-	if rec == nil || rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
-		t.Fatalf("record = %+v, want the arm refused", rec)
-	}
+	refusedArm(t, rec)
 }
 
 // TestShadowNeverCheckpoints: checkpoints push mid-stage through a path of

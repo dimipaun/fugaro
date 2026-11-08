@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -314,12 +315,16 @@ func (r *run) saveWork(ctx context.Context, kind gitops.RejectKind) string {
 // job shows failed, as a failed push always did. The status is the one a
 // failed push always had, infra_error with outcome none, whatever a halt
 // or cancel recorded (the record keeps the halt); only the reason is new,
-// and the work is saved. prNumber, when not 0, is a pull request that
+// and the work is saved. The class is branch_moved and not infra_error: the
+// status says which machinery stopped the run, the class says which family
+// the cause is in, and a push the host will never accept is the branch or the
+// pull request changing under the run — the case §3 of the design names this
+// call as. A class beside that status is not a second opinion about it. prNumber, when not 0, is a pull request that
 // exists: while it is open it gets a note, and a first run's draft its
 // "Stopped" section.
 func (r *run) endRefused(ctx context.Context, rej *gitops.PushRejected, prNumber int, records []verify.Record) error {
 	reason := r.redact(refusalText(rej) + " (" + r.saveWork(ctx, rej.Kind) + ")")
-	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusInfraError, runstore.OutcomeNone, reason
+	r.recordEnd(runstore.StatusInfraError, runstore.OutcomeNone, failure.BranchMoved, reason)
 	r.d.Log.Warn("the push was refused", "reason", reason)
 	r.storeEnded(ctx, records)
 	if prNumber != 0 && !r.shadow && r.giveUpNoteAllowed(ctx) {
