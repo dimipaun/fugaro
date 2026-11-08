@@ -514,10 +514,14 @@ func WriteManagedLabel(ctx context.Context, c *crm.Service, created, project str
 // Everything else is writeManagedLabel's, shared and unchanged: the same
 // value, the same refusals, the same labels kept, and the same fail-closed
 // direction when it cannot write (the object is the authority and the label
-// narrows; an unlabelled project reads as not managed). Nothing but
-// managed_flag.go may call this — the flag's consent (the PROJECT_ID argument)
-// is a parameter of the command, not of this function, so a caller that skips
-// the command skips the gate.
+// narrows; an unlabelled project reads as not managed). Two callers have this
+// entry point and no more, each keeping the gate above in its own command:
+// `fugaro managed flag`, where the consent is the PROJECT_ID argument, and
+// `fugaro update`'s self-flag (D1553, update_selfflag.go), which reaches this
+// write only from the update door, only when the run was given its budget once,
+// and only behind both refusals — the agent marker and the run marker. The
+// consent of each is a parameter of its command and not of this function, so a
+// caller that skips one of those commands skips its gate.
 //
 // The error is one bounded field (safetext.FieldErr), exactly as
 // WriteManagedLabel's is: the project name is the operator's own argument and

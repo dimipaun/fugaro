@@ -140,6 +140,73 @@ func TestUpdateDoesNotFlagAProjectWhoseStateIsElsewhere(t *testing.T) {
 	}
 }
 
+// TestSetupDoesNotFlagAnUnmanagedInstallation: D1553's self-flag is the
+// upgrade's, and the hook it hangs on is the one both doors share, so the door
+// is the step's first question. `fugaro setup` on a project that already exists
+// flags nothing — its own --managed help says flagging one that already exists
+// is not setup's, and it stays that way: what a wizard door would take away
+// here is the installation's typed confirmation, on a run whose job is to
+// converge what is there. The command line is the HARD RULE's test with the
+// other door in front of it, which is the only difference between the two runs.
+func TestSetupDoesNotFlagAnUnmanagedInstallation(t *testing.T) {
+	r := unmanagedUpdateRig(t)
+	args := append([]string{"setup"}, updateBudgetArgs()[1:]...)
+	out, errOut, err := executeStdin(t, "", args...)
+	if err != nil {
+		t.Fatalf("fugaro setup with the budget on an existing installation: %v\n%s\n%s", err, out, errOut)
+	}
+	if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); ok {
+		t.Errorf("fugaro setup wrote gs://%s/%s = %s on a project it did not create", initRunsBucket, managed.MarkerObject, got)
+	}
+	if l := r.crm.Labels(initProject)[managed.ProjectLabelKey]; l != "" {
+		t.Errorf("fugaro setup wrote %s=%q on a project it did not create", managed.ProjectLabelKey, l)
+	}
+	if managedFlagIsManaged(t, r) {
+		t.Error("the managed read believes a project fugaro setup did not flag")
+	}
+	if said := out + errOut; strings.Contains(said, "no second command") {
+		t.Errorf("fugaro setup claimed to have flagged the installation:\n%s", said)
+	}
+}
+
+// TestUpdateSelfFlagRefusesInsideAFugaroRun: the second fence beside the
+// agent's, which the flag command and the unflag both keep and this step must
+// too — a run's variables are set by the platform rather than by the agent, so
+// the two refusals are not the same test. A run credential may not write the
+// marks that take the confirmation away, least of all on its own installation,
+// where the applies that would then skip the confirmation are the ones its own
+// verdict is judged by.
+func TestUpdateSelfFlagRefusesInsideAFugaroRun(t *testing.T) {
+	for _, marker := range managedFlagRunMarkers {
+		t.Run(marker, func(t *testing.T) {
+			r := unmanagedUpdateRig(t)
+			t.Setenv(marker, "x")
+			out, errOut, err := executeStdin(t, "", updateBudgetArgs()...)
+			if err == nil {
+				t.Fatalf("a Fugaro run's process flagged the installation:\n%s\n%s", out, errOut)
+			}
+			if got := ExitCode(err); got != ExitUserError {
+				t.Errorf("exit %d, want %d", got, ExitUserError)
+			}
+			said := out + errOut + err.Error()
+			for _, want := range []string{"nothing was flagged", marker, "is not managed"} {
+				if !strings.Contains(said, want) {
+					t.Errorf("the refusal does not say %q:\n%s", want, said)
+				}
+			}
+			// Neither half of the mark, as in the agent fence's test: the refusal
+			// has to stand where the write would be, and the label is the half a
+			// run credential's write would leave behind.
+			if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); ok {
+				t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.MarkerObject, got)
+			}
+			if l := r.crm.Labels(initProject)[managed.ProjectLabelKey]; l != "" {
+				t.Errorf("a refused run wrote %s=%q on the project", managed.ProjectLabelKey, l)
+			}
+		})
+	}
+}
+
 // TestUpdatePlanOnlyFlagsNothing: --plan-only creates and changes nothing, and
 // the self-flag's whole output is the two marks that take the installation's
 // typed confirmation away. A preview that wrote them would turn a consent gate

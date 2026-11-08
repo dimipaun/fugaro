@@ -24,8 +24,15 @@ import (
 // what the unmanaged refusal of every other mutating command names (D1541) —
 // but it is not a step the upgrade needs.
 //
-// Four things decide what the step does, and each is one of the answer's own:
+// Five things decide what the step does, and each is one of the answer's own:
 //
+//   - It runs in `fugaro update` and in no other run. The doors share this
+//     engine and this hook, and D1553's answer is about the upgrade: update is
+//     the door that re-converges an installation that already exists, and its
+//     own help says so (`--managed`'s text, which names the door). `fugaro
+//     setup` on an existing project is a different question — its own
+//     --managed help says flagging a project that already exists is not
+//     setup's, and it stays that way: setup flags nothing it did not create.
 //   - It never runs under --plan-only. That door creates and changes nothing —
 //     it is what previews the plan — and this step's whole output is two marks
 //     that take an installation's typed confirmation away. A preview that wrote
@@ -47,25 +54,31 @@ import (
 //     version-1 creation fact, and refuses every other state with what is
 //     there. The label is the flag command's own write beside it (WriteManaged-
 //     LabelForFlag), because the read requires both marks.
-//   - It refuses in a coding agent's session, even when --budget was passed:
+//   - It refuses in a coding agent's session, even when --budget was passed,
+//     and in a Fugaro run's own process whichever markers its agent carries:
 //     what it writes is the marks that take the installation's typed
 //     confirmation away, so consent given by a flag is only as strong as the
-//     markers that identify the session (F20). The refusal names the marker and
-//     the command the owner runs at their own terminal, which is the same one
-//     this step would have run for them.
+//     markers that identify the session (F20). The two refusals are the flag
+//     command's own pair (managed_flag.go), kept here for the same reason: a
+//     run's variables are set by the platform rather than by the agent, so the
+//     run's credential would write these marks where the agent's session cannot
+//     — and here it would write them on its own installation. The refusal names
+//     the marker and the command the owner runs at their own terminal, which is
+//     the same one this step would have run for them.
 //
-// The fence stands where the write would be, and not at the head of the step:
+// The fences stand where the write would be, and not at the head of the step:
 // a run whose installation already records an amount flags nothing, so an
 // agent's session that passes its budget to an up-to-date installation meets no
 // fence at all — refusing there would refuse an ordinary update for a write
-// that was never going to happen. What it reads before the fence is the same
+// that was never going to happen. What it reads before the fences is the same
 // read the apply-time gate makes, and reading writes nothing.
 //
 // Nothing here can make a `fugaro update` fail: a write that did not happen is
 // a warning and the run's outcome is unchanged (the unmarked project is the
 // fail-closed direction, and the update itself succeeded). The one exception is
-// the agent refusal above, which is the run's outcome because it is the fence
-// F20 describes, and the exit code is a user error like every other refusal.
+// the two refusals above, which are the run's outcome because they are the
+// fence F20 describes, and the exit code is a user error like every other
+// refusal.
 //
 // A run that created the project is not this step's: its mark is markCreated's
 // (init.go), which writes both halves for every project a run creates and
@@ -77,11 +90,19 @@ import (
 // the agent refusal, and "" (nil) everywhere else.
 func (e *initEngine) selfFlagUnmanaged(ctx context.Context) error {
 	r, o := e.r, e.r.o
-	// First, because it is the door and not the input: --plan-only creates and
-	// changes nothing, and the marks below are the marks that take this
-	// installation's typed confirmation away. A preview writes none of them,
-	// and it is also why no fence is needed here: what an agent's session could
-	// do with --plan-only is read a plan.
+	// The door first, because it is the run and not the input: this step is the
+	// upgrade's (D1553), and the hook it hangs on is the one both doors share.
+	// `fugaro setup` on an existing unmanaged project flags nothing — its own
+	// --managed help says flagging one that already exists is not setup's, and a
+	// wizard door that wrote the marks taking the installation's typed
+	// confirmation away on its way past would be that sentence turned round.
+	if o.doorName() != updateDoor.name {
+		return nil
+	}
+	// Then --plan-only, which creates and changes nothing, and the marks below
+	// are the marks that take this installation's typed confirmation away: a
+	// preview writes neither, and it is no fence's business either — what an
+	// agent's session could do with --plan-only is read a plan.
 	if o.planOnly {
 		return nil
 	}
@@ -170,6 +191,19 @@ func (e *initEngine) selfFlagUnmanaged(ctx context.Context) error {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		return userErr("nothing was flagged: GCP project %s is not managed (%s), and this run was given the budget once — a fugaro update that is given its budget turns an installation that is not managed into a managed one in the same command, with no second command. What that write does is take the installation's typed confirmation away, and consent given by a flag is only as strong as the markers that identify the session (F20): %s. Run `fugaro update --budget N --budget-currency CCC --billing-account <account>` yourself at your own terminal, and nothing after it needs a second command",
 			safetext.Field(r.gcpProject), safetext.Field(managedReasonFor(answer)), initflow.AgentRefusal(m))
+	}
+	// And a Fugaro run's own process, whatever its agent's markers: the plan
+	// refuses this write from a run credential as well as from an agent's
+	// session, and the two are not the same test — the flag command and the
+	// unflag both keep it beside the agent one, for the reason managed_flag.go
+	// states (a run's variables are set by the platform rather than by the
+	// agent, and the credential could write these marks itself). It matters
+	// more here than there: this write is the one a run makes on its own
+	// installation, so a run that could make it would take away the
+	// confirmation that stands between its next apply and its own verdict.
+	if m := managedFlagRunMarker(os.Getenv); m != "" {
+		return userErr("nothing was flagged: GCP project %s is not managed, this run was given the budget once, and this process is a Fugaro run's (%s is set): the marks this step writes are the ones that take the installation's typed confirmation away, and a run credential may not write them — it holds the operator's credentials and could take the confirmation off the project its own applies are judged by. Run `fugaro update --budget N --budget-currency CCC --billing-account <account>` yourself at your own terminal, and nothing after it needs a second command",
+			safetext.Field(r.gcpProject), m)
 	}
 	number, err := infra.ProjectNumber(ctx, e.c, r.gcpProject)
 	if err != nil {
