@@ -763,10 +763,9 @@ folder's pin, moved the table's row from 112 to 113: it holds the folder's own c
 than a claim about code — the ask is the owner's words verbatim, the twenty decision rows
 carry an empty owner's-answer cell, the number block sits above every claim the folder read,
 and every task in the plan states its files, its red step and its reviewer tier.
-Amended 2026-11-08: `internal/cli/docs_checks_180_181_test.go`, the Bitbucket
-workspace-token folder's pin, is the file whose addition took the row to 113 —
-its own entry above carries the chain's numbers rather than the tree's — so the
-security-classification pin above is the 114th, and the row reads 114.) They
+Amended 2026-11-08: that move was resolved away by the batch merge that landed the
+same pin beside `de90e93c`'s recount of the doubled row, so the table's row moves from
+113 to 114 and carries the tree's figure again.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.

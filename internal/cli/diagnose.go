@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/logtail"
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -59,8 +60,18 @@ const (
 // Diagnosis is what diagnose gathers about one run. Every string in it
 // that comes from the run is redacted.
 type Diagnosis struct {
-	Project      string           `json:"project"` // the Fugaro project
-	Row          runview.Row      `json:"row"`
+	Project string      `json:"project"` // the Fugaro project
+	Row     runview.Row `json:"row"`
+	// FailureClass is why the run did not end succeeded, as one value of the
+	// closed vocabulary of docs/design/failure-classes.md §3 — the same value
+	// the row carries, on the diagnosis's own shape because diagnose is the
+	// command a person runs to be told why, and D1460 is that a reader of this
+	// document is never sent into the row for it. Absent for a run that did
+	// not fail, and for a row the read side ended itself — a preemption, a
+	// lost execution, or an `error` for a run it could not follow — where the
+	// row's own account of it is `derived`, or that sentence
+	// (runview.Row.FailureClass).
+	FailureClass failure.Class    `json:"failure_class,omitempty"`
 	Halt         *runstore.Halt   `json:"halt,omitempty"`     // why a halted run was halted
 	Verify       []verify.Record  `json:"verify,omitempty"`   // result.json's verify records
 	Failed       []string         `json:"failed,omitempty"`   // the last test record's failed tests
@@ -241,7 +252,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 	}
 	d := &Diagnosis{Row: rows[0], ReportPath: s.Prefix() + "report.md"}
 	d.DraftNote = draftNote(d.Row, time.Now())
-	d.Row.Reason = red(d.Row.Reason)
+	d.Row.Reason, d.FailureClass = red(d.Row.Reason), d.Row.FailureClass
 	if h := d.Row.Halt; h != nil {
 		c := *h
 		c.Detail = red(c.Detail)
@@ -841,6 +852,16 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		status += " (stage " + r.Stage + ")"
 	}
 	fmt.Fprintf(&b, "Status:   %s\n", oneLine(status))
+	// The class is the answer's first sentence (design §8 D9), so it stands
+	// directly under the status it describes: the closed vocabulary's name for
+	// why the run stopped, the runner's own where the record carries one and the
+	// reader's reading of its reason where it does not (runview.ClassOf). A run
+	// that did not fail, and a row whose ending is the read side's own — derived,
+	// or an `error` for a run it could not follow — has no cause to name and gets
+	// no line.
+	if d.FailureClass != "" {
+		fmt.Fprintf(&b, "Class:    %s\n", oneLine(string(d.FailureClass)))
+	}
 	if r.Reason != "" {
 		fmt.Fprintf(&b, "Reason:   %s\n", oneLine(r.Reason))
 	}

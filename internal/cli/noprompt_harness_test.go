@@ -147,20 +147,19 @@ type closedStdinFixture struct {
 // because there the sentence is the proof the run got to the ask; elsewhere the
 // proof is the body having run at all, which the harness checks for every leaf.
 var closedStdinFixtures = map[string]closedStdinFixture{
-	// The raise is what sets a cap: the caps are unset in the fixture's
-	// database, so setting one from nothing is a loosening. T3 removed the ask
-	// this fixture used to reach, so the sentence is the summary line the run
-	// prints instead.
+	// The caps are unset in the fixture's database, so the run sets one from
+	// nothing — the loosening T3's owner-session fence is about. It asks nothing
+	// now, so the sentence is the write itself rather than a banner.
 	"fugaro budget set": {args: []string{"--global", "--per-run", "50"}, reaches: "global caps per-run: not set -> $50"},
-	// The project-wide kill switch is the one that halts every run; a
-	// repository's is not. Its confirmation went with T3, so the sentence is
-	// the banner line the run prints in its place.
-	"fugaro budget kill": {args: []string{"--all"}, reaches: "project aurora killed"},
-	// A resume moves a switch only where there is one, so the fixture's
-	// database is killed first. Its ask is gone with T3 too.
+	// The project-wide kill switch, which a repository's own is not: the
+	// fixture drives --all, and T3 took the ask away, so what the run says is
+	// the kill and its undo.
+	"fugaro budget kill": {args: []string{"--all"}, reaches: "Running runs halt within seconds"},
+	// A resume moves a switch, so the fixture's database is killed first: the
+	// move is the subject of this run.
 	"fugaro budget resume": {
 		args:    []string{"--all"},
-		reaches: "project aurora resumed",
+		reaches: "resumed (by someone@example.com)",
 		seed: func(t *testing.T, f *budgetFixture) {
 			f.db.Set(budget.PathKillGlobal, map[string]any{"on": true, "by": "boss@example.com", "at": int64(1)})
 		},
@@ -271,6 +270,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro config publish":         "refuses with no fugaro.yaml to publish",
 	"fugaro config show":            "refuses outside a git checkout, which is what the world is",
 	"fugaro coordinator":            "refuses: the edition is not in this build",
+	"fugaro craft ls":               "prints the four crafts with no project selected, on the default credential",
 	"fugaro credentials serve":      "refuses without FUGARO_PROJECT in its own environment",
 	"fugaro creds":                  "is a name for set and ls: a bare run prints its own usage and returns",
 	"fugaro creds ls":               "prints the no-project-config refusal",
@@ -304,7 +304,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro runs summary":           "prints the no-project-config refusal",
 	"fugaro secrets":                "is a name for set, ls and rm: a bare run prints its own usage and returns",
 	"fugaro secrets ls":             "prints the no-project-config refusal",
-	"fugaro security paths":         "refuses from inside its body: it answers for one repository, and this world's working directory is a checkout of none",
+	"fugaro security paths":         "refuses from inside its body: it answers only for the checkout it stands in, and this world's directory names no origin repository",
 	"fugaro settings":               "prints the registry's every row with no project selected, which is the whole of what a bare run does",
 	"fugaro seats":                  "reads the selected project's records for an advisory estimate, and this world selects no project",
 	"fugaro setup":                  "refuses on this world's runs bucket name before the wizard's first step",

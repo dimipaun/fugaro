@@ -31,6 +31,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/backendtest"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -893,6 +894,50 @@ func TestLsShowsHalted(t *testing.T) {
 	out, _, err := execute(t, "runs", "ls")
 	if err != nil || !strings.Contains(out, "halted (token_cap)") {
 		t.Fatalf("ls = %s, %v", out, err)
+	}
+}
+
+// TestRunsLsCarriesTheLegacyClass: the listing's row carries the run's class,
+// which is the whole point of putting it on the row — a window holding a
+// record written before failure_class shipped and one written after shows a
+// class on both, and the reader's own sentence for the first is what makes the
+// report about the last seven days possible on the day the field ships (design
+// §5).
+//
+// The new record's reason is deliberately one the reader's table would class
+// otherwise: the field is the class, and a reader that read the reason back
+// over it would be the second opinion design §4.2 refuses.
+func TestRunsLsCarriesTheLegacyClass(t *testing.T) {
+	f := newCloudFixture(t)
+	f.run.Project, f.run.Region = "proj-1234", "us-east5"
+	oldID := runIDAt(0, "090000", "aaaa")
+	e1 := seedRun(t, f, oldID, "", "someone@example.com", true)
+	f.run.SetState(e1, backend.StateSucceeded)
+	// The record a run left before the field existed: the runner's own
+	// sentence, and no class on it at all.
+	writeRecord(t, f, oldID, &runstore.Record{Version: 1, RunID: oldID, Repo: "acme/app", Status: runstore.StatusFailed,
+		Outcome: runstore.OutcomeDraft, Stage: "verify", Reason: "tests failing on the final commit"})
+	newID := runIDAt(0, "091000", "bbbb")
+	e2 := seedRun(t, f, newID, "", "someone@example.com", true)
+	f.run.SetState(e2, backend.StateSucceeded)
+	rec := prRecord(newID, e2, 8, 1)
+	rec.Stage, rec.Reason = "review", "the mode was raised to pro at finalize, after the last review round"
+	rec.FailureClass = failure.NoCommits
+	writeRecord(t, f, newID, rec)
+
+	got, _ := lsJSON(t)
+	if len(got.Runs) != 2 {
+		t.Fatalf("ls = %+v, want the window's two runs", got.Runs)
+	}
+	byID := map[string]runview.Row{}
+	for _, row := range got.Runs {
+		byID[row.RunID] = row
+	}
+	if got := byID[oldID].FailureClass; got != failure.TestsFailed {
+		t.Errorf("the row of a record written before the field shipped reads %q, want %q: without the reading the owner's report is empty of causes until the retention window turns over", got, failure.TestsFailed)
+	}
+	if got := byID[newID].FailureClass; got != failure.NoCommits {
+		t.Errorf("the row reads %q, want the record's own %q: the field is the class, and its reason is not read back to work one out (design §4.2)", got, failure.NoCommits)
 	}
 }
 
