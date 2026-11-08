@@ -63,7 +63,7 @@ Subcommands:
 - `fugaro update` -- Re-converge the installation, or a checkout's repository, after a CLI upgrade
 - `fugaro update-skills` -- Pin the Fugaro plugin in the repository's .claude/settings.json to this release
 - `fugaro upgrade` -- Bring checkouts up to this fugaro: pin the plugin, install or update it in Claude Code, refresh the repository's images
-- `fugaro user` -- List, add and remove the installation's launchers and operators
+- `fugaro user` -- List, add and remove the installation's operators and admins
 - `fugaro validate` -- Check a fugaro.yaml against the schema and the repository
 - `fugaro verify` -- Run and record this repository's build, test or lint command (inside a Fugaro run)
 - `fugaro version` -- Print the fugaro version
@@ -4813,9 +4813,9 @@ confirmation. --plan-only never takes --yes: what the plan needs made first
 the run stops and says so. A plan that would delete or replace anything is
 refused unless --allow-delete names the address.
 
-A new project config grants the launcher and operator roles to you, the
+A new project config grants the operator and admin roles to you, the
 authenticated user (user:<your email> from the Application Default
-Credentials), so that fugaro run works; --launcher or --operator replaces that,
+Credentials), so that fugaro run works; --operator or --admin replaces that,
 an existing config is never changed by it, and with a service
 account's credentials it stops and names the two flags.
 
@@ -5452,12 +5452,12 @@ This command has no subcommands.
 
 ## `fugaro user`
 
-List, add and remove the installation's launchers and operators
+List, add and remove the installation's operators and admins
 
-List the installation's launchers and operators, and add a person to one of
+List the installation's operators and admins, and add a person to one of
 the two lists or remove them from it.
 
-The two lists are terraform.launchers and terraform.operators in this machine's own project config. They are what the operator's next
+The two lists are terraform.operators and terraform.admins in this machine's own project config. They are what the admin's next
 fugaro update applies to the installation, so a change made here takes effect
 then, and nothing is applied by this command: no IAM grant is written, no
 repository is touched and no invitation is sent.
@@ -5465,15 +5465,19 @@ repository is touched and no invitation is sent.
 A member is one person, written as user:<email>. Only user: members are
 written here: domain:, group:, serviceAccount:, allUsers,
 allAuthenticatedUsers and wildcards are refused (reconciliation F42 — the
-launcher and operator roles carry the token signer's own role, so a domain:
-member would grant a whole domain the right to mint a launcher's identity).
-fugaro setup --launcher/--operator remains the door for a whole list, group
+operator and admin roles carry the token signer's own role, so a domain:
+member would grant a whole domain the right to mint an operator's identity).
+fugaro setup --operator/--admin remains the door for a whole list, group
 members included.
+
+Both keys are derived from the installation's grants node, and this command
+writes this machine's file alone: a member added here is dropped by that
+machine's next fugaro update, which says so.
 
 add and rm read the installation's own outputs first and refuse when they
 disagree with this machine's config: a list written here replaces the
 installation's on the next fugaro update, so a config that has not seen the
-members another operator added would drop them.
+members another admin added would drop them.
 
 Usage: `fugaro user`
 
@@ -5485,15 +5489,15 @@ Flags:
 
 Subcommands:
 
-- `fugaro user add` -- Add a person to the installation's launchers or operators
-- `fugaro user ls` -- List the installation's launchers and operators
-- `fugaro user rm` -- Remove a person from the installation's launchers or operators
+- `fugaro user add` -- Add a person to the installation's operators or admins
+- `fugaro user ls` -- List the installation's operators and admins
+- `fugaro user rm` -- Remove a person from the installation's operators or admins
 
 ## `fugaro user add`
 
-Add a person to the installation's launchers or operators
+Add a person to the installation's operators or admins
 
-Change one member of one of the installation's two IAM lists: terraform.launchers and terraform.operators in this machine's own project config.
+Change one member of one of the installation's two IAM lists: terraform.operators and terraform.admins in this machine's own project config.
 
 The member is added to, or removed from, the list --role names, and the other
 list is left exactly as it is. --role is required and has no default: adding
@@ -5503,7 +5507,7 @@ person typing.
 Both subcommands read the installation's own outputs before they write and
 refuse when they disagree with this machine's config, because this machine's
 lists are what the next fugaro update applies: a config that predates a member
-another operator added would revoke that member. The refusal names the list
+another admin added would revoke that member. The refusal names the list
 that differs and the command that settles it (fugaro update).
 
 It prints an invite naming the project, the install line and the fact that the
@@ -5524,7 +5528,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--role` | string | "" | no | which list to change: launcher or operator (required) |
+| `--role` | string | "" | no | which list to change: operator or admin (required) |
 
 Subcommands:
 
@@ -5532,13 +5536,13 @@ This command has no subcommands.
 
 ## `fugaro user ls`
 
-List the installation's launchers and operators
+List the installation's operators and admins
 
-List the members of terraform.launchers and terraform.operators in this machine's own project config, as they are written there now.
+List the members of terraform.operators and terraform.admins in this machine's own project config, as they are written there now.
 
 It is this machine's own copy of the two lists: no member is fetched from the
 cloud and none is granted, and no Terraform runs. What the installation itself
-holds can differ — a change another operator applied, or one made here and not
+holds can differ — a change another admin applied, or one made here and not
 yet applied by a fugaro update — and only the outputs would tell, which is the
 read add and rm make.
 
@@ -5566,9 +5570,9 @@ This command has no subcommands.
 
 ## `fugaro user rm`
 
-Remove a person from the installation's launchers or operators
+Remove a person from the installation's operators or admins
 
-Change one member of one of the installation's two IAM lists: terraform.launchers and terraform.operators in this machine's own project config.
+Change one member of one of the installation's two IAM lists: terraform.operators and terraform.admins in this machine's own project config.
 
 The member is added to, or removed from, the list --role names, and the other
 list is left exactly as it is. --role is required and has no default: adding
@@ -5578,7 +5582,7 @@ person typing.
 Both subcommands read the installation's own outputs before they write and
 refuse when they disagree with this machine's config, because this machine's
 lists are what the next fugaro update applies: a config that predates a member
-another operator added would revoke that member. The refusal names the list
+another admin added would revoke that member. The refusal names the list
 that differs and the command that settles it (fugaro update).
 
 Run it in your own terminal, with your own credentials. A coding agent's
@@ -5595,7 +5599,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for rm |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--role` | string | "" | no | which list to change: launcher or operator (required) |
+| `--role` | string | "" | no | which list to change: operator or admin (required) |
 
 Subcommands:
 
