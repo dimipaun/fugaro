@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -104,6 +105,19 @@ type Row struct {
 	Status       string                       `json:"status"`
 	Stage        string                       `json:"stage,omitempty"`
 	Reason       string                       `json:"reason,omitempty"`
+	// FailureClass is why the run did not end succeeded, in the closed
+	// vocabulary of docs/design/failure-classes.md §3: the class the runner
+	// wrote beside the status, and — for a record written before the field
+	// shipped — the reader's reading of the record's own reason (ClassOf).
+	// Absent for a run that did not fail: a succeeded run, a run still going
+	// and a run that never started have no cause to name, and a class on them
+	// would be a classification of a success (D1464).
+	//
+	// It is a *reading* of a legacy record and says so by living in the row
+	// alone: nothing writes it back to the runs bucket, and no reader treats
+	// it as anything but a value of the closed vocabulary (the derivation the
+	// Derived field beside it is, runview.go:110).
+	FailureClass failure.Class `json:"failure_class,omitempty"`
 	// Derived, when set, is the read side's own reading of a run the run's
 	// record never settled: today the one value is DerivedPreempted, for a run
 	// whose Cloud Batch job ended FAILED because its Spot VM was reclaimed.
@@ -312,6 +326,25 @@ func priced(p backend.Prices) bool {
 	return p.VCPUSecondUSD > 0 || p.GiBSecondUSD > 0
 }
 
+// ClassOf is the class a record carries: why the run did not end succeeded, as
+// one value of the closed vocabulary, and nothing at all for a run that did
+// not fail (design §3, D1464). It answers with the record's own field where
+// the record has one, and with a reading of the record's own reason where it
+// does not — every record written before the field shipped (design §5).
+//
+// The reading is a reading: it never writes the record back, so the bytes the
+// store handed over are the bytes the next reader gets, and the answer is
+// published on the row alone. It is exported because the digest calls it too
+// (design §5, D1454: "the digest reads the same function"), and it lives here
+// rather than in internal/failure because it reads a *runstore.Record* and
+// failure may not import runstore (F21).
+func ClassOf(rec *runstore.Record) failure.Class {
+	if rec == nil {
+		return ""
+	}
+	return rec.FailureClass
+}
+
 // Join builds the row for in, pricing compute with prices.
 func Join(in Input, prices PriceBook, now time.Time) Row {
 	row := Row{Run: in.Slug + "/" + in.RunID, RunID: in.RunID}
@@ -371,6 +404,7 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 		if r.Reason != "" {
 			row.Reason = r.Reason
 		}
+		row.FailureClass = ClassOf(r)
 		// Whatever the status: a halted run whose finalize then failed is
 		// an infra_error that still says what halted it.
 		row.Halt = r.Halt
