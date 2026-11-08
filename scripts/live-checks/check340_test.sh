@@ -122,7 +122,30 @@ deny() { # permission
   if [ -n "${FAKE340_DENY_PERM:-}" ] && [ ! -f "$dir/removed" ]; then
     perm=$FAKE340_DENY_PERM
   fi
-  printf 'ERROR: (gcloud.storage) HTTPError 403: %s does not have %s access to the Google Cloud Storage object.\n' "$impersonate" "$perm" >&2
+  # FAKE340_LIST_DENY (and deny's own callers) may name SEVERAL permissions, in
+  # which case the denial spells one sentence out per permission, comma-joined.
+  # That is how a refusal that is not about one permission reads, and it is what
+  # tells a bare probe denial from one that also needs something else.
+  local one sentence=""
+  for one in ${perm//,/ }; do
+    sentence="${sentence}${sentence:+, }$impersonate does not have $one access to the Google Cloud Storage object."
+  done
+  printf 'ERROR: (gcloud.storage) HTTPError 403: %s\n' "$sentence" >&2
+  if [ -n "${FAKE340_DENY_RESOURCE:-}" ]; then
+    # The IAM shape of the same denial, which spells the resource out: a refusal
+    # whose resource is another bucket's is a call about something else, and the
+    # check has to tell it from a refusal on the bucket it is reading.
+    # FAKE340_DENY_LEVEL=bucket-level is IAM's OTHER spelling of the same thing —
+    # `denied on resource (e.g. 'projects/_/buckets/<bucket>')` — where the name
+    # the check reads sits inside quotes and parenthesis and not before a slash.
+    if [ "${FAKE340_DENY_LEVEL:-}" = bucket-level ]; then
+      printf "ERROR: (gcloud.storage) HTTPError 403: Permission '%s' denied on resource (e.g. 'projects/_/buckets/%s').\n" \
+        "$perm" "$FAKE340_DENY_RESOURCE" >&2
+    else
+      printf "ERROR: (gcloud.storage) HTTPError 403: Permission '%s' denied on resource '//storage.googleapis.com/projects/_/buckets/%s/objects' (or it may not exist).\n" \
+        "$perm" "$FAKE340_DENY_RESOURCE" >&2
+    fi
+  fi
   if [ -n "${FAKE340_ERROR_DETAIL:-}" ]; then
     # A failure whose message runs past its first line: a check that quoted the
     # first line only would hide everything after it. `ERROR-DETAIL` heads the
@@ -233,6 +256,46 @@ allowed_list() { # ATTR
   done < <(bindings_in_force)
   return 1
 }
+
+# prefix_listed_under_any_form PREFIX: FAKE340_BOTH_FORMS models the one thing
+# this check's contradiction stop is about — a bucket that lets a prefixed
+# listing through under BOTH candidate forms at once, which no single attribute
+# value can do. The binding's own clause value is read for its relative tail
+# (`projects/_/buckets/<b>/objects/runs/` → `runs/`) and matched against the
+# request's prefix, so the form the case does not carry still lists: the form
+# knob keeps deciding which of the two the bucket carries, and this is a second,
+# impossible one on top of it.
+prefix_listed_under_any_form() { # prefix
+  local prefix=$1 bmember brole bexpr btitle candidate
+  [ -n "${FAKE340_BOTH_FORMS:-}" ] || return 1
+  while IFS=$'\t' read -r bmember brole bexpr btitle; do
+    [ -n "$bexpr" ] || continue
+    candidate=$(list_clause "$bexpr")
+    [ -n "$candidate" ] || continue
+    candidate=${candidate##*objects/}
+    case "$prefix" in "$candidate"*) return 0 ;; esac
+  done < <(bindings_in_force)
+  return 1
+}
+
+# list_open_prefix PREFIX: FAKE340_LIST_OK="tokens/ cache/" is the third way a
+# grant can be too wide — not the root alone (FAKE340_ROOT_OK) and not the whole
+# bucket (FAKE340_WIDE), but a listing clause that matches a prefix it has no
+# business matching while the clauses that were asked for still hold. The listing
+# of such a prefix is ALLOWED, which is a criterion that FAILED, not a refusal
+# and not a row this check could not read. Like WIDE it reaches only while the
+# account holds a binding at all.
+list_open_prefix() { # prefix
+  local prefix=$1 ok
+  [ -n "${FAKE340_LIST_OK:-}" ] || return 1
+  [ -s "$dir/bindings" ] || return 1
+  [ -n "$prefix" ] || return 1
+  for ok in ${FAKE340_LIST_OK}; do
+    case "$prefix" in "$ok"*) return 0 ;; esac
+  done
+  return 1
+}
+
 allowed_read() { # OBJECT
   local object=$1 bmember brole bexpr btitle candidate
   while IFS=$'\t' read -r bmember brole bexpr btitle; do
@@ -262,6 +325,29 @@ storage)
     */*) prefix=${bare#*/} ;;
     *) prefix="" ;;
     esac
+    # A URL ending in `*` is a pattern, and gcloud resolves it to ONE ListObjects
+    # with the pattern's stem as the prefix — no object request first. The check
+    # asks for the two guarded listings that way on purpose, so the fake models
+    # the same request: the prefix is what is left when the pattern is cut off.
+    # A denial naming storage.objects.get is then only reachable from the case
+    # knobs, which is what a client that refuses before ListObjects answers.
+    case "$prefix" in
+    *'*') prefix=${prefix%%'*'} ;;
+    esac
+    if [ -z "$impersonate" ] && [ -n "${FAKE340_BUCKET_MISSING:-}" ]; then
+      # The bucket is not there at all: gcloud answers a 404 on the bucket, which
+      # is a different stop from one this identity may not list — and the one a
+      # reader has to be told how to fix.
+      printf 'ERROR: (gcloud.storage.ls) BucketNotFoundException: 404 %s bucket does not exist.\n' "$url" >&2
+      exit 1
+    fi
+    if [ -n "$impersonate" ] && [ -n "${FAKE340_REPORTS_BARE_REFUSED:-}" ] && [ "$prefix" = "reports/" ]; then
+      # The shape the check's second live run saw: the BARE reports/ listing is
+      # refused while the binding is really in the policy. The slug level under
+      # the same clause answers differently, which is why the criterion reads
+      # both and records each answer.
+      criteria_refusal storage.objects.list
+    fi
     if [ -n "$impersonate" ] && [ -n "${FAKE340_FLAKY:-}" ]; then
       # A grant that has not taken effect yet: the first FAKE340_FLAKY listings
       # are refused whatever the condition says, which is what a real fresh
@@ -284,15 +370,18 @@ storage)
         exit 1
       fi
       tick_pending
-      # FAKE340_ROOT_OK and FAKE340_WIDE are the two ways a grant can be wider
-      # than R12's: the first lets the root listing through alone, the second
-      # lets the account list anywhere, which is what an unconditioned binding
-      # would do. WIDE reaches only while the account holds a binding at all: it
-      # is a binding of this run's that is wider than R12's, and a removed one
-      # grants nothing.
+      # FAKE340_ROOT_OK, FAKE340_LIST_OK and FAKE340_WIDE are the three ways a
+      # grant can be wider than R12's: the first lets the root listing through
+      # alone, the second lets a listing clause reach a prefix it should not, the
+      # third lets the account list anywhere, which is what an unconditioned
+      # binding would do. The last two reach only while the account holds a
+      # binding at all: they are bindings of this run's that are wider than
+      # R12's, and a removed one grants nothing.
       if [ -z "$prefix" ] && [ -n "${FAKE340_ROOT_OK:-}" ]; then
         :
       elif [ -n "${FAKE340_WIDE:-}" ] && [ -s "$dir/bindings" ]; then
+        :
+      elif list_open_prefix "$prefix"; then
         :
       else
         case "$(cat "$dir/form" 2>/dev/null || echo none)" in
@@ -300,7 +389,21 @@ storage)
         full) attr="projects/_/buckets/$bucket/objects/$prefix" ;;
         *) attr='__no-form-carries-this__' ;;
         esac
-        allowed_list "$attr" || criteria_refusal storage.objects.list
+        if ! allowed_list "$attr" && ! prefix_listed_under_any_form "$prefix"; then
+          # FAKE340_LIST_DENY="prefix=permission[,permission] …": a listing of
+          # that prefix is refused naming THOSE permissions. One name is the
+          # common case — the listing permission the missing clause would have
+          # carried, or storage.objects.get, which is the object request a client
+          # makes before it lists — and TWO names model a denial that also needs
+          # something else, which is neither of the two readings and must not be
+          # taken for the probe.
+          for pair in ${FAKE340_LIST_DENY:-}; do
+            case "$prefix" in
+            "${pair%%=*}"*) criteria_refusal "${pair#*=}" ;;
+            esac
+          done
+          criteria_refusal storage.objects.list
+        fi
       fi
     elif [ -n "${FAKE340_UNREACHABLE:-}" ] || readback_denied; then
       deny storage.objects.list
@@ -640,6 +743,22 @@ scratch_of() { # dir
   sed -n 's/^.*scratch directory: \([^ ]*\).*/\1/p' "$1/err" | head -n 1
 }
 
+# slug_of DIR: the slug the run drew for itself, out of its own progress line.
+# The four seeded prefixes are under it, so a case that has to name one of them
+# — the reports criterion reads two — reads the run's own name rather than
+# guessing at a random one.
+slug_of() { # dir
+  sed -n 's|^.*prefixes runs/\([^/]*\)/, .*|\1|p' "$1/err" | head -n 1
+}
+
+# fact_line KEY: the ONE line of the block that carries KEY, so a case about what
+# a single row says reads that row and not the whole block. A row that folded two
+# answers into one detail is exactly what the reports case has to tell apart from
+# two answers, and reading the block would not.
+fact_line() { # key
+  printf '%s\n' "$out" | grep -m1 "^FACT $1:" || true
+}
+
 expect_scratch_gone() { # what
   local scratch
   scratch=$(scratch_of "$dir")
@@ -672,9 +791,12 @@ test_the_relative_form_passes() {
   expect_contains "$out" "FACT relative-tokens-read-refused: PASS — " "relative form: tokens/ cannot be read"
   expect_contains "$out" "FACT relative-tokens-list-refused: PASS — " "relative form: tokens/ cannot be listed"
   expect_contains "$out" "FACT relative-cache-list-refused: PASS — " "relative form: cache/ cannot be listed"
-  expect_contains "$out" "FACT full-lists-runs: INFO — not tried" "relative form: the form that was not reached"
+  # The second form is read to the end of its criteria as well, whatever the
+  # first one did, so its rows are measured rather than left "not tried".
+  expect_contains "$out" "FACT full-lists-runs: FAIL — the account could not list every prefix" "relative form: the other form is measured too"
+  expect_absent "$out" "not tried" "relative form: no row is left unmeasured"
   expect_contains "$out" "FACT list-prefix: PASS — " "relative form: the answer"
-  expect_contains "$out" "the RELATIVE form passed all seven criteria" "relative form: which form the answer is"
+  expect_contains "$out" "the RELATIVE form passed every criterion" "relative form: which form the answer is"
   expect_contains "$out" "THE LIST PREFIX R12 MUST USE: runs/ on the runs binding" "relative form: the line to copy back"
   expect_contains "$out" "FACT restore: PASS — " "relative form: the Restore"
   # R12's two clauses, in one expression, and never joined by &&.
@@ -707,7 +829,7 @@ test_the_full_path_form_passes() {
   expect_contains "$out" "FACT full-root-refused: PASS — " "full path form: the root listing is refused"
   expect_contains "$out" "FACT full-tokens-list-refused: PASS — " "full path form: tokens/ cannot be listed"
   expect_contains "$out" "FACT list-prefix: PASS — " "full path form: the answer"
-  expect_contains "$out" "the FULL PATH form passed all seven criteria" "full path form: which form the answer is"
+  expect_contains "$out" "the FULL PATH form passed every criterion" "full path form: which form the answer is"
   expect_contains "$out" "THE LIST PREFIX R12 MUST USE: projects/_/buckets/bkt-sandbox-a/objects/runs/" \
     "full path form: the line to copy back"
   expect_contains "$out" "CHECK 340 RESULT END (exit 0)" "full path form: the end line"
@@ -844,6 +966,14 @@ test_a_dry_run_prints_the_plan_and_makes_no_call() {
   expect_contains "$(cat "$dir/err")" "--condition-from-file" "dry run: and the condition file"
   expect_contains "$(cat "$dir/err")" "storage cp" "dry run: and the seeded objects"
   expect_contains "$(cat "$dir/err")" "remove-iam-policy-binding" "dry run: and the Restore's removes"
+  # The plan is what the owner reads BEFORE a run, so it has to move with the
+  # code: the wait between the two forms reads the same prefixed listing the
+  # criteria do and takes the same pair of denials, and a plan naming the listing
+  # permission alone had the owner read an abort as the expected behaviour.
+  expect_contains "$(cat "$dir/err")" "retried until the account is REFUSED it by a denial naming storage.objects.get or storage.objects.list" \
+    "dry run: the plan's wait names both permissions the removal can be read by"
+  expect_contains "$(cat "$dir/err")" "either permission for the tokens/ read, and storage.objects.list for the two listings, which are asked with a WILDCARD so gcloud sends the List request instead of refusing the prefix at the object request it makes first; a denial naming storage.objects.get on one of those two is that object request, so the row is recorded NOT OBSERVED and FAILS the form — a run that did not measure the pair that guards R12's two prefixes ends exit 2 and hands R12 no string" \
+    "dry run: and the plan's refusals line carries the wildcard and the exit-2 rule for the two listings"
   expect_bucket_clean "dry run"
   expect_scratch_gone "dry run"
 }
@@ -1016,7 +1146,8 @@ test_a_refusal_of_another_kind_is_flagged() {
   # not a denial of the clause, so the run stops (2) rather than answering a form
   # on a criterion it never observed.
   expect_status "$status" 2 "another permission"
-  expect_contains "$out" "NOTE: the refusal names storage.buckets.get" "another permission: the row says the refusal is of another kind"
+  expect_contains "$out" "NOTE: the refusal of gs://$BUCKET/runs/" "another permission: the row says which listing was refused for another reason"
+  expect_contains "$out" "names storage.buckets.get and not storage.objects.list" "another permission: and names the permission it was refused by"
   expect_contains "$out" "could not be read as a refusal" "another permission: the refusals are not taken as readings"
   expect_absent "$out" "FACT relative-root-refused: PASS" "another permission: and no refusal row is a pass"
   expect_bucket_clean "another permission"
@@ -1107,7 +1238,7 @@ test_a_listing_that_fails_for_another_reason_does_not_end_the_wait() {
   run340_default
   expect_status "$status" 2 "listing error"
   expect_contains "$out" "FACT aborted: FAIL — " "listing error: the abort is recorded"
-  expect_contains "$out" "kept failing without naming storage.objects.list" "listing error: the row says what the failure was not"
+  expect_contains "$out" "kept failing without naming storage.objects.get or storage.objects.list" "listing error: the row says what the failure was not"
   expect_contains "$out" "HTTPError 500" "listing error: and quotes the call that did not answer"
   expect_contains "$out" "FACT full-lists-runs: FAIL — not reached" "listing error: the second form was never granted"
   expect_absent "$out" "FACT full-lists-runs: PASS" "listing error: so it cannot list through the earlier clause"
@@ -1346,6 +1477,310 @@ test_a_warning_on_the_account_lists_stderr_is_not_an_answer() {
   expect_absent "$out" "still present" "list warns, denied delete: the warning is not read as the account's email"
 }
 
+# The pair that guards R12's two prefixes is asked with a wildcard so that the
+# List request is the one that goes out — but a denial naming
+# `storage.objects.get` says it did not: what came back is the object request a
+# client makes before it lists, which neither of R12's clauses governs, so
+# nothing about the listing CLAUSE can be read from it. The check's second live
+# run (2026-11-07) read that denial as "a call that did not answer" and stopped
+# on the spot, keeping the second form from ever being tried. Reading it as a
+# criterion that HELD is the other wrong answer, and the worse one: the row would
+# hold whatever the listing clause allows — including a clause wider than R12's
+# two prefixes, the one thing the pair exists to catch.
+#
+# So the row says NOT OBSERVED and the form does NOT pass. Both forms are still
+# read to the end (the block carries both), and the run ends exit 2 with no
+# string for R12's builder: exit 0 here would hand R12 an answer off a grant
+# whose H3 veto was never measured, which is exactly what this check runs before
+# R12 to prevent.
+test_a_listing_denied_with_the_object_request_is_not_observed() {
+  setup_case list-get relative
+  RUN340_ENV=(FAKE340_LIST_DENY="tokens/=storage.objects.get cache/=storage.objects.get")
+  run340_default
+  expect_status "$status" 2 "listing denied with objects.get"
+  expect_contains "$out" "FACT relative-tokens-list-refused: INFO — not observed: the listing of gs://$BUCKET/tokens/* (a wildcard, so the List request is the one that is sent) was refused by a denial naming storage.objects.get and not storage.objects.list" \
+    "listing denied with objects.get: the tokens/ row says what could not be read"
+  expect_contains "$out" "FACT relative-cache-list-refused: INFO — not observed: " "listing denied with objects.get: the cache/ row too"
+  expect_contains "$out" "it fails the form — a run that did not measure this pair cannot be an answer about R12's grant" \
+    "listing denied with objects.get: the row says the form does not pass"
+  expect_absent "$out" "FACT relative-tokens-list-refused: PASS" "listing denied with objects.get: the listing is not recorded as refused"
+  expect_absent "$out" "FACT relative-cache-list-refused: PASS" "listing denied with objects.get: nor the cache listing"
+  expect_absent "$(fact_line relative-tokens-list-refused)" "refused for the reason the criterion is about" \
+    "listing denied with objects.get: the row does not claim a refusal it did not read"
+  expect_absent "$(fact_line relative-cache-list-refused)" "refused for the reason the criterion is about" \
+    "listing denied with objects.get: nor does the cache/ row"
+  expect_contains "$out" "FACT relative-root-refused: PASS — " "listing denied with objects.get: the root listing is still refused by storage.objects.list"
+  # No answer, and the row that carries one says so: a form whose readable
+  # criteria all held is still not the answer while the guard is unread.
+  expect_contains "$out" "FACT list-prefix: INFO — not settled: under the relative form every criterion that could be read held" \
+    "listing denied with objects.get: the row is not an answer"
+  expect_contains "$out" "the two listings that guard R12's two prefixes could not be read — relative-tokens-list-refused, relative-cache-list-refused came back as a denial naming the object permission" \
+    "listing denied with objects.get: and names the rows it could not read"
+  expect_contains "$out" "FACT aborted: FAIL — the tokens/ and cache/ listings could not be read under the relative form" \
+    "listing denied with objects.get: the run says it is a could-not-tell"
+  expect_absent "$out" "FACT list-prefix: PASS" "listing denied with objects.get: no PASS for the attribute"
+  expect_absent "$out" "THE LIST PREFIX R12 MUST USE" "listing denied with objects.get: and no string for R12's builder"
+  # The rows named belong to the form whose readable criteria held, and both
+  # forms are read: the full-path form's own rows are unobserved too (its
+  # listings are refused the same way), so rows taken from the LAST form run
+  # would name the other form beside a could-not-tell about this one.
+  expect_absent "$(fact_line list-prefix)" "full-tokens-list-refused" \
+    "listing denied with objects.get: the row does not carry the other form's rows"
+  expect_absent "$(fact_line list-prefix)" "full-cache-list-refused" \
+    "listing denied with objects.get: nor the other form's cache row"
+  expect_contains "$out" "CHECK 340 RESULT END (exit 2)" "listing denied with objects.get: the end line"
+  expect_bucket_clean "listing denied with objects.get"
+}
+
+# The other half of the same rule: a listing refused by a denial naming the
+# LISTING permission WAS observed, and it is a criterion that held. Without this
+# case the NOT OBSERVED rule above could be read as "no prefixed listing is ever
+# a criterion", which would leave the two rows meaningless in the other
+# direction.
+test_a_listing_denied_with_the_list_permission_is_a_criterion() {
+  setup_case list-list relative
+  RUN340_ENV=(FAKE340_LIST_DENY="tokens/=storage.objects.list cache/=storage.objects.list")
+  run340_default
+  expect_status "$status" 0 "listing denied with objects.list"
+  expect_contains "$out" "FACT relative-tokens-list-refused: PASS — the listing of gs://$BUCKET/tokens/* (a wildcard, so the List request is the one that is sent) is refused to the account under this form, and refused for the reason the criterion is about — the denial names storage.objects.list" \
+    "listing denied with objects.list: tokens/ is refused for the clause's own reason"
+  expect_contains "$out" "FACT relative-cache-list-refused: PASS — " "listing denied with objects.list: cache/ too"
+  expect_absent "$out" "not observed:" "listing denied with objects.list: nothing is left unread"
+  expect_contains "$out" "FACT list-prefix: PASS — the RELATIVE form passed every criterion" "listing denied with objects.list: the form is answered"
+  expect_contains "$out" "CHECK 340 RESULT END (exit 0)" "listing denied with objects.list: the end line"
+  # The guard is asked with a wildcard, and the recorded call says so: without it
+  # gcloud's own object request comes first and the List request this criterion is
+  # about is never sent.
+  expect_contains "$(cat "$dir/state/calls")" "gs://$BUCKET/tokens/*" "listing denied with objects.list: the guard is asked with a wildcard"
+  expect_contains "$(cat "$dir/state/calls")" "gs://$BUCKET/cache/*" "listing denied with objects.list: both of them"
+  expect_bucket_clean "listing denied with objects.list"
+}
+
+# And a listing clause that is TOO WIDE — it reaches `tokens/` and `cache/`,
+# which R12's two prefixes exist to keep out of reach — gets no PASS anywhere:
+# the two rows are FAIL, no form is the answer, and the run stops R12's Terraform
+# with E4. This is the case the NOT OBSERVED rule must not swallow: a listing
+# that was really LISTED is a reading about the clause, and the opposite of a
+# row that could not be read.
+test_a_listing_clause_wider_than_the_two_prefixes_gets_no_pass() {
+  setup_case list-open relative
+  RUN340_ENV=(FAKE340_LIST_OK="tokens/ cache/")
+  run340_default
+  expect_status "$status" 1 "too-wide listing clause"
+  expect_contains "$out" "FACT relative-tokens-list-refused: FAIL — the listing of gs://$BUCKET/tokens/* (a wildcard, so the List request is the one that is sent) was ALLOWED to the account under this form, which is wider than R12's two prefixes" \
+    "too-wide listing clause: the tokens/ listing is the failure"
+  expect_contains "$out" "FACT relative-cache-list-refused: FAIL — " "too-wide listing clause: and the cache/ listing"
+  expect_absent "$out" "FACT relative-tokens-list-refused: PASS" "too-wide listing clause: no PASS for the tokens listing"
+  expect_absent "$out" "FACT relative-cache-list-refused: PASS" "too-wide listing clause: no PASS for the cache listing"
+  expect_absent "$out" "not observed:" "too-wide listing clause: an allowed listing is not a row that could not be read"
+  expect_absent "$out" "THE LIST PREFIX R12 MUST USE" "too-wide listing clause: and R12's builder gets no string"
+  expect_contains "$out" "FACT list-prefix: FAIL — " "too-wide listing clause: no form is the answer"
+  expect_absent "$out" "THE LIST PREFIX R12 MUST USE" "too-wide listing clause: nothing is handed to R12's builder"
+  expect_contains "$out" "FACT restore: PASS — " "too-wide listing clause: the Restore still ran"
+  expect_bucket_clean "too-wide listing clause"
+}
+
+# The probe rule is about a denial naming the object permission AND NOTHING ELSE.
+# A denial that names it beside a permission of another kind is not the object
+# request — it is a refusal for a reason of its own — and reading it as "not
+# observed" would quietly swallow the one shape this check exists to stop on: a
+# call that failed for something other than the clause. So it is exit 2, with the
+# row saying what it could not read, exactly like any other unclassified denial.
+# This case is what holds the exact match (`"$named" = "$probe "`) to being an
+# exact match: a looser test would take it for the probe.
+test_a_denial_naming_the_object_permission_beside_another_one_stops() {
+  setup_case list-get-plus relative
+  RUN340_ENV=(FAKE340_LIST_DENY="tokens/=storage.objects.get,storage.buckets.get")
+  run340_default
+  expect_status "$status" 2 "denial naming objects.get beside another permission"
+  expect_absent "$out" "FACT relative-tokens-list-refused: INFO" \
+    "denial naming objects.get beside another permission: the row is NOT the probe reading"
+  expect_absent "$out" "FACT relative-tokens-list-refused: PASS" \
+    "denial naming objects.get beside another permission: and not a criterion that held"
+  expect_absent "$out" "not settled" \
+    "denial naming objects.get beside another permission: the run stops here rather than reading on"
+  expect_contains "$out" "FACT aborted: FAIL — the listing of gs://$BUCKET/tokens/* (a wildcard, so the List request is the one that is sent) could not be read as a refusal" \
+    "denial naming objects.get beside another permission: the run stops and says which call"
+  expect_contains "$out" "without naming storage.objects.list" \
+    "denial naming objects.get beside another permission: the row names the permission the criterion requires"
+  expect_absent "$out" "THE LIST PREFIX R12 MUST USE" "denial naming objects.get beside another permission: no form is answered"
+  expect_bucket_clean "denial naming objects.get beside another permission"
+}
+
+# And a denial naming a permission the criterion's clause could NOT have carried
+# is still a call that did not answer: widening the accepted name to two must not
+# turn any refusal into a criterion that held, or a run stopped by an expired
+# session, a bucket-level refusal or a killed call would report a listing nobody
+# observed being refused.
+test_a_listing_denied_with_an_unrelated_permission_still_stops() {
+  setup_case list-other-perm relative
+  RUN340_ENV=(FAKE340_LIST_DENY="tokens/=storage.buckets.get")
+  run340_default
+  expect_status "$status" 2 "listing denied with an unrelated permission"
+  expect_contains "$out" "FACT aborted: FAIL — the listing of gs://$BUCKET/tokens/* (a wildcard, so the List request is the one that is sent) could not be read as a refusal" \
+    "listing denied with an unrelated permission: the run says what it could not read"
+  expect_contains "$out" "without naming storage.objects.list" \
+    "listing denied with an unrelated permission: the row names both permissions the criterion accepts"
+  expect_absent "$out" "FACT relative-tokens-list-refused: PASS" "listing denied with an unrelated permission: the criterion is not recorded as held"
+  expect_absent "$out" "THE LIST PREFIX R12 MUST USE" "listing denied with an unrelated permission: no form is answered"
+  expect_bucket_clean "listing denied with an unrelated permission"
+}
+
+# The refusal has to be about THIS check's bucket. A denial that puts its
+# resource on another bucket is a call about something else — the reading the
+# criterion is about was never taken — so it is a stop and not a criterion.
+test_a_denial_about_another_bucket_is_not_a_refusal() {
+  setup_case other-resource relative
+  RUN340_ENV=(FAKE340_DENY_RESOURCE=some-other-bucket)
+  run340_default
+  expect_status "$status" 2 "denial about another bucket"
+  expect_contains "$out" "FACT aborted: FAIL — the root listing of gs://$BUCKET/ could not be read as a refusal" \
+    "denial about another bucket: the run says what it could not read"
+  expect_contains "$out" "some-other-bucket" "denial about another bucket: the row quotes the resource the denial names"
+  expect_absent "$out" "FACT relative-root-refused: PASS" "denial about another bucket: the criterion is not recorded as held"
+  expect_absent "$out" "THE LIST PREFIX R12 MUST USE" "denial about another bucket: no form is answered"
+  expect_bucket_clean "denial about another bucket"
+}
+
+# A failed criterion under one form is a failure of THAT form and nothing more:
+# the reports listing is not covered, the relative form fails it alone, and the
+# full-path form is still read to the end of its criteria — so the answer rests
+# on two result sets and not on the first form to finish. The second form's rows
+# are measured readings, never a "not reached" the block reserves for a step that
+# was never run.
+test_the_second_form_runs_after_the_first_failed_a_listing() {
+  setup_case second-form relative
+  RUN340_ENV=(FAKE340_LOST_REPORTS=yes)
+  run340_default
+  expect_status "$status" 1 "second form after a failed listing"
+  expect_contains "$out" "FACT relative-lists-runs: PASS — " "second form after a failed listing: the relative form listed runs/"
+  expect_contains "$out" "FACT relative-lists-reports: FAIL — " "second form after a failed listing: and failed the reports listing"
+  expect_contains "$out" "FACT full-lists-runs: FAIL — the account could not list every prefix" \
+    "second form after a failed listing: the full-path form was measured anyway"
+  expect_absent "$out" "FACT full-lists-runs: FAIL — not reached" "second form after a failed listing: and is not left unreached"
+  expect_contains "$out" "FACT list-prefix: FAIL — " "second form after a failed listing: the answer is neither form"
+  expect_bucket_clean "second form after a failed listing"
+}
+
+# And the second form is read even when the first one held EVERY criterion: both
+# forms are run to the end of their criteria whatever the first did, so the block
+# carries both result sets and no row is left "not tried".
+test_the_second_form_is_read_even_after_the_first_passed() {
+  setup_case second-form-after-pass relative
+  run340_default
+  expect_status "$status" 0 "second form after a pass"
+  expect_contains "$out" "FACT relative-lists-runs: PASS — " "second form after a pass: the relative form held"
+  expect_contains "$out" "FACT full-lists-runs: FAIL — the account could not list every prefix" \
+    "second form after a pass: the full-path form was measured"
+  expect_absent "$out" "not tried" "second form after a pass: no row says it was not tried"
+  expect_contains "$out" "FACT list-prefix: PASS — the RELATIVE form passed every criterion" "second form after a pass: the answer is the form that held"
+  expect_bucket_clean "second form after a pass"
+}
+
+# The reports criterion is read at BOTH prefixes the reports job uses — the bare
+# `reports/` and the slug level under it — and each answer is its own in the
+# row's detail. A clause that covers the slug level and not the bare prefix is
+# then visible as exactly that, rather than folded into one FAIL that says
+# nothing about which of the two the attribute failed to match. This is the
+# reading the check's second live run could not make.
+test_the_reports_criterion_records_both_prefixes() {
+  setup_case reports-both relative
+  RUN340_ENV=(FAKE340_REPORTS_BARE_REFUSED=yes)
+  run340_default
+  slug=$(slug_of "$dir")
+  [ -n "$slug" ] || fail "reports read at both prefixes: the run did not say which slug it drew"
+  expect_status "$status" 1 "reports read at both prefixes"
+  row=$(fact_line relative-lists-reports)
+  expect_contains "$row" "FAIL — the account could not list every prefix" "reports read at both prefixes: the criterion fails"
+  expect_contains "$row" "gs://$BUCKET/reports/$slug/ listed and names reports/$slug/" \
+    "reports read at both prefixes: the slug level is its own answer, and it held"
+  expect_contains "$row" "gs://$BUCKET/reports/ was refused" \
+    "reports read at both prefixes: and the bare prefix is its own answer, and it did not"
+  expect_contains "$out" "FACT relative-lists-runs: PASS — " "reports read at both prefixes: the rest of the form held"
+  expect_bucket_clean "reports read at both prefixes"
+}
+
+# A bucket that is not there is a different stop from one this identity may not
+# list, and both the row and the stop message say so: the bucket is created by
+# YOU, with the command the row names, and never by this check — it grants IAM on
+# the bucket it is given and creates none.
+test_a_missing_bucket_says_how_to_create_it() {
+  setup_case missing-bucket relative
+  RUN340_ENV=(FAKE340_BUCKET_MISSING=yes)
+  run340_default
+  create="gcloud storage buckets create gs://$BUCKET --project=$PROJECT --location=us-central1 --uniform-bucket-level-access"
+  expect_status "$status" 2 "missing bucket"
+  expect_contains "$out" "FACT bucket-reachable: FAIL — " "missing bucket: the row fails"
+  expect_contains "$out" "does not exist" "missing bucket: the row says the bucket is not there"
+  expect_contains "$out" "$create" "missing bucket: the row says how to create it"
+  expect_contains "$out" "never creates the bucket" "missing bucket: and says this check does not"
+  expect_contains "$(cat "$dir/err")" "$create" "missing bucket: the stop message carries the same command"
+  expect_absent "$(cat "$dir/state/calls")" "buckets create" "missing bucket: nothing was created"
+  expect_contains "$out" "FACT list-prefix: FAIL — not reached" "missing bucket: no answer is given about the attribute"
+  expect_bucket_clean "missing bucket"
+}
+
+# The wait between the two forms reads the SAME prefixed listing the criteria do
+# — `gs://B/runs/<slug>/` — so it is refused the same way, and a refusal naming
+# `storage.objects.get` (gcloud probed the prefix as an object before listing it)
+# is as much "the earlier clause is gone" as one naming `storage.objects.list`.
+# Before this the wait accepted the listing permission alone, so a removal that
+# took effect became an abort at the first request that named the read one — and
+# since both forms are now read on every run, that abort sits on the PASSING path
+# too, where the run used to answer at once.
+test_the_wait_accepts_a_removal_refusal_naming_the_read_permission() {
+  setup_case removal-get relative
+  RUN340_ENV=(FAKE340_LIST_DENY="runs/=storage.objects.get")
+  run340_default
+  expect_status "$status" 0 "removal refused naming objects.get"
+  expect_absent "$out" "FACT aborted" "removal refused naming objects.get: the wait does not stop the run"
+  expect_contains "$out" "FACT full-lists-runs: FAIL — the account could not list every prefix" \
+    "removal refused naming objects.get: the wait ended and the second form really was read"
+  expect_contains "$out" "FACT list-prefix: PASS — the RELATIVE form passed every criterion" \
+    "removal refused naming objects.get: the form that held is still answered"
+  expect_bucket_clean "removal refused naming objects.get"
+}
+
+# A denial that names THIS bucket in IAM's bucket-level spelling — `denied on
+# resource (e.g. 'projects/_/buckets/<bucket>')` — is a refusal about this check's
+# own bucket, quoted and parenthesized. Read as a name with the punctuation on
+# it, it was a different string from the bucket's, and the guard stopped the run
+# on a denial about the very bucket it is reading: a criterion never observed
+# recorded as a stop.
+test_a_bucket_level_denial_about_this_bucket_is_a_refusal() {
+  setup_case bucket-level-denial relative
+  RUN340_ENV=(FAKE340_DENY_RESOURCE="$BUCKET" FAKE340_DENY_LEVEL=bucket-level)
+  run340_default
+  expect_status "$status" 0 "bucket-level denial about this bucket"
+  expect_absent "$out" "FACT aborted" "bucket-level denial about this bucket: nothing stops the run"
+  expect_absent "$out" "outside gs://$BUCKET" "bucket-level denial about this bucket: the denial is not read as another bucket's"
+  expect_contains "$out" "FACT relative-root-refused: PASS — " "bucket-level denial about this bucket: the root listing is refused"
+  expect_contains "$out" "FACT relative-tokens-list-refused: PASS — " "bucket-level denial about this bucket: and tokens/ is refused"
+  expect_contains "$out" "FACT list-prefix: PASS — the RELATIVE form passed every criterion" "bucket-level denial about this bucket: the form is answered"
+  expect_bucket_clean "bucket-level denial about this bucket"
+}
+
+# Two forms passing every criterion is a contradiction, not an answer: no single
+# attribute value starts with both `runs/` and
+# `projects/_/buckets/<bucket>/objects/runs/`, so a bucket that lets both through
+# is not the bucket this check is reading, and naming either form would name a
+# form off two result sets that disagree. The run stops as could-not-tell and the
+# register's "one form passing is enough" has to say so.
+test_both_forms_passing_is_a_contradiction_and_stops() {
+  setup_case both-forms relative
+  RUN340_ENV=(FAKE340_BOTH_FORMS=yes)
+  run340_default
+  expect_status "$status" 2 "both forms passing"
+  expect_contains "$out" "FACT relative-lists-runs: PASS — " "both forms passing: the first form held"
+  expect_contains "$out" "FACT full-lists-runs: PASS — " "both forms passing: and so did the second"
+  expect_contains "$out" "FACT aborted: FAIL — both the RELATIVE and the FULL PATH forms passed every criterion" \
+    "both forms passing: the run stops instead of answering"
+  expect_absent "$out" "FACT list-prefix: PASS" "both forms passing: no form is named as the answer"
+  expect_absent "$out" "THE LIST PREFIX R12 MUST USE" "both forms passing: and no string is printed to copy back"
+  expect_contains "$out" "CHECK 340 RESULT END (exit 2)" "both forms passing: the end line carries the could-not-tell exit"
+  expect_bucket_clean "both forms passing"
+}
+
 # Sharding, so the package's Go test can run the tests of this file side by
 # side: CHECK_TEST_SHARD="i/n" runs every n-th test starting at i, and
 # CHECK_TEST_ONLY=name runs that one test alone. Neither set: all run.
@@ -1395,6 +1830,19 @@ t test_a_denied_delete_of_an_account_the_list_shows_gone_is_not_an_error
 t test_a_denied_delete_of_an_account_the_list_still_shows_is_a_fail
 t test_a_denied_account_list_stops_the_guard
 t test_a_warning_on_the_account_lists_stderr_is_not_an_answer
+t test_a_listing_denied_with_the_object_request_is_not_observed
+t test_a_denial_naming_the_object_permission_beside_another_one_stops
+t test_a_listing_denied_with_the_list_permission_is_a_criterion
+t test_a_listing_clause_wider_than_the_two_prefixes_gets_no_pass
+t test_a_listing_denied_with_an_unrelated_permission_still_stops
+t test_a_denial_about_another_bucket_is_not_a_refusal
+t test_the_second_form_runs_after_the_first_failed_a_listing
+t test_the_second_form_is_read_even_after_the_first_passed
+t test_the_reports_criterion_records_both_prefixes
+t test_a_missing_bucket_says_how_to_create_it
+t test_the_wait_accepts_a_removal_refusal_naming_the_read_permission
+t test_a_bucket_level_denial_about_this_bucket_is_a_refusal
+t test_both_forms_passing_is_a_contradiction_and_stops
 
 if [ "$failures" -ne 0 ]; then
   echo "check340_test: $failures failure(s)" >&2

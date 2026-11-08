@@ -30,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -147,12 +148,42 @@ the reason printed first. Nothing is halted and nothing is deleted.`,
 	return cmd
 }
 
-// managedApply is newManagedApplyCmd's body. The order is the whole of the
-// design: the local checks, then the project and its number, then the
-// apply-time budget read and the gate it opens (Task 4.4), then the reads the
-// apply itself trusts, then the apply — and every refusal before the apply is a
-// hard return.
+// managedApply is newManagedApplyCmd's body, and the wrapper that gives it a
+// reporter of its own: the log is filed under this command's name (D1352) and
+// the closing line is this run's. A restore drives the same body with its own
+// run's reporter instead — one run, one log, one closing line — which is why
+// the body is a function of its own.
+//
+// The body opens the reporter and this wrapper ends the run, because the two
+// are not the same caller's: a run that was refused before the body opened one
+// has no closing line to print, and a restore's apply must not print one
+// halfway through the restore's own run. The deferred call below is that ending,
+// once, for the run this command owns.
 func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
+	var (
+		rep  *report.Reporter
+		sink report.Sink
+	)
+	defer func() {
+		if rep == nil {
+			return
+		}
+		rep.Summary()
+		if sink != nil {
+			_ = sink.Close()
+		}
+	}()
+	return managedApplyWith(cmd, o, rootArg, func() (*report.Reporter, report.Sink) {
+		rep, sink = reporterFor(cmd, "managed-apply", nil)
+		return rep, sink
+	})
+}
+
+// managedApplyWith is managedApply's body: the whole sequence, printing its one
+// step through the reporter newRep opens where the apply's own work starts. A
+// nil newRep is a caller with no reporter at all, which prints as this command
+// printed before there was one.
+func managedApplyWith(cmd *cobra.Command, o cloudOptions, rootArg string, newRep reporterOpener) error {
 	ctx := cmd.Context()
 	// A credential leak first, before anything opens the cloud: GODEBUG is
 	// read before main runs, so it cannot be unset in time (refuseHTTP2Debug).
@@ -182,12 +213,45 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 	if got := lc.RunsBucketName(); got != bucket {
 		return userErr("project %s names the runs bucket %q, and a managed project's marker and delete list live in %s: a managed apply reads the objects of the project's own runs bucket, so check runs_bucket in the project config", safetext.Field(lc.Name), safetext.Field(got), safetext.Field(bucket))
 	}
+	// This run's account and its log, opened here and not at the command's
+	// door: a GODEBUG credential leak, the project selection, the root argument
+	// and the runs-bucket name are all answered above without reaching the
+	// cloud, and a refused apply files no log, not even an empty one (D1352,
+	// reporterOpener). The empty file would be one of the fifty this command's
+	// name keeps (CL3's pruneLogs) and would evict a real run's.
+	if newRep == nil {
+		newRep = func() (*report.Reporter, report.Sink) { return report.New(report.Options{}), nil }
+	}
+	// The sink the opener hands back is not this body's to close: the run's
+	// closing line comes after this function has returned — the wrapper that
+	// owns the run prints it and closes the log under it, and a restore prints
+	// its own at the end of its whole sequence — so a sink closed here would
+	// lose that line. A caller closes what it opened.
+	rep, _ := newRep()
+	// One step for the whole apply: the project number and the budget gate, the
+	// owner's list and the inventory, the caller's own credential, the workdir
+	// copied from the root, and then the plan, the gate, the confirmation and
+	// the apply itself are one unit of work to the person watching. It is
+	// opened here, before the first of them, and not at the plan, because
+	// opening it there is what lets a run stop in one of them without a step:
+	// a restore marks its config, project and checkout done and then hands the
+	// apply over, so an apply refused before its plan printed "Done in …, 3
+	// steps" on the screen and in the log while the command exited 1 (G3).
+	step := rep.Step("apply")
+	fail := func(err error) error {
+		// This step's line never carries terraform's own stderr tail: this
+		// command has no redaction source, so what its log holds is the run's
+		// stage lines and never a provider's output (F6, D1352,
+		// withoutTerraformTail).
+		step.Failed(withoutTerraformTail(err), nil)
+		return err
+	}
 	// The project number is what says a bucket name is this project's (a
 	// bucket name is global), and both reads below prove it with.
 	number, err := infra.ProjectNumber(ctx, c, lc.GCPProject)
 	if err != nil {
 		// The API's own text can carry a body: one sanitised line.
-		return remote(fmt.Errorf("reading the number of GCP project %s: %s", safetext.Field(lc.GCPProject), safetext.Field(err.Error())))
+		return fail(remote(fmt.Errorf("reading the number of GCP project %s: %s", safetext.Field(lc.GCPProject), safetext.Field(err.Error()))))
 	}
 	// The apply-time budget read, and the gate it opens (Task 4.4). Both
 	// happen here, after the project and its number are known and before
@@ -195,7 +259,7 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 	// that did not open runs no terraform at all.
 	gate, fact, err := managedBudgetGate(ctx, c, lc)
 	if err != nil {
-		return userErr("nothing was applied: %v", err)
+		return fail(userErr("nothing was applied: %v", err))
 	}
 	// The addresses the owner approved, read fail-closed from the owner's own
 	// object. The applying command names none — this command registers no
@@ -205,7 +269,7 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 	// function that enforces the rule is still the one that runs it.
 	allowed, err := managed.GuardAllowList(ctx, c.Storage, bucket, lc.GCPProject, number, nil)
 	if err != nil {
-		return managedListErr(lc, bucket, err)
+		return fail(managedListErr(lc, bucket, err))
 	}
 	// The whole-project inventory (Task 4.5, D59), read here because this is
 	// the last moment the operator's own credential is the one in hand: the
@@ -222,26 +286,26 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 	// are made with.
 	self, ts, err := managedCaller(ctx, lc)
 	if err != nil {
-		return err
+		return fail(err)
 	}
 	// The workdir is this command's own, never the checkout (D76): terraform
 	// writes a plan file, a lock file and a provider directory, and the
 	// checkout belongs to the agent and to the user.
 	dir, err := infra.ManagedWorkdir(os.Getenv, lc.GCPProject)
 	if err != nil {
-		return userErr("%v", err)
+		return fail(userErr("%v", err))
 	}
 	wd, err := infra.CopyRoot(dir, root)
 	if err != nil {
-		return userErr("the root %s: %v", safetext.Field(rootArg), safetext.FieldErr(err))
+		return fail(userErr("the root %s: %v", safetext.Field(rootArg), safetext.FieldErr(err)))
 	}
 	cache, err := infra.PluginCache(os.Getenv)
 	if err != nil {
-		return userErr("%v", err)
+		return fail(userErr("%v", err))
 	}
 	bin, err := exec.LookPath("terraform")
 	if err != nil {
-		return userErr("fugaro managed apply needs terraform (>= 1.9, < 2) on PATH: %v", err)
+		return fail(userErr("fugaro managed apply needs terraform (>= 1.9, < 2) on PATH: %v", err))
 	}
 	imp := deployerImpersonator{self: self, ts: ts, endpoint: impersonationEndpoint, hc: impersonationHTTPClient()}
 	res, err := managedmode.Apply(ctx, managedmode.Request{
@@ -263,7 +327,7 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 		// identity need not, so init, plan, the show the gate reads and the
 		// apply are one identity's.
 		Terraform: func(cred managedmode.Credential) (*tf.TF, func(), error) {
-			return managedTerraform(cmd, lc, wd, bin, cache, cred)
+			return managedTerraform(cmd, lc, wd, bin, cache, cred, rep)
 		},
 		Cover: managedCover(lc, bucket),
 		// The addresses the owner approved and nothing else.
@@ -279,7 +343,7 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 		// the saved plan's hash and what it changes. A coding agent's session
 		// is never asked (D55), and a session with no terminal never reaches
 		// this (the rule refuses it first).
-		Ask: managedAsk(cmd, lc),
+		Ask: managedApplyAsk(cmd, lc, rep),
 		// Session is nil, and it is written out rather than left to the zero
 		// value because the field is the assertion: this command registers no
 		// flag and no argument that names an address, so there is no way to
@@ -298,19 +362,56 @@ func managedApply(cmd *cobra.Command, o cloudOptions, rootArg string) error {
 		// own member: the account is assumed by the identity the grant is
 		// on, and an assumption that cannot be made applies nothing.
 		Impersonator: imp,
-		Out:          cmd.ErrOrStderr(),
+		// What this command itself says — the D59 warning this project's
+		// inventory raised, the gate's verdict, what is about to be applied —
+		// stays on stderr, which is where it was before this command had a step
+		// of its own: the gate's warning is documented as one every session
+		// reads (Request.confirm), so it reaches the terminal in every session
+		// and not only under --verbose the way Stream does. It is kept in the
+		// run's log beside that (sayThrough): it is the run's own account, and
+		// a failure prints the log's path. Every write takes the line in flight
+		// down around it (G1): the apply's step is open across the whole of it,
+		// and a spinner's carriage return over these sentences would mangle
+		// exactly what an owner reads to decide whether a project is managed.
+		//
+		// Terraform's progress is the other writer, and it is not this one: it
+		// goes to cmd.ErrOrStderr() through managedTerraform, shown and not
+		// kept (streamThrough — D1352's rule for a command with no redaction
+		// source, whose log holds the stage lines only, and terraform's stream
+		// is raw).
+		Out: sayThrough(rep, cmd.ErrOrStderr()),
 	})
 	if err != nil {
-		return managedApplyErr(lc, rootArg, res, err)
+		// The step is the account of the apply, so a refused or failed one ends
+		// it with a cross and the error under it (G8) rather than printing a
+		// line the run does not stand behind — the same ending fail gives the
+		// reads and the preparation above. Terraform's own stderr tail reaches
+		// the screen twice over and neither time through this line: it is
+		// streamed as terraform writes it (TF.Out) and it is in the error this
+		// command returns.
+		return fail(managedApplyErr(lc, rootArg, res, err))
 	}
-	w := cmd.OutOrStdout()
 	if !res.Changed {
-		fmt.Fprintf(w, "no changes: the plan of %s is empty, so nothing was gated and nothing was applied\n", safetext.Field(rootArg))
+		step.Skipped(fmt.Sprintf("no changes: the plan of %s is empty, so nothing was gated and nothing was applied", safetext.Field(rootArg)))
 		return nil
 	}
-	fmt.Fprintf(w, "applied the saved plan of %s as %s: the gate admitted every change in it, and the owner's list approved every delete and replacement it carries\n",
-		safetext.Field(rootArg), safetext.Field(managedmode.DeployerAccount(lc.GCPProject)))
+	step.Done(fmt.Sprintf("applied the saved plan of %s as %s: the gate admitted every change in it, and the owner's list approved every delete and replacement it carries",
+		safetext.Field(rootArg), safetext.Field(managedmode.DeployerAccount(lc.GCPProject))))
 	return nil
+}
+
+// managedApplyAsk is managedAsk with the reporter's line in flight taken down
+// first: a managed apply's question is asked in the middle of the step, after
+// the plan has been gated, and a spinner drawn over the question would be a
+// prompt a person is reading through (G1). Resume draws the line again once
+// it is answered.
+func managedApplyAsk(cmd *cobra.Command, lc *localcfg.Config, rep *report.Reporter) func(string) (bool, error) {
+	ask := managedAsk(cmd, lc)
+	return func(question string) (bool, error) {
+		rep.Pause()
+		defer rep.Resume()
+		return ask(question)
+	}
 }
 
 // managedConditions is what this session says about who is there, and it is
@@ -454,7 +555,7 @@ func managedCover(lc *localcfg.Config, bucket string) tf.ManagedCover {
 // workdir — the root's parent, which an agent-written configuration names as
 // ".." — and the managed preflight refuses every function that could read a
 // file anyway.
-func managedTerraform(cmd *cobra.Command, lc *localcfg.Config, wd *infra.Workdir, bin, cache string, cred managedmode.Credential) (*tf.TF, func(), error) {
+func managedTerraform(cmd *cobra.Command, lc *localcfg.Config, wd *infra.Workdir, bin, cache string, cred managedmode.Credential, rep *report.Reporter) (*tf.TF, func(), error) {
 	none := func() {}
 	want := managedmode.DeployerAccount(lc.GCPProject)
 	ic, ok := cred.(impersonatedCredential)
@@ -492,7 +593,11 @@ func managedTerraform(cmd *cobra.Command, lc *localcfg.Config, wd *infra.Workdir
 		}
 		return nil, none, userErr("%v", safetext.FieldErr(err))
 	}
-	t.Out = cmd.ErrOrStderr()
+	// init, plan, apply and state rm all stream here, and the apply's step is
+	// open across them: the line in flight comes down around each write so the
+	// progress reads as terraform printed it (G1). The stream is not kept —
+	// streamThrough — because this command has no redaction source (D1352).
+	t.Out = streamThrough(rep, cmd.ErrOrStderr())
 	return t, cleanup, nil
 }
 
@@ -1027,6 +1132,31 @@ func managedListErr(lc *localcfg.Config, bucket string, err error) error {
 	default:
 		return remote(fmt.Errorf("reading gs://%s/%s for %s: %w", safetext.Field(bucket), managed.AllowDeleteObject, safetext.Field(lc.Name), safetext.FieldErr(err)))
 	}
+}
+
+// withoutTerraformTail is err's message with the stderr tail of the terraform
+// command inside it cut off, and err itself when no such command carries one.
+// What is kept is everything up to the command's own sentence — a wrapping
+// sentence such as "terraform for the root of …" still reads — and what goes is
+// the provider's own bytes terraform appended to it.
+//
+// It is what ends a failed apply's step, because the step's line is one of the
+// run's own lines and a log is read fourteen days later: this command has no
+// redaction source, so F6 gives its log the stage lines and nothing a provider
+// printed (D1352), and the same bytes reach the screen twice over anyway —
+// terraform streamed them as it ran, and the error the command returns still
+// carries them for the "Error:" line under the closing one.
+func withoutTerraformTail(err error) error {
+	var ee *tf.ExitError
+	if !errors.As(err, &ee) || strings.TrimSpace(ee.Stderr) == "" {
+		return err
+	}
+	head := fmt.Sprintf("terraform %s exited %d", ee.Command, ee.Code)
+	msg := head
+	if i := strings.Index(err.Error(), head); i >= 0 {
+		msg = err.Error()[:i] + head
+	}
+	return errors.New(msg)
 }
 
 // managedApplyErr maps the apply's own refusals to what the reader can do about

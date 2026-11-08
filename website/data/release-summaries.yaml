@@ -23,6 +23,7 @@
 version: 1
 
 summaries:
+  v0.22.0: An installation's rules now carry the orchestrator's state subtree, and fugaro update deploys it and records its generation in one run.
   v0.21.0: A run's default time budget is three hours and each stage gets one hour, so a security-reviewed task with three review levels finishes without a per-run override.
   v0.20.3: A run that reviews on your Claude subscription now starts on the job that holds its token, and a managed project's own update retires what it created.
   v0.20.2: fugaro update no longer stops at the installation step on a project that has a catalog check.

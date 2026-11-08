@@ -47,12 +47,17 @@ const (
 
 // sharedJobsProfile is the one profile both spellings of the fixture declare:
 // a github profile serving two Claude accounts beside its no-account job, so
-// the three account segments the axis produces are all distinct and a
+// the three account segments the Claude axis produces are all distinct and a
 // derivation that dropped the account segment, or the profile, or the provider
-// from the account's name would show up as a set that is not this one.
+// from the account's name would show up as a set that is not this one — plus
+// the account axis's one non-account value (config.AnthropicKeyAccount, the
+// project's own Anthropic API key), which is a job name and no mount: its job
+// is what its review-only variant is derived from, and an installation whose
+// profile lists it has a review job even when it defines no Claude account at
+// all (D1417, D1422).
 const sharedJobsProfile = `{"provider": "github", "cpu": 2, "memory": "8Gi", "timeout_class": "6h",
 		"allow_repos": ["github/acme/webapp"],
-		"claude_accounts": ["acme-personal", "acme-shared"],
+		"claude_accounts": ["acme-personal", "acme-shared", "` + config.AnthropicKeyAccount + `"],
 		"secrets": ["github-app-key"]}`
 
 // sharedJobsLocalConfig is the installation `fugaro update` deploys from: the M4
@@ -77,6 +82,7 @@ claude_accounts:
 project_secrets:
   claude-oauth-token: { allow_data_to: [acme/webapp] }
   github-app-key: { allow_data_to: [acme/webapp] }
+  ` + config.AnthropicSecret + `: { allow_data_to: [acme/webapp] }
 profiles:
   standard: ` + sharedJobsProfile + `
 `
@@ -85,7 +91,9 @@ profiles:
 // sharedJobsPolicyDoc is the policy node the same installation publishes: the
 // profiles block verbatim, and the accounts block `publish` derives from the
 // local config (DeriveAccounts), which is what a profile listing accounts is
-// judged against.
+// judged against. The sentinel's own entry is derived like every other axis
+// value's — from the profiles that name it, kept to the reach the key itself
+// has in the local config (config.ProjectSecretReaches).
 func sharedJobsPolicyDoc() string {
 	return `{
 		"version": 4,
@@ -93,7 +101,8 @@ func sharedJobsPolicyDoc() string {
 		"allow_repos": ["github/acme/webapp"],
 		"accounts": {
 			"acme-personal": {"allow_repos": ["github/acme/webapp"]},
-			"acme-shared": {"allow_repos": ["github/acme/webapp"]}
+			"acme-shared": {"allow_repos": ["github/acme/webapp"]},
+			"` + config.AnthropicKeyAccount + `": {"allow_repos": ["github/acme/webapp"]}
 		},
 		"profiles": {"standard": ` + sharedJobsProfile + `},
 		"credentials": {"fallback": "auto"}
@@ -149,12 +158,13 @@ func TestSharedJobAccountsAreTheNamesProjectJobsDeploys(t *testing.T) {
 		t.Fatalf("SharedJobAccountsFor = %v, want the accounts the deployer created, %v", got, deployed)
 	}
 	// The fixture is only a test of anything if the axis it covers is more
-	// than one account: one profile serving two accounts beside its
-	// no-account job.
+	// than one account: one profile serving two Claude accounts and the
+	// project's own key beside its no-account job.
 	want := []string{
 		serviceAccountEmailForTest(gcp.ProjectServiceAccountID("standard", "github", "")),
 		serviceAccountEmailForTest(gcp.ProjectServiceAccountID("standard", "github", "acme-personal")),
 		serviceAccountEmailForTest(gcp.ProjectServiceAccountID("standard", "github", "acme-shared")),
+		serviceAccountEmailForTest(gcp.ProjectServiceAccountID("standard", "github", config.AnthropicKeyAccount)),
 	}
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
@@ -261,11 +271,15 @@ func TestReviewAccountsAreTheNamesProjectJobsDeploys(t *testing.T) {
 	// The fixture is only a test of anything if the axis it covers is more than
 	// one account, and if the no-account job of a profile that lists no
 	// default account is spelled the way the published admissions spell the
-	// default account rather than as the empty string the axis produces.
+	// default account rather than as the empty string the axis produces. The
+	// sentinel is the row whose account segment is neither: it is no account at
+	// all, and the variant of its job is the one a review served by the
+	// project's own key runs on.
 	want := []credsvc.ReviewJobAccount{
 		{Email: serviceAccountEmailForTest(credsvc.ReviewServiceAccountID("standard", "github", config.DefaultClaudeAccount)), Account: config.DefaultClaudeAccount},
 		{Email: serviceAccountEmailForTest(credsvc.ReviewServiceAccountID("standard", "github", "acme-personal")), Account: "acme-personal"},
 		{Email: serviceAccountEmailForTest(credsvc.ReviewServiceAccountID("standard", "github", "acme-shared")), Account: "acme-shared"},
+		{Email: serviceAccountEmailForTest(credsvc.ReviewServiceAccountID("standard", "github", config.AnthropicKeyAccount)), Account: config.AnthropicKeyAccount},
 	}
 	slices.SortFunc(want, func(a, b credsvc.ReviewJobAccount) int { return cmp.Compare(a.Email, b.Email) })
 	if !slices.Equal(got, want) {

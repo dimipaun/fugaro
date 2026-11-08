@@ -50,6 +50,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/plan"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -417,9 +418,15 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(priceCatalog{}),
 		// §6.21, the managed screens' read (the managed-screens plan's CM2):
 		// the document and the bounded subset of the newest audit record,
-		// which is bounded because argv is not in it.
+		// which is bounded because argv is not in it — plus the retirement
+		// half CM8 reads there, which is the machine's own record of the last
+		// update carried as that record's types (localcfg.UpdateProject and
+		// its row shape) rather than as a second set of tags.
 		reflect.TypeOf(managedStatusDoc{}),
 		reflect.TypeOf(managedStatusAudit{}),
+		reflect.TypeOf(managedStatusRetirements{}),
+		reflect.TypeOf(localcfg.UpdateProject{}),
+		reflect.TypeOf(localcfg.UpdateRetirement{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command:
 		// ee/coordinator/cli/console_contract_test.go pins them against the
 		// tagged tree, which is the tree that still serves the console.
@@ -684,8 +691,13 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(settingsWriteDoc{}),
 		// §6.21, the managed screens' own document (the managed-screens plan's
 		// CM2): the marks' four facts and the bounded subset of the newest
-		// audit record, which is bounded because argv is not in it.
+		// audit record, which is bounded because argv is not in it — plus the
+		// last update's retirement, which CM8 reads there and which is the
+		// record's own shape (as above).
 		reflect.TypeOf(managedStatusDoc{}), reflect.TypeOf(managedStatusAudit{}),
+		reflect.TypeOf(managedStatusRetirements{}),
+		reflect.TypeOf(localcfg.UpdateProject{}),
+		reflect.TypeOf(localcfg.UpdateRetirement{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command,
 		// as in the test above.
 	}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -400,6 +401,66 @@ func TestPartialEnsureNonDraftKeepsReady(t *testing.T) {
 	}
 	if onlyPR(t, h.provider).Draft {
 		t.Fatal("the fake's PR should not be a draft")
+	}
+}
+
+// TestGitProviderRefusalCarriesItsClass: both ways a forge's refusal ends a
+// run carry git_provider_error, the design's class for a call the provider
+// would not make (§3): the pull request whose setup failed outright, and the
+// one the provider could only leave looking more like a draft than the run
+// asked for. The class is durable — the report groups runs by it and nothing
+// rewrites it — so a site that stopped naming its cause would file the forge's
+// own failure under infra_error or leave the run unclassified.
+//
+// The two sites choose it differently, which is why both are walked: the plain
+// failure travels on the error providerRefusal wraps it in (prflow.go) and is
+// read back by Run's deferred fallback, while the partial one is chosen in
+// finalize's own arm, where the run reports a draft and keeps the provider's
+// error as its reason.
+func TestGitProviderRefusalCarriesItsClass(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		newH    func(t *testing.T) *harness
+		status  runstore.Status
+		outcome runstore.Outcome
+		wantErr bool
+	}{
+		{
+			name: "the pull request could not be set up",
+			newH: func(t *testing.T) *harness {
+				h := newHarness(t, oldFlowCfg(t), nil)
+				h.deps.RetryDelay = time.Millisecond
+				h.provider.FailEnsureAfterCreate = 3
+				return h
+			},
+			status:  runstore.StatusInfraError,
+			outcome: runstore.OutcomeNone,
+			wantErr: true,
+		},
+		{
+			name: "the pull request was left looking like a draft",
+			newH: func(t *testing.T) *harness {
+				h := newHarness(t, "", nil)
+				h.provider.PartialEnsure = errors.New("drafts are unsupported on this repository")
+				h.provider.PartialEnsureDraft = true
+				return h
+			},
+			status:  runstore.StatusFailed,
+			outcome: runstore.OutcomeDraft,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec, err := tc.newH(t).run(t, implement("feature"), review("ship", 0))
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if rec.Status != tc.status || rec.Outcome != tc.outcome {
+				t.Fatalf("rec = %+v, want %s/%s", rec, tc.status, tc.outcome)
+			}
+			if rec.FailureClass != failure.GitProviderError {
+				t.Errorf("FailureClass = %q, want %q: the forge refused a call the run needed, and the class is the family a report prints for it", rec.FailureClass, failure.GitProviderError)
+			}
+		})
 	}
 }
 

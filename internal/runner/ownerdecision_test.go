@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -52,6 +53,9 @@ func TestOwnerDecisionStopsTheLoopWithoutAFixRound(t *testing.T) {
 	}
 	if rec.Halt == nil || rec.Halt.Reason != runstore.HaltOwnerDecision {
 		t.Errorf("halt = %+v, want the owner-decision halt", rec.Halt)
+	}
+	if rec.FailureClass != failure.Unclassified {
+		t.Errorf("failure_class = %q, want %q: no family in the design's §3 holds a stop a person rather than the code ends (haltClass)", rec.FailureClass, failure.Unclassified)
 	}
 	if rec.OwnerDecisions == nil || len(rec.OwnerDecisions.Decisions) != 1 {
 		t.Fatalf("owner decisions = %+v, want the one the round left", rec.OwnerDecisions)
@@ -202,6 +206,9 @@ func TestShippedVerdictWithAnOwnerDecisionWaitsOnThePR(t *testing.T) {
 	}
 	if rec.Halt != nil {
 		t.Errorf("halt = %+v, want none: the loop did not stop on the decision, Decide did", rec.Halt)
+	}
+	if rec.FailureClass != failure.Unclassified {
+		t.Errorf("failure_class = %q, want %q: the run is waiting on a person, which is no cause the vocabulary holds (Decide's owner gate)", rec.FailureClass, failure.Unclassified)
 	}
 	if rec.OwnerDecisions == nil || len(rec.OwnerDecisions.Decisions) != 1 {
 		t.Fatalf("owner decisions = %+v, want the one the shipped round carried", rec.OwnerDecisions)
