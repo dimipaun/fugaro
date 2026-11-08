@@ -124,8 +124,8 @@ func TestDocsEELicensed(t *testing.T) {
 	// paragraph says which features are born here, and so does the rule file's
 	// first sentence, so the phrase is one constant read against the two rather
 	// than two literals that can drift apart. D435/T20 puts the central
-	// orchestrators and the hosted MCP server in the folder from their first
-	// line (S0.3).
+	// orchestrators and the hosted MCP server in the folder from the start
+	// (S0.3).
 	const eeBornHere = "the central orchestrators and the hosted mcp server are born here"
 	for _, want := range []string{
 		"business-licensed features",

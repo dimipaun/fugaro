@@ -198,13 +198,13 @@ func TestDocsLicensingNamesTheMovedFeatures(t *testing.T) {
 // looking like core code that nobody had got round to licensing.
 func TestDocsLicensingNamesTheFeaturesBornInEE(t *testing.T) {
 	const path = "LICENSING.md"
+	// The sentence the README and the rule file state too, read here as one
+	// phrase: the statement, the folder's page and the folder's rule say the
+	// same thing about which features were born there.
+	const bornHere = "the central orchestrators and the hosted mcp server are born here"
 	flat := strings.ToLower(flattenDoc(readDoc(t, path)))
-	for _, want := range []string{
-		"the central orchestrators and the hosted mcp server are born here",
-	} {
-		if !strings.Contains(flat, strings.ToLower(want)) {
-			t.Errorf("%s never says %q: D435/T20 puts the central orchestrators and the hosted MCP server in the business-licensed folder from their first line, so a reader who meets `fugaro orchestrator` has to learn they are paid here rather than conclude they are core code nothing has moved", path, want)
-		}
+	if !strings.Contains(flat, bornHere) {
+		t.Errorf("%s never says %q: D435/T20 puts the central orchestrators and the hosted MCP server in the business-licensed folder from the start, so a reader who meets `fugaro orchestrator` has to learn here that they are paid rather than conclude they are core code nothing has moved", path, bornHere)
 	}
 }
 
