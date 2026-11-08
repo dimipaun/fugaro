@@ -3,8 +3,8 @@
 **Status: spike. Docs only: no code, no grant written, no write to any cloud.** It resolves the
 UNVERIFIED the plan left open — *"D1550's Billing grant"* (reconciliation §6) — and answers the six
 questions the owner asked of it. Everything below is either a quotation from Google's own
-documentation (by URL, in §7), a fact read out of this repository (by path and symbol), or marked
-**UNVERIFIED**.
+documentation (by URL, in §7), a fact read out of this repository (by path and symbol), a fact read from
+the API itself by the owner's probe and dated where it appears (§8), or marked **UNVERIFIED**.
 
 **The two facts this spike could not read for want of a credential were verified by the owner's own
 probe on 2026-11-08** (§1.4, §1.5, and the record in §8): their OAuth login, `X-Goog-User-Project` naming
