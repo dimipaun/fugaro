@@ -403,6 +403,49 @@ type Spec struct {
 	// could be gated. The gate lands with the flag, before any launch can
 	// write the field.
 	Mutate []Mutate `json:"mutate,omitempty"`
+	// FollowUpOf is the run a triage follow-up was filed from
+	// (docs/post-review-triage, decision D1843): the parent run's ID and the
+	// keys of the deferred findings this task was filed for. The CLI writes
+	// it out of the parent's own record — a job writes only its result
+	// record and never files a follow-up (F6, F24) — and nothing in a run
+	// reads it: it is how a later reader tells work a run left behind from
+	// work somebody asked for.
+	//
+	// Nil for every task that is not one of those, which is the common case
+	// and every spec written before this field, so a spec carrying none is
+	// byte-identical to what the release before it wrote and is still read
+	// by a runner that has never heard of the field. A task that carries one
+	// needs a runner that knows it: Parse decodes with DisallowUnknownFields,
+	// so an older runner refuses the whole spec — the skew every new task
+	// field has, and the reason the launcher gates a launch that would set
+	// it, the way rigor's own request is gated.
+	//
+	// The parent is checked (Validate below) and the keys are not: a key
+	// names a finding of the parent's own record — a hash of a file and a
+	// summary (D1850) — and is only ever compared with the keys that record
+	// carries, never joined into a path, a command or a prompt.
+	FollowUpOf *FollowUpOf `json:"follow_up_of,omitempty"`
+	// Debt marks the same task as one filed from a triage deferral rather
+	// than asked for: what `fugaro runs ls --debt` lists. False is every
+	// task that is not one, and every spec written before the field, so a
+	// spec carrying no mark is byte-identical to the previous release's.
+	Debt bool `json:"debt,omitempty"`
+}
+
+// FollowUpOf is the parent a triage follow-up came from: the run whose
+// review deferred findings this task settles, and the keys of the deferred
+// findings it was filed for (Spec.FollowUpOf, D1843).
+type FollowUpOf struct {
+	// Run is the parent's run ID: the run whose record carries the deferred
+	// findings. It is checked by Validate, since a follow-up that names no
+	// run names nothing a reader could look the findings up in.
+	Run string `json:"run"`
+	// Keys are the parent record's own finding keys (D1850) this task
+	// carries: one task per group, and the ungrouped case is one key. They
+	// are opaque here — compared for equality with the record's keys, never
+	// joined into a path, a command or a prompt — so unlike every other list
+	// in this spec they are carried through as written.
+	Keys []string `json:"keys,omitempty"`
 }
 
 // MaxOwnerRuledBytes bounds a task's owner ruling (Spec.OwnerRuled, fugaro
@@ -1115,6 +1158,13 @@ func (s *Spec) Validate() error {
 		if err := ValidateOwnerRuled(s.OwnerRuled); err != nil {
 			bad("task spec: %v", err)
 		}
+	}
+	// The parent a triage follow-up was filed from (Spec.FollowUpOf, D1843).
+	// It names another run, and a parent that is not one names nothing a
+	// reader could find the deferred findings in; the keys beside it are
+	// opaque and are not judged here.
+	if s.FollowUpOf != nil && !runIDRE.MatchString(s.FollowUpOf.Run) {
+		bad("task spec: follow_up_of.run %q is not a run ID", s.FollowUpOf.Run)
 	}
 	if s.Branch != "" && !BranchRE.MatchString(s.Branch) {
 		bad("task spec: branch %q must be fugaro/<run-id>", s.Branch)
