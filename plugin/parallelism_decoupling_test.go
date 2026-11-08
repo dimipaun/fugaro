@@ -105,6 +105,12 @@ func TestParallelismSkillHasDecouplingSection(t *testing.T) {
 // that "at least": it may raise the mode a run resolves and never lower it. The
 // mode a task resolves is read from the settings and matched to the task's
 // footprint by the agent itself (F18), so the text has to name the read.
+//
+// The same table says what the mode does to the pass (D1818), and the two rows
+// that decide whether the pass runs at all are the two a later edit is likeliest
+// to smooth away: Hotfix skips it, and Critical takes a contract only where it is
+// fully specified. Both are pinned here rather than left to CD5, which owns the
+// table's agreement with `internal/rigor` and not the pass's own behaviour.
 func TestParallelismSkillContractTaskRigor(t *testing.T) {
 	text := decouplingText(t)
 	for _, want := range []string{
@@ -114,6 +120,15 @@ func TestParallelismSkillContractTaskRigor(t *testing.T) {
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the decoupling text never says %q, so a contract can be launched below the rigor of what depends on it", want)
+		}
+	}
+	for _, want := range []string{
+		"skip the pass",
+		"fully specified contracts",
+		"the end-to-end test that proves the wiring",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the decoupling text never says %q, so a mode's own behaviour towards the pass is gone: Hotfix skips it and Critical takes a contract only where it is fully specified", want)
 		}
 	}
 }
@@ -168,8 +183,8 @@ func TestParallelismSkillIsGeneric(t *testing.T) {
 
 	// The checkout's own trees, read off the disk rather than listed here: a
 	// pass that named one of them would be written for this repository. docs/
-	// is left out on purpose — it is where a plan and its contract document live
-	// in any repository, and the pass points at both.
+	// is left out on purpose — it is where a contract document lives in any
+	// repository, and the pass points at `docs/contracts/`.
 	entries, err := os.ReadDir("..")
 	if err != nil {
 		t.Fatal(err)
