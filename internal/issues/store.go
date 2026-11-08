@@ -64,7 +64,9 @@ func (s *Store) Save(i Issue) error {
 	return s.write(name, data)
 }
 
-// Get reads the issue named by ref: its number, or its local ID (F23).
+// Get reads the issue named by ref: its number, or its local ID (F23). It
+// looks through List, so a record beside it that does not read back does not
+// stop it; that record is simply not found.
 func (s *Store) Get(ref string) (Issue, error) {
 	number, localID, err := parseRef(ref)
 	if err != nil {
@@ -83,9 +85,13 @@ func (s *Store) Get(ref string) (Issue, error) {
 }
 
 // List reads every issue in the folder, ordered by number with the ones that
-// have no number yet first, so a caller prints a stable list. A file that is
-// not one of ours is left alone; one of ours that does not parse is an error
-// rather than an issue that quietly disappears.
+// have no number yet first, so a caller prints a stable list.
+//
+// A file that is not one of ours is left alone, and so is one of ours that does
+// not read back: a hand-edit or a record from a newer version is one issue a
+// person can still open, while failing the whole folder would take `list`,
+// `show`, `dismiss` and every upload down with it — and there is no command
+// that removes one. It stays where it is.
 func (s *Store) List() ([]Issue, error) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -101,11 +107,11 @@ func (s *Store) List() ([]Issue, error) {
 		}
 		data, err := os.ReadFile(filepath.Join(s.dir, e.Name()))
 		if err != nil {
-			return nil, fmt.Errorf("issues: reading %s: %w", e.Name(), err)
+			continue
 		}
 		i, err := Unmarshal(data)
 		if err != nil {
-			return nil, fmt.Errorf("issues: %s: %w", e.Name(), err)
+			continue
 		}
 		out = append(out, i)
 	}

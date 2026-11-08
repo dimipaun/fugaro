@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"strconv"
 	"strings"
@@ -238,9 +239,9 @@ func Marshal(i Issue) ([]byte, error) {
 	b.WriteString(headerFence + "\n")
 	b.Write(head)
 	b.WriteString(headerFence + "\n")
-	writeSection(&b, "Summary", i.Summary)
-	writeSection(&b, "Diagnosis", i.Diagnosis)
-	writeSection(&b, "Steps", i.Steps)
+	writeTextSection(&b, "Summary", i.Summary)
+	writeTextSection(&b, "Diagnosis", i.Diagnosis)
+	writeTextSection(&b, "Steps", i.Steps)
 	b.WriteString("## Log\n\n")
 	for _, excerpt := range i.Logs {
 		writeFenced(&b, excerpt)
@@ -261,6 +262,13 @@ func Unmarshal(data []byte) (Issue, error) {
 	dec.KnownFields(true)
 	if err := dec.Decode(&i); err != nil {
 		return Issue{}, fmt.Errorf("issues: the record's header: %w", err)
+	}
+	// The header has to be the only document in it: YAML's `...` ends one, and
+	// a field written after it would otherwise be dropped without a word, which
+	// is the opposite of reading strictly (F23).
+	var rest any
+	if err := dec.Decode(&rest); !errors.Is(err, io.EOF) {
+		return Issue{}, errors.New("issues: the record's header carries more than one document")
 	}
 	if i.Version != RecordVersion {
 		return Issue{}, fmt.Errorf("issues: the record is version %d, and this fugaro reads %d", i.Version, RecordVersion)
@@ -298,6 +306,10 @@ var bodySections = []string{"Summary", "Diagnosis", "Steps", "Log"}
 // define, a missing one, a repeat and a section out of order are all errors:
 // the body is a shape this package writes, and a file that is not that shape
 // is not one to guess at.
+//
+// A text section holds exactly one block, which is what makes the body total:
+// the text is the agent's own words, so it can carry a line that reads like a
+// heading or like a fence, and only a block of its own keeps it whole.
 func parseBody(body []byte) (summary, diagnosis, steps string, logs []string, err error) {
 	sections, err := splitSections(string(body))
 	if err != nil {
@@ -311,11 +323,22 @@ func parseBody(body []byte) (summary, diagnosis, steps string, logs []string, er
 			return "", "", "", nil, fmt.Errorf("issues: the record's section %d is %q, want %q", idx+1, s.name, bodySections[idx])
 		}
 	}
-	logs, err = parseExcerpts(sections[3].lines)
+	texts := make([]string, len(bodySections)-1)
+	for idx, name := range bodySections[:len(bodySections)-1] {
+		blocks, err := parseExcerpts(sections[idx].lines)
+		if err != nil {
+			return "", "", "", nil, err
+		}
+		if len(blocks) != 1 {
+			return "", "", "", nil, fmt.Errorf("issues: the record's %s section holds %d blocks, want 1", name, len(blocks))
+		}
+		texts[idx] = blocks[0]
+	}
+	logs, err = parseExcerpts(sections[len(bodySections)-1].lines)
 	if err != nil {
 		return "", "", "", nil, err
 	}
-	return trimBlank(sections[0].lines), trimBlank(sections[1].lines), trimBlank(sections[2].lines), logs, nil
+	return texts[0], texts[1], texts[2], logs, nil
 }
 
 // bodySection is one `## <name>` heading and the lines under it.
@@ -325,7 +348,7 @@ type bodySection struct {
 }
 
 // splitSections cuts the body at its `## ` headings, stepping over the fences
-// of the Log section so a log's own text cannot look like a heading.
+// so a section's own text cannot look like a heading.
 func splitSections(body string) ([]bodySection, error) {
 	var sections []bodySection
 	var open string
@@ -352,8 +375,8 @@ func splitSections(body string) ([]bodySection, error) {
 	return sections, nil
 }
 
-// parseExcerpts reads the Log section: one fenced block per excerpt, in the
-// order they were written.
+// parseExcerpts reads one section's blocks: one fenced block per excerpt, in
+// the order they were written.
 func parseExcerpts(lines []string) ([]string, error) {
 	var out []string
 	for i := 0; i < len(lines); {
@@ -379,25 +402,25 @@ func parseExcerpts(lines []string) ([]string, error) {
 	return out, nil
 }
 
-// writeSection writes one text section: its heading, a blank line, the text.
-func writeSection(b *strings.Builder, name, text string) {
+// writeTextSection writes one text section: its heading, then the text in a
+// fence of its own.
+func writeTextSection(b *strings.Builder, name, text string) {
 	b.WriteString("## " + name + "\n\n")
-	if text != "" {
-		b.WriteString(text)
-		b.WriteString("\n")
-	}
-	b.WriteString("\n")
+	writeFenced(b, text)
 }
 
-// writeFenced writes one log excerpt in a fence longer than any run of
-// backticks in it, so the excerpt cannot end its own block.
+// writeFenced writes one block of free text — a section's text, a log excerpt —
+// in a fence longer than any run of backticks in it, so the text cannot end its
+// own block.
 func writeFenced(b *strings.Builder, text string) {
 	fence := strings.Repeat("`", max(3, longestBacktickRun(text)+1))
 	b.WriteString(fence + "\n")
 	b.WriteString(text)
-	if !strings.HasSuffix(text, "\n") {
-		b.WriteString("\n")
-	}
+	// Always, even when the text already ends with one: the closing fence needs
+	// a line of its own, and the reader takes back exactly the newline written
+	// here by joining the lines it read, which is what tells a text that ends
+	// with a newline from one that does not.
+	b.WriteString("\n")
 	b.WriteString(fence + "\n\n")
 }
 
@@ -426,18 +449,6 @@ func longestBacktickRun(s string) int {
 		longest = max(longest, run)
 	}
 	return longest
-}
-
-// trimBlank drops the blank lines a section is padded with and joins what is
-// left.
-func trimBlank(lines []string) string {
-	for len(lines) > 0 && strings.TrimSpace(lines[0]) == "" {
-		lines = lines[1:]
-	}
-	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
-		lines = lines[:len(lines)-1]
-	}
-	return strings.Join(lines, "\n")
 }
 
 // runCommandRE is what a command name may be in a run stem: the shape
@@ -543,19 +554,21 @@ var commandValueRE = regexp.MustCompile(`[/\\~]|://|[._@:=]|[0-9]`)
 func RedactCommand(argv []string) string {
 	out := make([]string, 0, len(argv))
 	for idx, arg := range argv {
-		switch {
-		case idx == 0:
-			out = append(out, oneLine(arg))
-		case strings.HasPrefix(arg, "-"):
+		if idx > 0 && strings.HasPrefix(arg, "-") {
 			name, value, ok := strings.Cut(arg, "=")
 			if !ok {
 				out = append(out, oneLine(arg))
 				continue
 			}
 			out = append(out, oneLine(name)+"="+redactValue(value))
-		default:
-			out = append(out, redactValue(arg))
+			continue
 		}
+		// The command word goes through the same rule: a user who ran the
+		// binary by path has that path — their home directory and their user
+		// name — in os.Args[0] (the rule internal/cli already applies to
+		// os.Args[0]), and this header is the one place the whole team reads.
+		// Run by name, `fugaro` survives.
+		out = append(out, redactValue(arg))
 	}
 	return redact.Text(strings.Join(out, " "), nil)
 }

@@ -150,6 +150,13 @@ func TestStoreListsSavedIssues(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(s.Dir(), "notes.md"), []byte("not a record\n"), 0o600); err != nil {
 		t.Fatalf("seeding a foreign file: %v", err)
 	}
+	// So is one of ours that cannot be read: a hand-edit or a file from a
+	// newer version must not take list, show and dismiss down with it, and
+	// there is no command that deletes one. The file stays where it is.
+	junk := filepath.Join(s.Dir(), "0009-update-20261107183012-48213.md")
+	if err := os.WriteFile(junk, []byte("---\nsurprise: 1\n---\n\n## Summary\n\nx\n"), 0o600); err != nil {
+		t.Fatalf("seeding an unreadable record: %v", err)
+	}
 	got, err := s.List()
 	if err != nil {
 		t.Fatalf("listing: %v", err)
@@ -159,6 +166,12 @@ func TestStoreListsSavedIssues(t *testing.T) {
 	}
 	if got[0].Number != 0 || got[1].Number != 7 {
 		t.Errorf("List is not ordered by number: %d, %d", got[0].Number, got[1].Number)
+	}
+	if _, err := s.Get("7"); err != nil {
+		t.Errorf("an unreadable record beside it broke Get: %v", err)
+	}
+	if _, err := os.Stat(junk); err != nil {
+		t.Errorf("the unreadable record was removed rather than skipped: %v", err)
 	}
 }
 

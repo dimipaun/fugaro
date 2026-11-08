@@ -33,10 +33,13 @@ func issueSample() Issue {
 		Regression:    true,
 		OriginalURL:   "https://github.com/dimipaun/fugaro/issues/3",
 		Notified:      true,
-		Summary:       "the update stops half way",
-		Diagnosis:     "the provider cache is stale\nand the run gives up",
-		Steps:         "1. run fugaro update\n2. wait for the first apply",
-		Logs:          []string{"line one\nline two", "a second excerpt"},
+		// The body is free text the agent wrote, so it can hold a line that
+		// looks like one of the record's own headings, one that looks like a
+		// fence, and an excerpt cut from a log file keeps its last newline.
+		Summary:   "the update stops half way\n\n## Notes\n\nand the second apply hangs",
+		Diagnosis: "the provider cache is stale\n```\nand the run gives up",
+		Steps:     "1. run fugaro update\n2. wait for the first apply",
+		Logs:      []string{"line one\nline two\n", "a second excerpt"},
 	}
 }
 
@@ -82,6 +85,17 @@ func TestIssueRoundTrip(t *testing.T) {
 			t.Errorf("the record does not carry %q:\n%s", want, data)
 		}
 	}
+	// The body is free text the agent wrote (spec.md), so it can hold a line
+	// that reads like a heading; the round trip above is what pins that it comes
+	// back whole rather than turning into a section of its own.
+	if !strings.Contains(got.Summary, "## Notes") {
+		t.Errorf("a heading inside the summary did not survive:\n%s", data)
+	}
+	// An excerpt is usually cut from a log file and keeps the newline it ends
+	// with, which the codec has to give back exactly.
+	if !strings.HasSuffix(got.Logs[0], "\n") {
+		t.Errorf("the trailing newline of an excerpt did not survive: %q", got.Logs[0])
+	}
 }
 
 func TestIssueRejectsUnknownHeaderField(t *testing.T) {
@@ -93,15 +107,25 @@ func TestIssueRejectsUnknownHeaderField(t *testing.T) {
 	cases := []struct {
 		name string
 		head string
+		want string
 	}{
-		{"a field this record does not define", head + "\nsurprise: 1"},
-		{"no class at all", strings.Replace(head, "class: fugaro\n", "", 1)},
-		{"a status outside the three", strings.Replace(head, "status: pending", "status: resolved", 1)},
+		{"a field this record does not define", head + "\nsurprise: 1", "field surprise"},
+		{"no class at all", strings.Replace(head, "class: fugaro\n", "", 1), "is not a class"},
+		{"a status outside the three", strings.Replace(head, "status: pending", "status: resolved", 1), "is not a status"},
+		// YAML's `...` ends a document, so a second one after it would be
+		// dropped without a word — the opposite of decoding strictly.
+		{"a second document after the header", head + "\n...\nsurprise: 1", "more than one document"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if _, err := Unmarshal([]byte(c.head + "\n---\n" + body)); err == nil {
+			_, err := Unmarshal([]byte(c.head + "\n---\n" + body))
+			if err == nil {
 				t.Fatalf("a header with %s was accepted:\n%s", c.name, c.head)
+			}
+			// Pinned, so a case that is refused for an unrelated reason does
+			// not pass as a case that is refused for its own.
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("refused for another reason, want %q in: %v", c.want, err)
 			}
 		})
 	}
@@ -143,5 +167,16 @@ func TestIssueFailedCommandIsRedacted(t *testing.T) {
 	}
 	if strings.ContainsAny(got, "\n\r") {
 		t.Errorf("the redacted command spans lines, which the header cannot hold: %q", got)
+	}
+	// The command word is redacted too: a user who ran the binary by path has
+	// that path — their home directory and their user name — in os.Args[0]
+	// (internal/cli's own rule for os.Args[0]), and the header is the one place
+	// the whole team reads. Run by name, `fugaro` survives, as asserted above.
+	byPath := RedactCommand([]string{"/home/ana/.local/bin/fugaro", "update"})
+	if strings.Contains(byPath, "/home/ana") {
+		t.Errorf("the redacted command kept the path it was run by: %s", byPath)
+	}
+	if !strings.Contains(byPath, "update") {
+		t.Errorf("the redacted command lost the subcommand: %s", byPath)
 	}
 }
