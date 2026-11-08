@@ -925,6 +925,7 @@ test_endpoint_override_shapes_are_refused() {
   for value in \
     "https://api.bitbucket.org/2.0" \
     "http://127.0.0.1:1@evil.example/2.0" \
+    "http://127.0.0.1:8080/a@evil.example/2.0" \
     "http://localhost:8080/2.0" \
     "http://127.0.0.1:not-a-port/2.0" \
     "http://127.0.0.1:8080/2.0?x=1"; do
