@@ -190,7 +190,7 @@ func TestStagedCIBuildsBothEditions(t *testing.T) {
 	// --- The trigger surface ------------------------------------------------
 	// A manual dispatch and nothing else (owner's ruling 2026-11-07: CI is
 	// dispatched by hand, in batches). The decode above refuses an unknown key
-	// anywhere in the file, so a push or pull_request trigger cannot slip back in.
+	// anywhere in the file, so a push trigger cannot slip back in.
 	triggers := eeEditionTriggers(t, path, wf.On)
 	var names []string
 	for _, tr := range triggers {

@@ -862,7 +862,7 @@ func (e *initEngine) fillCredentialsAudience(ctx context.Context) (bool, error) 
 	// because this plan has none — every resource in it is in the state already,
 	// and the cover consults that list only for a change that carries an import
 	// (tf.Cover.NotCovered).
-	gated, err := r.gateStep(ctx, e.t, nil, r.coverOf(r.notCovered))
+	gated, err := r.gateStep(ctx, e.t, nil, r.coverOf(r.coverReasons))
 	if err != nil {
 		return false, err
 	}
