@@ -592,7 +592,7 @@ console 0.118.0), while `report`'s own `--since` default stays 30 days —
 row carries the module's own `TABLE_GAP_SENTENCE` — the gap row's own sentence — which is not
 exported: it is the sentence a row draws, not a vocabulary anything reads.
 
-### 2.5 Project — `console/src/renderer/screens/projects.ts`
+### 2.5 Project — `console/src/renderer/screens/projects.ts`, `managed.ts`, `accountkeys.ts`, `policynotes.ts`, `retirements.ts`, `credentialsservice.ts`
 
 Seven panels of the tab's first read, each `section.projects-panel` carrying `data-panel`,
 `data-state` and (where there is one) `data-operation`: `caps`, `kill`, `repositories`,
@@ -648,6 +648,11 @@ a quarter of a minute. A screen this session has already read is drawn at once, 
 | Secrets | `projects-secrets`, `projects-secret-list`, `projects-secret`, `projects-secret-name`, `projects-secret-scope`, `projects-secret-versions`, `projects-secret-latest`, `projects-secret-label`, `projects-secret-label-key`, `projects-secret-label-value`, `projects-secret-allowed`, `projects-secret-bound`, `projects-secret-bound-word`, `projects-secrets-managed` |
 | Settings | `projects-settings`, `projects-settings-list`, `projects-settings-row`, `projects-settings-key`, `projects-settings-scope`, `projects-settings-value`, `projects-settings-wins`, `projects-settings-state`, `projects-settings-owner-word`, `projects-settings-owner`, `projects-settings-owner-generic`, `projects-settings-pencil`, `projects-settings-editor`, `projects-settings-editor-outcome` |
 | Models | `projects-models`, `projects-models-body`, `projects-models-heading`, `projects-models-route-list`, `projects-models-route`, `projects-models-route-name`, `projects-models-route-kind`, `projects-models-route-host`, `projects-models-route-fee`, `projects-models-claims`, `projects-models-claims-word`, `projects-models-claim`, `projects-models-to`, `projects-models-to-word`, `projects-models-to-every`, `projects-models-to-none`, `projects-models-allow`, `projects-models-route-base`, `projects-models-route-note`, `projects-models-list`, `projects-models-row`, `projects-models-id`, `projects-models-route-of`, `projects-models-input`, `projects-models-output`, `projects-models-catalog`, `projects-models-catalog-checked`, `projects-models-catalog-age`, `projects-models-catalog-stale` |
+| Managed state | `projects-managed`, `projects-managed-marks`, `projects-managed-marks-head`, `projects-managed-marks-list`, `projects-managed-trail`, `projects-managed-trail-head`, `projects-managed-trail-list`, `projects-managed-trail-state`, `projects-managed-term`, `projects-managed-value`, `projects-managed-word`, `projects-managed-number` |
+| Account keys | `projects-account-keys`, `projects-account-keys-title`, `projects-account-keys-state`, `projects-account-keys-source`, `projects-account-keys-because`, `projects-account-keys-body`, `projects-account-keys-list`, `projects-account-keys-row`, `projects-account-keys-key`, `projects-account-keys-stage`, `projects-account-keys-value` |
+| Policy notes | `policy-notes`, `policy-notes-project`, `policy-notes-block`, `policy-notes-heading`, `policy-notes-source`, `policy-notes-state`, `policy-notes-because`, `policy-notes-members`, `policy-notes-member`, `policy-notes-member-title`, `policy-notes-value`, `policy-notes-empty`, `policy-notes-count`, `policy-notes-number`, `policy-notes-branch`, `policy-notes-list`, `policy-notes-account`, `policy-notes-account-name`, `policy-notes-repo`, `policy-notes-model`, `policy-notes-entry`, `policy-notes-default`, `policy-notes-entry-name`, `policy-notes-entry-kind`, `policy-notes-entry-image`, `policy-notes-entry-repo`, `policy-notes-entry-path`, `policy-notes-entry-branch`, `policy-notes-checks`, `policy-notes-check`, `policy-notes-check-state`, `policy-notes-check-id`, `policy-notes-check-severity`, `policy-notes-check-problem`, `policy-notes-check-fix`, `policy-notes-others`, `policy-notes-others-lead`, `policy-notes-note` |
+| Retirements | `projects-retirements`, `projects-retirements-record`, `projects-retirements-record-head`, `projects-retirements-set-head`, `projects-retirements-record-list`, `projects-retirements-set-list`, `projects-retirements-row`, `projects-retirements-row-facts`, `projects-retirements-state`, `projects-retirements-term`, `projects-retirements-value`, `projects-retirements-word`, `projects-retirements-number`, `projects-retirements-secret` |
+| Credentials service | `projects-credentials-service`, `projects-credentials-service-title`, `projects-credentials-service-state`, `projects-credentials-service-source`, `projects-credentials-service-because`, `projects-credentials-service-no-check`, `projects-credentials-service-shape`, `projects-credentials-service-list`, `projects-credentials-service-row`, `projects-credentials-service-check-state`, `projects-credentials-service-check-id`, `projects-credentials-service-facts`, `projects-credentials-service-term`, `projects-credentials-service-value` |
 
 `data-*`: `data-theme`; `data-panel`; `data-state` — **the panel states are
 `read`, `unavailable`, `not-built`**; `data-operation`
@@ -767,8 +772,115 @@ hook is emitted by the code and reachable by no feed today; it becomes reachable
 `complete: true` and a non-empty `note` can arrive together, which is why it stays in the
 vocabulary rather than being deleted.
 
+**Five sections the managed-screens work adds stand on the same tab** (the plan's CM5 to
+CM11, D1488), each with its own read, its own busy mark and its own refusal, started in
+parallel with the three reads above and painted as its answer lands: the **managed state**
+with its audit trail, the **review account keys**, the **policy notes**, the **last update's
+retirements** and the **credentials service's state**. Two of them are drawn as
+`section.projects-panel` and are siblings of the panels above — `managed` and `retirements`,
+each with its own `data-panel` and its own command as the `data-operation` — and the three
+others stand as sections of their own (`section.projects-account-keys`,
+`section.projects-credentials-service`, and the policy panel's **body**,
+`div.policy-notes`), because they are filled by a read the tab does not make: the keys are
+the tab's own `settings --json`, and the policy notes and the credentials service are the
+`project policy show --json` and `doctor --json` reads CM10 wires. The tab's first paint is
+untouched by all five: jobs are not in it, and neither are these.
+
+**A section's state is a word, and it is never a tone.** `span.projects-state` names it on
+the two panel-drawn sections, `span.projects-account-keys-state`,
+`span.projects-credentials-service-state` and `span.policy-notes-state` on the three others,
+and each draws `read`/`not read` (the notes' blocks draw `read`/`not read` too, and the
+node's block says **`no policy`** where the CLI answered that the project has none — a
+different fact from a read that did not answer). `div.policy-notes-block` carries its own
+`data-state`, so a rule may key a block's state on it; **no rule keys a state on a tone**,
+and the panel's own left rule stays the tab's (§3.5).
+
+**The managed section is the state, the marks and the trail.** `div.projects-managed` is its
+host, `section.projects-panel` its panel — the state word, the source line and the refusal
+the tab's other panels draw — and the two blocks under it are its own: `section.projects-managed-marks`
+(a `dl.projects-managed-marks-list` of `dt.projects-managed-term`/`dd.projects-managed-value`
+pairs whose two facts are the managed word, `dd.projects-managed-word`, and the version,
+`dd.projects-managed-number`) and `section.projects-managed-trail` (the day, the count and
+the newest record's five members, or its own sentence in
+`p.projects-managed-trail-state`). **A state and a figure are never drawn together**
+(§6.21): a document that carried an `audit_state` draws that sentence and no day and no
+count, because `audit_count: 0` is what "the records could not be read" and "nothing was
+recorded" both look like in a count. Each block is a box of its own — the panel's is the
+tab's rule, and these two are siblings of it rather than children.
+
+**The account keys are one row per key**: `li.projects-account-keys-row` with
+`span.projects-account-keys-key`, the stage it belongs to when it carries one
+(`span.projects-account-keys-stage`) and its value (`span.projects-account-keys-value`,
+which is an account name through the `person` class or one of the module's own words,
+`unset` and the stage word). The panel draws **no control of any kind**: these are the keys
+`settings set` writes, and the section is read-only (D1471).
+
+**The policy notes are two blocks and a line.** `div.policy-notes` is the panel's body:
+`p.policy-notes-project`, `div.policy-notes-block` for the node and one for the checks —
+each with `h2.policy-notes-heading`, `p.policy-notes-source`, `span.policy-notes-state` and
+its `p.policy-notes-because` sentence, or its content — and the one `p.policy-notes-note`
+saying where a diff is printed rather than drawn (D1482). The node's block holds
+`div.policy-notes-members`: five `div.policy-notes-member`s, each an `h3` title, a value or
+a `span.policy-notes-count`, and — for the three that are lists — a `ul.policy-notes-list`
+of `li.policy-notes-repo`, `li.policy-notes-account` (`span.policy-notes-account-name` and
+its repositories) or `li.policy-notes-entry` (the `span.policy-notes-default` mark and the
+entry's name, kind, image, repository, path and branch), with the word
+`span.policy-notes-empty` where a list the document answered empty would be a box with a `0`
+and nothing else. The checks' block holds `span.policy-notes-others` and
+`span.policy-notes-others-lead` — the count of the checks `doctor` returned that this
+section does not draw — and a `ul.policy-notes-checks` of `li.policy-notes-check`, each with
+`span.policy-notes-check-state`, `-id`, `-severity`, `-problem` and `-fix`.
+
+**A check's `data-ok` is not its state word.** `li.policy-notes-check` carries the
+document's own boolean — `true`, `false`, or `unstated` where no `ok` arrived — and the word
+beside it is the **CLI's own classification** read out of `severity`: `ok` for a check the
+document says passed, `noted` for one `doctor` reports with `severity: "info"` and does not
+fail on, `failing` for any other. `false` therefore covers both a measurement and a
+finding, so a rule painted on `[data-ok='false']` would draw a healthy installation's
+informational check as a failure — which is what reading `ok` alone did before the review of
+2026-11-07 — and the stylesheet colours no `[data-ok]` at all (the same attribute and the
+same words are the credentials service's rows': `li.projects-credentials-service-row` with
+`span.projects-credentials-service-check-state`).
+
+**The retirements are a record and a set.** `section.projects-retirements-record` is the
+block the `retirements` panel appends below itself: an `h3`, a `dl.projects-retirements-record-list`
+of the time and the runs the registry held in flight, then either the sentence for an update
+that retired nothing (`p.projects-retirements-state`) or an `h4.projects-retirements-set-head`
+and a `ul.projects-retirements-set-list` of `li.projects-retirements-row`. A row is a
+`dl.projects-retirements-row-facts` of `dt.projects-retirements-term`/`dd.projects-retirements-value`
+pairs — one drawn only where the record carried the fact, so a row never says `kept: —` — the
+protected flag as a word (`dd.projects-retirements-word`) and the secret's **name**, drawn as
+itself in `dd.projects-retirements-secret` with the note saying that is what it is (D1485).
+
+**The credentials service is one line per check `doctor` returned**:
+`section.projects-credentials-service` with its title, its state word, its source line, its
+refusal (`p.projects-credentials-service-because`), the sentence for an installation whose
+CLI predates the check (`p.projects-credentials-service-no-check`) and
+`ul.projects-credentials-service-list` of `li.projects-credentials-service-row`, each with
+the state word, the check's id (`span.projects-credentials-service-check-id`) and a
+`dl.projects-credentials-service-facts` of the CLI's own severity, problem and fix. A
+document that answers with a shape this build does not read says so
+(`p.projects-credentials-service-shape`) rather than drawing nothing: the section re-derives
+none of it.
+
+**What the stylesheet draws for the five.** The block headings are one step below the
+section's title (`h3.projects-managed-marks-head`, `h3.projects-managed-trail-head`,
+`h3.projects-retirements-record-head`, `h4.projects-retirements-set-head`,
+`h2.policy-notes-heading`, `h3.policy-notes-member-title`); a `dt` is the muted word its
+value is read against; a `dd` is the value at the row size and **not** mono, because a value
+is a slug, a command or a sentence and only the ones compared character by character are
+mono (§3.7 — the keys, the ids, the branches, the repositories, the models and the policy
+notes' two source lines); a word of the console's own in a value's place
+(`dd.projects-managed-word`, `dd.projects-retirements-word`,
+`span.projects-credentials-service-check-state`, `span.policy-notes-check-state`,
+`span.policy-notes-default`) takes the state words' uppercase treatment and **no tone**; and
+the figures — `projects-managed-number`, `projects-retirements-number`,
+`policy-notes-number` — are the `numberCell` hooks §2.10's alignment rule names.
+
 Readings: money (`usd`) for the reserve, the caps and the models panel's two prices; counts
-for the panel counts, the secret versions and the price catalog's age in days; a percent for
+for the panel counts, the secret versions, the price catalog's age in days, the managed
+section's version and trail count, the retirements' runs in flight and the policy notes'
+member counts and undrawn checks; a percent for
 a route's fee. **No reading is a time on this screen** — every date is text, and no cell
 of this screen carries a rigor mode: the run detail owns that answer (§2.6), and the jobs
 row that used to repeat it went with the run list.
@@ -1050,6 +1162,13 @@ redesign moved the Coordinator's figure to a rule of its own in `flight-deck.css
 on the Coordinator, the prepended class on the other four) is the single hook giving
 **tabular figures** and right alignment, so §6.1 rule 2's "tabular figures, right-aligned
 numerics" is satisfiable on those five screens.
+
+**The five managed sections of §2.5 draw figures too, and each of their `numberCell`s
+prepends its own file's hook** — `projects-managed-number` (`managed.ts`),
+`projects-retirements-number` (`retirements.ts`) and `policy-notes-number`
+(`policynotes.ts`) — so the one alignment rule reaches them as well. The hook is the
+**helper's** and not the screen's, which is what lets a section drawn by a file of its own
+carry the guarantee the screen it lands on has.
 
 **The degraded screen's `numberCell` (`degraded.ts`) prepends no class at all** — it is
 `cell(parent, factory, tag, ...classes)` with no `-num` — so every figure on the degraded

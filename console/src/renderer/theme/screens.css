@@ -94,7 +94,9 @@ h1.unavailable-headline {
 /* A panel's title is the medium step, a table's header the small one
  * (design section 3.7). */
 h2.spend-people-title,
-h2.projects-title {
+h2.projects-title,
+h2.projects-account-keys-title,
+h2.projects-credentials-service-title {
   font-size: var(--font-size-md);
   font-weight: var(--weight-semibold);
 }
@@ -122,6 +124,14 @@ p.projects-because,
 p.projects-note,
 p.projects-accounts-note,
 p.projects-warning,
+p.projects-managed-trail-state,
+p.projects-account-keys-because,
+p.projects-retirements-state,
+p.projects-credentials-service-because,
+p.projects-credentials-service-no-check,
+p.projects-credentials-service-shape,
+p.policy-notes-because,
+p.policy-notes-note,
 p.run-warning,
 p.run-log-note,
 p.run-log-refused,
@@ -166,6 +176,13 @@ p.live-review-capped {
  * screens whose figure has no rule of its own, and a step that writes one stops
  * naming it here.
  *
+ * **The managed sections' figures are here too** (the managed-screens plan's
+ * CM11). Each of the three that draws a figure has a `numberCell` of its own
+ * file, and each of those prepends its own hook -- `projects-managed-number`
+ * (`managed.ts`), `projects-retirements-number` (`retirements.ts`) and
+ * `policy-notes-number` (`policynotes.ts`) -- so the one alignment rule reaches
+ * them and no section needs a copy of it.
+ *
  * `min-width` is in `ch` and stated here rather than as a token: like the rail's
  * two widths it is a fact about the drawing, and section 3.1's vocabulary is
  * closed -- the token test asserts `tokens.css` is exactly that table, so a task
@@ -175,7 +192,10 @@ p.live-review-capped {
 .live-num,
 .spend-num,
 .projects-number,
-.degraded-num {
+.degraded-num,
+.projects-managed-number,
+.projects-retirements-number,
+.policy-notes-number {
   min-width: 6ch;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
@@ -197,6 +217,12 @@ li.spend-person,
 li.spend-cap-repo,
 li.projects-secret,
 li.projects-account,
+li.projects-account-keys-row,
+li.projects-retirements-row,
+li.projects-credentials-service-row,
+li.policy-notes-account,
+li.policy-notes-entry,
+li.policy-notes-check,
 li.degraded-run {
   display: flex;
   flex-wrap: wrap;
@@ -214,6 +240,11 @@ ol.degraded-runs,
 section.spend-caps,
 section.spend-people,
 section.projects-panel,
+section.projects-managed-marks,
+section.projects-managed-trail,
+section.projects-retirements-record,
+section.projects-account-keys,
+section.projects-credentials-service,
 div.degraded-caps,
 div.degraded-totals {
   margin-bottom: var(--space-lg);
@@ -247,6 +278,23 @@ li.projects-repo-enrolled,
 span.projects-secret-name,
 span.projects-accounts-repo,
 span.projects-kill-repo,
+span.projects-account-keys-key,
+span.projects-account-keys-value,
+span.projects-credentials-service-check-id,
+p.policy-notes-project,
+p.policy-notes-source,
+span.policy-notes-value,
+span.policy-notes-branch,
+span.policy-notes-repo,
+span.policy-notes-model,
+span.policy-notes-account-name,
+span.policy-notes-entry-name,
+span.policy-notes-entry-kind,
+span.policy-notes-entry-image,
+span.policy-notes-entry-repo,
+span.policy-notes-entry-path,
+span.policy-notes-entry-branch,
+span.policy-notes-check-id,
 span.spend-key,
 td.spend-model,
 span.spend-person-user,
@@ -662,6 +710,9 @@ span.projects-mode,
 span.projects-day,
 span.projects-source,
 span.projects-count,
+span.projects-account-keys-source,
+span.projects-account-keys-stage,
+span.projects-credentials-service-source,
 span.projects-cap-source,
 span.projects-kill-scope,
 span.projects-secret-scope,
@@ -2420,6 +2471,217 @@ select.installation-checkout-select {
  * for the button it sits beside (`base.css`, section 4.4's rule 1). */
 @media (forced-colors: active) {
   select.installation-checkout-select {
+    border-color: CanvasText;
+  }
+}
+
+/* ---- The managed sections (the managed-screens plan's CM11) -----------------
+ *
+ * The five sections the managed-project work adds to the Project tab (design
+ * section 2.5; the plan's CM5 to CM11): the managed state with its audit trail,
+ * the review account keys, the policy notes, the last update's retirements and
+ * the credentials service's state. Two of them -- the managed state and the
+ * retirements -- are drawn as `section.projects-panel` and take the tab's own
+ * box and state rule above; the three others stand on the tab as sections of
+ * their own, and the marks, trail and record blocks the two panel-drawn ones
+ * append below their panel are siblings of it rather than parts of it, so all
+ * five of those boxes are the panel rule above and not a rule here.
+ *
+ * **Their rules are here rather than in `flight-deck.css`** for the models and
+ * settings panels' reason: the redesign did not redraw these sections -- they
+ * did not exist -- and each is the shape this file already draws: a heading, a
+ * state word, a source line, and one list of rows with a term and a value. So
+ * they read the section 3.1 vocabulary, the way those two panels do.
+ *
+ * **Nothing here is coloured by a state**, and that is a decision about one
+ * attribute in particular. A `doctor` check is drawn with the document's own
+ * `ok` twice -- as the `data-ok` attribute and as the word beside it -- and the
+ * attribute is **not** the state the word carries: `policynotes.ts` draws
+ * `noted` for a check `doctor` reports with `severity: "info"` and `failing` for
+ * any other, and both are `data-ok="false"`, so a rule painted on that attribute
+ * would paint a healthy installation's informational measurement as a failure.
+ * The word is the mark (section 3.5), and the tone a section's own read carries
+ * is the tab's panel rule above, where the CLI's own `data-state` decides it.
+ */
+
+/* The state word of a section that is not a `projects-panel`, in the chip
+ * `section.projects-panel span.projects-state` wears in `flight-deck.css`: the
+ * same uppercase word, the same sunken ground and the same one hairline, so the
+ * word a reader meets first looks the same on every section of the tab. The
+ * declarations are written again rather than shared with that rule because the
+ * two select different hooks -- the panel's chip belongs to `projects-state`,
+ * which none of these three sections draws -- and a selector list spanning the
+ * two layers would move a rule of the redesign's into this file. */
+span.projects-account-keys-state,
+span.projects-credentials-service-state,
+span.policy-notes-state {
+  padding: 0 var(--space-2xs);
+  font-size: var(--text-label);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  background: var(--surface-sunken);
+  border: var(--rule-width) solid var(--line-subtle);
+  border-radius: var(--radius-chip);
+  white-space: nowrap;
+}
+
+/* The block headings inside a section: one step below the section's own title
+ * (`h2.projects-title`, above) and the size `h3.projects-models-heading` uses.
+ * The weight is `base.css`'s for a heading, so only the size is written. */
+h3.projects-managed-marks-head,
+h3.projects-managed-trail-head,
+h3.projects-retirements-record-head,
+h4.projects-retirements-set-head,
+h2.policy-notes-heading,
+h3.policy-notes-member-title {
+  font-size: var(--font-size-sm);
+}
+
+/* A word of the console's own in a value's place -- `managed`/`not managed`,
+ * `protected`/`unprotected`, a check's `ok`/`noted`/`failing` -- is the word a
+ * reader is meant to catch, so it takes the state words' uppercase treatment and
+ * **no tone**: the word is the mark (section 3.5). */
+dd.projects-managed-word,
+dd.projects-retirements-word,
+span.projects-credentials-service-check-state,
+span.policy-notes-check-state,
+span.policy-notes-default {
+  font-size: var(--font-size-xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* The fact lists: one term and its value, two columns, the term muted -- the
+ * pairs are a `dl`, and the two columns are what lines the values up under each
+ * other rather than leaving every one of them to start where its own term
+ * ended. */
+dl.projects-managed-marks-list,
+dl.projects-managed-trail-list,
+dl.projects-retirements-record-list,
+dl.projects-retirements-row-facts,
+dl.projects-credentials-service-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-3xs) var(--space-sm);
+  margin-block: var(--space-2xs);
+}
+
+dt.projects-managed-term,
+dt.projects-retirements-term,
+dt.projects-credentials-service-term {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* The value cell is whatever the document put there -- a slug, a command, a
+ * sentence -- so it is drawn at the row size and is **not** mono: only a value
+ * whose worth is that it can be compared character by character is (section
+ * 3.7), and the figures beside it keep the tabular hook the alignment rule
+ * above gives them. */
+dd.projects-managed-value,
+dd.projects-retirements-value,
+dd.projects-credentials-service-value {
+  font-size: var(--font-size-sm);
+}
+
+/* The one value that is an identity and not a sentence: a retired secret's
+ * name, drawn by the name rather than by its value (D1485), with the note
+ * saying so on it (`retirements.ts`). */
+dd.projects-retirements-secret {
+  font-family: var(--font-mono);
+}
+
+/* The lists a section draws under its blocks. */
+ul.policy-notes-list,
+ul.policy-notes-checks,
+ul.projects-credentials-service-list,
+ul.projects-retirements-set-list,
+ul.projects-account-keys-list {
+  display: grid;
+  gap: var(--space-2xs);
+  margin-block: var(--space-2xs) var(--space-md);
+}
+
+/* ---- The policy notes' body -----------------------------------------------
+ *
+ * The policy panel's read (the plan's CM7, CM10): the tab draws the panel's
+ * frame, its title and its state, and the body below them is this -- the
+ * project line, the node's block, the checks' block and the one line about the
+ * diff. The body is inside the panel's own box, so its blocks are told apart by
+ * a rule rather than boxed again: a box inside a box is a second boundary for
+ * one region.
+ */
+
+div.policy-notes-block {
+  margin-block-start: var(--space-md);
+  padding-block-start: var(--space-2xs);
+  border-top: var(--rule-width) solid var(--border);
+}
+
+div.policy-notes-members {
+  display: grid;
+  gap: var(--space-sm);
+  margin-block-start: var(--space-sm);
+}
+
+/* One member: its title and the count or value beside it on one line, and the
+ * list it may carry on the line below -- the list takes the whole line because
+ * a list beside a title reads as one more value of it. */
+div.policy-notes-member {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3xs) var(--space-sm);
+}
+
+div.policy-notes-member > ul.policy-notes-list {
+  flex: 1 0 100%;
+}
+
+span.policy-notes-empty,
+span.policy-notes-others-lead,
+span.policy-notes-check-severity {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* The two sentences a check carries are the CLI's own wording and are drawn as
+ * prose, not as the muted qualifiers around them (`policynotes.ts`'s
+ * `absentValueCell`). */
+span.policy-notes-check-problem,
+span.policy-notes-check-fix {
+  font-size: var(--font-size-base);
+}
+
+/* The appended block's own forced-colors arm, in a media block of its own so
+ * that the blocks above stay one appended section rather than an edit inside
+ * another feature's. Only the tone is written where a colour is forced and the
+ * style and width are not (design section 4.4's rule 1): the boxes keep the
+ * boundary the panel rule above keeps, and so do the hairline rows, the chip and
+ * the rule between the policy notes' blocks. */
+@media (forced-colors: active) {
+  section.projects-managed-marks,
+  section.projects-managed-trail,
+  section.projects-retirements-record,
+  section.projects-account-keys,
+  section.projects-credentials-service,
+  div.policy-notes-block {
+    border-color: CanvasText;
+  }
+
+  li.projects-account-keys-row,
+  li.projects-retirements-row,
+  li.projects-credentials-service-row,
+  li.policy-notes-account,
+  li.policy-notes-entry,
+  li.policy-notes-check,
+  span.projects-account-keys-state,
+  span.projects-credentials-service-state,
+  span.policy-notes-state {
     border-color: CanvasText;
   }
 }
