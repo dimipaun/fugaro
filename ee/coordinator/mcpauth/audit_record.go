@@ -119,8 +119,9 @@ type AuditEntry struct {
 // it is, and the calls it holds, newest first.
 type AuditRecord struct {
 	// Identity is the exact `user:` entry the record belongs to, carried inside
-	// the object rather than in its key: the key is a hash, so the store's own
-	// listing names nobody.
+	// the object rather than in its key. That is a shape and not a hiding place:
+	// the key is a hash of this same value, so a reader who can guess the value
+	// reaches the object (auditKey).
 	Identity string `json:"identity"`
 	// Entries are the calls, newest first, at most MaxAuditEntries of them. It
 	// is empty and never null for an identity no call has been served for: an
@@ -144,7 +145,18 @@ type AuditRecord struct {
 // value and for the same reason — a key is a path in a bucket, and an address
 // in a path is an address in every listing, metric and error that names the
 // path. The record says whose it is inside itself, so a reader that has the
-// object knows and a reader that only lists the store learns nothing.
+// object knows whose it is.
+//
+// **This key hides less than a token's, and what it hides it hides by
+// guesswork.** The value hashed here is a `user:<email>` entry a person wrote,
+// not NewValue's 32 random bytes: a reader who can list this store has a
+// dictionary of addresses, so a walk of it confirms which identities have
+// called here, and the object's own Identity then names the person outright.
+// What the hash still buys is that no key of this store carries an address as a
+// path. What would buy the walk away is the keyed hash D922's amendment designs
+// — and it is specified over the token records, so when it lands this one is
+// keyed with that same pepper beside them, which is the thing to keep in mind
+// there.
 func auditKey(identity string) (string, error) {
 	if _, ok := userEntry(identity); !ok {
 		return "", fmt.Errorf("mcpauth: %q is not one person written as user:<email>: an audit record is one person's", identity)

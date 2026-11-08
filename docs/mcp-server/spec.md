@@ -1074,11 +1074,19 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   revocation state, so a reader who is not the store's own member reads an identity in the clear and
   a writer the rules do not bind is not refused by a mark. The gap is **M2's own row**, which merged
   on `main` before this branch, and it is carried in [reconciliation.md](reconciliation.md) §4a as a
-  finding rather than closed by an edit here. **What it costs is bounded by the value it hashes**:
-  `NewValue` is 32 random bytes (`ee/coordinator/mcpauth/store.go:406`), so the hash has no weak
-  space to walk and the missing key buys a reader nothing practical — what is wrong until the keyed
-  hash and the MAC land is a security document promising an integrity control the code does not
-  perform.
+  finding rather than closed by an edit here. **What it costs is bounded by the value it hashes, and
+  that bound holds only where the value is one nobody can guess**: a token record's key is the hash
+  of `NewValue`'s 32 random bytes (`ee/coordinator/mcpauth/store.go:406`), which has no weak space to
+  walk, so there the missing key buys a reader nothing practical. **It does not hold for the audit
+  record** (M10): that one is keyed by the same unkeyed hash of a `user:<email>` entry
+  (`ee/coordinator/mcpauth/audit_record.go:164`), and an address is guessable — so a reader who can
+  list the store, the project Viewer the bullet above leaves reading it until M4's row lands, can
+  walk a dictionary of addresses and **confirm which identities have called here**, the object's own
+  `identity` field then naming the person outright. That amendment's keyed hash is specified over
+  the **token** records, so the pepper held in Secret Manager has to be put under **this** key too
+  when it lands, or the one walkable hash in the store is the one the amendment's own answer does
+  not cover. What is wrong either way until the keyed hash and the MAC land is a security
+  document promising an integrity control the code does not perform.
 - **Who owns the two bounds the open registration endpoint is accepted under** (§3, §8): the
   **per-source rate limit** and the **sweep that makes a registration, a pending authorize request
   and a code expire**. **Neither is built**, M10's `store.go` row is revocation and nothing else, and
