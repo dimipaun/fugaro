@@ -719,8 +719,11 @@ func TestM5FieldsValidation(t *testing.T) {
 	for name, tc := range map[string]struct{ yaml, msg string }{
 		"state bucket":     {"terraform: { state_bucket: Bad_Bucket }\n", "terraform.state_bucket"},
 		"alert email":      {"terraform: { alert_email: nobody }\n", "terraform.alert_email"},
-		"launcher":         {"terraform: { launchers: [\"a@example.com\"] }\n", "terraform.launchers"},
-		"operator":         {"terraform: { operators: [\"owner:a@example.com\"] }\n", "terraform.operators"},
+		// Both spellings come back as the version-1 list they are: v1's
+		// `launchers` folds into this version's operators, v1's `operators`
+		// into its admins (foldLegacyLists).
+		"launcher":         {"terraform: { launchers: [\"a@example.com\"] }\n", "terraform.operators"},
+		"operator":         {"terraform: { operators: [\"owner:a@example.com\"] }\n", "terraform.admins"},
 		"log view":         {"log_view: projects/my-project/buckets/fugaro/views/runs\n", "log_view"},
 		"log view project": {"log_view: projects/My_Project/locations/global/buckets/fugaro/views/runs\n", "log_view"},
 		"scheduler region": {"scheduler_region: us_east4\n", "scheduler_region"},

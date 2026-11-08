@@ -1,4 +1,4 @@
-version: 1
+version: 2
 name: aurora
 gcp_project: my-project
 region: us-central1

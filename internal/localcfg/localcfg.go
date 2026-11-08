@@ -1650,12 +1650,12 @@ func oldMailboxKeychainItem(mailbox *yaml.Node) string {
 //
 // It is the ONE place the two spellings are told apart, and it does so from the
 // document's own version rather than from the keys it carries: a version-1
-// document's `operators` is the ADMINS, and reading it by "which keys are here"
-// would take it for this version's operators — the exact misread the version
-// exists to prevent. So a document at this version or newer is returned
-// untouched, and a version-1 document without a `launchers` key is untouched
-// too: there is nothing to move, and its `operators` list, if it has one, is
-// already spelled the way this version reads it.
+// document's `operators` is the ADMINS (and its `launchers` the operators),
+// whichever of the two keys it happens to carry, so reading it by "which keys
+// are here" would take a version-1 roster of admins for this version's
+// operators — the exact misread the version exists to prevent. A document at
+// this version or newer is returned untouched, and one whose `terraform` block
+// holds neither key has nothing to move either way.
 //
 // It works on the parsed YAML tree, not on text and not on the typed struct:
 // the rewrite is two key names, the comments and the rest of the document are
@@ -1674,16 +1674,22 @@ func foldLegacyLists(data []byte, top map[string]yaml.Node) ([]byte, error) {
 		return data, nil
 	}
 	block := mappingValue(root.Content[0], "terraform")
-	if block == nil || block.Kind != yaml.MappingNode || mappingValue(block, "launchers") == nil {
+	if block == nil || block.Kind != yaml.MappingNode {
 		return data, nil
 	}
+	moved := false
 	for i := 0; i+1 < len(block.Content); i += 2 {
 		switch block.Content[i].Value {
 		case "launchers":
 			block.Content[i].Value = "operators"
+			moved = true
 		case "operators":
 			block.Content[i].Value = "admins"
+			moved = true
 		}
+	}
+	if !moved {
+		return data, nil
 	}
 	out, err := yaml.Marshal(&root)
 	if err != nil {
