@@ -19,7 +19,7 @@ func TestLegacyBaseRefusedWithTheMigrationDoc(t *testing.T) {
 
 // TestLegacyImageNodeAndJDKRefused pins both 0.7.0 sentences whole, token by
 // token and in order, rather than by the value they echo: what one of them
-// stops naming matters as much as what it names, and the 0.20.0 removal took
+// stops naming matters as much as what it names, and the repository-image removal took
 // the image.tools alternative out of it, because a decoder that sends a person
 // to a key it refuses in the next breath is worse than one that names only the
 // path left. That reader meets the removal's own sentence either way -- it

@@ -159,14 +159,17 @@ var ExecutableKeys = []string{
 var NonExecutableImageKeys = map[string]string{
 	"workflows.*.image.node": "removed in 0.7.0, refused unconditionally by validateImage (" + MigrationDoc + "); never a command",
 	"workflows.*.image.jdk":  "removed in 0.7.0, refused unconditionally by validateImage (" + MigrationDoc + "); never reaches a Dockerfile",
-	// The five 0.20.0 tombstones are here rather than in ExecutableKeys: a
-	// removed key that stayed executable would keep gating a publish on a
-	// value no profile can carry any more.
-	"workflows.*.image.apt":                "removed in 0.20.0, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
-	"workflows.*.image.setup":              "removed in 0.20.0, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
-	"workflows.*.image.tools":              "removed in 0.20.0, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
-	"workflows.*.image.skip_build_scripts": "removed in 0.20.0, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
-	"workflows.*.image.key_files":          "removed in 0.20.0, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
+	// The five tombstones of the repository-image removal are here rather than
+	// in ExecutableKeys: a removed key that stayed executable would keep gating
+	// a publish on a value no profile can carry any more. The rows name no
+	// release for the same reason the sentences do not (image.go,
+	// removedBuildKeyMessage): the slot the plan recommends is not the release
+	// the removal lands in.
+	"workflows.*.image.apt":                "removed by the repository-image removal, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
+	"workflows.*.image.setup":              "removed by the repository-image removal, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
+	"workflows.*.image.tools":              "removed by the repository-image removal, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
+	"workflows.*.image.skip_build_scripts": "removed by the repository-image removal, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
+	"workflows.*.image.key_files":          "removed by the repository-image removal, refused unconditionally by removedImageKeyProblems (" + RemovedImageKeyDoc + "); never a command",
 }
 
 // ScopeOf is the row of path, a fugaro.yaml path with a real workflow name
@@ -203,7 +206,7 @@ func scopeRow(key string) (ScopeRow, bool) {
 
 // isBlock reports whether path ("agent", "workflows.*.image") is a block
 // that holds listed keys rather than a key itself, or held the removal's keys
-// until 0.20.0.
+// before the release that carried it.
 func isBlock(path string) bool {
 	for _, r := range Scopes {
 		if strings.HasPrefix(r.Key, path+".") {

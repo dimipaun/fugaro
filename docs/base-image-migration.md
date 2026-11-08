@@ -48,7 +48,7 @@ GOTOOLCHAIN = "local"  # what the go base set: no toolchain downloads at run tim
 node = "24.19.0"       # image.node's value; without image.node, the base had 24
 ```
 
-- `image.node` moves to `mise.toml`; a 0.7.0 CLI refuses it. The `image.tools: { node: "24.19.0" }` block that was the alternative then is refused too as of 0.20.0, with every other per-repository image key (`fugaro image add`), so `mise.toml` is where a runtime is declared.
+- `image.node` moves to `mise.toml`; a 0.7.0 CLI refuses it. The `image.tools: { node: "24.19.0" }` block that was the alternative then is refused too, with every other per-repository image key (`fugaro image add`), so `mise.toml` is where a runtime is declared.
 - pnpm and Yarn keep coming from corepack and `packageManager`.
 - The dependency warm-up and the default cache are unchanged.
 - Playwright's `--with-deps` works on Debian 13; keep the `image.setup` line.

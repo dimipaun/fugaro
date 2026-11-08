@@ -120,9 +120,16 @@ func RemovedImageKeyMessage(key string) string { return removedImageRefusal(key)
 // Both name `fugaro image add`, because that is the command that replaces the
 // key: a person who meets the refusal has to be told what to do next, and a
 // decoder's "field not found" tells them nothing (D1195).
+//
+// Neither names the release the removal lands in. The slot the plan recommends
+// is not the release that carries it — 0.20.0, 0.20.1, 0.20.2 and 0.20.3 are
+// all out without it — so a number here would tell an operator their file broke
+// in a release it did not break in, and the release this one does land in is the
+// owner's to pick rather than this sentence's to guess. What a reader needs is
+// that the key is gone and which command replaces it, and both are said.
 const (
-	removedBuildKeyMessage   = "was removed in 0.20.0: a job's image is a catalog entry now, and a repository adds one with `fugaro image add` and selects it with image_name (%s)"
-	removedRebuildKeyMessage = "was removed in 0.20.0: nothing rebuilds a repository's own image any more; `fugaro image add` records a catalog entry and `fugaro image build` builds it (%s)"
+	removedBuildKeyMessage   = "was removed: a job's image is a catalog entry now, and a repository adds one with `fugaro image add` and selects it with image_name (%s)"
+	removedRebuildKeyMessage = "was removed: nothing rebuilds a repository's own image any more; `fugaro image add` records a catalog entry and `fugaro image build` builds it (%s)"
 )
 
 // removedImageKey is one key the repository-image removal took out of a

@@ -317,8 +317,8 @@ func TestRebuildKeysAreRefused(t *testing.T) {
 			t.Fatalf("%s: parsed to %v with %v, want %d problems", file, cfg, ps, len(want))
 		}
 		for i, path := range want {
-			if ps[i].Path != path || !strings.Contains(ps[i].Message, "was removed in 0.20.0") {
-				t.Errorf("%s: problem %d = %+v, want %s: was removed in 0.20.0", file, i, ps[i], path)
+			if ps[i].Path != path || !strings.Contains(ps[i].Message, "was removed") {
+				t.Errorf("%s: problem %d = %+v, want %s: was removed", file, i, ps[i], path)
 			}
 		}
 	}

@@ -35,7 +35,7 @@ A clone job has no build at all, and a run has no root, so Fugaro cannot install
 
 Move the workflow back to `baked` if it needs either of them.
 
-The keys that used to be refused here — `image.apt`, `image.tools`, `image.setup`, `image.skip_build_scripts`, `image.key_files`, `dockerfile:` — were **removed in 0.20.0** for every workflow, whatever its `checkout:`. Each is refused by name, wherever it is written, with the sentence that names `fugaro image add` and [project-image-catalog](project-image-catalog/README.md): moving to `baked` does not bring one back, and only a catalog entry replaces what it did. A project layer a release before 0.20.0 published still holding one is rewritten without it by `fugaro update` (see [project-layer.md](project-layer.md)).
+The keys that used to be refused here — `image.apt`, `image.tools`, `image.setup`, `image.skip_build_scripts`, `image.key_files`, `dockerfile:` — were **removed** for every workflow, whatever its `checkout:`. Each is refused by name, wherever it is written, with the sentence that names `fugaro image add` and [project-image-catalog](project-image-catalog/README.md): moving to `baked` does not bring one back, and only a catalog entry replaces what it did. A project layer an earlier release published still holding one is rewritten without it by `fugaro update` (see [project-layer.md](project-layer.md)).
 
 ### Switching a workflow to `clone`
 

@@ -35,7 +35,7 @@ Compute is not the only thing a backend needs. The `Backend` interface above is 
 
 ## Your own image
 
-A project that needs more than the installation's base image carries gives its workflow a catalog entry — `fugaro image add`, an inline definition or a Dockerfile at a repository path built `FROM ${FUGARO_BASE}` ([project-image-catalog](project-image-catalog/README.md)) — or points the installation at a base image of its own. [base-image.md](base-image.md)'s "Bring your own" section covers the last of these, and the contract a custom base must keep. The per-workflow keys that used to do this — `image.apt`, `image.tools`, `image.setup` among them — were removed in 0.20.0.
+A project that needs more than the installation's base image carries gives its workflow a catalog entry — `fugaro image add`, an inline definition or a Dockerfile at a repository path built `FROM ${FUGARO_BASE}` ([project-image-catalog](project-image-catalog/README.md)) — or points the installation at a base image of its own. [base-image.md](base-image.md)'s "Bring your own" section covers the last of these, and the contract a custom base must keep. The per-workflow keys that used to do this — `image.apt`, `image.tools`, `image.setup` among them — were removed.
 
 ## Live checks
 

@@ -125,7 +125,7 @@ agent:
   max_budget_usd: 25          # per stage
 workflows:
   web:
-    # the repository's mise.toml declares its runtimes (image.tools was removed in 0.20.0)
+    # the repository's mise.toml declares its runtimes (image.tools was removed)
     commands:
       build: npm run build
       test: npm test

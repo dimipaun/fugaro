@@ -4080,7 +4080,7 @@ func TestSchemasCarryNoMemberForARemovedKey(t *testing.T) {
 	if len(ps) != 1 || ps[0].Path != "workflows.app.image.apt" {
 		t.Fatalf("config.Parse problems = %v, want one at workflows.app.image.apt", ps)
 	}
-	for _, want := range []string{"was removed in 0.20.0", "fugaro image add", config.RemovedImageKeyDoc} {
+	for _, want := range []string{"was removed", "fugaro image add", config.RemovedImageKeyDoc} {
 		if !strings.Contains(ps[0].Message, want) {
 			t.Errorf("the refusal %q does not name %q", ps[0].Message, want)
 		}
@@ -4157,7 +4157,7 @@ func TestSchemaCoversCheckoutShared(t *testing.T) {
 			if schemaErr == nil {
 				t.Errorf("the schema accepts %s under checkout: shared", tc.path)
 			}
-			if len(ps) != 1 || ps[0].Path != tc.path || !strings.Contains(ps[0].Message, "was removed in 0.20.0") {
+			if len(ps) != 1 || ps[0].Path != tc.path || !strings.Contains(ps[0].Message, "was removed") {
 				t.Errorf("config.Parse problems = %v, want the removal's refusal at %s", ps, tc.path)
 			}
 		})
@@ -4171,7 +4171,7 @@ func TestSchemaCoversCheckoutShared(t *testing.T) {
 		t.Errorf("config.Parse problems = %v, want the four removed keys refused", ps)
 	}
 	for _, p := range ps {
-		if !strings.Contains(p.Message, "was removed in 0.20.0") {
+		if !strings.Contains(p.Message, "was removed") {
 			t.Errorf("problem %v is not the removal's refusal", p)
 		}
 	}
@@ -4252,7 +4252,7 @@ func TestProjectLayerSchemaCoversCheckoutShared(t *testing.T) {
 		t.Errorf("config.ParseProjectLayer problems = %v, want the three removed keys refused", ps)
 	} else {
 		for _, p := range ps {
-			if !strings.Contains(p.Message, "was removed in 0.20.0") {
+			if !strings.Contains(p.Message, "was removed") {
 				t.Errorf("problem %v is not the removal's refusal", p)
 			}
 		}
@@ -4264,7 +4264,7 @@ func TestProjectLayerSchemaCoversCheckoutShared(t *testing.T) {
 	if schemaErr == nil {
 		t.Error("the schema accepts image.setup under a profile's checkout: shared")
 	}
-	if len(ps) != 1 || ps[0].Path != "profiles.p.image.setup" || !strings.Contains(ps[0].Message, "was removed in 0.20.0") {
+	if len(ps) != 1 || ps[0].Path != "profiles.p.image.setup" || !strings.Contains(ps[0].Message, "was removed") {
 		t.Errorf("config.ParseProjectLayer problems = %v, want the removal's refusal at profiles.p.image.setup", ps)
 	}
 }

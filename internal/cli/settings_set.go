@@ -101,7 +101,7 @@ var settingsGenericKeys = map[string]bool{
 	"claude_account_auto":     true,
 	"stages.*.claude_account": true,
 	// A repository's workflows.* (26 rows) and the project layer's profiles.*
-	// (26), in the registry's own order: the 0.20.0 removal took an entry out
+	// (26), in the registry's own order: the repository-image removal took an entry out
 	// with the registry row it mirrored, so the two lists name the same keys.
 	"workflows.*.profile":                            true,
 	"workflows.*.job_profile":                        true,

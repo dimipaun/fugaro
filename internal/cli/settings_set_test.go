@@ -857,7 +857,7 @@ func TestSettingsGenericKeyIsSpec44sAllowlist(t *testing.T) {
 // settable, and an allowlist entry is what decides the generic path may write
 // it — so an entry the registry no longer has a row for is a spelling nothing
 // can reach, and one that lists a removed key is where a reader is told the
-// key still works. The 0.20.0 removal took the removed keys' twenty-one rows;
+// key still works. The repository-image removal took the removed keys' twenty-one rows;
 // this is what holds the two lists equal afterwards.
 func TestSettingsGenericAllowlistNamesOnlyRegistryRows(t *testing.T) {
 	rows := map[string]bool{}
