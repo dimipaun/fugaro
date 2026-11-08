@@ -36,7 +36,11 @@ whose own `agent.auth` is an API key (`internal/runner/routing.go` `checkReviewC
 `docs/cloud-senior-review` §6's **CSR11** once the service's admission of the review caller reached the
 tree (that section's §1 **E7**, its second half **CSRW1** and **CSRW2**), and the live-check switch the
 flip replaced is deleted with it — before that it was built and not admitted, which is the state
-`docs/releases/v0.20.2.md`'s known limits record of their release. The owner
+`docs/releases/v0.20.2.md`'s known limits record of their release. **The launch is refused while the
+installation itself still predates that release**: the launcher judges the installation's own release
+(`internal/cli/recipes_skew.go`'s `checkReviewAdmission`, `reviewAdmissionSince`), so an installation
+between the binary's upgrade and its `fugaro update` is refused rather than started on a service that
+would answer 401. The owner
 wants the same review served
 by an **Anthropic API key**, with the dollars real and capped, no subscription needed, and the key
 able to be a secret of its own.

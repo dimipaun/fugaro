@@ -1177,11 +1177,15 @@ that is still the check's step 3.
 
 - **Files:** `internal/cli/review.go`, `internal/cli/review_test.go`, `internal/cli/validate.go`,
   `internal/cli/validate_test.go`, `internal/cli/root.go`, `internal/cli/root_test.go`,
-  `internal/cli/recipes_skew.go`, `internal/cli/recipes_skew_test.go`, `docs/release.md`,
-  `docs/c39-review-identity/live-check.md`, `docs/cloud-senior-review/implementation-plan.md`.
-  **11 files** (the plan's two named files plus the refusal the flip leaves behind: `validate.go`'s
+  `internal/cli/recipes_skew.go`, `internal/cli/recipes_skew_test.go`, `internal/cli/run.go`,
+  `docs/release.md`, `docs/recipes.md`, `docs/rigor-modes/reconciliation.md`,
+  `plugin/skills/working/SKILL.md`, `docs/c39-review-identity/live-check.md`,
+  `docs/cloud-senior-review/implementation-plan.md`.
+  **15 files** (the plan's two named files plus the refusal the flip leaves behind: `validate.go`'s
   precondition note, which said a fugaro update could not supply the admission half, and the two
-  documents that told a reader to set the switch; plus the gate and its release bullet, below).
+  documents that told a reader to set the switch; plus the two gates and their release bullet, below,
+  and the three places the installation half below made false: `run.go`'s refusal, `docs/recipes.md`'s
+  review paragraph and the working skill's sentence about a service that does not admit the caller).
 - **The gate the flip made load-bearing, and the value it moved with it.** `reviewJobSince`
   (`internal/cli/recipes_skew.go:418`) named `"0.19.0"` — the release that deploys the review-only
   variant — and no launch ever reached it while `reviewJobAdmitted` was `false`; the flip is what makes
@@ -1198,6 +1202,33 @@ that is still the check's step 3.
   because the citation checks resolve a line against its file and never against its subject, which is
   how this constant's own citations here went stale in the change that moved it — the same file's
   `run.go` comment, and the bullet itself.
+- **The installation's half of the same gate, and the second constant.** A review launch is served by
+  **two releases**, and the flip's review found the other one unguarded: `reviewJobSince` judges the job
+  image (0.20.0, whose runner can serve a launch), and nothing judged the **credentials service**, which
+  admits the review job's own caller only from `reviewAdmissionSince = "0.21.0"` on — the release that
+  carries CSRW1 (PR #1932) and CSRW2 (PR #1934). A 0.20.x installation after `brew upgrade` and before
+  `fugaro update` was therefore admitted by every gate and died inside the job on the service's 401,
+  which is the failure the other gate's own rationale says a launch refusal exists to prevent. So
+  `checkReviewAdmission` (`internal/cli/recipes_skew.go`, beside `checkCloneReviewJobImage`) judges the
+  installation and is called from `run.go`'s `mode: review` block after the image gates, so the
+  `run --pr N --recipe review-only` spelling is covered exactly as `fugaro review` is. **The judge is the
+  installation's own base image**, and that is not a proxy by choice: the launcher can ask the service
+  nothing (D143, `reviewJobAdmitted`'s comment), while `fugaro update` pins `base_images.base` at the
+  release it runs and resolves and pins the service's image in the same run, so a base image below this
+  value is an installation whose service is below it too; a base image that carries no release, or none
+  at all, only warns (`releaseOf`'s rule). The refusal names `fugaro update` as the whole upgrade and
+  `fugaro run --pr N --recipe review-only` as what works until it is run — **not**
+  `reviewJobSince`'s `fugaro image refresh`, which moves no credentials service, and that is why this is
+  a second constant rather than that value raised. Tests:
+  `TestRecipesSkewRefusesAReviewServiceOlderThanTheClass` (0.20.x refused, 0.21.0 admitted, an unreadable
+  or absent base image warned about),
+  `TestReviewRefusesAnInstallationWhoseServicePredatesTheClass` (the command's own refusal, on the
+  fixture at `reviewJobSince` — the installation between the upgrade and the update the gate exists for),
+  `TestReviewAdmissionSinceHasAReleaseBullet` for the checklist bullet, and the review fixtures moved to
+  `reviewAdmissionSince` (`newReviewFixtureAt` names the release, since `setBaseImage` rewrites the pin
+  the fixture was built with). `docs/recipes.md`'s review paragraph, `plugin/skills/working/SKILL.md`'s
+  sentence about a service that does not admit the caller, and the rigor-modes census row that counts the
+  file's `…Since` constants (29, not 28) follow the same commit.
 - **Interfaces:** `reviewJobAdmitted` (`internal/cli/review.go:55`) is `true`, with its comment rewritten
   to say **what made it true** — C3.9's merge, CSRW1's and CSRW2's, the owner's ruling of 2026-11-07 and
   the release the variant deploys in — rather than deleted: the next reader's question is why a constant

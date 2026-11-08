@@ -159,6 +159,10 @@ the coordinator's merge path blocked (spec §2, §5; reconciliation E7).
   §5). **The refusal is gone as of 2026-11-08** — CSR11 flipped `reviewJobAdmitted` once the service's
   review class was wired — so what the first slice waits on now is the owner-run live check rather than
   a task; whether a given installation's service admits a review caller is what C3.9's check observes.
+  **A launch does not leave that to the observation**: the installation's own release is judged and one
+  older than the release carrying the class is refused, naming `fugaro update`
+  (`checkReviewAdmission`, `reviewAdmissionSince = "0.21.0"`), so what the check observes is the class on
+  an installation that already has it.
 
 ## Related
 
