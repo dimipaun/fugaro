@@ -103,17 +103,7 @@ func newConvergeRigYAML(t *testing.T, node map[string]any, yaml string) *converg
 
 	// One config file, where both doors read it: the checkout's own project
 	// file, so `fugaro update` writes what `fugaro doctor` then reads.
-	cfg, err := os.ReadFile(r.cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	projects := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "fugaro", "projects")
-	if err := os.MkdirAll(projects, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(projects, initProjectName+".yaml"), cfg, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	registerInstallation(t, r.initRig)
 	t.Setenv("FUGARO_CONFIG", "")
 	t.Setenv("FUGARO_PROJECT", "")
 

@@ -728,6 +728,40 @@ func wordMacro(m string, depth int) (string, error) {
 // test reads out of this file to resolve a pinned citation.
 const PathMCPAuth = "mcpauth"
 
+// PathBuildLeases is the build lease's own family (T8 of
+// docs/no-prompt-policy/implementation-plan.md; D1543, F19, F22): one node per
+// submission, buildleases/<slug>/<id>, holding the reservation an image build
+// takes before it is submitted, what it really spent and what was given back.
+// It is deliberately not under runs/: a lease keyed by a run id would be read
+// as a run by everything that reads runs/ (runstore, watch, the console,
+// internal/budget's own Outstanding), and F22 asks for a key space of its own
+// so a lease's reader and a run's never meet.
+//
+// The template carries it with `.read: false` and `.write: false`, written out
+// rather than left to the root's denial, for the reason PathMCPAuth gives above.
+// Its writers are IAM identities and never client tokens: `fugaro image build`
+// takes and closes a lease on the person's own credentials
+// (internal/cli/cloud.go's newBudgetClient, ADC with the budget scopes), and the
+// project's catalog-check job takes its own on the job's service account, and
+// neither is a token these rules can bound. The one client token the document
+// knows how to bind — a run's, fs/fr — is not a build lease's writer: nothing in
+// the container submits a build. So the family may be named and denied and
+// nothing more, and naming it is what keeps the next grant to it from being an
+// edit under a path nobody reading this file could see.
+//
+// Denied whole, it is what internal/projectpolicy's Version documents as "a
+// generation that only adds a deny, or a node no client may reach": the family
+// is not opened to any client, so it does not move RulesVersion and `fugaro
+// update` carries no migration for it — the rules stage already redeploys a
+// document `SameJSON` reports as different (internal/infra/firebasedb.go's
+// Plan). Opening it to a client later is a grant, and that is the change the
+// generation bump is for.
+//
+// Like PathMCPAuth, it sits below the macro table rather than beside
+// PathDevices: a constant added above those citations moves the lines the tests
+// that resolve them read.
+const PathBuildLeases = "buildleases"
+
 // boundedMatch is a non-empty string of at most max characters, every one of
 // them in the pattern's set.
 func boundedMatch(max int, pattern string) string {

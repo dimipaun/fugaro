@@ -557,6 +557,10 @@
     "mcpauth": {
       ".read": false,
       ".write": false
+    },
+    "buildleases": {
+      ".read": false,
+      ".write": false
     }
   }
 }
