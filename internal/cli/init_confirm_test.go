@@ -60,6 +60,14 @@ func (c condition) run(t *testing.T, stdin string) (*initRun, *readSpy, *strings
 	o := c.opts
 	o.firebase = "aurora-fp"
 	cmd := &cobra.Command{}
+	// The flags the two sanctioned readers look up on the command rather than
+	// on the options (askConfirm reads --ask, --yes, --json and
+	// --non-interactive there): a test's run must carry the same ones a real
+	// command does, or --ask answers from a command that never passed it.
+	cmd.Flags().Bool("ask", o.ask, "")
+	cmd.Flags().Bool("yes", o.yes, "")
+	cmd.Flags().Bool("json", o.asJSON, "")
+	cmd.Flags().Bool("non-interactive", o.nonInteractive, "")
 	cmd.SetIn(spy)
 	r := &initRun{cmd: cmd, o: &o, w: out, in: bufio.NewReader(spy), projectName: initProjectName, gcpProject: initProject}
 	return r, spy, out
@@ -67,8 +75,9 @@ func (c condition) run(t *testing.T, stdin string) (*initRun, *readSpy, *strings
 
 // TestTypedOnlyFirestoreLocationMatrix: the Firestore location is permanent,
 // and it is the ONE step W5.1 changes in a single door (D12's answer of
-// 2026-10-20): `setup` keeps it Typed — only a person typing a real terminal's
-// answer confirms it there — and `update --yes` covers it, because a
+// 2026-10-20): `setup` keeps it Typed — where only a person at a real
+// terminal may confirm it, and since T7 their being there IS the
+// confirmation, with nothing typed — and `update --yes` covers it, because a
 // re-converge of a database that already exists is not a first-time decision.
 // The three steps the answer never relaxes, in either door, are creating the
 // project and linking the billing account (which `update` refuses by flag, so
@@ -91,8 +100,8 @@ func TestTypedOnlyFirestoreLocationMatrix(t *testing.T) {
 					if err != nil {
 						t.Fatalf("the location was not confirmed: %v", err)
 					}
-					if typed := !c.opts.yes; typed != spy.read {
-						t.Fatalf("typed %v, stdin read %v: not the route this condition has", typed, spy.read)
+					if spy.read {
+						t.Fatalf("stdin was read: nothing is typed at a confirmation any more (T7)")
 					}
 					if c.opts.yes && !strings.Contains(out.String(), "confirmed by --yes") {
 						t.Errorf("update --yes confirmed the location without saying so:\n%s", out)
@@ -148,9 +157,10 @@ func TestTypedOnlyImageBuildMatrix(t *testing.T) {
 			cfg := &config.Config{Workflows: map[string]config.Workflow{"app": {}}}
 			spec := infra.RepoSpec{Name: initProjectName, BuildServiceAccountEmail: "b@x.iam", RegistryPath: "r"}
 			built, err := r.buildImages(t.Context(), lc, cfg, spec, []string{"app"})
-			// YesOrTyped, exactly: --yes takes it, a real terminal types it
-			// with no --non-interactive and no --json, and a coding agent's
-			// environment takes it from neither.
+			// YesOrTyped, exactly: --yes takes it, a real terminal takes it
+			// with no --non-interactive and no --json (the person being there
+			// is the confirmation, since T7), and a coding agent's environment
+			// takes it from neither.
 			can := canConfirmStep(initflow.YesOrTyped, r.conditions())
 			for _, rq := range fb.Requests() {
 				if rq.Method == "POST" {
@@ -167,8 +177,8 @@ func TestTypedOnlyImageBuildMatrix(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), "no workflow") {
 					t.Fatalf("err %v: the confirmation was not taken", err)
 				}
-				if typed, read := c.terminal && !c.opts.yes, spy.read; typed != read {
-					t.Fatalf("typed %v, stdin read %v", typed, read)
+				if spy.read {
+					t.Fatalf("stdin was read: nothing is typed at a confirmation any more (T7)")
 				}
 				if c.opts.yes && !strings.Contains(out.String(), "confirmed by --yes") {
 					t.Errorf("--yes confirmed the build without saying so:\n%s", out)

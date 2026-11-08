@@ -19,17 +19,17 @@ import (
 // In a project Fugaro owns, the ordinary steps (the Terraform applies of the
 // installation, the Firebase root, the history job and the repository, the
 // state bucket, the Viewer-read removal, the Firestore marks and rules, image
-// copies that only add tags, the local config) share ONE typed project name,
-// asked with a review screen the first time one of them has something to
-// change (so a rerun with nothing to do asks nothing). Each step still prints
-// its own exact plan and banner, and says it was covered.
+// copies that only add tags, the local config) share ONE confirmation, taken
+// with a review screen the first time one of them has something to change (so
+// a rerun with nothing to do asks nothing). Each step still prints its own
+// exact plan and banner, and says it was covered.
 //
 // It never covers what is money, permanent, a secret or someone else's:
 // project creation, billing, the Firestore database's creation, a Cloud Build,
 // replacing a registry tag, an unlisted repository (confirmRepo), secrets.
 // Those never call anything here: TestRunConfirmationCallSites lists the only
 // files that may. And a step whose plan destroys, replaces or removes an IAM
-// grant is not covered either (tf.Cover): it asks its own typed confirmation.
+// grant is not covered either (tf.Cover): it asks its own question.
 //
 // Fugaro-owned means: the project was created by this run (fugaro setup
 // --create-project), or the runs bucket's fugaro/project.json names this
@@ -77,11 +77,11 @@ func (r *initRun) ctx() context.Context {
 // this step and every one after it.
 //
 // In a managed project the confirmation is the gate's read of the two marks
-// and nothing is typed (the ruling of 2026-11-01): the review screen is still
-// printed — the owner's own account of what is about to happen, which is what
-// the screen is for — and the ordinary steps go through, exactly as they do in
-// a coding agent's session the gate admitted. The screen is printed ONCE, as
-// the typed name was asked once.
+// (the ruling of 2026-11-01): the review screen is still printed — the owner's
+// own account of what is about to happen, which is what the screen is for —
+// and the ordinary steps go through, exactly as they do in a coding agent's
+// session the gate admitted. The screen is printed ONCE, as the question the
+// person answered was asked once.
 func (r *initRun) runCovers() (bool, error) {
 	rv := r.review
 	if rv == nil || r.o.planOnly || agentMarker(os.Getenv, r.stdinTerminal()) != "" || !initflow.CanConfirmRun(r.conditions()) {
@@ -120,14 +120,16 @@ func (r *initRun) runCovers() (bool, error) {
 }
 
 // declinedRun is the needs-you of a run whose one confirmation was not given:
-// nothing is applied, here or in a later stage.
+// nothing is applied, here or in a later stage. The question is asked to the
+// person at their own terminal (--ask puts it back), so the line says what
+// that answer was and the left says how the run is resumed.
 func (r *initRun) declinedRun() error {
 	args := []string{r.o.doorName()}
 	if r.o.firebase != "" {
 		args = append(args, "--firebase-project", quoteWord(r.o.firebaseProject()))
 	}
 	fmt.Fprintln(r.w, "not confirmed (the review's own question was answered no); nothing was applied")
-	return &initflow.NeedsYouError{Left: promptLeft(initflow.Installation, "type the project's name at the review to apply all of its steps", args...)}
+	return &initflow.NeedsYouError{Left: promptLeft(initflow.Installation, "run it in your own terminal window and answer the review's question with yes to apply all of its steps", args...)}
 }
 
 // notCovered is why a plan is not covered by the run's one confirmation, ""

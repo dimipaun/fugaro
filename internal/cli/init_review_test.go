@@ -48,17 +48,17 @@ func nextLine(t *testing.T, r *initRun) string {
 	return strings.TrimSpace(l)
 }
 
-// Every mode, fugaro-owned or not: who takes the one confirmation, who is
-// asked per step as before, and who is refused. Two ordinary steps follow
-// each other; the line after the first answer is never read by the second.
+// Every mode, fugaro-owned or not: who takes the run's one confirmation, who
+// is asked per step, and who is refused. Two ordinary steps follow each other,
+// and neither of them reads a line: a confirmation is never typed any more
+// (T7, docs/no-prompt-policy). The line left in stdin is nobody's.
 func TestRunConfirmationMatrix(t *testing.T) {
 	for _, c := range conditions() {
 		for _, owned := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s/owned=%v", c.name, owned), func(t *testing.T) {
-				r, spy, out, owner, screens := c.reviewRun(t, initProjectName+"\n"+initProjectName+"\nNEXT\n", owned)
+				r, spy, out, owner, screens := c.reviewRun(t, "NEXT\n", owned)
 				err1 := r.confirmOrdinary("applies A", "nothing was applied", "")
 				err2 := r.confirmOrdinary("applies B", "nothing was applied", "")
-				typedAtTerminal := c.terminal && c.agent == "" && !c.opts.yes && !c.opts.nonInteractive && !c.opts.asJSON
 				switch {
 				case c.agent != "":
 					var ag *initflow.AgentError
@@ -70,31 +70,33 @@ func TestRunConfirmationMatrix(t *testing.T) {
 					if err1 != nil || err2 != nil || spy.read || *owner != 0 || *screens != 0 || !strings.Contains(out.String(), "confirmed by --yes") {
 						t.Fatalf("--yes: %v / %v, read %v, owner %d, screens %d\n%s", err1, err2, spy.read, *owner, *screens, out)
 					}
+				case c.opts.asJSON:
+					// --json confirms no step and names itself: it is not a
+					// terminal a person could be asked at, and it is not --yes.
+					if err1 == nil || err2 == nil || spy.read || *owner != 0 || *screens != 0 || !strings.Contains(err1.Error(), "--json") || strings.Contains(err1.Error(), "real terminal") {
+						t.Fatalf("--json: %v / %v, read %v, owner %d, screens %d", err1, err2, spy.read, *owner, *screens)
+					}
 				case !c.terminal || c.opts.nonInteractive:
 					if err1 == nil || err2 == nil || spy.read || *owner != 0 || *screens != 0 || !strings.Contains(err1.Error(), "real terminal") {
 						t.Fatalf("no confirmation possible: %v / %v, read %v, owner %d", err1, err2, spy.read, *owner)
 					}
-				case !typedAtTerminal:
-					// --json at a terminal: the per-step typed confirmation, as before.
-					if err1 != nil || err2 != nil || *owner != 0 || *screens != 0 || nextLine(t, r) != "NEXT" || strings.Count(out.String(), "Type aurora to apply to GCP project") != 2 {
-						t.Fatalf("--json: %v / %v, owner %d\n%s", err1, err2, *owner, out)
-					}
 				case owned:
-					if err1 != nil || err2 != nil || *screens != 1 || *owner != 1 {
-						t.Fatalf("owned: %v / %v, screens %d, owner %d\n%s", err1, err2, *screens, *owner, out)
+					if err1 != nil || err2 != nil || *screens != 1 || *owner != 1 || spy.read {
+						t.Fatalf("owned: %v / %v, screens %d, owner %d, read %v\n%s", err1, err2, *screens, *owner, spy.read, out)
 					}
-					// One prompt for both steps, and the second answer unread.
-					if got := nextLine(t, r); got != initProjectName {
-						t.Fatalf("the second step read its own line (%q)", got)
+					// One review for both steps, and the sentence says so: the
+					// covered line, never a name typed at it.
+					if n := strings.Count(out.String(), "covered by the run confirmation"); n != 2 {
+						t.Fatalf("covered lines %d:\n%s", n, out)
 					}
-					if n := strings.Count(out.String(), "Type aurora to"); n != 1 || strings.Count(out.String(), "covered by the run confirmation") != 2 {
-						t.Fatalf("prompts %d:\n%s", n, out)
+					if got := nextLine(t, r); got != "NEXT" {
+						t.Fatalf("a step read a line for its confirmation (%q)", got)
 					}
 				default:
-					// Not Fugaro's: today's per-step prompts, no review, the owner asked once.
-					if err1 != nil || err2 != nil || *screens != 0 || *owner != 1 || nextLine(t, r) != "NEXT" ||
-						strings.Count(out.String(), "Type aurora to apply to GCP project") != 2 || strings.Contains(out.String(), "covered by the run") {
-						t.Fatalf("unowned: %v / %v, screens %d, owner %d\n%s", err1, err2, *screens, *owner, out)
+					// Not Fugaro's: no review, and still nothing typed, because
+					// the person at the terminal is the confirmation itself.
+					if err1 != nil || err2 != nil || *screens != 0 || *owner != 1 || spy.read || strings.Contains(out.String(), "covered by the run") {
+						t.Fatalf("unowned: %v / %v, screens %d, owner %d, read %v\n%s", err1, err2, *screens, *owner, spy.read, out)
 					}
 				}
 			})
@@ -103,14 +105,15 @@ func TestRunConfirmationMatrix(t *testing.T) {
 }
 
 // --plan-only never takes the run confirmation, with a terminal or not: a
-// step it asks about is asked on its own, as before.
+// step it asks about is the step's own, and the review is neither shown nor
+// read.
 func TestRunConfirmationNeverTakenUnderPlanOnly(t *testing.T) {
 	c := condition{"a terminal, plan-only", initOptions{planOnly: true}, true, ""}
-	r, spy, _, owner, screens := c.reviewRun(t, initProjectName+"\n", true)
+	r, spy, _, owner, screens := c.reviewRun(t, "", true)
 	if err := r.confirmOrdinary("applies A", "nothing was applied", ""); err != nil {
 		t.Fatal(err)
 	}
-	if *owner != 0 || *screens != 0 || !spy.read {
+	if *owner != 0 || *screens != 0 || spy.read {
 		t.Fatalf("owner %d, screens %d, read %v: plan-only took the run confirmation", *owner, *screens, spy.read)
 	}
 	c = condition{"plan-only --yes", initOptions{planOnly: true, yes: true}, false, ""}
@@ -120,17 +123,18 @@ func TestRunConfirmationNeverTakenUnderPlanOnly(t *testing.T) {
 	}
 }
 
-// A name that is not the project's at the review applies nothing: this step
-// is needs-you, and so is every step after it, which never reads stdin.
-func TestWrongNameAtTheRunPromptAppliesNothing(t *testing.T) {
-	c := condition{"a terminal", initOptions{}, true, ""}
-	r, _, out, _, screens := c.reviewRun(t, "nope\n"+initProjectName+"\n", true)
+// A no at the review applies nothing: this step is needs-you, and so is every
+// step after it, which never reads stdin. The run's question is asked where a
+// person asked for it (--ask), which is the only door that can answer it no.
+func TestDeclinedReviewAppliesNothing(t *testing.T) {
+	c := condition{"a terminal, --ask", initOptions{ask: true}, true, ""}
+	r, spy, out, _, screens := c.reviewRun(t, "n\n"+initProjectName+"\n", true)
 	var ny *initflow.NeedsYouError
 	err := r.confirmOrdinary("applies A", "nothing was applied", "")
-	if !asNeedsYou(err, &ny) || *screens != 1 {
-		t.Fatalf("err %v, screens %d", err, *screens)
+	if !asNeedsYou(err, &ny) || *screens != 1 || !spy.read {
+		t.Fatalf("err %v, screens %d, read %v", err, *screens, spy.read)
 	}
-	if !strings.Contains(strings.Join(ny.Left.Commands, " "), "setup") || !strings.Contains(ny.Left.Text, "type the project's name") || strings.Contains(ny.Left.Text+out.String(), "--yes") {
+	if !strings.Contains(strings.Join(ny.Left.Commands, " "), "setup") || !strings.Contains(ny.Left.Text, "review's question") || strings.Contains(ny.Left.Text+out.String(), "--yes") {
 		t.Errorf("left %+v\n%s", ny.Left, out)
 	}
 	if ok, err := r.askOrdinary("applies B", ""); ok || !asNeedsYou(err, &ny) {
@@ -144,14 +148,16 @@ func TestWrongNameAtTheRunPromptAppliesNothing(t *testing.T) {
 	}
 }
 
-// What the run confirmation never covers: each of these still asks for its own
-// typed answer after it was taken (the line left in stdin is the next step's,
-// and an empty stdin is a no).
+// What the run confirmation never covers: after it was taken, each of these
+// steps asks its own question, and the line left in stdin is the next step's
+// (an empty stdin is a no). --ask is what puts those questions back, and it is
+// the only door that asks them: nothing is typed at a confirmation any more
+// (T7, docs/no-prompt-policy).
 func TestRunConfirmationNeverCoversTheSeparateSteps(t *testing.T) {
-	c := condition{"a terminal", initOptions{}, true, ""}
+	c := condition{"a terminal, --ask", initOptions{ask: true}, true, ""}
 	taken := func(t *testing.T, rest string) (*initRun, *strings.Builder) {
 		t.Helper()
-		r, _, out, _, _ := c.reviewRun(t, initProjectName+"\n"+rest, true)
+		r, _, out, _, _ := c.reviewRun(t, "y\n"+rest, true)
 		if err := r.confirmOrdinary("applies A", "nothing was applied", ""); err != nil {
 			t.Fatal(err)
 		}
@@ -168,13 +174,13 @@ func TestRunConfirmationNeverCoversTheSeparateSteps(t *testing.T) {
 		if err := r.confirmLocation(); err == nil {
 			t.Fatal("the permanent location was confirmed by the run confirmation")
 		}
-		r, _ = taken(t, infra.FirestoreLocation+"\n")
+		r, _ = taken(t, "y\n")
 		if err := r.confirmLocation(); err != nil {
-			t.Fatalf("typing the location itself is the confirmation: %v", err)
+			t.Fatalf("answering the location's own question is the confirmation: %v", err)
 		}
-		r, _ = taken(t, initProjectName+"\n")
+		r, _ = taken(t, "n\n")
 		if err := r.confirmLocation(); err == nil {
-			t.Fatal("the project's name confirmed the location")
+			t.Fatal("a no at the location's own question confirmed the location")
 		}
 	})
 	t.Run("a Cloud Build", func(t *testing.T) {
@@ -202,10 +208,10 @@ func TestRunConfirmationNeverCoversTheSeparateSteps(t *testing.T) {
 		if ok || err != nil || e.authorized["acme/web"] {
 			t.Fatalf("ok %v err %v: the run confirmation opted a repository in", ok, err)
 		}
-		r, _ = taken(t, initProjectName+"\n")
+		r, _ = taken(t, "y\n")
 		e = &initEngine{r: r, lc: &localcfg.Config{Name: initProjectName}}
-		if ok, _ := e.confirmRepo("/tmp/x", originInfo{Repo: "acme/web", Host: "github.com"}); ok {
-			t.Fatal("the project's name opted a repository in: only owner/name does")
+		if ok, _ := e.confirmRepo("/tmp/x", originInfo{Repo: "acme/web", Host: "github.com"}); !ok || !e.authorized["acme/web"] {
+			t.Fatal("the repository's own question, and not the run's, is what opts it in")
 		}
 	})
 }

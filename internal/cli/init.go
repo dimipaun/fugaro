@@ -1947,12 +1947,22 @@ func (r *initRun) confirmNow(question string) (bool, error) {
 	return r.canType(), nil
 }
 
-// notConfirmed is the refusal of a step that was not confirmed.
+// notConfirmed is the refusal of a step that was not confirmed. Nothing is
+// typed at a confirmation any more (T7, docs/no-prompt-policy), so the three
+// ways a step comes back unconfirmed are told apart by what the session itself
+// is: --ask's own question, answered no; --json, which confirms nothing; and
+// everything else that has no terminal — a pipe, --non-interactive — where the
+// step is the user's and the sentence names the flag that reaches it.
 func (r *initRun) notConfirmed(undone string) error {
-	if r.o.nonInteractive || !stdinIsTerminal(r.cmd.InOrStdin()) {
-		return userErr("%s%s; %s", initflow.NeedsTerminal("the typed confirmation of this step"), r.yesRoute(), undone)
+	switch {
+	case r.o.ask:
+		return userErr("not confirmed (the question was answered no); %s", undone)
+	case r.o.asJSON:
+		return userErr("not confirmed (--json confirms no step: run this one in your own terminal window, without --json); %s", undone)
+	case r.o.nonInteractive || !stdinIsTerminal(r.cmd.InOrStdin()):
+		return userErr("%s%s; %s", initflow.NeedsTerminal("the confirmation of this step"), r.yesRoute(), undone)
 	}
-	return userErr("not confirmed (the project's name was not typed); %s", undone)
+	return userErr("not confirmed (this step was not confirmed); %s", undone)
 }
 
 // yesRoute is what follows "needs a real terminal" when a step cannot be
