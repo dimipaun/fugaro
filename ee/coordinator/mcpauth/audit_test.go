@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -152,6 +153,59 @@ func TestAnActThisDoorCannotAuditIsNotAnswered(t *testing.T) {
 	}
 	if len(auditLines(t, &audit)) != 0 {
 		t.Errorf("a handler that does not record wrote %q", audit.String())
+	}
+}
+
+// TestAnInstallationsFaultIsAuditedAsFailed holds the line to the difference
+// the door's own 500s are about: a token this installation turned away is a
+// refusal the caller could act on, and a store or a member list this door could
+// not read is a fault of the installation that no act of the caller's would
+// have changed. Both are one line naming an identity as far as it is known;
+// what tells them apart is the outcome, and a monitor counting refusals has to
+// be able to tell a stranger's bad token from a store that stopped answering.
+func TestAnInstallationsFaultIsAuditedAsFailed(t *testing.T) {
+	for _, tc := range []struct {
+		what  string
+		build func(t *testing.T, audit *bytes.Buffer) (*resourceTest, string)
+	}{
+		{
+			"a token store this front door cannot read",
+			func(t *testing.T, audit *bytes.Buffer) (*resourceTest, string) {
+				ts := newResourceServer(t, auditTo(t, audit))
+				_, tokens := ts.runFlow(t, testClientRedirect)
+				// The flow above ran against the real store, so what is
+				// replaced here is a working store and not a broken one that
+				// everything else also stands on.
+				ts.Server.store = unreadableStore{Store: ts.store}
+				return ts, tokens.AccessToken
+			},
+		},
+		{
+			"member lists this front door cannot read",
+			func(t *testing.T, audit *bytes.Buffer) (*resourceTest, string) {
+				ts := newResourceServer(t, auditTo(t, audit), WithRoster(rosterFunc(func(context.Context) (Members, error) {
+					return Members{}, errors.New("the installation's published state is not readable")
+				})))
+				_, tokens := ts.runFlow(t, testClientRedirect)
+				return ts, tokens.AccessToken
+			},
+		},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			var audit bytes.Buffer
+			ts, token := tc.build(t, &audit)
+			wantBearerRefusal(t, ts.rpc(t, token, toolsListBody), http.StatusInternalServerError, "server_error")
+
+			lines := auditLines(t, &audit)
+			if len(lines) != 1 {
+				t.Fatalf("%s wrote %d lines; want exactly one:\n%s", tc.what, len(lines), audit.String())
+			}
+			for _, want := range []string{"outcome=" + OutcomeFailed, "reason=" + ReasonUnreadable} {
+				if !strings.Contains(lines[0], want) {
+					t.Errorf("the line %q does not carry %q: the caller's token is not what was wrong, and a line reading as a refusal would send an operator looking at the token", lines[0], want)
+				}
+			}
+		})
 	}
 }
 

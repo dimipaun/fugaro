@@ -69,6 +69,12 @@ import (
 const (
 	auditMessage        = "mcpauth: audit"
 	auditRefusedMessage = "mcpauth: audit event refused"
+
+	// auditUnavailable is the one answer a call gets when this door cannot
+	// record it, whenever the fault is found: before a tool runs, or when the
+	// line fails while being written. The caller's fact is one — the act was
+	// not made and there is no line to read — so the sentence is one.
+	auditUnavailable = "this door could not record the call, so it answers nothing: the audit is what makes a call accountable, and an act it cannot audit is not made"
 )
 
 // The outcomes a line carries. A closed set, for the reason the reasons below
@@ -205,6 +211,24 @@ func NewAuditor(h slog.Handler) (*Auditor, error) {
 		return nil, errors.New("mcpauth: no handler: a call or a refusal this door could not audit must not be made")
 	}
 	return &Auditor{h: h}, nil
+}
+
+// CanRecord reports whether this auditor's handler records the audit level, so
+// the door can ask before an act that the line about it can be written at all.
+// It is the decidable half of D143: a sink that records nothing — a level
+// filter, a handler that was never armed — is found out here, before a tool
+// that deletes is handed a call, because the line names the outcome and so
+// cannot be written before the tool runs. A handler that fails while writing
+// the line is not decidable in advance; that one is auditedCall's, and the act
+// has been made by then.
+//
+// A zero Auditor — a Server built by hand rather than by NewServer — records
+// nothing and answers so, which is the same answer a level filter gives.
+func (a *Auditor) CanRecord(ctx context.Context) bool {
+	if a == nil {
+		return false
+	}
+	return a.h.Enabled(ctx, slog.LevelInfo)
 }
 
 // Write records one audited event as one structured line, and returns an error
@@ -346,9 +370,12 @@ func checked(ev AuditEvent) (AuditEvent, auditRefusal) {
 // The reason is passed in because the door is the only place that knows it: two
 // refusals that answer with the same error and the same status — a token that
 // was never minted and a token whose family was revoked — are one thing to the
-// caller and two things to the operator.
-func (s *Server) refuseToken(ctx context.Context, w http.ResponseWriter, status int, errType, reason, scope, identity, description string, challenge bearerChallenge) {
-	s.auditRefusal(ctx, identity, reason)
+// caller and two things to the operator. The outcome is passed in for the same
+// reason: a token this door turned away is a refusal, and a store or a member
+// list this installation could not read is a fault the caller could do nothing
+// about (a 500), which is the distinction OutcomeFailed exists for.
+func (s *Server) refuseToken(ctx context.Context, w http.ResponseWriter, status int, errType, outcome, reason, scope, identity, description string, challenge bearerChallenge) {
+	s.auditRefusal(ctx, identity, outcome, reason)
 	s.refuseBearer(w, status, errType, scope, identity, description, challenge)
 }
 
@@ -360,28 +387,34 @@ func (s *Server) refuseToken(ctx context.Context, w http.ResponseWriter, status 
 // A line that could not be written cannot un-refuse a request. The refusal
 // stands, and the fault is recorded on the door's own logger — the account
 // M7's refusal line already uses — rather than swallowed.
-func (s *Server) auditRefusal(ctx context.Context, identity, reason string) {
+func (s *Server) auditRefusal(ctx context.Context, identity, outcome, reason string) {
 	a := s.audit
 	if a == nil {
 		// A server NewServer built always has an auditor; this is the zero
 		// Server, which records nothing rather than panicking on a refusal.
 		return
 	}
-	if err := a.Write(ctx, AuditEvent{Identity: identity, Outcome: OutcomeRefused, Reason: reason}); err != nil {
+	if err := a.Write(ctx, AuditEvent{Identity: identity, Outcome: outcome, Reason: reason}); err != nil {
 		s.logComplaint("the MCP endpoint could not record a refusal", err)
 	}
 }
 
 // auditedCall audits one tools/call and answers whether the door may answer it
 // at all: the one line and the one record entry this call leaves are written
-// first, and a call whose line could not be written is answered as the door's
-// own failure (D143 — an act this door could not audit is not made). The
-// caller's refusal is withheld with it, deliberately: the answer and the line
-// are one event, and a refusal answered without its line would be the missing
-// half of a pair an operator reads together.
+// before the answer, and a call whose line could not be written is answered as
+// the door's own failure (D143). The line names the outcome, so it cannot be
+// written before the tool runs: what that leaves decidable in advance is
+// whether the sink records at all, and callTool asks that first, before a tool
+// is handed the call. A handler that fails while writing the line is a fault no
+// check can see coming, and there the act has been made — the caller is told
+// this door could not record the call, which is the only place that fault can
+// be reported (SECURITY.md states the residual). The caller's refusal is
+// withheld with it, deliberately: the answer and the line are one event, and a
+// refusal answered without its line would be the missing half of a pair an
+// operator reads together.
 func (s *Server) auditedCall(w http.ResponseWriter, r *http.Request, id json.RawMessage, auth authorized, tool, outcome, reason string) bool {
 	if err := s.auditCall(r.Context(), auth, tool, outcome, reason); err != nil {
-		s.rpcError(w, http.StatusOK, id, codeInternal, "this door could not record the call, so it answers nothing: the audit is what makes a call accountable, and an act it cannot audit is not made")
+		s.rpcError(w, http.StatusOK, id, codeInternal, auditUnavailable)
 		return false
 	}
 	return true

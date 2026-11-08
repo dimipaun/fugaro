@@ -169,7 +169,7 @@ func (s *Server) serveMCP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request) (authorized, bool) {
 	value, ok := bearerToken(r)
 	if !ok {
-		s.refuseToken(r.Context(), w, http.StatusUnauthorized, "invalid_token", ReasonNoCredential, "", "", "the MCP endpoint needs one bearer token in an Authorization header: read the resource metadata document named in the WWW-Authenticate header, register a client and sign in", challengeBare)
+		s.refuseToken(r.Context(), w, http.StatusUnauthorized, "invalid_token", OutcomeRefused, ReasonNoCredential, "", "", "the MCP endpoint needs one bearer token in an Authorization header: read the resource metadata document named in the WWW-Authenticate header, register a client and sign in", challengeBare)
 		return authorized{}, false
 	}
 	rec, err := s.store.LookupByHash(r.Context(), TokenHash(value))
@@ -181,23 +181,23 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) (authorized, 
 			// it was never minted, and they would stop asking. It is the same
 			// distinction the revoke path and resolveIdentity make, and the
 			// same reason for it.
-			s.refuseToken(r.Context(), w, http.StatusInternalServerError, "server_error", ReasonUnreadable, "", "", "the front door could not read this installation's token records, so it admits nobody: this is a fault of the installation and not of this token", challengeBare)
+			s.refuseToken(r.Context(), w, http.StatusInternalServerError, "server_error", OutcomeFailed, ReasonUnreadable, "", "", "the front door could not read this installation's token records, so it admits nobody: this is a fault of the installation and not of this token", challengeBare)
 			return authorized{}, false
 		}
-		s.refuseToken(r.Context(), w, http.StatusUnauthorized, "invalid_token", ReasonUnknownToken, "", "", "the bearer token is not one this endpoint can use: it was not issued here, or the family it belongs to was revoked; the resource metadata document named in the WWW-Authenticate header says how to get one", challengeNamesTheError)
+		s.refuseToken(r.Context(), w, http.StatusUnauthorized, "invalid_token", OutcomeRefused, ReasonUnknownToken, "", "", "the bearer token is not one this endpoint can use: it was not issued here, or the family it belongs to was revoked; the resource metadata document named in the WWW-Authenticate header says how to get one", challengeNamesTheError)
 		return authorized{}, false
 	}
 	if err := usable(rec, s.now()); err != nil {
-		s.refuseToken(r.Context(), w, http.StatusUnauthorized, "invalid_token", ReasonUnusableToken, "", rec.Token.Identity, err.Error()+": the resource metadata document named in the WWW-Authenticate header says how to get another one", challengeNamesTheError)
+		s.refuseToken(r.Context(), w, http.StatusUnauthorized, "invalid_token", OutcomeRefused, ReasonUnusableToken, "", rec.Token.Identity, err.Error()+": the resource metadata document named in the WWW-Authenticate header says how to get another one", challengeNamesTheError)
 		return authorized{}, false
 	}
 	role, err := s.resolveIdentity(r.Context(), rec.Token.Identity)
 	if err != nil {
 		if errors.Is(err, ErrIdentityOffTheLists) {
-			s.refuseToken(r.Context(), w, http.StatusForbidden, "insufficient_scope", ReasonNoRole, "", rec.Token.Identity, "this identity holds no role at this installation: the front door serves the people on its launcher and operator lists, and fugaro user is the command that changes them", challengeNamesTheError)
+			s.refuseToken(r.Context(), w, http.StatusForbidden, "insufficient_scope", OutcomeRefused, ReasonNoRole, "", rec.Token.Identity, "this identity holds no role at this installation: the front door serves the people on its launcher and operator lists, and fugaro user is the command that changes them", challengeNamesTheError)
 			return authorized{}, false
 		}
-		s.refuseToken(r.Context(), w, http.StatusInternalServerError, "server_error", ReasonUnreadable, "", rec.Token.Identity, "the front door could not read this installation's member lists, so it admits nobody: this is a fault of the installation and not of this token", challengeBare)
+		s.refuseToken(r.Context(), w, http.StatusInternalServerError, "server_error", OutcomeFailed, ReasonUnreadable, "", rec.Token.Identity, "the front door could not read this installation's member lists, so it admits nobody: this is a fault of the installation and not of this token", challengeBare)
 		return authorized{}, false
 	}
 	return authorized{
@@ -317,6 +317,10 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, auth authorize
 // does not hold. None of the three has a tool to name, so each is the JSON-RPC
 // layer's answer rather than an event about a person's call (SECURITY.md says
 // the same in the operator's words).
+//
+// One answer below that lookup is not audited and cannot be: the door's own
+// refusal to make a call it could not record. The sink is asked before the tool
+// runs, and the line about that answer is the line that cannot be written.
 func (s *Server) callTool(w http.ResponseWriter, r *http.Request, auth authorized, req rpcRequest) {
 	var params callParams
 	if len(req.Params) > 0 {
@@ -346,6 +350,17 @@ func (s *Server) callTool(w http.ResponseWriter, r *http.Request, auth authorize
 			return
 		}
 		s.rpcError(w, http.StatusOK, req.ID, codeInvalidParams, "tools/call takes the arguments as one JSON object")
+		return
+	}
+	// The line names the outcome, so it is written after the tool runs — which
+	// for a tool whose act is a delete would be a delete this door then reports
+	// it could not record. So the one half of D143 that can be decided before
+	// the act is decided here: a sink that records nothing is found out while
+	// the call is still only a request. What no check can see coming is a
+	// handler that fails while writing the line, and that one is auditedCall's
+	// (SECURITY.md states what it costs).
+	if !s.audit.CanRecord(r.Context()) {
+		s.rpcError(w, http.StatusOK, req.ID, codeInternal, auditUnavailable)
 		return
 	}
 	out, err := s.tools.Call(r.Context(), Call{

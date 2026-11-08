@@ -4,7 +4,10 @@
 package mcpauth
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -62,6 +65,52 @@ func TestALauncherCannotRevokeAFamily(t *testing.T) {
 		t.Errorf("the family %s is gone from the store after a launcher asked for it to be revoked: a refusal that deleted anyway would leave every record naming a family nothing holds", familyID)
 	}
 	wantResult(t, ts.rpc(t, tokens.AccessToken, auditCallBody(t, "get_task_status", "")))
+}
+
+// TestAFamilyIsNotRevokedByACallTheDoorCannotAudit is D930's delete against
+// D143's rule, and it is why the sink is asked before a tool runs: the line
+// names the outcome, so a door that only checked after the tool had run would
+// delete a family and then report that it could not record having done it. The
+// handler below records nothing, which is the shape of a misconfigured log
+// level, and the family has to still be there afterwards.
+func TestAFamilyIsNotRevokedByACallTheDoorCannotAudit(t *testing.T) {
+	var audit bytes.Buffer
+	quiet, err := NewAuditor(slog.NewTextHandler(&audit, &slog.HandlerOptions{Level: slog.LevelError}))
+	if err != nil {
+		t.Fatalf("building the auditor: %v", err)
+	}
+	ts := newResourceServer(t, WithAuditor(quiet), WithRoster(rosterOf(Members{
+		Launchers: []string{testIdentity},
+		Operators: []string{testIdentity},
+	})))
+	ts.serve(t, "get_task_status", answering("run-7 is implementing"))
+	if err := ts.tools.Register(RevokeFamilyTool(ts.store)); err != nil {
+		t.Fatalf("registering the revocation tool: %v", err)
+	}
+	_, tokens := ts.runFlow(t, testClientRedirect)
+
+	// The family comes out of the store rather than out of the audit tool,
+	// because every call at this door is refused while the sink records
+	// nothing — which is the state under test.
+	token, err := ts.store.Store.LookupByHash(context.Background(), TokenHash(tokens.AccessToken))
+	if err != nil {
+		t.Fatalf("reading the token the flow minted: %v", err)
+	}
+	if token.FamilyID == "" {
+		t.Fatal("the token names no family: there is nothing for the revocation to end")
+	}
+
+	body := auditCallBody(t, "revoke_family", `{"family_id":`+quoted(t, token.FamilyID)+`}`)
+	ans := wantFailure(t, ts.rpc(t, tokens.AccessToken, body), http.StatusOK, codeInternal)
+	if msg := ans.Error.Message; !strings.Contains(msg, "audit") {
+		t.Errorf("a call this door could not audit is refused with %q; want the door's own fault named", msg)
+	}
+	if _, held := ts.store.objects(t)[familyPrefix+token.FamilyID]; !held {
+		t.Errorf("the family %s is gone after a call this door could not record: the delete ran before the door knew it could write the line, and an act this door cannot audit is not made (D143)", token.FamilyID)
+	}
+	if len(auditLines(t, &audit)) != 0 {
+		t.Errorf("a handler that records nothing wrote %q", audit.String())
+	}
 }
 
 // TestRevokedFamilyIsRefusedOnTheNextCall is the whole of D930's answer read
