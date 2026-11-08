@@ -58,8 +58,8 @@
     "facts": {
       "type": "object",
       "maxProperties": 64,
-      "description": "What the loop has learned and wants to keep across sessions, keyed by a name. The key is a fact's only identity: setting one that is there replaces it.",
-      "propertyNames": { "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+      "description": "What the loop has learned and wants to keep across sessions, keyed by a name. The key is a fact's only identity: setting one that is there replaces it. A name is also a database key — the node is a JSON document in the Realtime Database, where a property name is a path segment — so the pattern refuses `. $ # [ ] /` and control characters, which the transport refuses anywhere in the tree; Go: internal/orchestrator's idRE, which refuses a colon as well.",
+      "propertyNames": { "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$" },
       "additionalProperties": { "$ref": "#/$defs/fact" }
     },
     "archived": {
@@ -101,8 +101,8 @@
       "properties": {
         "id": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
-          "description": "The item's name, unique among the live items. It carries no colon: an intent's id is \"<item>:<attempt>\"."
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+          "description": "The item's name, unique among the live items, and a name a database key can carry (see `facts`). It carries no colon: an intent's id is \"<item>:<attempt>\"."
         },
         "title": { "type": "string", "minLength": 1, "maxLength": 200 },
         "repo": {
@@ -129,7 +129,7 @@
           "type": "array",
           "maxItems": 32,
           "description": "Work items that have to be done before this one starts. Each names a live item, and an item that something live depends on cannot be archived.",
-          "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" }
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$" }
         },
         "phase": {
           "enum": ["queued", "running", "review", "done", "failed", "blocked", "cancelled"],
@@ -193,7 +193,7 @@
       "required": ["id", "question", "waiting_on", "at"],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$" },
         "question": { "type": "string", "minLength": 1, "maxLength": 600 },
         "waiting_on": {
           "enum": ["person", "session", "daemon"],
@@ -219,7 +219,7 @@
       "required": ["id", "outcome", "at"],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$" },
         "outcome": { "type": "string", "minLength": 1, "maxLength": 80, "description": "How it ended, in a line." },
         "at": { "type": "string", "format": "date-time" }
       }
@@ -231,7 +231,7 @@
       "properties": {
         "id": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}:[0-9]+$",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}:[0-9]+$",
           "description": "The work item and the attempt, so that one attempt cannot be declared twice and a daemon that dies before the start re-issues the same launch."
         },
         "run_id": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$", "description": "Minted before the launch and committed with the declaration." },

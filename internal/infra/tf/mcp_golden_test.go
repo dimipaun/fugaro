@@ -29,7 +29,8 @@ import (
 // resources).
 func TestNoGoldenPlanCreatesTheFrontDoor(t *testing.T) {
 	goldens := []string{"installation", "installation-accounts", "installation-managed", "installation-credentials",
-		"installation-adopt", "installation-coordinator", "firebase", "firebase-same-project", "firebase-adopt", "firebase-coordinator"}
+		"installation-adopt", "installation-coordinator", "firebase", "firebase-same-project", "firebase-adopt", "firebase-coordinator",
+		"installation-catalog-add-repo"}
 	var sawCoordinator bool
 	for _, name := range goldens {
 		for _, rc := range goldenPlan(t, name).ResourceChanges {

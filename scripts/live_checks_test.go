@@ -28,12 +28,21 @@ import (
 // the three anonymous GETs the check makes about a repository; its fake
 // `gcloud` and `fugaro` log any call and fail, so the test can say the check
 // never reaches a cloud tool.
+// `gcloud` and `fugaro` for Checks 111 and 146, and a fake `gcloud` that
+// evaluates the conditions of Check 340's own IAM bindings for Check 340 --
+// or, for Check 145, against a fake Bitbucket Cloud on a loopback port, so no
+// network, no cloud project and no credential is touched here, and no live
+// step of any of them is run by an agent. Check 130's fake is a fake `curl`
+// alone, answering the three anonymous GETs the check makes about a
+// repository; its fake `gcloud` and `fugaro` log any call and fail, so the
+// test can say the check never reaches a cloud tool.
 var liveCheckScripts = []struct {
 	name string
 	test string
 }{
 	{"check90.sh", "check90_test.sh"},
 	{"check91.sh", "check91_test.sh"},
+	{"check111.sh", "check111_test.sh"},
 	{"check130.sh", "check130_test.sh"},
 	{"check145.sh", "check145_test.sh"},
 	{"check146.sh", "check146_test.sh"},

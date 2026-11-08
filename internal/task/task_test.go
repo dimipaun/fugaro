@@ -239,6 +239,84 @@ func TestReviewPRsValidation(t *testing.T) {
 	}
 }
 
+// TestOwnerRuledValidation covers the owner ruling's own shape rules (OD1,
+// fugaro run --owner-ruled): it is a follow-up's field, so it needs the three
+// follow-up fields, and it is text a brief and a run record carry, so a blank
+// one, one over the cap and one carrying a control character are refused — a
+// ruling this package accepts is one the run stores and quotes.
+//
+// Mutation (drop the `!allFollowUp` case): the first case below validates,
+// and a ruling nobody could act on is stored on a first run's task.
+func TestOwnerRuledValidation(t *testing.T) {
+	base := func() *Spec {
+		return &Spec{Version: 1, RunID: "20260926-221530-a1b2", Repo: "acme/app", Ref: "main",
+			Branch: "fugaro/20260926-221530-a1b2", PR: 7, PreviousRun: "20260926-221530-a1b2"}
+	}
+	cases := []struct {
+		name  string
+		ruled string
+		want  string
+	}{
+		{"no follow-up", "ship it", "owner_ruled answers findings a run on a pull request left"},
+		{"blank", " \n\t ", "owner_ruled is blank"},
+		{"over the cap", strings.Repeat("x", MaxOwnerRuledBytes+1), "longer than 4096 bytes"},
+		{"a NUL", "ship\x00it", "control character"},
+		{"a bidi override", "ship‮it", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := base()
+			if c.name == "no follow-up" {
+				s.Branch, s.PR, s.PreviousRun = "", 0, ""
+				s.Task = "do it"
+			}
+			s.OwnerRuled = c.ruled
+			err := s.Validate()
+			if c.want == "" {
+				// A bidi override is not a control character: the ruling is a
+				// person's prose, and the launcher's own clip and the brief's
+				// own rendering are what keep it from rewriting a line. It
+				// validates, which is what keeps a real ruling from being
+				// refused for a character nobody typed on purpose.
+				if err != nil {
+					t.Fatalf("Validate() = %v, want the ruling accepted", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("Validate() = %v, want it to mention %q", err, c.want)
+			}
+		})
+	}
+	ok := base()
+	ok.OwnerRuled = "Counsel cleared the licence text.\nKeep the flow as it is."
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("a plain ruling: %v", err)
+	}
+	// And the rule as the exported function it is, because a reader of a run
+	// record applies it to the ruling inherited from that record
+	// (internal/runner, prepareFollowUp): empty is no ruling at all and passes,
+	// and every text the task refuses is refused there too.
+	if err := ValidateOwnerRuled(""); err != nil {
+		t.Errorf(`ValidateOwnerRuled("") = %v, want nil: a record with no ruling is a run that works from none`, err)
+	}
+	for _, c := range cases {
+		if c.name == "no follow-up" {
+			continue
+		}
+		err := ValidateOwnerRuled(c.ruled)
+		if c.want == "" {
+			if err != nil {
+				t.Errorf("ValidateOwnerRuled(%q) = %v, want the ruling accepted", c.ruled, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("ValidateOwnerRuled(%q) = %v, want it to mention %q", c.ruled, err, c.want)
+		}
+	}
+}
+
 func TestApply(t *testing.T) {
 	rounds, budget := 4, 10.0
 	s := &Spec{Overrides: Overrides{ReviewRounds: &rounds, MaxBudgetUSD: &budget, Model: "m", TotalTimeout: "45m"}}

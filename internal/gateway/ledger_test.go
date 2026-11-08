@@ -68,14 +68,26 @@ func maxRates() pricing.Rates { return pricing.Embedded().Max() }
 // --- settlement ---
 
 func TestNon2xxChargesZero(t *testing.T) {
+	fastRetry(t)
 	for _, c := range []struct {
 		status int
 		typ    string
 	}{{400, "invalid_request_error"}, {429, "rate_limit_error"}, {500, "api_error"}, {529, "overloaded_error"}} {
-		h := newHarness(t, anthropicfake.Error(c.status, c.typ, "no"))
+		// A 429 and a 5xx are the gateway's one retry (issue #1827, SC2), so
+		// the upstream is scripted to answer the same way twice; a 400 is the
+		// call's answer and is asked for once.
+		answer := anthropicfake.Error(c.status, c.typ, "no")
+		script := []anthropicfake.Reply{answer}
+		if c.status == 429 || c.status/100 == 5 {
+			script = append(script, answer)
+		}
+		h := newHarness(t, script...)
 		resp, _ := h.post(msg(sonnet, 1000, `"stream":true`))
 		if resp.StatusCode != c.status {
 			t.Errorf("status %d, want %d", resp.StatusCode, c.status)
+		}
+		if n := h.fake.Count(); n != len(script) {
+			t.Errorf("%d: the upstream saw %d requests, want %d", c.status, n, len(script))
 		}
 		rep := h.gw.EndStage()
 		if l := h.gw.Ledger(); l.Used != 0 || l.Reserved != 0 || rep.Used != 0 || rep.Unreconciled != 0 {
@@ -134,11 +146,21 @@ func TestUnparsed2xxChargesReservation(t *testing.T) {
 }
 
 func TestNoStatusAfterBodyWrittenChargesReservation(t *testing.T) {
-	h := newHarness(t, anthropicfake.Reply{DropBeforeHeaders: true})
+	fastRetry(t)
+	// A connection dropped before the upstream's status line is a transport
+	// error, so the call is sent once more (the gateway's one retry, issue
+	// #1827 SC2) and the second attempt drops it the same way: both attempts
+	// failed before a byte existed, and the one reservation the client request
+	// made is still charged, because neither attempt's answer can be read.
+	drop := anthropicfake.Reply{DropBeforeHeaders: true}
+	h := newHarness(t, drop, drop)
 	body := msg(sonnet, 1000, `"stream":true`)
 	resp, b := h.post(body)
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Errorf("status %d, want 502", resp.StatusCode)
+	}
+	if n := h.fake.Count(); n != 2 {
+		t.Errorf("the upstream saw %d requests, want 2: the call and its one retry", n)
 	}
 	if typ, _ := apiError(t, b); typ != "api_error" {
 		t.Errorf("error type %q", typ)
@@ -683,8 +705,15 @@ func TestClientCancelCancelsUpstream(t *testing.T) {
 }
 
 func TestRetryAfter529ChargesOnce(t *testing.T) {
+	fastRetry(t)
 	u := pricing.Usage{Input: 900, Output: 90}
-	h := newHarness(t, anthropicfake.Error(529, "overloaded_error", "busy"), anthropicfake.StreamOK(sonnet, u))
+	// Two 529s and then the answer: the first client request spends both 529s
+	// on its own attempt and the gateway's one retry (issue #1827, SC2), so
+	// Claude Code gets the upstream's 529 and asks again, which is the second
+	// client request. Two client requests, two reservations, one charge -- for
+	// the call that answered.
+	h := newHarness(t, anthropicfake.Error(529, "overloaded_error", "busy"),
+		anthropicfake.Error(529, "overloaded_error", "busy"), anthropicfake.StreamOK(sonnet, u))
 	body := msg(sonnet, 1000, `"stream":true`)
 	if resp, _ := h.post(body); resp.StatusCode != 529 {
 		t.Fatalf("first: %d", resp.StatusCode)

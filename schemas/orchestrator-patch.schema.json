@@ -111,7 +111,7 @@
       "properties": {
         "id": {
           "type": "string",
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
           "description": "The item this op is about. An item that is not there yet is created by this op, and one that is there is changed in the fields the op carries."
         },
         "title": { "type": "string", "minLength": 1, "maxLength": 200 },
@@ -122,7 +122,7 @@
         "depends_on": {
           "type": "array",
           "maxItems": 32,
-          "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" }
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$" }
         },
         "note": { "type": "string", "maxLength": 600 },
         "phase": {
@@ -143,7 +143,7 @@
       "required": ["id"],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}:[0-9]+$", "description": "The work item and the attempt." },
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}:[0-9]+$", "description": "The work item and the attempt." },
         "run_id": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
         "spec_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
         "approval_at": { "type": "string", "format": "date-time" },
@@ -158,7 +158,7 @@
       "required": ["id", "spec_digest"],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$" },
         "spec_digest": {
           "type": "string",
           "pattern": "^sha256:[0-9a-f]{64}$",
@@ -171,7 +171,7 @@
       "required": ["id", "outcome"],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$" },
         "outcome": { "type": "string", "minLength": 1, "maxLength": 80, "description": "How it ended, in a line." }
       }
     },
@@ -180,7 +180,7 @@
       "required": ["id", "question", "waiting_on"],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$" },
         "question": { "type": "string", "minLength": 1, "maxLength": 600 },
         "waiting_on": {
           "enum": ["person", "session", "daemon"],
@@ -193,7 +193,7 @@
       "required": ["id", "answer"],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$" },
         "answer": { "type": "string", "minLength": 1, "maxLength": 600, "description": "What was decided. Who decided is the actor's class, not a field here, so a caller cannot claim to be someone else by writing it down." }
       }
     },
@@ -202,7 +202,7 @@
       "required": ["key", "value"],
       "additionalProperties": false,
       "properties": {
-        "key": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "key": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$" },
         "value": {
           "type": "string",
           "maxLength": 300,

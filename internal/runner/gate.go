@@ -8,6 +8,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/logtail"
 	"github.com/dimipaun/fugaro/internal/procgroup"
 	"github.com/dimipaun/fugaro/internal/recipe"
@@ -377,7 +378,7 @@ func (r *run) redactTail(text string) string {
 // succeeded, outcome none; finalize, which still runs after, does nothing
 // more (r.skipPR).
 func (r *run) endWithoutPR(ctx context.Context, reason string) {
-	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusSucceeded, runstore.OutcomeNone, reason
+	r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeNone, "", reason)
 	r.skipPR = true
 	r.storeEnded(ctx, nil)
 }
@@ -389,7 +390,7 @@ func (r *run) endWithoutPR(ctx context.Context, reason string) {
 // is really a cancel (context.Cause(ctx), ErrCancelled) and calls
 // endCancelled instead when it is: this is only for a genuine infra error.
 func (r *run) failInfra(ctx context.Context, err error) {
-	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusInfraError, runstore.OutcomeNone, r.redact(err.Error())
+	r.recordEnd(runstore.StatusInfraError, runstore.OutcomeNone, failure.InfraError, r.redact(err.Error()))
 	r.skipPR = true
 	r.d.Log.Warn("the check gate failed", "err", r.rec.Reason)
 	r.storeEnded(ctx, nil)
@@ -404,7 +405,7 @@ func (r *run) failInfra(ctx context.Context, err error) {
 // failInfra when it really was a cancel. finalize, which still runs after,
 // does nothing more (r.skipPR).
 func (r *run) endCancelled(ctx context.Context, reason string) {
-	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusCancelled, runstore.OutcomeNone, reason
+	r.recordEnd(runstore.StatusCancelled, runstore.OutcomeNone, failure.Cancelled, reason)
 	r.skipPR = true
 	r.storeEnded(ctx, nil)
 }
@@ -417,8 +418,8 @@ func (r *run) endCancelled(ctx context.Context, reason string) {
 // record once the top-level deferred code in Run also carries Record.Halt.
 // finalize, which still runs after, does nothing more (r.skipPR).
 func (r *run) endHalted(ctx context.Context, h *runstore.Halt) {
-	r.rec.Status, r.rec.Outcome, r.rec.Halt = runstore.StatusHalted, runstore.OutcomeNone, h
-	r.rec.Reason = (&HaltError{*h}).Error()
+	r.rec.Halt = h
+	r.recordEnd(runstore.StatusHalted, runstore.OutcomeNone, haltClass(h.Reason), (&HaltError{*h}).Error())
 	r.skipPR = true
 	r.storeEnded(ctx, nil)
 }

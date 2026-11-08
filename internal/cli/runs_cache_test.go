@@ -466,7 +466,7 @@ func TestResolvePRReadsTheBucketNotTheCache(t *testing.T) {
 	}
 	d.forget()
 
-	if _, err := resolvePR(ctx, env, "acme/app", appSlug, 7, "", nil); err != nil {
+	if _, err := resolvePR(ctx, env, "acme/app", appSlug, 7, "", false, nil); err != nil {
 		t.Fatal(err)
 	}
 	read := d.runReads()

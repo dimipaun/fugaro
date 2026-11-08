@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -89,7 +90,9 @@ func TestMain(m *testing.M) {
 	// so without this a suite run would read and delete the developer's own
 	// ~/.local/state/fugaro/logs, the logs an operator reads back after a
 	// failure. A test that reads its command's log back isolates a state
-	// home of its own (isolateState); this is the backstop.
+	// home of its own (isolateState, or a rig that does it per test for a
+	// whole family — newInitRig); this is the backstop for every other test.
+	// Never removed, like the two above.
 	if dir, err := os.MkdirTemp("", "fugaro-test-state-"); err == nil {
 		testStateRoot = dir
 		os.Setenv("XDG_STATE_HOME", dir)
@@ -248,6 +251,103 @@ func TestATestNeverWritesTheDeveloperConfigHome(t *testing.T) {
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("the recording wrote nothing to its own config home: %v", err)
 	}
+}
+
+// TestATestNeverWritesTheDeveloperStateHome is the state home's half, and it
+// drives the write rather than reading the variable: a run of a migrated
+// command files the log its account points a failure at (D1351), and one that
+// landed in the developer's own directory would be pruned by the next run
+// (D1352). The command is not isolated the way its own tests isolate it —
+// no t.Setenv of its own — so what it does is what every other test in this
+// package does, and the directory it must not have written is read the way
+// OpenLog would resolve it with $XDG_STATE_HOME taken away: the developer's
+// own.
+//
+// Mutation (run, restore): delete the XDG_STATE_HOME block from TestMain and
+// this fails twice over — testStateRoot is empty, and the log lands in the
+// developer's own ~/.local/state/fugaro/logs.
+func TestATestNeverWritesTheDeveloperStateHome(t *testing.T) {
+	if os.Getenv("XDG_STATE_HOME") != testStateRoot || testStateRoot == "" {
+		t.Fatalf("XDG_STATE_HOME = %q, TestMain's own = %q: a test that runs a mutating command would file its log in the developer's own state directory", os.Getenv("XDG_STATE_HOME"), testStateRoot)
+	}
+	if home := os.Getenv("HOME"); home != "" && strings.HasPrefix(testStateRoot, home+string(filepath.Separator)) {
+		t.Fatalf("TestMain's state home %q is inside the developer's home %q", testStateRoot, home)
+	}
+	secretsFixture(t)
+	logs := filepath.Join(testStateRoot, "fugaro", "logs")
+	devLogs := developerStateLogDir(t)
+	before, devBefore := readDirNames(t, logs), readDirNames(t, devLogs)
+	if _, _, err := executeStdin(t, tokenValue+"\n", "secrets", "set", "claude-oauth-token", "--repo", "acme/app"); err != nil {
+		t.Fatal(err)
+	}
+	// The harm this is about, and the half that cannot be read as a count of
+	// names: nothing this run left is in the developer's own directory. It is
+	// asserted first because it is the assertion no other test can take away —
+	// a log is named `<command>-<14 digits UTC>-<pid>` (report.logName) and the
+	// create is O_EXCL, so a second run of one command in this process and
+	// second keeps no log at all.
+	if fresh := newNames(readDirNames(t, devLogs), devBefore); len(fresh) != 0 {
+		t.Fatalf("a test filed %v in the developer's own state directory %s", fresh, devLogs)
+	}
+	// And this run's log is the new one here. It cannot be when another test's
+	// run of this command in this same process and second already holds the
+	// name: that is a test to give a state home of its own (isolateState,
+	// newInitRig), not a failure of this one.
+	fresh := newNames(readDirNames(t, logs), before)
+	switch {
+	case len(fresh) == 1 && strings.HasPrefix(fresh[0], "secrets-set-"):
+	case len(fresh) == 0:
+		t.Skipf("another run of `secrets set` in this process and second holds this run's log name, so this run kept no log to find in %s", logs)
+	default:
+		t.Fatalf("the run left %v in %s, want one secrets-set log of its own", fresh, logs)
+	}
+}
+
+// developerStateLogDir is the directory a run would file its log in with
+// $XDG_STATE_HOME taken away: the developer's own, resolved through the one
+// rule the CLI has (localcfg.UserDir), so this test names no path of its own.
+func developerStateLogDir(t *testing.T) string {
+	t.Helper()
+	base, err := localcfg.UserDir(func(name string) string {
+		if name == "XDG_STATE_HOME" {
+			return ""
+		}
+		return os.Getenv(name)
+	}, runtime.GOOS, localcfg.DirState)
+	if err != nil {
+		t.Skipf("the developer's own state directory cannot be named: %v", err)
+	}
+	return filepath.Join(base, "fugaro", "logs")
+}
+
+// newNames is the names of after that were not in before.
+func newNames(after, before []string) []string {
+	had := make(map[string]bool, len(before))
+	for _, n := range before {
+		had[n] = true
+	}
+	var fresh []string
+	for _, n := range after {
+		if !had[n] {
+			fresh = append(fresh, n)
+		}
+	}
+	return fresh
+}
+
+// readDirNames is a directory's entry names, and nothing when it is not there
+// yet (this test's first read is of a directory no test has written to).
+func readDirNames(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
 }
 
 func TestNoRealGCSFromTests(t *testing.T) {

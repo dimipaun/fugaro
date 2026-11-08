@@ -158,6 +158,14 @@ var doctorSecurityPrefixes = []string{
 	// the budget is a legitimate choice, but a credential in the agent's own
 	// reach is a fact the reader acts on now rather than reviews later.
 	"model-key-in-agent",
+	// security-list is D1513's line: the security list in force for a
+	// checkout, which in slice 1 is the engine's floor alone and so is only
+	// measured — the default view does not print it and --security does. Its
+	// sibling ID, security-list-unused, is the finding the same check makes
+	// when a row a person wrote matches nothing in the base: that one is a
+	// warning, so the class is doctorClassActionable and the default view
+	// prints it whatever this list says.
+	"security-list",
 }
 
 // doctorDecisionIDs are the checks whose state is the owner's to choose: doctor
@@ -868,6 +876,11 @@ var doctorShorts = map[string]doctorShort{
 	"creds-unknown-state":          {"a credential mark carries a state this Fugaro does not read, so the account is held rather than available.", ""},
 	"creds-rules":                  {"the deployed budget rules do not carry the credentials family this Fugaro writes, or could not be read.", ""},
 	"token-signers":                {"who can sign the budget database's sign-in tokens could not be read.", ""},
+	// The managed deployer's own grants, the sweep's one warning that is the
+	// module's own binding: it carries no remove command, so its own sentence
+	// is the one the default view must print, and the sentence above is the
+	// path in the length one screen line allows.
+	"token-signers-managed": {"the managed deployer can sign here: it creates fmgd- accounts of this project and grants itself the token-creator role on them.", ""},
 }
 
 // doctorShortsByPrefix are the short forms for the checks doctor emits once
@@ -883,6 +896,11 @@ var doctorShortsByPrefix = []doctorPrefixShort{
 	// No short fix: the check's own names the workflow, and its workflow is the
 	// one thing a hand-run build needs.
 	{prefix: "image-config-", short: doctorShort{problem: "its job image was built from image settings it no longer resolves to."}},
+	// The catalog half of the same pair, and its own text is longer than the
+	// line: it carries the entry, the definition's sha256 and the record's.
+	// The fix stays the check's own either way — the entry's build, which
+	// names the entry the ID does not (the ID names the workflow).
+	{prefix: "image-catalog-", short: doctorShort{problem: "its project image catalog entry has no build, or one built from another definition than the runs bucket holds."}},
 	// The sweep's per-instance warnings, one for a member and one for a job
 	// account: doctor numbers their IDs (runs-bucket-iam-1, job-token-grant-2,
 	// token-signers-3) and their own sentence carries the whole triple, so each
@@ -890,9 +908,10 @@ var doctorShortsByPrefix = []doctorPrefixShort{
 	// member.
 	//
 	// A short form is only ever reached from the default view, and the info
-	// lines these prefixes also match (a sweep's own summary, a signer the
-	// installation designed for) are measurements, which that view never prints:
-	// the full text is what --all and --security show either way.
+	// lines these prefixes also match — token-signers-owners and
+	// token-signers-google-agents, the sweep's own measurements — are never
+	// printed by that view: the full text is what --all and --security show
+	// either way.
 	{prefix: "token-signers-", short: doctorShort{problem: "somebody who is not a signer Fugaro designs for can sign sign-in tokens, or the policy could not be read."}},
 	{prefix: "runs-bucket-iam-", short: doctorShort{problem: "a grant on the runs bucket that Fugaro does not write, or one it could not read."}},
 	{prefix: "job-token-grant-", short: doctorShort{problem: "a job account's read grant on the budget token objects is not one Fugaro writes, or could not be read."}},

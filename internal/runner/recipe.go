@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -35,23 +36,23 @@ func (r *run) resolveRecipe(ctx context.Context, cfg *config.Config) (*recipe.Re
 	switch {
 	case found:
 	case emb != nil && emb.Source == string(recipe.SourceRepo):
-		return nil, runstore.RecipeRecord{}, fmt.Errorf("recipe %s is a repository recipe (%s), but %s has no such file at its base: commit and push it to %s, then launch again", name, where, r.spec.Ref, r.spec.Ref)
+		return nil, runstore.RecipeRecord{}, endClass{failure.ConfigInvalid, fmt.Errorf("recipe %s is a repository recipe (%s), but %s has no such file at its base: commit and push it to %s, then launch again", name, where, r.spec.Ref, r.spec.Ref)}
 	case emb != nil:
 		data, src, where = []byte(emb.YAML), recipe.Source(emb.Source), emb.Source+" recipe "+name+" (embedded in task.json)"
 	default:
 		text, ok := recipe.CatalogText(name)
 		if !ok {
-			return nil, runstore.RecipeRecord{}, fmt.Errorf("recipe %s is not in %s at %s nor in the catalog (%s); a project recipe reaches a run only through fugaro run, which embeds it",
-				name, recipe.RepoDir, r.spec.Ref, strings.Join(recipe.CatalogNames(), ", "))
+			return nil, runstore.RecipeRecord{}, endClass{failure.ConfigInvalid, fmt.Errorf("recipe %s is not in %s at %s nor in the catalog (%s); a project recipe reaches a run only through fugaro run, which embeds it",
+				name, recipe.RepoDir, r.spec.Ref, strings.Join(recipe.CatalogNames(), ", "))}
 		}
 		data, src, where = text, recipe.SourceCatalog, "catalog recipe "+name
 	}
 	rcp, ps := recipe.Parse(data)
 	if len(ps) > 0 {
-		return nil, runstore.RecipeRecord{}, fmt.Errorf("%s is invalid: %s", where, recipe.ProblemsText(ps))
+		return nil, runstore.RecipeRecord{}, endClass{failure.ConfigInvalid, fmt.Errorf("%s is invalid: %s", where, recipe.ProblemsText(ps))}
 	}
 	if rcp.Name != name {
-		return nil, runstore.RecipeRecord{}, fmt.Errorf("%s names itself %q; the file name and the name must agree", where, rcp.Name)
+		return nil, runstore.RecipeRecord{}, endClass{failure.ConfigInvalid, fmt.Errorf("%s names itself %q; the file name and the name must agree", where, rcp.Name)}
 	}
 	sum := recipe.Sum(data)
 	r.d.Log.Info("recipe", "name", name, "source", string(src), "sha256", sum)
