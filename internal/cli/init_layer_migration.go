@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -315,8 +316,20 @@ func textRemoval(data []byte, doc layerProfiles) ([]byte, []layerRemovedKey, err
 // documents either way. False is a tree this could not be done to at all, which
 // leaves the editor's refusal as the answer.
 func nodeRemoval(data []byte, doc layerProfiles) ([]byte, []layerRemovedKey, bool) {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
 	var root yaml.Node
-	if err := yaml.Unmarshal(data, &root); err != nil || len(root.Content) == 0 {
+	if err := dec.Decode(&root); err != nil || len(root.Content) == 0 {
+		return nil, nil, false
+	}
+	// The document this was asked for is the whole stream: what is encoded
+	// again below is the one document the tree was read from, and a document
+	// after it would be dropped by that encoding. A side this removal writes
+	// is the published object — which nothing else holds a copy of — or the
+	// owner's own file, so a stream that carries another document is not one
+	// this writes, and the editor's own refusal (ReasonMultiDocument, which
+	// is what sends the removal here) stands instead.
+	var after yaml.Node
+	if err := dec.Decode(&after); !errors.Is(err, io.EOF) {
 		return nil, nil, false
 	}
 	top := root.Content[0]

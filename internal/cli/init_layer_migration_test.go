@@ -80,6 +80,19 @@ profiles:
 default_profile: svc
 `
 
+// flowLayerTwoDocuments is flowLayer with a second document after it: the text
+// editor refuses the stream (ReasonMultiDocument), and a write of the tree the
+// removal read from would encode that first document alone and drop the other.
+const flowLayerTwoDocuments = `version: 1
+project: aurora
+gcp_project: proj-1234
+profiles:
+  svc: { commands: { build: sh build.sh }, image: { apt: [libvips-dev] } }
+default_profile: svc
+---
+version: 1
+`
+
 // flowLayerMigrated is flowLayer as the removal writes it: the text editor has
 // no splice for a member whose value is a collection, so the document is written
 // from its own tree — the key out, the rest of it as the owner wrote it, its
@@ -418,6 +431,16 @@ func TestRemovedKeysOut(t *testing.T) {
 		}
 		if !strings.Contains(string(r.Data), "# why this package") {
 			t.Errorf("the tree write dropped a comment of the document's:\n%s", r.Data)
+		}
+	})
+
+	t.Run("a second document after it is refused, never dropped", func(t *testing.T) {
+		r := removedKeysOut([]byte(flowLayerTwoDocuments), lc)
+		if r == nil || !r.unwritable() {
+			t.Fatalf("a layer holding a second document was written from its own tree: %+v", r)
+		}
+		if !strings.Contains(r.why(), "more than one YAML document") {
+			t.Errorf("the refusal does not name the document the stream holds: %s", r.why())
 		}
 	})
 
