@@ -1494,9 +1494,14 @@ func TestBuildLeaseFamilyIsTheWritersOwnName(t *testing.T) {
 		}
 	}
 	// Keyed by its own id under its own family, never under runs/: a lease that
-	// sits where a run sits is one every record reader mistakes for a run.
-	if strings.HasPrefix(budget.PathBuildLease("aurora", "b1"), strings.SplitN(budget.PathRun("aurora", "b1"), "/", 2)[0]+"/") {
-		t.Errorf("the build lease's path is under the same family as a run's, so a lease would be read as a run (F22)")
+	// sits where a run sits is one every record reader mistakes for a run, and
+	// the two families share no path. The run family's own root is read off a
+	// run's path, so this test does not spell it a second time.
+	runRoot := strings.SplitN(budget.PathRun("aurora", "b1"), "/", 2)[0]
+	for _, p := range []string{budget.PathBuildLeases("aurora"), budget.PathBuildLease("aurora", "b1")} {
+		if p == runRoot || strings.HasPrefix(p, runRoot+"/") {
+			t.Errorf("internal/budget writes the build lease at /%s, inside the run family /%s: a lease there is read as a run (F22)", p, runRoot)
+		}
 	}
 
 	// The template names the family, and names it closed: its writers are IAM
