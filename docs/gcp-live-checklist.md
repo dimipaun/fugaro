@@ -613,6 +613,24 @@ entry's image, and the facts read back — the marker present in a command the a
 runs any step of it** — it reads and writes in the sandbox installation and the sandbox repository
 only, **never `belong`**, and it is **NOT RUN**.
 
+**Check 370 is the security-classification work's, and it is the first number free above every claim
+this register records** (`docs/security-classification/implementation-plan.md` §6, its task **SC6**,
+the owner's approval of 2026-11-07; [reconciliation.md](security-classification/reconciliation.md)
+**D1519** and its §9). The highest **written** `## Check` section in this file, **read at `1031563d` —
+the commit this change is based on**, was **340**; above it, **341** and **342** are
+`docs/periodic-reviews`'s (its §P8: "**Check 340, Check 341 and Check 342 are this round's; 343–349
+are reserved and unused**"), **350** is `docs/failure-classes`'s (its §6, which reserves 351–359), and
+**360** is `docs/console-managed-screens`'s, which reads **361–369 as available above it** — so **370
+is the number free at this change's merge**, which is the register's rule for a work that reserved
+none, and this paragraph is the record of the one taken. Like every claim above the highest written
+section it is **claimed, not reserved**: a claim is settled at its merge, and whichever of two claims
+merges second renumbers itself. Its subject is **the security escalation**: a run whose own diff
+touches a path the list in force calls security-sensitive turns review level 3 on for the rest of the
+run, spends the adversarial step, and records which row decided it — while a run whose diff touches
+nothing on the list does neither, and its record carries no escalation member. It is owner-run — **no
+agent runs any step of it** — it reads and writes in the sandbox installation and the sandbox
+repository only, **never `belong`**, and it is **NOT RUN**.
+
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
 below.
@@ -813,6 +831,7 @@ probe account carries predefined grants only).
 | 290 | The mixed-credentials run on a real installation (design [`docs/design/mixed-credentials.md`](design/mixed-credentials.md) §5 and §11, the tasks **B1–B6**; the owner's ruling **B0**, 2026-11-04; [`docs/multi-model.md`](multi-model.md) §3): an `api-key` run of the sandbox repository whose **coder** stays on its provider route — a DeepSeek model priced through the budget gateway — while its **senior review** runs inside the same loop, direct to Anthropic on ONE stage-scoped Claude OAuth account and on an **Opus** model. It is the only place the mix meets a real run, and it reads back the seven facts the rule stands on: `stage_accounts.review` naming the account; the `review` stage's `credential: oauth`, its model an Opus one, and no `model call` line for it in the log; the verdict `ship`; no `Invalid API key` anywhere; the account's dollars inside `cost.model_usd` and outside `cost.total_usd`; the coder's stage carrying the gateway's routing and its call count; and the coder's own stage environment holding no token. It is what `docs/multi-model.md` and the design's §9 name as the evidence still missing | See "Check 290" below; **you** run it, on the sandbox installation and the sandbox repository only, **never `belong`**, with `budget.mode: enforce` (the gateway caps the coder; nobody caps the account's own subscription dollars), and **no agent runs any step of it** | One run of the sandbox repository on a task that changes one line: the coder's gateway-priced calls, one review round on the account, and the run's own report. The run commits that line, pushes its `fugaro/<id>` branch and opens a pull request — a task that changes nothing is no cleaner, since a run whose agent makes no commit is failed, given an empty commit and still pushed and opened as a draft (`internal/runner/runner.go`) — so the Restore closes the pull request, deletes the branch, takes the file back and republishes the policy. **USER-RUN, NOT RUN.** |
 | 291 | What a catalog image's `ENV` does in a run ([`docs/image-env/`](image-env/implementation-plan.md) §6, that work's task **IE4** and its live check; **D1381**; issue #1755; `docs/base-image.md`'s "Bring your own" is the rule it reads back): one catalog entry published on the sandbox whose Dockerfile sets an ordinary marker (`ENV NEXUS_BASEURL=https://example.invalid/repository/maven-public/`) and one reserved name (`ENV GOOGLE_APPLICATION_CREDENTIALS=/dev/null`) — **no credential and no secret-shaped value on the image**, which is the point — then `fugaro update --repo` so the job carries the stamp, and `fugaro doctor --all` read for that job's line: it names the catalog entry and the names the job itself sets that a run drops, with **no value printed** — and since an image's own `ENV` lives in the image and no read of a job can list it, the line says so, and the reservation appears in the report only once one reserved name is set on the job by hand (`--update-env-vars`, converged away again in the same step); then one trivial run on the entry's image, from whose transcript the marker is present in the environment of a command the run ran through `fugaro verify`, `GOOGLE_APPLICATION_CREDENTIALS` is absent, and the image's value appears nowhere; and the **refutation step** — the same workflow on a **repository-built** image (`dockerfile:` in the sandbox's `fugaro.yaml`) setting the same marker, whose variable must be **absent** from the run and whose `doctor --all` line must read not catalog-stamped — that is D1370's scope, and the half a code review cannot settle | See "Check 291" below; **you** run it, on the sandbox installation and the sandbox repository only, **never `belong`**, and **no agent runs any step of it** | One catalog entry published and built, one repository-image rebuild, two `fugaro update --repo` runs and two trivial sandbox runs, and the pull requests they open — closed and their branches deleted by the Restore. **USER-RUN, NOT RUN.** |
 | 340 | The prefix-limited listing grant ([`docs/periodic-reviews/`](periodic-reviews/implementation-plan.md) §P8, its Check 340; **R12's, and it gates R12**; `docs/design/bucket-iam.md` §4 — the H3 veto — and §11 item **V7**): which form the `storage.googleapis.com/objectListPrefix` request attribute carries — the request's own prefix (`runs/`, `reports/`) or the bucket's object path (`projects/_/buckets/<bucket>/objects/runs/`) — read as a throwaway service account holding R12's two conditioned bindings (objectViewer on `runs/`, objectUser on `reports/`, each carrying the `resource.name` read clause and the listing clause joined by `\|\|`): that account lists `runs/<slug>/` and `reports/`, reads a `runs/` object, and is refused the root listing, a `tokens/` read and a `tokens/` and a `cache/` listing. The design records the attribute as unverified and no code in this tree reads it, so this is the one reading no test can make: **the wrong form is a grant that lists nothing, and if neither form lists, R12's Terraform does not land and the plan stops and asks** (E4) | See "Check 340" below; `bash scripts/live-checks/check340.sh --project <project> --bucket <sandbox bucket>` is the whole of it — the script creates the throwaway account, grants the two bindings, seeds four objects of its own, makes all fourteen readings and tears every bit of it down again — and **you** run it, on a **sandbox bucket** only, never `belong` (a project or a bucket naming that installation is refused before a single call); **no agent runs any step of it** | Nothing billable and no model call: one throwaway service account, four small objects under `runs/`, `reports/`, `tokens/` and `cache/`, two bucket bindings and one impersonation grant, every one of them removed and read back as gone by the script's own Restore, which runs from its exit trap even on a failed assertion or a Ctrl-C. **USER-RUN, NOT RUN.** One attempt has been made — 2026-11-07, exit `2`, aborted, **nothing settled about the attribute and no `PASS` for `list-prefix`** — and the section below records what that run did and did not measure. |
+| 370 | The security escalation ([`docs/security-classification/`](security-classification/implementation-plan.md) §6, its Check 370; the plan's task **SC6**, the owner's approval of 2026-11-07; reconciliation **D1507**, **D1508**, **D1509** and **D1519**): a run whose own diff touches a path the list in force calls security-sensitive turns review level 3 on for the rest of the run — the adversarial step runs, and the run's record names the matched row's `name`, its `category` and the moment, while the rigor mode stays the mode it was (D1508) — and a run whose diff touches nothing on the list does neither, its record carrying no escalation member. Its reader's half is `fugaro security paths --json` on a project that has published no key: the floor's 43 rows, with `internal/creds/state.go` sensitive and `docs/recipes.md` not — the pair that shows the floor is a **positive list and not the classifier's complement** (F1, F22) — and the same command against a working tree whose `fugaro.yaml` carries a `security` row and a base that does not, which must print the **base's** list (D1518) | See "Check 370" below; **you** run it, on the sandbox installation and the sandbox repository only, **never `belong`**, and **no agent runs any step of it** | Two sandbox runs and three reader commands: **the runs are model calls and real money** and the reader commands are free. Nothing is granted, nothing is written outside the runs' own prefixes, and there is nothing to restore. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -11465,3 +11484,73 @@ this check exists to produce.
 **What waits on it.** R12, and behind R12 the reports job's first firing (Check 341) and `fugaro runs digest`'s
 own writing to `reports/` (R10, Open item 5 of [periodic-reviews/implementation-plan.md](periodic-reviews/implementation-plan.md)):
 neither the Terraform nor anything it enables may land before this check answers.
+
+## Check 370: the security escalation — a matching diff runs level 3, and the record names the row (sandbox installation and sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by the task that implemented the behaviour it reads,
+[security-classification/implementation-plan.md](security-classification/implementation-plan.md) **SC6**
+(that plan's §6, the owner's approval of 2026-11-07; reconciliation **D1507**, **D1508**, **D1509** and
+**D1519**) — §6 names the number and leaves the row and this section to that task, which is the
+register's own rule for a work that reserved none — **no step of it has been run to a reading, and
+nothing here is a claim that it works.**
+
+**What no test can prove, and what this check is for.** `internal/runner/security_test.go` proves, off a
+fixture repository, that a diff matching a row of the list in force turns review level 3 on, puts the
+adversarial step in the plan, leaves the rigor mode where it was and records the row that decided it —
+and that a diff matching nothing does none of it. What it cannot prove is that a **real** run spends the
+step: the fixture's plan is a slice in memory, and only a run whose loop walks it to the adversarial
+stage shows the level is not merely recorded. That is the second part below, and it is the part that
+costs money.
+
+**Part 1 — the reader, on a project with no key.** `fugaro security paths --json` (the same work's task
+**SC3**, which lands with its slice 1) prints the floor's 43 rows on a project that has published no
+`security` list, each with its source layer. `--check internal/creds/state.go` answers
+`sensitive: true` from the `credentials` floor row; `--check docs/recipes.md` answers
+`sensitive: false`; `--check docs/pending-workflows/console-tests.yml` answers `true` from
+`pending-workflows`. The pair is the point: `docs/` is a routine tree, and only the two `docs/` rows the
+routing text's own exceptions name are on the floor, so the list is a **positive list and not the
+classifier's complement** (F1, F22). The third path is the interesting case in between — a routine tree
+with a listed exception — which is the shape a project's own list will have.
+
+**Part 2 — the escalation, on a real run.** Two runs on the sandbox repository, each launched with a
+task that says which paths to touch. The first touches a floor path: a task that creates
+`internal/creds/state.go` is enough, because the floor row is a doublestar glob and needs no tree to
+exist under it. It must run the **adversarial** step — the run's last review round carries
+`tier: "adversarial"` in the record — and its record's `security` member must read
+`{"at": "implement", "pattern": "credentials", "category": "credentials"}`. The second touches nothing
+on the list, and must do neither: no adversarial round, and **no `security` member at all**, which is
+the difference between "no escalation" and "an escalation with an empty row". The two runs are the whole
+of the claim — that the list in force decides what a run spends, and that the record says why.
+
+**Part 3 — the base-branch property.** With a working tree whose `fugaro.yaml` carries a `security` row
+and a base branch that does not, `fugaro security paths --json` prints the **base's** list, and the
+working tree's row is nowhere in it. This is the property D1518 exists for — a change that carries its
+own pattern list must not also carry its own exemption from it — and it is the one part a reviewer
+cannot check by reading either side.
+
+**Run it:**
+
+```bash
+fugaro security paths --json
+fugaro security paths --check internal/creds/state.go --check docs/recipes.md \
+  --check docs/pending-workflows/console-tests.yml --json
+fugaro run --repo <sandbox repo> "create internal/creds/state.go with a package clause and one comment"
+fugaro run --repo <sandbox repo> "add a line to docs/recipes.md"
+gcloud storage cat gs://<runs bucket>/runs/<slug>/<run-id>/result.json   # each run's record
+```
+
+**You** run it, on the sandbox installation and the sandbox repository only, and **no agent runs any
+step of it**. A project or a repository naming `belong` is out of bounds for every step. The record is
+read back from the runs bucket because **no `fugaro` command prints the `security` member yet**: the
+member lands with the escalation, and the reader that draws it is a later slice's. `result.json`'s
+`security` block and its `reviews[].tier` are what the run itself wrote, and reading them is the whole
+of the check — nothing is edited, and no run is asked to do anything a person would not.
+
+**Cost.** Two sandbox runs: model calls, and whatever the sandbox's per-run cap allows — this is the
+only part of the check that is billable. The three reader commands are free and make no cloud call
+beyond the policy read a `fugaro` command already makes.
+
+**What waits on it.** Nothing in the release: the escalation ships whether or not this has been run, and
+**D1519**'s slice 2 is what it proves rather than what it gates. What it settles is the claim the whole
+work rests on — that the list in force changes what a run spends, and that a person can read out of the
+record why it did.
