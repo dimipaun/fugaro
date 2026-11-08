@@ -1881,6 +1881,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := r.checkProjectJobAccount(ctx, cfg.Agent.Auth); err != nil {
 		return err
 	}
+	// The shared job's own task timeout is the run's ceiling (clampTotalToJob):
+	// applied here, to the workflow every later reader takes its timeouts from
+	// and after the overrides above, so a run launched onto a job shorter than
+	// its total still finalizes and opens its pull request instead of being
+	// killed with neither.
+	if err := r.clampTotalToJob(ctx, &wf); err != nil {
+		return err
+	}
 	rcp, rrec, err := r.resolveRecipe(ctx, cfg)
 	if err != nil {
 		return err

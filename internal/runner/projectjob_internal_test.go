@@ -6,9 +6,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"gocloud.dev/blob/memblob"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
@@ -1158,6 +1160,120 @@ func TestProjectJobOfPolicySeesTheVariant(t *testing.T) {
 			profile, provider, account, ok := ProjectJobOfPolicy(p, tc.job)
 			if !ok || profile != "standard" || provider != "github" || account != tc.account {
 				t.Fatalf("ProjectJobOfPolicy(%s) = %q/%q/%q, %v; want standard/github/%q", tc.job, profile, provider, account, ok, tc.account)
+			}
+		})
+	}
+}
+
+// clampConfigYAML is a repository that names no timeouts, which is the shape an
+// installation carries when it takes a release's new defaults without editing
+// its config: the engine's defaults apply, and this workflow's total is
+// whatever the current default is.
+const clampConfigYAML = `
+version: 1
+project: aurora
+git:
+  provider: github
+workflows:
+  app:
+    commands:
+      build: ./gradlew assemble
+      test: ./gradlew test
+`
+
+// TestClampTotalToJobBoundsTheRunByItsJob is the shared job's clock against the
+// run's own, which nothing else compares: the job's Cloud Run task timeout is
+// its profile's timeout_class plus backend.TaskTimeoutSlack, the run's clock
+// comes from the workflow's timeouts.total, and a profile whose class fitted a
+// previous default is now shorter than a repository that took the new one. The
+// container is killed at the task timeout whatever the run believes, and a run
+// killed before finalize ends with no result and no pull request, so the run
+// holds its total to the class.
+//
+// Mutation (run, restored): return early from clampTotalToJob without touching
+// the total. The first case fails — at 90 minutes, which is when the job's own
+// class has elapsed, the run is still in its stages and Cloud Run kills it two
+// minutes later, before finalize.
+func TestClampTotalToJobBoundsTheRunByItsJob(t *testing.T) {
+	ctx := context.Background()
+	cfg, problems := config.Parse([]byte(clampConfigYAML))
+	if len(problems) > 0 {
+		t.Fatalf("parsing the fixture config: %v", problems)
+	}
+	_, fresh, err := cfg.SelectWorkflow(identityWorkflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := fresh.Timeouts.Total.Duration
+
+	slug := identitySlug(t, "github", "acme/app")
+	for _, tc := range []struct {
+		name     string
+		class    string
+		job      string
+		override string
+		byClass  bool
+		want     time.Duration
+	}{
+		{"the class the previous default fitted", "90m", gcp.ProjectJobName("standard", "github", "acme-personal"), "", true, 90 * time.Minute},
+		{"a class above the total", "6h", gcp.ProjectJobName("standard", "github", "acme-personal"), "", true, total},
+		{"a per-repository job, whose timeout is derived from this workflow", "90m", gcp.JobName(slug, identityWorkflow), "", false, total},
+		{"a run whose own total is the execution's timeout", "90m", gcp.ProjectJobName("standard", "github", "acme-personal"), "2h", false, 2 * time.Hour},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := servingPolicy([]string{"acme-personal"}, map[string][]string{
+				"acme-personal": {"github/acme/app"},
+			})
+			pr := p.Profiles["standard"]
+			pr.TimeoutClass = tc.class
+			p.Profiles["standard"] = pr
+			spec := &task.Spec{Version: 1, RunID: "20261107-101010-abcd", Repo: "acme/app", Ref: "main",
+				Workflow: identityWorkflow, Task: "Add a feature"}
+			spec.Overrides.TotalTimeout = tc.override
+			r := identityRun(t, tc.job, slug, spec, p, true)
+			if _, _, _, err := r.jobIdentity(ctx); err != nil {
+				t.Fatalf("the run was refused the job %s it was launched as: %v", tc.job, err)
+			}
+			// The workflow bootstrap resolves: the config, then the task's own
+			// overrides, in that order.
+			wf := fresh
+			if err := spec.Apply(cfg, &wf); err != nil {
+				t.Fatalf("applying the task's overrides: %v", err)
+			}
+			if err := r.clampTotalToJob(ctx, &wf); err != nil {
+				t.Fatalf("clampTotalToJob: %v", err)
+			}
+			if got := wf.Timeouts.Total.Duration; got != tc.want {
+				t.Errorf("the run's total is %s, want %s: a workflow at the %s default on this job %s", got, tc.want, total, tc.job)
+			}
+			// The clamp moves a total, never a relation: config.Validate holds
+			// the run to these, and a clamped total that broke one would be
+			// refused or run with a reserve that does not fit.
+			if res, tot := wf.Timeouts.FinalizeReserve.Duration, wf.Timeouts.Total.Duration; res >= tot {
+				t.Errorf("the finalize reserve is %s of a %s total, and it must be less than the total", res, tot)
+			}
+			if st, tot := wf.Timeouts.Stage.Duration, wf.Timeouts.Total.Duration; st > tot {
+				t.Errorf("the stage timeout is %s of a %s total, and it may not exceed the total", st, tot)
+			}
+			if !tc.byClass {
+				return
+			}
+			class, err := config.ParseDuration(tc.class)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The property the clamp exists for: at the class's own end the run
+			// has reached finalize, so backend.TaskTimeoutSlack is the margin
+			// Cloud Run kills the container with and not time the run counted
+			// on. The class alone is the bound, not the class plus the slack:
+			// finalize has work to do inside it.
+			start := time.Now()
+			b := Budget{Start: start, Total: wf.Timeouts.Total.Duration,
+				Reserve: wf.Timeouts.FinalizeReserve.Duration, Stage: wf.Timeouts.Stage.Duration,
+				Now: func() time.Time { return start.Add(class) }}
+			if !b.Exhausted() {
+				t.Errorf("at the job's %s class the run is still in its stages (finalize begins at %s), and Cloud Run kills the container at %s: the run would end with no result and no pull request",
+					class, b.finalizeAt().Sub(start), class+backend.TaskTimeoutSlack)
 			}
 		})
 	}
