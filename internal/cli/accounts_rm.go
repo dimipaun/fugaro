@@ -951,7 +951,12 @@ func accountsRmRestore(cmd *cobra.Command, path string, wrote, back []byte, name
 // through add's own runner over the registered stages, so the job the account
 // owned is gone from the installation and the node no longer names it.
 func accountsRmConverge(ctx context.Context, cmd *cobra.Command, after *localcfg.Config, wrote []byte, path string, plan accountsRmPlan, secret string) error {
-	stages, err := accountsAddRunStages(ctx, cmd, after, path, wrote, "accounts rm")
+	// The removal's own account (CL7a), filed under the removal's own name: the
+	// block below is stdout, so the run's steps go to stderr, which is where
+	// this command's converge already accounted for itself.
+	run := stepRunFor(cmd, "accounts-rm", cmd.ErrOrStderr())
+	defer run.close()
+	stages, err := accountsAddRunStages(ctx, cmd, run, after, path, wrote, "accounts rm")
 	if err != nil {
 		return err
 	}

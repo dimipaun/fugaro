@@ -589,11 +589,12 @@ func (e *initEngine) pinCredentialsImage(ctx context.Context) error {
 	// update), so the file and the snapshot agree; deleting it here would put
 	// the block back out of reach and repeat the failure above.
 	//
-	// What goes back is not quite what was read: the block's job table is
-	// brought up to date with this machine's config first, because the deploy
-	// is the table's only other writer and a repository onboarded after it
-	// would hold an invoker grant on a service whose table refuses its jobs
-	// (infra.RefreshCredentialsServiceJobAccounts). The repository this run
+	// What goes back is not quite what was read: the block's two job tables —
+	// the coding one and the review-only one — are brought up to date with this
+	// machine's config first, because the deploy is their only other writer and
+	// a repository onboarded after it would hold an invoker grant on a service
+	// whose table refuses its jobs (infra.RefreshCredentialsServiceJobAccounts).
+	// The repository this run
 	// onboards is in the config before this stage plans
 	// (makeOnboardingRepoEntry), so the table names its jobs in the run that
 	// grants them the invoker: a row only a later run would add leaves this
@@ -861,7 +862,7 @@ func (e *initEngine) fillCredentialsAudience(ctx context.Context) (bool, error) 
 	// because this plan has none — every resource in it is in the state already,
 	// and the cover consults that list only for a change that carries an import
 	// (tf.Cover.NotCovered).
-	gated, err := r.gateStep(ctx, e.t, nil, r.coverOf(r.notCovered))
+	gated, err := r.gateStep(ctx, e.t, nil, r.coverOf(r.coverReasons))
 	if err != nil {
 		return false, err
 	}

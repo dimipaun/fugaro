@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	terraform "github.com/dimipaun/fugaro/deploy/terraform"
+
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // The installation root's credentials_service key and the two functions that
@@ -589,6 +591,107 @@ func TestRefreshCredentialsServiceJobAccountsUnionsTheInstallationsJobs(t *testi
 	broken := strings.Replace(string(vars), `"job_accounts": [`, `"job_accounts": "none"`, 1)
 	if _, err := RefreshCredentialsServiceJobAccounts([]byte(broken), lc); err == nil {
 		t.Error("RefreshCredentialsServiceJobAccounts replaced a table it could not read")
+	}
+}
+
+// The review table is the block's SECOND member this side composes out of the
+// local config, and it carries the job table's hazard one step along the axis
+// (CredentialsReviewJobAccounts): the deploy fills it in on the run that
+// CREATES the block, every later run carries the block as it is found, and a
+// profile or a Claude account added after that deploy is a review variant the
+// service's table does not name — refused by the service while the variant
+// itself runs with the service's address in its environment (modules/project's
+// review job, D893(c)). No other command can put the row there: `fugaro
+// update` is the whole upgrade (CLAUDE.md's HARD RULE).
+//
+// The union is the job table's rule and for the same reason, and the empty
+// union is the one place the two differ: an installation that names no profile
+// derives no review row, and a member the module renders no entry for is left
+// exactly as the document carried it — absent stays absent — because writing
+// an empty one would change a carried block, and the plan of an installation
+// that deploys no review job, for no fact at all.
+//
+// Mutation (verified, run and restored): write the derived rows over the found
+// ones instead of unioning them — the first assertion fails, the row gone from
+// a table no command can rebuild it into.
+func TestRefreshCredentialsServiceJobAccountsUnionsTheReviewVariants(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+credentialsBudgetLC+projectAccountLCBlock)
+	svc := credsVarsSpec()
+	// The block a deploy left: a review row for a variant this machine's config
+	// no longer describes.
+	svc.ReviewJobAccounts = []CredentialsReviewJob{{Profile: "gone", Provider: "github", Account: config.DefaultClaudeAccount}}
+	vars, err := SetCredentialsService([]byte(credsVarsDiscovered), svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := RefreshCredentialsServiceJobAccounts(vars, lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		CredentialsService *CredentialsServiceSpec `json:"credentials_service"`
+	}
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatalf("the result is not a tfvars document: %v\n%s", err, got)
+	}
+	if doc.CredentialsService == nil {
+		t.Fatalf("credentials_service was dropped:\n%s", got)
+	}
+	want := []CredentialsReviewJob{
+		{Profile: "apikey", Provider: "github", Account: config.DefaultClaudeAccount},
+		{Profile: "gone", Provider: "github", Account: config.DefaultClaudeAccount},
+		{Profile: "standard", Provider: "github", Account: "acme-personal"},
+		{Profile: "standard", Provider: "github", Account: config.DefaultClaudeAccount},
+	}
+	if have := doc.CredentialsService.ReviewJobAccounts; !slices.Equal(have, want) {
+		t.Errorf("credentials_service.review_job_accounts = %+v, want %+v (the config's own variants in their sorted place, and the row the block already carried kept): a table the refresh DROPPED is a review job that holds the service's address and is refused by it", have, want)
+	}
+	// The coding table is refreshed in the same pass and by the same rule, and
+	// every other member of the block is the installation's own record.
+	svc.ReviewJobAccounts = want
+	svc.JobAccounts = []CredentialsJob{
+		{Provider: "bitbucket", Repo: "acme/sandbox", Workflow: "web"},
+		{Provider: "github", Repo: "acme/webapp", Workflow: "web"},
+		{Provider: "github", Repo: "acme/webapp", Workflow: "web_acme-personal"},
+		{Provider: "github", Repo: "acme/webapp", Workflow: "web_bmb"},
+	}
+	if !credsVarsSpecEqual(*doc.CredentialsService, svc) {
+		t.Errorf("credentials_service = %+v, want %+v: the two tables are the members this side composes, and the image, the URL, the bundle, the database and the verifier list are the installation's own record", *doc.CredentialsService, svc)
+	}
+	if wantDoc, have := credsVarsDoc(t, vars), credsVarsDoc(t, got); !mapsEqual(wantDoc, have) {
+		t.Errorf("the document changed beyond the one key:\nwant %v\ngot  %v", wantDoc, have)
+	}
+	// And it converges: a second refresh of the same document is byte for byte
+	// the same file.
+	again, err := RefreshCredentialsServiceJobAccounts(got, lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != string(got) {
+		t.Errorf("a second refresh changed the document:\nfirst  %s\nsecond %s", got, again)
+	}
+
+	// An installation that names no profile derives no review row, and a block
+	// that carries none keeps no member: what the module renders for an empty
+	// list is nothing, so the refresh leaves the document — and with it the
+	// plan of an installation that deploys no review job — exactly as it was.
+	plain := credentialsLC(t)
+	none, err := SetCredentialsService([]byte(credsVarsDiscovered), credsVarsSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = RefreshCredentialsServiceJobAccounts(none, plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "review_job_accounts") {
+		t.Errorf("the refresh gave an installation that deploys no review job a review_job_accounts member:\n%s", got)
+	}
+	// A review table this program cannot read is refused too, and for the job
+	// table's own reason: the table it cannot read is the table it would drop.
+	brokenReview := strings.Replace(string(vars), `"review_job_accounts": [`, `"review_job_accounts": "none"`, 1)
+	if _, err := RefreshCredentialsServiceJobAccounts([]byte(brokenReview), lc); err == nil {
+		t.Error("RefreshCredentialsServiceJobAccounts replaced a review table it could not read")
 	}
 }
 

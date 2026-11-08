@@ -2462,6 +2462,18 @@ run "credentials_service_on" {
         repo     = "acme/webapp"
         workflow = "web"
       }]
+      review_job_accounts = [
+        {
+          profile  = "standard"
+          provider = "github"
+          account  = "default"
+        },
+        {
+          profile  = "standard"
+          provider = "github"
+          account  = "acme-personal"
+        },
+      ]
       verifier_accounts = ["person-1@example.com", "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"]
       url               = "https://fugaro-credentials-123456789012.us-east5.run.app"
     }
@@ -2602,15 +2614,24 @@ run "credentials_service_on" {
   # below, which names none, is where the entry carries the installation's own
   # verifier account alone (CSR14 — the entry is rendered in every state of the
   # list, and an absent member is the state the account is the default in).
-  # Two of the nine are rendered only
-  # from what this file's own variables name: the verifier list (C3.9g1) and,
-  # since BB4, the read mint's admitted people — the operators among the
-  # installation's user: members, as the bare addresses a Google ID token's
-  # email claim carries, which is what the service verifies them by. What the
-  # service does with a value (a database URL that is not the Firebase
-  # project's, an audience that is not a URL, a job table that binds nothing,
-  # a verifier list or a person list that is not a list of addresses) is
-  # refused by the process itself, by name, and is C1.14's tests.
+  # Three of the ten are rendered only from what this file's own variables
+  # name: the verifier list (C3.9g1) and, since BB4, the read mint's admitted
+  # people — the operators among the installation's user: members, as the bare
+  # addresses a Google ID token's email claim carries, which is what the
+  # service verifies them by — and, since this change, the review class's own
+  # set, which the paragraph below is about. What the service does with a value
+  # (a database URL that is not the Firebase project's, an audience that is not
+  # a URL, a job table that binds nothing, a verifier list or a person list
+  # that is not a list of addresses) is refused by the process itself, by name,
+  # and is C1.14's tests.
+  #
+  # This run also names two review job accounts, so the EIGHTH name is
+  # rendered: the review class's admitted set, which the class is dead without
+  # (a deployment carrying the coding table alone admits no review caller, and
+  # every review launch is refused with the fail-closed sentence). The runs
+  # below that name none are the other half: the entry is absent, the set is
+  # empty and the class admits nobody, which is the fail-closed state rather
+  # than a revision that refuses to bind a port.
   assert {
     condition = tomap({
       for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.name => e.value
@@ -2622,6 +2643,7 @@ run "credentials_service_on" {
       FUGARO_FIREBASE_PROJECT        = "aurora-fp"
       FUGARO_CREDENTIALS_SERVICE_URL = "https://fugaro-credentials-123456789012.us-east5.run.app"
       FUGARO_JOB_ACCOUNTS            = "[{\"provider\":\"github\",\"repo\":\"acme/webapp\",\"workflow\":\"web\"}]"
+      FUGARO_REVIEW_JOB_ACCOUNTS     = "[{\"account\":\"default\",\"profile\":\"standard\",\"provider\":\"github\"},{\"account\":\"acme-personal\",\"profile\":\"standard\",\"provider\":\"github\"}]"
       FUGARO_VERIFIER_ACCOUNTS       = "[\"person-1@example.com\",\"fugaro-coordinator@proj-1234.iam.gserviceaccount.com\"]"
       FUGARO_PERSON_ACCOUNTS         = "[\"operator@example.com\"]"
     })
@@ -2660,6 +2682,27 @@ run "credentials_service_on" {
       workflow = "web"
     }]
     error_message = "the job table must be the variable's triples as JSON, which is what the service decodes (all three fields present, no others)"
+  }
+  # The review set is the other document, and it is held the same way: the
+  # rows the service decodes into its own admission rows. A row carries the
+  # triple the variant's service account is derived from and the Claude
+  # account the variant's calls are served by, and nothing else — the emails
+  # are that derivation's output and would be a second spelling that can
+  # drift from the accounts the deployer creates.
+  #
+  # Mutation (run, restore): carrying job_accounts under the review name — the
+  # copy-paste the two tables invite — fails this assertion and the run's exact
+  # map together, so a deployment cannot ship the coding table as its
+  # admissions and refuse every review launch.
+  assert {
+    condition = jsondecode([
+      for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.value
+      if e.name == "FUGARO_REVIEW_JOB_ACCOUNTS"
+      ][0]) == [
+      { profile = "standard", provider = "github", account = "default" },
+      { profile = "standard", provider = "github", account = "acme-personal" },
+    ]
+    error_message = "the review set must be the variable's {profile, provider, account} rows as JSON, in the variable's own order: the service derives each review job's service account from the triple and serves its calls by the Claude account the row names, and the default account is spelled out rather than left empty (the axis spells it as the empty string and the admissions spell it config.DefaultClaudeAccount)"
   }
   assert {
     condition = (length(google_cloud_run_v2_service.credentials[0].template[0].containers) == 1 &&
@@ -2760,6 +2803,22 @@ run "credentials_service_first_apply_has_no_audience_yet" {
   assert {
     condition     = length(google_cloud_run_v2_service.credentials[0].template[0].containers[0].env) == 9
     error_message = "the unset case sets the same nine names, the audience and the verifier entry among them: a name the module drops is a service the process refuses by a different message, and the verifier entry is rendered in every state of the list (CSR14)"
+  }
+  # This run names no review job account, and the entry is not rendered at
+  # all: the process reads the absence as an empty review set and admits no
+  # review caller, which is the fail-closed direction — an installation that
+  # deploys no review variant gets a service that serves no review launch
+  # rather than one that refuses to bind a port (the exact count above already
+  # fails on an extra entry; this is the named half of the same fact, and the
+  # run above is the set's own).
+  #
+  # Mutation (run, restore): rendering the entry in every state — the
+  # unconditional block this one is not — fails the count above (ten names,
+  # not nine), so the fail-closed state cannot be replaced by an empty list
+  # that reads as "the installation said so".
+  assert {
+    condition     = length([for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e if e.name == "FUGARO_REVIEW_JOB_ACCOUNTS"]) == 0
+    error_message = "an installation whose block names no review job account renders no review entry: the set arrives with the variants the deployment creates (the review class), and the empty set is what the service's own fail-closed sentence is about"
   }
   assert {
     condition = jsondecode(one([
@@ -2944,6 +3003,43 @@ run "credentials_service_job_row_needs_all_three_fields" {
         provider = "github"
         repo     = "acme/webapp"
         workflow = ""
+      }]
+    }
+  }
+
+  expect_failures = [var.credentials_service]
+}
+
+# A review job row needs all three of its fields, for the reason the coding
+# table's does: the service derives the review job's service account from the
+# triple and serves the call by the account the row names, so a row with an
+# empty account is an admission the service refuses at start-up by name
+# ("names no Claude account, so no call of it could be served") — which is a
+# revision that never binds a port, and a plan is where that is caught.
+run "credentials_service_review_job_row_needs_all_three_fields" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "acme/webapp"
+        workflow = "web"
+      }]
+      review_job_accounts = [{
+        profile  = "standard"
+        provider = "github"
+        account  = ""
       }]
     }
   }

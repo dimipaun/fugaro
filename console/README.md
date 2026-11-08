@@ -1649,6 +1649,8 @@ truncated.
 | `sentence` | free text a job wrote, one line, invisible characters stripped, credential-shaped runs neutralised, every URL replaced | clipped at 512 characters, never refused (an empty title is a title) |
 | `label` | a short rendered field (`stage`, `round`, `verify`, `models`, `recipe`, `workflow`) | refused past 200 characters, or if it is not a single line |
 | `repository` | `owner/name`, at most 200 characters, no `..` | refused |
+| `repoPattern` | a policy allow-list entry: `*`, or three segments or more — `provider/owner/name`, a path that nests included — each matching the CLI's own segment grammar (`[a-z0-9*._-]`, a star matched inside a segment and never across a `/`, no `.` or `..` segment and no `.git` ending), at most 255 characters (`projectpolicy.MaxPatternLen`) | refused |
+| `imageRef` | a container image reference, the CLI's own `catalogImageRE` (`registry[:port]/path[:tag][@sha256:…]`, lower-case, at most 255 characters) | refused |
 | `slug` | the console's own slug grammar | refused |
 | `branch` | a git ref, no leading/trailing slash, no `.lock` | refused |
 | `project` | a GCP project name | refused |

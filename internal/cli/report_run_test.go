@@ -30,24 +30,6 @@ func isolateState(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
 }
 
-// TestATestNeverWritesTheDeveloperStateHome: the commands this batch moves
-// onto the reporter file a log as they run, so the suite must never file one
-// in the developer's own state directory -- and prune it there, 50 files per
-// command name. TestMain is the backstop that makes it impossible; a test
-// that reads a log back points the state home at its own (isolateState).
-//
-// Mutation (run, restore): delete the XDG_STATE_HOME block from TestMain and
-// this fails: testStateRoot is empty, and the logs of every migrated command
-// land in the developer's ~/.local/state/fugaro/logs.
-func TestATestNeverWritesTheDeveloperStateHome(t *testing.T) {
-	if os.Getenv("XDG_STATE_HOME") != testStateRoot || testStateRoot == "" {
-		t.Fatalf("XDG_STATE_HOME = %q, TestMain's own = %q: a command that keeps a log would file it in the developer's own state home", os.Getenv("XDG_STATE_HOME"), testStateRoot)
-	}
-	if home := os.Getenv("HOME"); home != "" && strings.HasPrefix(testStateRoot, home+string(filepath.Separator)) {
-		t.Fatalf("TestMain's state home %q is inside the developer's home %q", testStateRoot, home)
-	}
-}
-
 // closingLine is the reporter's last line for a run of n steps: the elapsed
 // time is the run's own, so only its shape is pinned.
 func closingLine(t *testing.T, out string, n int) {

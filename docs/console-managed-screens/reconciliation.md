@@ -63,7 +63,7 @@ and a new IPC operation, and a write is not on the table** (F5, F6).
 - **Two writes, and this work adds none.** `run.launch` (rule 11) and `settings.edit` (rule 12);
   `console/docs/json-contract.md` §9 states the rule and both exceptions.
 - **Untrusted text is drawn as text.** Every string from a document goes through `putText` with the
-  class its wire key declares; `TEXT_CLASSES` (`console/src/shared/sanitize.ts:84`) is the closed
+  class its wire key declares; `TEXT_CLASSES` (`console/src/shared/sanitize.ts:100`) is the closed
   list, and rule 7 forbids `innerHTML`, a `dangerouslySetInnerHTML` equivalent and an `href` built
   from it.
 - **Sections, not a redraw.** The owner's rule of 2026-10-31 (`.claude/rules/console.md`): every tab
@@ -171,7 +171,7 @@ one as the other (D1483).
 | **F4** | The policy panel has no operation, so the console cannot read the policy node at all | **Gap** | `POLICY_SOURCE_LINE` (`projects.ts:122`) names the command and no `CONSOLE_OPERATIONS` row carries it; the panel's `operation` is null and it says what it cannot read. The fallback it would otherwise take is `PROJECTS_SOURCE_LINES[operation] ?? \`fugaro ${operation}\`` (`projects.ts:567`, `:587`), which for an operation named `policy.show` spells `fugaro policy.show` — an argv no CLI answers, which is why CM10 settles the row rather than letting the fallback draw one |
 | **F5** | The console's surface is a closed list and its spawn allow-list is exact argv | **Rule** | `CONSOLE_OPERATIONS` (`console/src/main/ipc.ts:529`), `argvFor` (`console/src/main/spawn.ts:1334`), rule 6's table (`docs/design/desktop-console.md` §5.1) |
 | **F6** | Exactly two operations write, and neither is this work's | **Rule** | `run.launch` (rule 11) and `settings.edit` (rule 12); `console/docs/json-contract.md` §9 states the rule and both exceptions |
-| **F7** | Every string from a document is drawn as text, through a class the wire key declares | **Rule** | `TEXT_CLASSES` (`console/src/shared/sanitize.ts:84`), `putText`; rule 7 forbids `innerHTML` |
+| **F7** | Every string from a document is drawn as text, through a class the wire key declares | **Rule** | `TEXT_CLASSES` (`console/src/shared/sanitize.ts:100`), `putText`; rule 7 forbids `innerHTML` |
 | **F8** | A section has its own read, its own busy state and its own refusal, and independent reads run in parallel | **Rule** | The owner's rule of 2026-10-31 (`.claude/rules/console.md`); `sectionRead`, `renderBusy`, `renderStamp` (`console/src/renderer/section.ts`) |
 | **F9** | A view showing spend, caps or the kill controls must withhold in a reduced console | **Rule** | `hidesView` (`console/src/shared/version.ts:689`), `REDUCED_VIEWS` (`version.ts:392`) |
 | **F10** | `doctor --json` prints a closed document of checks, and a check carries prose rather than fields | **Exists** | `doctorOutput` and `doctorCheck` (`internal/cli/doctor.go`) |
@@ -222,13 +222,31 @@ Stated as a list because each one is a fence a later task could move without not
 2. **The managed marks are never written from the console.** They are the CLI's, at a terminal, and
    the screens show them (F5, F11).
 3. **No figure the Spend screen owns.** These screens show no dollars and no caps: the caps are the
-   Project tab's `caps` panel and the spend is the Spend screen's (F2, F9).
+   Project tab's `caps` panel and the spend is the Spend screen's (F2, F9). **That reaches the policy
+   node's own `budget` block** (`mode`, `per_run_usd`, `allowed_models`, `max_run_tokens`), which
+   `policy.show` carries and the policy notes **drop rather than draw**: a ceiling drawn there would
+   be the third home D1481 chose `project policy show --json` to avoid, the `caps` panel is where a
+   configured ceiling is drawn, and `docs/design/desktop-console.md` §5.1's `policy.show` row now says
+   so too — its paragraph and that row both said the tab draws the block as the policy it is, which
+   CM7's review corrected on 2026-11-07, because no screen of this work draws a figure of it. The
+   read is withheld in a reduced console all the same — `REDUCED_VIEW_OPERATIONS`'s `caps`
+   (`console/src/main/ipc.ts`) — because the ceiling travels in the **document**, which is a
+   statement about the read and not about a drawing.
 4. **No secret, in any form.** No screen asks the CLI for a value, and a row the read marks
    `sensitive` is dropped whole rather than drawn with a blank (F17, D1479).
 5. **No derived fact drawn as a read one.** "Revoked" is not shown as a state (F15, D1475), and the
    coordinator's `in_flight` is never drawn as the runs in flight at the last publish (F20, D1483).
 6. **No unbounded read.** The audit read is the newest N of a day, not a history the operator pages
    through (D1477), and jobs are never part of the first paint (F8).
+7. **No check the ruling did not name** (recorded 2026-11-07, CM7's review). The policy notes draw
+   the six `policy-*` checks of D1482 and no other check `doctor` returns. `doctor` warns about the
+   same published node from two checks outside that family — `allow-list-empty` and
+   `allow-list-uncovered` (`internal/cli/doctor.go`), which say the node admits no repository, or
+   does not admit one this machine's config names — and the section **counts** them in its own figure
+   and **draws** neither their ids nor their sentences: the heading names the `policy-*` family and
+   the count beside it is what the section says about everything else. A later task that draws them
+   moves D1482's closed list; a filter widened to a prefix, or to every warning about the policy, is
+   that change made without the ruling.
 
 ## 7. Decisions D1470–D1489
 
