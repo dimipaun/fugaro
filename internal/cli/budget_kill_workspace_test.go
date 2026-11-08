@@ -1,0 +1,162 @@
+package cli
+
+// The workspace scope of `fugaro budget kill` and `budget resume` (D1302,
+// budget_kill_workspace.go).
+//
+// The switch it sets is the workspace's own service's stop flag, in the
+// workspace's own database: the node the credentials service deployed in the
+// workspace's own project reads with budget.ReadKills and refuses every call on
+// (internal/credsvc/server.go:454). So these tests hold the two halves of its
+// scope at once. It reaches a member: a member's call that pays with the
+// workspace's shared credentials is refused, and no member's operator can undo
+// that, because the switch is in a database no member can write. And it reaches
+// nobody else: no node of a member's own database, and no other workspace's.
+
+import (
+	"context"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/rtdb"
+)
+
+// wsKillClient is a client of one fixture database, as the commands open one.
+func wsKillClient(t *testing.T, db *gcpfake.RTDB) *rtdb.Client {
+	t.Helper()
+	client, err := newBudgetClient(context.Background(), db.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client
+}
+
+// wsKillStop reads a workspace's stop flag the way the workspace's own service
+// reads it (internal/credsvc/server.go:454: budget.ReadKills against the
+// database the deployment serves), so "the stop reached a member" is asserted
+// through the read the refusal is made on and not through the raw node alone.
+func wsKillStop(t *testing.T, db *gcpfake.RTDB, name string) (bool, string) {
+	t.Helper()
+	kills, err := budget.ReadKills(context.Background(), wsKillClient(t, db), name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return kills.On()
+}
+
+// wsKillSwitch is the switch a kill wrote, as the database holds it.
+func wsKillSwitch(t *testing.T, db *gcpfake.RTDB) budget.Kill {
+	t.Helper()
+	var k budget.Kill
+	found, err := wsKillClient(t, db).Get(context.Background(), budget.PathKillGlobal, &k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatalf("nothing was written at %s: the workspace was not stopped", budget.PathKillGlobal)
+	}
+	return k
+}
+
+// TestWorkspaceKillStopsAMemberRunInFlight is the red step: the scope did not
+// exist (`--workspace` was an unknown flag). It is the test the task exists for
+// — the stop is the one control that does not depend on a member's honesty
+// (spec.md §8), so it is the control that has to be shown to reach a member.
+func TestWorkspaceKillStopsAMemberRunInFlight(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTable)
+	member := h.add(t, "member-a", "member-a-gcp", "")
+	before := member.db.Value("")
+	wsDB := h.project(t, "workspace-alpha").db
+
+	// The word asked for is the workspace's own name (confirmTyped compares
+	// against the config the switch is written from), and a different word
+	// writes nothing, as it does for --all.
+	typed(t)
+	if _, _, err := executeStdin(t, "aurora\n", "budget", "kill", "--workspace", "workspace-alpha", "--reason", "runaway spend"); err == nil {
+		t.Fatal("the workspace kill accepted a word that is not the workspace's name")
+	}
+	if on, _ := wsKillStop(t, wsDB, "workspace-alpha"); on {
+		t.Fatal("the refused confirmation killed the workspace")
+	}
+
+	out, _, err := executeStdin(t, "workspace-alpha\n", "budget", "kill", "--workspace", "workspace-alpha", "--reason", "runaway spend")
+	if err != nil {
+		t.Fatalf("budget kill --workspace: %v", err)
+	}
+	k := wsKillSwitch(t, wsDB)
+	if !k.On || k.By != "person-1@example.com" || k.Reason != "runaway spend" ||
+		k.At <= 0 || k.At > time.Now().UnixMilli() {
+		t.Errorf("the workspace's switch is %+v, want it on, recorded by the operator, with the reason and the time", k)
+	}
+	// The refusal a member's shared-credential call meets is this read.
+	if on, which := wsKillStop(t, wsDB, "workspace-alpha"); !on || which != "global" {
+		t.Errorf("the workspace service's stop read is (on=%v, which=%q), want its own global switch on: every member's shared-credential call is refused on it", on, which)
+	}
+	if !strings.Contains(out, "workspace-alpha") || !strings.Contains(out, "resume --workspace workspace-alpha") {
+		t.Errorf("the kill does not name the workspace and its undo:\n%s", out)
+	}
+
+	// Nothing of a member's own (spec.md §9): no node of its database was
+	// written, so its credentials, its caps, its sign-in and the runs that never
+	// reach the workspace are all untouched.
+	if after := member.db.Value(""); !reflect.DeepEqual(before, after) {
+		t.Errorf("the member's database changed:\nbefore %v\nafter  %v", before, after)
+	}
+	if on, which := wsKillStop(t, member.db, "member-a"); on {
+		t.Errorf("the member's own stop read is on (%s): a workspace reached into a member", which)
+	}
+
+	// The undo is the same scope, in the same database.
+	if _, _, err := execute(t, "budget", "resume", "--workspace", "workspace-alpha", "--yes"); err != nil {
+		t.Fatalf("budget resume --workspace: %v", err)
+	}
+	if on, _ := wsKillStop(t, wsDB, "workspace-alpha"); on {
+		t.Error("resume --workspace left the workspace's switch on")
+	}
+	if after := member.db.Value(""); !reflect.DeepEqual(before, after) {
+		t.Errorf("the member's database changed across the resume:\nbefore %v\nafter  %v", before, after)
+	}
+}
+
+// TestWorkspaceKillDoesNotStopAnotherWorkspace: the scope is one workspace and
+// never the group of them nor the project this command happens to run in. Both
+// ways it could be read as another scope are refused rather than resolved — a
+// second scope flag, and the flags that name the project the command acts on —
+// and a kill of one workspace leaves another's database byte for byte as it was.
+func TestWorkspaceKillDoesNotStopAnotherWorkspace(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTable)
+	other := h.add(t, "workspace-beta", "ws-beta-gcp", "")
+	before := other.db.Value("")
+
+	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha", "--all", "--yes"); err == nil ||
+		!strings.Contains(err.Error(), "name one scope") {
+		t.Errorf("--workspace with --all: %v, want a refusal naming the one scope", err)
+	}
+	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha", "--project", "workspace-beta", "--yes"); err == nil ||
+		!strings.Contains(err.Error(), "--project") {
+		t.Errorf("--workspace with --project: %v, want a refusal, not a write into whatever --project names", err)
+	}
+	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-nowhere", "--yes"); err == nil ||
+		!strings.Contains(err.Error(), "workspace-nowhere") {
+		t.Errorf("an unknown workspace: %v, want a refusal naming it", err)
+	}
+	if !reflect.DeepEqual(before, other.db.Value("")) {
+		t.Fatal("a refused kill wrote a workspace")
+	}
+
+	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha", "--yes", "--reason", "runaway spend"); err != nil {
+		t.Fatalf("budget kill --workspace: %v", err)
+	}
+	if on, _ := wsKillStop(t, h.project(t, "workspace-alpha").db, "workspace-alpha"); !on {
+		t.Error("the killed workspace's own switch is not on")
+	}
+	if after := other.db.Value(""); !reflect.DeepEqual(before, after) {
+		t.Errorf("killing workspace-alpha wrote workspace-beta:\nbefore %v\nafter  %v", before, after)
+	}
+	if on, _ := wsKillStop(t, other.db, "workspace-beta"); on {
+		t.Error("killing workspace-alpha stopped workspace-beta")
+	}
+}
