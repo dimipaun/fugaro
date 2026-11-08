@@ -1,10 +1,13 @@
-# Fugaro's own runtimes (docs/base-image.md): the Fugaro base installs them
-# into this repository's derived image, and developers who use mise get the
-# same. images/repo_pins_test.go keeps go in go.mod's series and terraform at
-# ci.yml's version.
+# Fugaro's own runtimes and scanners (docs/base-image.md): the Fugaro base
+# installs them into this repository's image, and developers who use mise get
+# the same. images/repo_pins_test.go keeps go in go.mod's series, terraform
+# and tflint at ci.yml's versions, and trivy at the version images/scan.sh
+# pins, so a run and CI lint and scan with one version of each.
 [tools]
 go = "1.27.1"
 terraform = "1.16.4"
+tflint = "0.64.0"
+trivy = "0.76.2"
 
 [env]
 GOTOOLCHAIN = "local"
