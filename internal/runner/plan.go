@@ -3,6 +3,7 @@ package runner
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -55,9 +56,30 @@ type planStep struct {
 // layer, and rigor.Known is false only for a run that never resolved one at
 // all (a hand-built one; every real run's bootstrapRigor answers).
 func (r *run) resolveLevels() error {
+	levels, err := r.resolveLevelsForcing(nil)
+	if err != nil {
+		return err
+	}
+	r.levels = levels
+	return nil
+}
+
+// resolveLevelsForcing is resolveLevels with levels forced on above the owner's
+// floor. It is the security escalation's re-resolution (security.go, D1507):
+// the run's diff matched a row of the list in force, so level 3 is required of
+// this run exactly as the owner's floor requires a level — the same input, so
+// the same refusals and the same Inserted answer, and the runner's plan then
+// carries the step.
+//
+// It resolves and returns; it does not write the run's levels. A caller that
+// cannot go on with the answer — a refusal the floor's own requirement met, a
+// plan that would not hold it — leaves the run's levels where they are, which
+// is what "the escalation never fails the run" needs (F9). force is nil for
+// every ordinary resolution, which is then byte-for-byte resolveLevels.
+func (r *run) resolveLevelsForcing(force []policy.Level) (config.Levels, error) {
 	mode := r.reachedRigor()
 	if !rigor.Known(mode) {
-		return nil
+		return config.Levels{}, nil
 	}
 	// A shadow run resolves against the champion's coder: level 1's own
 	// answer is read off the coder's model (Agent.FirstLineOn), and the two
@@ -69,9 +91,15 @@ func (r *run) resolveLevels() error {
 	if r.shadow {
 		arm, r.cfg.Agent.Models.Coder = r.cfg.Agent.Models.Coder, r.championCoder
 	}
+	floor := r.policy.ReviewFloor(mode)
+	if len(force) > 0 {
+		// Cloned: ReviewFloor hands out the policy's own slice, and appending
+		// to it would write the forced levels into the merged policy.
+		floor = append(slices.Clone(floor), force...)
+	}
 	levels, warns, err := r.applyLevels(config.LevelInputs{
 		Mode:           mode,
-		Floor:          r.policy.ReviewFloor(mode),
+		Floor:          floor,
 		Task:           r.spec.ReviewLevels,
 		Recipe:         r.rcp,
 		CatalogDefault: r.derived,
@@ -89,10 +117,34 @@ func (r *run) resolveLevels() error {
 		r.d.Log.Warn("review levels: "+w.Message, "level", string(w.Level))
 	}
 	if err != nil {
-		return fmt.Errorf("review levels: %w", err)
+		return config.Levels{}, fmt.Errorf("review levels: %w", err)
 	}
-	r.levels = levels
+	return levels, nil
+}
+
+// buildPlan derives the run's plan from its recipe and the levels it has
+// resolved and writes it to the run. It is the one place the plan is built, so
+// the escalation's rebuild (security.go) and bootstrap's first build cannot
+// drift apart.
+func (r *run) buildPlan() error {
+	plan, err := r.planFor(r.levels)
+	if err != nil {
+		return err
+	}
+	r.plan = plan
 	return nil
+}
+
+// planFor is the plan the run's levels make of its recipe, checked. levels is
+// a parameter rather than r.levels because the escalation builds a candidate
+// plan from levels it has not committed to yet: a plan that does not hold them
+// must leave the run's own plan untouched.
+func (r *run) planFor(levels config.Levels) ([]planStep, error) {
+	plan := planOf(r.rcp, levels, r.cfg.Agent, r.spec.Overrides.ReviewRounds, r.reachedRigor())
+	if err := checkPlan(r.rcp, levels, plan); err != nil {
+		return nil, err
+	}
+	return plan, nil
 }
 
 // stepLevel is which review level a step kind belongs to, false for a kind no

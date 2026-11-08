@@ -840,6 +840,13 @@ type Record struct {
 	// existed, and a run that died before bootstrap — so an old reader sees
 	// the record it always saw.
 	Rigor *RigorRecord `json:"rigor,omitempty"`
+	// Security is the security escalation the run took: its own diff matched a
+	// row of the list in force, so the runner turned review level 3 on for it
+	// (docs/security-classification/implementation-plan.md SC6, D1507, D1509).
+	// Absent for a run that escalated nothing — a diff that matched no row, a
+	// run that already carried level 3, and every record written before this
+	// field existed, so a reader from before it sees the record it always saw.
+	Security *SecurityEscalation `json:"security,omitempty"`
 	// Tier is the expectation tier the run was dispatched at and the cost and
 	// duration Fugaro expects a run of that tier to have
 	// (docs/task-governance/implementation-plan.md T8.1, D330): the launcher's

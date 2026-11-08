@@ -110,7 +110,7 @@ func TestRunEscalationLeavesTheRigorModeAlone(t *testing.T) {
 	change(t, repo, map[string]string{listedPath: "package creds\n"}, "work on the credentials tree")
 	before := *r.rec.Rigor
 	r.escalateSecurity(context.Background(), runstore.SecurityAtImplement)
-	if r.rec.SecurityEscalation == nil {
+	if r.rec.Security == nil {
 		t.Fatal("the escalation did not fire")
 	}
 	if !reflect.DeepEqual(*r.rec.Rigor, before) {
@@ -125,7 +125,7 @@ func TestRunRecordsThePatternThatEscalatedIt(t *testing.T) {
 	r, repo := securityRun(t, rigor.Pro)
 	change(t, repo, map[string]string{listedPath: "package creds\n"}, "work on the credentials tree")
 	r.escalateSecurity(context.Background(), runstore.SecurityAtFix)
-	got := r.rec.SecurityEscalation
+	got := r.rec.Security
 	if got == nil {
 		t.Fatal("the record carries no escalation")
 	}
@@ -154,8 +154,8 @@ func TestRunWithLevelThreeAlreadyAskedRecordsNoEscalation(t *testing.T) {
 	}
 	change(t, repo, map[string]string{listedPath: "package creds\n"}, "work on the credentials tree")
 	r.escalateSecurity(context.Background(), runstore.SecurityAtImplement)
-	if r.rec.SecurityEscalation != nil {
-		t.Fatalf("a run that already ran level 3 recorded an escalation: %+v", r.rec.SecurityEscalation)
+	if r.rec.Security != nil {
+		t.Fatalf("a run that already ran level 3 recorded an escalation: %+v", r.rec.Security)
 	}
 }
 
@@ -166,7 +166,7 @@ func TestRunEscalationSurvivesAUnitThatChangedNothing(t *testing.T) {
 	r, repo := securityRun(t, rigor.Pro)
 	change(t, repo, map[string]string{listedPath: "package creds\n"}, "work on the credentials tree")
 	r.escalateSecurity(context.Background(), runstore.SecurityAtImplement)
-	if r.rec.SecurityEscalation == nil {
+	if r.rec.Security == nil {
 		t.Fatal("the escalation did not fire")
 	}
 	// The next unit changed nothing: the branch is back at its base, so the
@@ -178,8 +178,8 @@ func TestRunEscalationSurvivesAUnitThatChangedNothing(t *testing.T) {
 	if !levelOn(r.levels, policy.LevelL3) {
 		t.Fatalf("a unit that changed nothing put level 3 back off: %+v", r.levels)
 	}
-	if r.rec.SecurityEscalation == nil || r.rec.SecurityEscalation.At != runstore.SecurityAtImplement {
-		t.Fatalf("the escalation = %+v, want the implement one kept", r.rec.SecurityEscalation)
+	if r.rec.Security == nil || r.rec.Security.At != runstore.SecurityAtImplement {
+		t.Fatalf("the escalation = %+v, want the implement one kept", r.rec.Security)
 	}
 }
 
@@ -190,7 +190,7 @@ func TestRunEscalationIsIdempotentAcrossRoundRigor(t *testing.T) {
 	r, repo := securityRun(t, rigor.Pro)
 	change(t, repo, map[string]string{listedPath: "package creds\n"}, "work on the credentials tree")
 	r.escalateSecurity(context.Background(), runstore.SecurityAtImplement)
-	if r.rec.SecurityEscalation == nil {
+	if r.rec.Security == nil {
 		t.Fatal("the escalation did not fire")
 	}
 	levels, plan := r.levels, slices.Clone(r.plan)
@@ -202,8 +202,8 @@ func TestRunEscalationIsIdempotentAcrossRoundRigor(t *testing.T) {
 	if !slices.Equal(r.plan, plan) {
 		t.Fatalf("the plan moved: %+v, want %+v", r.plan, plan)
 	}
-	if r.rec.SecurityEscalation.At != runstore.SecurityAtImplement {
-		t.Fatalf("the moment = %q, want the implement one", r.rec.SecurityEscalation.At)
+	if r.rec.Security.At != runstore.SecurityAtImplement {
+		t.Fatalf("the moment = %q, want the implement one", r.rec.Security.At)
 	}
 }
 
@@ -218,7 +218,7 @@ func TestRunEscalationReadsTheDiffBeforeTheRecordHasIt(t *testing.T) {
 		t.Fatalf("the record already carries the changed paths (%+v), so the seam this test pins is not the seam it reached", r.rec.ChangedFiles)
 	}
 	r.escalateSecurity(context.Background(), runstore.SecurityAtImplement)
-	if r.rec.SecurityEscalation == nil {
+	if r.rec.Security == nil {
 		t.Fatal("no escalation fired: the read took the record's own ChangedFiles, which is nil at this moment")
 	}
 	if r.rec.ChangedFiles != nil {
@@ -235,8 +235,8 @@ func TestRunEscalationWarnsAndKeepsTheLevelsWhenTheReadFails(t *testing.T) {
 	r.d.Log = slog.New(slog.NewTextHandler(&logged, nil))
 	levels, plan := r.levels, slices.Clone(r.plan)
 	r.escalateSecurity(context.Background(), runstore.SecurityAtImplement)
-	if r.rec.SecurityEscalation != nil {
-		t.Fatalf("a failed read recorded an escalation: %+v", r.rec.SecurityEscalation)
+	if r.rec.Security != nil {
+		t.Fatalf("a failed read recorded an escalation: %+v", r.rec.Security)
 	}
 	if r.levels != levels || !slices.Equal(r.plan, plan) {
 		t.Fatalf("a failed read moved the levels (%+v) or the plan (%+v)", r.levels, r.plan)
@@ -253,16 +253,16 @@ func TestRunEscalationFiresOnAPathOnlyALaterFixAdded(t *testing.T) {
 	r, repo := securityRun(t, rigor.Pro)
 	change(t, repo, map[string]string{routinePath: "a recipe\n"}, "implement")
 	r.escalateSecurity(context.Background(), runstore.SecurityAtImplement)
-	if r.rec.SecurityEscalation != nil {
-		t.Fatalf("a routine diff escalated: %+v", r.rec.SecurityEscalation)
+	if r.rec.Security != nil {
+		t.Fatalf("a routine diff escalated: %+v", r.rec.Security)
 	}
 	change(t, repo, map[string]string{listedPath: "package creds\n"}, "fix")
 	r.escalateSecurity(context.Background(), runstore.SecurityAtFix)
-	if r.rec.SecurityEscalation == nil {
+	if r.rec.Security == nil {
 		t.Fatalf("a fix that added %s did not escalate", listedPath)
 	}
-	if r.rec.SecurityEscalation.At != runstore.SecurityAtFix {
-		t.Fatalf("the moment = %q, want %q", r.rec.SecurityEscalation.At, runstore.SecurityAtFix)
+	if r.rec.Security.At != runstore.SecurityAtFix {
+		t.Fatalf("the moment = %q, want %q", r.rec.Security.At, runstore.SecurityAtFix)
 	}
 	if !hasAdversarialStep(r.plan) {
 		t.Fatalf("the plan carries no adversarial step: %+v", r.plan)

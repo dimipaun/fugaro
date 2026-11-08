@@ -401,6 +401,17 @@
         "revision": { "type": "string", "maxLength": 120, "description": "The revision of the configuration the mode was read from, origin/<base branch> (D25), so a run whose other keys came from the checked-out ref can be told apart from the mode it ran under (F35's 'two answers' made visible). Absent when the run could not name it." }
       }
     },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "pattern", "category"],
+      "description": "The security escalation the run took (docs/security-classification/implementation-plan.md SC6, D1507, D1509): the run's own diff matched a row of the list in force, so the runner turned review level 3 on for it. It is the run's account of why its review got harder — the levels and the plan a reader can see say that level 3 ran, never what asked for it. Absent for a run that escalated nothing: a diff that matched no row, a run whose own review_levels block already carried level 3, and every record written before this field existed, so an old reader sees the record it always saw and version stays 1 (the field is additive).",
+      "properties": {
+        "at": { "enum": ["implement", "fix"], "description": "The seam the escalation was decided at: the post-implement window, or the post-fix seam beside the rigor mode's own round moment, which a fix round that added a path the implement round did not touch reaches. It is the first moment the run escalated at: the escalation is raise-only, so a later moment that matches again escalates nothing and leaves this as it was." },
+        "pattern": { "type": "string", "minLength": 1, "maxLength": 40, "description": "The matched row's name, as its layer wrote it (internal/orchestrator/sensitivity's Pattern.Validate) — what the record prints when it says which rule decided the level." },
+        "category": { "enum": ["credentials", "guards", "targets", "infrastructure", "prompts", "CI", "artifacts"], "description": "The matched row's category, the word printed beside the name (sensitivity.Categories, D1500). It is carried on the record rather than looked up in the list again, because the list is read from the base branch and the record has to explain itself without it." }
+      }
+    },
     "tier": {
       "type": "object",
       "additionalProperties": false,

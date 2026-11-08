@@ -2099,11 +2099,9 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// run is the arm's: resolveLevels put the champion's coder back only
 		// for the length of its own call, because the level 1 *model* is read
 		// off the coder while the rounds are not.
-		plan := planOf(rcp, r.levels, r.cfg.Agent, spec.Overrides.ReviewRounds, r.reachedRigor())
-		if err := checkPlan(rcp, r.levels, plan); err != nil {
+		if err := r.buildPlan(); err != nil {
 			return fmt.Errorf("recipe %s: %w", rrec.Name, err)
 		}
-		r.plan = plan
 	}
 	// The run's Firebase identity, the shared caps and the kill switches:
 	// a halt here is outcome none (nothing is locked, pushed or opened).
@@ -2700,6 +2698,11 @@ func (r *run) agentLoop(ctx context.Context) {
 			return
 		}
 		r.afterStage(ctx, "implement")
+		// D1507's first seam: the diff the implement stage left is the run's
+		// first answer to "does this change touch what the list in force calls
+		// security-sensitive", and the level it decides has to be in the plan
+		// before the loop below walks it (security.go).
+		r.escalateSecurity(ctx, runstore.SecurityAtImplement)
 		if r.pr.gone {
 			return // a person closed the PR: nothing more to spend on it
 		}
@@ -2722,7 +2725,12 @@ func (r *run) agentLoop(ctx context.Context) {
 		}
 	}
 	tier := ""
-	for _, st := range r.plan {
+	// The plan is read through the slice on every step, rather than ranged
+	// once, because a step may rebuild it: the security escalation appends
+	// level 3's step after the fix seam inside this loop, and a range would
+	// keep walking the plan it captured (security.go, D1507).
+	for i := 0; i < len(r.plan); i++ {
+		st := r.plan[i]
 		switch st.Kind {
 		case recipe.StepFirstLine:
 			tier = runstore.TierSenior
@@ -3078,6 +3086,11 @@ func (r *run) fix(ctx context.Context, v Verdict, sys, sessionID string) (string
 	// asked for, so a mode the run's own work reached is the one the rounds it
 	// has left are spent at (rigor.go).
 	r.roundRigor(ctx)
+	// D1507's second seam, at the same moment and for the same reason: a fix
+	// round can add a path the implement round did not touch, and the plan has
+	// to carry level 3's step before the next round is asked for
+	// (security.go). The read is roundRigor's, above.
+	r.escalateSecurity(ctx, runstore.SecurityAtFix)
 	return req.SessionID, !r.pr.gone
 }
 
