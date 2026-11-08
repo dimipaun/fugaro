@@ -198,9 +198,11 @@ var (
 
 	// authScheme is the same credential where no header name introduces it:
 	// a curl line or an error body prints `Bearer <token>` on its own. The
-	// floor on the value's length is what keeps a sentence's "basic
-	// requirement" out of it, so a short bare credential is caught only when
-	// a header name introduces it (above).
+	// floor on the value's length keeps a sentence out of it — "basic
+	// requirement" is below it — and eats a long word after basic or bearer
+	// instead (`basic command-line-interface tool`): over-redacting a phrase
+	// that reads like a scheme is the cheaper mistake of the two, and a short
+	// bare credential is still caught when a header name introduces it (above).
 	authScheme = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{16,}`)
 
 	// signedParam is the query parameter of a signed URL — the one place
