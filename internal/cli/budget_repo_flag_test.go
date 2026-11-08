@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -84,6 +85,10 @@ func TestBudgetSetBareRepoIsTheCheckout(t *testing.T) {
 	}
 }
 
+// doneInRE is the reporter's elapsed-time line, which differs between two runs
+// of the same command and is not part of what the operator confirms.
+var doneInRE = regexp.MustCompile(`Done in [0-9.]+m?s`)
+
 // TestBudgetSetBareRepoMatchesTheExplicitForm: the bare form and the value
 // that names the same repository are the same command. The printed lines are
 // compared byte for byte, because the display is what the operator reads
@@ -96,7 +101,7 @@ func TestBudgetSetBareRepoMatchesTheExplicitForm(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%v: %v", args, err)
 		}
-		return out, f.db.Value(budget.PathCapsRepo(appSlug))
+		return doneInRE.ReplaceAllString(out, "Done in 0s"), f.db.Value(budget.PathCapsRepo(appSlug))
 	}
 	bare, bareNode := run("--repo", "--daily", "5", "--yes")
 	named, namedNode := run("--repo", "acme/app", "--daily", "5", "--yes")

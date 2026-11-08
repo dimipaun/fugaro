@@ -1,6 +1,7 @@
 # Security classification: implementation plan
 
-**Status: plan only; nothing is implemented; no task approved.** Every task below is a proposal, every
+**Status: three of the tasks below are in the tree — SC1, SC4 and SC2, each with a landed note in its own
+block — and no decision is answered.** Every task below that has not landed is a proposal, every
 decision it is written against is **unanswered** ([reconciliation.md](reconciliation.md) §8, D1500–D1519,
 each with an empty owner's-answer cell), and the two slices this plan orders are a recommendation
 (**D1519**) rather than a schedule. This document adds no code, no schema, no config, no fixture and no
@@ -197,6 +198,10 @@ a level: slice 1 spans levels 0–2, slice 2 is level 3, slice 3 is levels 4–7
 - **Why SEC:** this is the floor of a security control: every later layer is measured against it.
 - **Reviewer tier:** security. **Owner-run:** no. **Depends on:** nothing. **Commit:** `feat(sensitivity):
 the security-pattern floor, the matcher and the union merge`.
+- **Note added 2026-11-08:** this task has **landed** — `e5a4605f`, #1916, under the commit line above —
+  and it is the plan's first task to do so; **SC4** landed over it (`0ee73e2e`, #1975) and **SC2** lands
+  with the change that adds this note. The red step, the two mutations, the named tests and the sizes
+  above are this plan's reading of 2026-11-07 and are left as what was written then.
 
 ### SC2. This folder's pin, and the census row (F17, F25). **size M**
 
@@ -220,6 +225,12 @@ the security-pattern floor, the matcher and the union merge`.
   naming both numbers.
 - **Reviewer tier:** standard. **Owner-run:** no. **Depends on:** nothing.
   **Commit:** `docs(security-classification): the folder's pin, and the census moves to 102`.
+- **Note added 2026-11-08:** the move landed as **112 → 113** — the row's own amendment sentence
+  records it beside the setup-wizard's Check 111 pin, which took 111 → 112 on the same day — and the
+  three census re-check test files named above needed **no edit** — each re-derives the count from the
+  row. The **101 → 102** figures in this block, in §1 and in
+  [reconciliation.md](reconciliation.md)'s D1519 are the plan's own reading of 2026-11-07 and are left
+  as what was read then.
 
 ### SC3. `fugaro security paths [--check PATH…] [--json]` (D1512). **size M**
 
@@ -276,6 +287,9 @@ the security-pattern floor, the matcher and the union merge`.
 - **Mutation (run, restore):** drop the "matched nothing" row; its case fails.
 - **Reviewer tier:** standard. **Owner-run:** no. **Depends on:** SC1.
   **Commit:** `cli: doctor says which security patterns are in force`.
+- **Note added 2026-11-08:** this task has **landed** — `0ee73e2e`, #1975, over SC1's floor — as
+  `internal/cli/doctor_security.go`'s `doctorSecurityListChecks`, with the ID `security-list` on the
+  security sweep; the plan's own text above is left as it was written.
 
 ### SC5. The CLI reference, and the release note (F13, F18). **size S**
 
@@ -539,8 +553,10 @@ this work's to claim now and to prove later.
   orchestrator's own plan builds it, and this plan does not wait for it.
 - **`settings set` for the list** (D1515). The list is edited in the layer file and the repository's
   `fugaro.yaml`, published by `config publish`; the managed allow-list admits nothing new.
-- **OD1, OD2, the needs_owner work** (F15). None is in this tree; D1518 makes the design independent of
-  them, and SC11 is the only task whose *content* depends on OD2's intent.
+- **OD1, OD2, the needs_owner work** (F15). Neither was in this tree when this was read — **OD1 landed
+  the same day** (`505718ab`, #1882) and touches no pattern list, so no task here changes for it, while
+  OD2 is still absent. D1518 makes the design independent of them, and SC11 is the only task whose
+  *content* depends on OD2's intent.
 - **A publish or a migration of its own** (F13). The key rides `fugaro update`'s existing stages,
   including `policyMigrateStage`; an additive optional key means no migrator and no policy version bump.
 - **Any new dependency.** The matcher is `doublestar`, already imported (F21).

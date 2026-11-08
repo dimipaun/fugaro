@@ -117,12 +117,16 @@ const (
 	// plan implements it over that state, so a line saying M7 were built whole
 	// would claim a control the tree does not perform. The exception is
 	// disclosed in full in §11 of the spec and its own section of the plan,
-	// which the disclosure test below pins. M8's clause is the same shape
-	// again: the four read tools are built and no binary registers them, and
-	// the wiring that would is what M5b gates, so its exception is named the
-	// same way and for the same reason -- a line saying M8 were built whole
-	// would claim a reach no process has.
-	mcpStatus = "Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built except the reading of the installation's published state its lists come from, which no task of this plan carries; M8 is built except the wiring that would serve its four read tools, which is the task M5b gates; M9–M10 are not started; this folder approves no task."
+	// which the disclosure test below pins. M10's clause has the same shape
+	// again: the audit, the record and the revocation are built, and the store
+	// they are at rest in is M2's bucket-backed one, whose bucket and single
+	// grant in an installation are M4's store half — not started — so a line
+	// saying M10 were built whole would claim a store an installation does not
+	// carry. M8's is the same shape once more: the four read tools are built and
+	// no binary registers them, and the wiring that would is what M5b gates, so
+	// its exception is named the same way and for the same reason -- a line
+	// saying M8 were built whole would claim a reach no process has.
+	mcpStatus = "Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built except the reading of the installation's published state its lists come from, which no task of this plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store half and not started; M8 is built except the wiring that would serve its four read tools, which is the task M5b gates; M9 is not started; this folder approves no task."
 )
 
 func mcpDocs() []string { return []string{mcpReadme, mcpSpec, mcpReconciled, mcpPlan} }
@@ -413,7 +417,7 @@ func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
 		// than as what the code does, with the line that hashes without a key.
 		"The keyed hashes and the MACs the store is specified to write",
 		"Both are designed and not built",
-		"the store hashes with a plain unkeyed `sha256` (`ee/coordinator/mcpauth/store.go:387`)",
+		"the store hashes with a plain unkeyed `sha256` (`ee/coordinator/mcpauth/store.go:398`)",
 		// And the two bounds, with the owner named as the one who assigns them
 		// and the wiring task named as the carrier until he does.
 		"Who owns the two bounds the open registration endpoint is accepted under",

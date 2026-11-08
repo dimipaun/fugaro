@@ -28,7 +28,10 @@ import (
 //
 // **Both sets are served here** (D931): the owner's six (spec.md §5) and the
 // coordinator's own tools (docs/coordinator/spec.md:46-53) are one tools/list
-// under their existing names, which is why the catalogue holds both.
+// under their existing names, which is why the catalogue holds both. The front
+// door's own two — the audit record and revocation — are in the table beside
+// them, for the same reason: a name the table does not hold cannot be
+// registered, so a tool whose scope nobody decided is not served at all.
 //
 // **A handler is reached only through Call, with its scope checked** — the
 // check is inside Call rather than at the door that calls it, so a caller that
@@ -81,6 +84,15 @@ var toolCatalogue = []toolSpec{
 	{"get_project_state", ScopeTasksRead, "Query the coordinator's shared view of the project"},
 	{"get_release_status", ScopeTasksRead, "Query the shared view's release status"},
 	{"record_override", ScopeTasksWrite, "Log a decision taken against the coordinator's advice, with a reason"},
+
+	// M10's two: the audit record an operator reads (D933's "an operator may
+	// also read the audit record") and the one delete that ends a token family
+	// (D930's revocation, from a person's own surface as well as from
+	// POST /oauth/revoke). Reading a record is a read and ending a family is a
+	// write; that both are also an operator's is the tools' own rule
+	// (ErrOperatorOnly) and not this table's.
+	{"get_audit_record", ScopeTasksRead, "Read one person's audit record: the calls this front door served for them, and how it answered"},
+	{"revoke_family", ScopeTasksWrite, "Revoke one token family: every access and refresh token of it stops working at the next call"},
 }
 
 // catalogueEntry answers the declaration the catalogue holds for a tool name,

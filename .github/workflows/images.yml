@@ -413,7 +413,7 @@ jobs:
       # never writes -pinned either). Both are exact conditions, not
       # substrings: a widened one would sign on an event this release's
       # identity does not cover.
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
         if: github.event_name == 'push'
       # Signing is by DIGEST, taken from the same job's own
       # --metadata-file output above — never by re-reading a tag. Re-reading
@@ -569,7 +569,7 @@ jobs:
       # never writes -pinned either). The condition is exact, not a substring:
       # a widened one would sign on an event this release's identity does not
       # cover.
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
         if: github.event_name == 'push'
       # Signing is by DIGEST, taken from this same job's own push above --
       # never by re-reading a tag. Re-reading :$VERSION-pinned (or :$VERSION)
