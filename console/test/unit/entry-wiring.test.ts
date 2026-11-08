@@ -184,11 +184,23 @@ import {
   COORDINATOR_JOB_DETAIL_CLASS,
 } from '../../src/renderer/screens/coordinator'
 import {
+  PROJECTS_ACCOUNT_KEYS_CLASS,
   PROJECTS_BUSY,
+  PROJECTS_CREDENTIALS_SERVICE_CLASS,
+  PROJECTS_MANAGED_CLASS,
   PROJECTS_MODELS_BUSY,
+  PROJECTS_RETIREMENTS_CLASS,
   PROJECTS_SETTINGS_BUSY,
   SETTINGS_PENCIL_CLASS,
 } from '../../src/renderer/screens/projects'
+import { ACCOUNT_KEYS_BUSY, ACCOUNT_KEYS_TITLE } from '../../src/renderer/screens/accountkeys'
+import {
+  CREDENTIALS_SERVICE_BUSY,
+  CREDENTIALS_SERVICE_TITLE,
+} from '../../src/renderer/screens/credentialsservice'
+import { MANAGED_BUSY, MANAGED_TITLE } from '../../src/renderer/screens/managed'
+import { POLICY_NODE_TITLE } from '../../src/renderer/screens/policynotes'
+import { RETIREMENTS_BUSY, RETIREMENTS_SET_TITLE } from '../../src/renderer/screens/retirements'
 import type { SkeletonShape } from '../../src/renderer/skeleton'
 import { WRITE_UNAVAILABLE } from '../../src/renderer/writes'
 import {
@@ -216,7 +228,7 @@ import {
 const CONSOLE_ROOT = join(__dirname, '..', '..')
 
 /**
- * READ_METHODS is the fifteen reads `entry.ts` may reach for (`ReadBridge`'s
+ * READ_METHODS is the eighteen reads `entry.ts` may reach for (`ReadBridge`'s
  * own list less `summaryRuns`, which `queueBridge` answers with its own
  * recorder), by the name the preload exposes. Every one of them is on the
  * fake bridge below, and every one records its call -- so "this read was never
@@ -225,7 +237,9 @@ const CONSOLE_ROOT = join(__dirname, '..', '..')
  * `graphRead` is the graph plan's CG9a read, and it is the fifteenth: the
  * Graph's second scope is read through it, and a case that drove the Graph with
  * a bridge that could not answer it would be driving a console whose only
- * remaining scope is the plan's.
+ * remaining scope is the plan's. `managedStatus`, `policyShow` and
+ * `environmentReport` are the managed-project screens plan's CM4 rows, and they
+ * are the last three: the Project tab's later sections read them (CM10).
  */
 const READ_METHODS = [
   'subscribeLive',
@@ -243,6 +257,9 @@ const READ_METHODS = [
   'runLogLink',
   'planStatus',
   'graphRead',
+  'managedStatus',
+  'policyShow',
+  'environmentReport',
 ] as const
 
 /** A_REPLY is a bridge method's answer. */
@@ -325,6 +342,17 @@ function panelOf(document: FakeDocument): FakeNode {
     (node) => node.attributes.get('class') === VIEW_PANEL_CLASS,
   )
   if (panel === undefined) throw new Error('the entry drew no panel')
+  return panel
+}
+
+/** policyPanelOf is the policy panel of the Project tab: a member of the
+ * `PROJECT_PANEL_KEYS` the body draws, found by its own `data-panel` rather than
+ * by a class hook, because the tab's panels all wear the same shell (CM10). */
+function policyPanelOf(document: FakeDocument): FakeNode {
+  const panel = classed(panelOf(document), 'projects-panel').find(
+    (node) => node.attributes.get('data-panel') === 'policy',
+  )
+  if (panel === undefined) throw new Error('the entry drew no policy panel')
   return panel
 }
 
@@ -3368,6 +3396,10 @@ const REPORT_REFUSAL = 'the report read refused, in the CLI’s own words'
 const RUNS_REFUSAL = 'the run list refused, in the CLI’s own words'
 const COORDINATOR_REFUSAL = 'the coordinator read refused, in the CLI’s own words'
 const INTENTS_REFUSAL = 'the declared intents read refused, in the CLI’s own words'
+/** MANAGED_REFUSAL is a refused `managed status --json`, in the CLI's own words:
+ * the sentence **both** of the sections that read it draw, because they are one
+ * read (the managed state and the retirements). */
+const MANAGED_REFUSAL = 'the managed read refused, in the CLI’s own words'
 /** WINDOW_REFUSAL is a refused `runs summary --json`, in the CLI's own words: the
  * sentence the strip draws beside the figures that are not its read's. */
 const WINDOW_REFUSAL = 'the window’s read refused, in the CLI’s own words'
@@ -4889,6 +4921,83 @@ const MODELS_DOC = Object.freeze({
   repositories: [],
 })
 
+/** MANAGED_DOC is `managed status --json` (contract section 6.21), invented: a
+ * managed project whose newest audit record is one update that retired one
+ * setting. **One read, two sections** (CM8 and CM9): the managed state's marks
+ * and trail, and the last update's retirements, are both drawn from this
+ * document -- which is why the case beside it asserts both hosts. */
+const MANAGED_DOC = Object.freeze({
+  managed: true,
+  reason: '',
+  version: 3,
+  generation: '7',
+  audit_day: '2026-11-07',
+  audit_count: 1,
+  audit_state: '',
+  audit: {
+    at: '2026-11-07T09:15:00Z',
+    command: 'update',
+    verdict: 'ok',
+    identity: 'operator@example.test',
+    plan_digest: 'sha256:0000',
+  },
+  retirements: {
+    version: 1,
+    at: '2026-11-07T09:15:00Z',
+    runs_in_flight: 0,
+    retire: [
+      {
+        address: 'config/agent.models.coder',
+        kind: 'setting',
+        cause: 'the registry dropped it',
+        kept: '',
+        logical: 'agent.models.coder',
+        secret_id: '',
+        protected: false,
+      },
+    ],
+  },
+})
+
+/** POLICY_DOC is `project policy show --json`: the `{project, policy}` object
+ * CM4's row answers with, and the document the tab's policy panel is drawn from
+ * (CM10). One allow-list entry, one account and one route, which is what the
+ * panel's body draws. */
+const POLICY_DOC = Object.freeze({
+  project: 'example-project',
+  policy: {
+    version: 3,
+    base_branch: 'trunk',
+    allow_repos: ['github/example-owner/example-repo'],
+    accounts: { 'claude-ops': { allow_repos: ['github/example-owner/example-repo'] } },
+  },
+})
+
+/** DOCTOR_DOC is `doctor --json`: the checks array, and it is **two reads'**
+ * answer at once (CM9 and CM7): the credentials service's section draws its own
+ * `credentials-service-deployed` line, and the policy panel's body draws the six
+ * `policy-*` checks. `managed-audit` is here as the check neither draws. */
+const DOCTOR_DOC = Object.freeze({
+  ok: false,
+  checks: [
+    {
+      id: 'credentials-service-deployed',
+      ok: false,
+      severity: 'warning',
+      problem: 'the credentials service is not deployed',
+      fix: 'fugaro update deploys it',
+    },
+    {
+      id: 'policy-published',
+      ok: false,
+      severity: 'info',
+      problem: 'a policy is published',
+      fix: '',
+    },
+    { id: 'managed-audit', ok: true, severity: 'info', problem: 'the audit trail is readable', fix: '' },
+  ],
+})
+
 /** SETTINGS_DOC is `settings --json` (the settings-edit plan's C1), invented:
  * two rows -- a writable one with a target layer, and one the generic path does
  * not write. It is the Projects tab's third read. */
@@ -5268,7 +5377,14 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     expect(
       calls.slice(before).map((call) => call.name),
       'the Projects tab made a read that is not its own',
-    ).toEqual(['showBudget', 'listModels', 'readSettings'])
+    ).toEqual([
+      'showBudget',
+      'listModels',
+      'readSettings',
+      'managedStatus',
+      'policyShow',
+      'environmentReport',
+    ])
     expect(
       calls.slice(before).some((call) => call.name === 'listRuns'),
       'the Projects tab read the run list, which is the read the owner measured at six seconds',
@@ -5309,8 +5425,19 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
           (name) => name === 'showBudget' || name === 'listModels' || name === 'readSettings',
         ),
     ).toEqual(['showBudget', 'listModels', 'readSettings'])
-    // While all three are out, the tab says which read each of its marks is.
-    expect(busyLabels(document)).toEqual([PROJECTS_BUSY, PROJECTS_MODELS_BUSY, PROJECTS_SETTINGS_BUSY])
+    // While all seven are out, the tab says which read each of its marks is --
+    // one mark per section, on the section's own host (CM10's four siblings are
+    // the last four, and the policy panel's read wears no mark of its own: it is
+    // a member of the body's model, drawn with it).
+    expect(busyLabels(document)).toEqual([
+      PROJECTS_BUSY,
+      PROJECTS_MODELS_BUSY,
+      PROJECTS_SETTINGS_BUSY,
+      MANAGED_BUSY,
+      ACCOUNT_KEYS_BUSY,
+      RETIREMENTS_BUSY,
+      CREDENTIALS_SERVICE_BUSY,
+    ])
     await flush()
     // Each section paints its own answer, and the models section paints the
     // document's own routes and models and not the budget's.
@@ -5324,6 +5451,246 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     expect(holdsText(settings as FakeNode, 'budget.per_run_usd')).toBe(true)
     expect(holdsText(settings as FakeNode, 'fugaro models')).toBe(true)
     expect(busyLabels(document)).toEqual([])
+  })
+
+  it('draws the four later sections from their own reads, and the policy panel from the body’s', async () => {
+    // CM10: the tab's four sibling sections (the managed state, the review
+    // account keys, the retirements and the credentials service) and the policy
+    // panel's own read. **One read, two sections** twice over -- `managed status`
+    // draws the first and the third, `settings --json` the second, `doctor
+    // --json` the fourth -- and the policy panel is no host of its own: it stays a
+    // member of `PROJECT_PANEL_KEYS`, drawn with the body (the plan's "a panel
+    // another read builds is a sibling, not a member").
+    const { bridge } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
+        managedStatus: () => ({ ok: true, data: { document: MANAGED_DOC } }),
+        policyShow: () => ({ ok: true, data: { document: POLICY_DOC } }),
+        environmentReport: () => ({ ok: true, data: { document: DOCTOR_DOC } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'projects').click()
+    await flush()
+    const root = panelOf(document)
+    const section = (className: string): FakeNode => {
+      const drawn = classed(root, className)[0]
+      expect(drawn, `the tab drew no ${className} section`).toBeDefined()
+      return drawn as FakeNode
+    }
+    // The managed state and the retirements, out of the one document that carries
+    // both -- the marks block (whose generation is this document's) and the set
+    // the last update retired.
+    expect(holdsText(section(PROJECTS_MANAGED_CLASS), MANAGED_TITLE)).toBe(true)
+    expect(holdsText(section(PROJECTS_MANAGED_CLASS), '7')).toBe(true)
+    expect(holdsText(section(PROJECTS_RETIREMENTS_CLASS), RETIREMENTS_SET_TITLE)).toBe(true)
+    // The account keys, out of the settings document the panel beside it draws.
+    expect(holdsText(section(PROJECTS_ACCOUNT_KEYS_CLASS), ACCOUNT_KEYS_TITLE)).toBe(true)
+    // The credentials service, out of doctor's own check.
+    expect(holdsText(section(PROJECTS_CREDENTIALS_SERVICE_CLASS), CREDENTIALS_SERVICE_TITLE)).toBe(true)
+    // And the policy panel, a member of the body's own seven: its body is CM7's
+    // section, drawn from the node.
+    expect(holdsText(policyPanelOf(document), POLICY_NODE_TITLE)).toBe(true)
+    expect(busyLabels(document)).toEqual([])
+  })
+
+  it('paints the policy panel when its own read lands, out of the body’s own repaint', async () => {
+    // The policy panel's read is a later one than the budget's, and the panel is
+    // drawn **inside** the body: while its read is out the panel says so, with the
+    // sentence naming the command, and the document's arrival is what turns it
+    // from that state into a read one. Nothing else on the body moves with it.
+    const policy = holding()
+    const { bridge } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
+        managedStatus: () => ({ ok: true, data: { document: MANAGED_DOC } }),
+        policyShow: () => policy.reply(),
+        environmentReport: () => ({ ok: true, data: { document: DOCTOR_DOC } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'projects').click()
+    await flush()
+    expect(policyPanelOf(document).getAttribute('data-state')).toBe('unavailable')
+    expect(
+      holdsText(policyPanelOf(document), 'no document arrived for `fugaro project policy show --json`'),
+    ).toBe(true)
+    // The caps the budget drew are on screen, and the policy read is still out:
+    // the panel is the only thing waiting for it.
+    expect(classed(panelOf(document), 'projects-kill-row').length).toBeGreaterThan(0)
+    policy.release({ ok: true, data: { document: POLICY_DOC } })
+    await flush()
+    expect(policyPanelOf(document).getAttribute('data-state')).toBe('read')
+    expect(holdsText(policyPanelOf(document), POLICY_NODE_TITLE)).toBe(true)
+    // The node's own string is on the screen, and the state word is the design's
+    // `read` rather than the `locked` a not-built panel wears.
+    expect(holdsText(policyPanelOf(document), 'trunk')).toBe(true)
+  })
+
+  it('holds the body’s own mark when a later read lands while `budget show` is out', async () => {
+    // **The repaint guard** (CM10): the body is repainted by the two later reads
+    // of a panel inside it -- `policy.show` and doctor's -- and a repaint while
+    // the budget's own read is out would clear the section and take down the mark
+    // of a read that is still on its way. That is this console taking a drawing
+    // away to say a drawing is coming, which the guard is there to refuse.
+    //
+    // The visit that shows it is the one served from a view older than
+    // `CACHE_FRESH_MS`: the figures are drawn at once, marked, and read again in
+    // the same frame, so the body holds a model **and** a mark at the same time.
+    const policy = holding()
+    const secondBudget = holding()
+    let budgetReads = 0
+    const { bridge } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => {
+          budgetReads += 1
+          return budgetReads === 1
+            ? { ok: true, data: { document: BUDGET_DOC } }
+            : secondBudget.reply()
+        },
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
+        managedStatus: () => ({ ok: true, data: { document: MANAGED_DOC } }),
+        policyShow: () => policy.reply(),
+        environmentReport: () => ({ ok: true, data: { document: DOCTOR_DOC } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'projects').click()
+    await flush()
+    expect(classed(panelOf(document), 'projects-kill-row').length).toBeGreaterThan(0)
+
+    vi.setSystemTime(Date.now() + CACHE_FRESH_MS)
+    buttonFor(document, 'live').click()
+    await flush()
+    buttonFor(document, 'projects').click()
+    await flush()
+    expect(
+      busyLabels(document),
+      'a later read’s own landing repainted the body under the budget read’s mark',
+    ).toEqual([PROJECTS_BUSY])
+    // The figures the cached view carried are kept under the mark rather than
+    // blanked, which is what makes the mark's disappearance observable.
+    expect(classed(panelOf(document), 'projects-kill-row').length).toBeGreaterThan(0)
+
+    // The policy read lands while the budget's own is out: it draws nothing, and
+    // the mark above the figures stays where it is.
+    policy.release({ ok: true, data: { document: POLICY_DOC } })
+    await flush()
+    expect(
+      busyLabels(document),
+      'a later read repainted the body while the budget’s own read was out',
+    ).toEqual([PROJECTS_BUSY])
+    expect(policyPanelOf(document).getAttribute('data-state')).toBe('unavailable')
+
+    // Nothing is lost by waiting: the budget's own answer draws the body, and the
+    // policy document that landed first is drawn with it.
+    secondBudget.release({ ok: true, data: { document: BUDGET_DOC } })
+    await flush()
+    expect(busyLabels(document)).toEqual([])
+    expect(holdsText(policyPanelOf(document), POLICY_NODE_TITLE)).toBe(true)
+  })
+
+  it('does not read a dropped answer as the current visit’s budget read ending', async () => {
+    // A superseded answer says nothing about the read that superseded it (the
+    // owner's rule of 2026-10-31, point 4), and that includes the body's
+    // in-flight flag: an answer the sequence token has already dropped must not
+    // tell the two later reads that `budget show` is over. The second press here
+    // is the stamp's own Refresh, over a cached view whose refresh read is still
+    // out -- one press, one token, and the answer to the first press arriving
+    // afterwards.
+    const policy = holding()
+    const secondBudget = holding()
+    const thirdBudget = holding()
+    let budgetReads = 0
+    const { bridge } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => {
+          budgetReads += 1
+          if (budgetReads === 1) return { ok: true, data: { document: BUDGET_DOC } }
+          return budgetReads === 2 ? secondBudget.reply() : thirdBudget.reply()
+        },
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
+        managedStatus: () => ({ ok: true, data: { document: MANAGED_DOC } }),
+        policyShow: () => policy.reply(),
+        environmentReport: () => ({ ok: true, data: { document: DOCTOR_DOC } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'projects').click()
+    await flush()
+
+    // The view is stale, so the cached drawing is marked and read again at once;
+    // the stamp's Refresh is the second press, and it supersedes that read.
+    vi.setSystemTime(Date.now() + CACHE_FRESH_MS)
+    buttonFor(document, 'live').click()
+    await flush()
+    buttonFor(document, 'projects').click()
+    await flush()
+    const refresh = classed(panelOf(document), STAMP_REFRESH_CLASS)[0]
+    expect(refresh, 'the cached view drew no refresh control: the case proves nothing').toBeDefined()
+    refresh?.click()
+    await flush()
+    expect(budgetReads).toBe(3)
+    expect(busyLabels(document)).toEqual([PROJECTS_BUSY])
+
+    // The first press's answer lands. It is not this visit's, so it draws nothing
+    // -- and it does not open the guard either: the read the second press made is
+    // the one that is still out.
+    secondBudget.release({ ok: true, data: { document: BUDGET_DOC } })
+    await flush()
+    expect(busyLabels(document)).toEqual([PROJECTS_BUSY])
+    policy.release({ ok: true, data: { document: POLICY_DOC } })
+    await flush()
+    expect(
+      busyLabels(document),
+      'an answer the token had dropped opened the body’s repaint',
+    ).toEqual([PROJECTS_BUSY])
+
+    thirdBudget.release({ ok: true, data: { document: BUDGET_DOC } })
+    await flush()
+    expect(busyLabels(document)).toEqual([])
+    expect(holdsText(policyPanelOf(document), POLICY_NODE_TITLE)).toBe(true)
+  })
+
+  it('keeps a later section’s content when a sibling’s read is refused', async () => {
+    // The one document two sections are drawn from is refused: both draw the
+    // CLI's own sentence, because both are the same read's (D1488) -- and the
+    // sections whose own reads answered lose nothing to it.
+    const { bridge } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
+        managedStatus: () => ({ ok: false, reason: MANAGED_REFUSAL }),
+        policyShow: () => ({ ok: true, data: { document: POLICY_DOC } }),
+        environmentReport: () => ({ ok: true, data: { document: DOCTOR_DOC } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'projects').click()
+    await flush()
+    const root = panelOf(document)
+    const section = (className: string): FakeNode => classed(root, className)[0] as FakeNode
+    expect(holdsText(root, MANAGED_REFUSAL)).toBe(true)
+    // Both sections of the refused read say so, in the CLI's own words: they are
+    // one document and two drawings, and a refusal is the document's.
+    expect(holdsText(section(PROJECTS_MANAGED_CLASS), MANAGED_REFUSAL)).toBe(true)
+    expect(holdsText(section(PROJECTS_RETIREMENTS_CLASS), MANAGED_REFUSAL)).toBe(true)
+    expect(holdsText(section(PROJECTS_CREDENTIALS_SERVICE_CLASS), CREDENTIALS_SERVICE_TITLE)).toBe(true)
+    expect(holdsText(section(PROJECTS_ACCOUNT_KEYS_CLASS), ACCOUNT_KEYS_TITLE)).toBe(true)
+    expect(classed(root, 'projects-kill-row').length).toBeGreaterThan(0)
+    expect(holdsText(policyPanelOf(document), POLICY_NODE_TITLE)).toBe(true)
   })
 
   it('paints the settings section on its own token, and a document of another version is its own sentence', async () => {
@@ -5345,9 +5712,10 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     const document = await boot(bridge, new FakeDocument())
     buttonFor(document, 'projects').click()
     await flush()
-    // The budget and the models have painted; the settings section is still out,
-    // and it is the only mark left.
-    expect(busyLabels(document)).toEqual([PROJECTS_SETTINGS_BUSY])
+    // The budget and the models have painted; the settings read is still out, and
+    // it is a mark on **two** sections: the settings panel's and the account
+    // keys' own, which are one read and two sections (D1488).
+    expect(busyLabels(document)).toEqual([PROJECTS_SETTINGS_BUSY, ACCOUNT_KEYS_BUSY])
     settings.release({ ok: true, data: { document: { ...SETTINGS_DOC, version: 2 } } })
     await flush()
     expect(busyLabels(document)).toEqual([])

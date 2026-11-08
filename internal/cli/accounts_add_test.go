@@ -304,8 +304,9 @@ func TestAccountsAddConfirmsTheRotationItMakes(t *testing.T) {
 // TestSettingsWritesTheAccountChoiceKeys is D873's three keys on the generic
 // write path (spec §11.1): each resolves, each is the local config's alone, a
 // layer or a value a key refuses leaves the file byte-identical, and turning
-// `claude_account_auto` on is the sensitive direction — the project's own name
-// is what confirms it, and --yes never does (D846, D875).
+// `claude_account_auto` on is the sensitive direction — a coding agent's
+// session cannot make it, and the owner's own terminal is asked nothing
+// (D846, D875, D1552, D1555).
 func TestSettingsWritesTheAccountChoiceKeys(t *testing.T) {
 	_, localPath := settingsWriteHomeWith(t, "\nclaude_accounts:\n  team-b:\n    allow_data_to: [acme/app]\n")
 	before := readFileString(t, localPath)
@@ -383,18 +384,24 @@ func TestSettingsWritesTheAccountChoiceKeys(t *testing.T) {
 	}
 
 	// Off is the default and the ordinary write; on is the sensitive
-	// direction, so with no terminal and no --yes nothing is written. --yes is
-	// the other answer to that form outside a coding agent's session (D1107).
-	noTerminal(t)
+	// direction, whose fence is the coding agent's session rather than a
+	// terminal (D1552, D1555): nothing is written there, and the owner's own
+	// session is asked nothing for it.
+	agentSession(t)
 	_, _, err = execute(t, "settings", "set", "claude_account_auto", "true", "--layer", "local")
 	if err == nil {
-		t.Fatal("turning claude_account_auto on was written with no terminal and no --yes")
+		t.Fatal("turning claude_account_auto on was written in an agent session")
 	}
-	if !strings.Contains(err.Error(), "needs a real terminal") {
-		t.Errorf("the refusal does not say what it needs: %v", err)
+	if !strings.Contains(err.Error(), "coding agent's session") {
+		t.Errorf("the refusal does not say what refused it: %v", err)
 	}
 	if readFileString(t, localPath) != written {
 		t.Error("a refused claude_account_auto write changed the local config")
+	}
+	noAgentSession(t)
+	noTerminal(t)
+	if _, _, err := execute(t, "settings", "set", "claude_account_auto", "true", "--layer", "local"); err != nil {
+		t.Fatalf("turning claude_account_auto on asked for an answer: %v", err)
 	}
 	if _, _, err := execute(t, "settings", "set", "claude_account_auto", "false", "--layer", "local", "--yes"); err != nil {
 		t.Fatalf("settings set claude_account_auto false: %v", err)
