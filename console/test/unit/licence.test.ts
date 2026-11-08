@@ -486,6 +486,16 @@ describe('the negative vectors', () => {
     expect(other).not.toContain('\n')
     expect(other.split('\n')).toHaveLength(1)
   })
+
+  it('an id naming a property of every object is refused: a keyring is a plain object', () => {
+    // `constructor`, `toString` and `__proto__` are not keys any build holds,
+    // and a lookup that read them would hand a verifier a function or an
+    // object where a public key belongs.
+    for (const id of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+      const reason = refusalOf(verifyLicenceKey(mint(acme, claimsFor(), id), at(ISSUED), acme.keyring))
+      expect(reason, id).toMatch(/is not one the console holds/)
+    }
+  })
 })
 
 describe('the module itself', () => {

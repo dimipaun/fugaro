@@ -116,6 +116,11 @@ export type LicenceRead =
 /** TIERS is the closed list the `tier` claim is checked against. */
 const TIERS: readonly string[] = Object.freeze(['community', 'team', 'enterprise'])
 
+/** isTier is that check as a narrowing, so a claim passing it needs no cast. */
+function isTier(value: unknown): value is LicenceTier {
+  return typeof value === 'string' && TIERS.includes(value)
+}
+
 /** BASE64URL is the spelling every part uses: the alphabet, unpadded. A part
  * with a character outside it -- a `+`, a `/`, a pad -- is not a part this
  * verifier reads. */
@@ -172,7 +177,7 @@ function claimsOf(payload: string): LicenceClaims | null {
   const claims = parsed as Record<string, unknown>
 
   const tier = claims['tier']
-  if (typeof tier !== 'string' || !TIERS.includes(tier)) return null
+  if (!isTier(tier)) return null
 
   const features = claims['features']
   if (!Array.isArray(features)) return null
@@ -192,7 +197,7 @@ function claimsOf(payload: string): LicenceClaims | null {
   const expires = claims['expires']
   if (!unixSeconds(issued) || !unixSeconds(expires)) return null
 
-  return { tier: tier as LicenceTier, features: list, seats, organisation, issued, expires }
+  return { tier, features: list, seats, organisation, issued, expires }
 }
 
 /** nameOf is the key id as a sentence may draw it. The id is decoded out of
@@ -237,7 +242,10 @@ export function verifyLicenceKey(raw: string, now: Date, keyring: LicenceKeyring
   const id = idBytes === null ? null : textOf(idBytes)
   if (id === null || id === '') return { ok: false, reason: "a licence key's id does not decode" }
 
-  const publicKey = keyring[id]
+  // `Object.hasOwn` and not a plain index: a keyring is a plain object, an id
+  // is text an operator pasted, and `keyring['constructor']` is not a public
+  // key this build holds.
+  const publicKey = Object.hasOwn(keyring, id) ? keyring[id] : undefined
   if (publicKey === undefined) return refuse(id, 'is not one the console holds')
 
   const payload = decodePart(parts[1] ?? '')
