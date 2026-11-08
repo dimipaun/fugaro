@@ -188,29 +188,38 @@ func TestSettingsSetRepoLayerIsAllowedInAnAgentSession(t *testing.T) {
 	}
 }
 
-// TestSettingsSetLooseningACeilingAsksForTheTypedProjectName: loosening a
-// ceiling key asks for the project's name typed at a terminal. --yes answers
-// that same form outside a coding agent's session (D1107), and this is the path
-// that passes it to nothing: no terminal and no flag is still a refusal.
-func TestSettingsSetLooseningACeilingAsksForTheTypedProjectName(t *testing.T) {
+// TestCeilingLooseningRefusesInAnAgentSession: the per-run and per-day ceilings
+// are caps like the budget's, and D1552 fences their loosening exactly as D1542
+// fences a raise — the owner's own session, and no prompt anywhere. A coding
+// agent's session is refused with the command to run itself whatever --yes says,
+// and the owner's own terminal is asked nothing. The direct /config write by a
+// budget admin is not this fence's business: it stays an IAM matter.
+func TestCeilingLooseningRefusesInAnAgentSession(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  per_run_usd: 10\n"))
 	before := readFileString(t, path)
 
-	noTerminal(t)
-	_, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo")
+	agentSession(t)
+	_, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo", "--yes")
 	if err == nil {
-		t.Fatal("a widening with no terminal and no --yes was written")
+		t.Fatal("a coding agent's session loosened a repository's ceiling")
 	}
-	if !strings.Contains(err.Error(), "typed confirmation") {
-		t.Errorf("the refusal does not name the typed form: %v", err)
+	if !strings.Contains(err.Error(), "CLAUDECODE") {
+		t.Errorf("the refusal does not name the marker: %v", err)
+	}
+	if !strings.Contains(err.Error(), "fugaro settings set budget.per_run_usd 50 --layer repo") {
+		t.Errorf("the refusal does not print the command to run: %v", err)
 	}
 	if readFileString(t, path) != before {
 		t.Error("the refused write changed fugaro.yaml")
 	}
 
-	fakeTerminal(t)
-	out, _, err := executeStdin(t, "aurora\n", "settings", "set", "budget.per_run_usd", "50", "--layer", "repo")
+	// The owner's own terminal, with nothing typed on it: the widening lands,
+	// and the command reads no input at all (D1540: the typed project name this
+	// form used to ask for was the last prompt of a raise).
+	noAgentSession(t)
+	typed(t)
+	out, _, err := executeStdin(t, "", "settings", "set", "budget.per_run_usd", "50", "--layer", "repo")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}

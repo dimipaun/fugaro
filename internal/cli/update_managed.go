@@ -547,10 +547,11 @@ var rulesAdmittedRules = []string{
 // The class is the step's own and not this function's choice: a publish that
 // loosens a ceiling takes the Typed class (D846), which D1026 never admits, so
 // nothing is recorded for it and the write waits on the tail's own
-// confirmation (policyMigrationConfirm) — the typed name where the door asks
-// for one, and on a managed project at the owner's own terminal a note (the
-// ruling of 2026-11-06). The helper decides the class from the step, and this
-// call passes the class it read rather than the one it would have preferred.
+// confirmation (policyMigrationConfirm) — a note on a managed project at the
+// owner's own terminal (the ruling of 2026-11-06), and the refusal below in a
+// coding agent's session (D1552). The helper decides the class from the step,
+// and this call passes the class it read rather than the one it would have
+// preferred.
 //
 // The two branches that write no node are not judged at all, and the reason is
 // the one above: D854's bare re-seed and the generation-record step write this
@@ -578,31 +579,32 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 	}
 	marker := agentMarker(os.Getenv, s.e.r.stdinTerminal())
 	if !initflow.GateConfirms(class, r.conditions(), mg) {
-		// A Typed class is the one not-admitted answer with a sentence of the
-		// gate's own to give, and it is given here rather than left to the
-		// caller's coding-agent refusal: this step's document WAS admitted by
-		// the rules above, so what refuses it is the class rule and nothing
-		// about the session — a session told only that a coding agent is
-		// present learns that it is an agent and nothing about the node every
-		// run of the project is admitted by, which is the thing D1026 keeps out
-		// of a plan gate's reach. The verdict is the one this step built, so
-		// Refuse's own sentence names the class rule (D1026) and no rule that
-		// passed.
+		// The publish that widens the node is the owner's own step, and the
+		// fence on it is the session's rather than its class's (D1552): a
+		// loosening is what refuses here — m.loosening() is the node's
+		// ceilings, its account-choice members and its first publish, the three
+		// widens this stage has — and the marker is what asks it, so the fence
+		// keeps refusing a coding agent's session when the class system goes
+		// (D1552's own reason for the fence being this one and not Typed). The
+		// class stays beside it for everything else: it is what D1026 keeps out
+		// of a plan gate's reach, and a step this gate admits is one the rules
+		// above admitted, so what the sentence below names is the class rule
+		// and no rule that passed.
 		//
-		// The marker is asked for beside the class, and it is what keeps this
-		// inside the session the gate is about: the sentence here is the coding
-		// agent's alone. A person at a real terminal on a managed project is
-		// not asked for the typed name (the owner's ruling of 2026-11-06,
-		// policyMigrationConfirm), so the tail writes on a note with the diff
-		// above it — what this loosens is read there, in the members that
-		// changed, rather than in a sentence worded for a confirmation nobody
-		// is asked for.
+		// The sentence is the coding agent's alone, and the person at a real
+		// terminal on a managed project is not asked for the typed name (the
+		// owner's ruling of 2026-11-06, policyMigrationConfirm), so the tail
+		// writes on a note with the diff above it — what this loosens is read
+		// there, in the members that changed, rather than in a sentence worded
+		// for a confirmation nobody is asked for. What it leaves the owner is
+		// the command they run themselves (Left, below): this refusal is about
+		// the step and not about the plan, so the step is theirs.
 		//
 		// Every other not-admitted answer keeps the caller's refusal, because
 		// the gate has no sentence for it: a mark revoked between the two reads
 		// is a project that is not managed at this moment, and a fallback
 		// inventory is not a verdict about this document either.
-		if class == initflow.Typed && marker != "" {
+		if len(m.loosening()) > 0 && marker != "" {
 			refused := conv.Refuse()
 			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused, Refusal: initflow.GateRefusedClass}
 		}

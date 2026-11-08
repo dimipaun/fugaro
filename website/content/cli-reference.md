@@ -791,8 +791,8 @@ checkout belongs to, as it does for set. show takes owner/name (its empty
 --repo means no repository filter, not a checkout), and preview already
 means this checkout's repository without the flag.
 Runs in flight halt within seconds (a run in its last stage finishes pushing
-its work first) and new runs refuse. --all asks you to type the project's name
-(or pass --yes); one repository needs no confirmation.
+its work first) and new runs refuse. Nothing is asked for it: halting runs
+spends nothing, and only a resume is a raise.
 
 Usage: `fugaro budget kill (--all | --repo [owner/name]) [--reason TEXT]`
 
@@ -808,7 +808,7 @@ Flags:
 | `--reason` | string | "" | no | why (recorded, shown by budget show and watch) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | one repository, given as owner/name or a path inside its checkout (no value: this checkout's origin) |
-| `--yes` | bool | `false` | no | confirm without typing the project's name |
+| `--yes` | bool | `false` | no | accepted and ignored: this command asks nothing |
 
 Subcommands:
 
@@ -924,8 +924,9 @@ Clear a kill switch (budget admins)
 
 Clear the project's kill switch (--all) or one repository's (--repo [owner/name]),
 recording who and when. --repo with no value means the repository this checkout
-belongs to, as it does for set. Asks you to type the project's name (or pass
---yes): runs start again.
+belongs to, as it does for set. Runs start spending again, so nothing is
+asked for it and a coding agent's session is refused, exactly as a raise is
+(D1542).
 
 Usage: `fugaro budget resume (--all | --repo [owner/name]) [--reason TEXT]`
 
@@ -941,7 +942,7 @@ Flags:
 | `--reason` | string | "" | no | why (recorded, shown by budget show and watch) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | one repository, given as owner/name or a path inside its checkout (no value: this checkout's origin) |
-| `--yes` | bool | `false` | no | confirm without typing the project's name |
+| `--yes` | bool | `false` | no | accepted and ignored: this command asks nothing |
 
 Subcommands:
 
@@ -973,8 +974,10 @@ the one whose empty --repo is not the checkout (it means no repository
 filter), so it takes owner/name.
 
 Raising a cap (setting one that was unset counts), or lowering the mode to
-observe, loosens what runs may spend, so it asks you to type the project's name
-(or pass --yes). Lowering needs no confirmation.
+observe, loosens what runs may spend: nothing is asked for it, and a coding
+agent's session is refused with the command to run yourself — a raise is the
+owner's own step (D1542). --ask puts the question back where you can answer
+it. Tightening a cap asks nothing either.
 
 Usage: `fugaro budget set (--global | --defaults | --repo [owner/name]) [--daily USD] [--per-run USD] [--max-reserve USD] [--mode observe|enforce] | --clear`
 
@@ -982,6 +985,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--ask` | bool | `false` | no | ask before a raise, at a terminal that can answer |
 | `--clear` | bool | `false` | no | remove the scope's caps |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--daily` | float64 | `0` | no | the daily cap, in US dollars |
@@ -995,7 +999,7 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | one repository's caps, given as owner/name or a path inside its checkout (no value: this checkout's origin) |
-| `--yes` | bool | `false` | no | confirm a raise without typing the project's name |
+| `--yes` | bool | `false` | no | accepted and ignored: this command asks nothing |
 
 Subcommands:
 
