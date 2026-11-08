@@ -311,4 +311,38 @@ func TestTheAuditLineCarriesEveryFieldUnderItsOwnName(t *testing.T) {
 	if got := decoded["identity"]; got != testIdentity {
 		t.Errorf("the line's identity is %v; want %q", got, testIdentity)
 	}
+
+	// And every field is escaped on the way out, which is the part an operator
+	// cannot check for themselves. An identity is another writer's text, and
+	// userEntry admits a bidi control — it refuses whitespace and `*?[]` and
+	// nothing else — so a line that carried one raw would rearrange the screen
+	// an operator reads the record of the call on, in the terminal and in the
+	// log viewer both.
+	var hostile bytes.Buffer
+	marked, err := NewAuditor(slog.NewJSONHandler(&hostile, nil))
+	if err != nil {
+		t.Fatalf("building the auditor: %v", err)
+	}
+	if err := marked.Write(context.Background(), AuditEvent{
+		Identity: "user:alias‮name@example.com",
+		Tool:     "list_tasks",
+		Scopes:   []string{ScopeTasksRead},
+		Outcome:  OutcomeOK,
+	}); err != nil {
+		t.Fatalf("writing an event whose identity carries a bidi control: %v", err)
+	}
+	hostileLines := auditLines(t, &hostile)
+	if len(hostileLines) != 1 {
+		t.Fatalf("one event wrote %d lines", len(hostileLines))
+	}
+	if strings.ContainsRune(hostileLines[0], '‮') {
+		t.Errorf("the line %q carries the bidi control the identity was written with: safetext is what keeps it out of the terminal and the log viewer", hostileLines[0])
+	}
+	var hostileDecoded map[string]any
+	if err := json.Unmarshal([]byte(hostileLines[0]), &hostileDecoded); err != nil {
+		t.Fatalf("the line is not the JSON document an operator reads: %v (%q)", err, hostileLines[0])
+	}
+	if got, want := hostileDecoded["identity"], "user:alias?name@example.com"; got != want {
+		t.Errorf("the line's identity is %v; want %q: the control is marked rather than dropped, so a reader sees that something was there", got, want)
+	}
 }

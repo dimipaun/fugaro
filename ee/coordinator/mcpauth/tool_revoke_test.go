@@ -18,6 +18,52 @@ import (
 // family named by the audit record can be ended through a tool, and that the
 // next call with a token of that family is refused.
 
+// TestALauncherCannotRevokeAFamily is the other half of D930's surface, and the
+// tool's own role check is the whole control on it: the catalogue maps
+// revoke_family to tasks:write, which a launcher's token holds, and the registry
+// and the door check that scope and nothing else — so what stands between a
+// launcher and any family it can name is the check inside the handler. The
+// family is left alive and the operator's own token keeps working, which is the
+// difference between a refusal and a revocation.
+func TestALauncherCannotRevokeAFamily(t *testing.T) {
+	ts := newResourceServer(t, WithRoster(rosterOf(Members{
+		Launchers: []string{auditLauncher},
+		Operators: []string{testIdentity},
+	})))
+	ts.serve(t, "get_task_status", answering("run-7 is implementing"))
+	for _, tool := range []Tool{AuditRecordTool(ts.store), RevokeFamilyTool(ts.store)} {
+		if err := ts.tools.Register(tool); err != nil {
+			t.Fatalf("registering %s: %v", tool.Name, err)
+		}
+	}
+
+	_, tokens := ts.runFlow(t, testClientRedirect)
+	wantResult(t, ts.rpc(t, tokens.AccessToken, auditCallBody(t, "get_task_status", "")))
+
+	rec, _ := auditRecordOf(t, ts, tokens.AccessToken, testIdentity)
+	if len(rec.Entries) == 0 || rec.Entries[0].FamilyID == "" {
+		t.Fatalf("the operator's record names no family: %+v", rec.Entries)
+	}
+	familyID := rec.Entries[0].FamilyID
+
+	// The launcher is admitted to the task tools, so its token holds both
+	// scopes and the door's own check lets the call through: what refuses it
+	// below is the tool's rule and nothing before it.
+	launcher := ts.seededToken(t, auditLauncher)
+	ans := wantResult(t, ts.rpc(t, launcher, auditCallBody(t, "revoke_family", `{"family_id":`+quoted(t, familyID)+`}`)))
+	refusal, isError := wantToolText(t, ans)
+	if !isError {
+		t.Fatalf("a launcher revoked the family %s and the tool answered %s: the role check in the handler is the only control on that delete", familyID, refusal)
+	}
+	if !strings.Contains(refusal, "operator") {
+		t.Errorf("the launcher's refusal reads %q; want it to say whose tool this is, because a launcher that cannot tell the rule from a fault keeps asking", refusal)
+	}
+	if _, held := ts.store.objects(t)[familyPrefix+familyID]; !held {
+		t.Errorf("the family %s is gone from the store after a launcher asked for it to be revoked: a refusal that deleted anyway would leave every record naming a family nothing holds", familyID)
+	}
+	wantResult(t, ts.rpc(t, tokens.AccessToken, auditCallBody(t, "get_task_status", "")))
+}
+
 // TestRevokedFamilyIsRefusedOnTheNextCall is the whole of D930's answer read
 // from the front door: an operator reads a family in a person's record, revokes
 // it, and the access token that family minted stops working at the next call —
