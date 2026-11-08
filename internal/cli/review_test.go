@@ -27,7 +27,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/infra"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -35,14 +34,12 @@ import (
 )
 
 // reviewCLI runs the review command through a real root, so the persistent
-// setup, the flags and the cloud open are the tree's own. The command family's
-// one registration line lives in internal/cli/root.go, which this task's brief
-// leaves alone (see the PR body), so the test adds it here rather than relying
-// on a root that would not resolve `fugaro review` yet.
+// setup, the flags and the cloud open are the tree's own — including the
+// registration, which is the core root's (root.go's AddCommand list) and not
+// this file's.
 func reviewCLI(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
 	root := NewRootCmd()
-	root.AddCommand(newReviewCmd())
 	var out, errOut bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&errOut)
@@ -57,9 +54,9 @@ func reviewCLI(t *testing.T, args ...string) (string, string, error) {
 // the base image at the release the variant ships in (reviewJobSince, which
 // every review launch is gated on), and the credentials service opted in.
 //
-// E7's second half — the service admitting a project-scoped caller — is not a
-// fact of this tree at all, so the tests that have to reach the launch set it
-// themselves (reviewJobAdmitted).
+// E7's two halves hold in it — the service is published, and the launcher's
+// constant admits the class since 0.21.0 — so a launch from it reaches the
+// review job unless a test says otherwise.
 func newReviewFixture(t *testing.T) *projectJobFixture {
 	t.Helper()
 	f := newProjectJobServingFixture(t)
@@ -91,13 +88,15 @@ func setBaseImage(t *testing.T, tag string) {
 	}
 }
 
-// admitReviewJob is E7's second half, set by the tests that have to reach a
-// launch and restored after each: on this tree the deployed service carries no
-// review job accounts, so a review launch is refused (reviewJobAdmitted).
-func admitReviewJob(t *testing.T) {
+// unadmitReviewJob is the test seam on E7's second half, and it is set the one
+// way round that has a use now that the constant is true: a test that wants the
+// refusal a binary older than the flip answers sets it to false and restores
+// the tree's own value after itself.
+func unadmitReviewJob(t *testing.T) {
 	t.Helper()
-	reviewJobAdmitted = true
-	t.Cleanup(func() { reviewJobAdmitted = false })
+	old := reviewJobAdmitted
+	reviewJobAdmitted = false
+	t.Cleanup(func() { reviewJobAdmitted = old })
 }
 
 // storedRunRef is the "<slug>/<run-id>" of the run the fixture's bucket holds:
@@ -151,7 +150,6 @@ func reviewTaskSpec(t *testing.T, f *cloudFixture, slug, id string) *task.Spec {
 // never the shared coding job itself.
 func TestReviewLaunchesOnTheNamedAccount(t *testing.T) {
 	f := newReviewFixture(t)
-	admitReviewJob(t)
 	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
 
 	if _, _, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal"); err != nil {
@@ -214,7 +212,6 @@ func wantReviewRefused(t *testing.T, f *cloudFixture, args []string, wants ...st
 // it: --token here is the operator naming the credential a job will run on.
 func TestReviewRefusesAnAccountTheRepoMayNotUse(t *testing.T) {
 	f := newReviewFixture(t)
-	admitReviewJob(t)
 	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
 
 	err := wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-stranger"}, "is not one acme/app may use")
@@ -229,7 +226,6 @@ func TestReviewRefusesAnAccountTheRepoMayNotUse(t *testing.T) {
 // is refused a minute later and whose run is then retried by hand.
 func TestReviewRefusesAnExhaustedAccount(t *testing.T) {
 	f := newReviewFixture(t)
-	admitReviewJob(t)
 	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
 	until := time.Now().UTC().Truncate(time.Second).Add(3 * time.Hour)
 	f.db.Set(credsMarkPath("acme-personal"), map[string]any{
@@ -246,7 +242,6 @@ func TestReviewRefusesAnExhaustedAccount(t *testing.T) {
 // under it.
 func TestReviewRefusesWhileTheCodingRunIsGoing(t *testing.T) {
 	f := newReviewFixture(t)
-	admitReviewJob(t)
 	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
 	seedRoot(t, f.cloudFixture, rootID, time.Now().Add(-time.Hour))
 	active := wallRunIDAt(0, "000100", "bbbb")
@@ -297,13 +292,15 @@ func TestReviewShowPrintsTheArtifactAndItsMarkdown(t *testing.T) {
 	wantReviewRefused(t, f, []string{"show", appSlug + "/" + empty}, "has no review artifact")
 }
 
-// TestReviewRefusesWhereTheCredentialsServiceIsOff is E7's first half: the
-// review-only job mounts nothing, so its read-only installation token and its
-// account's model calls both come from the installation's credentials service,
-// and an installation without one has nothing for the job to fetch anything
-// from. The refusal names both commands that fix it, in order: the first is a
-// fugaro update, which is the whole upgrade.
-func TestReviewRefusesWhereTheCredentialsServiceIsOff(t *testing.T) {
+// TestReviewStillRefusesWhenTheCredentialsServiceIsOff is E7's first half, and
+// it is the refusal the flip leaves standing: the review-only job mounts
+// nothing, so its read-only installation token and its account's model calls
+// both come from the installation's credentials service, and an installation
+// without one has nothing for the job to fetch anything from. The refusal names
+// both commands that fix it, in order: the first is a fugaro update, which is
+// the whole upgrade. E7's second half holds here (reviewJobAdmitted is true
+// since 0.21.0), which is what makes this the missing half alone.
+func TestReviewStillRefusesWhenTheCredentialsServiceIsOff(t *testing.T) {
 	f := newProjectJobServingFixture(t)
 	setBaseImage(t, reviewJobSince)
 	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
@@ -314,236 +311,132 @@ func TestReviewRefusesWhereTheCredentialsServiceIsOff(t *testing.T) {
 		"fugaro creds set github-app-key")
 }
 
-// TestReviewRefusesAJobTheCredentialsServiceWillNotAdmit is E7's second half,
-// the one no operator command can supply: the deployed service admits a
-// repository's own job, and admitting a review caller of a project-scoped job
-// is C3.9, which is not built. The refusal has to say so — a sentence that
-// named a fugaro update would send the operator looking for one that does not
-// exist — and point at the verb that works today.
-func TestReviewRefusesAJobTheCredentialsServiceWillNotAdmit(t *testing.T) {
+// TestReviewLaunchIsAdmittedWhenTheConstantIsFlipped is the release's own
+// state, and CSR11's red step read the other way: reviewJobAdmitted has been
+// true since 0.21.0, so a launch whose two halves hold reaches the review-only
+// variant with no test seam and no environment variable anywhere in its path —
+// and the same installation under a binary that predates the flip refuses,
+// which is the whole of what the constant decides.
+func TestReviewLaunchIsAdmittedWhenTheConstantIsFlipped(t *testing.T) {
 	f := newReviewFixture(t)
 	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
 
-	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-personal"},
-		"does not admit the review job's own caller", "No fugaro update supplies this half",
-		"fugaro run --pr N --recipe review-only")
-}
-
-// clearAgentMarkers empties every marker of agentenv.Markers in this test's
-// environment. Whether the machine running the tests is a coding agent's
-// session is not what a test about the switch is about, and the switch is the
-// only thing in a review launch that reads the markers at all.
-func clearAgentMarkers(t *testing.T) {
-	t.Helper()
-	for _, name := range agentenv.Markers {
-		t.Setenv(name, "")
-	}
-}
-
-// TestReviewSwitchAdmitsTheLaunchAndSaysSo is the live-check switch: with
-// FUGARO_REVIEW_SKIP_ADMISSION_CHECK set and the constant still false, the
-// launch proceeds — that is how the owner's C3.9 check's step 3 reaches a
-// review launch at all — and it says so in exactly one line, the first line the
-// launch itself prints, naming what the variable is for and the boundary it
-// does not cross. The launch it produces is otherwise the launch every other
-// test here asserts: same job, same account, same task.
-func TestReviewSwitchAdmitsTheLaunchAndSaysSo(t *testing.T) {
-	f := newReviewFixture(t)
-	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
-	// The fixture's runs bucket is the fake name `unused-bucket`, which makes
-	// the launch print a project-recipes note before anything of its own
-	// (projectRecipesNote); an installation names its runs bucket the default
-	// way and prints none. The warning's position is asserted against the
-	// launch's own output, so the fixture is brought to that state rather than
-	// the assertion weakened to allow a note no installation writes.
-	projectRecipesFixture(t, f.cloudFixture, nil)
-	clearAgentMarkers(t)
-	t.Setenv("FUGARO_REVIEW_SKIP_ADMISSION_CHECK", "1")
-
-	out, errOut, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal")
-	if err != nil {
-		t.Fatalf("a review launched with FUGARO_REVIEW_SKIP_ADMISSION_CHECK set: %v (out %q err %q)", err, out, errOut)
-	}
-	// Spelled out rather than read from the tree: the one line is the whole of
-	// what the launch says about the switch, and it is pinned here so an edit
-	// that made it say less — or nothing, which the mutation below is — fails.
-	const notice = "warning: FUGARO_REVIEW_SKIP_ADMISSION_CHECK is set, so this launch skips the launcher's early refusal of a review and starts the job anyway: the variable is the owner's own live check's door into a review launch, and it admits nothing — the credentials service's answer to the review's caller is what decides whether the run is served, and this switch changes none of it."
-	lines := strings.Split(strings.TrimSuffix(errOut, "\n"), "\n")
-	if len(lines) < 2 || !strings.HasPrefix(lines[0], "project: ") || lines[1] != notice {
-		t.Fatalf("the launch printed %q, want the switch's own line %q as the first line the launch itself prints (the line before it is the shared project header every cloud command writes): a launch that skips the refusal has to say so before it does anything", errOut, notice)
-	}
-	if n := strings.Count(errOut, notice); n != 1 {
-		t.Errorf("the launch printed the switch's line %d times, want exactly one: %q", n, errOut)
+	if _, errOut, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal"); err != nil {
+		t.Fatalf("a review on the release that admits the review class: %v (stderr %q)", err, errOut)
 	}
 	calls := f.run.RunRequests()
 	if len(calls) != 1 {
-		t.Fatalf("the switched launch asked Cloud Run for %d executions, want 1", len(calls))
+		t.Fatalf("the admitted launch asked Cloud Run for %d executions, want 1", len(calls))
 	}
 	if want := credsvc.ReviewJobName("standard", "github", "acme-personal"); calls[0].Job != want {
-		t.Errorf("the switched launch ran the job %q, want %q: the switch removes one refusal and resolves nothing else", calls[0].Job, want)
+		t.Errorf("the admitted launch ran the job %q, want the review-only variant %q", calls[0].Job, want)
 	}
 	slug, id, err := parseRunRef(storedRunRef(t, f.cloudFixture))
 	if err != nil {
 		t.Fatal(err)
 	}
-	spec := reviewTaskSpec(t, f.cloudFixture, slug, id)
-	switch {
-	case spec.Mode != recipe.ModeReview:
-		t.Errorf("the stored task's mode is %q, want %q", spec.Mode, recipe.ModeReview)
-	case spec.OAuthToken != "acme-personal":
-		t.Errorf("the stored task's account is %q, want acme-personal", spec.OAuthToken)
+	if spec := reviewTaskSpec(t, f.cloudFixture, slug, id); spec.Mode != recipe.ModeReview || spec.OAuthToken != "acme-personal" {
+		t.Errorf("the admitted launch stored the task %+v, want a review on acme-personal", spec)
 	}
+
+	t.Run("the same installation under a binary that predates the flip", func(t *testing.T) {
+		f := newReviewFixture(t)
+		projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
+		unadmitReviewJob(t)
+
+		wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-personal"}, "predates the release")
+	})
 }
 
-// TestReviewSwitchIsRefusedInAnAgentSession: the switch is the owner's own
-// door and no agent's, and it is refused by the path the tree already refuses
-// the owner's other doors with — every marker of agentenv.Markers, the
-// classification agentMarker makes, the sentence initflow.AgentRefusal writes.
-// The refusal is read before the variable is honored, so a session carrying a
-// marker never reaches the launch the switch admits; the marker list is read
-// rather than extended, which is why the loop is over the list itself.
-func TestReviewSwitchIsRefusedInAnAgentSession(t *testing.T) {
-	old := stdinIsTerminal
-	stdinIsTerminal = func(io.Reader) bool { return false }
-	t.Cleanup(func() { stdinIsTerminal = old })
-	for _, marker := range agentenv.Markers {
-		t.Run(marker, func(t *testing.T) {
-			f := newReviewFixture(t)
-			projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
-			clearAgentMarkers(t)
-			t.Setenv(marker, "1")
-			t.Setenv("FUGARO_REVIEW_SKIP_ADMISSION_CHECK", "1")
-
-			before := len(f.run.Executions())
-			out, errOut, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal")
-			if err == nil {
-				t.Fatalf("%s is set and the switch launched a review anyway (out %q err %q): the variable is refused in a coding agent's session", marker, out, errOut)
-			}
-			if ExitCode(err) != ExitUserError {
-				t.Errorf("exit %d, want a refusal (exit 1): %v", ExitCode(err), err)
-			}
-			if want := initflow.AgentRefusal(marker); !strings.Contains(err.Error(), want) {
-				t.Errorf("the refusal is %q, want it to carry the tree's own sentence %q", err.Error(), want)
-			}
-			if after := len(f.run.Executions()); after != before {
-				t.Errorf("the refusal started %d executions: the switch admits nothing in an agent's session", after-before)
-			}
-		})
-	}
-}
-
-// TestReviewStillRefusesWithoutTheSwitch is the switch off by default: with the
-// variable unset and no marker, the launch is refused byte for byte as it was
-// before the switch existed, and nothing about the refusal mentions it. The
-// sentence is spelled out here rather than read from the tree, because the
-// claim is that the bytes did not move.
-func TestReviewStillRefusesWithoutTheSwitch(t *testing.T) {
+// TestReviewStillRefusesWhenTheConstantIsOff is the one state the sentence in
+// review.go is reachable in: a binary built before 0.21.0 carries the admission
+// as false, so it refuses the launch whatever the installation in front of it
+// admits — and the sentence names the upgrade as the remedy rather than a
+// repair of the installation, because the fact is the binary's. The seam is the
+// only way there, and the bytes are pinned because they are the whole of what
+// such a binary answers.
+func TestReviewStillRefusesWhenTheConstantIsOff(t *testing.T) {
 	f := newReviewFixture(t)
 	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
-	clearAgentMarkers(t)
+	unadmitReviewJob(t)
 
-	const refusal = "this installation's credentials service does not admit the review job's own caller: the review's account belongs to a project-scoped job, and the service refuses one whole (its admission is built for a repository's own job). A review launched now would fail inside the job with the service's answer instead of this sentence. No fugaro update supplies this half — it is a change to the service's own admission, which this release ships the command, the gate and the review-only job variant ahead of (docs/cloud-senior-review §1). Until it lands, review a pull request in the run's own job with fugaro run --pr N --recipe review-only"
+	const refusal = "this fugaro predates the release in which the credentials service admits the review job's own caller: the review's account belongs to a project-scoped job, and whether the service admits that class is not a question this launcher can ask it (E7's second half) — it is a fact the binary carries, and this one was built while the answer was no, so it refuses the launch whatever the installation in front of it admits. Upgrade Fugaro (`brew upgrade dimipaun/tap/fugaro`), then run `fugaro update` with the newer binary: that is the whole upgrade, and the command that deploys the service's review class beside the review-only job variant. Until then, review a pull request in the run's own job with fugaro run --pr N --recipe review-only"
 	before := len(f.run.Executions())
 	out, errOut, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal")
 	if err == nil {
-		t.Fatalf("a review launched with no switch set (out %q err %q): the refusal is what an installation that never sets the variable answers", out, errOut)
+		t.Fatalf("a review launched by a binary that predates the flip (out %q err %q)", out, errOut)
 	}
 	if ExitCode(err) != ExitUserError {
 		t.Errorf("exit %d, want a refusal (exit 1): %v", ExitCode(err), err)
 	}
 	if err.Error() != refusal {
-		t.Errorf("the refusal without the switch is %q, want today's sentence byte for byte: %q", err.Error(), refusal)
-	}
-	for _, line := range strings.Split(errOut, "\n") {
-		if strings.HasPrefix(line, "warning:") {
-			t.Errorf("the launch printed a warning line with no switch set: %q", line)
-		}
+		t.Errorf("the refusal of a pre-flip binary is %q, want the pinned sentence byte for byte: %q", err.Error(), refusal)
 	}
 	if after := len(f.run.Executions()); after != before {
 		t.Errorf("the refusal started %d executions", after-before)
 	}
 }
 
-// TestReviewSwitchIsNotReadFromConfig: the variable's one source is the
-// environment the launcher runs in — os.Getenv at the refusal, and nothing
-// else — so a document carrying a value of that name admits nothing. The three
-// documents are the ones a person edits and the ones a value would have to
-// reach this command through: the repository's own fugaro.yaml (the file the
-// launch resolves agent.auth and the accounts out of), the project layer
-// published beside it, and the installation's local config (what a project
-// layer's keys land in on this machine). Each is written with the key set to
-// "1", and the launch is refused in every case: exit 1, no execution started,
-// and no line saying the switch was honoured.
-func TestReviewSwitchIsNotReadFromConfig(t *testing.T) {
-	const key = "FUGARO_REVIEW_SKIP_ADMISSION_CHECK"
-	for _, tc := range []struct {
-		where string
-		// want is what the refusal has to carry. For the two documents the
-		// launch resolves leniently — the repository's file and the project
-		// layer, where a key the shape does not know is a note rather than a
-		// refusal — that is the admission sentence: the launch was refused for
-		// the reason it is always refused, and the key in the document bought
-		// nothing. For the local config, which the CLI opens strictly on every
-		// command, it is the key's own name: the file cannot carry it at all.
-		want  string
-		write func(t *testing.T, f *cloudFixture)
-	}{
-		{"the repository's fugaro.yaml", "does not admit the review job's own caller", func(t *testing.T, f *cloudFixture) {
-			projectJobCheckoutYAML(t, projectJobOAuthRepoYAML+"\n"+key+": \"1\"\n")
-		}},
-		{"the local config", key, func(t *testing.T, f *cloudFixture) {
-			projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
-			f.appendConfig(t, key+": \"1\"\n")
-		}},
-		{"the project layer", "does not admit the review job's own caller", func(t *testing.T, f *cloudFixture) {
-			// The layer applies to a fugaro.yaml that names its gcp_project, so
-			// the checkout is anchored to the fixture's project first: a layer
-			// that would not be read at all would prove nothing about the key.
-			projectJobCheckoutYAML(t, strings.Replace(projectJobOAuthRepoYAML, "project: aurora\n", "project: aurora\ngcp_project: proj-1234\n", 1))
-			publishedLayer(t, f, testProjectLayer+"\n"+key+": \"1\"\n")
-		}},
-	} {
-		t.Run(tc.where, func(t *testing.T) {
-			f := newReviewFixture(t)
-			tc.write(t, f.cloudFixture)
-			clearAgentMarkers(t)
+// TestReviewReadsNoAdmissionSwitch is CSR12's expiry date kept: the switch
+// FUGARO_REVIEW_SKIP_ADMISSION_CHECK existed for the owner's own C3.9 live
+// check and for nothing else, and CSR11's commit deletes it, so the variable
+// changes nothing anywhere — with the seam at false and the variable set to
+// "1", the launch is refused exactly as with it unset, no warning line is
+// printed, and no execution starts. The source half is checked beside the
+// behaviour: the mutation this test exists for is re-adding the read, and
+// either spelling of it — honoured again, or read and ignored — has to fail.
+func TestReviewReadsNoAdmissionSwitch(t *testing.T) {
+	const name = "FUGARO_REVIEW_SKIP_ADMISSION_CHECK"
+	t.Setenv(name, "1")
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(e.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), name) {
+			t.Errorf("%s names %s: the switch CSR12 added for the live check is deleted in the same commit as the flip, and a variable that outlives the gate it was built for is a hole with no reason left to be open", e.Name(), name)
+		}
+	}
 
-			before := len(f.run.Executions())
-			out, errOut, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal")
-			if err == nil {
-				t.Fatalf("%s carrying %s admitted the launch (out %q err %q): the read is the environment's alone", tc.where, key, out, errOut)
-			}
-			if ExitCode(err) != ExitUserError {
-				t.Errorf("exit %d, want a refusal (exit 1): %v", ExitCode(err), err)
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("%s was refused with %q, want the refusal to carry %q", tc.where, err.Error(), tc.want)
-			}
-			for _, line := range strings.Split(errOut, "\n") {
-				if strings.HasPrefix(line, "warning:") {
-					t.Errorf("%s produced a warning line: %q, so something read the key after all", tc.where, line)
-				}
-			}
-			if after := len(f.run.Executions()); after != before {
-				t.Errorf("%s admitted %d executions: the switch admits nothing from a document", tc.where, after-before)
-			}
-		})
+	f := newReviewFixture(t)
+	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
+	unadmitReviewJob(t)
+
+	before := len(f.run.Executions())
+	out, errOut, err := reviewCLI(t, "--pr", "7", "--token", "acme-personal")
+	if err == nil {
+		t.Fatalf("%s set and the launch was admitted (out %q err %q): no code path reads the variable", name, out, errOut)
+	}
+	if !strings.Contains(err.Error(), "predates the release") {
+		t.Errorf("the refusal with %s set is %q, want the one the constant gives with the variable unset", name, err.Error())
+	}
+	for _, line := range strings.Split(errOut, "\n") {
+		if strings.HasPrefix(line, "warning:") {
+			t.Errorf("a launch with %s set printed a warning line: %q", name, line)
+		}
+	}
+	if after := len(f.run.Executions()); after != before {
+		t.Errorf("%s admitted %d executions", name, after-before)
 	}
 }
 
-// TestTheAdmissionSwitchIsDocumentedWhereThePlanSays: the variable is written
-// in exactly two places — the plan that defines it and the live check whose
-// step 3 is reached with it — and nowhere else under docs/, website/ or
-// plugin/. The restriction is not tidiness: the generated CLI reference is
-// regenerated from the command tree, which this variable must never reach (it
-// is not a flag), and a reference row, a settings surface or a skill sentence
-// naming it would offer an operator a door the release intends to delete.
-func TestTheAdmissionSwitchIsDocumentedWhereThePlanSays(t *testing.T) {
+// TestTheRemovedAdmissionSwitchSurvivesOnlyInThePlan: the switch's name is kept
+// in exactly one place on this tree — the plan that defines it and records its
+// removal — and in no live document, no website page and no plugin skill. The
+// step that was reached with it (docs/c39-review-identity/live-check.md, step
+// 3) reads as the plain launch now, and the generated CLI reference is
+// regenerated from the command tree, which never held the variable: a sentence
+// left behind would offer an operator a door this release has taken out.
+func TestTheRemovedAdmissionSwitchSurvivesOnlyInThePlan(t *testing.T) {
 	const name = "FUGARO_REVIEW_SKIP_ADMISSION_CHECK"
-	want := []string{
-		"docs/c39-review-identity/live-check.md",
-		"docs/cloud-senior-review/implementation-plan.md",
-	}
+	const want = "docs/cloud-senior-review/implementation-plan.md"
 	found := map[string]bool{}
 	for _, root := range []string{"../../docs", "../../website", "../../plugin"} {
 		err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -573,14 +466,22 @@ func TestTheAdmissionSwitchIsDocumentedWhereThePlanSays(t *testing.T) {
 			t.Fatalf("walking %s: %v", root, err)
 		}
 	}
-	for _, path := range want {
-		if !found[path] {
-			t.Errorf("%s does not carry %s: the switch is documented in the plan that defines it and in the live check that uses it, and a reader of either has to be able to find it", path, name)
-		}
-		delete(found, path)
+	if !found[want] {
+		t.Errorf("%s no longer records %s: the plan is where the switch's definition and its removal are written, and a reader of the flip has to be able to find both", want, name)
 	}
+	delete(found, want)
 	for path := range found {
-		t.Errorf("%s names %s: the variable belongs to the plan and the live check alone, and a reference row, a settings surface or a skill sentence naming it would advertise a door the release deletes", path, name)
+		t.Errorf("%s names %s: the variable was removed by the flip, and a reference row, a settings surface, a live check or a skill sentence naming it would advertise a door that no longer exists", path, name)
+	}
+}
+
+// clearAgentMarkers empties every marker of agentenv.Markers in this test's
+// environment. Whether the machine running the tests is a coding agent's
+// session is not what the tests that call it are about.
+func clearAgentMarkers(t *testing.T) {
+	t.Helper()
+	for _, name := range agentenv.Markers {
+		t.Setenv(name, "")
 	}
 }
 
