@@ -45,6 +45,17 @@ var craftParent = map[string]string{
 	CraftSecurityReview: CraftSeniorReview,
 }
 
+// CraftParent is the craft name follows: the craft whose model and access it
+// takes where it sets none of its own. It is "" for the coder and the senior
+// review, which the spec makes required — and for a name that is no craft, so a
+// caller asking about one inherits nothing by mistake.
+//
+// It is exported because a reader of the resolution has to say which craft a
+// half came from ("inherited from coder"), and a second copy of this chain in
+// internal/craft (the resolver, MC2) would be a second rule: this one and
+// Crafts.Inherited walk the same map.
+func CraftParent(name string) string { return craftParent[name] }
+
 // Craft is one craft's two halves, each set or inherited on its own: the model
 // a stage runs and the credential or pool its calls go out on (spec §3). An
 // empty half is unset, and what an unset half finally resolves to — the
