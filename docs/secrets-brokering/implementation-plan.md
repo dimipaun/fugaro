@@ -10,7 +10,8 @@ spec, the reconciliation wins.
   no task. **This section is the plan as it was written, not a reading of the tree**:
   [status-2026-11-07.md](status-2026-11-07.md) is the census of 2026-11-07 and says, task by task,
   what is on `main` — every task of S0 and every inert piece of S1 are
-  merged, the proxy chain (B1.5–B1.7, B1.10, B1.11) and the flip (B1.13 part two) are not — with the
+  merged, beside the chain's first two tasks (B1.5, B1.6); the chain's remainder (B1.7, B1.10, B1.11)
+  and the flip (B1.13 part two) are not — with the
   commit and the test that prove it, what blocks each remaining task and which of them can launch
   now. The release table below is historical:
   0.14.0 through 0.20.3 shipped without the proxy chain.

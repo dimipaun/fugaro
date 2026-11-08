@@ -11235,8 +11235,9 @@ FAIL (cleanup)  branch chk190/sJRgQCI8 was left on the sandbox repository; the o
 **32 MiB** does **not** pass Cloud Run on **HTTP/1.1** — the Google Frontend answers **413 Request
 Entity Too Large**, and the proxy behind it receives **4 bytes** — so S1 is not built on HTTP/1.1:
 B1.5 and the service serve **h2c end to end** (B1.0). That is U2's first two halves measured, and its
-third — whether h2c end to end lifts the limit — stays **UNVERIFIED** until B1.0's server and B1.5's
-route exist. The rest of the check answered as designed: a full clone is **10 s** (3 requests,
+third — whether h2c end to end lifts the limit — stays **UNVERIFIED**: B1.0's listener and B1.5's route
+are on `main`, but no live step has read a push over h2c, because no run reaches them yet (B1.7, the
+runner's own half, is unwritten) and no deployment carrying the chain has been measured. The rest of the check answered as designed: a full clone is **10 s** (3 requests,
 1080 B in / 23008 out), a blobless clone **3 s** (5 requests), the first git request after **2100 s**
 idle is **1 s** on a **new** instance (D501's scale-to-zero holds), and the unauthenticated
 `GET /chk190/health` answered **403**, so no project-level `allUsers` or `allAuthenticatedUsers`

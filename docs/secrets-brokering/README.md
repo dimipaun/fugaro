@@ -1,7 +1,10 @@
 # Secrets and credential brokering
 
 **Status: S0 is complete — every task of it, B0.6 (Check 190's run record) included — and every inert
-piece of S1 is on `main`; the proxy chain and the flip are not, and no task is approved** — [status-2026-11-07.md](status-2026-11-07.md) reads
+piece of S1 is on `main` beside the proxy chain's first two tasks — B1.5's service route and B1.6's
+loopback forwarder, which landed after the census below was read; the chain's runner half (B1.7), the
+docs (B1.10), the two live checks (B1.11) and the flip (B1.13 part two) are not, and no task is
+approved** — [status-2026-11-07.md](status-2026-11-07.md) reads
 every task of the plan, one row each, against the merged tree, and says which can launch now. The
 owner answered D490–D506 on 2026-10-27: all as recommended except **D501** (the service keeps scaling
 to zero: not the recommendation;
