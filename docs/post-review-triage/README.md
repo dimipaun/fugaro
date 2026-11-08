@@ -13,7 +13,7 @@ deferred and become follow-up tasks.
 | Document | What it is |
 | --- | --- |
 | [spec.md](spec.md) | the owner's spec, verbatim, in its own commit (no typo was fixed) |
-| [reconciliation.md](reconciliation.md) | F1-F20 findings against the code, decisions D1800-D1816 with the owner's answers, open tensions, UNVERIFIED; where it differs from the spec, it wins |
+| [reconciliation.md](reconciliation.md) | F1-F20 findings against the code, decisions D1830-D1846 with the owner's answers, open tensions, UNVERIFIED; where it differs from the spec, it wins |
 | [implementation-plan.md](implementation-plan.md) | four slices, thirteen tasks with their files, tests, red steps, levels, critical path and shared-files table |
 
 ## In one paragraph
@@ -28,7 +28,7 @@ away" reads "is ready" here.
 
 ## Numbers this work holds
 
-Decisions **D1800-D1829** (D1800-D1816 used) and checks **470-479** (470-472 used). The external prerequisite is BF1m (#1999),
+Decisions **D1830-D1859** (D1830-D1846 used) and checks **480-489** (480-482 used). The external prerequisite is BF1m (#1999),
 which edits the files most runner and config tasks write.
 
 ## Notes on the spec
