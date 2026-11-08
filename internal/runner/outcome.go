@@ -101,6 +101,17 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 			// own reason points at would find nothing blocking there.
 			return false, stopBlockingReason(pol.StopBlocking), failure.ReviewNotConverged
 		}
+		// The mode takes this round whole — the stop accepts it, or its own row
+		// tolerates it — and the round read an earlier commit than the one the
+		// run publishes: the fix its verdict bought is on the branch and no
+		// review round read it (the time half of the stop is asked at the top of
+		// a loop, after the fix the round before it bought, and the cheap loop
+		// buys one after its last round too). Both of the mode's answers are
+		// about the round, and neither reaches the commit that ships, so the
+		// pull request stays a draft whose reason names the round (BF1m).
+		if pol.UnreadFix != nil && pol.tolerates(last) && !pol.raisedAfterReview() {
+			return false, unreadFixReason(*pol.UnreadFix), failure.ReviewUnread
+		}
 		if pol.acceptsAtStop(last) {
 			// The run stopped without shipping a round, and what the round
 			// left is what the mode accepts at the stop (the owner's ruling
@@ -164,6 +175,16 @@ func stopBlockingReason(rs []runstore.ReviewSummary) string {
 		parts = append(parts, part)
 	}
 	return strings.Join(parts, " and ") + ", so the pull request is a draft"
+}
+
+// unreadFixReason is Decide's reason for a run whose last review round read an
+// earlier commit than the one it publishes: the round whose fix no review read.
+// It is the round rather than the count that is named because the count is the
+// round's own and the run is not a draft on what the round found — the mode
+// takes that — but on the commit the round never saw, which is the head the
+// pull request's own review line prints and the record's last round.
+func unreadFixReason(rs runstore.ReviewSummary) string {
+	return fmt.Sprintf("the fix after review round %d was not reviewed", rs.Round)
 }
 
 // reviewLevelOf is the level a recorded round is a round of: its tier says
@@ -427,6 +448,15 @@ type FindingsPolicy struct {
 	// show it. Empty for every run whose row names no stop, and for every run
 	// that did not stop.
 	StopBlocking []runstore.ReviewSummary
+	// UnreadFix is the last review round the run's record holds, set only where
+	// the commit the run publishes is not the one that round read: the fix the
+	// round's verdict bought — or the work a later stage did — is on the branch
+	// and no review round read it. Both answers the mode gives about a round,
+	// the stop's acceptance and its own tolerance, are answers about the commit
+	// that round read, and neither reaches code no review read: a pull request is
+	// never ready on it (BF1m). nil wherever the last round read the commit that
+	// ships, which is every run whose loop bought no fix after its last round.
+	UnreadFix *runstore.ReviewSummary
 }
 
 // RigorRaise is the raise a run's mode took during the run (T3.5, D22): the
@@ -498,8 +528,11 @@ func (pol FindingsPolicy) tolerates(last *runstore.ReviewSummary) bool {
 // taken from rigor.SplitAtStop), that round did not ship — a shipped round is
 // ready on its own verdict and the stop has nothing to accept for it — the
 // round is one the policy takes whole, no enabled level under the decider left
-// a finding the stop does not take (StopBlocking), and no raise after the last
-// round withdrew the mode the split was read under (D22, raisedAfterReview).
+// a finding the stop does not take (StopBlocking), no raise after the last
+// round withdrew the mode the split was read under (D22, raisedAfterReview), and
+// the commit the run publishes is the one the run's last review round read
+// (UnreadFix, BF1m): the acceptance is an answer about a round, and a round
+// whose fix nobody read is an answer about code the run did not publish.
 //
 // It is Decide's ready answer and the record's Accepted block stated once: the
 // block says the run merged with what it left, and a record that claimed one
@@ -508,6 +541,7 @@ func (pol FindingsPolicy) tolerates(last *runstore.ReviewSummary) bool {
 func (pol FindingsPolicy) acceptsAtStop(last *runstore.ReviewSummary) bool {
 	return pol.AtStop != "" && last != nil && last.Verdict != "ship" &&
 		len(pol.StopBlocking) == 0 &&
+		pol.UnreadFix == nil &&
 		!pol.raisedAfterReview() &&
 		pol.tolerates(last)
 }
@@ -585,7 +619,39 @@ func (r *run) findingsPolicy() FindingsPolicy {
 	pol.Raised = r.rigorRaise
 	pol.HeldBack = r.heldBackLevel()
 	pol.StopBlocking = r.stopBlockingLevels()
+	pol.UnreadFix = r.unreadFix()
 	return pol
+}
+
+// unreadFix is the last review round the run's record holds where the commit
+// the run publishes is not the one that round read: the fix the round's verdict
+// bought, or the work a stage after it did, is on the branch and no review
+// round read it. It is what the mode's two answers about a round cannot cover
+// (FindingsPolicy.UnreadFix, BF1m).
+//
+// The record's *last* round is the one compared, and not the deciding round the
+// policy is otherwise built from, because a review round moves the head only
+// where a fix follows it: where some round read the commit that ships, every
+// round after it read that same commit, so the last entry is the round that
+// would have had to read it — and in a bounce it is the cheap loop's round,
+// which reads the head level 2's round bought the fix for, while the deciding
+// round's head is the one before that fix by construction.
+//
+// A round that recorded no head — the read of the repository's head failed —
+// is not shown to have read the commit that ships, so it is read as a fix
+// nobody reviewed: the fail-closed answer the table gives a finding it cannot
+// read (D4). Every stop the run did not reach before that round is a draft the
+// same way, and its reason names the round instead of the count.
+func (r *run) unreadFix() *runstore.ReviewSummary {
+	rs := r.rec.Reviews
+	if len(rs) == 0 {
+		return nil
+	}
+	last := &rs[len(rs)-1]
+	if last.Head != "" && last.Head == r.rec.HeadSHA {
+		return nil
+	}
+	return last
 }
 
 // toleratedRecord is what the run's record keeps of the findings the mode let

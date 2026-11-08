@@ -689,6 +689,15 @@ func toleratedPart(pol FindingsPolicy, last runstore.ReviewSummary) string {
 	}
 	part := ", tolerated at " + inlineText(string(pol.Mode))
 	if pol.AtStop != "" {
+		// The stop's own words only where the stop is what decided the run: a
+		// round it would have taken and did not — one whose commit is not the
+		// one the run publishes (UnreadFix), or one a level under the decider
+		// left a finding the stop does not take (StopBlocking) — is a draft, and
+		// a body that filed the acceptance anyway would claim a merge the record
+		// has no block for (acceptsAtStop).
+		if !pol.acceptsAtStop(&last) {
+			return ""
+		}
 		part = ", accepted at " + inlineText(string(pol.Mode)) + " (" + inlineText(pol.AtStop) + ")"
 	}
 	return part + " (" + inlineText(strings.Join(labels, ", ")) + ")"

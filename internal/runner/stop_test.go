@@ -362,16 +362,17 @@ func TestStopFilesTheCheapRoundsAcceptance(t *testing.T) {
 // loop, which is the one loop that hands its round on; here the clock crosses
 // one stage later — during the fix a `changes` round bought — so the stop is
 // asked at the top of the level above, the level that never started a round.
-// The half that ends the run is the same half either way, so a stop at an
-// outer loop's top has to leave the run reading the same round the cheaper
-// stop would have: the level-1 round that ran and is all the run has.
+// The half that ends the run is the same half either way, and the round the
+// stop reads is the one that ran: the reason below is built from level 1's
+// round and from the stop's own split of it, which a run read off the level
+// above alone cannot say — that policy holds no round at all.
 //
-// The pair is one run with level 2 on and the same run with it off, and the
-// ruling's own sentence is that asking for a level must not change the mode's
-// rigor (the owner's ruling of 2026-11-08): read off the level above, the
-// level-2 run finalizes a draft on findings no field had kept while the
-// level-2-off run — whose round the cheap loop records because it decides
-// there — is ready.
+// The run is a draft, and for the reason of its own that the fix it bought
+// earns it: the commit that ships is not the one that round read, so the stop's
+// acceptance — an answer about the round — reaches nothing on it (UnreadFix,
+// BF1m). What the pair pins is both halves at once: asking for a level changes
+// nothing about the finding the cheap round left, and what nobody read is the
+// fix, named by the round that bought it.
 func TestStopAtAnOuterLoopsTopReadsTheCheapRoundsRound(t *testing.T) {
 	// 0.2 of the fixture's 5m is 60s and every stage advances the harness's
 	// clock by 25: the cheap round runs (50s) and the fix it asked for takes
@@ -396,13 +397,8 @@ func TestStopAtAnOuterLoopsTopReadsTheCheapRoundsRound(t *testing.T) {
 	}
 	for _, off := range []bool{true, false} {
 		name := "level 1 is the only level, and the cheap loop asks the stop itself"
-		// With no level above it the cheap loop's own stop sites see the clock
-		// cross, and the round it was given is the plan's last either way, so
-		// the half that ends the run is the rounds half.
-		at := runstore.StopRoundsSpent
 		if !off {
 			name = "level 2 is enabled and never started, and the stop reads the same round"
-			at = runstore.StopTimeThreshold
 		}
 		t.Run(name, func(t *testing.T) {
 			clk := newClock()
@@ -421,17 +417,120 @@ func TestStopAtAnOuterLoopsTopReadsTheCheapRoundsRound(t *testing.T) {
 			if got := stageNames(rec); !eq(got, "implement", "review_first", "fix") {
 				t.Fatalf("stages = %v, want the cheap round and its fix and no outer round", got)
 			}
-			if rec.Outcome != runstore.OutcomeReady {
-				t.Fatalf("outcome = %s (reason %q), want ready: the stop accepts this round's finding", rec.Outcome, rec.Reason)
+			if rec.Outcome != runstore.OutcomeDraft {
+				t.Fatalf("outcome = %s (reason %q), want a draft: the fix this round bought is on the branch and no review round read it", rec.Outcome, rec.Reason)
 			}
-			if want := "review round 1 left 1 finding, accepted at startup (" + at + ")"; rec.Reason != want {
-				t.Errorf("reason = %q, want %q", rec.Reason, want)
+			if want := "the fix after review round 1 was not reviewed"; rec.Reason != want {
+				t.Errorf("reason = %q, want %q: the round whose fix nobody read is the cheap loop's, which is the round the stop read", rec.Reason, want)
 			}
-			if ac := rec.Accepted; ac == nil || ac.Round != 1 || ac.At != at || ac.Total != 1 || len(ac.Findings) != 1 {
-				t.Fatalf("the record's accepted block = %+v, want the cheap loop's round and the half that ended the run", ac)
+			// The mismatch itself, asserted rather than assumed: the round the
+			// record's last entry read is not the commit the run publishes, and
+			// that is the whole of what keeps this run a draft.
+			if last := rec.Reviews[len(rec.Reviews)-1]; last.Head == "" || last.Head == rec.HeadSHA {
+				t.Fatalf("the record's last round read %q and the run shipped %q, want two commits: this is the case the rule is for", last.Head, rec.HeadSHA)
+			}
+			if ac := rec.Accepted; ac != nil {
+				t.Errorf("the record's accepted block = %+v, want none: the stop accepts a round, and this round did not read what ships", ac)
+			}
+			if pr := onlyPR(t, h.provider); !pr.Draft {
+				t.Errorf("the pull request is not a draft: %+v", pr)
 			}
 		})
 	}
+}
+
+// TestStopLetsTheStopThroughOnlyWhereAReviewReadTheCommit is the pair BF1m's
+// rule is read by: the same run twice, with the cheap loop given one round and
+// two.
+//
+// One round, and the fix that round's `changes` verdict bought is the last thing
+// that touched the branch: no review round read it, so the stop's acceptance —
+// an answer about the round, and the round is about the commit before the fix —
+// reaches nothing, and the pull request ships as a draft naming the round.
+// Two, and round 2 reviews that fix before the stop is asked: the commit that
+// ships is the one round 2 read, the acceptance is an answer about it, and the
+// run merges as the ruling of 2026-11-08 has it merge. The distinction is what
+// keeps the rule from reading every stopped run as a draft: it is the commit
+// that shipped that has to have been read, and not the round the levels happen
+// to read readiness off.
+func TestStopLetsTheStopThroughOnlyWhereAReviewReadTheCommit(t *testing.T) {
+	// Above Startup's floor and below its override: a finding the mode's own row
+	// blocks on and its stop accepts, so the stop's acceptance is the only thing
+	// that can make either run ready.
+	blocking := reviewScored("changes", map[string]any{
+		"summary": "unbounded retry loop in the fetch path", "likelihood": 3, "impact": 3, "fix_cost": 2, "class": "correctness",
+	})
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature"}
+
+	// 0.2 of the fixture's 5m is 60s and a stage advances the harness's clock by
+	// 25: the cheap round runs (50s) and its fix takes the run to 75s, so the
+	// stop is asked at the top of level 2's loop, past the fix and before any
+	// round of that level.
+	t.Run("the fix nobody read keeps the draft", func(t *testing.T) {
+		clk := newClock()
+		h := newHarness(t, modeCfg(t, "startup", 1, "  first_line_review: on\n  review_stop_fraction: 0.2\n"), spec)
+		h.deps.Now = clk.Now
+		rec, err := h.run(t,
+			afterStep(clk, implement("feature")),
+			afterStep(clk, blocking), // review_first: changes, so a fix is bought
+			afterStep(clk, fixStep),  // the fix, and the clock crosses during it
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := stageNames(rec); !eq(got, "implement", "review_first", "fix") {
+			t.Fatalf("stages = %v, want the cheap round, its fix and no review of it", got)
+		}
+		if rec.Outcome != runstore.OutcomeDraft {
+			t.Fatalf("outcome = %s (reason %q), want a draft", rec.Outcome, rec.Reason)
+		}
+		if want := "the fix after review round 1 was not reviewed"; rec.Reason != want {
+			t.Errorf("reason = %q, want %q", rec.Reason, want)
+		}
+		if ac := rec.Accepted; ac != nil {
+			t.Errorf("the record's accepted block = %+v, want none", ac)
+		}
+		if pr := onlyPR(t, h.provider); !pr.Draft {
+			t.Errorf("the pull request is not a draft: %+v", pr)
+		}
+	})
+
+	// The same run with the cheap loop given a second round: it reviews the fix
+	// (100s), and 0.3 of the budget is 90s, so the stop is asked before the fix
+	// round 2 would have bought. The round the stop reads is round 2, and the
+	// commit it read is the one the run publishes.
+	t.Run("a round that read the fix lets the stop through", func(t *testing.T) {
+		clk := newClock()
+		h := newHarness(t, modeCfg(t, "startup", 1, "  first_line_review: on\n  first_line_rounds: 2\n  review_stop_fraction: 0.3\n"), spec)
+		h.deps.Now = clk.Now
+		rec, err := h.run(t,
+			afterStep(clk, implement("feature")),
+			afterStep(clk, blocking), // review_first, round 1: changes, so a fix is bought
+			afterStep(clk, fixStep),  // the fix round 2 reviews
+			afterStep(clk, blocking), // review_first, round 2: changes, and the stop is asked before its fix
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := stageNames(rec); !eq(got, "implement", "review_first", "fix", "review_first") {
+			t.Fatalf("stages = %v, want the round that read the fix and no fix after it", got)
+		}
+		if last := rec.Reviews[len(rec.Reviews)-1]; last.Head != rec.HeadSHA {
+			t.Fatalf("the record's last round read %q and the run shipped %q, want the same commit", last.Head, rec.HeadSHA)
+		}
+		if rec.Outcome != runstore.OutcomeReady {
+			t.Fatalf("outcome = %s (reason %q), want ready: a review round read the commit that ships", rec.Outcome, rec.Reason)
+		}
+		if want := "review round 2 left 1 finding, accepted at startup (time threshold)"; rec.Reason != want {
+			t.Errorf("reason = %q, want %q", rec.Reason, want)
+		}
+		if ac := rec.Accepted; ac == nil || ac.Round != 2 || ac.At != runstore.StopTimeThreshold || ac.Total != 1 {
+			t.Fatalf("the record's accepted block = %+v, want the round that read the fix", ac)
+		}
+		if pr := onlyPR(t, h.provider); pr.Draft {
+			t.Errorf("the pull request is a draft: %+v", pr)
+		}
+	})
 }
 
 // TestStopInABouncedCheapLoopFilesTheDecidingRoundsAcceptance is the pull
