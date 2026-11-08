@@ -246,6 +246,39 @@ func TestPolicyKeyPathCraft(t *testing.T) {
 	}
 }
 
+// TestPolicyRecordCraftIgnoredNamesALayer: every entry of the record's
+// ignored[] names a layer, the craft merge's own included. A credential, a
+// pool or a craft's access a later layer may not introduce (F12, D1628) has no
+// effective value, but it still answers to the project's own layer — the one
+// that creates credentials and pools — and policyRecord copies the merge's
+// source verbatim into result.json, whose schema pins the field to the four
+// layer names (schemas/result.schema.json, schemas_test's enum table). A merge
+// that answered "" here would write a record the repository's own validator
+// refuses.
+func TestPolicyRecordCraftIgnoredNamesALayer(t *testing.T) {
+	project := policy.Layer{Craft: policy.CraftLayer{
+		Credentials: []string{"openrouter-main"},
+		Pools:       map[string]policy.CraftPool{"claude": {Members: []string{"openrouter-main"}}},
+		Access:      map[string]string{config.CraftCoder: "openrouter-main"},
+	}}
+	file := policy.Layer{Craft: policy.CraftLayer{
+		Credentials: []string{"repo-key"},
+		Pools:       map[string]policy.CraftPool{"repo-pool": {Members: []string{"openrouter-main"}}},
+		Access: map[string]string{config.CraftCoder: "repo-key",
+			config.CraftSeniorReview: "repo-pool"},
+	}}
+	rec := policyRecord(policy.Merge(project, file), 0)
+	if rec == nil || len(rec.Ignored) == 0 {
+		t.Fatalf("the repository's refused craft values were not recorded: %+v", rec)
+	}
+	layers := []string{policy.SourceCeiling, policy.SourcePolicy, policy.SourceDefaultBranch, policy.SourceBranch}
+	for _, ig := range rec.Ignored {
+		if !slices.Contains(layers, ig.Source) {
+			t.Errorf("ignored %s: source %q is not one of %v, so result.json would fail its own schema", ig.Key, ig.Source, layers)
+		}
+	}
+}
+
 // TestRunnerReadsReviewFloorFromNode is D722's job half, and the trust
 // boundary it closes (G1): the floor is read from the owner-only policy node
 // — the one object the launcher cannot write — and from nowhere else, so a
