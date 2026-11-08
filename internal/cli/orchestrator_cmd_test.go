@@ -210,6 +210,21 @@ func orchestratorDocMatchesSchema(t *testing.T, out string) {
 // rather than filling pages, and a state of an ordinary size is one screen.
 func TestStateBriefFitsOneScreen(t *testing.T) {
 	f := newOrchestratorFixture(t)
+
+	// A node nobody has written yet is revision 0, and 0 is what the document
+	// says: it is the base_rev a patch built from this read carries, so a
+	// document that dropped it as an empty value would leave a consumer with
+	// nothing to write against. The schema holds this too, with a conditional
+	// required over source: node.
+	empty, _, err := runOrchestrator(t, "", "orchestrator", "state", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, empty)
+	}
+	orchestratorDocMatchesSchema(t, empty)
+	if !strings.Contains(empty, `"rev": 0`) {
+		t.Errorf("an empty node's document carries no revision 0:\n%s", empty)
+	}
+
 	ops := []orchestrator.Op{}
 	for i := range 10 {
 		ops = append(ops, workItemUpsert("w"+orchNum(i), "a small piece of work"))

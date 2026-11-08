@@ -27,6 +27,13 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["version", "kind", "id", "source", "brief"],
+      "$comment": "A node's document carries rev and schema_version and a cache's carries neither. Conditional rather than prose because zero is a revision a live node really is at — the revision of a node nobody has written yet — so a writer that drops the field as an empty value must fail here and not pass it as an absent optional.",
+      "allOf": [
+        {
+          "if": { "required": ["source"], "properties": { "source": { "const": "node" } } },
+          "then": { "required": ["rev", "schema_version"] }
+        }
+      ],
       "properties": {
         "version": { "$ref": "#/$defs/version" },
         "kind": { "const": "state" },

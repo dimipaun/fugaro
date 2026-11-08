@@ -67,12 +67,10 @@ type orchestratorPatchDoc struct {
 	Ops     int    `json:"ops"`
 }
 
-// personOnlyOp is one op of a patch that only a person may land, as the
-// confirmation shows it.
+// personOnlyOp is one op of a patch that only a person may land.
 type personOnlyOp struct {
 	Kind   orchestrator.OpKind
 	ID     string
-	Title  string
 	Digest orchestrator.Digest
 }
 
@@ -80,6 +78,9 @@ type personOnlyOp struct {
 // approving a work item, setting the goal, and closing a decision that waits on
 // a person. A decision this run cannot find is not one of them: Apply refuses
 // an unknown id before it looks at the class, so nothing is written either way.
+// The state read here is the one the patch starts from, because whether an op
+// is the person's is a fact about the node as it stands; what the confirmation
+// shows is rendered from the state the patch leaves behind.
 func personOnlyOps(s orchestrator.State, p orchestrator.Patch) []personOnlyOp {
 	var out []personOnlyOp
 	for _, op := range p.Ops {
@@ -88,11 +89,7 @@ func personOnlyOps(s orchestrator.State, p orchestrator.Patch) []personOnlyOp {
 			if op.Approve == nil {
 				continue
 			}
-			one := personOnlyOp{Kind: op.Op, ID: op.Approve.ID, Digest: op.Approve.SpecDigest}
-			if w, ok := s.Item(op.Approve.ID); ok {
-				one.Title = safetext.OneLine(safetext.Clip(w.Title, 80))
-			}
-			out = append(out, one)
+			out = append(out, personOnlyOp{Kind: op.Op, ID: op.Approve.ID, Digest: op.Approve.SpecDigest})
 		case orchestrator.OpGoalSet:
 			out = append(out, personOnlyOp{Kind: op.Op})
 		case orchestrator.OpDecisionResolve:
@@ -107,23 +104,40 @@ func personOnlyOps(s orchestrator.State, p orchestrator.Patch) []personOnlyOp {
 	return out
 }
 
-// personPatchWords is what the confirmation shows: one line per op only a
-// person may land, out of names, digests and the stored title this command
-// cleaned on the way out.
-func personPatchWords(ops []personOnlyOp) string {
+// storedText is a string out of the state as a line of the confirmation shows
+// it: one line, cleaned of what a terminal cannot take, shortened to n runes.
+// A document can also be hand-written, so this cannot rely on Apply having
+// cleaned it on the way in.
+func storedText(s string, n int) string { return safetext.OneLine(safetext.Clip(s, n)) }
+
+// personPatchWords is what the person reads before typing their project's name,
+// and it is written from the state the patch leaves behind (after) and never
+// from the one it starts at: what the confirmation attests to is the text that
+// lands. So a goal_set shows the goal, a decision_resolve shows the question
+// and the answer it closes the decision with, and an approval shows the title
+// its digest binds — which a work_item_upsert in the same document may have
+// rewritten, and does so before the approval is applied.
+func personPatchWords(after orchestrator.State, ops []personOnlyOp) string {
 	lines := make([]string, 0, len(ops))
 	for _, op := range ops {
 		switch op.Kind {
 		case orchestrator.OpWorkItemApprove:
 			what := fmt.Sprintf("approving work item %s", safetext.Field(op.ID))
-			if op.Title != "" {
-				what += fmt.Sprintf(" (%s)", op.Title)
+			if w, ok := after.Item(op.ID); ok && w.Title != "" {
+				what += fmt.Sprintf(" (%s)", storedText(w.Title, 80))
 			}
 			lines = append(lines, what+" against spec "+safetext.Field(string(op.Digest)))
 		case orchestrator.OpGoalSet:
-			lines = append(lines, "setting the goal of the loop")
+			lines = append(lines, "setting the goal of the loop to: "+storedText(after.Goal, 120))
 		case orchestrator.OpDecisionResolve:
-			lines = append(lines, fmt.Sprintf("closing decision %s, which waits on a person", safetext.Field(op.ID)))
+			what := fmt.Sprintf("closing decision %s, which waits on a person", safetext.Field(op.ID))
+			if d, ok := after.Decision(op.ID); ok {
+				what += ": " + storedText(d.Question, 120)
+				if d.Answer != "" {
+					what += " — with the answer: " + storedText(d.Answer, 120)
+				}
+			}
+			lines = append(lines, what)
 		default:
 			lines = append(lines, string(op.Kind))
 		}
@@ -136,11 +150,13 @@ func personPatchWords(ops []personOnlyOp) string {
 // environment is refused as well, but that check is a mitigation against the
 // accident and not a barrier — whoever unsets the marker is outside it — which
 // is why nothing here rests on it. --yes never covers this class, and no
-// argument reaches it.
-func confirmPersonPatch(cmd *cobra.Command, o *orchestratorPatchOptions, lc *localcfg.Config, ops []personOnlyOp) error {
+// argument reaches it. The state it is given is the one the patch would write,
+// which at this point exists in memory alone: nothing reaches the node before
+// this returns and the conditional write runs.
+func confirmPersonPatch(cmd *cobra.Command, o *orchestratorPatchOptions, lc *localcfg.Config, after orchestrator.State, ops []personOnlyOp) error {
 	terminal := stdinIsTerminal(cmd.InOrStdin())
 	marker := agentMarker(os.Getenv, terminal)
-	what := personPatchWords(ops)
+	what := personPatchWords(after, ops)
 	switch {
 	case marker != "":
 		return userErr("nothing was written: %s", initflow.AgentRefusal(marker))
@@ -164,6 +180,13 @@ func runOrchestratorPatch(cmd *cobra.Command, o *orchestratorPatchOptions) error
 	if err != nil {
 		return err
 	}
+	// The state node is written into the budget database, so this writer asks
+	// the one ownership question every writer into it asks (budgetDBUnadopted),
+	// before it reads anything: a patch is not a read of somebody else's
+	// installation that happens to have no effect.
+	if err := requireOwnBudgetDB(ctx, lc, db, "nothing was written"); err != nil {
+		return err
+	}
 	s, etag, err := node.Load(ctx)
 	if err != nil {
 		return dbErr(lc, err, false)
@@ -176,13 +199,14 @@ func runOrchestratorPatch(cmd *cobra.Command, o *orchestratorPatchOptions) error
 		return userErr("the database answered without its own clock, and every stamp this patch writes comes from it (D1230)")
 	}
 	actor := orchestrator.Actor{Class: orchestrator.Session, Now: now}
-	if ops := personOnlyOps(s, p); len(ops) > 0 {
-		if err := confirmPersonPatch(cmd, o, lc, ops); err != nil {
-			return err
-		}
+	personOps := personOnlyOps(s, p)
+	if len(personOps) > 0 {
+		// Who the person is comes before the confirmation, because the state the
+		// patch would write is what the confirmation shows and an approval cannot
+		// be applied without the name it is recorded with.
 		name, err := authenticatedUser(ctx, lc)
 		if err != nil {
-			return userErr("an approval is recorded with the person's own name, and this run could not read who its credentials belong to: %v", err)
+			return userErr("a patch that approves a work item, sets the goal or closes a person's decision is recorded with the person's own name, and this run could not read who its credentials belong to: %v", err)
 		}
 		actor.Class, actor.Name = orchestrator.Person, name
 	}
@@ -192,6 +216,15 @@ func runOrchestratorPatch(cmd *cobra.Command, o *orchestratorPatchOptions) error
 			return userErr("%v: read the state again with fugaro orchestrator state and build the patch from the revision it prints", err)
 		}
 		return userErr("%v: nothing was written", err)
+	}
+	// The confirmation comes after the patch is built and before it is written,
+	// so the person reads the state this patch leaves behind rather than the one
+	// it starts from. Apply works on a copy: up to the write below, nothing of
+	// it exists outside this run's memory.
+	if len(personOps) > 0 {
+		if err := confirmPersonPatch(cmd, o, lc, next, personOps); err != nil {
+			return err
+		}
 	}
 	if err := node.Save(ctx, next, etag); err != nil {
 		if errors.Is(err, orchestrator.ErrStateMoved) {

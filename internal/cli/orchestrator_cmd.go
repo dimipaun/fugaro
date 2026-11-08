@@ -34,9 +34,13 @@ const orchestratorOutputVersion = 1
 //
 // The node is built without a lease: the CLI is the person's own credential
 // and holds no daemon's claim (D1241), so the one write it makes is the
-// conditional write its ETag bounds and nothing else fences it.
+// conditional write its ETag bounds and nothing else fences it. The client is
+// openBudget's — the same database, and the same check that it is this
+// installation's — because the orchestrator's three nodes live in the budget
+// database, and a write into somebody else's installation is what that check
+// is for.
 func openOrchestrator(ctx context.Context, o cloudOptions) (*localcfg.Config, *orchestrator.Node, *rtdb.Client, error) {
-	lc, db, err := openBudgetDB(ctx, o)
+	lc, db, err := openBudget(ctx, o)
 	if err != nil {
 		return nil, nil, nil, err
 	}

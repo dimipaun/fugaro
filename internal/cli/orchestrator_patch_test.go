@@ -99,6 +99,11 @@ func TestPersonOpsNeedATypedConfirmation(t *testing.T) {
 	if !strings.Contains(out, "⚠ CONFIRM") {
 		t.Errorf("the confirmation was not shown:\n%s", out)
 	}
+	// What the person types their project's name over is the write: the
+	// question and the answer that lands, and not only the op's kind.
+	if !strings.Contains(out, "which repository do we cut first?") || !strings.Contains(out, "the web one") {
+		t.Errorf("the confirmation does not show the question and the answer it closes the decision with:\n%s", out)
+	}
 	d, ok := storedOrchestratorState(t, f).Decision("pick-a-repo")
 	if !ok || !d.Resolved() {
 		t.Fatal("the confirmed patch closed nothing")
@@ -125,6 +130,46 @@ func TestPersonOpsNeedATypedConfirmation(t *testing.T) {
 	}
 	if storedOrchestratorState(t, f).Goal != "" {
 		t.Error("the goal was set by a --json run")
+	}
+}
+
+// digestAfter is the digest of an item as the patch under test leaves it: the
+// upsert applied first, as a session, so the test computes what the command
+// computes rather than spelling a digest out.
+func digestAfter(t *testing.T, s orchestrator.State, up orchestrator.Op, id string) orchestrator.Digest {
+	t.Helper()
+	next, err := orchestrator.Apply(s, orchestrator.Patch{BaseRev: s.Rev, Ops: []orchestrator.Op{up}},
+		orchestrator.Actor{Class: orchestrator.Session, Name: "session", Now: orchestratorTestNow})
+	if err != nil {
+		t.Fatalf("applying the upsert: %v", err)
+	}
+	w, ok := next.Item(id)
+	if !ok {
+		t.Fatalf("the upsert left no item %s", id)
+	}
+	return orchestrator.SpecDigest(w)
+}
+
+// TestThePersonConfirmationShowsTheGoalThatLands: setting the goal is a
+// person's op as well, and the line the person reads before typing their
+// project's name is the goal itself — that it is a goal is the op's kind, and
+// the person is the only one who can say whether the text is what they meant.
+func TestThePersonConfirmationShowsTheGoalThatLands(t *testing.T) {
+	f := newOrchestratorFixture(t)
+	asPerson(t)
+	typed(t)
+	s := seedOrchestratorState(t, f, workItemUpsert("web-fix", "fix the flaky test"))
+	path := patchFile(t, goalPatch(t, s.Rev, "ship slice one and nothing else"))
+
+	out, _, err := runOrchestrator(t, orchestratorTestID+"\n", "orchestrator", "patch", "-f", path)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "ship slice one and nothing else") {
+		t.Errorf("the confirmation does not show the goal it sets:\n%s", out)
+	}
+	if got := storedOrchestratorState(t, f).Goal; got != "ship slice one and nothing else" {
+		t.Errorf("the goal that landed is %q", got)
 	}
 }
 
@@ -240,16 +285,42 @@ func TestApproveShowsTheSpecItDigests(t *testing.T) {
 		t.Errorf("the approval is %+v, and it is the approved digest under the person's own name", approved.Approved)
 	}
 
+	// A patch that rewrites the item and approves it in the same document: the
+	// digest is the one the rewrite produces, so the title the person is shown
+	// has to be the title that digest binds and not the one the node still
+	// holds — otherwise the person attests to a spec by reading another one.
+	before := storedOrchestratorState(t, f)
+	up := workItemUpsert("web-fix", "the title the person is approving")
+	digest = digestAfter(t, before, up, "web-fix")
+	path = patchFile(t, patchDoc(t, before.Rev, up, orchestrator.Op{Op: orchestrator.OpWorkItemApprove,
+		Approve: &orchestrator.ApproveOp{ID: "web-fix", SpecDigest: digest}}))
+	out, _, err = runOrchestrator(t, orchestratorTestID+"\n", "orchestrator", "patch", "-f", path)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "the title the person is approving") {
+		t.Errorf("the confirmation does not show the title the digest binds:\n%s", out)
+	}
+	if strings.Contains(out, "fix the flaky test") {
+		t.Errorf("the confirmation shows the title the node held before the patch:\n%s", out)
+	}
+	if w, _ := storedOrchestratorState(t, f).Item("web-fix"); w.Approved == nil || w.Approved.SpecDigest != digest {
+		t.Errorf("the approval that landed is %+v, and it is the rewritten spec's", w.Approved)
+	}
+
 	// A digest that is not the item's is refused, and the person is not asked
 	// to confirm a spec that is not the one stored.
-	before := storedOrchestratorState(t, f)
-	path = patchFile(t, patchDoc(t, before.Rev, orchestrator.Op{Op: orchestrator.OpWorkItemApprove,
+	cur := storedOrchestratorState(t, f)
+	path = patchFile(t, patchDoc(t, cur.Rev, orchestrator.Op{Op: orchestrator.OpWorkItemApprove,
 		Approve: &orchestrator.ApproveOp{ID: "web-fix", SpecDigest: orchestrator.SpecDigest(orchestrator.WorkItem{ID: "other"})}}))
 	out, _, err = runOrchestrator(t, orchestratorTestID+"\n", "orchestrator", "patch", "-f", path)
 	if err == nil {
 		t.Fatalf("an approval of another spec landed:\n%s", out)
 	}
-	if after := storedOrchestratorState(t, f); after.Rev != before.Rev {
+	if !strings.Contains(err.Error(), "digest") {
+		t.Errorf("the refusal does not say the spec is not the item's: %v", err)
+	}
+	if after := storedOrchestratorState(t, f); after.Rev != cur.Rev {
 		t.Error("the refused approval wrote something")
 	}
 }

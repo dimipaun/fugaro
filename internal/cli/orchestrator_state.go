@@ -58,12 +58,16 @@ func newOrchestratorStateCmd() *cobra.Command {
 // orchestratorStateDoc is the document `state --json` prints: the summary the
 // command generated (or the daemon cached), where it came from, and the
 // revision a patch built from it would carry.
+// Rev is a pointer because zero is a revision this document has to write: a
+// node nobody has written yet is at revision 0, and that 0 is the base_rev a
+// patch built from this read carries. Absent means the source is the cache,
+// which has no revision at all.
 type orchestratorStateDoc struct {
 	Version       int    `json:"version"`
 	Kind          string `json:"kind"`
 	ID            string `json:"id"`
 	Source        string `json:"source"`
-	Rev           int64  `json:"rev,omitempty"`
+	Rev           *int64 `json:"rev,omitempty"`
 	SchemaVersion int    `json:"schema_version,omitempty"`
 	Brief         string `json:"brief"`
 	CachedAt      string `json:"cached_at,omitempty"`
@@ -98,7 +102,7 @@ func runOrchestratorState(cmd *cobra.Command, o *orchestratorStateOptions) error
 	if o.json {
 		return writeJSON(w, orchestratorStateDoc{
 			Version: orchestratorOutputVersion, Kind: "state", ID: lc.Name, Source: "node",
-			Rev: s.Rev, SchemaVersion: s.SchemaVersion, Brief: brief,
+			Rev: &s.Rev, SchemaVersion: s.SchemaVersion, Brief: brief,
 		})
 	}
 	// The revision is what a patch is built from, so a reader who is about to
