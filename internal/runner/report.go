@@ -313,7 +313,7 @@ func toleratedSection(rec *runstore.Record) string {
 		// that round — the block would be dropped, or compared against an outer
 		// level's older round, and a run the ruling merges as-is would file
 		// nothing.
-		last = acceptedRound(rec.Reviews, ac.Round)
+		last = decidingRound(rec.Reviews, ac.Round)
 	}
 	if last == nil || tf.Total != last.Findings {
 		return ""

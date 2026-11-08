@@ -518,11 +518,27 @@ func verifyPart(records []verify.Record) string {
 // (T3.3). The line ends with what reviewed the round — its model, its effort
 // and the commit it read (reviewFactsPart, CLI 0.16.0) — so a reader of the
 // pull request can tell which model shipped which head.
+//
+// The round the line reports is the policy's where the policy names one, and
+// the last review the record holds only where it names none (the running
+// section, which asks with the zero policy). The two are not the same round:
+// after a bounce the cheap loop's rounds are the last ones written while the
+// round readiness read is the outer one behind them, and the policy is that
+// round's split — so a line built from the record's last entry asks
+// toleratedPart about a round the split was never made from, and the count it
+// compares is the wrong round's. Where the two are equal in number, which the
+// levels' own numbering makes possible, the line would file the outer round's
+// acceptance as the cheap round's.
 func reviewsPart(rs []runstore.ReviewSummary, pol FindingsPolicy) string {
 	if len(rs) == 0 {
 		return ""
 	}
 	last := rs[len(rs)-1]
+	if pol.Round > 0 {
+		if d := decidingRound(rs, pol.Round); d != nil {
+			last = *d
+		}
+	}
 	who := ""
 	switch last.Tier {
 	case runstore.TierFirst:

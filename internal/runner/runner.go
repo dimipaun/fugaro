@@ -505,11 +505,12 @@ type run struct {
 	// Nothing clears it and nothing has to: every write is on a path that ends
 	// the plan's review rounds, so no round runs after it and no later ship can
 	// leave a stale stop widening a split. The time half is written where the
-	// loop answers stopNow and returns out of the loop it asked in
-	// (firstLineStop), and the rounds half where the plan's own last review
-	// step ends at its cap without shipping (seniorLoop, adversarialLoop,
-	// firstLine) — the one write that returns true is that last step's, and the
-	// step after it is finalize's, which starts no review at all.
+	// loop answers stopNow and returns out of the loop it asked in (timeStop,
+	// which every one of those sites goes through), and the rounds half where
+	// the plan's own last review step ends at its cap without shipping
+	// (seniorLoop, adversarialLoop, firstLine) — the one write that returns
+	// true is that last step's, and the step after it is finalize's, which
+	// starts no review at all.
 	stopAt string
 	// ckpt is the checkpoint pushes' state (checkpoint.go).
 	ckpt checkpointState
@@ -2898,9 +2899,9 @@ func (r *run) agentLoop(ctx context.Context) {
 // whatever the clock says, and stops from the second on. A run with no time
 // budget at all has no threshold (Budget.stopAt), so it never stops here.
 //
-// The caller sets r.stopAt to runstore.StopTimeThreshold when it acts on the
-// answer: this asks the question and records nothing, because the half is
-// recorded once, where the loop was ended.
+// The caller ends the loop through timeStop when it acts on the answer: this
+// asks the question and records nothing, because the half is recorded once,
+// where the loop was ended.
 func (r *run) stopNow() bool {
 	return r.reviewRoundsRun > 0 && r.budget.PastStop()
 }
@@ -2934,7 +2935,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 	prompt := reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL2))
 	for round := 1; ; round++ {
 		if r.stopNow() {
-			r.stopAt = runstore.StopTimeThreshold
+			r.timeStop()
 			return false
 		}
 		// The loop counts the review rounds it starts, across every enabled
@@ -3003,7 +3004,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			// not bought. Without this the fix round runs into the run's own
 			// deadline and the run dies of "time budget exhausted during fix"
 			// instead of finalizing what it already has.
-			r.stopAt = runstore.StopTimeThreshold
+			r.timeStop()
 			return false
 		}
 		if sessionID, ok = r.fix(ctx, v, sys, sessionID); !ok {
@@ -3038,7 +3039,7 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 	prompt := AdversarialPrompt(reviewPrompt, r.levelFocus(policy.LevelL3))
 	for round := 1; ; round++ {
 		if r.stopNow() {
-			r.stopAt = runstore.StopTimeThreshold
+			r.timeStop()
 			return false
 		}
 		// Counted exactly as seniorLoop counts it, and never per level: the
@@ -3092,7 +3093,7 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 			return false
 		}
 		if r.stopNow() {
-			r.stopAt = runstore.StopTimeThreshold
+			r.timeStop()
 			return false
 		}
 		if sessionID, ok = r.fix(ctx, v, sys, sessionID); !ok {
@@ -3410,24 +3411,41 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 	return sessionID, true
 }
 
-// firstLineStop ends the cheap loop at the stop rule's time half (item 2) and
-// leaves the round readiness reads where readiness reads it.
-//
-// The stop ends the whole loop, not only this level's, so where no outer level
-// has reviewed yet the round finalize decides on is this loop's — level 1's.
-// lastSenior is the field every reader of that round goes through (findingsPolicy
-// and the two record blocks), and where the cheap loop decides readiness itself
-// it writes lastSenior already; this is the other case, the level the stop cut
-// before it could start. Without it the policy is built from the empty round
-// lastSenior still holds and the run ends a draft on findings no level recorded,
-// which is the strictness the ruling of 2026-11-08 forbids: the same run with
-// the outer level configured off would be ready.
+// firstLineStop ends the cheap loop at the stop rule's time half (item 2),
+// through timeStop, which leaves the round readiness reads where readiness
+// reads it.
 func (r *run) firstLineStop(sessionID string) (string, bool) {
+	r.timeStop()
+	return sessionID, false
+}
+
+// timeStop ends the run's review loop at the stop rule's time half and leaves
+// the round readiness reads where readiness reads it.
+//
+// The stop ends the whole loop, not only the level it is asked in, so where no
+// outer level has reviewed yet the round finalize decides on is the cheap
+// loop's — level 1's. lastSenior is the field every reader of that round goes
+// through (findingsPolicy and the two record blocks), and where the cheap loop
+// decides readiness itself it writes lastSenior already; this is the other
+// case, the level the stop cut before it could start. Without it the policy is
+// built from the empty round lastSenior still holds and the run ends a draft on
+// findings no level recorded, which is the strictness the ruling of 2026-11-08
+// forbids: the same run with the outer level configured off would be ready.
+//
+// Every act on stopNow's answer goes through here, wherever the loop asked it:
+// the cheap loop's own two sites (firstLineStop) and the round an outer level
+// would have started but for the clock — its loop's top, and the fix it would
+// have bought. The hand-over is guarded rather than asked per site because it
+// is the same question at all of them and only one answer can be right: an
+// outer loop's own sites have recorded that level's round already, so
+// outerLevelReviewed is true and lastSenior holds it, and the cheap round is
+// the hand-over exactly where no outer round exists (the top of the first
+// round an enabled outer level never got to start).
+func (r *run) timeStop() {
 	if !r.outerLevelReviewed() {
 		r.lastSenior = r.firstLineLast
 	}
 	r.stopAt = runstore.StopTimeThreshold
-	return sessionID, false
 }
 
 // outerLevelReviewed reports whether an enabled level above the cheap one has
@@ -3454,23 +3472,28 @@ func seniorReview(rs []runstore.ReviewSummary) *runstore.ReviewSummary {
 	return nil
 }
 
-// acceptedRound is the review a record's accepted block was written from
-// (runstore.AcceptedFindings.Round): the last review carrying that round that
-// decided, and the last cheap one where every review of that round is the cheap
-// loop's.
+// decidingRound is the review of one round number that decided: the last
+// review carrying that number that is not the cheap loop's, and the last cheap
+// one where every review of that number is the cheap loop's. It answers for a
+// reader that has the record alone and a round the run named — the accepted
+// block's own round (runstore.AcceptedFindings.Round) and the round a findings
+// policy was split from (FindingsPolicy.Round) — which is why the round comes
+// in and the review is not simply the last one written.
 //
 // The tier is what tells the two apart because the record carries nothing else
 // that does: the levels number their rounds from 1 of their own, so a cheap
 // round and an outer one can carry the same number (a bounce's cheap loop after
 // level 2's round 2), and only the deciding one is a round the stop can have
-// accepted. Where no outer level left a round at all — the stop that ended the
-// run before level 2 could start, which is the case this exists for — the cheap
-// round is the deciding one and the only review carrying that number.
+// accepted or the policy read. Where no outer level left a round at all — the
+// stop that ended the run before level 2 could start, which is the case this
+// exists for — the cheap round is the deciding one and the only review carrying
+// that number.
 //
-// It is the report's reader (report.go toleratedSection), which has the record
-// and not the run: a run reads the same round through firstLineStop's lastSenior
-// and decidingReview.
-func acceptedRound(rs []runstore.ReviewSummary, round int) *runstore.ReviewSummary {
+// Its readers are the record's two: the report's accepted section
+// (report.go toleratedSection) and the pull request's review line
+// (prflow.go reviewsPart), both of which have the record and not the run. A run
+// reads the same round through timeStop's lastSenior and decidingReview.
+func decidingRound(rs []runstore.ReviewSummary, round int) *runstore.ReviewSummary {
 	var cheap, deciding *runstore.ReviewSummary
 	for i := range rs {
 		if rs[i].Round != round {
