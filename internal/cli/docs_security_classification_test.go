@@ -173,11 +173,13 @@ func TestDocsSecurityClassificationDecisionsAreUnanswered(t *testing.T) {
 			rows = append(rows, m[1])
 		}
 	}
+	// Fatal rather than reported: the loop below reads the table by position, so
+	// a table of the wrong length is the precondition of every check after it.
 	if len(rows) != len(secClassDecisions) {
-		t.Errorf("%s writes %d decision rows and the folder's block is %d: D1500–D1519 is the block this work took, and a row outside it is a number nobody allocated", path, len(rows), len(secClassDecisions))
+		t.Fatalf("%s writes %d decision rows and the folder's block is %d: D1500–D1519 is the block this work took, and a row outside it is a number nobody allocated", path, len(rows), len(secClassDecisions))
 	}
 	for i, want := range secClassDecisions {
-		if i >= len(rows) || rows[i] != want {
+		if rows[i] != want {
 			t.Errorf("%s' decision rows are not D1500–D1519 in order: row %d is %q, want D%s", path, i+1, rows[i], want)
 			break
 		}
