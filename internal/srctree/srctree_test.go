@@ -626,6 +626,17 @@ func TestCacheDirIsChecked(t *testing.T) {
 		t.Fatalf("the cache was written through a link: %v, %v", entries, err)
 	}
 
+	// A file at the cache name is not a cache either.
+	if err := os.Remove(filepath.Join(o.Getenv("XDG_CACHE_HOME"), "fugaro")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(o.Getenv("XDG_CACHE_HOME"), "fugaro"), []byte("not a cache\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Ensure(context.Background(), o); err == nil || !strings.Contains(err.Error(), "fugaro is not a directory") {
+		t.Fatalf("err = %v", err)
+	}
+
 	// A wider cache directory is tightened to 0700.
 	if err := os.Remove(filepath.Join(o.Getenv("XDG_CACHE_HOME"), "fugaro")); err != nil {
 		t.Fatal(err)

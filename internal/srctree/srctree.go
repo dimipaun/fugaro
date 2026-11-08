@@ -143,9 +143,10 @@ type want struct {
 
 // Ensure returns the directory holding the source of the installed version,
 // fetching it when the cache does not already hold exactly that version, and
-// the Record of what it holds. The tree is left read-only: nothing, the
-// agent included, writes into the source it is reading, and Fugaro widens it
-// only while it fetches another version into it.
+// the Record of what it holds. The tree is left read-only: nothing, the agent
+// included, writes into the source it is reading. Another version is built in
+// a directory of its own and replaces the tree only once it is there, so the
+// tree is never widened at all.
 func Ensure(ctx context.Context, o Options) (string, Record, error) {
 	o = o.withDefaults()
 	w := targetFor(o)
@@ -394,15 +395,15 @@ func tarTree(ctx context.Context, o Options, root string, w want) (string, error
 // empty. Every entry goes through an os.Root, so no name can land outside
 // dest, and the archive's single top-level directory is stripped. The global
 // pax header a git archive opens with holds no file, so it is skipped before
-// its name is judged. An entry
-// that escapes — an absolute name, a ".." component, a link whose target
-// leaves the tree — a second top-level directory, an entry that is not a
-// directory, a regular file or such a link, and an archive over max bytes
-// are all refused (F21). So is an entry whose directory is a link an earlier
-// entry planted rather than a directory of the archive's own, a link that
-// resolves out of the tree once every entry is in place, and any entry named
-// .git: that is where git run in the tree reads a repository's own
-// configuration, and the cache's own repository is the only one there.
+// its name is judged. An entry that escapes — an absolute name, a ".."
+// component, a link whose target leaves the tree — a second top-level
+// directory, an entry that is not a directory, a regular file or such a link,
+// and an archive over max bytes are all refused (F21). So is an entry whose
+// directory is a link an earlier entry planted rather than a directory of the
+// archive's own, a link that resolves out of the tree once every entry is in
+// place, and any entry named .git: that is where git run in the tree reads a
+// repository's own configuration, and the cache's own repository is the only
+// one there.
 //
 // A link that stays inside the tree is created rather than refused: the
 // repository itself ships links under .claude/skills, and refusing every one
