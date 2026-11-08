@@ -67,7 +67,8 @@ CD4 build against it in the order the edges below give.
 - **Files:** `plugin/skills/parallelism/SKILL.md` (edit: one section "Break dependencies with a contract
   first", a pointer to the reference); `plugin/skills/parallelism/reference/decoupling.md` (new: the
   per-edge test, the contract-task template, the integration task, the change-request flow, the rigor
-  table, the planner output); `plugin/parallelism_skill_test.go` (edit).
+  table, the planner output); `plugin/parallelism_decoupling_test.go` (new; a new file so CD1 and CD2
+  never both write `plugin/parallelism_skill_test.go`).
 - **Interfaces:** consumes `fugaro plan graph` as it is today (schema 2: nodes, edges with reasons).
   Produces text only. Contract and integration tasks are ordinary nodes named `C-...` and `I-...`, each
   edge carries its reason; the broken-versus-kept list is written in the plan document.
@@ -85,20 +86,23 @@ CD4 build against it in the order the edges below give.
   schema shapes, events, plausible stubs in files the contract names, a short contract doc); small;
   reviewed at least at the highest rigor of its consumers (`--mode`); the integration task depends on
   both sides, deletes the stub files and runs end-to-end checks; the change-request flow (D1812: a node,
-  an edge for unlaunched dependents, a follow-up run for launched ones that names the contract file and
-  never pastes its text); per-mode behaviour (POC and Startup aggressive, Pro where the contract is
+  an edge for unlaunched dependents, a follow-up run for launched ones that names the contract file as it is on `origin/<base>`, which must be a
+  contract node of the merged graph, and never pastes its text; a base that changed `.github/workflows` is
+  never merged into a branch with a cloud follow-up run, CLAUDE.md); per-mode behaviour (POC and Startup aggressive, Pro where the contract is
   clear, Critical only fully specified with a named end-to-end test, Hotfix skip); break an edge only
-  when the weighted path shrinks (D1816), by the agent's own arithmetic until CD5.
+  when the weighted path shrinks (D1816), by the agent's own arithmetic until CD5. A task's resolved rigor mode is read with `fugaro settings rigor.default rigor.areas --json` and its footprint paths matched against the areas by the agent (no command resolves a mode for given paths, F18).
 
 ### CD2: graph schema 3, the document and its validation
 
-- **Files:** `internal/plan/document.go` (edit: `SchemaVersion` 3, `Node.Kind`, `Node.Size`,
+- **Files:** `console/docs/json-contract.md` (edit: section 6.9 names schema versions 1-3 and every json tag of `Document` and `Node`, because `TestDocsDesktopConsoleContractNamesTheOtherShapesFields` requires it); `plugin/parallelism_skill_test.go` (edit: the example's version is checked as readable, not as equal to `plan.SchemaVersion`); `internal/cli/plan_test.go` (edit: the v2 fixture check, same reason); `internal/plan/document.go` (edit: `SchemaVersion` 3, `Node.Kind`, `Node.Size`,
   `Node.Stubs`, `Document.Decoupling`, `Document.ContractChanges`, the types); `internal/plan/read.go`
-  (edit: read versions 1-3, closed-set decode at each, v1/v2 documents carrying a v3 field are refused);
+  (edit: read versions 1-3, closed-set decode at each, v1/v2 documents carrying a v3 field are refused; the
+  two comparisons written against the constant, the stream rule and the version-shape rule in `Normalize`,
+  are pinned to the literal 2 so a v2 graph still reads exactly as before);
   `internal/plan/decoupling_test.go` (new).
 - **Interfaces:** produces the v3 document types consumed by CD3 and CD4. `kind` is one of `task`
   (default when absent), `contract`, `integration`, `contract_change`; `size` a number greater than 0
-  (absent means 1); `stubs` only on `contract` nodes, literal repo-relative paths. `decoupling` entries:
+  (absent means 1); `stubs` only on `contract` nodes, literal repo-relative paths, each of which must match that contract node's own footprint (a stub can never name `go.mod` or any file the contract does not own). `decoupling` entries:
   `{contract, was: {task, needs}, integration, reason}`. `contract_changes` entries:
   `{change, contract, raised_by, reason, affects}`.
 - **Schema, rules, config change:** the graph artifact schema version 2 to 3, additive; the version
@@ -106,9 +110,9 @@ CD4 build against it in the order the edges below give.
 - **Tests:** `TestGraphV3RoundTrips`, `TestGraphV3RefusesWhatItDoesNotKnow`,
   `TestV2DocumentWithAV3FieldIsRefused`, `TestDecouplingNeedsIntegrationOverBothEndpoints`,
   `TestDecouplingWasEdgeMustNotStillBeAnEdge`, `TestContractChangeReferencesMustExistAndMatchKinds`,
-  `TestStubPathsAreLiteralRepoRelative`, `TestContractFilesBelongToTheContractAndItsChanges`,
+  `TestStubPathsAreLiteralRepoRelative`, `TestContractFilesBelongToTheContractAndItsChanges` (contract files are the contract node's literal footprint paths minus its stubs, checked with `Footprint.Matches`; the integration node is exempt for the stubs it deletes), `TestStubMustMatchTheContractFootprint`, `TestV2GraphNamingAStreamStillReads`,
   `TestGraphV3CycleStillRefused`, plus the existing `internal/plan` tests unchanged.
-- **Command:** `go test ./internal/plan/ -count=1`.
+- **Command:** `go test ./internal/plan/ ./plugin/ -count=1 && go test ./internal/cli/ -run 'PlanGraph|Docs' -count=1`.
 - **Depends on:** nothing.
 - **Commit:** `plan: graph schema 3 carries contract tasks, the broken edges and the change requests`.
 - **Red step:** `TestGraphV3RoundTrips` fails: the decoder refuses `kind` as an unknown field.
@@ -117,18 +121,18 @@ CD4 build against it in the order the edges below give.
 ### CD3: the computed gain and the stub read
 
 - **Files:** `internal/plan/decouple.go` (new: the before graph, both path measures, the added task
-  count, `stubs_present`); `internal/plan/analyze.go` (edit: additive `Graph.Gain`, `Graph.Decoupling`,
-  per-contract `stubs_present`); `internal/plan/decouple_test.go` (new).
+  count, `stubs_present`); `internal/plan/analyze.go` (edit: additive `Graph.Gain`, `Graph.Decoupling`, `Graph.ContractChanges` (`Graph` copies the document's fields one by one, so `contract_changes` would otherwise be dropped, D1814),
+  per-contract `stubs_present`); `console/docs/json-contract.md` (edit: the `Graph`, `NodeState` and gain tags, same docs pin as CD2); `internal/plan/decouple_test.go` (new).
 - **Interfaces:** consumes CD2's types. Produces `gain`: `{broken, kept, added_tasks, before: {tasks,
   weight}, after: {tasks, weight}, improves}`; the *before* graph is the recorded `was` edges restored
-  with every `contract`, `integration` and `contract_change` node removed. `stubs_present` lists the
-  contract's stub paths that still exist under the checkout root, by `lstat` with no symlink followed.
+  with every `contract`, `integration` and `contract_change` node removed, and every edge that ran through a removed integration node rewritten onto that node's endpoints (a task that waited on the integration node waited on both sides). `stubs_present` lists the
+  contract's stub paths that still exist under the checkout root (the directory `plan graph` already resolves `docs/plans` against), resolved through `os.Root` (or, if the pinned Go version lacks it, an `Lstat` of every path component) so a symlinked directory cannot lead outside the checkout.
 - **Schema, rules, config change:** none beyond additive output fields.
 - **Tests:** `TestGainIsComputedNotRead`, `TestGainReportsALossWhenTheBreakLengthensThePath`,
   `TestGainWeightedShrinksWhenSidesAreLarge`, `TestGainCountsAddedTasks`,
   `TestStubsPresentListsOnlyExistingFiles`, `TestStubsPresentDoesNotFollowSymlinksOut`,
-  `TestGraphWithoutDecouplingHasNoGainNoise` (a v2 graph reads exactly as before).
-- **Command:** `go test ./internal/plan/ -run 'Gain|Stubs|Decoupl' -count=1`.
+  `TestGainRewritesEdgesOnTheIntegrationNode`, `TestGraphCarriesContractChanges`, `TestStubsPresentDoesNotFollowASymlinkedDirectory`, `TestPlanStatusReadsAV3Graph` (`internal/plan/state.go` reads v3 through `Parse`, unchanged), `TestGraphWithoutDecouplingHasNoGainNoise` (a v2 graph reads exactly as before).
+- **Command:** `go test ./internal/plan/ -count=1 && go test ./internal/cli/ -run Docs -count=1`.
 - **Depends on:** CD2.
 - **Commit:** `plan: the read computes the decoupling gain and which stubs remain`.
 - **Red step:** `TestGainReportsALossWhenTheBreakLengthensThePath` fails: no `gain` field exists.
@@ -137,10 +141,9 @@ CD4 build against it in the order the edges below give.
 ### CD4: `fugaro plan graph` prints it, and the console contract says so
 
 - **Files:** `internal/cli/plan.go` (edit: a "DECOUPLING" block in the table and the JSON passthrough);
-  `internal/cli/plan_test.go` (edit); `console/docs/json-contract.md` (edit: section 6.9 states schema
-  versions 1-3, the new node keys, `decoupling`, `contract_changes`, `gain`, `stubs_present`).
+  `internal/cli/plan_test.go` (edit). The console contract page is CD2's and CD3's, because its pin test fails the moment the Go types change.
 - **Interfaces:** consumes CD3's output. Produces the CLI's stdout and `--json` shape.
-- **Schema, rules, config change:** console JSON contract page.
+- **Schema, rules, config change:** none.
 - **Tests:** `TestPlanGraphPrintsDecouplingBlock`, `TestPlanGraphJSONCarriesGain`,
   `TestPlanGraphV2OutputIsUnchanged`, and `go test ./internal/cli/ -run Docs`.
 - **Command:** `go test ./internal/cli/ -run 'PlanGraph|Docs' -count=1`.
@@ -152,7 +155,7 @@ CD4 build against it in the order the edges below give.
 ### CD6: the setting `planning.decoupling`
 
 - **Files:** `internal/config/config.go` (edit: a `Planning` block with `Decoupling` on/off in the repo
-  file and the project layer's defaults); `internal/config/scope.go` (edit: the key's scopes);
+  file); `internal/config/layer.go` (edit: the project layer's `LayerDefaults` and its `Sets*()` answer; the layer is decoded with `KnownFields(true)`); `docs/project-layer.md` (edit: the scope table, `TestScopeTableMatchesDocs`); `internal/cli/docs_config_management_test.go`, `docs/config-management/README.md` and `docs/config-management/reconciliation.md` (edit: the registry row count `cfmRegistryRows` and the counts the docs state); `internal/config/scope.go` (edit: the key's scopes);
   `internal/settings/registry.go` (edit: the row, default `on`, merge Replace); `internal/cli/validate.go`
   (edit if the key's validation lives there); `schemas/fugaro.schema.json`, `schemas/project-layer.schema.json`,
   `schemas/settings.schema.json` (edit); tests beside each.
@@ -162,7 +165,7 @@ CD4 build against it in the order the edges below give.
 - **Tests:** `TestPlanningDecouplingDefaultsOn`, `TestPlanningDecouplingRepoOverridesProject`,
   `TestRegistryDefaultsMatchApplyDefaults` (existing, now covering the row),
   `TestSettingsSchemaCoversPlanningKey`.
-- **Command:** `go test ./internal/config/ ./internal/settings/ ./schemas/ -count=1`.
+- **Command:** `go test ./internal/config/ ./internal/settings/ ./schemas/ -count=1 && go test ./internal/cli/ -run 'Docs|Scope' -count=1`.
 - **Depends on:** nothing.
 - **Commit:** `config: planning.decoupling turns the decoupling pass off for a project or a repository`.
 - **Red step:** `TestPlanningDecouplingDefaultsOn` fails: the registry has no such key.
@@ -171,7 +174,7 @@ CD4 build against it in the order the edges below give.
 ### CD7: the skew gate in `fugaro update`
 
 - **Files:** `internal/cli/recipes_skew.go` (edit: `planningDecouplingSince` and its message);
-  `internal/cli/init.go` (edit: the `update --repo` gate beside `gateGitAuthor`); tests beside them;
+  `internal/cli/init.go` (edit: the `update --repo` gate beside `gateGitAuthor`); `internal/cli/run.go` (edit: the launch gate, as `checkGitAuthorImage` is for `gitAuthorSince`); `docs/release.md` (edit: the "Verify ...Since" bullet and its `Test...SinceIsTheReleaseTheChecklistNames` pin); tests beside them;
   the release notes file of the release in flight under `docs/releases/` (edit: `### For operators`: run
   `fugaro update`, plus what it asks) and its line in `website/data/release-summaries.yaml` (no backticks).
 - **Interfaces:** consumes CD6's key.
@@ -187,8 +190,7 @@ CD4 build against it in the order the edges below give.
 ### CD5: the skill teaches schema 3, the setting, and the check script
 
 - **Files:** `plugin/skills/parallelism/SKILL.md` and `plugin/skills/parallelism/reference/decoupling.md`
-  (edit); `plugin/parallelism_skill_test.go` (edit); `docs/contract-first-decoupling/check-480.sh` (new,
-  not run by any agent).
+  (edit); `plugin/parallelism_skill_test.go` (edit); `docs/contract-first-decoupling/check-480.sh` and `check-481.sh` (new, one command each, not run by any agent).
 - **Interfaces:** consumes CD4's CLI and CD7's gate. The skill now writes `kind`, `decoupling`, `stubs`,
   `size` and `contract_changes`, tells the agent to read `fugaro settings planning.decoupling --json`
   (off means skip the pass and say so), and to report broken versus kept edges and the gain from
@@ -196,7 +198,7 @@ CD4 build against it in the order the edges below give.
 - **Schema, rules, config change:** none.
 - **Tests:** `TestParallelismSkillGraphExampleIsReadableAtV3` (the example parses with the real
   `plan.Parse`), `TestSkillRigorTableMatchesInternalRigor`, `TestSkillNamesPlanningSetting`,
-  `TestParallelismSkillCommandsExist` (existing), the lint.
+  the existing `TestParallelismSkillGraphExampleIsReadable` and the command checks in `plugin/skillcli_test.go`, the lint.
 - **Command:** `go test ./plugin/ -count=1`.
 - **Depends on:** CD1, CD4, CD7.
 - **Commit:** `plugin: parallelism writes schema 3 graphs and honours planning.decoupling`.
@@ -222,13 +224,17 @@ CD5 may name only what the CLI has (F16).
 
 | File | Writers (level) |
 | --- | --- |
-| `plugin/skills/parallelism/SKILL.md`, `.../reference/decoupling.md`, `plugin/parallelism_skill_test.go` | CD1 (0), CD5 (3) |
+| `plugin/skills/parallelism/SKILL.md`, `.../reference/decoupling.md` | CD1 (0), CD5 (3) |
+| `plugin/parallelism_decoupling_test.go` | CD1 (0) |
+| `plugin/parallelism_skill_test.go` | CD2 (0), CD5 (3) |
 | `internal/plan/document.go`, `internal/plan/read.go` | CD2 (0) |
+| `console/docs/json-contract.md` | CD2 (0), CD3 (1) |
+| `internal/cli/plan_test.go` | CD2 (0), CD4 (2) |
 | `internal/plan/analyze.go`, `decouple.go` | CD3 (1) |
-| `internal/cli/plan.go`, `plan_test.go`, `console/docs/json-contract.md` | CD4 (2) |
-| `internal/config/config.go`, `scope.go`, `internal/settings/registry.go`, the three schemas | CD6 (0) |
-| `internal/cli/recipes_skew.go`, `internal/cli/init.go`, `docs/releases/<release>.md`, `website/data/release-summaries.yaml` | CD7 (1) |
-| `docs/contract-first-decoupling/check-480.sh` | CD5 (3) |
+| `internal/cli/plan.go` | CD4 (2) |
+| `internal/config/config.go`, `layer.go`, `scope.go`, `internal/settings/registry.go`, the three schemas, `docs/project-layer.md`, `docs/config-management/*`, `internal/cli/docs_config_management_test.go` | CD6 (0) |
+| `internal/cli/recipes_skew.go`, `internal/cli/init.go`, `internal/cli/run.go`, `docs/release.md`, `docs/releases/<release>.md`, `website/data/release-summaries.yaml` | CD7 (1) |
+| `docs/contract-first-decoupling/check-480.sh`, `check-481.sh` | CD5 (3) |
 
 Any change to a task's Files re-checks this table.
 
@@ -241,7 +247,7 @@ Any change to a task's Files re-checks this table.
   `bash docs/contract-first-decoupling/check-480.sh`. No agent performs any step of it.
 - **Check 481 (OWNER-RUN, optional): the gain is real.** Plans one real interface-only dependency with
   the skill, runs both shapes, and compares the weighted estimate with the wall-clock. The owner types
-  `fugaro plan graph --plan <plan> --json` and the two `fugaro runs ls --batch` listings; no script.
+  `bash docs/contract-first-decoupling/check-481.sh <plan>`, which prints the plan's gain and the two batches' wall-clock; no agent performs any step of it. The weighted figure is only as honest as the `size` the planner wrote; the check is how that is learnt.
 
 Nothing here needs a backfill, a secret or a config change after deploy beyond what `fugaro update` does,
 which CD7's release-notes entry states.

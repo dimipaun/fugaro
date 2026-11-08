@@ -91,7 +91,7 @@ a *prediction*, and a run's real changes are the run's own record, never the gra
 discouraged by this repository's comment rule (CLAUDE.md "No TODO comments, no section-header
 comments"). **D1815**: stubs live in whole files the contract names; the integration task deletes them;
 the read reports which of them still exist. Stub paths are literal repo-relative paths, not globs, and are
-untrusted plan text: reject absolute paths, `..` elements and symlinks that leave the checkout.
+untrusted plan text: reject absolute paths and `..` elements, require each stub to match its contract node's own footprint, and resolve them through `os.Root` so a symlinked directory cannot leave the checkout.
 
 **F10 (Gap, trust boundary): a merged contract is a single point both sides trust, and nothing guards it.**
 Nothing mechanical stops a run from editing a merged contract file to suit itself: the graph footprint
@@ -139,6 +139,18 @@ them. The skill header carries `fugaro-version`, and plugin skills are "Fugaro-o
 tuning is therefore a setting the skill tells the agent to *read* with `fugaro settings --json`, never an
 edit of the skill.
 
+**F18 (Gap): no command resolves a rigor mode for given paths.** `rigor.Resolve` takes concrete paths and
+the graph's footprints are globs; `budget preview` resolves with none. D1818 and D1819 therefore have the
+agent read `fugaro settings rigor.default rigor.areas --json` and match footprints to areas itself; a read
+command is not planned. Whether `fugaro settings` reads work inside an agent session is UNVERIFIED (U5).
+
+**F19 (Gap): the pin tests move with the Go types.** `plugin/parallelism_skill_test.go` and
+`internal/cli/plan_test.go` compare a fixture's version to `plan.SchemaVersion`, and the Docs pin
+`TestDocsDesktopConsoleContractNamesTheOtherShapesFields` needs every json tag of the graph types named in
+`console/docs/json-contract.md`. Bumping the constant and adding tags therefore edits those files in the
+task that changes the types (CD2, CD3), not in a later one. `Normalize` also compares against the
+constant in two places (the stream rule, the version shape); they are pinned to the literal 2.
+
 **F17 (Rule): release notes.** CLAUDE.md requires `### For operators` in the release notes for any step
 after a deploy. The only step here is the one `fugaro update` performs (the plugin pin, the new setting's
 skew gate). The entry is "run `fugaro update`" plus what it asks.
@@ -165,7 +177,7 @@ Resolutions with one defensible answer (not questions):
 | **D1818** | "Critical: fully specified contracts and strong integration tests" is skill prose and a task-text requirement (the integration node names its end-to-end test), not a machine check (F13). "Hotfix: usually skip" is the resolved mode read from `rigor.Resolve` of the plan's footprint paths; the skill skips the pass in Hotfix. |
 | **D1819** | The contract task is launched with `fugaro run --mode <highest consumer mode>`; the flag is raise-only, which is the spec's "at least the parent's rigor". Security-relevant contracts are `opus + mandatory independent review` (F10). |
 | **D1820** | The decoupling pass adds no spend path (F11): contract and integration tasks are ordinary tasks under the same caps and the same go-ahead rule; the planner output states the added task count. |
-| **D1821** | The skill never parses the graph: the CLI does (the same rule as docs/review-levels-ab-jobmax G9: plan text is untrusted, `fugaro plan graph` validates it). Stub paths are validated as literal repo-relative paths (F9). |
+| **D1821** | The skill never parses the graph: the CLI does (the same rule as the `/jobmax` section of docs/review-levels-ab-jobmax's implementation plan: plan text is untrusted, `fugaro plan graph` validates it). Stub paths are validated as literal repo-relative paths (F9). |
 | **D1822** | First slice is skill-only on schema 2 (contract and integration tasks as ordinary nodes, the reason on each edge); schema 3 and the setting follow. Slice 1 ships something useful alone and teaches nothing the CLI cannot read. |
 | **D1823** | The personas (F14) and a mechanical contract-immutability guard (F10) are out of scope; they are **O2** and **O1**. |
 
@@ -188,10 +200,12 @@ refuses, and F7 and F4 say how `fugaro update` carries them; that is a cost, not
 
 ## 5. UNVERIFIED
 
+- **U5.** Whether `fugaro settings` reads work inside an agent session (F18).
+
 - **U1.** Whether a `jobmax` skill exists outside `plugin/skills` (F2). The repo's `.claude/skills` holds
   only Go and release skills.
-- **U2.** Whether an older runner refuses an unknown `defaults.*` key in the project layer (F7).
-- **U3.** Whether the console, which reads `plan graph --json`, tolerates a document carrying
+- **U2 (closed in review).** An older runner does refuse an unknown project-layer key: `internal/config/layer.go` decodes the layer with `KnownFields(true)`.
+- **U3.** Whether the console, which reads `plan status --json` and `graph --json` (not `plan graph`; `internal/plan/state.go` joins the same graph through `Parse`), tolerates a document carrying
   `schema_version: 3` and the new node keys. The contract page says additive keys are ignored and an
   unknown version is refused by the CLI; no console decoder was read.
 - **U4.** Whether a follow-up run's agent reliably merges the base and conforms to a named contract file.

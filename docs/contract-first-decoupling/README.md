@@ -9,7 +9,7 @@ Status: **plan only; nothing is implemented; no task approved.**
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The spec as received, unchanged. |
-| [reconciliation.md](reconciliation.md) | Findings F1-F17, decisions D1810-D1816 with the owner's answers of 2026-11-08, resolutions D1817-D1823, open items O1-O3, UNVERIFIED U1-U4. **Where it disagrees with `spec.md`, it wins.** |
+| [reconciliation.md](reconciliation.md) | Findings F1-F19, decisions D1810-D1816 with the owner's answers of 2026-11-08, resolutions D1817-D1823, open items O1-O3, UNVERIFIED U1-U5. **Where it disagrees with `spec.md`, it wins.** |
 | [implementation-plan.md](implementation-plan.md) | Tasks CD1-CD7 in four levels, the critical path, the shared-files table, checks 480 and 481. Nothing in it is approved. |
 
 Principle recorded from the spec: what we learn while dogfooding Fugaro becomes a built-in skill or
