@@ -104,6 +104,10 @@ type Entry = string | { readonly within: string; readonly reason: string }
  * source text.
  */
 const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>>> = Object.freeze({
+  'accountkeys.ts': {
+    'model.because':
+      'every reason the section has not to draw a table -- the CLI\'s refusal sentence for its read (`settings.read`, the `SourceRefusal` channel), or one of this module\'s own sentences -- is put through `sanitizeRefusal` (`drawnRefusal`) in `buildAccountKeys`, before it is stored on the model, exactly as `projects.ts` does it for its panels. Design section 6.3 requires the CLI\'s sentence verbatim, so the pattern classes must not touch it: `roles/datastore.viewer` is `[redacted]` and the project\'s own config path is `<path>` under `sentence`, and the tab\'s settings panel draws the same refusal unedited. A sentence the sanitizer refuses is `REFUSAL_UNREADABLE` (`./degraded`), so the cell is never blank',
+  },
   'degraded.ts': {
     'state.installCommand': '`FUGARO_INSTALL_COMMAND` in `src/source/cli.ts`, which is the README\'s own `brew install dimipaun/tap/fugaro` rather than a string a document chose',
     'drawnOrNothing(state.operation)': '`OperationName`, the closed IPC allow-list union: the read the console asked for, in the console\'s own words, and passed through `sanitizeRefusal` again in `refused()` because `RefusedState` can be built without `refusedState`',
@@ -1187,8 +1191,9 @@ const SHARED_DRAWER = '../../shared/notice.ts'
 const SKEW_MODULE = '../../shared/version.ts'
 
 describe('a screen writes only its own vocabulary through literal', () => {
-  it('reads the eleven screens', () => {
+  it('reads every screen module on the tree', () => {
     expect([...SCREEN_FILES]).toEqual([
+      'accountkeys.ts',
       'coordinator.ts',
       'degraded.ts',
       'graph.ts',
@@ -1529,6 +1534,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'graph/layout.ts',
       'graph/model.ts',
       'installations.ts',
+      'screens/accountkeys.ts',
       'screens/coordinator.ts',
       'screens/degraded.ts',
       'screens/graph.ts',
