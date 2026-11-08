@@ -395,12 +395,15 @@ describe('the negative vectors', () => {
     const malleable = part.slice(0, -1) + alphabet[last ^ 1]
     expect(Buffer.from(malleable, 'base64url').equals(signature), 'the vector is not malleable').toBe(true)
 
-    const respelled = spell(acme.id, payload, Buffer.from(malleable, 'base64url'))
-    expect(respelled).not.toBe(spell(acme.id, payload, signature))
+    // Spelled by hand rather than through `spell`: re-encoding the bytes would
+    // put the canonical spelling back and lose the vector.
+    const canonical = spell(acme.id, payload, signature)
+    const respelled = canonical.replace(/\.[^.]+$/, `.${malleable}`)
+    expect(respelled).not.toBe(canonical)
     expect(refusalOf(verifyLicenceKey(respelled, at(ISSUED), acme.keyring))).toMatch(/signature that does not decode/)
 
     // And the padded spelling, which a lenient decoder accepts: also refused.
-    const padded = spell(acme.id, payload, signature).replace(/\.[^.]+$/, `.${part}=`)
+    const padded = canonical.replace(/\.[^.]+$/, `.${part}=`)
     expect(refusalOf(verifyLicenceKey(padded, at(ISSUED), acme.keyring))).toMatch(/signature that does not decode/)
   })
 
@@ -437,9 +440,9 @@ describe('the negative vectors', () => {
       JSON.stringify({ ...claimsFor(), issued: 1.5 }),
       JSON.stringify({ ...claimsFor(), organisation: '' }),
       JSON.stringify({ ...claimsFor(), features: ['report', 7] }),
-      // A claim value chosen by whoever spelled the key never reaches the
-      // sentence: the payload verified, and it is still not drawn.
-      JSON.stringify({ ...claimsFor(), organisation: '<script>alert(1)</script>' }),
+      // A refused payload whose text is hostile: the sentence names the part,
+      // and never a value the spelt payload carried.
+      JSON.stringify({ ...claimsFor(), seats: '4', organisation: '<script>alert(1)</script>' }),
     ]) {
       const bytes = Buffer.from(payload, 'utf8')
       const key = spell(acme.id, bytes, edSign(null, bytes, acme.privateKey))
@@ -457,9 +460,13 @@ describe('the negative vectors', () => {
   })
 
   it('a key that is not three parts is refused, and one surrounded by whitespace is read', () => {
-    for (const key of ['', 'a.b', 'a.b.c.d', 'a..c']) {
+    for (const key of ['', 'a.b', 'a.b.c.d']) {
       expect(refusalOf(verifyLicenceKey(key, at(ISSUED), acme.keyring)), key).toMatch(/three base64url parts/)
     }
+
+    // An empty part is a part that does not decode, named as the part it is.
+    const empty = `${b64url(acme.id)}..${b64url('x')}`
+    expect(refusalOf(verifyLicenceKey(empty, at(ISSUED), acme.keyring))).toMatch(/has a payload that does not decode/)
 
     // A key arrives from a file's line or a paste, and neither adds meaning to
     // the whitespace around it.
