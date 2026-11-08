@@ -14,4 +14,4 @@ Status: **plan only; nothing is implemented; no task approved.**
 
 Principle recorded from the spec: what we learn while dogfooding Fugaro becomes a built-in skill or
 recipe where it applies to everyone; anything specific to our own projects stays in project settings.
-The post-review triage personas the spec names are not in the repository (reconciliation F14, O2).
+The post-review triage personas the spec names are the rigor levels' personas and are already built in (reconciliation F14). O1-O3 were ruled 2026-11-08.

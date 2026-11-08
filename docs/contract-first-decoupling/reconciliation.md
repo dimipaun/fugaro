@@ -21,7 +21,7 @@ the CLI validates. That changes where every part of the spec lands.
 | Bundled planner skill, on by default | The plugin's five skills; `TestSkillSetIsFive`. `parallelism` is the planning skill |
 | "Turn off or tune per project, area, repo or task" | The settings registry (`internal/settings/registry.go`) and the two config layers; no skill-level switch exists |
 | Notify dependents and have them rebase | Nothing automatic. `fugaro run --pr N` follow-up runs exist; the orchestrator tick (docs/stateless-orchestrator O5/O7) is unmerged |
-| Post-review triage personas | Not in the tree (UNVERIFIED, F14) |
+| Post-review triage personas | The rigor levels' personas, `docs/rigor-modes/levels-spec.md`, built in as `rigor.Mode` (F14) |
 
 ## 2. Findings
 
@@ -121,12 +121,12 @@ mechanical (the resolved mode is read from `rigor.Resolve`). The second is skill
 requirement that the integration node of a Critical-mode plan names its end-to-end test in the task text.
 No command can check that a contract is "fully specified". **D1818** records it as prose by design.
 
-**F14 (Open, UNVERIFIED): the post-review triage personas.** The spec says they "should follow the same
-rule". `git grep -i persona` over `docs`, `plugin` and `internal` finds no triage personas; they are part
-of the owner's own setup. They cannot be reconciled or shipped from here. The general principle (what we
-learn while dogfooding becomes a built-in skill or recipe where it applies to everyone; anything specific
-to our own projects stays in project settings) is recorded in the README and in the skill's maintenance
-note, with no task. See **O2**.
+**F14 (Exists, corrected by the owner 2026-11-08): the triage personas are the rigor levels.** An earlier
+draft said no persona exists in the tree; that search used the word "persona" and missed
+`docs/rigor-modes/levels-spec.md`, which gives each level one ("`poc` The smart enthusiast ... `startup`
+The 10x cowboy (ruthless triage ...)", and so on). They are implemented as `rigor.Mode`
+(`internal/rigor`), so the spec's principle already holds for them: the generic personas are built in, and
+project-specific tuning lives in project and repo settings. No task is needed.
 
 **F15 (Exists): a "short contract doc in the repo" and "commit contracts so every agent reads them"
 needs no mechanism.** A run checks out the repository at its base ref, so a contract that has merged is
@@ -179,21 +179,20 @@ Resolutions with one defensible answer (not questions):
 | **D1820** | The decoupling pass adds no spend path (F11): contract and integration tasks are ordinary tasks under the same caps and the same go-ahead rule; the planner output states the added task count. |
 | **D1821** | The skill never parses the graph: the CLI does (the same rule as the `/jobmax` section of docs/review-levels-ab-jobmax's implementation plan: plan text is untrusted, `fugaro plan graph` validates it). Stub paths are validated as literal repo-relative paths (F9). |
 | **D1822** | First slice is skill-only on schema 2 (contract and integration tasks as ordinary nodes, the reason on each edge); schema 3 and the setting follow. Slice 1 ships something useful alone and teaches nothing the CLI cannot read. |
-| **D1823** | The personas (F14) and a mechanical contract-immutability guard (F10) are out of scope; they are **O2** and **O1**. |
+| **D1823** | A mechanical contract-immutability guard (F10) is out of scope (**O1**, ruled procedural only); the personas need no work (F14, **O2**). |
 
 ## 4. Open tensions and open items for the owner
 
 No tension between two answers: D1811's schema 3 and D1813's new setting both bump what an older reader
 refuses, and F7 and F4 say how `fugaro update` carries them; that is a cost, not a conflict.
 
-- **O1 (owner): a guard that a task does not edit a merged contract.** Nothing stops it today (F10). The
+- **O1 (ruled 2026-11-08: procedural only, the recommendation):** no guard is built. The text below is the option declined. A guard that a task does not edit a merged contract.** Nothing stops it today (F10). The
   smallest guard is a finalize-time check of the run's changed files against the contract files of the
   plan, refused unless the run's own plan task is a `contract_change`. It needs the run to know its plan
   task's kind and the contracts of its plan, so it is a new runner behaviour and a new trust input. Not
   planned; say if you want it designed.
-- **O2 (owner): the triage personas.** They are not in the tree (F14). To follow the principle they must
-  first be written down somewhere the repo can see.
-- **O3 (owner, release):** schema 3 and the new setting make a teammate on an older CLI unable to read a
+- **O2 (resolved 2026-11-08):** the personas are the rigor levels and already built in (F14). No task.
+- **O3 (ruled 2026-11-08: `fugaro update` is the fix, the recommendation):** schema 3 and the new setting make a teammate on an older CLI unable to read a
   v3 graph until they run `fugaro update`. The plan treats that as the normal upgrade (F4, F7). Say if the
   graph should instead stay readable by an older CLI, which would mean carrying the new facts outside the
   artifact.

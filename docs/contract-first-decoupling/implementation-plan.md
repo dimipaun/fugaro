@@ -257,8 +257,7 @@ which CD7's release-notes entry states.
 
 - CD5 waits on CD7 and so on the release that carries the new CLI; the skill must not teach schema 3
   to a plugin pin whose CLI cannot read it.
-- O1 (a guard that a task does not edit a merged contract), O2 (the triage personas) and O3 (whether an
-  older CLI should read v3) wait on the owner and have no task.
+- Nothing else: O1 (no guard), O2 (personas already built in) and O3 (an older CLI is refused; `fugaro update` is the fix) were ruled 2026-11-08 and have no task.
 
 ## Considered and declined
 
