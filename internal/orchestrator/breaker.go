@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -40,8 +41,15 @@ const (
 )
 
 // Breaker is the daemon's guard against a loop that spins: it counts the
-// cycles in a row that ended with nothing done, and the tick that reaches the
+// cycles in a row that ended with nothing done, and the cycle that reaches the
 // threshold raises a decision and stops spawning until a person answers.
+//
+// The count is this process's and nothing else — a daemon that crashed, that a
+// supervisor restarted, or that exited for the version check starts with a
+// fresh Breaker and has counted nothing. The pause is not the count: it is the
+// question the trip left on the node, which is what BreakerOpen reads and what
+// Plan refuses over, so a restart cannot lift it (the same rule the caps
+// follow, whose counts are derived from the state rather than remembered).
 type Breaker struct {
 	consecutive int
 }
@@ -68,12 +76,32 @@ func (b *Breaker) Observe(o CycleOutcome) bool {
 	return false
 }
 
-// Tripped reports whether the streak has reached the threshold: the daemon
-// stops spawning until a person answers the decision it raised.
+// Tripped reports whether this process's streak has reached the threshold. It
+// is not the pause: the pause outlives the process, and BreakerOpen is what
+// reads it off the node.
 func (b *Breaker) Tripped() bool { return b.consecutive >= BreakerThreshold }
 
 // Reset starts the count again, which is what a person's answer is.
 func (b *Breaker) Reset() { b.consecutive = 0 }
+
+// BreakerOpen reports whether the node carries the question a tripped breaker
+// raised and nobody has answered, which is the pause itself. It is a read of
+// the state and not of a Breaker, so a tick that has just started — after a
+// crash, a supervisor restart, or the exit the version check takes — keeps the
+// pause its predecessor's trip earned until a person answers. What ends it is
+// that answer, the same write that resolves the decision: a cycle that did work
+// is not one, and neither is anything else the daemon can do on its own.
+//
+// The id is what tells this question from every other one the loop asks a
+// person, and it is the trip's own (see BreakerDecisionID).
+func BreakerOpen(s State) bool {
+	for _, d := range s.Decisions {
+		if !d.Resolved() && strings.HasPrefix(d.ID, BreakerDecisionID+"-") {
+			return true
+		}
+	}
+	return false
+}
 
 // Decision is the question a tripped breaker raises, for the tick to commit
 // with the rest of its patch. now is the tick's server time, and it is what

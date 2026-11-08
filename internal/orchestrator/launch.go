@@ -110,14 +110,16 @@ type Action struct {
 // it out commits each intent before anything starts.
 //
 // It hesitates in the only safe direction. Nothing is planned with the kill
-// switch on, nothing while the node is over its size cap (the intents a count
-// is read against would no longer be the whole record), nothing for an item
-// with an attempt that has not reported, nothing for an item nobody approved,
+// switch on, nothing while the breaker's question stands unanswered on the node
+// (a pause a restart may not lift), nothing while the node is over its size cap
+// (the intents a count is read against would no longer be the whole record),
+// nothing for an item with an attempt that has not reported, nothing for an
+// item nobody approved,
 // nothing whose spec has changed since the approval, and nothing while a
 // dependency is unfinished. What is left is a first attempt under a person's
 // approval, or the one retry that approval still covers.
 func Plan(s State, view RunView, caps Caps, now time.Time) []Action {
-	if caps.KillSwitch || OverCap(s) {
+	if caps.KillSwitch || OverCap(s) || BreakerOpen(s) {
 		return nil
 	}
 	counts := CountsOf(s, now)
