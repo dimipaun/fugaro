@@ -17,6 +17,7 @@ package cli
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -80,6 +81,55 @@ func TestDocsRolesDesign(t *testing.T) {
 	}
 	if m := rolesSeatFigure.FindString(flat); m != "" {
 		t.Errorf("%s contains a seat figure (%q): a seat is D433's pricing rule and the estimate is D439's, so no count belongs in this design (D430)", rolesDesignPath, m)
+	}
+}
+
+// TestDocsRolesDesignCitations: the role-model section's four line citations
+// into internal/access/access.go are resolved, not pinned to a literal.
+//
+// It is the drift a literal cannot see that this guard is for: RS2 grew that
+// file's package doc by six lines, all four citations named a line that then
+// said something else, and no test covered them. The access.go citations here
+// are the closed set's `const (` block and the three declarations the sentence
+// names beside it, so each one is read out of the source and the document has to
+// name it. mobileauth.go:80 is that file's own and is not this section's.
+func TestDocsRolesDesignCitations(t *testing.T) {
+	doc := readDoc(t, rolesDesignPath)
+	src := strings.Split(readDoc(t, "internal/access/access.go"), "\n")
+
+	lineOf := func(needle string) int {
+		for i, l := range src {
+			if strings.Contains(l, needle) {
+				return i + 1
+			}
+		}
+		t.Fatalf("internal/access/access.go no longer carries %q, so %s's citation has nothing to resolve against", needle, rolesDesignPath)
+		return 0
+	}
+
+	// The closed set is the `const (` block the sentence's three names are in,
+	// which is the line the citation names: walk back from RoleViewer's own
+	// declaration to the block that opens it.
+	closedSet := lineOf(`RoleViewer Role = "viewer"`)
+	for closedSet > 0 && strings.TrimSpace(src[closedSet-1]) != "const (" {
+		closedSet--
+	}
+	if closedSet == 0 {
+		t.Fatalf("internal/access/access.go declares RoleViewer outside a `const (` block, so the citation %s makes for the closed set has no line to name", rolesDesignPath)
+	}
+
+	for _, c := range []struct {
+		cite string
+		what string
+	}{
+		{"`internal/access/access.go:" + strconv.Itoa(closedSet) + "`", "the closed set"},
+		{"(`:" + strconv.Itoa(lineOf("func ParseRole")) + "`)", "ParseRole"},
+		{"(`:" + strconv.Itoa(lineOf("func (r Role) Rank()")) + "`)", "Rank"},
+		{"(`:" + strconv.Itoa(lineOf("func (r Role) AtLeast(")) + "`)", "AtLeast"},
+	} {
+		if !strings.Contains(doc, c.cite) {
+			t.Errorf("%s does not cite %s at %s, where internal/access/access.go declares it: the sentence points at whatever now sits on the lines it names, which is how these four drifted from 60/82/99/112 when that file grew", rolesDesignPath, c.what, c.cite)
+		}
 	}
 }
 

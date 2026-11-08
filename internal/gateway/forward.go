@@ -693,7 +693,24 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, rt route
 	// served and this gateway could not price is still a call the run
 	// pays for at the tier it was served from.
 	var served string
-	out = s.forward(w, r, rt, body, p, known, w0, &cl.status, &served, &probed)
+	var lost bool
+	out, lost = s.forward(w, r, rt, body, p, known, w0, &cl.status, &served, &probed)
+	if lost && out.amount < w0 {
+		// The attempt that settled this call is not the only one that may have
+		// reached the upstream: a retry replaced an attempt whose request had
+		// been written and whose answer never came, and this gateway read no
+		// status and no usage for it, so the upstream may have generated for
+		// it. The call is charged at least its reservation whatever the retry
+		// answered (m9 §5.5, the rule an attempt that reads no status already
+		// settles by), the part of the charge the retry's own usage does not
+		// account for being unreconciled. Pricing the call from the retry's
+		// answer alone would let that spend pass `granted` under `enforce`
+		// with no call in the ledger to explain it -- which is what the
+		// reservation is held for. A retry that overran the reservation stands
+		// as it is.
+		out.charge.unreconciled = satAdd(out.charge.unreconciled, w0-out.amount)
+		out.amount, out.settled = w0, settledReserved
+	}
 	out.charge.tier, out.charge.agentID = served, cl.agentID
 }
 
@@ -709,8 +726,12 @@ func zeroOutcome(model string, sent bool) outcome {
 }
 
 // forward sends the call upstream and copies the response back without
-// buffering, teeing it to the usage parser, and says how it settles.
-func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body []byte, p parsed, known bool, w0 pricing.Micros, status *int, tier *string, probed *[]string) outcome {
+// buffering, teeing it to the usage parser, and says how it settles. Its
+// second value is true when a retry replaced an attempt whose request had been
+// written and whose answer never came (sendRetryingOnce reports it): that
+// attempt may have reached the upstream, and the caller is what keeps the
+// call's reservation charged for it (m9 §5.5) whatever the retry answered.
+func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body []byte, p parsed, known bool, w0 pricing.Micros, status *int, tier *string, probed *[]string) (outcome, bool) {
 	start := time.Now()
 	reserved := outcome{charge: charge{amount: w0, unreconciled: w0, model: p.model, sent: true}, settled: settledReserved, pricedAs: pricedTable}
 	if !known {
@@ -724,7 +745,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 	stopHalt := context.AfterFunc(s.hctx, cancel) // so does an external halt
 	defer stopHalt()
 
-	up, sent, err := s.upstreamRequest(ctx, r, rt, body)
+	first, firstSent, err := s.upstreamRequest(ctx, r, rt, body)
 	if err != nil {
 		if s.o.Upstream.Kind == KindService && errors.Is(err, errServiceUnidentified) {
 			// C1.15 (service.go), D143: a service call this job cannot
@@ -735,12 +756,14 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 			// unreachable service -- rather than one 502 per call until the
 			// stage's deadline. Nothing was sent: nothing to charge.
 			s.haltService(w, stateDetailUnidentified)
-			return zeroOutcome(p.model, false)
+			return zeroOutcome(p.model, false), false
 		}
 		writeError(w, http.StatusBadGateway, "api_error", "fugaro: "+err.Error())
-		return zeroOutcome(p.model, false)
+		return zeroOutcome(p.model, false), false
 	}
-	resp, err := s.client.Do(up)
+	up, sent, resp, err, lost := s.sendRetryingOnce(ctx, first, firstSent, func() (*http.Request, *atomic.Bool, error) {
+		return s.upstreamRequest(ctx, r, rt, body)
+	}, p.model)
 	if err != nil {
 		if s.o.Upstream.Kind == KindService && s.serviceUnreachable(w, s.base, r.Context()) {
 			// C1.15 (service.go), D143: an unreachable credentials service
@@ -749,9 +772,9 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 			// the upstream: nothing to charge. Anything did: the service may
 			// have been generating, so the whole reservation.
 			if !sent.Load() {
-				return zeroOutcome(p.model, false)
+				return zeroOutcome(p.model, false), lost
 			}
-			return reserved
+			return reserved, lost
 		}
 		// No status. Nothing reached the upstream: nothing to charge.
 		// Anything did: the upstream may be generating, so the whole
@@ -764,9 +787,9 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 			}
 		}
 		if !sent.Load() {
-			return zeroOutcome(p.model, false)
+			return zeroOutcome(p.model, false), lost
 		}
-		return reserved
+		return reserved, lost
 	}
 	defer resp.Body.Close()
 	if rt.provider != nil && isRedirect(resp.StatusCode) {
@@ -774,7 +797,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		// never followed: the provider answered with nothing usable.
 		*status = http.StatusBadGateway
 		writeError(w, http.StatusBadGateway, "api_error", "fugaro: the provider answered with a redirect, which the gateway does not follow")
-		return zeroOutcome(p.model, true)
+		return zeroOutcome(p.model, true), lost
 	}
 	*status = resp.StatusCode
 	if s.o.Upstream.Kind == KindService {
@@ -799,9 +822,9 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 			if resp.StatusCode/100 == 2 {
 				reserved.unparsed = true
 				s.logUsageUnparsed(p.model, rt.provider, "no_tier", nil)
-				return reserved
+				return reserved, lost
 			}
-			return zeroOutcome(p.model, true)
+			return zeroOutcome(p.model, true), lost
 		}
 	}
 
@@ -815,7 +838,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		}
 		o := zeroOutcome(p.model, true)
 		o.errorType = providerError(w, resp, eb)
-		return o
+		return o, lost
 	}
 	var out io.Writer = w
 	var rw *redactWriter
@@ -895,7 +918,143 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		o.charge.streamCut = s.streamCutSide(r, end)
 		s.logStreamCut(p.model, resp.StatusCode, tee, o.charge.streamCut, time.Since(start), streamEndError(end))
 	}
-	return o
+	return o, lost
+}
+
+// upstreamRetryDelay is how long the one retry of a call waits before it is
+// sent again. It is short on purpose: what it steps over is a connection that
+// died, or an upstream that answered a failure before the model began, and
+// not an outage -- an outage is Claude Code's own retry (a fresh request,
+// with a fresh reservation) and the runner's retry of a whole stage. It is a
+// var so the tests do not spend it.
+var upstreamRetryDelay = 250 * time.Millisecond
+
+// sendRetryingOnce sends up, the call's first attempt, and sends it once more
+// when that attempt failed before any byte of an answer had reached the
+// agent: a transport error, or an upstream failure status (5xx) or its rate
+// limit (429) -- upstreamRetryReason. Nothing the agent has seen is replayed,
+// because nothing had been sent to it: it is the one thing that makes the
+// retry safe, and it is why the failed answer is still this gateway's to
+// discard rather than the agent's to read. Every other failure is kept: a 4xx
+// other than 429 is an answer about the request or the credential, which the
+// same request sent again would get again, and a failure after a byte has
+// reached the agent is a stream the agent has already read.
+//
+// The retry is the same call: next builds it again -- the same route, the
+// same credential and the same body, which this gateway holds in memory for
+// exactly this and never logs -- and the reservation is untouched, because
+// the whole retry happens inside the one client request whose settlement
+// handleMessages owns. Nothing here reserves, releases or settles: the call
+// settles once, from the attempt that answered -- or at the reservation an
+// attempt that never answered leaves standing (the last value below).
+//
+// A service upstream (C1.15, KindService) is not retried here: the service
+// retries its own calls across the credentials it holds, inside the one
+// answer it gives this gateway, and D143 makes an unreachable service a halt
+// rather than a call this gateway sends again.
+//
+// What the narrow form costs, stated: the first attempt may have reached an
+// upstream that then generated and answered nothing, and this gateway read no
+// usage for it, so what the provider charged for that attempt is a figure no
+// ledger here holds. The call still settles at no less than its one
+// reservation -- the worst case it was reserved for, charged once, which is
+// what the same failure costs without a retry at all.
+//
+// The five values it returns are one attempt's own -- the request the caller
+// reads the credential and the run's identity off, the flag that says whether
+// anything of it may have reached the upstream, the response and the error --
+// and which attempt they belong to is decided by whether the retry happened
+// at all: the retry's when it left the client, the first attempt's when it did
+// not (it could not be built again, or it never got out of the client). A
+// retry that never left is not an attempt, and answering the call with its
+// failure would say something this gateway does not know: it would either
+// leave an attempt the upstream may have received uncharged (the reservation
+// the ledger keeps for exactly that) or hand the agent a gateway error in
+// place of the status the upstream did send.
+//
+// The last value says the attempt that answered is not the only one that may
+// have reached the upstream: the first attempt was a transport error with its
+// request already written and no status read for it, and the retry did leave
+// the client. The upstream may have received that first attempt and generated
+// for it, and what that cost is in no ledger here, so the caller keeps the
+// call's reservation charged for it (design §5.5, the rule an attempt that
+// reads no status already settles by) instead of letting the retry's own
+// answer discharge it -- which, under `enforce`, is real spend passing
+// `granted` with nothing to show for it. A first attempt that answered a
+// status is not this: the upstream refused that call or asked for it later,
+// and generated nothing this gateway has to account for.
+func (s *Server) sendRetryingOnce(ctx context.Context, up *http.Request, sent *atomic.Bool, next func() (*http.Request, *atomic.Bool, error), model string) (*http.Request, *atomic.Bool, *http.Response, error, bool) {
+	resp, err := s.client.Do(up)
+	reason, status := upstreamRetryReason(resp, err)
+	if reason == "" || s.o.Upstream.Kind == KindService || ctx.Err() != nil {
+		return up, sent, resp, err, false
+	}
+	lost := reason == "transport" && sent.Load()
+	if !sleepUpstreamRetry(ctx) {
+		return up, sent, resp, err, false // cancelled while waiting: the failed attempt is the call's answer
+	}
+	nup, nsent, nerr := next()
+	if nerr != nil {
+		// A call the gateway cannot build again (a Vertex token that went
+		// away between the two attempts) is not sent again: no retry
+		// happened, so the call's answer is the first attempt's.
+		return up, sent, resp, err, false
+	}
+	s.logUpstreamRetry(model, reason, status, 1)
+	nresp, nerr := s.client.Do(nup)
+	if nerr != nil && !nsent.Load() {
+		// The retry never left the client -- a dial, a DNS or a TLS failure,
+		// not one byte of it written anywhere -- so it is not an attempt, and
+		// the call's answer is the first attempt's, answered for exactly as it
+		// would have been without a retry: the status the upstream gave, and
+		// the reservation charged if that attempt may have reached it.
+		return up, sent, resp, err, false
+	}
+	if resp != nil {
+		// The retry left the client, so the call's answer is the retry's now,
+		// and the first attempt's is the gateway's to discard: not one byte of
+		// it ever reached the agent, and it is read no further.
+		_ = resp.Body.Close()
+	}
+	return nup, nsent, nresp, nerr, lost
+}
+
+// upstreamRetryReason is why an attempt may be sent again, from a closed set:
+// "" for an attempt whose answer the agent can be handed, "transport" for one
+// that got no status at all, and "status" with the upstream's own status for
+// a 5xx or a 429 -- the upstream failed, or is asking for the call to come
+// back later, and neither is a fact about the work.
+func upstreamRetryReason(resp *http.Response, err error) (string, int) {
+	switch {
+	case err != nil:
+		return "transport", 0
+	case resp != nil && (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode/100 == 5):
+		return "status", resp.StatusCode
+	}
+	return "", 0
+}
+
+// sleepUpstreamRetry waits out upstreamRetryDelay, and reports false when the
+// call was cancelled first -- the client went away, or Close or a halt ended
+// the run -- in which case no retry is made.
+func sleepUpstreamRetry(ctx context.Context) bool {
+	t := time.NewTimer(upstreamRetryDelay)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// logUpstreamRetry says the gateway sent a call a second time, and why the
+// first attempt was not the agent's. The retry count is here and nowhere
+// else, and the line carries no header, no credential and no byte of the
+// request or of the answer.
+func (s *Server) logUpstreamRetry(model, reason string, status, retry int) {
+	s.log.Warn("budget: call retried", "stage", s.stageName(), "model", logValue(model),
+		"retry", retry, "reason", reason, "status", status, "delay_ms", upstreamRetryDelay.Milliseconds())
 }
 
 // logStreamCut warns that a streamed response ended before its terminal
@@ -1124,7 +1283,7 @@ func (s *Server) upstreamRequest(ctx context.Context, r *http.Request, rt route,
 		return nil, nil, errors.New("the upstream URL is invalid")
 	}
 	up.ContentLength = int64(len(body))
-	up.GetBody = nil // never replayed: the gateway never retries
+	up.GetBody = nil // the transport never replays the body: the gateway's one retry builds its own request from the body it holds
 	if rt.provider != nil {
 		// Only what the provider needs: no cookies, no session or agent
 		// IDs, no SDK telemetry.

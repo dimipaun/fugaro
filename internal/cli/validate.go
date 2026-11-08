@@ -126,6 +126,24 @@ func clampWarning(ig policy.Ignored) config.Problem {
 		msg = fmt.Sprintf("[%s] names models outside the project's allow-list; the runner will use [%s]",
 			strings.ReplaceAll(ig.Value, ",", ", "), strings.ReplaceAll(ig.Effective, ",", ", "))
 	default:
+		// The craft grant's own refusal: a credential or a pool a repository
+		// may not introduce, or a craft's access where the project selected
+		// nothing (F12, D1628). There is no running value to be measured
+		// against and none to fall back to, so the looser-than sentence would
+		// name nothing at all — and the rule a repository met is the one to
+		// say.
+		//
+		// An empty effective value is what tells that refusal apart, and it is
+		// a craft key that can carry one: the merge renders the value in force
+		// for everything it compares, a pool's strategy included, where the
+		// pool names none and the run's failover default answers for it
+		// (policy's poolStrategyText) — so a strategy that lost to the default
+		// is never read here as a credential the project does not define.
+		if strings.HasPrefix(ig.Key, "crafts.") && ig.Effective == "" {
+			msg = fmt.Sprintf("%s names nothing the project makes available: a repository selects among the credentials and the pools the project creates and never adds one, so the runner ignores this key",
+				pluginwire.Printable(ig.Value))
+			break
+		}
 		msg = fmt.Sprintf("%s is looser than %s; the runner will use %s", ig.Value, ig.Effective, ig.Effective)
 	}
 	return config.Problem{Path: runner.PolicyKeyPath(ig.Key), Message: msg}
