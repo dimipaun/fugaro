@@ -193,6 +193,13 @@ type managedStatusRetirements struct {
 	// settled, the set it retired (`[]` for one that retired nothing, never
 	// null) and the runs the registry held while it did — absent when the
 	// number is not known, and never a zero in its place (D1483).
+	//
+	// The entry is carried as the record spells it, `at` included: that time is
+	// the update's own, from the machine it ran on and in that machine's zone,
+	// and it is not re-spelled into UTC the way the trail's own `at` is
+	// rendered. The record is the document a reader may compare against the
+	// file, so a member re-spelled here would be one the two disagree about,
+	// and a consumer draws that time rather than reading a zone into it.
 	localcfg.UpdateProject
 }
 
@@ -331,8 +338,11 @@ func managedStatus(cmd *cobra.Command, o cloudOptions, asJSON bool) error {
 //
 // It is a LOCAL read, and it is made whatever the marks answer: the record is
 // written by a plain `fugaro update` of any project, and a project that is not
-// managed ran one too. It reaches no cloud object, which is also why it is the
-// one subject of this document that a machine with no cloud at all can answer.
+// managed ran one too. It reaches no cloud object, which is the one thing that
+// makes it unlike the rest of this document — and it is not a fallback for a
+// machine that cannot reach the cloud either: the marks are the document's
+// whole subject, so a read that cannot make them exits before this one is
+// reached, and this subject is only ever printed beside them.
 //
 // The three answers are kept apart because they are three facts. An entry is
 // the record and its version. Null with no state is "this machine has recorded

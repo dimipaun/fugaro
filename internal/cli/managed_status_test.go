@@ -391,7 +391,12 @@ func TestManagedStatusNamesItsFieldsInTheContract(t *testing.T) {
 // document is closed at this level too, and a consumer reading it reads these.
 func TestManagedStatusCarriesTheLastUpdatesRetirement(t *testing.T) {
 	r := newManagedStatusRig(t, managedAuditOpts{})
-	when := managedAuditTestNow.Add(-2 * time.Hour)
+	// A time that is neither UTC nor whole-second, because the document must
+	// carry the record's own spelling of it and not a normalised one: the
+	// update runs on the operator's machine, from that machine's clock and
+	// zone, and `UpdateProject.At` is a `time.Time` written by `time.Now()`
+	// (contract §6.21's `at`).
+	when := time.Date(2026, 11, 3, 11, 30, 0, 123456789, time.FixedZone("UTC+2", 2*60*60))
 	runs := 3
 	up := localcfg.UpdateProject{
 		At: when,
@@ -448,6 +453,18 @@ func TestManagedStatusCarriesTheLastUpdatesRetirement(t *testing.T) {
 	slices.Sort(keys)
 	if want := []string{"at", "retire", "runs_in_flight", "version"}; !slices.Equal(keys, want) {
 		t.Errorf("the retirements member carries %v, want exactly %v: the record's entry plus the record's version", keys, want)
+	}
+	// The time is the record's own spelling -- its own offset and its own
+	// nanoseconds -- and not re-rendered into UTC the way the trail's `at` is:
+	// the record is the document a reader compares against the file, and
+	// contract §6.21's `at` row says so. The mutation this case fails is
+	// normalising the time on the way into the document.
+	wantAt, err := json.Marshal(when)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(raw.Retirements["at"]); got != string(wantAt) {
+		t.Errorf("at in the document = %s, want the record's own %s: the entry is carried as the record spells it, offset and nanoseconds included, and a consumer draws the time rather than reading a zone into it", got, wantAt)
 	}
 }
 

@@ -70,6 +70,7 @@ import {
   RETIREMENTS_SECRET_NOTE,
   RETIREMENTS_SECRET_TERM,
   RETIREMENTS_SET_LIST_CLASS,
+  RETIREMENTS_SET_WORD,
   RETIREMENTS_SOURCE_LINE,
   RETIREMENTS_STATE_CLASS,
   RETIREMENTS_TITLE,
@@ -425,6 +426,32 @@ describe('buildRetirementsModel', () => {
       expect(all(root, RETIREMENTS_ROW_CLASS)).toHaveLength(0)
       expect(drawn(root)).not.toContain(ROW.address)
     }
+  })
+
+  it('refuses the whole set when one of its rows is not a retirement', () => {
+    // The set is read whole or not at all. A reader that skipped a row it could
+    // not make sense of would draw a list that reads as **smaller than it is**,
+    // and a retirement list is exactly the place where a short list is a false
+    // statement about what left the state -- so one unreadable member refuses
+    // the whole set, and the good rows that came before it are not drawn
+    // either. The mutation this case fails is `rowsOf` skipping the bad row and
+    // drawing the rest.
+    for (const bad of [7, 'a string', null, true, ['address'], undefined]) {
+      const model = buildRetirementsModel({ raw: { ...MANAGED, retirements: { ...RECORD, retire: [ROW, bad] } } })
+      expect(model.state, JSON.stringify(bad)).toBe('unavailable')
+      expect(model.record, JSON.stringify(bad)).toBeNull()
+      const root = renderRetirements(factory, model)
+      expect(all(root, RETIREMENTS_SET_LIST_CLASS), JSON.stringify(bad)).toHaveLength(0)
+      expect(all(root, RETIREMENTS_ROW_CLASS), JSON.stringify(bad)).toHaveLength(0)
+      expect(drawn(root), JSON.stringify(bad)).not.toContain(ROW.address)
+      expect(drawn(root), JSON.stringify(bad)).toContain(RETIREMENTS_SET_WORD)
+    }
+
+    // The control, so a pass here means the guard is about the bad row and not
+    // about the set: the same record with every row readable draws both.
+    const ok = buildRetirementsModel({ raw: MANAGED })
+    expect(ok.state).toBe('read')
+    expect(ok.record?.rows).toHaveLength(2)
   })
 
   it('refuses a document that carries no last-update record at all', () => {
