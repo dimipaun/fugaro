@@ -41,8 +41,8 @@ RUN --mount=type=secret,id=git-credentials,uid=1000,required=false \
       || { echo "commit $commit is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }; } \
  && git -C /work/repo reset --quiet --hard "$commit"
 
-# This repository's own runtimes, from its mise.toml (Go, Terraform): the base
-# image installs no toolchain of its own. The download cache survives local
+# This repository's own tools, from its mise.toml (Go, Terraform, tflint,
+# Trivy): the base image installs no toolchain of its own. The download cache survives local
 # rebuilds, and nothing may be left missing.
 RUN --mount=type=cache,id=fugaro-mise,target=/home/fugaro/.cache/mise,uid=1000,gid=1000 mise install \
  && missing="$(mise ls --current --missing)" \

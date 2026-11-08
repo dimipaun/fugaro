@@ -187,6 +187,12 @@ func TestScanRoutesAreOneCommandLine(t *testing.T) {
 		t.Errorf("the docker route's invocation is\n%s\nwant\n%s", got, want)
 	}
 	args := fields[7:]
+	// The docker route's target is the mount it makes a line above; asserting
+	// it rather than mapping whatever is there is what catches a target that
+	// drifted off /src (a substring check would not: /srcfoo contains /src).
+	if got := args[len(args)-1]; got != "/src" {
+		t.Errorf("the docker route scans %q, want the /src mount it makes: %s", got, docker.args)
+	}
 	args[len(args)-1] = here
 	for i, a := range args {
 		if a == "/src/.trivyignore" {
