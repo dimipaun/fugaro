@@ -76,15 +76,15 @@ type CraftLayer struct {
 	// may not introduce one.
 	Pools map[string]CraftPool
 	// Access is the credential or pool each craft's calls go out on, by craft
-	// name — the four of config.CraftNames, which this package keeps as the
-	// layer wrote them: a name outside that vocabulary is refused by the strict
-	// decoder that owns it, where the block is written, and a merge that
-	// silently dropped one it did not know would answer an unset craft. The
-	// first layer selects among its own and is taken as written; a
-	// later layer selects among the effective set and is dropped, and
-	// recorded, when it names anything else. A craft left out is unset, and
-	// what an unset access resolves to — the craft it follows, then the
-	// project's default credential — is the resolver's answer (MC2, D1624).
+	// name — the four of config.CraftNames, kept as the layer wrote them: a
+	// name outside that vocabulary is refused where the block is written, by
+	// the strict decoder that owns it, and a merge that quietly dropped one it
+	// did not know would answer an unset craft. The first layer selects among
+	// its own and is taken as written; a later layer selects among the
+	// effective set and is dropped, and recorded, when it names anything else.
+	// A craft left out is unset, and what an unset access resolves to — the
+	// craft it follows, then the project's default credential — is the
+	// resolver's answer (MC2, D1624).
 	Access map[string]string
 }
 
