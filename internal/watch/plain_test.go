@@ -64,6 +64,17 @@ func TestRenderPlainReadySurvivesAFilteredView(t *testing.T) {
 	}
 }
 
+// shortRunView is one repository with an active run and a finished one: the
+// two tables of one block, which are the rows the collision rule works over.
+func shortRunView(active, finished string) View {
+	v := View{Now: t0, Repos: []RepoBlock{{Slug: "a", Name: "acme/app", Runs: []RunRow{
+		mkRun(active, "Fix the flaky login test", "coding", nil),
+	}}}}
+	return MergeFinished(v, Config{}, []FinishedRun{
+		{Run: finished, Slug: "a", Title: "Speed up the parser", Status: "succeeded", FinishedAt: t0.Add(-time.Minute)},
+	}, t0)
+}
+
 // A run's id in the plain frame is the same short form the interactive table
 // shows — its last four characters — and never the whole id (spec.md §1, F3):
 // the leading characters are the launch stamp, which every run started in the
@@ -71,19 +82,7 @@ func TestRenderPlainReadySurvivesAFilteredView(t *testing.T) {
 // a column of one. Both tables read the same way, the active one and the
 // finished one.
 func TestPlainShortRun(t *testing.T) {
-	const running = "20261023-021512-abcd"
-	const done = "20261024-030000-ef01"
-	v := View{Now: t0, Repos: []RepoBlock{{Slug: "a", Name: "acme/app", Runs: []RunRow{
-		mkRun(running, "Fix the flaky login test", "coding", nil),
-	}}}}
-	v = MergeFinished(v, Config{}, []FinishedRun{
-		{Run: done, Slug: "a", Title: "Speed up the parser", Status: "succeeded", FinishedAt: t0.Add(-time.Minute)},
-	}, t0)
-	var b strings.Builder
-	if err := RenderPlain(&b, "aurora", v, nil, PlainOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	got := b.String()
+	got := plainFrame(t, shortRunView("20261023-021512-abcd", "20261024-030000-ef01"))
 	for _, want := range []string{"abcd", "ef01", "Fix the flaky login test"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("the plain frame is missing %q:\n%s", want, got)
@@ -95,24 +94,12 @@ func TestPlainShortRun(t *testing.T) {
 }
 
 // Two runs whose ids share their last four characters are shown with an
-// ending extended one character at a time until the two differ (SR1's rule;
-// the extension crosses the dash), and the extension covers a block's two
-// tables at once: an active row and a finished one are printed together on
-// this frame, so a collision between them widens both cells.
+// ending extended one character at a time until the two differ (spec.md §3,
+// task.DisplayRuns; the extension crosses the dash), and the extension covers
+// a block's two tables at once: an active row and a finished one are printed
+// together on this frame, so a collision between them widens both cells.
 func TestPlainCollision(t *testing.T) {
-	const active = "20261108-115248-3bb2"
-	const finished = "20261107-010101-3bb2"
-	v := View{Now: t0, Repos: []RepoBlock{{Slug: "a", Name: "acme/app", Runs: []RunRow{
-		mkRun(active, "Fix the flaky login test", "coding", nil),
-	}}}}
-	v = MergeFinished(v, Config{}, []FinishedRun{
-		{Run: finished, Slug: "a", Title: "Speed up the parser", Status: "succeeded", FinishedAt: t0.Add(-time.Minute)},
-	}, t0)
-	var b strings.Builder
-	if err := RenderPlain(&b, "aurora", v, nil, PlainOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	got := b.String()
+	got := plainFrame(t, shortRunView("20261108-115248-3bb2", "20261107-010101-3bb2"))
 	for _, want := range []string{"8-3bb2", "1-3bb2"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("the colliding ending %q is not in the plain frame:\n%s", want, got)

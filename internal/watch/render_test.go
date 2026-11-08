@@ -623,10 +623,10 @@ func TestHelpNamesFilterToggleAndDismiss(t *testing.T) {
 }
 
 // Two runs of one repository whose ids end in the same four characters are
-// shown with the ending the rule extends them to (SR1: one character at a
-// time, through the dash), and the table's RUN column widens to hold it: the
-// columns behind it start as many columns further right as the extension
-// added, and the widened row still ends inside the screen.
+// shown with the ending the rule extends them to (task.DisplayRuns: one
+// character at a time, through the dash), and the table's RUN column widens to
+// hold it: the second column starts as many columns further right as the
+// extension added, and the widened row still ends inside the screen.
 func TestTUIShortRunCollision(t *testing.T) {
 	base := frame(fixture(), 120, 0)
 	v := fixture()
@@ -646,7 +646,7 @@ func TestTUIShortRunCollision(t *testing.T) {
 	// elastic cell, gives them up: every column behind the RUN cell holds its
 	// place.
 	hdr, baseHdr := headerLine(t, got), headerLine(t, base)
-	wantTitle := strings.Index(baseHdr, "TITLE") + 2
+	wantTitle := strings.Index(baseHdr, "TITLE") + 2 // the two characters the extension added
 	if strings.Index(hdr, "TITLE") != wantTitle {
 		t.Fatalf("the RUN column did not widen by the ending's two characters: TITLE at %d, want %d\n%s",
 			strings.Index(hdr, "TITLE"), wantTitle, got)
