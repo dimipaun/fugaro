@@ -1121,10 +1121,18 @@ export const CONSOLE_OPERATIONS = [
   // rule: a sensitive row is dropped whole by the read, so it has no pencil and
   // reaches this operation not at all.
   //
-  // **What this operation does not have**: no `--repo` (the edit lands in the
-  // selected installation's own layers, and the layer a repository's own config
-  // file would be is the fourth one the read's `target_layer` would name if that
-  // were the one), no `--add`/`--remove` (a list edit is a form no control can
+  // **What this operation does not have**: no `--repo` (the row whose
+  // `target_layer` is `repo` -- the layer the read names for the keys a
+  // repository's own config file carries -- is edited where the child's own
+  // working directory says, because that is what the CLI resolves `--layer repo`
+  // from with no `--repo`: the one at the checkout `git rev-parse
+  // --show-toplevel` finds for `.`, or its own refusal when that
+  // directory is not one (`internal/cli/settings_set.go`). The child's directory
+  // is the installation's recorded checkout when it has one and
+  // `privateWorkingDirectory` otherwise, so this surface names no repository and
+  // never checks that the directory is one; whether such a row should be refused
+  // instead is the settings write's own open question, not a rule here), no
+  // `--add`/`--remove` (a list edit is a form no control can
   // choose: the read carries no member that says a key is list-shaped), and no
   // third subcommand: `settings get` is a read of one key this screen does not
   // need and `set`/`unset` are this row's own two, so no other word of the group
@@ -1510,9 +1518,14 @@ export const CONSOLE_OPERATIONS = [
   // the **installation's** caps -- dollars that belong to the Spend screen and
   // to the tab's own `caps` panel, and that a decoder here would have to drop
   // (D1481). What the node does carry is the *project's* own `budget` block, and
-  // that is the project's policy rather than a spend figure: the tab draws it as
-  // the policy it is. **It is a ceiling all the same**, which is what the
-  // reduced mode withholds, so this read is on the tab's own view list
+  // **no screen draws it**: those figures are configured ceilings, drawn where
+  // the `caps` panel draws one and nowhere else, so the policy notes read the
+  // node, drop the block and draw no figure of it (the managed screens'
+  // reconciliation, §6 rule 3 -- which also retires this comment's earlier claim
+  // that the tab draws the block "as the policy it is"; no screen of that work
+  // does, review of 2026-11-07). **The read is not moneyless all the same**, and
+  // that is what the reduced mode withholds: the ceiling travels in the
+  // **document**, so this read is on the tab's own view list
   // (`REDUCED_VIEW_OPERATIONS`'s `caps`, below) with `budget.show` and
   // `settings.read` -- the same ruling that puts the settings read there for its
   // `budget.*` rows. The view entry is untouched: the tab's view is `caps`

@@ -39,11 +39,13 @@ lands the notes, on `main` before the tag:
   rather than inside it, because that file is keyed `vX.Y.Z` and validated
   against the CLI's own release files. What a sentence says, and what it must
   not, is [../README.md](../README.md)'s rule and holds here as it does there:
-  what the release gives a user, not what changed inside the repository. Nothing
-  reads this file automatically yet — the app's stream has no release body
-  generated for it — so it is written for the app's own release page and for the
-  store listing's "what's new" text, and it is the app's record of the release's
-  one sentence.
+  what the release gives a user, not what changed inside the repository. **The
+  site's build reads this file**: the changelog renders the line as the app's own
+  line, below the CLI's entries (`website/src/pages/changelog.astro`), and the
+  build stops when the app's latest release has no line there — so the line goes
+  in the same commit as the notes and the two version lines. It is also written
+  for the app's own release page and for the store listing's "what's new" text,
+  and it is the app's record of the release's one sentence.
 
 **The name comes first.** The app's releases are named after birds, spent in
 order: the **first is Falcon** (`mobile-v0.200.0`), then **Pelican**
@@ -67,4 +69,11 @@ GitHub release for it.
 **The first release ships under the app's business licence**, [`mobile/LICENSE.md`](../../../mobile/LICENSE.md)
 (the owner's ruling D311 of 2026-10-26, [`LICENSING.md`](../../../LICENSING.md)), and its notes say
 so. The text is counsel's, and it names Subscription Terms that are not published yet: the first release waits until the owner has published those terms or replaced that
-sentence. How the licence sits beside each store's own end-user terms is an open item for counsel.
+sentence. **It also waits for counsel's sign-off**: the app's first release ships under the business
+licence only once counsel has signed off the three rulings the licence and its pricing rest on —
+the free evaluation seat (D432), a seat as anyone who launches jobs (D433) and the read-only state
+after the grace period (D436), which is S8.4's round. (Console `0.113.0` went out ahead of that
+sign-off, on 2026-10-27; the console's README records it.) It is **honour-based**: the release
+states what the licence requires and checks no key, and key enforcement arrives with the key
+service in a later release.
+How the licence sits beside each store's own end-user terms is an open item for counsel.

@@ -1,0 +1,11 @@
+version: 1
+project: aurora
+git: { provider: github }
+agent:
+  auth: vertex
+  crafts:
+    coder:
+      model: claude-opus-5-5
+      access: "Not A Credential Name"
+workflows:
+  server: { commands: { build: make, test: make test } }

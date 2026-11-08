@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -433,4 +434,84 @@ func TestServiceContractMirrorsCredsvcReadsWhatItWrites(t *testing.T) {
 			t.Errorf("an exhausted answer halted the run: %q", detail)
 		}
 	})
+}
+
+// TestGitForwardMirrorsCredsvc: the loopback forwarder's copy of the wire
+// (B1.6) held to the contract internal/credsvc writes — the route's prefix and
+// the two identity headers — the way TestServiceConstantsMirrorCredsvc holds
+// the model path's. The forwarder cannot import internal/credsvc (the service
+// imports internal/gateway), so its prefix is spelled a second time on purpose
+// and this test is what keeps the two spellings one: a route renamed on one
+// side and not the other would leave every proxied run's git talking to a path
+// the service answers 404 to, with nothing else to notice it.
+func TestGitForwardMirrorsCredsvc(t *testing.T) {
+	if gateway.GitProxyPrefix != credsvc.BitbucketProxyPrefix {
+		t.Errorf("the forwarder serves %q and the service serves %q", gateway.GitProxyPrefix, credsvc.BitbucketProxyPrefix)
+	}
+
+	// And the headers a forward writes are the contract's own, read back from
+	// the bytes a service receives: the job's ID token in Authorization (the
+	// header Cloud Run IAM consumes), the run's identity and the job's name in
+	// the two headers internal/credsvc's RequestFromHTTP reads them from.
+	const path = "acme/sandbox.git/info/refs"
+	idToken := "id-token-" + mirrorName(t)
+	runIdentity := "run-identity-" + mirrorName(t)
+	seen := make(chan *http.Request, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.Clone(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	fw, err := gateway.StartGitForward(context.Background(), gateway.GitForwardOptions{
+		Service: srv.URL,
+		Identity: gateway.Service{
+			IDToken:    func(context.Context) (string, error) { return idToken, nil },
+			RunIDToken: func() string { return runIdentity },
+			Job:        mirrorJob,
+		},
+		Log: slog.New(slog.DiscardHandler),
+	})
+	if err != nil {
+		t.Fatalf("StartGitForward: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	defer func() { _ = fw.Close(ctx) }()
+
+	u, err := url.Parse(fw.URL())
+	if err != nil {
+		t.Fatalf("URL() = %q: %v", fw.URL(), err)
+	}
+	if u.Path != credsvc.BitbucketProxyPrefix {
+		t.Errorf("the URL a runner hands git carries the path %q, want the route the service serves (%q)", u.Path, credsvc.BitbucketProxyPrefix)
+	}
+
+	resp, err := http.Get(fw.URL() + path)
+	if err != nil {
+		t.Fatalf("the forwarder: %v", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the fetch answered %d, want 200", resp.StatusCode)
+	}
+	var got *http.Request
+	select {
+	case got = <-seen:
+	case <-ctx.Done():
+		t.Fatal("the credentials service was never reached")
+	}
+	if want := credsvc.BitbucketProxyPrefix + path; got.URL.Path != want {
+		t.Errorf("the service was sent %q, want %q", got.URL.Path, want)
+	}
+	if v := got.Header.Get("Authorization"); v != "Bearer "+idToken {
+		t.Errorf("Authorization = %q, want the job's own ID token", v)
+	}
+	if v := got.Header.Get(credsvc.HeaderRunIdentity); v != runIdentity {
+		t.Errorf("%s = %q, want %q", credsvc.HeaderRunIdentity, v, runIdentity)
+	}
+	if v := got.Header.Get(credsvc.HeaderRunJob); v != mirrorJob {
+		t.Errorf("%s = %q, want %q", credsvc.HeaderRunJob, v, mirrorJob)
+	}
 }

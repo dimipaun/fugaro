@@ -116,8 +116,21 @@ const scoringAxes = `
 - class, the kind of issue, exactly one of: correctness, performance, security, data_loss, maintainability, cosmetic; a finding without one of these counts as unscored.
 Leave nothing unscored: a finding with no score blocks the pull request in every mode.`
 
+// ownerClause is OD1's rule for the in-run reviewer: when a finding is the
+// owner's to settle, and when it is not. It is the in-run contract's alone —
+// the independent review job's artifact has its own third verdict word,
+// "reject", for a person to look at the pull request rather than an automated
+// fix, and its schema carries no needs_owner for a reader to act on.
+//
+// It is written as the reviewer's own question ("whose decision is this?")
+// rather than as a list to match, and the last sentence is the one that keeps
+// the flag from becoming a way out of a hard finding: a reviewer that marked
+// everything needs_owner would stop the run on its own opinion.
+const ownerClause = `
+- needs_owner, whether the only remedies are a decision this run cannot make: set it to true on a finding whose every remedy is a licence or legal clearance, a product or policy choice, a step the owner runs, or a spec that says this must not merge until the owner answers — and never on a finding the code can fix. A needs_owner finding is still scored on the three axes above, it is never handed to the fixer, and a round whose findings are all needs_owner ends the run until a person decides. Set it only when you are sure: a finding the code can fix, marked needs_owner, is a fix nobody makes.`
+
 // reviewScoring is that contract for every in-run reviewer.
-const reviewScoring = scoringPreamble + inRunSeverity + "." + scoringAxes
+const reviewScoring = scoringPreamble + inRunSeverity + "." + scoringAxes + ownerClause
 
 // artifactScoring is it for the independent review job, whose answer is the
 // artifact (reviewartifact.go, D890).
@@ -603,10 +616,16 @@ func fixFindingField(s string, neutralize func(string) string) string {
 }
 
 // FixPrompt asks the implementing session to address review findings.
+//
+// The findings a reviewer marked needs_owner are left out (OD1): they are the
+// ones no code change can settle, and handing one to the coder would spend the
+// round on work that cannot answer it. A round whose every finding is one of
+// those never reaches this function at all — the loop stops and the run ends
+// waiting for the owner — so what is dropped here is the mixed round's.
 func FixPrompt(v Verdict) string {
 	var b strings.Builder
 	b.WriteString("A code review of your changes asked for these fixes:\n\n")
-	for _, f := range v.Findings {
+	for _, f := range fixableFindings(v.Findings) {
 		b.WriteString("- ")
 		if f.Severity != "" {
 			fmt.Fprintf(&b, "[%s] ", f.Severity)

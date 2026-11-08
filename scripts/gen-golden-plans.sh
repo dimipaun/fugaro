@@ -3,8 +3,9 @@
 # `terraform show -json` plans of the three roots (the Firebase root in the
 # same-project layout, and the installation root with the account axis's
 # tfvars and with managed_deployer_scoped set) (fresh creates), cut down to
-# their resource_changes, plus repo-scope-move.plan.json, the one golden made
-# in two steps from a synthetic prior state (see below). Needs terraform, jq
+# their resource_changes, plus the two goldens made in two steps from a
+# synthetic prior state (repo-scope-move and installation-catalog-add-repo, see
+# below). Needs terraform, jq
 # and the google provider already in a plugin cache directory (the one fugaro
 # keeps: ~/.cache/fugaro/terraform-plugins).
 # It plans with a fake access token and an unreachable HTTPS proxy, so no
@@ -215,6 +216,43 @@ JQ
   cp "$repo/deploy/terraform/gcp/roots/repo/tests/testdata/project-secrets.tfvars.json" terraform.tfvars.json
   "${tfenv[@]}" terraform plan -refresh=false -state="$tmp/scope1.state.json" -out=scope2.bin >/dev/null
   "${tfenv[@]}" terraform show -json scope2.bin | jq -c '{format_version,terraform_version,resource_changes}' > "$golden/repo-scope-move.plan.json"
+)
+
+# installation-catalog-add-repo.plan.json is the other golden that needs a
+# PRIOR state, and the plan the managed gate's cover was missing (CV1): the
+# installation root of a project that already has the catalog check job
+# (modules/installation/catalogcheck.tf, D1148) planned against the state one
+# repository earlier, which is the plan `fugaro update` writes when a
+# repository is added to it — the one the gate refused (a step it cannot be
+# typed past, D1012) and the one internal/infra/tf's catalogRecordsGrant is
+# about. Two real steps, offline throughout, the same machinery
+# repo-scope-move uses:
+#
+# 1. state_from_plan turns the installation root's fresh plan of
+#    installation-catalog.tfvars.json (the same installation before the
+#    repository) into the state a real apply of it would have written. The
+#    catalog check account's identity needs no help here: the provider
+#    computes google_service_account's email and member during plan, so the
+#    state carries the account's real name and the grants referencing it stay
+#    no-ops in step 2 (`member` is the string the new repository's grant
+#    carries — the whole point of this golden, since the account already
+#    exists by then; the alternative spelling, a member computed at apply, is
+#    the one a first deploy plans).
+# 2. terraform plan -refresh=false -state=<that state> against
+#    installation-catalog-added.tfvars.json (the same installation one
+#    repository later, and one catalog entry later) reads nothing from the
+#    provider, so the no-network guarantee holds.
+(
+  cd "$tmp/gcp/roots/installation"
+  cp "$repo/internal/infra/testdata/installation-catalog.tfvars.json" terraform.tfvars.json
+  "${tfenv[@]}" terraform init -backend=false >/dev/null
+  "${tfenv[@]}" terraform plan -out=catalog1.bin >/dev/null
+  "${tfenv[@]}" terraform show -json catalog1.bin > "$tmp/catalog1.json"
+  "${tfenv[@]}" terraform providers schema -json > "$tmp/catalog-schema.json"
+  jq -c --slurpfile schema "$tmp/catalog-schema.json" -f "$tmp/state_from_plan.jq" "$tmp/catalog1.json" > "$tmp/catalog1.state.json"
+  cp "$repo/internal/infra/testdata/installation-catalog-added.tfvars.json" terraform.tfvars.json
+  "${tfenv[@]}" terraform plan -refresh=false -state="$tmp/catalog1.state.json" -out=catalog2.bin >/dev/null
+  "${tfenv[@]}" terraform show -json catalog2.bin | jq -c '{format_version,terraform_version,resource_changes}' > "$golden/installation-catalog-add-repo.plan.json"
 )
 
 adopt_variant "$golden/installation.plan.json" "$golden/installation-adopt.plan.json" '{

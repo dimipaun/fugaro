@@ -379,14 +379,15 @@ func jobConfigCopyMountNote(names []string) string {
 // reader accepts (C1.1) from the release that carries the service, and a
 // repository whose file names it is a repository whose jobs must NOT mount a
 // model credential: the run asks the installation's service for one instead.
-// That is not something a version upgrade does. Two owner-run steps do it —
-// the installation's credentials stage, which turns the service on, and each
-// repository's own `fugaro update --repo .`, which drops the job's
-// model-secret accessors and grants its account an invoker on the service —
-// and until they have run, the checkout says `cascade` while its jobs are
-// unchanged, exactly the half-state the skill's offer is pinned against
-// (C1.19). An upgrade is where the operator learns it: the step names both,
-// in the order they have to run.
+// That is not something a version upgrade does: an ordinary `fugaro update`
+// deploys the service on the installation (it is every installation's now) and
+// re-applies the root of the checkout it runs in, which is what drops that
+// repository's jobs' model-secret accessors and grants their accounts an
+// invoker on the service, and every other repository of the project needs its
+// own `fugaro update --repo .`. Until that has run for a repository, its file
+// says `cascade` while its jobs are unchanged, exactly the half-state the
+// skill's offer is pinned against (C1.19). An upgrade is where the operator
+// learns it: the step names both, in the order they have to run.
 //
 // "" for every other auth: nothing of this is about a workflow that mounts
 // its own credential, which is every repository until its file says
@@ -404,7 +405,7 @@ func jobConfigCopyCredentialsNote(cfg *config.Config) string {
 	// --firebase-project is a string flag with no default, so the note names
 	// its value; the repository's own file is the only place this side can
 	// read one from, and a checkout that records none says what to type.
-	return fmt.Sprintf("this repository's workflows run with agent.auth: %s, and that mode's credential comes from the installation's credentials service at call time: a job that is `cascade` must mount no model credential at all, and the two steps that make it so are owner-run. Turn the service on in the installation with `fugaro update --provision-credentials` (a typed confirmation, and it needs the installation's Firebase rules redeployed with `fugaro update --firebase-project %s` first), then run `fugaro update --repo .` in this checkout and in every other repository of the project, which is what drops each job's model-secret accessors and grants its account an invoker on the service. Until both have run, a %s run is refused at launch and the deployed job still mounts the credential it should not", config.AuthCascade, firebaseProjectIDWord(cfg.GCPProject), config.AuthCascade)
+	return fmt.Sprintf("this repository's workflows run with agent.auth: %s, and that mode's credential comes from the installation's credentials service at call time: a job that is `cascade` must mount no model credential at all, and the step that makes it so is owner-run. An ordinary `fugaro update` in this checkout deploys the installation's credentials service — it needs the installation's Firebase backend, which `fugaro update --firebase-project %s` supplies — and re-applies this repository's root, which is what drops its jobs' model-secret accessors and grants their accounts an invoker on the service. Every OTHER repository of the project needs the same `fugaro update --repo .` in its own checkout. Until that has run for a repository, a %s run of it is refused at launch and the deployed job still mounts the credential it should not", config.AuthCascade, firebaseProjectIDWord(cfg.GCPProject), config.AuthCascade)
 }
 
 // jobConfigCopyPolicyNote is the drift note's policy clause: what a

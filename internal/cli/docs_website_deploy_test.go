@@ -465,7 +465,7 @@ func websiteWorkflowProblems(name string, want websiteWorkflowExpectations, data
 		for jobID, job := range doc.Jobs {
 			env, _ := job.Environment.(string)
 			if env != websiteLiveEnvironment {
-				add("promote-environment", "%s job %q has environment %v, want %q: the owner-only environment is what holds the job for approval", name, jobID, job.Environment, websiteLiveEnvironment)
+				add("promote-environment", "%s job %q has environment %v, want %q: `website-live` is where the job's deployment branch policy (main only) and its repository variables live -- the reviewer who used to hold the job was removed on 2026-11-07", name, jobID, job.Environment, websiteLiveEnvironment)
 			}
 			guard, _ := job.If.(string)
 			if !strings.Contains(guard, want.ownerLogin) || !strings.Contains(guard, "github.actor") {

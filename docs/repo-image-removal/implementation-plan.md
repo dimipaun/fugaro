@@ -401,8 +401,8 @@ readiness branches that decide between them.
 
 ## R8. The writers and the published surfaces (D1204, D1205)
 
-- **Interface.** `plugin/skills/setup/SKILL.md:84` teaches `fugaro image add` and `image_name` in place
-  of the removed keys (`:91`), with the reference documents and the plugin's two pins moving with
+- **Interface.** `plugin/skills/setup/SKILL.md:82` teaches `fugaro image add` and `image_name` in place
+  of the removed keys (`:89`), with the reference documents and the plugin's two pins moving with
   it (`plugin/setup_skill_test.go:154`, `plugin/skills_lint_test.go:789`). The console's never-reachable
   table drops the removed commands (`console/src/main/ipc.ts:1764`, with
   `console/test/unit/ipc.test.ts:681`), and the generated CLI reference is regenerated

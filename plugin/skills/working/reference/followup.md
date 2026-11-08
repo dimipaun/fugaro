@@ -3,7 +3,7 @@
 
 # Follow up a Fugaro pull request
 
-You are launching `fugaro run --pr N`: a cloud run that checks out the branch of pull request N, which an earlier Fugaro run opened, and continues it. The run reads the PR's review comments and the configuration of the PR's base branch. It adds commits to the same branch, marks the PR ready or draft again, and posts a new report on it. Reviewers are requested again only if the run turns a draft PR ready; a PR that was already ready is not re-requested. It never opens a second PR.
+You are launching `fugaro run --pr N`: a cloud run that checks out the branch of pull request N, which an earlier Fugaro run opened, and continues it. It reads the PR's review comments and the base branch's configuration, adds commits to the same branch, marks the PR ready or draft again, and posts a new report. Reviewers are requested again only when the run turns a draft PR ready. It never opens a second PR.
 
 You are done when the launch printed `launched` (or `already-launched`) and you have told the user the run, the branch and how to watch it.
 
@@ -48,7 +48,7 @@ The run already has the PR's diff, its earlier session when it can resume it, an
 
 Make them self-contained: the remote agent can't see this conversation. Give acceptance criteria it can check, such as which tests must pass or what the behaviour must be.
 
-If the trusted comments say everything, pass no instructions at all. The run then addresses the unresolved review comments.
+If the trusted comments say everything, pass none at all: the run then addresses the unresolved review comments.
 
 ## 4. Choose a run ID
 
@@ -76,7 +76,7 @@ Without instructions:
 fugaro run --pr N --repo <owner/name> --run-id <id> --json
 ```
 
-Don't pass `--ref` or `--workflow`: a follow-up takes the base branch and workflow of the runs before it, and the CLI refuses them. `--batch <name>` and `--total-timeout <duration>` work as for any run.
+Don't pass `--ref` or `--workflow`: a follow-up takes the base branch and workflow of the runs before it, and the CLI refuses them. `--batch` and `--total-timeout` work as for any run.
 
 The JSON has `run`, `branch` (the PR's branch), `pr`, `previous_run` (the run whose work it continues), `execution`, `log_url` and `status` (`launched`, or `already-launched` when this run ID was launched before). Tell the user:
 - the run (`run`), the PR and its branch
@@ -101,13 +101,14 @@ The CLI exits 1 and says why. Don't work around a refusal. Tell the user what it
 | `has no task.json, so its base branch is unknown` | The last run's task is gone. Offer a new run. |
 | `ran on ref …, which is not a branch name` | The PR's runs were launched at a tag or a commit, so a follow-up has no base branch to read its configuration from. Offer a new run. |
 | `continues X, but PR #N is on Y` | The PR moved to another branch since this follow-up was stored. Launch again with a new run ID. |
+| `stopped waiting on … only you can settle` | The last run's review left findings only the owner can settle, so it halted (`owner_decision`) rather than spend runs on them. Get their ruling, then launch again passing it as `--owner-ruled <text-or-file>`; never invent one. |
 | `run ID <id> already holds a different task` | You reused a run ID for another follow-up. Choose a new ID. |
 | `has updated PR #N since; start a new follow-up` | Another run updated the PR after this one was stored. Launch again with a new run ID. |
 | anything else | Show the user the message, and `fugaro diagnose <run>` of any run it names, and stop. |
 
-A `branch busy` holder whose own execution the backend confirms has ended — a crash, an OOM, a node loss, or a kill right after it finished — doesn't need any of this: the CLI notices on its own, clears the lock and launches, with a one-line note on stderr instead of the refusal. You only see `branch busy` for a run that is still genuinely live, or whose execution the backend can't yet (or no longer) confirm either way. Under the bucket hardening, a launcher's clear is refused (every launcher's delete of locks/ is, by design — only an operator can clear it there; there is no automatic sweeper for locks/, unlike the lifecycle rule that expires runs/ and cache/ on their own); the CLI then prints the exact command an operator needs to run, and the launch stays refused until they do — don't try to work around it.
+A `branch busy` holder whose own execution the backend confirms has ended doesn't need any of this: the CLI notices on its own, clears the lock and launches, with a one-line note on stderr instead of the refusal. You see `branch busy` only for a run that is genuinely live, or whose execution the backend can't yet confirm either way. Under the bucket hardening a launcher's clear is refused (every launcher's delete of locks/ is, by design; only an operator can clear it there, and no sweeper expires locks/ as the lifecycle rule expires runs/ and cache/): the CLI prints the exact command an operator runs, and the launch stays refused until they do — don't work around it.
 
-**When you don't know whether the launch went through** (the command timed out, the connection dropped, or it exited 2): run the same command again, with the same run ID. It reports `already-launched` if the first attempt got through, and launches otherwise. If it says the launch is still in flight, wait a few minutes and repeat it: after ten minutes an abandoned launch claim is taken over. `fugaro run --retry <run>` launches the stored run the same way A report run is the one exception: launched again, never retried.
+**When you don't know whether the launch went through** (the command timed out, the connection dropped, or it exited 2): run the same command again, with the same run ID. It reports `already-launched` if the first attempt got through, and launches otherwise. If it says the launch is still in flight, wait a few minutes and repeat it: after ten minutes an abandoned launch claim is taken over. `fugaro run --retry <run>` launches a stored run the same way; a report run is never retried.
 
 ## 7. When the run ends without updating the PR
 
@@ -138,10 +139,12 @@ The report stays in the runs bucket, and `fugaro diagnose <run>` shows it. Launc
 
 ## 8. A halted PR
 
-A run can end `halted`: a budget cap stopped it (`fugaro runs ls` shows `halted (<reason>)`, for example `run_cap`, `token_cap`, `repo_daily_cap`, `global_daily_cap`, `kill_switch`, `budget_unavailable` or `budget_token_expired`, and `fugaro diagnose <run>` names the cap or switch and what the run spent). A halted run pushed its work and opened a **draft** PR, so it can be followed up like any other, but only once the cap that stopped it has been raised. Otherwise the follow-up halts at its first call.
+A run can end `halted`: a cap, a kill switch or a review waiting on the owner stopped it (`fugaro runs ls` shows `halted (<reason>)`, and `fugaro diagnose <run>` names the cap or switch and what the run spent). A halted run pushed its work and opened a **draft** PR, so it can be followed up like any other, but only once the cause has been dealt with. Otherwise the follow-up halts at its first call.
 
-- **Raising the cap is the user's decision, never yours.** For a dollar cap it is `budget.per_run_usd` in the project's local config (`~/.config/fugaro/projects/<project>.yaml`); for a token cap it is `budget.max_run_tokens` there (the ceiling) and, when the repository committed a lower one, `agent.max_run_tokens` or `budget.per_run_usd` in `fugaro.yaml` on the default branch (a merge, since a branch can only tighten and the runner reads the default branch). The ceiling reaches the jobs only through the repository step of the converge, so the user reruns it from the repository's checkout after changing the config. Say which of these applies, and don't edit either yourself.
-- **A shared-budget halt is the owner's decision too.** `repo_daily_cap` and `global_daily_cap` are caps in the project's budget database: only a budget admin raises them (show the user the state with `fugaro budget show --repo owner/name`; you never run the owner's budget commands yourself). A `kill_switch` halt means someone stopped the project or the repository on purpose: do not follow up until the user says it was cleared. `budget_unavailable` means the budget backend was unreachable for three minutes: tell the user and, once they confirm it is back, follow up as usual. `budget_token_expired` means the run waited over an hour before it started: launch it again.
+**`owner_decision` is the one halt that is not a cap: a person, not the code, is what comes next.** A follow-up on such a PR is refused without `--owner-ruled <text-or-file>`, the owner's ruling appended to the brief verbatim; `reference/status.md` says what is waiting and why. Ask the user for it, never write one yourself.
+
+- **Raising the cap is the user's decision, never yours.** A dollar cap is `budget.per_run_usd`, a token cap `budget.max_run_tokens`, in the project's local config (`~/.config/fugaro/projects/<project>.yaml`); the ceiling for both. A repository may commit a lower one in `fugaro.yaml` on the default branch, and only a merge there raises that. The ceiling reaches the jobs through the repository step of the converge, which the user reruns from the repository's checkout. Say which applies, and edit neither yourself.
+- **A shared-budget halt is the owner's decision too.** `repo_daily_cap` and `global_daily_cap` live in the project's budget database: only a budget admin raises them (`fugaro budget show --repo owner/name` shows the state; you never run the owner's budget commands). A `kill_switch` means someone stopped the project or repository on purpose: do not follow up until the user says it was cleared. `budget_unavailable` means the backend was unreachable for three minutes: follow up once the user confirms it is back. `budget_token_expired` means the run waited over an hour to start: launch it again.
 - **Then follow up as usual** (steps 2 to 5). The run continues from the halted run's branch; the PR stays a draft until a run ends with a passing test run and a `ship` review.
 - **A halt at bootstrap** (reason `no_cap`, `kill_switch`, `budget_token_expired`, `budget_unavailable`, or a halted follow-up that stopped before its push) opened no PR. There is nothing to follow up: after the user fixes the budget, launch a new run.
 

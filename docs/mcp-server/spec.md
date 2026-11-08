@@ -1,7 +1,10 @@
 # The hosted MCP server: the spec
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; the rest is not started; this folder approves no task.** The owner's spec of
+merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
+prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
+except the reading of the installation's published state its lists come from, which no task of this
+plan carries; M8–M10 are not started; this folder approves no task.** The owner's spec of
 2026-10-24 is §0, copied **verbatim**; the design that follows (§1 onward) is written to the
 **answers the owner gave on 2026-11-04** to the fifteen decisions in
 [reconciliation.md](reconciliation.md) §4 (D920–D934) — **every one of them the recommendation at
@@ -163,10 +166,19 @@ repository's own rule for a documentation folder says so. **The one licence this
 on is a dependency's**: D921 was answered with `zitadel/oidc`'s licence **UNCONFIRMED**, and
 **nothing the independent security review of 2026-11-04 read could settle it** (finding M-c,
 [reconciliation.md](reconciliation.md) §4a) — the library's Apache 2.0 claim is the library's own.
-What stands is the check itself, which is why it is a gate rather than a closed item: **the owner or
-counsel confirms the licence, counsel's clearance of the transitive dependencies included, and the
-M5 gate file is the owner's to create** — M5 does not start until a person has written it
-([reconciliation.md](reconciliation.md) §6, check 1).
+**The owner settled it himself on 2026-11-07.** He ruled that he would clear the set by reading one
+table — every module this branch adds or bumps, its licence as the module's own file reads it,
+whether it is linked into the fugaro binary, and a column for anything not clearly permissive — that
+table is [licence-table.md](licence-table.md), and **he read it the same day and cleared the set,
+recording no more than one line: "Cleared: all permissive."** That record is
+[licence-gate.md](licence-gate.md), the gate file the check describes, and **the table is evidence
+and not the gate: it claims no clearance of its own, and counsel was never asked for the transitive
+dependencies' clearance**, so what the tree carries is the owner's clearance and no other
+([reconciliation.md](reconciliation.md) §6, check 1). **So the first owner check is met, and the
+licence holds nothing back** — a licence that turned out to be unusable would still send D921 back to
+its own alternatives, with the library out of `go.mod` and M5 rebuilt without it — **and what keeps
+M5 dormant is M5b**, the paired-device approval (§3, §8), which is a hard prerequisite before any
+binary links the front door.
 
 ## 2. The front door: transport, endpoint, and who may reach it
 
@@ -212,7 +224,10 @@ confirmation rather than a silent apply.
   coordinator's own authorization server.
 - `/.well-known/oauth-authorization-server` — the authorization server's metadata.
 - `POST /oauth/register` — Dynamic Client Registration (RFC 7591).
-- `GET /oauth/authorize`, `POST /oauth/token`, `POST /oauth/revoke`.
+- `GET /oauth/authorize` — the authorization request, which renders the page a person reads — and
+  `POST /oauth/authorize`, the approve step that page posts its answer to. One path, two methods:
+  M-a's approval is a POST, and the GET verifies nothing.
+- `POST /oauth/token`, `POST /oauth/revoke`.
 
 **Every other request** is the MCP endpoint, and it is the resource server: it reads the bearer
 token, validates it (D920), and only then looks at the JSON-RPC body.
@@ -235,11 +250,12 @@ therefore bound the service, and they are the service's own, not the handler's:
 **The metadata document's shape.** A Firebase ID token's audience is the bare project id rather than
 a URL, which is the gotcha the owner's spec names. The design answers it exactly as the spec says it
 should: the coordinator issues its own tokens and never passes a Firebase token through as a bearer.
-A Firebase ID token is accepted at **one** endpoint, **`GET /oauth/authorize`** — the owner's answer
-of 2026-11-04, and not at `POST /oauth/token` as an earlier draft of this design had it: it is the
-proof of the *sign-in* step, which is the authorize step, and it is never a grant the token endpoint
-accepts. The access token the coordinator mints afterwards carries a real resource audience — the
-coordinator's own URL — so a client's standard check works.
+A Firebase ID token is accepted at **one** endpoint, the **approve step's `POST /oauth/authorize`** —
+the owner's answer of 2026-11-04, amended the same day (M-a) so that the token travels in that POST's
+body and **never in a GET URL** — and not at `POST /oauth/token` as an earlier draft of this design
+had it: it is the proof of the *sign-in* step, which is the authorize step, and it is never a grant
+the token endpoint accepts. The access token the coordinator mints afterwards carries a real resource
+audience — the coordinator's own URL — so a client's standard check works.
 
 ## 3. The authorization server
 
@@ -247,12 +263,15 @@ coordinator's own URL — so a client's standard check works.
 server is built on **zitadel/oidc** — the first option the owner listed, and the owner's answer —
 with the coordinator supplying two things the library does not: the storage over the project's own
 store (§6), and Dynamic Client Registration, which the owner's spec already expects to be a few
-hundred hand-written lines. **The library's licence is still UNCONFIRMED** — the review settles the
-library's *behaviour* against this design and not its licence; **the owner or counsel confirms it,
-counsel's clearance of the transitive dependencies included**, and **the M5 gate file is the owner's
-to create**, so the gate stands until a person has written it
-([reconciliation.md](reconciliation.md) §6, check 1). M5 does not start until it is settled, and a
-licence that turns out to be unusable sends D921 back to its alternatives rather than to a
+hundred hand-written lines. **The library's licence was answered UNCONFIRMED**, and the review
+settles the library's *behaviour* against this design and not its licence, so the owner confirmed it
+himself: **he read [licence-table.md](licence-table.md) on 2026-11-07 and cleared the dependency set
+in one line — "Cleared: all permissive" — recorded in [licence-gate.md](licence-gate.md)**
+([reconciliation.md](reconciliation.md) §6, check 1). **Counsel was never asked, and no line here is
+counsel's clearance.** So the check that gated M5 is met, and **what still holds the front door
+dormant is M5b**, the paired-device approval the owner ruled a task of its own (§8), rather than the
+licence: a licence that had turned out to be unusable would send D921 back to its alternatives rather
+than to a
 workaround. The alternatives and their costs stay in the reconciliation; the short version is that
 ory/fosite brings the same missing piece and a heavier plugin API for a flow this small, and a
 standalone third-party server is a second resident service in a self-hosted product whose whole
@@ -304,6 +323,16 @@ MCP client registers before any person has signed in. Openness is bound by four 
   kind; this design keeps the example out of the code, because a vendor's callback URL baked into a
   self-hosted product is a URL that goes stale in somebody else's release cycle.
 
+**The rate limit and the expiry are not built.** The registration endpoint that ships with M5
+refuses nothing by rate and sweeps nothing: it writes one record per registration, so the audit
+holds, but there is no limiter in front of it, no sweep, and no read-time bound either — a
+registration carries the time it was made and nothing compares that against anything, so a
+registration stays a client for as long as the store holds it. **Both bounds belong to no task of
+the plan**, M5 builds the endpoint and neither bound, and this paragraph names the gap and raises it
+to the owner rather than closing it here ([reconciliation.md](reconciliation.md) §4a). The flow's
+own two records, the pending request and the code, are the pair M5 does bound on read: each refuses
+its record once its TTL has passed, and the sweep all three shapes wait for is what is missing.
+
 **The flow, end to end** (the owner's §"Auth flow", with the places this design changes it — none
 of them the endpoints, all of them what happens at them):
 
@@ -353,6 +382,15 @@ of them the endpoints, all of them what happens at them):
    - approval is **a single-use POST on a named endpoint**, and **an ID token never travels in a GET
      URL**, where it would land in history, logs and referrers;
    - **nothing is pushed without a person starting it.**
+
+   **The first of those is what the flow's implementation does not yet do.** M5's approve step renders
+   the flow's number on the page and posts it back from the same page's form, so the number is a
+   binding between that page and the approval and **not the device-side approval this bullet asks
+   for**: the paired device never sees the number, and a page rendering a flow of its own knows its
+   own number ([reconciliation.md](reconciliation.md) §4a, D923's M-a amendment). The half that would
+   bind the approval on the device is unbuilt, and **the owner answered it on 2026-11-07: it is M5b,
+   a task of its own and a hard prerequisite before anything wires the front door**
+   ([implementation-plan.md](implementation-plan.md) §3).
 6. The coordinator issues the authorization code, and the exchange at `POST /oauth/token` mints a
    short-lived access token and a refresh token, scoped to the MCP resource URL, carrying the
    identity, the client, the scopes and the limits of §6.
@@ -514,6 +552,14 @@ an error **naming the limit** — the mode the token allows and the mode that wa
 the owner's spec asks for exactly that and because an agent that cannot see which limit it hit will
 retry the same request.
 
+**And nothing in the endpoint M5 ships turns the flag on.** `Limits.Narrow` takes the tighter side,
+so a token can only ever make Hotfix *less* true than the installation already allows, and the
+approval page of §3 carries no control that would make it true: a token minted by the flow that
+exists today carries `Hotfix: false` whatever the project's own `hotfix:` line says, and the window
+it carries is the installation's own, because nothing in an authorization request asks for a
+narrower one. Where a person turns the flag on is a product decision no task in the plan has taken,
+so this paragraph states both rules and says plainly that the way to *use* them is not built yet.
+
 **The spend limit narrows the run's ceiling** (D924, answered as recommended on 2026-11-04). The
 token's spend limit is never sent to the
 agent as its own budget figure. It is applied where the run's ceiling is applied: the run's ceiling
@@ -557,6 +603,12 @@ floating-point zero cannot tell "no limit of its own" from "a limit of zero", an
 the whole of "only narrows" (D924). An **unknown rigor-mode string is refused**, not ignored — a
 token whose window names a mode this build does not know is refused rather than read as unset.
 
+**The micros half of that is decided here and not built.** The shipped field is still
+`Limits.SpendUSD float64` (`ee/coordinator/mcpauth/limits.go`), so today an unset spend limit and a
+limit of zero are the same value and only the pass-through rule tells them apart; moving the field
+to micros is **M9's** own decision rather than a second one taken here
+([implementation-plan.md](implementation-plan.md), M9; reconciliation.md §4a).
+
 **What is stored, and where** (D922, answered 2026-11-04 — **the recommendation**, **amended the
 same day** by findings H3 and M-c; D935). Only **hashes** — never a token value, never a refresh
 token, never a client secret — and the record lives in a **separate top-level subtree of the
@@ -587,7 +639,12 @@ amended answer has four parts, and the rules clause above is only the first:
    pepper held in Secret Manager**, so a reader who is not the coordinator cannot reverse one even
    with a weak token space; and **every record's identity, its limits and its revocation state are
    MAC'd**, so a writer the rules do not bind — a database admin, a launcher with a signer, a
-   compromised run — cannot forge one.
+   compromised run — cannot forge one. **This is the design's requirement and it is not what the
+   code does**: the store hashes with a plain unkeyed `sha256` and writes no MAC
+   (`ee/coordinator/mcpauth/store.go:387`), so a reader who is not the store's own member reads an
+   identity in the clear. That gap is M2's own row, merged on `main` and not in this branch, and it
+   is carried as a finding in §11 and [reconciliation.md](reconciliation.md) §4a rather than read
+   here as a control the tree performs.
 3. **The public service holds no `firebasedatabase.admin`.** It holds **viewer only**, and only for
    the pre-check it runs before minting. The account that writes the store is not the account that
    answers strangers.
@@ -614,9 +671,10 @@ exactly the way the decision was asked about.
 something were written there, which is finding H3 and the reason the records left the database
 altogether. So the correct statement is the narrower one: **what the rules close, they close against
 every client; what they do not close — IAM — is answered by the records not being there, by the
-HMAC-keyed hashes, by the MACs, and by the public service holding viewer and not admin.** "Store
-only hashes" is the *second* line of defence and not the only one; the value is shown once at mint
-and never again.
+public service holding viewer and not admin, and by the two controls of §6 that are **designed and
+not built**: the HMAC-keyed hashes and the MACs (§11, [reconciliation.md](reconciliation.md) §4a).**
+"Store only hashes" is the *second* line of defence and not the only one; the value is shown once at
+mint and never again.
 
 **D922 was answered the other way first, and restated the same day.** The first answer kept the
 separate subtree but made it readable by any signed-in user of the project; the restatement of
@@ -635,9 +693,15 @@ requests presenting the same refresh token both read it as live and both rotate,
 double-submit reads as theft and a theft reads as a double-submit. The amended answer, built by M2:
 **the rotation is conditioned on the generation of the same read** — the generation-matched replace
 `internal/blobx` gives the bucket the records live in (`internal/blobx/blobx.go:1`, M2), which is the
-condition an `ETag` PUT gave a store inside the database — so exactly one rotation wins; and the
-loser inside a **small grace window** is answered with the same new pair rather than being read as a
-replay, so a client on a slow link is not logged out by its own retry. A replay **outside** the window revokes the family, exactly as above.
+condition an `ETag` PUT gave a store inside the database — so exactly one rotation wins. **The
+answer's second half is not built**: the loser inside a **small grace window** is meant to be
+answered with the winner's own new pair rather than read as a replay, so a client on a slow link is
+not logged out by its own retry — and no grace window exists in the tree. What the loser gets
+instead is `invalid_grant` (`ee/coordinator/mcpauth/token.go:323`), which is terminal and carries no
+invitation to try again, because the retry that a 5xx invites presents the spent token and that
+presentation is the theft signal itself: it revokes the family the winner is holding, so one
+double-submit would become a logout. A client that re-authorizes instead loses nothing but a page;
+the window is what a client that retries the exchange would need. A replay **outside** the window revokes the family, exactly as above.
 
 **Only narrowing** (the second rule of this folder). Scopes, the rigor window, the Hotfix flag and
 the spend limit all merge by taking the tighter side against the project's policy, the repository's
@@ -722,13 +786,41 @@ the same limits. Rotation is what turns the theft into an event: the next time t
 presents the rotated-away token, the family is revoked and the theft is visible in the audit record
 rather than silent.
 
-**What a stolen Firebase ID token reaches.** One thing: **`GET /oauth/authorize`** — the single
-endpoint that consumes one (the owner's answer of 2026-11-04; an earlier draft had it at
-`POST /oauth/token`) — and only while it is unexpired and only if its issuer and audience match the
-project, and only for an identity the project's own lists admit. It is never a bearer for the MCP
-endpoint and it is never a grant at the token endpoint, which is the whole reason the coordinator
-mints its own tokens, and it is why the design will not accept a Firebase token as an access token
-"just for convenience". **The coordinator mints no Firebase token of its own** either: it holds no
+**What a stolen Firebase ID token reaches.** One thing: **the approve step's `POST /oauth/authorize`**
+— the single endpoint that consumes one (the owner's answer of 2026-11-04, amended the same day by
+M-a; an earlier draft had it at `POST /oauth/token`) — and only while it is unexpired and only if its
+issuer and audience match the project. **The last of the bounds this paragraph used to state is built
+at one door and not at the other**: an identity has to be one the project's own lists admit, and
+**M5's approve step still mints a code and a family for any verified Firebase address** — resolving
+an identity through the launcher and operator lists is **M7** (`ee/coordinator/mcpauth/identity.go`,
+`TestIdentityOffTheListsIsRefused`, `TestOnlyExactUserEntriesAreRead`), which reads them on every
+request to the MCP endpoint — **once something supplies them: the reading of the installation's
+published state they live in is not built, and §11 carries it as an open item** — so a verified
+Firebase address still gets a token family and **that
+token reaches no tool**: an identity on neither list is refused before the request body is read, and
+the lists bound what a token buys rather than who may obtain one. It is
+never a bearer for the MCP endpoint and it is never a grant at the token endpoint, which is the whole
+reason the coordinator mints its own tokens, and it is why the design will not accept a Firebase
+token as an access token
+"just for convenience".
+
+**What the token's own expiry does not bound is what it buys.** The approval it answers mints a
+refresh family, and a family carries no lifetime of its own: `AccessTokenTTL` is the one expiry this
+package has (`ee/coordinator/mcpauth/mint.go:47`), and a refresh token's own is the zero time
+(`ee/coordinator/mcpauth/store.go:220`). Nothing spends the ID token either — the approve step
+verifies it and records nothing that would refuse it a second time — so **a leaked token approves
+another flow on every replay until it expires, and every approval leaves a family behind that
+outlives it**. **What would bound it is M-a's device half, and that half is not built**: the page
+renders the flow's number and takes it back from the same browser that
+answered, which binds the page to the flow and nothing to a paired device, so a page that rendered a
+flow of its own hands over the number and the token together and this server cannot tell that
+approval from the one M-a asks for. **The owner answered it on 2026-11-07: the device half is M5b, a
+task of its own and a hard prerequisite before anything wires the front door**, and its other two
+requirements close the two limits this paragraph states — **the ID token is spent**, and **a refresh
+family ages** ([implementation-plan.md](implementation-plan.md) §3;
+[reconciliation.md](reconciliation.md) §4a).
+
+**The coordinator mints no Firebase token of its own** either: it holds no
 signer role, so a compromised coordinator cannot answer "this person signed in" for somebody who
 did not — that is the paired device's act (§3), and the coordinator only verifies what the device's
 session produced.
@@ -782,7 +874,10 @@ design says now, and what §6 states in full:
   main database is a failing test rather than a quiet widening.
 - **The records are keyed and marked**: **HMAC-keyed hashes with a pepper in Secret Manager**, and a
   **MAC over each record's identity, limits and revocation state**, so a reader cannot reverse a
-  hash and a writer the rules do not bind cannot forge a record.
+  hash and a writer the rules do not bind cannot forge a record. **Both are designed and not
+  built**: the store hashes with a plain unkeyed `sha256` (`ee/coordinator/mcpauth/store.go:387`)
+  and writes no MAC, which §11 and [reconciliation.md](reconciliation.md) §4a carry as a finding
+  rather than this paragraph reading as a control the tree performs.
 - **The public service holds viewer and not admin**, which is the part of the finding a *grant*
   fixes rather than a store.
 - **The values are shown once, at mint, and never again** — there is no "show me my token again"
@@ -830,6 +925,10 @@ endpoint is reachable by anyone and writes a record, so it is rate-limited and a
 registration is worthless until a person consents (§3). The residual risk the design accepts is
 record growth by an unauthenticated caller, bounded by the rate limit and by registration records
 being expirable; the risk it does not accept is a registration that grants a token by itself.
+**Neither bound is built in M5** (§3, "The rate limit and the expiry are not built"), and no task of
+the plan carries either: until a limiter and a sweep land, the growth this paragraph calls
+accepted-by-bounds is accepted unbounded, and a registration has no lifetime at all — nothing yet
+bounds how many of them a stranger may leave behind.
 
 **An agent caller.** The hardest case, and the reason §7 refuses a token without limits. An agent
 cannot be asked to notice that a tool result looks wrong, and it will happily follow an instruction
@@ -968,6 +1067,39 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   UNVERIFIED** (§6, [reconciliation.md](reconciliation.md) §6 check 8): whether GCS still attaches
   its convenience bindings to a Terraform-created bucket, so that a basic project Viewer reads the
   store until M4 strips or refuses those members.
+- **The keyed hashes and the MACs the store is specified to write** (§6, §8 — the answer to finding
+  H3): **designed and not built.** The store hashes with a plain unkeyed `sha256`
+  (`ee/coordinator/mcpauth/store.go:387`) and writes no MAC over a record's identity, limits or
+  revocation state, so a reader who is not the store's own member reads an identity in the clear and
+  a writer the rules do not bind is not refused by a mark. The gap is **M2's own row**, which merged
+  on `main` before this branch, and it is carried in [reconciliation.md](reconciliation.md) §4a as a
+  finding rather than closed by an edit here. **What it costs is bounded by the value it hashes**:
+  `NewValue` is 32 random bytes (`ee/coordinator/mcpauth/store.go:395`), so the hash has no weak
+  space to walk and the missing key buys a reader nothing practical — what is wrong until the keyed
+  hash and the MAC land is a security document promising an integrity control the code does not
+  perform.
+- **Who owns the two bounds the open registration endpoint is accepted under** (§3, §8): the
+  **per-source rate limit** and the **sweep that makes a registration, a pending authorize request
+  and a code expire**. **Neither is built**, M10's `store.go` row is revocation and nothing else, and
+  **no task of the plan carries them** ([reconciliation.md](reconciliation.md) §4a, "The two bounds
+  no task carries"). **What is owed is the owner's assignment** — them inside M10's entry, or a task
+  of their own — and **until it comes the bound is the wiring task's**: the task that mounts this
+  package on a binary carries both bounds and deletes `TestNoBinaryLinksTheFrontDoorYet`, so the
+  growth §8 accepts is accepted only while nothing mounts the routes. **The wiring task owes M5b
+  beside them** (the owner's ruling of 2026-11-07): the guard is relaxed by building the
+  paired-device approval, not by deleting its message.
+- **Where the front door's own two lists are read from** (§4, D933, the amendment's finding M-f):
+  **the design says the installation's published state, and the tree reads nothing there.** §8's
+  claim that the lists bound what a token buys turns on it: `ee/coordinator/mcpauth/identity.go`
+  holds the `Roster` interface the door resolves an identity through and a server with none set
+  refuses every token (fail-closed, `WithRoster`), but **no implementation of that interface over the
+  published state is in the tree and no task of this plan carries one** — so what is built is the
+  rule the reading must keep (the lists as the source rather than a machine's config, and exact
+  `user:` entries only) rather than the reading. **The door is dormant with the rest of the front
+  door (D936)**, so no local file is read either, and **the wiring task that mounts this package on a
+  binary — the one M5b gates — owes this reading beside the two bounds above**; until it lands, a
+  front door wired up without one admits nobody rather than everybody, which is the direction the
+  gap fails in ([reconciliation.md](reconciliation.md) §4a, D933's amendment).
 - **The library's citations, and the version they were read at.** The review read `zitadel/oidc`
   3.51.17 **outside this container**, so §3's constraint layer rests on findings this folder could
   not re-check; M5 re-reads them against the version it pins.
@@ -978,9 +1110,10 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   the text ([reconciliation.md](reconciliation.md) §4a, the workspaces dependency).
 - **The override fence is unbuilt and its mechanism is undecided** (§8): how the runner reads non-allowlisted configuration from something `runWithOverrides` cannot set. It gates M9 and D931; the owner decides the mechanism before either is built.
 - The three open items of the owner's spec are answered or narrowed: the library is **zitadel/oidc**
-  (§3, D921, answered 2026-11-04 with its licence still **UNCONFIRMED** — the owner or counsel
-  confirms it, **counsel's clearance of the transitive dependencies included**, and **the gate file
-  is the owner's to create**); the standalone-server option is not taken; and
+  (§3, D921, answered 2026-11-04 with its licence **UNCONFIRMED** and cleared by the owner on
+  2026-11-07, so **§6's first check is met**: [licence-gate.md](licence-gate.md) is the record, and
+  counsel was never asked, the clearance of the transitive set being the owner's own); the
+  standalone-server option is not taken; and
   re-verification against the live MCP specification and the project's Identity Platform features is
   an owner check before implementation ([reconciliation.md](reconciliation.md) §6). **The
   re-verification could not be done here**: the public specification is not reachable from this

@@ -305,14 +305,14 @@ func applyDefaults(c *Config) {
 		w.Rebuild = w.Rebuild.Defaults()
 		t := &w.Timeouts
 		if t.Total.Duration == 0 {
-			t.Total.Duration = 90 * time.Minute
+			t.Total.Duration = 3 * time.Hour
 		}
 		// Unset timeouts scale down with a short total so a small total alone is valid.
 		if t.FinalizeReserve.Duration == 0 {
 			t.FinalizeReserve.Duration = min(5*time.Minute, t.Total.Duration/5)
 		}
 		if t.Stage.Duration == 0 {
-			t.Stage.Duration = min(40*time.Minute, t.Total.Duration)
+			t.Stage.Duration = min(60*time.Minute, t.Total.Duration)
 		}
 		if t.Verify.Duration == 0 {
 			t.Verify.Duration = min(30*time.Minute, t.Total.Duration)

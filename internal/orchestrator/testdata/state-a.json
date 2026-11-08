@@ -47,11 +47,11 @@
     }
   ],
   "facts": {
-    "repo.primary": {
+    "repo-primary": {
       "value": "owner/repo",
       "by": "person"
     },
-    "sweep.retired": {
+    "sweep-retired": {
       "value": "the sweep script, on 2026-11-06",
       "by": "daemon"
     }

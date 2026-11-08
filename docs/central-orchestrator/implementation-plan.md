@@ -16,6 +16,43 @@ Reading the register for this plan: the D-numbers are folder-local (**D23**), an
 owner-run live checks are **proposed by name and not numbered** (**D24**) — the reasoning, with
 the register read name by name, is §7 of [reconciliation.md](reconciliation.md) and §8 below.
 
+**Re-planned 2026-11-07 (D435; T20): the parts land in `ee/`, behind `ee/register`.** The owner's
+ruling of 2026-10-27 is that **central orchestrators — and the hosted MCP server with them — are
+born in the business-licensed folder**, not in the core
+([../subscriptions/reconciliation.md](../subscriptions/reconciliation.md), D435) — which is what
+this plan, and the pull request that was building its P2, had both assumed. So **a part whose
+product is the orchestrator itself lands in `ee/`**, and **#831 — the pull request that built P2
+(`fugaro orchestrator add|rm|ls`) as core code — closes as superseded**. That closure is
+**OWNER-RUN**: the pull request is already closed (2026-10-27, per the census of 2026-11-07,
+[../subscriptions/status-2026-11-07.md](../subscriptions/status-2026-11-07.md)), but the comment
+T20 names, `gh pr close 831 --comment "Superseded: re-planned in ee/ (T20)"`, is a person's to post
+— this re-plan neither posts it nor records it as done.
+
+What "born in `ee/`" changes, and what it does not:
+
+- **A part whose product is the orchestrator itself lands under `ee/orchestrator/`**, reached only
+  through `ee/register`: the command surface (P2), the resident service's Go half (P4), the session
+  protocol (P5), the session's own records (P6), the prompts (P7) and the alert path's own half
+  (P8). An untagged build keeps the core's stub for the name — it exits non-zero and says why (E1.1,
+  D522) — so a console or a phone reaches the orchestrator only in the tagged binary, which is a
+  reading each client's own part has to make explicitly. **The order in
+  §1 and every part's red step are unchanged**: what moves is where the code lands, not what it has
+  to prove.
+- **A part whose product is a capability the core already enforces stays in the core, or grows a
+  core seam.** P1's allow-list admission is the core's (`internal/infra/tf/cover.go`), and the
+  policy, the rules, the caps and the kill switch a service or an alert job drives are the core's
+  too — they are what an untagged installation enforces. P3's lease is read by `fugaro watch` and
+  taken by `fugaro run`'s launch path, both core commands, and a core package may not import `ee/`:
+  so the record and its store stay in `internal/`, the orchestrator's *use* of them lands in `ee/`,
+  and **the seam between the two is a question P3 answers in its own red step** — this re-plan does
+  not invent one.
+- **The Terraform does not move.** `deploy/terraform/` is embedded in the Go binary and applied by
+  the MIT `fugaro update`: the service, its own account and its grants are written where the
+  installation's other modules live, and the admission of the Cloud Run service type stays the
+  core's own deliberate act (P1).
+- **The decisions are still open and the gate is still unpassed.** D435 says where the code lands
+  once it is built; it answers none of D1–D26, and nothing here starts a part.
+
 ## 1. The order, and why it is this order
 
 The order is forced by four dependencies, and nothing else in the plan is arbitrary:
@@ -23,7 +60,9 @@ The order is forced by four dependencies, and nothing else in the plan is arbitr
 1. **Nothing can deploy a service until the resource type is admitted.** `internal/infra/tf/cover.go`'s
    `allowedTypes` admits `google_cloud_run_v2_job` and `google_cloud_run_v2_job_iam_member` only,
    and `Cover.NotCovered` refuses everything else (reconciliation #1). That is **P1**, and it is
-   first because every later part stands on it.
+   first because every later part stands on it. **The type has since been admitted, by the
+   credentials service's own root (D146/C1.18) — see P1's note at the end of that part**, which also
+   records the half that is still open with the owner.
 2. **Nothing can be authorised until the access record exists** — and the record has to decide
    what the allowlist *is* (a device node with an email field, per D6), because the phone's
    allowlist and the orchestrator's are the same one in the spec's own words. That is **P2**.
@@ -63,11 +102,11 @@ and what was not).
 `internal/cli/` at `2f8b4dca`, from `internal/cli/docs_artifact_runs_test.go` to
 `internal/cli/docs_windows_cli_test.go`. This folder has none, because the pull request that
 wrote it was docs-only (reconciliation C1). P0 is that guard. **Note for whoever writes it:**
-the rigor modes work's guard (`internal/cli/docs_rigor_modes_test.go`) is *not* in this tree
-to copy — that work is in open PR #773, as the folder's own documents say (README, and C6 of
-the reconciliation) — so the models to follow are
+the rigor modes work's guard (`internal/cli/docs_rigor_modes_test.go`) was *not* in this tree
+to copy when this was written — that work was in open PR #773 then, as the folder's own
+documents say (README, and C6 of the reconciliation) — so the models this part names are
 `internal/cli/docs_coordinator_test.go` and `internal/cli/docs_windows_cli_test.go`, both on
-`main`.
+`main`. **It is a third model now** — see the note at the end of this part.
 
 **Files.** New `internal/cli/docs_central_orchestrator_test.go`, whose tests hold: (a)
 `docs/central-orchestrator/spec.md` byte-for-byte against the owner's text, the way the
@@ -77,8 +116,8 @@ statement that no check number is claimed; (d) every citation in `reconciliation
 names a file in this repository anchored by **content** — the phrase the citation turns on,
 the convention `internal/cli/docs_coordinator_test.go`'s own comment describes — with the
 citation that names a document only in an open pull request (PR #632's
-`docs/mobile/design/always-on-orchestrator.md`, PR #773's `docs/rigor-modes/`) excused **by
-name, with its reason**, in the test itself.
+`docs/mobile/design/always-on-orchestrator.md`) excused **by name, with its reason**, in the
+test itself.
 
 **Red step.** Write the content anchors, then rename the symbol one of them names (for
 example `takeClaim` in `internal/cli/run.go`) in a scratch tree: the test must fail, naming
@@ -93,6 +132,14 @@ TestDocsCentralOrchestrator`.
 **Reviewer tier.** Standard. **Security-sensitive.** No.
 
 **Commit.** `cli: pin the central-orchestrator documents and their content anchors`
+
+**Stays core, and one of its models has arrived (re-planned 2026-11-07, D435/T20).** The guard this
+part writes is `internal/cli/docs_central_orchestrator_test.go` — core code, with no `ee/` half, so
+the re-plan moves nothing here. What it does change is the two sentences above about the rigor modes
+work: `internal/cli/docs_rigor_modes_test.go` **is in this tree now**, so it is a model for this
+guard rather than one to avoid, and `docs/rigor-modes/` resolves, so **Files (d) excuses PR #632's
+`docs/mobile/design/always-on-orchestrator.md` alone** — the only one of the two documents that is
+still only in its pull request.
 
 ---
 
@@ -130,6 +177,29 @@ reviewed by someone who did not write it.** The pull request body must say which
 added, which stayed refused, and that the typed confirmation still fires.
 
 **Commit.** `infra: admit google_cloud_run_v2_service to the installation's plan allow-list`
+
+**Stays core, and half of it has already been done — by another root (re-planned 2026-11-07,
+D435/T20).** The allow-list is core code with no `ee/` half, so the re-plan moves nothing here. What
+it owes the part is a correction, because **the admission this part is built around has been made**:
+`internal/infra/tf/cover.go`'s `allowedTypes` carries `google_cloud_run_v2_service` and its
+`google_cloud_run_v2_service_iam_member` (the credentials service's own root, D146/C1.18, whose
+comment the two rows sit under), so **the red step's "it fails today, because the type is refused"
+no longer fails**, and what the part adds there is a **citation** rather than an addition. Two things
+follow, and the second is not this re-plan's to decide:
+
+- **The managed path is the other half, and `managedTypes` is not where it lands.** This part's Files
+  line sends the type to `internal/infra/tf/managed_cover.go`'s `managedTypes`; the type is not on
+  that map, it is on `managedDropped`, which the reconciliation of the two maps requires a reason
+  for (`TestManagedAllowedTypesIsDecided`) and whose reasons for both rows end *"keeping it is the
+  owner's decision"*. So a plan written to this part as it stands would move a type out of a
+  fail-closed default by editing a list — which is the act the map exists to make deliberate — and
+  the red step has to be rewritten around the entry that is already there.
+- **Whether a **managed** project's plan may carry the service type is open with the owner**, and is
+  recorded here rather than decided: the row's reason is that an agent-authored service in a
+  Fugaro-owned project is a new reachable endpoint, and the deployer holds no `run.services.*`
+  permission to apply one anyway (Task 1.5). The installation's own allow-list — the half this part
+  was really about — is settled; this half is a widening of blast radius with the owner's name on
+  it, and the plan keeps it open.
 
 ---
 
@@ -169,6 +239,16 @@ the pull request body must state the rule's shape, the generation bump, and what
 no device node gets.
 
 **Commit.** `cli: the orchestrator access record and fugaro orchestrator add|rm|ls`
+
+**Lands in `ee/` (re-planned 2026-11-07, D435/T20).** The **command** is what moves: a new
+`ee/orchestrator/cli/` package with `newOrchestratorCmd` and its three subcommands, registered by
+`ee/register` the way the coordinator's command already is (`ee/coordinator/cli/coordinator.go`),
+with the core keeping the stub an untagged build shows for the name (E1.1, D522). **The record's
+mechanics stay core**, and that is the part of D435's ruling that needs saying: the policy block,
+its publish path and the RTDB rules are the project policy format and the rules generation the
+cloud enforces (`internal/projectpolicy/`, `internal/budget/rules/`, `schemas/fugaro.schema.json`),
+and the cloud keeps enforcing the launcher, operator and admin lists in MIT core — the viewer and
+the role model are what `ee/` adds on top of them.
 
 ---
 
@@ -213,6 +293,16 @@ next action gets.
 
 **Commit.** `lease: one job, one shepherd, in the Realtime Database`
 
+**Stays core, with the orchestrator's use of it in `ee/` (re-planned 2026-11-07, D435/T20).** The
+lease is the one part of this plan whose product is a **core** capability: `fugaro watch` renders it
+and `fugaro run`'s launch path takes it, both core commands, and a core package may not import
+`ee/`. So `internal/lease/` and the rules generation it needs stay where this section puts them,
+and what lands under `ee/orchestrator/` is the resident orchestrator's own use of the record. **The
+seam between the two — if the paid half needs one at all rather than reading the same subtree
+through the same client — is this part's own question**, answered in its red step beside the race
+it already proves: `ee/register` is the registry a core seam is filled through, and the rule that
+no core package imports `ee/` is what makes the answer necessary rather than optional.
+
 ---
 
 ### P4 — The resident service: consume and launch, and nothing else
@@ -251,6 +341,16 @@ evidence that no model credential is in its environment or its secrets.
 
 **Commit.** `orchestrator: the resident service consumes and launches, and holds no model credential`
 
+**Lands in `ee/` (re-planned 2026-11-07, D435/T20).** The consumer and the launcher are the
+orchestrator's own product, so their Go half lands under `ee/orchestrator/`, reached only through
+`ee/register` — and **the entry point this section calls "a new Go entry point under `cmd/`" is
+read the way the coordinator's own plan reads it**: `cmd/fugaro` is only `main`, so what carries the
+service is a command or a server the tagged tree registers, not a second `main`. The module under
+`deploy/terraform/gcp/modules/orchestrator/` does not move: it is the installation's own root, which
+the MIT `fugaro update` applies. The launch path P4 calls as a library is core
+(`internal/runstore/launch.go`, `internal/cli/run.go`) — a paid caller of a core library, which the
+boundary allows and the reverse of which it forbids.
+
 ---
 
 ### P5 — The WebSocket protocol, and `fugaro orchestrator attach`
@@ -288,6 +388,13 @@ must state the authentication at connect and at submission, what an unverified o
 allowlist-less identity gets, and why the console's CSP did not change.
 
 **Commit.** `orchestrator: the shared session protocol, and fugaro orchestrator attach`
+
+**Lands in `ee/` (re-planned 2026-11-07, D435/T20).** The protocol's package and the service's
+handler are the orchestrator's own, so they land under `ee/orchestrator/`, and **`fugaro orchestrator
+attach` joins the command P2 registers** rather than arriving as a second core command. The console
+half does not move: it is `console/`, business-licensed already, and it reaches `attach` through the
+CLI sidecar it spawns — so the console's own reading of this is that the sidecar has to be the
+tagged binary, since an untagged one answers the name with the core's stub (E1.1, D522).
 
 ---
 
@@ -329,6 +436,13 @@ alone. Independent review required for the storage and the retention fields.
 
 **Commit.** `session: the shared session, its memory and its audit trail`
 
+**Lands in `ee/` (re-planned 2026-11-07, D435/T20).** The session's own records — the message
+shape, the compacted summary and the ordering rule — are the orchestrator's product and land under
+`ee/orchestrator/`. **The store's client does not**: `internal/firestore/client.go` is core, and the
+extension this section expects is an extension of a core client the core's own commands use. The
+Terraform half (the database and any field TTL) stays in the installation's own root, applied by
+`fugaro update` — the same rule every other part's Terraform follows here.
+
 ---
 
 ### P7 — Prompts, claiming, escalation and the callback contract
@@ -369,6 +483,14 @@ review required; the body must state the tag's construction, the replay window, 
 timed-out prompt does.
 
 **Commit.** `prompt: routing, claiming, the mode-keyed escalation table and signed callbacks`
+
+**Lands in `ee/` (re-planned 2026-11-07, D435/T20).** The prompt, its claim CAS, its escalation clock
+and its routing rule are the orchestrator's own and land under `ee/orchestrator/`. **The
+mode-keyed table's home is split, and deliberately**: the *values* ride the project policy
+(`internal/projectpolicy/` and `schemas/fugaro.schema.json`, both core, because the policy is a
+format the cloud and the local CLI both read), while the code that *uses* them is the paid half.
+The mailbox vocabulary P7 reuses is core and stays there (`internal/mailbox/`), which is the
+point of reusing it rather than re-inventing it.
 
 ---
 
@@ -422,6 +544,16 @@ the alert job still can reach (the account is the blast radius — `docs/project
 
 **Commit.** `alerts: verified ingest, de-duplication, the automated budget and the breaker`
 
+**Lands in `ee/` (re-planned 2026-11-07, D435/T20), with the safety net staying core.** The webhook
+receiver, the fingerprint grouping and the alert job's own prompt builder land under
+`ee/orchestrator/`. **The caps, the breaker's store and the injection boundary do not**: the
+automated nodes and the rules are the core's (`internal/budget/model.go` and the rules template), the
+breaker is a core capability beside the kill switch, and the data-boundary convention is written
+where the prompt is built (`internal/runner/prompts.go`'s `SystemPrompt`) because **an untagged
+runner has to read the same boundary** — a convention that only the paid half carried would be no
+boundary at all for an installation running core images. P8's own gate is unchanged and still holds:
+it starts only when the owner has answered **D4** and **D16**.
+
 ---
 
 ### P9 — The other two clients, and the path to the coordinator
@@ -460,6 +592,13 @@ No — the console half adds no network surface (it adds an IPC operation beside
 allow-list), and the reporter writes only.
 
 **Commit.** `console: the orchestrator session, and the orchestrator's report to the coordinator`
+
+**Lands in `ee/` (re-planned 2026-11-07, D435/T20).** The **reporter** is the orchestrator's own
+writer and lands under `ee/orchestrator/`, as a **client** of the coordinator's service: it writes
+the project record and reads nothing back into a launch decision, which is what its own red step
+already asserts. The console half stays in `console/` and gains no network surface — its renderer's
+CSP is `connect-src 'none'` and every operation goes through the CLI sidecar, the tagged one
+(E1.1, D522). The phone's half is a note and not an edit, as this section says of itself.
 
 ## 3. The critical path, and the effort
 

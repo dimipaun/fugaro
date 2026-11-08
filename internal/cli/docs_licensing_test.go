@@ -186,6 +186,28 @@ func TestDocsLicensingNamesTheMovedFeatures(t *testing.T) {
 	}
 }
 
+// TestDocsLicensingNamesTheFeaturesBornInEE (S0.3, D435, T20): the statement
+// says which parts are business-licensed, and two of them were never in the
+// core. The central orchestrators and the hosted MCP server are born under
+// `ee/`, so a reader who meets `fugaro orchestrator` and looks for the move
+// that put it there finds none: the sentence has to say they were born here.
+//
+// It reads the born half, and TestDocsLicensingNamesTheMovedFeatures above
+// reads the moved half. Only together do they say what the folder holds: a
+// statement that named the moved parts alone would leave the orchestrators
+// looking like core code that nobody had got round to licensing.
+func TestDocsLicensingNamesTheFeaturesBornInEE(t *testing.T) {
+	const path = "LICENSING.md"
+	// The sentence the README and the rule file state too, read here as one
+	// phrase: the statement, the folder's page and the folder's rule say the
+	// same thing about which features were born there.
+	const bornHere = "the central orchestrators and the hosted mcp server are born here"
+	flat := strings.ToLower(flattenDoc(readDoc(t, path)))
+	if !strings.Contains(flat, bornHere) {
+		t.Errorf("%s never says %q: D435/T20 puts the central orchestrators and the hosted MCP server in the business-licensed folder from the start, so a reader who meets `fugaro orchestrator` has to learn here that they are paid rather than conclude they are core code nothing has moved", path, bornHere)
+	}
+}
+
 // TestDocsLicensingReadmeSection: the README's `## Licensing` section is where
 // most readers meet the split, so it states it in two or three sentences, links
 // both files a reader can go on to, carries the earlier-releases sentence (R4),
@@ -364,5 +386,320 @@ func TestDocsLicensingOneWording(t *testing.T) {
 	}
 	if !strings.Contains(want, claURL) {
 		t.Errorf("clause 2.1 of the three licence files does not name %s: the bracketed placeholder it replaced is gone, and the agreement the Licensor publishes has to be reachable from the sentence that requires it", claURL)
+	}
+}
+
+// The licence-key design note (subscriptions plan S2.1; D308 as extended by
+// D438 and as ruled on 2026-10-27 by O4, T26 and the key binding, with
+// D436/T12 for the lapse).
+//
+// The note is a design, so it compiles nothing and refuses nothing: every
+// verifier task that follows it -- the Go one (S2.3), the console's (S2.4),
+// the app's (S2.5), the two entry paths (S2.7, S2.8) and the key the
+// coordinator job is handed (S1.9, carried as E1.4) -- is written against what
+// this file says. That is the whole reason it is pinned here: a trust boundary
+// that three languages implement from one page is the one page whose silent
+// edit costs the most, and the plan's S2.1 entry names no test at all, so
+// nothing else in this package would read it.
+//
+// It lives in this file rather than in a `docs_licence_key_test.go` of its own
+// because the count of `internal/cli/docs_*_test.go` is pinned in
+// `docs/rigor-modes/reconciliation.md`, a dated record four tests hold to its
+// figure: a fifth file moves the count and edits another plan's record. This
+// file is already the licensing folder's own pin, so the note joins it.
+//
+// What is pinned is the *content* the plan's S2.1 entry lists, in the plan's
+// own order, plus the two cross-file halves a reader arrives by: L3.1 marked
+// superseded in the licensing plan and the note's row in the licensing README
+// table. Which words the note chooses is not what these tests are about:
+// flattenDoc folds the whitespace, and every phrase is read
+// case-insensitively. A missing phrase fails with the consequence of the claim
+// rather than with the spelling, because the reader who loses it is a verifier
+// author in another language, not a reader of the note.
+//
+// Each phrase is the fact and not the word for it: "refused", "production" and
+// "grace" are words a rewritten sentence keeps while it drops the rule they
+// were standing for, so the pins are the store's state table, the conditions in
+// it, and the sentences that carry the rules ("a staging key is refused", "a
+// test key can never license a customer", "the latest valid one"). A phrase is
+// also never split by the note's own emphasis: where a rule is bolded, the pin
+// is the span inside the markers, because flattenDoc folds whitespace and not
+// markup.
+//
+// Mutations (verified, run and restored): cut "raw bytes before any JSON is
+// parsed" out of the note -- TestDocsLicenceKeyDesign fails, naming that
+// claim; put back the rotation rule as "until the last key it signed has
+// expired" -- it fails, on a window that would refuse a key the state table
+// below reads as `grace` (an id the build does not hold is refused before the
+// payload is decoded, so an id has to outlive the grace and not only the term);
+// delete the rule that no claim is read out of an unverified payload,
+// the rule that a refusal names no claim, the rule that the signature is over
+// the bytes as they are spelled, the rule that an id the build does not hold is
+// refused before either other part is decoded, and the rule that the hand-off
+// variable is never written to a file, a log or an error message -- it fails on
+// each, which none of those five sentences did before they were pinned; put
+// back the "reaches exactly one child" claim in place of the rule that the CLI
+// takes the variable out of its own environment -- it fails, on a claim the
+// console's allow-list alone does not make true (the CLI's own children inherit
+// the environment it holds when they start: internal/gitops/gitops.go,
+// internal/claudeplugin/claudeplugin.go, internal/cli/managed_apply.go and
+// internal/cli/exec.go all pass os.Environ() to a child);
+// put the hand-off back as the unqualified "reaches exactly one child" and cut
+// the limit it leaves for an untagged build -- it fails; put the app's row back
+// as `expo-secure-store.js`, "the module every credential the app keeps goes
+// through" -- it fails, on a module that is the platform adapter and not the
+// gate (`secure-store.js` refuses every name `secret.js`'s two-item
+// `SECRET_ITEMS` does not carry, and D232 keeps that list at two);
+// rewrite the test-mode sentence so it keeps "staging key id",
+// "refused" and "production" while flipping the rule (a staging key is
+// accepted, a test key can license a customer) -- it fails on the two
+// sentences that carry the rule; put back the withdrawn claim that the tier
+// maximum bounds a leaked signing key in place of what the bound does bound --
+// it fails on that claim's replacement; change the state table's `expired`
+// condition to "after it" -- it fails on that row; and delete the note's row
+// from the licensing README's file table, leaving the note named in the
+// amendment paragraph above it -- TestDocsLicenceKeyNoteIsInTheLicensingReadme
+// fails, naming the table, which is the half no S2.1 test but these reaches.
+
+const licenceKeyNotePath = "docs/licensing/licence-key.md"
+
+// licenceKeyDesignGroups is the note's content, one group per subject the
+// plan's S2.1 entry names. Each phrase is a fact a verifier implements, not a
+// wording: the "why" is what a reader loses when the phrase is gone.
+var licenceKeyDesignGroups = []struct {
+	subject string
+	why     string
+	phrases []string
+}{
+	{
+		subject: "the key",
+		why:     "the format is what three verifiers agree on byte for byte, the claims are the licence's own terms, and the boundary rules -- the key id is what decides before anything else is decoded, the signature is over the bytes as they are spelled, a refusal names no attacker-chosen claim, and a rotated build keeps an old id until the keys it signed have passed their grace, or it refuses a key the state table reads as grace -- are where the scheme's safety and its consistency rest",
+		phrases: []string{
+			"ed25519",
+			"base64url",
+			"<key id>.<payload>.<signature>",
+			"before any json is parsed",
+			"signed as it is spelled",
+			"fails the signature",
+			"key id",
+			"refused before either other part is decoded",
+			"rotate",
+			"passed its grace",
+			"and not bare `expires`",
+			"| `tier` | `community`, `team` or `enterprise` |",
+			"| `features` |",
+			"| `seats` |",
+			"| `organisation` |",
+			"| `issued` |",
+			"| `expires` |",
+			"not to a person or a machine",
+			"no claim is read out of a payload whose signature did not verify",
+			"names the key and the part that failed, never a claim",
+		},
+	},
+	{
+		subject: "expiry only (O4)",
+		why:     "the covered-versions date D438 added named a version window that only the perpetual fallback gave a meaning to, and D436 dropped the fallback: a key that states a version window is a key the product has no rule for",
+		phrases: []string{
+			"expiry only",
+			"no covered-versions date",
+			"no release-date stamping",
+		},
+	},
+	{
+		subject: "the check",
+		why:     "the check gates at the registration point and nowhere else, so the MIT core keeps building and running with no key at all",
+		phrases: []string{
+			"ee/register",
+			"nothing in the core",
+			"offline",
+			"no phone-home",
+			"| `valid` | `now <= expires` |",
+			"| `grace` | `expires < now <= expires + 30 days` |",
+			"| `expired` | past the grace |",
+			"refused rather than given a state",
+		},
+	},
+	{
+		subject: "the lapse",
+		why:     "read-only is what a lapse costs, and cancel and the kill switch are what it must never cost (T12, D436)",
+		phrases: []string{
+			"30-day grace",
+			"read-only",
+			"keeps reading, cancel and the kill switch",
+			"loses launching and configuration changes",
+			"never stopped by licence state",
+		},
+	},
+	{
+		subject: "renewal and overlap",
+		why:     "the overlap is why an issuing outage of up to 60 days is survivable, and the latest valid key is the one a verifier acts on (T26)",
+		phrases: []string{
+			"30 days before expiry",
+			"two keys are simply two keys the store holds",
+			"the latest valid one",
+			"past 60 days",
+		},
+	},
+	{
+		subject: "limits",
+		why:     "these are the accepted limits, and the tier maximum is stated with what it bounds and what it does not, so a verifier author does not build the length check as a defence against a leaked signing key that it is not",
+		phrases: []string{
+			"maximum lifetime",
+			"not the same as bounding a leaked signing key",
+			"`issued` is the minter's to choose",
+			"a tier's maximum is its term plus the 30-day issue lead",
+			"one year and 30 days for every tier today",
+			"without a change to the key format",
+			"never in the verifier alone",
+			"no revocation",
+			"a refunded buyer keeps a working key until it expires",
+			"a clock set back extends `expires`",
+			"the hand-off reaches one child only where the build has the check",
+			"carries no edition today",
+		},
+	},
+	{
+		subject: "test-mode keys",
+		why:     "a staging key has to be unusable against a production installation, or the environment that exists to be broken is the environment that licenses customers",
+		phrases: []string{
+			"staging key id",
+			"keyring holds production ids only",
+			"a staging key is refused",
+			"a test key can never license a customer",
+		},
+	},
+	{
+		subject: "storage and hand-off",
+		why:     "a key that reaches a child in argv is a key every local process reads (F41), each product stores it where its own platform keeps a credential -- and for the app that is not the two-item secret store D111/D232 keep closed -- and the hand-off is one child where the build has the check: the console's allow-list is not enough on its own, because the CLI's own children -- git, the plugin install, Terraform and the runner in exec -- inherit the environment it holds when they start",
+		phrases: []string{
+			"licence.key",
+			"never in argv",
+			"fugaro_licence_key",
+			"the one route to a spawned child is its **environment**",
+			"the variable reaches one child and stops there where the build that receives it has the check",
+			"reads `fugaro_licence_key` once",
+			"takes it out of its own environment in the same step",
+			"testtheenvironmentkeyisremovedbeforeanychildstarts",
+			"a build with no registration point has no such step",
+			"not the app's two-item secret store",
+			"secure-store.js",
+			"secret_items",
+			"d232",
+			"secret manager",
+			"mounted into the job and never typed by a person",
+			"never written to a file, a log or an error message",
+		},
+	},
+	{
+		subject: "states and minting",
+		why:     "the no-key state is a real installation rather than an error (F43), minting is the owner's and off every machine an agent reaches (R8, T13), and the coordinator's job is handed its key rather than typing one",
+		phrases: []string{
+			"the store being empty rather than a fourth state",
+			"minted by hand",
+			"owner-run",
+			"private signing key",
+			"free keys expire too",
+		},
+	},
+}
+
+// TestDocsLicenceKeyDesign: `docs/licensing/licence-key.md` is the S2.1 note,
+// and it states every subject the plan's S2.1 entry names.
+func TestDocsLicenceKeyDesign(t *testing.T) {
+	flat := strings.ToLower(flattenDoc(readDoc(t, licenceKeyNotePath)))
+	for _, group := range licenceKeyDesignGroups {
+		for _, want := range group.phrases {
+			if !strings.Contains(flat, strings.ToLower(want)) {
+				t.Errorf("%s never says %q (%s): %s", licenceKeyNotePath, want, group.subject, group.why)
+			}
+		}
+	}
+}
+
+// TestDocsLicenceKeyNoteSupersedesL31: the note is licensing task L3.1's
+// successor rather than a second design beside it, and the licensing plan has
+// to say so where a reader of L3.1 arrives. Two notes on one key, neither
+// marked, is how a verifier gets written against the withdrawn text -- and the
+// withdrawal is O4's, which dropped the covered-versions date and the
+// release-date stamping D438 had added to L3.1's three design rules. L3.1's own
+// text carries neither, so the supersession is stated as a ruling rather than
+// as a difference between the two notes.
+//
+// The supersession line has to name the plan that carries the note and the
+// note itself: a bare "superseded" leaves the reader of L3.1 with no later
+// text to read, which is the state the subscriptions plan's own status census
+// recorded against this task.
+func TestDocsLicenceKeyNoteSupersedesL31(t *testing.T) {
+	const plan = "docs/licensing/implementation-plan.md"
+	doc := readDoc(t, plan)
+	section := docSection(t, plan, doc, "#### L3.1 — The licence-key design note")
+	flat := strings.ToLower(flattenDoc(section))
+
+	for _, want := range []string{
+		"superseded",
+		"docs/subscriptions/implementation-plan.md",
+		"licence-key.md",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("%s's L3.1 section never says %q: the note it used to commission is written now by the subscriptions plan's S2.1, whose note carries O4's ruling (the covered-versions date and the release-date stamping D438 added to L3.1's rules are dropped), so a reader who lands on L3.1 first has to be told where the later text is and that it exists", plan, want)
+		}
+	}
+}
+
+// TestDocsLicenceKeyNoteIsInTheLicensingReadme: the licensing README's table is
+// the folder's map of what each file is for, so the note takes a row in it,
+// and the row says what the file is: a design that is not built. The row is the
+// only route to the note from the folder's front page, and a design the front
+// page does not name is a design the next reader of the folder does not know
+// exists (that table is where spec.md, reconciliation.md, the implementation
+// plan and the Terms are reached from).
+//
+// The row is read out of the table's own span rather than out of the whole
+// file: a mention of the note in the amendment paragraph above is not a row,
+// and the half this test exists for is a reader scanning the table.
+func TestDocsLicenceKeyNoteIsInTheLicensingReadme(t *testing.T) {
+	const readme = "docs/licensing/README.md"
+	doc := readDoc(t, readme)
+	table := strings.ToLower(flattenDoc(docSection(t, readme, doc, "| File | Role |")))
+	for _, want := range []string{"](licence-key.md)", "the licence key's design", "not built"} {
+		if !strings.Contains(table, want) {
+			t.Errorf("%s's file table carries no %q: the table is the folder's map, and the S2.1 note is a document a verifier author has to be able to find -- and to see is a design rather than a built feature -- from the folder's front page", readme, want)
+		}
+	}
+}
+
+// TestDocsSubscriptionsPlanBoundsWhatTheTierMaximumBounds: the subscriptions
+// plan's constraint table is what an S2.3 or S3.2 reviewer reads as the
+// mitigation the verifier owes, and the S2.1 row of it is pinned by this note.
+// The row used to say a leaked signing key cannot mint keys old releases accept
+// for ever, which the ruled check does not deliver -- the length check is over
+// `expires - issued`, and `issued` is the minter's to choose -- so the two
+// sentences the note holds for it are held here too: the constraint the check
+// does satisfy, and the horizon as an accepted limit.
+//
+// The hand-off row is read here beside them because it is the other constraint
+// this note is the pin for, and because the S2.3 test it names is what makes the
+// console's allow-list entry sufficient: the CLI's own children inherit the
+// environment it holds when they start, and none may inherit the key.
+//
+// The withdrawn claim is asserted absent rather than left unpinned: the plan is
+// where a verifier author looks for what to implement, and a sentence that reads
+// as a security property the design does not have is worse than no sentence.
+func TestDocsSubscriptionsPlanBoundsWhatTheTierMaximumBounds(t *testing.T) {
+	const plan = "docs/subscriptions/implementation-plan.md"
+	flat := strings.ToLower(flattenDoc(docSection(t, plan, readDoc(t, plan), "## Global constraints and review focus")))
+	for _, want := range []string{
+		"no key is given a term longer than its tier's maximum",
+		"a leaked signing key's horizon is an accepted limit",
+		"the key reaches the cli it is handed to and no further",
+		"the licence key does not join the app's two-item secret store",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("%s's constraint table never says %q: its S2.1 row is the note's own claim, and a constraint row that asks the verifier for more than the ruled check does is how TestKeyBeyondTheTierLifetimeIsRefused gets written against a property it cannot hold", plan, want)
+		}
+	}
+	if strings.Contains(flat, "cannot mint keys old releases accept for ever") {
+		t.Errorf("%s's constraint table still says a leaked signing key cannot mint keys old releases accept for ever: the length check bounds `expires - issued`, and `issued` is the minter's to choose, so the note it pins says the opposite", plan)
 	}
 }
