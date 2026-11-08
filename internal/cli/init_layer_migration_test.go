@@ -204,23 +204,98 @@ func TestUpdateMigratesAPreviousReleaseLayerOnlyOnce(t *testing.T) {
 	}
 }
 
-// TestUpdateRefusesALayerTheRemovalCannotLeaveValid: the one state the migration
-// does not answer is a layer whose every other key was a removed one under the
-// profile its default_profile names — the removal empties the profile, and a
-// layer whose default_profile names no profile is not one a reader accepts.
-// Nothing is published from it, and the refusal names the profile, which is the
-// part the owner has to decide about.
+// TestUpdateKeepsAProfileTheRemovalEmpties: a profile whose every key was a
+// removed one is left in the layer as an empty mapping, not taken out with them.
+// A profile is a name other documents resolve by — the layer's own
+// default_profile, and the `profile:` of every repository of the project — so a
+// removal that took the name away with the keys stopped every one of those
+// repositories resolving against the project's layer while `fugaro update`
+// reported the installation converged: the layer a repository is judged against
+// is the one that has no profile it named.
+func TestUpdateKeepsAProfileTheRemovalEmpties(t *testing.T) {
+	const emptiedLayer = `version: 1
+project: aurora
+gcp_project: proj-1234
+defaults:
+  git: { provider: github }
+profiles:
+  api:
+    image: { apt: [libvips-dev] }
+  svc:
+    commands: { build: sh build.sh, test: sh test.sh }
+default_profile: api
+`
+	r := newLayerRig(t, emptiedLayer)
+	recordLayer(t, emptiedLayer, "0")
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		t.Fatalf("fugaro update stopped on a layer whose profile the removal empties: %v\n%s%s", err, out, errOut)
+	}
+	data, ok := layerObject(t, r)
+	if !ok {
+		t.Fatal("the migration published no project layer")
+	}
+	if !strings.Contains(data, "api: {}") {
+		t.Errorf("the profile the removal emptied is not the empty mapping the layer keeps:\n%s", data)
+	}
+	if local, rerr := os.ReadFile(localLayerPath(t)); rerr != nil || string(local) != data {
+		t.Errorf("this machine's layer file is not the layer the removal wrote (%v):\n%s", rerr, local)
+	}
+	l, ps := config.ParseProjectLayer([]byte(data), config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"})
+	if len(ps) > 0 {
+		t.Fatalf("the layer this run wrote is refused: %v", ps)
+	}
+	if _, ok := l.Profiles["api"]; !ok {
+		t.Fatalf("the profile the layer's default_profile names went with its keys:\n%s", data)
+	}
+	// A repository names a profile for the settings the profile carries rather
+	// than for its commands: the workflow that names it writes its own, and the
+	// emptied profile contributes nothing to it either way. The repository that
+	// writes no workflows: and names the profile at the top level instead takes
+	// the workflow — and so its commands — from the profile, which a profile
+	// holding only removed keys could never supply; `image.apt` supplied none
+	// before the removal either, so the removal takes nothing from it.
+	for name, repo := range map[string]string{
+		"a workflow naming the emptied profile": `version: 1
+project: aurora
+gcp_project: proj-1234
+workflows:
+  web:
+    profile: api
+    commands: { build: sh build.sh, test: sh test.sh }
+`,
+		"a workflow naming another profile": `version: 1
+project: aurora
+gcp_project: proj-1234
+workflows:
+  web:
+    profile: svc
+`,
+	} {
+		if _, _, ps := config.Resolve([]byte(repo), l); len(ps) > 0 {
+			t.Errorf("%s no longer resolves against the layer the removal wrote: %v", name, ps)
+		}
+	}
+}
+
+// TestUpdateRefusesALayerTheRemovalCannotLeaveValid: the removal's own refusal
+// is the document that is wrong about something else as well. Nothing is
+// published from a file this run cannot leave valid, and the refusal names what
+// is wrong with it, which is the part the owner has to decide about: `fugaro
+// update` has taken the removed keys out of the file it was able to, and what is
+// left of it is still not one a reader accepts.
 func TestUpdateRefusesALayerTheRemovalCannotLeaveValid(t *testing.T) {
-	const onlyRemovedKeys = `version: 1
+	const alsoWrong = `version: 1
 project: aurora
 gcp_project: proj-1234
 profiles:
   svc:
     image: { apt: [libvips-dev] }
-default_profile: svc
+default_profile: nowhere
 `
-	r := newLayerRig(t, onlyRemovedKeys)
-	recordLayer(t, onlyRemovedKeys, "0")
+	r := newLayerRig(t, alsoWrong)
+	recordLayer(t, alsoWrong, "0")
 
 	out, errOut, err := executeStdin(t, "", "update", "--yes")
 	if err == nil || ExitCode(err) != ExitUserError {
@@ -230,7 +305,7 @@ default_profile: svc
 	if !strings.Contains(all, "default_profile") && !strings.Contains(all, "profiles:") {
 		t.Errorf("the refusal does not say what the removal left wrong with the layer:\n%s", all)
 	}
-	if got, ok := layerObject(t, r); !ok || got != onlyRemovedKeys {
+	if got, ok := layerObject(t, r); !ok || got != alsoWrong {
 		t.Errorf("the object was written from a layer this Fugaro refuses: %q", got)
 	}
 }
@@ -310,12 +385,13 @@ func TestUpdateStopsWhenAPublishWouldLeaveAFlowStyledObject(t *testing.T) {
 }
 
 // TestUpdateRefusesAPublishedLayerTheRemovalCannotLeaveValid: the state on the
-// object side that no write of this run answers — every key of the profile its
-// `default_profile` names is a removed one, so the document the removal makes is
-// not a project layer this Fugaro reads. The object is the layer every
-// repository of the project resolves against, so the run stops with a non-zero
-// error rather than skipping the stage: a skip would report an installation
-// converged that no repository of it can use.
+// object side that no write of this run answers — the removal is not the whole
+// of what is wrong with the object, so the document it makes is still not a
+// project layer this Fugaro reads. The object is the layer every repository of
+// the project resolves against, so the run stops with a non-zero error rather
+// than skipping the stage: a skip would report an installation converged that no
+// repository of it can use, and it would write the object's own refused bytes
+// into this machine's layer file.
 //
 // The remedy it names has to be one the reader can carry out from the state they
 // are in, which is why the file to publish is asserted and not only the command:
@@ -323,19 +399,19 @@ func TestUpdateStopsWhenAPublishWouldLeaveAFlowStyledObject(t *testing.T) {
 // defaulted path refuses with the command that sent the reader here, and a
 // refusal that named that command alone would send them round the loop.
 func TestUpdateRefusesAPublishedLayerTheRemovalCannotLeaveValid(t *testing.T) {
-	const onlyRemovedKeysFlow = `version: 1
+	const alsoWrongFlow = `version: 1
 project: aurora
 gcp_project: proj-1234
 profiles:
   svc: {image: {apt: [libvips-dev]}}
-default_profile: svc
+default_profile: nowhere
 `
 	for _, tc := range []struct{ name, local, record string }{
 		{"there is no local layer file to seed", "", ""},
 		{"the local file is from another generation", migratedLayer, "9"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := newLayerRig(t, onlyRemovedKeysFlow)
+			r := newLayerRig(t, alsoWrongFlow)
 			if tc.local != "" {
 				recordLayer(t, tc.local, tc.record)
 			}
@@ -350,7 +426,7 @@ default_profile: svc
 					t.Errorf("the refusal does not say %q:\n%s", want, all)
 				}
 			}
-			if got, ok := layerObject(t, r); !ok || got != onlyRemovedKeysFlow {
+			if got, ok := layerObject(t, r); !ok || got != alsoWrongFlow {
 				t.Errorf("the object was written from a layer this Fugaro refuses: %q", got)
 			}
 			data, rerr := os.ReadFile(localLayerPath(t))
@@ -444,14 +520,39 @@ func TestRemovedKeysOut(t *testing.T) {
 		}
 	})
 
-	t.Run("a profile the removal empties", func(t *testing.T) {
+	t.Run("a profile the removal empties stays, written as an empty mapping", func(t *testing.T) {
 		const emptied = "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  api:\n    image: { apt: [libvips-dev] }\n  svc:\n    commands: { test: sh test.sh }\ndefault_profile: svc\n"
 		r := removedKeysOut([]byte(emptied), lc)
-		if r == nil || len(r.Problems) > 0 {
+		if r == nil || r.unwritable() {
 			t.Fatalf("the strip refused a layer whose other profile survives: %v", r)
 		}
 		if len(r.Profiles) != 1 || r.Profiles[0] != "api" {
 			t.Errorf("the emptied profile is not reported: %v", r.Profiles)
+		}
+		if !r.Reencoded {
+			t.Error("the removal does not report that a document leaving a profile empty was written from its own tree")
+		}
+		l, ps := config.ParseProjectLayer(r.Data, config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"})
+		if len(ps) > 0 {
+			t.Fatalf("the layer the removal wrote is refused: %v\n%s", ps, r.Data)
+		}
+		if _, ok := l.Profiles["api"]; !ok {
+			t.Errorf("the removal took a profile out of the layer with its keys, so nothing that names it resolves any more:\n%s", r.Data)
+		}
+	})
+
+	t.Run("a flow-styled profile the removal empties", func(t *testing.T) {
+		const emptied = "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  api: {image: {apt: [libvips-dev]}}\ndefault_profile: api\n"
+		r := removedKeysOut([]byte(emptied), lc)
+		if r == nil || r.unwritable() {
+			t.Fatalf("the strip refused a layer it should migrate: %v", r)
+		}
+		l, ps := config.ParseProjectLayer(r.Data, config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"})
+		if len(ps) > 0 {
+			t.Fatalf("the layer the removal wrote is refused: %v\n%s", ps, r.Data)
+		}
+		if _, ok := l.Profiles["api"]; !ok {
+			t.Errorf("the profile the layer's default_profile names did not survive the removal:\n%s", r.Data)
 		}
 	})
 }
@@ -459,32 +560,34 @@ func TestRemovedKeysOut(t *testing.T) {
 // TestARemovalNeverPrintsAProfileNameItDidNotRead: the profile names in the
 // removal's report come out of the layer document, and the published project
 // layer is an object any writer of the project's bucket can put a name in. A
-// profile whose every key the removal takes is emptied out of the document the
-// removal leaves, so ParseProjectLayer's check of a profile name never sees it
-// (which is why that reader spells `profiles.<name>` through config.ShowKey) —
-// the name is the only thing of that profile this run prints, and a control
-// character in it would rewrite the terminal line the write is confirmed on,
-// the rule the refusal sentences follow (removedKeysFolded).
+// name carrying a control character is one no reader accepts, so the document
+// the removal spells it in is one this run does not write — and the reader that
+// refuses it is not the report the operator reads first: the keys' sentence, the
+// refusal on each side and the printed report all name the profile, and a raw
+// ESC[2J in one of them would rewrite the terminal line the write is read on. So
+// the name goes through config.ShowKey wherever the removal spells it
+// (layerRemovedKey.Path, printLayerRemoval), and a sentence that carries a whole
+// text is wrapped through pluginwire.Printable as well (removedKeysFolded,
+// objectRefusalFolded).
 func TestARemovalNeverPrintsAProfileNameItDidNotRead(t *testing.T) {
 	const hostile = "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  \"p\\e[2Jevil\":\n    image: { apt: [libvips-dev] }\n  svc:\n    commands: { test: sh test.sh }\ndefault_profile: svc\n"
 	lc := &localcfg.Config{Name: "aurora", GCPProject: "proj-1234"}
 	r := removedKeysOut([]byte(hostile), lc)
-	if r == nil || r.unwritable() {
-		t.Fatalf("the removal refused a layer it should migrate: %+v", r)
+	if r == nil || !r.unwritable() {
+		t.Fatalf("the removal wrote a layer whose profile name no reader accepts: %+v", r)
 	}
 	if len(r.Profiles) != 1 || r.Profiles[0] != "p\x1b[2Jevil" {
 		t.Fatalf("the emptied profile is not the one the document names: %q", r.Profiles)
 	}
 	var printed strings.Builder
 	printLayerRemoval(&printed, "the published project layer", r)
-	p := &layerPlan{migrate: true, objectRemoval: r, localRemoval: r}
+	p := &layerPlan{publish: true, objectRefusal: r}
 	for what, got := range map[string]string{
-		"the keys' sentence":  r.text(),
-		"the plan":            p.planDetail(),
-		"the status":          p.migrateDetail(),
-		"the removal clause":  p.removalClause(),
-		"the printed report":  printed.String(),
-		"the stopped removal": removedKeysFolded(r),
+		"the keys' sentence":   r.text(),
+		"the file's refusal":   removedKeysFolded(r),
+		"the object's refusal": objectRefusalFolded(r),
+		"the refusal clause":   p.objectRefusalClause(),
+		"the printed report":   printed.String(),
 	} {
 		if strings.ContainsRune(got, '\x1b') {
 			t.Errorf("%s prints the layer's control character: %q", what, got)

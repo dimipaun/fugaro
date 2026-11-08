@@ -527,29 +527,35 @@ its `Recommendation` and both costs, so the answer and the price of the other re
   between them is a new decision, not one of these nineteen**, and no task of the plan may land before
   it is picked.
 - **A layer whose removed key sits where no splice of the text editor measures it is written from the
-  document's own tree, and a layer the removal cannot leave valid stops the run.** `yamledit` splices a
+  document's own tree, and a profile the removal empties keeps its name.** `yamledit` splices a
   member out of a flow mapping only while the member's value is a plain value, so a layer written as
   `svc: { … image: { apt: […] } }` — a shape a release before this one published — holds `image.apt`
   where no splice of the removal takes it out. The removal falls back to the document's node tree for
   every shape the splices do not measure: the same edits are made on the tree and it is encoded again,
   so the order, the styles and the comments survive and the exact spacing and quoting may not
-  (`internal/cli/init_layer_migration.go:307`). Both sides are therefore migrated by `fugaro update`
+  (`internal/cli/init_layer_migration.go:258`). Both sides are therefore migrated by `fugaro update`
   alone — the published object rewritten in place against the generation it read, and this machine's
   file with it — where an object left holding the keys is what every repository of the project resolves
   against and so a run that skipped it would report an installation converged that no repository of it
-  can use. What remains is the layer the removal cannot leave valid, the profile its `default_profile`
-  names holding nothing but removed keys: no write of the run is the owner's answer there, so the run
-  stops with a non-zero error naming the door that does repair the object — a layer published over it
-  with `fugaro config publish --executable-changes FILE`
-  (`internal/cli/init_layer_stage.go:265`) — rather than skipping the stage. **FILE is named because
+  can use. A profile whose **every** key was a removed one is left in the layer as an empty mapping
+  rather than taken out with them: a profile is a name other documents resolve by — the layer's own
+  `default_profile` and the `profile:` of every repository of the project — and a name that went with
+  the keys is one that stops resolving, which is a repository that fails its own resolution against a
+  layer `fugaro update` has just reported converged. `api: {}` is a profile a repository still names
+  and takes no commands from, and it means after the removal exactly what it meant before it, so
+  keeping it spends no decision of the owner's. The text editor composes no empty mapping, so a
+  document the removal empties a profile of is one more shape the tree path writes. **What remains is
+  the layer the removal cannot leave valid for a reason that is not the removal** — a document that is
+  wrong about something else as well: no write of the run is the owner's answer there, so the run stops
+  with a non-zero error naming the door that does repair the object — a layer published over it with
+  `fugaro config publish --executable-changes FILE`
+  (`internal/cli/init_layer_stage.go:409`) — rather than skipping the stage. **FILE is named because
   the state that reaches that sentence from the seed is the one where this machine has no local layer
   file at all: `fugaro config publish` on its own defaulted path refuses there with "run fugaro
   update, which seeds it" — the command that has just sent the reader here — so a remedy naming that
   door without a file sends them round the loop.** That is an operator step beyond `fugaro update` for
   a broken layer, and it is the HARD RULE's own boundary: the run says it has not converged instead of
-  pretending, and the reading still open is whether the removal should decide that state itself (choose
-  a `default_profile` for the owner). **Picking between them is a new decision, not one of these
-  nineteen.**
+  pretending, and the document it stops on is wrong about something this removal does not own.
 - **Unit tests cannot show the deploy path.** The registry, the build account, the job and the run are
   one artefact, and the hermetic fakes are written from the API documentation. That is why the 0.20.0
   tag waits for the owner's live check rather than for a green suite, and why the check is a step of the

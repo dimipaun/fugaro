@@ -20,10 +20,13 @@ D1190–D1208 are answered** — seven of them as recommended, the other twelve 
 that the owner did not object to, each with the date and the reason it rests on
 ([reconciliation.md](reconciliation.md) §4) — and the one question its residual raises is still open:
 whether the removal's release may ship the per-repository `--retire` as an operator step, or has to fold
-the retirement into `fugaro update`'s own converge. The built half answers the same question for the
-layer the removal cannot leave valid in the only way it can without a new decision: `fugaro update`
-stops and says so rather than pretending, and the sentence it stops with names a command the reader can
-carry out from the state they are in.
+the retirement into `fugaro update`'s own converge. The built half answers that for the layer the
+removal touches in the only way it can without a new decision. A profile whose every key was a removed
+one is not left to the owner: the removal keeps the name with an empty mapping, so the layer's
+`default_profile` and every repository's `profile:` go on resolving, which is what a repository needs
+of a profile it takes no commands from. For the layer it still cannot leave valid — one wrong about
+something else as well — `fugaro update` stops and says so rather than pretending, and the sentence it
+stops with names a command the reader can carry out from the state they are in.
 
 | File | Role |
 | --- | --- |

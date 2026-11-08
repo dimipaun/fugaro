@@ -77,10 +77,12 @@ type layerRemoval struct {
 	Layer *config.ProjectLayer
 	// Keys are the keys that went, in the order a reader meets them.
 	Keys []layerRemovedKey
-	// Profiles are the profiles the removal emptied out of the layer: every key
-	// they held was one the removal took, and a mapping with no keys left has
-	// no spelling yamledit writes (`{}` is a value this editor does not
-	// compose), so the profile goes with them.
+	// Profiles are the profiles the removal empties: every key they held was
+	// one the removal took, and what is left of them is an empty mapping. A
+	// profile is a name other documents resolve by — the layer's
+	// default_profile, and the `profile:` of every repository of the project —
+	// so an emptied one stays in the layer rather than going with its keys,
+	// and a caller that prints what it wrote says which they are.
 	Profiles []string
 	// Problems is why this removal is not one this Fugaro may write: what is
 	// left of the document is not a project layer it reads, so the caller
@@ -227,49 +229,83 @@ func removalTakesTheBlock(block string, sub map[string]any) bool {
 // The result is not always one a caller may write, and the two ways it is not
 // are kept apart — Refused for a document neither the text editor's splices nor
 // its own tree can be edited, which is the last resort, and Problems for the
-// document the removal does make and this Fugaro does not read (a profile is
-// emptied and `default_profile` named it, say) — because a caller that read
-// either as "nothing to do" would report a layer converged while the document
-// still holds keys every reader refuses. Data and Layer are what the side is
-// written from, and mean nothing when unwritable.
+// document the removal does make and this Fugaro does not read (a document that
+// was already wrong about something else as well, say) — because a caller that
+// read either as "nothing to do" would report a layer converged while the
+// document still holds keys every reader refuses. Data and Layer are what the
+// side is written from, and mean nothing when unwritable.
 func removedKeysOut(data []byte, lc *localcfg.Config) *layerRemoval {
 	var doc layerProfiles
 	if err := yaml.Unmarshal(data, &doc); err != nil || len(doc.Profiles) == 0 {
 		return nil
 	}
+	emptied := profilesEmptied(doc)
+	r := &layerRemoval{Profiles: emptied}
 	out, keys, err := textRemoval(data, doc)
-	r := &layerRemoval{Keys: keys}
-	if err != nil {
-		// yamledit measures bytes, and a document it has no splice for is
-		// still one this migration has to repair: the side it is on is what
-		// every repository of the project resolves against (or the file the
-		// owner reads), and `fugaro update` is the whole upgrade. The same
-		// edits are made again on the document's own tree, which has a member
-		// for every shape the splices do not.
+	if len(emptied) > 0 || err != nil {
+		// The document's own tree is the removal for two shapes: one the text
+		// editor has no splice for, and one a profile of which the removal
+		// empties. An emptied profile is left in the layer written as an empty
+		// mapping — a repository whose `profile:` names it and the layer's
+		// `default_profile` both resolve against a name, and a name that went
+		// with the keys is one that stops resolving — and the editor composes
+		// no empty mapping, so it is not the one that can write that document.
+		// yamledit measures bytes, and a document it has no splice for is still
+		// one this migration has to repair: the side it is on is what every
+		// repository of the project resolves against (or the file the owner
+		// reads), and `fugaro update` is the whole upgrade.
 		var ok bool
 		if out, keys, ok = nodeRemoval(data, doc); !ok {
-			r.Refused = spliceRefusal(err)
+			r.Keys = keys
+			if err != nil {
+				r.Refused = spliceRefusal(err)
+			} else {
+				r.Refused = emptiedRefusal(emptied)
+			}
 			return r
 		}
-		r.Keys, r.Reencoded = keys, true
+		r.Reencoded = true
 	}
+	r.Keys = keys
 	if len(r.Keys) == 0 {
 		return nil
 	}
 	r.Data = out
+	// A document the removal wrote and nothing decodes is no removal at all:
+	// problems say what a reader refuses, and this says there is no document.
 	var left layerProfiles
 	if err := yaml.Unmarshal(out, &left); err != nil {
 		r.Problems = []config.Problem{{Message: "the removal leaves a document that is not YAML this Fugaro reads"}}
 		return r
 	}
-	for _, name := range slices.Sorted(maps.Keys(doc.Profiles)) {
-		if _, ok := left.Profiles[name]; !ok {
-			r.Profiles = append(r.Profiles, name)
-		}
-	}
 	l, ps := projectLayerProblems(out, lc)
 	r.Layer, r.Problems = l, ps
 	return r
+}
+
+// profilesEmptied is the profiles the removal leaves with no keys: every key
+// they write is one an edit of theirs takes whole, so what is left of them is an
+// empty mapping. It is the one thing the removal decides about a profile rather
+// than about a key, and both writes need it — an emptied profile stays in the
+// layer, and the text editor cannot be the one that keeps it.
+func profilesEmptied(doc layerProfiles) []string {
+	var out []string
+	for _, name := range slices.Sorted(maps.Keys(doc.Profiles)) {
+		held, _ := doc.Profiles[name].(map[string]any)
+		if len(held) == 0 {
+			continue
+		}
+		gone := map[string]bool{}
+		for _, e := range layerRemovalEdits(name, held) {
+			if len(e.path) == 1 {
+				gone[e.path[0]] = true
+			}
+		}
+		if len(gone) == len(held) {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // textRemoval makes the removal's edits on the document's bytes, which is the
@@ -310,11 +346,12 @@ func textRemoval(data []byte, doc layerProfiles) ([]byte, []layerRemovedKey, err
 // and the quoting a value did not need. That is why this is the fallback and
 // the text path is the removal.
 //
-// A profile whose every key went goes with them, the way DropEmptyParents takes
-// it in the text path, and so does `profiles` itself when nothing is left of
-// it: the report of the profiles the removal emptied is made from the two
-// documents either way. False is a tree this could not be done to at all, which
-// leaves the editor's refusal as the answer.
+// A profile whose every key went stays, and the tree writes it as an empty
+// mapping: `{}` is a profile a repository's `profile:` and the layer's
+// `default_profile` both still resolve against, and a profile that went with its
+// keys is a name that stops resolving — the one thing the removal of a layer
+// must not do to a repository it does not read. False is a tree this could not
+// be done to at all, which leaves the editor's refusal as the answer.
 func nodeRemoval(data []byte, doc layerProfiles) ([]byte, []layerRemovedKey, bool) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	var root yaml.Node
@@ -350,12 +387,6 @@ func nodeRemoval(data []byte, doc layerProfiles) ([]byte, []layerRemovedKey, boo
 			}
 			keys = append(keys, e.keys...)
 		}
-		if len(profile.Content) == 0 {
-			deleteMember(profiles, name)
-		}
-	}
-	if len(profiles.Content) == 0 {
-		deleteMember(top, "profiles")
 	}
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
@@ -435,7 +466,7 @@ func printLayerRemoval(w io.Writer, place string, r *layerRemoval) {
 		fmt.Fprintf(w, "  %s: %s\n", k.Path(), k.Sentence())
 	}
 	for _, name := range r.Profiles {
-		fmt.Fprintf(w, "  the profile %s held nothing else, so it goes with them: a repository whose profile: names it has to select another one\n", config.ShowKey(name))
+		fmt.Fprintf(w, "  the profile %s held nothing else, so the removal leaves it empty rather than taking it out: a repository whose profile: names it still resolves against the layer\n", config.ShowKey(name))
 	}
 	if r.Reencoded {
 		fmt.Fprintf(w, "  this document writes a removed key where no splice of this editor measures it, so it is written from its own tree: the order, the styles and the comments stay, the spacing and the quoting may not\n")
@@ -453,6 +484,20 @@ func spliceRefusal(err error) string {
 		return "this editor refused to cut the key out of the document"
 	}
 	return fmt.Sprintf("this editor will not cut the key out of the document as it is written — %s", reason)
+}
+
+// emptiedRefusal is why a document holding a profile the removal empties is not
+// written when its own tree could not be written either: the tree write is what
+// keeps the emptied profile, so of this side there is no write that is not a loss
+// to a repository whose `profile:` names it. The profiles are named, because the
+// name is what a reader repairing the document has to keep rather than take out
+// with the keys.
+func emptiedRefusal(emptied []string) string {
+	names := make([]string, 0, len(emptied))
+	for _, name := range emptied {
+		names = append(names, config.ShowKey(name))
+	}
+	return fmt.Sprintf("the removal leaves the profile %s with no keys, and this document is not one that can be written again from its own tree", strings.Join(names, ", "))
 }
 
 // why is what stopped the removal, for a sentence: the editor's own refusal, or
