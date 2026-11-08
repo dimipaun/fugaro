@@ -160,9 +160,19 @@ var errNoReadOnlyToken = errors.New("no read-only installation token")
 // a refused review with). It is the run's own trace and nothing else: at
 // every point this is called from, nothing has been cloned, pushed, opened
 // or commented on.
+//
+// The class is config_invalid: what is refused is the run's resolved
+// configuration — the task's arm, the layers it is read against, or the
+// provider this repository runs on — before any stage could start, which is
+// that class's own case (design §3). The coder pin the run's model policy
+// will not serve is the same cause read from the other side: bootstrap's
+// checkBudget branch sends it here because it is the arm's, and the pins both
+// arms share keep the fallback's class for the same reason (runner.go). And
+// the design's §4.2 counts a challenger arm among the runs that must carry a
+// class rather than none, which is why this is not left unclassified.
 func (r *run) refuseArm(reason string) error {
 	reason = r.redact(reason)
-	r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, failure.Unclassified, reason)
+	r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, failure.ConfigInvalid, reason)
 	r.d.Log.Warn("the challenger arm was refused", "reason", reason)
 	return errors.New(reason)
 }
