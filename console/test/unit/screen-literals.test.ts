@@ -194,6 +194,25 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     'model.because':
       'the section\'s one reason sentence: the CLI\'s own refusal, **through `sanitizeRefusal`** in `drawnRefusal` (the free-text rules would draw `roles/datastore.viewer` as `[redacted]` and the project as `<project>`, and the remedy is the whole value of a refusal), or one of this file\'s own sentences naming the command (`absent`), or `REFUSAL_UNREADABLE` when the CLI\'s sentence cannot be drawn at all -- the same three-way door `projects.ts`\'s `panel.because` and `degraded.ts` keep',
   },
+  // The retirements section (CM8) reads the same `managed status --json`
+  // document as `managed.ts` and draws one subject of it. It is handed no
+  // document string that reaches a sink either: the model's one reason sentence
+  // is the CLI's own refusal through `sanitizeRefusal`, and every value beside a
+  // term goes through `putText` with the class its wire key declares.
+  'retirements.ts': {
+    text: {
+      within: 'term',
+      reason:
+        'the parameter of the `term` helper itself; every call site passes one of this file\'s own term constants (`RETIREMENTS_AT_TERM`, `RETIREMENTS_ADDRESS_TERM`, ... `RETIREMENTS_PROTECTED_TERM`), which are the console\'s words for what the value beside them is',
+    },
+    termText: {
+      within: 'factRow',
+      reason:
+        'the parameter of the `factRow` helper itself, which draws one `dt`/`dd` pair **only when the document carried a value for it**; every call site passes one of this file\'s own term constants, so no document string reaches the sink',
+    },
+    'model.because':
+      'the section\'s one reason sentence: the CLI\'s own refusal, **through `sanitizeRefusal`** in `drawnRefusal` (`refusal` is the only writer of this member, and it draws both the child\'s sentence and this file\'s own), or one of this file\'s own sentences naming the command and the versions (`recordAbsentSentence`, `setAbsentSentence`, `versionSentence`), or `REFUSAL_UNREADABLE` when the sentence cannot be drawn at all -- the same three-way door `managed.ts`\'s `model.because` keeps, for the same channel',
+  },
   // The drawers outside `src/renderer/screens`: `src/shared/notice.ts` writes
   // the notice card's text slots, and `src/shared/version.ts` composes the
   // version-skew notice's text and hands it to that card (Task 3.2). Both live
@@ -562,6 +581,11 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
     'model.state':
       '`ManagedState`, a closed union the model assigns (`read`, `unavailable`) and this file\'s own: there is no third, because the command answers with a document or it does not, and a document of a shape this build cannot read is a read that did not answer',
+  },
+  'retirements.ts': {
+    "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
+    'model.state':
+      '`RetirementsState`, a closed union the model assigns (`read`, `unavailable`) and this file\'s own: there is no third, because the read answers with a document or it does not, and a record of a version this build does not write is a read that did not answer',
   },
   'degraded.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
@@ -1228,6 +1252,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
       'policynotes.ts',
       'projects.ts',
       'reading.ts',
+      'retirements.ts',
       'run.ts',
       'spend.ts',
     ])
@@ -1570,6 +1595,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'screens/policynotes.ts',
       'screens/projects.ts',
       'screens/reading.ts',
+      'screens/retirements.ts',
       'screens/run.ts',
       'screens/spend.ts',
       'section.ts',
