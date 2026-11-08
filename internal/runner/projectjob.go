@@ -126,9 +126,17 @@ func (r *run) projectJob() (jobTriple, bool) {
 // there the platform holds the run to its own total and nothing is clamped. A
 // class at or above the total changes nothing either, so a run that already
 // fits keeps its budget and an installation whose profile was sized for the new
-// default behaves exactly as before. The reserve and the stage scale down with
-// the clamped total the way applyDefaults scales them with a short one, so the
-// relations internal/config's Validate holds are never broken by the clamp.
+// default behaves exactly as before.
+//
+// Every timeout that has to fit inside the total is cut with it, and by
+// config.Validate's own rules, so the workflow the run goes on to use is one a
+// repository could have written: the stage to the total, the verify cap to the
+// total, the render cap to what the reserve leaves, and the reserve itself only
+// when it no longer fits (a class at or below the reserve would otherwise leave
+// the run exhausted before its first stage, ending it with nothing pushed).
+// A cap left above the total is worse than a shorter one: a gate step bounded
+// by a verify longer than the job outlives the job, and the run is killed in it
+// — no finalize, no result — which is the outcome this clamp exists to prevent.
 func (r *run) clampTotalToJob(ctx context.Context, wf *config.Workflow) error {
 	job, project := r.projectJob()
 	if !project {
@@ -171,6 +179,12 @@ func (r *run) clampTotalToJob(ctx context.Context, wf *config.Workflow) error {
 	}
 	if st := wf.Timeouts.Stage.Duration; st > class {
 		wf.Timeouts.Stage.Duration = class
+	}
+	if v, tot := wf.Timeouts.Verify.Duration, wf.Timeouts.Total.Duration; v > tot {
+		wf.Timeouts.Verify.Duration = tot
+	}
+	if rd, room := wf.Timeouts.Render.Duration, wf.Timeouts.Total.Duration-wf.Timeouts.FinalizeReserve.Duration; rd > room {
+		wf.Timeouts.Render.Duration = room
 	}
 	return nil
 }

@@ -1219,6 +1219,10 @@ func TestClampTotalToJobBoundsTheRunByItsJob(t *testing.T) {
 		{"a class above the total", "6h", gcp.ProjectJobName("standard", "github", "acme-personal"), "", true, total},
 		{"a per-repository job, whose timeout is derived from this workflow", "90m", gcp.JobName(slug, identityWorkflow), "", false, total},
 		{"a run whose own total is the execution's timeout", "90m", gcp.ProjectJobName("standard", "github", "acme-personal"), "2h", false, 2 * time.Hour},
+		// A class under the default verify and render caps: left above the
+		// total they are caps the job's own clock cuts first, so the step they
+		// bound is killed mid-run instead of ending in finalize.
+		{"a class under the step caps", "20m", gcp.ProjectJobName("standard", "github", "acme-personal"), "", true, 20 * time.Minute},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := servingPolicy([]string{"acme-personal"}, map[string][]string{
@@ -1254,6 +1258,12 @@ func TestClampTotalToJobBoundsTheRunByItsJob(t *testing.T) {
 			}
 			if st, tot := wf.Timeouts.Stage.Duration, wf.Timeouts.Total.Duration; st > tot {
 				t.Errorf("the stage timeout is %s of a %s total, and it may not exceed the total", st, tot)
+			}
+			if v, tot := wf.Timeouts.Verify.Duration, wf.Timeouts.Total.Duration; v > tot {
+				t.Errorf("the verify timeout is %s of a %s total: a step bounded by it would outlive the job the run is on", v, tot)
+			}
+			if rd, room := wf.Timeouts.Render.Duration, wf.Timeouts.Total.Duration-wf.Timeouts.FinalizeReserve.Duration; rd > room {
+				t.Errorf("the render timeout is %s, and a total of %s leaves %s after the reserve", rd, wf.Timeouts.Total.Duration, room)
 			}
 			if !tc.byClass {
 				return
