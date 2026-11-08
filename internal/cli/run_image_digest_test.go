@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -49,6 +50,25 @@ func hookDigestRegistry(t *testing.T) *gcpfake.Registry {
 		return &imagecheck.Registry{HTTP: &http.Client{}, Google: &http.Client{}, Endpoint: func(string) string { return reg.URL }}
 	}
 	return reg
+}
+
+// hookDigestRegistryUnavailable points the launcher's digest reads at a
+// registry whose every manifest read fails with a server error: the read
+// failure C4 calls a warning only. It is neither of the two failures the
+// warning treats specially — the tag being gone (a 404, ErrManifestUnknown,
+// named for the operator to fix) and the launcher's identity being refused (a
+// 401/403, which stays silent) — so it reaches the launcher as a warning.
+func hookDigestRegistryUnavailable(t *testing.T) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+	old := checkRegistry
+	t.Cleanup(func() { checkRegistry = old })
+	checkRegistry = func() *imagecheck.Registry {
+		return &imagecheck.Registry{HTTP: srv.Client(), Google: srv.Client(), Endpoint: func(string) string { return srv.URL }}
+	}
 }
 
 // writeDigestBuildRecord writes the build record of slug's workflow as the
@@ -165,6 +185,39 @@ func TestRunDigestNoRecordYet(t *testing.T) {
 			t.Fatalf("%d registry reads, want none: a record with no digest of its own is nothing to compare", got)
 		}
 	})
+}
+
+// TestRunDigestReadFailureIsAWarningOnly: the registry read behind the digest
+// comparison fails, and the launch says so and starts anyway. Nothing pins the
+// digest a build recorded (D619: Cloud Run cannot vary the image per
+// execution), so a read the launcher cannot complete is never a reason to
+// refuse the launch — C4's "a read failure is a warning only". The launcher
+// then makes no claim about the image either way: a read that failed is not a
+// mismatch, so the drift wording must not appear.
+//
+// This is the read failure a launch can meet. The record half of the rule —
+// the records bucket or the record read itself failing — is a refusal one gate
+// earlier (checkImageSince judges the same record, and a record it cannot read
+// is a refusal there rather than a warning), so it is pinned at the warning's
+// own level by TestWarnImageDigestDriftSkips.
+func TestRunDigestReadFailureIsAWarningOnly(t *testing.T) {
+	f := newCloudFixture(t)
+	hookDigestRegistryUnavailable(t)
+	writeDigestBuildRecord(t, f, appSlug, "web", digestImage, recordDigest)
+	_, warn, err := execute(t, "run", "--repo", "acme/app", "--run-id", wallRunID(t, time.Minute, "d5a1"), "A task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "warning: the image digest of acme/app workflow web is not compared with its build record: reading " + digestImage + ":latest's manifest: HTTP 500\n"
+	if !strings.Contains(warn, want) {
+		t.Fatalf("warn = %q, want it to carry %q", warn, want)
+	}
+	if strings.Contains(warn, "is at digest ") {
+		t.Fatalf("warn = %q, want no drift claim from a read that failed", warn)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want 1: a read failure must never refuse the launch", n)
+	}
 }
 
 // TestWarnImageDigestDriftSkips pins the branches a launch-level test cannot
