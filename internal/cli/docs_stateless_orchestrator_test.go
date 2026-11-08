@@ -4,17 +4,20 @@ package cli
 //
 // docs/stateless-orchestrator/ is design-only: spec.md (the owner's, verbatim,
 // never edited), README.md, reconciliation.md (F1-F23, the decisions
-// D1220-D1243) and implementation-plan.md (O0-O19). Nothing in it pins a
-// command or a flag. What rots silently is pinned here: the block the decisions
+// D1220-D1247) and implementation-plan.md (O0-O19). Nothing in it pins a
+// command or a flag — BF2's plan names `fugaro runs watch`, which no task here
+// has built. What rots silently is pinned here: the block the decisions
 // live in, the rulings that are not the recommendation (D1235, the retry rule
 // and T7), Q2 answered a second time, the three round-1 questions the owner has
 // now answered, the last tension the answers left open — T7, the daemon-unit
 // carve-out of the HARD RULE, ruled on 2026-11-05 and refused in favour of
-// `fugaro update` re-rendering an installed unit — the facts a rewrite would
-// quietly drop (D1243's cache writer and O10's level, the 14-day manual
-// rollback, the unit's first install in `fugaro setup` and its re-render in
-// `fugaro update`, the approval an intent spends and the refusal that burns no
-// attempt, the binary the unit names) and the absence of any secret-shaped
+// `fugaro update` re-rendering an installed unit — BF2's long-run triage rule
+// (D1244-D1247, O14, answered 2026-11-08: the threshold, the three inputs, the
+// three outcomes, the fail-closed reading and the read-only print), the facts a
+// rewrite would quietly drop (D1243's cache writer and O10's level, the 14-day
+// manual rollback, the unit's first install in `fugaro setup` and its re-render
+// in `fugaro update`, the approval an intent spends and the refusal that burns
+// no attempt, the binary the unit names) and the absence of any secret-shaped
 // literal.
 
 import (
@@ -54,15 +57,15 @@ func soRow(rec, id string) string {
 
 func TestDocsStatelessOrchestratorDecisionsAreWritten(t *testing.T) {
 	rec := soRead(t, soReconciled)
-	for n := 1220; n <= 1243; n++ {
+	for n := 1220; n <= 1247; n++ {
 		id := "D" + strconv.Itoa(n)
 		if !regexp.MustCompile(`(?m)^\| `+id+` \|`).MatchString(rec) && !strings.Contains(rec, "- **"+id+".") && !strings.Contains(rec, id+" (") && !strings.Contains(rec, id+", D") && !strings.Contains(rec, id+" are") {
 			t.Errorf("%s: %s is not written anywhere", soReconciled, id)
 		}
 	}
 	for _, f := range []string{soReadme, soReconciled, soPlan} {
-		if !strings.Contains(soRead(t, f), "D1244-D1249") {
-			t.Errorf("%s: the reserved remainder D1244-D1249 is not stated", f)
+		if !strings.Contains(soRead(t, f), "D1248-D1249") {
+			t.Errorf("%s: the reserved remainder D1248-D1249 is not stated", f)
 		}
 	}
 }
@@ -304,6 +307,76 @@ func TestDocsStatelessOrchestratorCacheAnswerIsFollowedThrough(t *testing.T) {
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s: D1243's follow-through %q is gone", soPlan, want)
+		}
+	}
+}
+
+// BF2 (2026-11-08) is the newest addition to the folder and it is plan only:
+// the long-run triage rule (D1244-D1247, task O14) has to stay readable as the
+// code rule it is — a local threshold under the run's budget, three reads (the
+// run record, the pull request's state and BF1's open-findings file), three
+// outcomes with the merge automatic only on positive evidence, the fail-closed
+// reading of everything it cannot read, the audit id and a read-only print. A
+// rewrite that turns the rule into a model call, or that lets it merge on a
+// finding set it could not read, is the change this design cannot afford.
+func TestDocsStatelessOrchestratorLongRunTriageIsFollowedThrough(t *testing.T) {
+	plan := soRead(t, soPlan)
+	rec := soRead(t, soReconciled)
+	readme := soRead(t, soReadme)
+	for _, f := range []struct{ name, text string }{{soPlan, plan}, {soReconciled, rec}, {soReadme, readme}} {
+		if !strings.Contains(f.text, "2026-11-08") {
+			t.Errorf("%s: BF2's answers carry no date", f.name)
+		}
+	}
+	for _, id := range []string{"D1244", "D1245", "D1246", "D1247"} {
+		row := soRow(rec, id)
+		if row == "" {
+			t.Fatalf("%s: %s has no decision row", soReconciled, id)
+		}
+		for _, want := range []string{"Answered 2026-11-08", "the recommendation"} {
+			if !strings.Contains(row, want) {
+				t.Errorf("%s: the %s row lost %q", soReconciled, id, want)
+			}
+		}
+	}
+	for _, want := range []string{
+		"### O14. The long-run triage rule and `fugaro runs watch` (BF2, slice 1)",
+		"**Level 7.**",
+		"| G12 |",
+		"orchestrator.triage_after",
+		"default `2h`",
+		"BF1's open-findings file",
+		"no model call",
+		"merge as-is plus a follow-up task",
+		"none high in a security path",
+		"fails closed",
+		"`<run>:triage`",
+		"fugaro runs watch",
+		"no flag that acts",
+		"waiting_on: person",
+		"TestTriageNeverCallsAModel",
+		"TestTriageMergesOnlyWithGreenCIAndANonCriticalFindingSet",
+		"TestTriageFailsClosedWithoutAFindingsFile",
+		"TestTriageFailsClosedOnAnUnknownSeverity",
+		"TestTriageUsesThePathClassifierForSecurity",
+		"TestTriageCancelsThroughTheCancelPath",
+		"TestTriageIsWrittenToTheAuditLog",
+		"TestRunsWatchPrintsTheTriageWithoutWriting",
+		"TestRunsWatchHasNoFlagThatActs",
+		"TestTriageAfterIsLocalOnly",
+	} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("%s: BF2's follow-through %q is gone", soPlan, want)
+		}
+	}
+	for _, want := range []string{"U10", "split into sub-tasks", "the owner's ruling"} {
+		if !strings.Contains(rec, want) {
+			t.Errorf("%s: BF2's %q is gone", soReconciled, want)
+		}
+	}
+	for _, want := range []string{"BF2, 2026-11-08", "D1244-D1247", "merge as-is with follow-ups"} {
+		if !strings.Contains(readme, want) {
+			t.Errorf("%s: BF2's %q is gone", soReadme, want)
 		}
 	}
 }
