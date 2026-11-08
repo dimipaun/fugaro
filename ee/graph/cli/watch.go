@@ -39,11 +39,12 @@ import (
 //     shape, and it is why a repository the coordinator has never reconciled
 //     keeps its runs half here exactly as it does there. The floor bounds the
 //     cost: a burst of events is one read, and at most one a second.
-//   - **A scope that is down is a state, and a refused read is terminal.** A
-//     transport that has fallen over, and a read that failed while it stood —
-//     an unreachable database, a bucket that refused a listing — are both
-//     carried in `sources[].state`, and the child keeps running with the last
-//     document's nodes (H3); a read this CLI is refused is the one thing that
+//   - **A scope that is down is a state, and a refusal is terminal.** A
+//     transport that has fallen over, a listen the server has withdrawn, and a
+//     read that failed while the listen stood — an unreachable database, a
+//     bucket that refused a listing — are all carried in `sources[].state`, and
+//     the child keeps running with the last document's nodes (H3, F20(3),
+//     contract §6.22, §10.6); a read this CLI is *refused* is the one thing that
 //     ends it, with a sentence naming the command, because that is what the
 //     console reads as "this CLI has no graph" (T3).
 //   - **A keep-alive, so an orphaned child dies.** A graph that does not change
@@ -72,6 +73,13 @@ var (
 	// left with nothing to draw because a connection was slow to open.
 	graphFirstSnapshot = 5 * time.Second
 )
+
+// withdrawnListen is why a scope is down when the server has taken the listen
+// away: the subscription is over — the transport does not reconnect after a
+// cancel (rtdb.Client.Stream) — and this is the reason a screen shows beside the
+// state. The words are `watch`'s own for the same event
+// (internal/watch/state.go), because the two children mean the same thing by it.
+const withdrawnListen = "the server withdrew the listen"
 
 // runGraphWatch is `graph --watch --json`. The scope has already been parsed
 // and refused (runGraph), and the cloud is open: this opens the project's
@@ -105,7 +113,12 @@ type watcher struct {
 	// down still draws: the nodes are the last thing the scope said, and the
 	// state beside them is what has changed (H3).
 	last graph.Document
-	// down is why the subscription cannot be reached, "" while it is up.
+	// down is why the scope is down, "" while it is up. Two things set it: a
+	// transport that fell over or a read that failed, which the next read
+	// clears, and a listen the server withdrew, which nothing clears while the
+	// child lives because no subscription is left to deliver the put that
+	// would — the scope then stays down exactly as `watch`'s view stays
+	// offline (contract §10.6).
 	down string
 	// dirty is a change that has not been printed yet, either because it has
 	// just arrived, because the floor has not passed since the last document, or
@@ -136,9 +149,17 @@ func (w *watcher) run(ctx context.Context, db *rtdb.Client) error {
 		case <-tick.C:
 		case ev, ok := <-events:
 			if !ok {
-				return w.ended(ctx)
-			}
-			if err := w.observe(ev); err != nil {
+				// The channel closes when the context ends or after the server
+				// withdrew the listen; the context was checked above, so this is
+				// the withdrawal, and the child is not refused by it: its scope
+				// goes down and it stays alive with the last graph, which is
+				// `watch`'s rule for the same event (contract §10.6) and the rule
+				// this scope's plan pins (CG7, F20(3)). Nothing arrives on a
+				// closed channel again, so it is dropped from the select rather
+				// than read as an endless stream of zero events.
+				events = nil
+				w.down, w.dirty = withdrawnListen, true
+			} else if err := w.observe(ev); err != nil {
 				return err
 			}
 		}
@@ -176,7 +197,17 @@ func (w *watcher) first(ctx context.Context, events <-chan rtdb.Event) error {
 			return w.write(ctx, time.Now())
 		case ev, ok := <-events:
 			if !ok {
-				return w.ended(ctx)
+				// A closed channel before the opening put is the context ending
+				// or the listen withdrawn before it ever proved it was
+				// listening. For the withdrawal no put is coming, so waiting for
+				// one waits for the bound to pass for nothing: the first snapshot
+				// is written now, with its scope down, and the child is not
+				// refused by it (H3, contract §10.6).
+				if ctx.Err() != nil {
+					return nil
+				}
+				w.down, w.dirty = withdrawnListen, true
+				return w.write(ctx, time.Now())
 			}
 			switch {
 			case ev.Type == "put" && ev.Path == "/":
@@ -190,15 +221,25 @@ func (w *watcher) first(ctx context.Context, events <-chan rtdb.Event) error {
 
 // observe folds one event of the subscription into the child's state.
 //
-// A change waits for the floor. A transport that has fallen over is a state
-// rather than an exit (H3): the child keeps its subscription — the client
-// reconnects on its own, and begins again with a full put — and what it prints
-// meanwhile is the last document with its sources marked down. The one event
-// that ends the child is a refusal, which is the read this CLI may not make.
+// A change waits for the floor. Two things are states rather than exits: a
+// transport that has fallen over — the child keeps its subscription, the client
+// reconnects on its own and begins again with a full put — and a listen the
+// server withdrew, after which there is no subscription left at all. What it
+// prints for either is the last document with its sources marked down (H3). The
+// one event that ends the child is a refusal: a database answering 401 or 403,
+// which is a read this CLI may not make rather than a scope that is down.
 func (w *watcher) observe(ev rtdb.Event) error {
 	switch ev.Type {
 	case "put", "patch":
 		w.down, w.dirty = "", true
+	case "cancel":
+		// The server withdrew the listen — a rule no longer allows it — and the
+		// transport does not reconnect after a cancel, so this child's
+		// subscription is over. The scope goes down and the child stays alive
+		// (contract §10.6): the listen it was holding stopped being allowed,
+		// which is not the same as this CLI being refused the read it makes, and
+		// it is the read's refusal that ends a child.
+		w.down, w.dirty = withdrawnListen, true
 	case "auth_revoked":
 		// The credential the subscription was made with expired. The transport
 		// mints another and reconnects itself, and what follows is a full put,
@@ -212,17 +253,6 @@ func (w *watcher) observe(ev rtdb.Event) error {
 		w.down, w.dirty = "the database stream is down: "+ev.Err.Error(), true
 	}
 	return nil
-}
-
-// ended is what a closed subscription channel means: the context ended, or the
-// server withdrew the listen. Those are the only two ways the transport closes
-// its channel, and the second is a refusal — a rule no longer allows the read —
-// rather than a scope that is down.
-func (w *watcher) ended(ctx context.Context) error {
-	if ctx.Err() != nil {
-		return nil
-	}
-	return refusedStream()
 }
 
 // write builds the document to print now, stamps it as the stream's next and
@@ -319,10 +349,12 @@ func downDoc(last graph.Document, reason string) graph.Document {
 	return doc
 }
 
-// refusedStream is the refusal that ends the child: the server withdrew the
-// subscription, so this CLI may not read the graph at all — which is the
-// refusal a console shows as "this CLI has no graph", beside the sentence that
-// names the command a person can run instead (T3, contract §6.22).
+// refusedStream is the refusal that ends the child: the database answered 401
+// or 403 to the subscription itself, so this CLI may not read the graph at all
+// — which is the refusal a console shows as "this CLI has no graph", beside the
+// sentence that names the command a person can run instead (T3, contract §6.22,
+// §10.5). It is told apart from a scope that is down by exactly that: a
+// transport that fell over, or a listen withdrawn, is a state in the document.
 func refusedStream() error {
-	return fcli.UserErr("graph: the database withdrew the stream and this build cannot stream the graph: run fugaro graph --json to read it once")
+	return fcli.UserErr("graph: the database refused the stream and this build cannot stream the graph: run fugaro graph --json to read it once")
 }

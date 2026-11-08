@@ -30,9 +30,16 @@ package cli
 //     block rather than lose a document (H5, §10.3).
 //   - TestWatchOneSubscriptionPerScope: one held connection for the scope,
 //     however many repositories and nodes it has (H6, F12).
-//   - TestWatchRefusedReadIsTerminalAndNamesTheCommand: the server withdrawing
-//     the listen is a refusal that ends the child and names the command, which
-//     is what a console reads as "this CLI has no graph" (T3).
+//   - TestWatchAWithdrawnListenIsADownScopeAndNotAnExit: the server taking the
+//     listen away is a scope that is down, not a refusal: the last graph stays,
+//     the child stays alive and keeps its clock (§10.6, F20(3), the plan's CG7).
+//   - TestWatchAWithdrawnListenIsADownScopeAtEveryInstantItCanLand: the same
+//     for the two instants the fake cannot produce — the cancel event itself,
+//     and a withdrawal before the opening put ever arrived, which is a document
+//     rather than a wait for a bound that nothing can beat.
+//   - TestWatchRefusedReadIsTerminalAndNamesTheCommand: the listen *refused* —
+//     a 401 or 403 on the subscription itself — ends the child and names the
+//     command, which is what a console reads as "this CLI has no graph" (T3).
 //   - TestWatchRefusedReadIsTerminalWhileTheListenStands: a *read* this CLI is
 //     refused, with the listen served throughout, is the other refusal: exit 1
 //     and no document, where a read that merely failed is a scope marked down
@@ -68,6 +75,7 @@ import (
 	"github.com/dimipaun/fugaro/ee/graph"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/coordpath"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
 // The clocks these tests drive the stream with: a floor of milliseconds rather
@@ -973,36 +981,119 @@ func TestWatchOneSubscriptionPerScope(t *testing.T) {
 	}
 }
 
-// TestWatchRefusedReadIsTerminalAndNamesTheCommand: a refusal is what ends the
-// child, and the sentence it ends with names what to do instead, because a
-// console shows that sentence and draws no graph (H3, T3, contract §6.22). Two
-// refusals reach it — the server withdrawing the listen mid-stream, and a
-// caller asking for the stream without --json — and each names its own way out.
-func TestWatchRefusedReadIsTerminalAndNamesTheCommand(t *testing.T) {
-	t.Run("the server withdrew the listen", func(t *testing.T) {
-		f := newGraphFixture(t)
-		f.writeStoredView(t, storedView())
-		fast(t, testFloor, testKeep)
+// TestWatchAWithdrawnListenIsADownScopeAndNotAnExit: the server can take the
+// listen away — a rule no longer allows it — and the transport does not
+// reconnect after a cancel, so the child's one subscription is over for good.
+// What that is not is a refusal: the scope goes down, the child stays alive
+// with the last graph and keeps its clock, which is §10.6's rule for `watch` on
+// the same event and the rule this scope's plan pins (CG7, F20(3)). A console
+// reads the state and ages the figures itself.
+func TestWatchAWithdrawnListenIsADownScopeAndNotAnExit(t *testing.T) {
+	f := newGraphFixture(t)
+	f.writeStoredView(t, storedView())
+	fast(t, testFloor, testKeep)
 
-		sink := newWatchSink()
-		child := startWatch(t, sink, "graph", "--watch", "--json")
-		if first := sink.next(t, testPatience); first.Seq != 1 {
-			t.Fatalf("the first document is seq %d, want 1: the child streamed before it was refused", first.Seq)
+	sink := newWatchSink()
+	child := startWatch(t, sink, "graph", "--watch", "--json")
+	first := sink.next(t, testPatience)
+	if len(first.Sources) != 1 || first.Sources[0].State != graph.SourceUp {
+		t.Fatalf("the first document's sources are %+v, want the one scope up", first.Sources)
+	}
+
+	f.db.SendCancel()
+
+	down := sink.next(t, testPatience)
+	if len(down.Sources) != 1 || down.Sources[0].State != graph.SourceDown {
+		t.Errorf("the scope is %+v after the listen was withdrawn, want it down", down.Sources)
+	}
+	if got := down.Sources[0].Reason; got != withdrawnListen {
+		t.Errorf("the reason is %q, want %q: the document says why the scope is down", got, withdrawnListen)
+	}
+	if len(down.Nodes) == 0 {
+		t.Errorf("the withdrawn listen dropped the graph: the last nodes are what a screen still draws (H3)")
+	}
+	if down.StreamID != first.StreamID || down.Seq != first.Seq+1 {
+		t.Errorf("the document after the withdrawal is %q seq %d, want %q seq %d: the same child, the next document",
+			down.StreamID, down.Seq, first.StreamID, first.Seq+1)
+	}
+	child.stillRunning(t, 20*testFloor)
+
+	// The clock keeps running, which is how a reader tells a child that is alive
+	// and a feed that is not: the next document is the keep-alive, nothing
+	// changed, the same scope still down.
+	alive := sink.next(t, testPatience)
+	if len(alive.Sources) != 1 || alive.Sources[0].State != graph.SourceDown {
+		t.Errorf("the keep-alive after the withdrawal is %+v, want the scope still down", alive.Sources)
+	}
+	if alive.StreamID != first.StreamID || alive.Seq != down.Seq+1 {
+		t.Errorf("the keep-alive is %q seq %d, want %q seq %d", alive.StreamID, alive.Seq, first.StreamID, down.Seq+1)
+	}
+	child.stillRunning(t, 20*testFloor)
+}
+
+// TestWatchAWithdrawnListenIsADownScopeAtEveryInstantItCanLand: the withdrawal
+// is two things in the transport — a `cancel` event, and the closed channel
+// that follows it — and the child folds both of them into one state, in the two
+// places it can arrive: out of the ordinary event loop, and before the opening
+// put that proves the listen works has ever come.
+//
+// Both instants are handed to the child directly, because the fake cannot
+// produce them: it registers a listener and writes its opening put in one
+// breath, so a cancel sent by a test cannot land between the two, and it always
+// closes the stream it cancels. Every other instant is held end to end by
+// TestWatchAWithdrawnListenIsADownScopeAndNotAnExit.
+func TestWatchAWithdrawnListenIsADownScopeAtEveryInstantItCanLand(t *testing.T) {
+	t.Run("the cancel event", func(t *testing.T) {
+		var w watcher
+		if err := w.observe(rtdb.Event{Type: "cancel"}); err != nil {
+			t.Fatalf("the cancel event ended the child with %v, want a scope that is down", err)
 		}
-
-		// The server takes the listen away: a rule no longer allows the read,
-		// which is a refusal rather than a scope that is down.
-		f.db.SendCancel()
-
-		err := child.wait(t, testPatience)
-		if err == nil {
-			t.Fatalf("the child kept streaming after the server withdrew the listen")
+		if w.down != withdrawnListen {
+			t.Errorf("the scope is down because %q, want %q", w.down, withdrawnListen)
 		}
-		if !strings.Contains(err.Error(), "fugaro graph") {
-			t.Errorf("the refusal is %q, want it to name the command to run instead", err)
+		if !w.dirty {
+			t.Errorf("the withdrawal left no change pending: nothing would tell a reader the scope is down")
 		}
 	})
 
+	t.Run("before the opening put", func(t *testing.T) {
+		closed := make(chan rtdb.Event)
+		close(closed)
+
+		st, err := graph.NewStream()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		w := &watcher{out: &out, st: st}
+		if err := w.first(context.Background(), closed); err != nil {
+			t.Fatalf("a withdrawn listen ended the child with %v, want the first document, its scope down", err)
+		}
+		doc, err := graph.ParseDocument(bytes.TrimSpace(out.Bytes()))
+		if err != nil {
+			t.Fatalf("the child wrote a line that is not a document: %v: %s", err, out.String())
+		}
+		if len(doc.Sources) != 1 || doc.Sources[0].State != graph.SourceDown {
+			t.Errorf("the first document's sources are %+v, want the one scope down", doc.Sources)
+		}
+		if got := doc.Sources[0].Reason; got != withdrawnListen {
+			t.Errorf("the reason is %q, want %q", got, withdrawnListen)
+		}
+		if doc.Seq != 1 || doc.StreamID == "" {
+			t.Errorf("the first document is seq %d under stream %q, want seq 1 under this child's stream", doc.Seq, doc.StreamID)
+		}
+	})
+}
+
+// TestWatchRefusedReadIsTerminalAndNamesTheCommand: a refusal is what ends the
+// child, and the sentence it ends with names what to do instead, because a
+// console shows that sentence and draws no graph (H3, T3, contract §6.22).
+// Three refusals reach it — the listen refused when it opens, the listen refused
+// on a reconnect, and a caller asking for the stream without --json — and each
+// names its own way out. A listen the server *withdrew* is not one of them:
+// that is a scope that is down, and
+// TestWatchAWithdrawnListenIsADownScopeAndNotAnExit holds it.
+func TestWatchRefusedReadIsTerminalAndNamesTheCommand(t *testing.T) {
 	t.Run("the listen is refused when the stream opens", func(t *testing.T) {
 		f := newGraphFixture(t)
 		f.writeStoredView(t, storedView())
