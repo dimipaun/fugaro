@@ -210,6 +210,10 @@ func newCoreRoot() *cobra.Command {
 		// SC3, D1512). It reads a file at the base branch and nothing else: no
 		// bucket, no database and no host.
 		newSecurityCmd(),
+		// The reader and the one writer a person or a session has over the
+		// project's orchestrator state (the stateless-orchestrator plan's O5,
+		// D1223). It reads and writes the node its project's daemon keeps.
+		newOrchestratorCmd(),
 		// The credentials service's own entry point: hidden, and the only
 		// thing the service's image runs (credentials_serve.go, plan task
 		// C1.14). It is registered like every other command so `fugaro
