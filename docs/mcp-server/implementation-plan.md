@@ -4,7 +4,8 @@
 merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
 prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
 except the reading of the installation's published state its lists come from, which no task of this
-plan carries; M8–M10 are not started; this folder approves no task.** The design is
+plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
+half and not started; M8 and M9 are not started; this folder approves no task.** The design is
 [spec.md](spec.md), the findings and the fifteen decisions are
 [reconciliation.md](reconciliation.md). **All fifteen were answered on 2026-11-04** — **every one of
 them the recommendation**, with the owner's own detail written into M3, M5, M6 and M9 — and this
@@ -162,7 +163,8 @@ half (#1716) are merged on `main`** — M4's half being the account, the front d
 public invoker binding (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`,
 `:527`) — **M5 is built apart from the paired device M-a asks for, which is M5b below and is not
 built, M7 is built apart from the reading of the installation's published state its lists come from,
-which no task below carries, and M4's store half and M8–M10 are not started**. **What each built task
+which no task below carries, M10 is built apart from the store's own bucket and its one grant, which
+are M4's store half below and are not started, and M8 and M9 are not started**. **What each built task
 still owes is named in its own section below**
 ([reconciliation.md](reconciliation.md) §4a, "What has happened since").
 
