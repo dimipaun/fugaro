@@ -390,8 +390,8 @@ type run struct {
 	// forwarder (B1.7): the published node's bitbucket_token block admits this
 	// repository with proxy: true AND the installation has its credentials
 	// service on (G9, G15). admissionCheck is what decides it -- it is the
-	// one read of the node -- and the clone URL, the provider, the remote
-	// check and the git environment all read it.
+	// one read of the node -- and the forwarder, the credential URL, the
+	// provider and the git environment all read it.
 	proxied bool
 	// forward is the loopback forwarder a proxied run's git and Bitbucket API
 	// calls go through (gateway.GitForward, B1.6), nil for every other run.
@@ -1695,19 +1695,22 @@ func (r *run) warnAuthRefresh(err error) {
 	r.d.Log.Warn("refreshing git credentials failed; keeping the current ones", "err", r.redact(err.Error()))
 }
 
-// proxiedRemote is the URL a proxied run clones from, fetches and pushes
-// through: the runner's own forwarder endpoint for this run's repository
-// (B1.7). It is built from the run's own repository and the listener's
-// address, never from the launcher's remote, because what a proxied run's git
-// talks to -- and what its git credential is scoped to -- must be the
-// forwarder, and the remote is a value the job's environment carries.
+// forwarderRemote is the runner's own forwarder endpoint for this run's
+// repository: the URL the insteadOf rewrite credentialVars installs lands
+// every Bitbucket URL on, and therefore the one the run's git credential is
+// scoped to (B1.7). It is built from the run's own repository and the
+// listener's address, never from the launcher's remote: what git asks its
+// credential helper for is the rewritten URL, and the helper is installed for
+// this endpoint alone.
 //
-// The Bitbucket origin itself is not gone from this run's git: the insteadOf
-// rewrite credentialVars installs sends every https://bitbucket.org/ URL a
-// command or a tool names to this same endpoint, so a repository's own
-// tooling (a submodule, a fetch the agent spells out) reaches Bitbucket
-// through the service too.
-func (r *run) proxiedRemote(remote string) string {
+// Nothing writes it into a checkout, and nothing hands it to git as a remote:
+// it is derived per execution, from a listener whose port dies with the
+// execution. The remote stays the Bitbucket URL, which is what makes a
+// checkout an earlier execution left behind still fetchable -- the rewrite
+// credentialVars installs sends every https://bitbucket.org/ URL a command or
+// a tool names, the repository's own tooling included, to the endpoint of the
+// execution that is running now.
+func (r *run) forwarderRemote(remote string) string {
 	if r.forward == nil {
 		return remote
 	}
@@ -1968,8 +1971,9 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// The forwarder a proxied run reaches Bitbucket through (B1.7), started
 	// here: after the admission, which is what decides that this run is
 	// proxied (its one read of the published node), and before anything of
-	// this run talks to Bitbucket -- the remote below is its endpoint, and
-	// the clone, every fetch and the final push go through it.
+	// this run talks to Bitbucket -- the git environment built below points
+	// every Bitbucket URL at it, so the clone, every fetch and the final push
+	// go through it.
 	if err := r.startProxiedGit(ctx); err != nil {
 		return err
 	}
@@ -1987,12 +1991,20 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := r.checkProjectCheckoutOrigin(ctx, remote); err != nil {
 		return err
 	}
-	// A proxied run's remote is the forwarder's endpoint, and it is the
-	// runner's own answer rather than the launcher's: a checkout a retried
-	// execution found here already carries it as its origin (proxiedRemote),
-	// and the runner writes it as the origin of the one it clones.
-	remote = r.proxiedRemote(remote)
-	r.credURL = gitops.CredentialURL(remote)
+	// A proxied run keeps the remote it was given -- the launcher's Bitbucket
+	// URL, or the origin of a checkout an earlier execution left here, which
+	// is that same URL -- and it is the insteadOf rewrite its git environment
+	// carries (credentialVars) that sends every Bitbucket URL to this
+	// execution's forwarder. The remote is not rewritten to the endpoint
+	// because git reaches it through what the checkout records, not through
+	// what this function hands it: a port written into the remote would be one
+	// an earlier execution drew, dead by the time this one fetches, and the
+	// final push would go to nobody. Written this way, the port exists in the
+	// environment alone and every execution routes by its own.
+	//
+	// The git credential is the one thing scoped to the endpoint: git asks its
+	// helper for the URL it is about to open, which is the rewritten one.
+	r.credURL = gitops.CredentialURL(r.forwarderRemote(remote))
 	// The clone and fetch below may already need credentials, so the
 	// provider is opened now if anything but fugaro.yaml names it.
 	switch job, project := r.projectJob(); {

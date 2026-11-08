@@ -9,9 +9,8 @@ package runner
 // It asks the three seams that half is made of -- the decision
 // (proxiedBitbucket, read once by admissionCheck), the environment the
 // forwarder puts in the run's and the agent's git (credentialVars) and the
-// remote the clone, every fetch and the push go to (proxiedRemote, and the
-// admission that has to accept it when a retried execution finds the checkout
-// the first one made) -- rather than running a whole run, for the reason
+// endpoint git is actually routed to and the credential is scoped to
+// (forwarderRemote) -- rather than running a whole run, for the reason
 // git_service_internal_test.go gives for its own half: the run's identity is
 // the budget session's token and not an environment value, so the fixtures
 // build it the way the run's own policy read does (gitRunIdentity).
@@ -21,6 +20,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -30,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // proxyService is the installation's credentials service as these fixtures
@@ -106,7 +107,7 @@ func startForward(t *testing.T, r *run) {
 func TestProxiedBitbucketAgentEnvHasNoToken(t *testing.T) {
 	r := proxiedRun(t, pushIdentity(t), nil)
 	startForward(t, r)
-	r.credURL = gitops.CredentialURL(r.proxiedRemote("https://bitbucket.org/acme/app.git"))
+	r.credURL = gitops.CredentialURL(r.forwarderRemote("https://bitbucket.org/acme/app.git"))
 	if r.credURL == "" || !strings.HasPrefix(r.credURL, "http://127.0.0.1:") {
 		t.Fatalf("the proxied remote's credential URL is %q, want the loopback forwarder's", r.credURL)
 	}
@@ -153,66 +154,127 @@ func TestProxiedBitbucketAgentEnvHasNoToken(t *testing.T) {
 	}
 }
 
-// TestProxiedRemoteRewrite: a proxied run clones, fetches and pushes through
-// its own forwarder, and it is the run that writes that remote rather than the
-// launcher (proxiedRemote). So the endpoint it writes has to be one its own
-// admission accepts: a retried execution of the same job finds the checkout
-// the first execution made, whose origin is the endpoint, and the check that
-// binds a remote to this run's repository would otherwise refuse it.
+// TestProxiedFetchFollowsThisExecutionsForwarder: what a proxied run's git
+// actually reaches is decided by the insteadOf rewrite its environment carries
+// -- git opens the URL the checkout records, and every Bitbucket URL is
+// rewritten to THIS execution's listener -- so a checkout an earlier execution
+// left behind is fetched through the forwarder of the run that is running now,
+// whatever port it drew, and the endpoint is never written into the checkout.
 //
-// The endpoint is admitted for this run's repository and no other, and only
-// for a proxied run: it is a remote the runner itself wrote, and everything
-// else about the check is unchanged.
-func TestProxiedRemoteRewrite(t *testing.T) {
+// Real git, the run's own credentialVars and the real forwarder against the
+// fake service, because the claim is about what git does with the two: a
+// remote whose port an earlier execution drew, or a rewrite that is missing or
+// aimed at the wrong endpoint, is a fetch that reaches neither this listener
+// nor the service, and it fails here naming the URL it tried.
+//
+// Mutation (run, restored): hand the launcher's remote to gitops in place of
+// the rewrite -- the fetch goes to https://bitbucket.org/ and the service is
+// sent nothing.
+func TestProxiedFetchFollowsThisExecutionsForwarder(t *testing.T) {
+	svc := newGitServiceFake(t, time.Now())
+	meta := gitMetadataFake(t, gitServiceIDToken)
+	r := proxiedRun(t, pushIdentity(t), func(r *run) {
+		r.d.Env = []string{
+			providers.EnvCredentialsServiceURL + "=" + svc.srv.URL,
+			metadataHostEnv + "=" + strings.TrimPrefix(meta.URL, "http://"),
+		}
+	})
+	startForward(t, r)
+	// The bootstrap's own wiring: the credential is scoped to the endpoint,
+	// and the remote stays the URL a launcher writes for this repository --
+	// which is what an earlier execution's checkout carries as its origin.
+	const launcherRemote = "https://bitbucket.org/acme/app.git"
+	r.credURL = gitops.CredentialURL(r.forwarderRemote(launcherRemote))
+	if !strings.HasPrefix(r.credURL, "http://127.0.0.1:") {
+		t.Fatalf("the credential is scoped to %q, want this execution's loopback endpoint", r.credURL)
+	}
+	vars, err := r.authVars()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := vars["GIT_CONFIG_VALUE_2"], bitbucketOrigin; got != want {
+		t.Fatalf("the git environment rewrites %q, want %q: without it git opens the remote as it is spelled", got, want)
+	}
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "--quiet", "-b", "main", ".")
+	testutil.Git(t, dir, "remote", "add", "origin", launcherRemote)
+	repo, err := gitops.Open(dir, gitops.WithVars(nil, vars))
+	if err != nil {
+		t.Fatalf("opening the checkout: %v", err)
+	}
+	// The fetch fails: the fake service is not a git server. What it must not
+	// do is fail without reaching the service, which is what this asserts.
+	if err := repo.FetchBase(context.Background(), "main"); err == nil {
+		t.Error("a fetch from a service that is not a git server succeeded")
+	}
+	calls := svc.mintCalls()
+	if len(calls) == 0 {
+		t.Fatal("the fetch never reached the installation's credentials service: the run's git did not follow the rewrite")
+	}
+	if want := gateway.GitProxyPrefix + "acme/app.git/info/refs"; calls[0].path != want {
+		t.Errorf("the service was asked for %q, want %q", calls[0].path, want)
+	}
+	if calls[0].auth != "Bearer "+gitServiceIDToken {
+		t.Errorf("the fetch reached the service with %q, want this job's own identity", calls[0].auth)
+	}
+}
+
+// TestForwarderRemoteIsTheCredentialScope: the endpoint the credential is
+// scoped to is this run's own listener, and it is not the remote. The remote a
+// proxied run leaves in a checkout is the launcher's Bitbucket URL, so nothing
+// this run writes carries a port that dies with it.
+func TestForwarderRemoteIsTheCredentialScope(t *testing.T) {
 	r := proxiedRun(t, pushIdentity(t), nil)
 	startForward(t, r)
 	const launcherRemote = "https://bitbucket.org/acme/app.git"
-	got := r.proxiedRemote(launcherRemote)
+	got := r.forwarderRemote(launcherRemote)
 	if want := strings.TrimSuffix(r.forward.URL(), "/") + "/acme/app.git"; got != want {
-		t.Fatalf("the proxied remote is %q, want %q", got, want)
+		t.Fatalf("the endpoint is %q, want %q", got, want)
 	}
 	if strings.Contains(got, "bitbucket.org") {
-		t.Errorf("the proxied remote names Bitbucket itself (%q): the run talks to the forwarder, and to Bitbucket only through the service", got)
+		t.Errorf("the endpoint names Bitbucket itself (%q): the credential is scoped to the loopback listener", got)
 	}
+	// The admission is the one every other run makes: the launcher's remote
+	// for this repository, and nothing about it changes for a proxied run.
 	slug, err := task.Slug(gitprov.KindBitbucket, "acme/app")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.remoteAdmissionErr(got, gitprov.KindBitbucket, "acme/app", slug); err != nil {
-		t.Errorf("the run's own forwarder endpoint was refused by its own admission: %v", err)
+	if err := remoteAdmissionErr(launcherRemote, gitprov.KindBitbucket, "acme/app", slug); err != nil {
+		t.Errorf("a proxied run's own remote was refused by the run's admission: %v", err)
 	}
-	other := strings.TrimSuffix(r.forward.URL(), "/") + "/acme/other.git"
-	if err := r.remoteAdmissionErr(other, gitprov.KindBitbucket, "acme/app", slug); err == nil {
-		t.Error("the endpoint naming another repository was admitted: the endpoint is the runner's, and the repository it names is still the launcher's to bind")
-	}
-	// A run that is not proxied has no such endpoint, and the admission says
-	// so: the rewrite is the proxied run's own, and nothing else may hand it
-	// in.
-	plain := proxiedRun(t, gitRunIdentity(t), func(r *run) { r.proxied = false })
-	if err := plain.remoteAdmissionErr(got, gitprov.KindBitbucket, "acme/app", slug); err == nil {
-		t.Error("a run that is not proxied admitted the forwarder's endpoint")
-	}
-	if plain.proxiedRemote(launcherRemote) != launcherRemote {
-		t.Error("a run that is not proxied rewrote its remote")
+	if plain := r.forwarderRemote(launcherRemote); plain == launcherRemote {
+		t.Error("the endpoint is the launcher's remote: a proxied run's git credential would be scoped to Bitbucket itself")
 	}
 }
 
-// TestForwarderRemoteRepoUnreadable: forwarderRemoteRepo reads the endpoint
-// and only the endpoint -- an http URL on a loopback address, under the
-// proxy route's prefix, naming an owner/name. Everything else is somebody
-// else's remote, whatever it looks like.
-func TestForwarderRemoteRepoUnreadable(t *testing.T) {
+// TestForwarderEndpointIsNeverARemote: no remote this run reads is admitted
+// when it names the forwarder. The listener has a port of its own in every
+// execution, so a checkout carrying one is pinned to a port that dies with the
+// execution that wrote it, and git reaches the remote a checkout records rather
+// than the one a caller hands it: admitting it would be a fetch, and a push,
+// aimed at an address nobody is listening on. Nothing writes one any more --
+// the endpoint is derived per execution, from the environment alone
+// (forwarderRemote) -- and the rows below are the addresses it could be spelled
+// on, the loopback ones included: the earlier shape of this code admitted
+// them, and a checkout an earlier execution left kept the dead port.
+func TestForwarderEndpointIsNeverARemote(t *testing.T) {
+	slug, err := task.Slug(gitprov.KindBitbucket, "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct{ name, remote string }{
-		{"Bitbucket itself", "https://bitbucket.org/acme/app.git"},
-		{"a loopback host that is not this route", "http://127.0.0.1:9/acme/app.git"},
-		{"a route with no repository", "http://127.0.0.1:9" + gateway.GitProxyPrefix},
-		{"a route with only an owner", "http://127.0.0.1:9" + gateway.GitProxyPrefix + "acme"},
-		{"a remote that is not a URL", "git@bitbucket.org:acme/app.git"},
+		{"a loopback endpoint naming this run's repository", "http://127.0.0.1:9" + gateway.GitProxyPrefix + "acme/app.git"},
+		{"the IPv6 loopback spelling of one", "http://[::1]:9" + gateway.GitProxyPrefix + "acme/app.git"},
+		{"an address that is not loopback", "http://10.0.0.5:9" + gateway.GitProxyPrefix + "acme/app.git"},
 		{"a host that merely begins with 127.0.0.1", "http://127.0.0.1.evil.example:9" + gateway.GitProxyPrefix + "acme/app.git"},
 	} {
-		if named, ok := forwarderRemoteRepo(tc.remote); ok {
-			t.Errorf("%s (%q) was read as the forwarder's endpoint for %q", tc.name, tc.remote, named)
+		if err := remoteAdmissionErr(tc.remote, gitprov.KindBitbucket, "acme/app", slug); err == nil {
+			t.Errorf("%s (%q) was admitted as this run's remote", tc.name, tc.remote)
 		}
+	}
+	if err := remoteAdmissionErr("https://bitbucket.org/acme/app.git", gitprov.KindBitbucket, "acme/app", slug); err != nil {
+		t.Errorf("the repository's own Bitbucket remote was refused: %v", err)
 	}
 }
 
@@ -327,8 +389,8 @@ func TestProxyFalseUnchanged(t *testing.T) {
 			t.Fatal("a run that is not proxied started a forwarder")
 		}
 		const remote = "https://bitbucket.org/acme/app.git"
-		if got := r.proxiedRemote(remote); got != remote {
-			t.Errorf("proxiedRemote(%q) = %q, want it unchanged", remote, got)
+		if got := r.forwarderRemote(remote); got != remote {
+			t.Errorf("forwarderRemote(%q) = %q, want it unchanged", remote, got)
 		}
 		if err := r.openProvider(context.Background(), gitprov.KindBitbucket, "the workflow"); err != nil {
 			t.Fatalf("opening the provider of a run that is not proxied: %v", err)

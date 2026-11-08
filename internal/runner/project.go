@@ -4,13 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/url"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -483,60 +481,6 @@ func remoteAdmissionErr(remote, kind, repo, slug string) error {
 	// cause (every one of them is a sentence about this run's own
 	// environment), so there is nothing for a %w to preserve.
 	return errors.New(safetext.OneLine(err.Error()))
-}
-
-// remoteAdmissionErr is the remote check this run makes of the remote it
-// clones from: remoteAdmissionRefusal, and the one remote a proxied run
-// carries that the launcher did not write.
-//
-// A proxied run's remote is the runner's own forwarder endpoint (B1.7): the
-// clone URL a proxied run is given is the loopback listener, so a work
-// directory that already holds one -- a retried execution of the same job
-// finds the checkout the first one made -- carries that endpoint as its
-// origin, and the check below would refuse it as an http remote on a host no
-// provider kind owns (the two refusals remoteAdmissionRefusal makes first).
-// It is admitted for a proxied Bitbucket run and for no other, and only for
-// the repository this run is for: the endpoint is a remote the runner itself
-// wrote, and a remote naming another repository through it is refused exactly
-// as any other remote naming another repository is.
-func (r *run) remoteAdmissionErr(remote, kind, repo, slug string) error {
-	if r.proxied && kind == gitprov.KindBitbucket {
-		if named, ok := forwarderRemoteRepo(remote); ok {
-			if want, err := task.CanonicalRepo(repo); err == nil && named == want {
-				return nil
-			}
-		}
-	}
-	return remoteAdmissionErr(remote, kind, repo, slug)
-}
-
-// forwarderRemoteRepo reads a remote written as the runner's own forwarder
-// endpoint for a repository: an http URL on a loopback address whose path is
-// the proxy route's prefix and then an owner/name. It answers the canonical
-// repository the endpoint names, and false for every other remote.
-//
-// The loopback address is the whole of what makes this the runner's own
-// endpoint rather than a remote someone else wrote: the forwarder listens on
-// 127.0.0.1 and nowhere else (StartGitForward), so a remote on a loopback
-// address is one only this job could serve. What it is admitted FOR is
-// decided by the caller, which compares the name against this run's.
-func forwarderRemoteRepo(remote string) (string, bool) {
-	u, err := url.Parse(remote)
-	if err != nil || u.Scheme != "http" || u.Host == "" {
-		return "", false
-	}
-	if ip := net.ParseIP(u.Hostname()); ip == nil || !ip.IsLoopback() {
-		return "", false
-	}
-	rest, ok := strings.CutPrefix(u.Path, gateway.GitProxyPrefix)
-	if !ok {
-		return "", false
-	}
-	named, err := task.CanonicalRepo(strings.TrimSuffix(rest, ".git"))
-	if err != nil {
-		return "", false
-	}
-	return named, true
 }
 
 // proxiedBitbucket decides whether this run's Bitbucket access goes through
@@ -1259,8 +1203,8 @@ func (r *run) admissionCheck(ctx context.Context) error {
 	// the only thing that says so (D146/D147). A per-repository job only
 	// (D505): a project job serves every repository of its profile, and its
 	// job account is the one the service admits, so a proxied repository is
-	// never launched onto one. Everything downstream reads this fact --
-	// the forwarder, the clone URL, the provider and the git environment --
+	// never launched onto one. Everything downstream reads this fact -- the
+	// forwarder, the credential URL, the provider and the git environment --
 	// so that no second reader can disagree with this one about which of
 	// them a repository is.
 	r.proxied = r.proxiedBitbucket(p, found, project, kind, repo)
@@ -1284,7 +1228,7 @@ func (r *run) admissionCheck(ctx context.Context) error {
 		// read on a project job (plan task 3.3 step 3), and a value a launcher
 		// wrote there can neither redirect the run nor halt it.
 		remote := r.originURL(ctx)
-		if err := r.remoteAdmissionErr(remote, kind, repo, slug); err != nil {
+		if err := remoteAdmissionErr(remote, kind, repo, slug); err != nil {
 			return err
 		}
 	}
