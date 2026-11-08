@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "plan": "docs/console-dependency-graph/implementation-plan.md",
   "stream": "console",
   "nodes": [

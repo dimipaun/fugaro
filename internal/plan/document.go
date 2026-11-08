@@ -25,12 +25,14 @@ package plan
 import "github.com/dimipaun/fugaro/internal/streams"
 
 // SchemaVersion is the graph schema this build writes, and the newest it reads.
-// It is 2 since the plan's graph learned the stream its plan ships in and the
-// shape a node's target version has (GV1.3). The field is on the document rather
-// than in this package's head because the console has to be able to tell "this
-// graph is from a newer CLI" from "this graph is broken", and it can only do
-// that if the number is in the document it was handed.
-const SchemaVersion = 2
+// It is 3 since the plan's graph learned the contract-first decoupling pass
+// (D1811): a node's `kind`, a node's relative `size`, the stubs a contract names,
+// the record of each broken edge and the change requests raised against a
+// merged contract. The field is on the document rather than in this package's
+// head because the console has to be able to tell "this graph is from a newer
+// CLI" from "this graph is broken", and it can only do that if the number is in
+// the document it was handed.
+const SchemaVersion = 3
 
 // FirstSchemaVersion is the graph schema this build reads beside the current
 // one. A v1 artifact names no stream and spells a node's target version in the
@@ -40,9 +42,42 @@ const SchemaVersion = 2
 const FirstSchemaVersion = 1
 
 // readsSchemaVersion reports whether this build reads a document written in
-// schema version v. Two are read rather than one because the second only added
-// fields: a v1 artifact is a graph this build draws, not one it refuses.
+// schema version v. Three are read rather than one because each of the newer
+// ones only added fields: a v1 or v2 artifact is a graph this build draws, not
+// one it refuses.
 func readsSchemaVersion(v int) bool { return v >= FirstSchemaVersion && v <= SchemaVersion }
+
+// The four kinds of node a schema-3 graph names. A node carrying none is a
+// task, which is what every node of a v1 or v2 graph is, so `kind` is absent
+// from those documents rather than written out as the default.
+const (
+	// KindTask is ordinary work: a node of the plan that is not part of the
+	// decoupling pass.
+	KindTask = "task"
+	// KindContract is a contract task: the interface the pass wrote down
+	// before breaking an edge through it, and the stubs it leaves behind.
+	KindContract = "contract"
+	// KindIntegration is the integration task: it depends on both endpoints of
+	// the edge the contract broke, deletes the contract's stubs and runs the
+	// end-to-end checks.
+	KindIntegration = "integration"
+	// KindContractChange is a change request against a contract that has
+	// already merged (D1812), which the planner records rather than edits.
+	KindContractChange = "contract_change"
+)
+
+// nodeKinds is the closed set `kind` is held to, in the order a refusal names
+// them.
+var nodeKinds = []string{KindTask, KindContract, KindIntegration, KindContractChange}
+
+// kindOf is the kind a node is, with the default spelled out: a node carrying
+// no kind is a task.
+func kindOf(n Node) string {
+	if n.Kind == "" {
+		return KindTask
+	}
+	return n.Kind
+}
 
 // validStream reports whether name is one of the release streams a plan may
 // name (GD7). The list is internal/streams' own, the one the streams file is
@@ -76,6 +111,17 @@ type Document struct {
 	Stream *string `json:"stream,omitempty"`
 	Nodes  []Node  `json:"nodes"`
 	Edges  []Edge  `json:"edges"`
+	// Decoupling is the record of every edge the decoupling pass broke: which
+	// contract broke it, the edge it was, the integration node that covers it
+	// and why breaking it was right (D1811, D1817). It is a schema-3 field and
+	// it is omitted when the planner broke nothing, so a v3 graph of a plan
+	// that did not run the pass prints no such key.
+	Decoupling []Decoupling `json:"decoupling,omitempty"`
+	// ContractChanges is the change requests raised against contracts that have
+	// already merged (D1814). The document is where they are recorded because
+	// it is git-tracked and reviewed with the plan, and because the read that
+	// prints the graph is the read that shows them.
+	ContractChanges []ContractChange `json:"contract_changes,omitempty"`
 }
 
 // Node is one task of the plan. ID is the planner's own name for it and is what
@@ -97,6 +143,74 @@ type Node struct {
 	// Footprint is the planner's expected set of paths, advisory and always
 	// labelled a prediction (D28, footprint.go).
 	Footprint Footprint `json:"footprint"`
+	// Kind is what this node is: one of the four above, and absent when it is
+	// an ordinary task, which is every node of a v1 or v2 graph. It is a
+	// schema-3 field, so the documents those schemas describe print without it.
+	Kind string `json:"kind,omitempty"`
+	// Size is the task's weight relative to the others, and it is how a
+	// before/after path is compared: a contract task and an integration task
+	// are small against the work they unblock, and a plan that could only count
+	// tasks would report a loss for the simplest break (F5, D1816). It is
+	// absent when the planner did not say, which means one — and a size of zero
+	// or less is refused rather than read as "free work".
+	Size *float64 `json:"size,omitempty"`
+	// Stubs is the whole files a contract node leaves for its dependents to
+	// compile against, which the integration task deletes (D1815, F9). It is
+	// set on a contract node and nowhere else, each entry is a literal
+	// repository-relative path rather than a glob, and each must appear in that
+	// node's own footprint by name — a stub is a file the planner named, not
+	// one a pattern happened to cover.
+	Stubs []string `json:"stubs,omitempty"`
+}
+
+// Decoupling is one edge the pass broke, and it is the record CD3 computes the
+// gain from: the CLI restores `was` to build the before graph rather than
+// trusting any figure the planner wrote next to it.
+//
+// It is one entry per broken edge, and the entries naming one contract share
+// one integration node (D1817): an integration task covers every edge its
+// contract broke, not one edge each.
+type Decoupling struct {
+	// Contract is the node of kind contract the edge was broken through.
+	Contract string `json:"contract"`
+	// Was is the edge as it stood before the pass, which must not still be an
+	// edge of this graph: an edge that is both broken and present is a
+	// document disagreeing with itself.
+	Was BrokenEdge `json:"was"`
+	// Integration is the node of kind integration that depends on both
+	// endpoints of `was`, and every entry naming the same contract names the
+	// same one.
+	Integration string `json:"integration"`
+	// Reason is why the break is right — the same rule as an edge's own
+	// reason: a break nobody can check is not a decoupling.
+	Reason string `json:"reason"`
+}
+
+// BrokenEdge is a dependency as it stood before the pass broke it: the task,
+// and the task it needed. It is an edge without a reason, because the reason
+// belongs to the record of the break and not to the edge that no longer exists.
+type BrokenEdge struct {
+	Task  string `json:"task"`
+	Needs string `json:"needs"`
+}
+
+// ContractChange is one request to change a contract that has already merged
+// (D1812, D1814). It is a plan node rather than a comment on a pull request:
+// an unlaunched dependent waits on it through an edge, and a launched one is
+// reached by a follow-up run whose instructions name the contract file.
+type ContractChange struct {
+	// Change is the node of kind contract_change that carries the work.
+	Change string `json:"change"`
+	// Contract is the node of kind contract the change is against.
+	Contract string `json:"contract"`
+	// RaisedBy is the node that found the change — a dependent that cannot be
+	// built against the contract as it merged.
+	RaisedBy string `json:"raised_by"`
+	// Reason is what has to change and why.
+	Reason string `json:"reason"`
+	// Affects names the tasks the change reaches; each one is a node of this
+	// graph.
+	Affects []string `json:"affects"`
 }
 
 // Edge is one dependency: Task depends on Needs, and Reason is why — the field

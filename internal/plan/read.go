@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/streams"
@@ -125,13 +126,32 @@ func Normalize(path string, doc Document) (Document, error) {
 	// the field quietly dropped, which would leave the file and the read
 	// disagreeing about which stream the plan ships in.
 	if doc.Stream != nil {
-		if doc.SchemaVersion < SchemaVersion {
-			return Document{}, refuse(path, "the graph artifact is schema version %d and names the stream %q; a stream is a schema version %d field",
-				doc.SchemaVersion, *doc.Stream, SchemaVersion)
+		// The literal 2, not SchemaVersion: the stream is the *second*
+		// schema's field and it stays the second schema's field, so a v3 graph
+		// naming one is read and a v1 graph naming one is still the document
+		// that never existed.
+		if doc.SchemaVersion < 2 {
+			return Document{}, refuse(path, "the graph artifact is schema version %d and names the stream %q; a stream is a schema version 2 field",
+				doc.SchemaVersion, *doc.Stream)
 		}
 		if !validStream(*doc.Stream) {
 			return Document{}, refuse(path, "the graph artifact names the stream %q; a plan's stream is one of %s",
 				*doc.Stream, strings.Join(streams.Names(), ", "))
+		}
+	}
+	// And the third schema's fields, in a document written to one of the two
+	// older ones: refused for the reason a stream in a v1 document is — a
+	// document carrying a field its own version does not have is written to
+	// neither schema, and reading it would drop the field and leave the file
+	// and the read disagreeing about the graph.
+	if doc.SchemaVersion < SchemaVersion {
+		if carried := schema3Fields(doc); len(carried) > 0 {
+			noun := "field"
+			if len(carried) > 1 {
+				noun = "fields"
+			}
+			return Document{}, refuse(path, "the graph artifact is schema version %d and carries the schema version %d %s %s",
+				doc.SchemaVersion, SchemaVersion, noun, strings.Join(carried, ", "))
 		}
 	}
 	if doc.Nodes == nil {
@@ -162,9 +182,12 @@ func Normalize(path string, doc Document) (Document, error) {
 		// The shape is the current schema's promise and not a retroactive one:
 		// a v1 planner wrote its own words and they are read as written, while
 		// a v2 artifact promises a number a release box can be drawn from.
-		if doc.SchemaVersion == SchemaVersion && node.Version != nil && !versionNumber(*node.Version) {
-			return Document{}, refuse(path, "node %q carries the version %q; a schema version %d graph spells a target version MAJOR.MINOR or MAJOR.MINOR.PATCH",
-				node.ID, *node.Version, SchemaVersion)
+		// The literal 2 again: the shape became a promise with the second
+		// schema and it holds at every schema from there on, so a v3 graph's
+		// versions are checked exactly as a v2 graph's are.
+		if doc.SchemaVersion >= 2 && node.Version != nil && !versionNumber(*node.Version) {
+			return Document{}, refuse(path, "node %q carries the version %q; a schema version 2 graph spells a target version MAJOR.MINOR or MAJOR.MINOR.PATCH",
+				node.ID, *node.Version)
 		}
 		// The label is set here rather than read off the document, so a
 		// footprint this build emits is a prediction by construction. A
@@ -189,6 +212,12 @@ func Normalize(path string, doc Document) (Document, error) {
 		}
 		if strings.TrimSpace(edge.Reason) == "" {
 			return Document{}, refuse(path, "the edge %s -> %s carries no reason; an edge nobody can check is not a dependency", edge.Task, edge.Needs)
+		}
+	}
+
+	if doc.SchemaVersion >= SchemaVersion {
+		if err := validateSchema3(path, doc); err != nil {
+			return Document{}, err
 		}
 	}
 
@@ -269,4 +298,205 @@ func findCycle(doc Document) []string {
 		}
 	}
 	return nil
+}
+
+// schema3Fields names the schema-3 keys a document carries, in the order a
+// refusal lists them, and de-duplicated: three nodes carrying a kind are one
+// field the document has and its version does not.
+func schema3Fields(doc Document) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(name string, set bool) {
+		if set && !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	add("decoupling", doc.Decoupling != nil)
+	add("contract_changes", doc.ContractChanges != nil)
+	for _, n := range doc.Nodes {
+		add("kind", n.Kind != "")
+		add("size", n.Size != nil)
+		add("stubs", n.Stubs != nil)
+	}
+	return out
+}
+
+// validateSchema3 checks what the third schema added: the kind a node is, the
+// weight it carries, the stubs a contract leaves behind, the record of each
+// broken edge and the change requests raised against merged contracts.
+//
+// Every rule here is a refusal, because the document is untrusted plan text
+// (D1821): a graph whose kinds and references do not hold together has no
+// answer to give about which edge broke, which stub is still there or what the
+// change reaches, and a read that guessed would be inventing them. It runs at
+// every schema from 3 on, so a document written to a later one that still reads
+// as a graph is held to the same rules.
+func validateSchema3(path string, doc Document) error {
+	kinds := make(map[string]string, len(doc.Nodes))
+	for _, n := range doc.Nodes {
+		kinds[n.ID] = kindOf(n)
+	}
+	for _, n := range doc.Nodes {
+		if !validKind(kindOf(n)) {
+			return refuse(path, "node %q carries the kind %q; a node is one of %s", n.ID, n.Kind, strings.Join(nodeKinds, ", "))
+		}
+		if n.Size != nil && *n.Size <= 0 {
+			return refuse(path, "node %q carries the size %v; a task's size is greater than 0, and a task with no size is 1", n.ID, *n.Size)
+		}
+		if len(n.Stubs) > 0 && kindOf(n) != KindContract {
+			return refuse(path, "node %q carries stubs and is a %s; the stubs a contract leaves behind are named by the contract", n.ID, kindOf(n))
+		}
+	}
+
+	for _, n := range doc.Nodes {
+		if kindOf(n) != KindContract {
+			continue
+		}
+		if len(literalPaths(n.Footprint)) == 0 {
+			return refuse(path, "node %q is a contract node whose footprint names no literal path; a contract's files are whole files it names one by one, and a footprint of globs names none of them", n.ID)
+		}
+		for _, stub := range n.Stubs {
+			if !literalRepoPath(stub) {
+				return refuse(path, "node %q names the stub %q; a stub is a literal repository-relative path — never a glob, never absolute and never with a parent element", n.ID, stub)
+			}
+			if !slices.Contains(n.Footprint.Paths, stub) {
+				return refuse(path, "node %q names the stub %q and its footprint does not name that file; a stub is a file the contract names, and a glob over it never stands in for one", n.ID, stub)
+			}
+		}
+	}
+
+	// Which integration node covers a contract, and which nodes are the change
+	// requests against it: the two exemptions the contract-files rule below
+	// turns on (F10).
+	integrations := map[string]string{}
+	changes := map[string]map[string]bool{}
+	for _, c := range doc.ContractChanges {
+		if changes[c.Contract] == nil {
+			changes[c.Contract] = map[string]bool{}
+		}
+		changes[c.Contract][c.Change] = true
+	}
+
+	for _, d := range doc.Decoupling {
+		if kinds[d.Contract] != KindContract {
+			return refuse(path, "a decoupling entry names the contract %q, which is not a contract node of this graph", d.Contract)
+		}
+		for _, endpoint := range []string{d.Was.Task, d.Was.Needs} {
+			if _, ok := kinds[endpoint]; !ok {
+				return refuse(path, "the decoupling entry for the contract %q records the edge %q -> %q, and %q is not a node of this graph",
+					d.Contract, d.Was.Task, d.Was.Needs, endpoint)
+			}
+		}
+		if carriesEdge(doc, d.Was.Task, d.Was.Needs) {
+			return refuse(path, "the graph carries the edge %s -> %s and records it as broken by the contract %q; an edge is broken or it is there, never both",
+				d.Was.Task, d.Was.Needs, d.Contract)
+		}
+		if kinds[d.Integration] != KindIntegration {
+			return refuse(path, "the decoupling entry for the contract %q names the integration %q, which is not an integration node of this graph", d.Contract, d.Integration)
+		}
+		if !carriesEdge(doc, d.Integration, d.Was.Task) || !carriesEdge(doc, d.Integration, d.Was.Needs) {
+			return refuse(path, "the integration node %q does not depend on both sides of the edge %s -> %s that the contract %q broke; the integration task covers what it re-joins",
+				d.Integration, d.Was.Task, d.Was.Needs, d.Contract)
+		}
+		if prev, ok := integrations[d.Contract]; ok && prev != d.Integration {
+			return refuse(path, "the contract %q is covered by two integration nodes, %q and %q; one contract's broken edges are one integration task (D1817)",
+				d.Contract, prev, d.Integration)
+		}
+		integrations[d.Contract] = d.Integration
+		if strings.TrimSpace(d.Reason) == "" {
+			return refuse(path, "the decoupling entry for the contract %q carries no reason; a break nobody can check is not a decoupling", d.Contract)
+		}
+	}
+
+	for _, c := range doc.ContractChanges {
+		if kinds[c.Change] != KindContractChange {
+			return refuse(path, "the contract change %q names the node %q, which is not a contract_change node of this graph", c.Contract, c.Change)
+		}
+		if kinds[c.Contract] != KindContract {
+			return refuse(path, "the contract change %q is against %q, which is not a contract node of this graph", c.Change, c.Contract)
+		}
+		if _, ok := kinds[c.RaisedBy]; !ok {
+			return refuse(path, "the contract change %q is raised by %q, which is not a node of this graph", c.Change, c.RaisedBy)
+		}
+		for _, id := range c.Affects {
+			if _, ok := kinds[id]; !ok {
+				return refuse(path, "the contract change %q affects %q, which is not a node of this graph", c.Change, id)
+			}
+		}
+		if strings.TrimSpace(c.Reason) == "" {
+			return refuse(path, "the contract change %q carries no reason; a change nobody can check is not a change request", c.Change)
+		}
+	}
+
+	// F10: a merged contract is a single point both sides trust, so its files
+	// appear in no other task's footprint — only the contract's own, the change
+	// requests against it, and the integration node for the stubs it deletes.
+	for _, n := range doc.Nodes {
+		if kindOf(n) != KindContract {
+			continue
+		}
+		for _, other := range doc.Nodes {
+			if other.ID == n.ID || changes[n.ID][other.ID] {
+				continue
+			}
+			integration := integrations[n.ID] == other.ID
+			for _, f := range literalPaths(n.Footprint) {
+				if !other.Footprint.Matches(f) {
+					continue
+				}
+				if integration && slices.Contains(n.Stubs, f) {
+					continue
+				}
+				return refuse(path, "node %q's footprint covers %q, which is a file of the contract %q; a contract's files are named only by the contract and by the change requests against it (F10)",
+					other.ID, f, n.ID)
+			}
+		}
+	}
+	return nil
+}
+
+// validKind reports whether kind is one of the four a node may be.
+func validKind(kind string) bool { return slices.Contains(nodeKinds, kind) }
+
+// carriesEdge reports whether the graph carries task -> needs as a dependency.
+func carriesEdge(doc Document, task, needs string) bool {
+	for _, e := range doc.Edges {
+		if e.Task == task && e.Needs == needs {
+			return true
+		}
+	}
+	return false
+}
+
+// literalPaths is a footprint's paths that name one file rather than a pattern,
+// which is the set a contract's files and its stubs come from: they are whole
+// files the planner named, and a glob never admits one.
+func literalPaths(f Footprint) []string {
+	var out []string
+	for _, p := range f.Paths {
+		if literalRepoPath(p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// literalRepoPath reports whether p is a literal repository-relative path: no
+// glob metacharacter, no parent element, no absolute path and no empty
+// component. It is the only shape a stub may have (F9): a stub that could be a
+// pattern is a stub the integration task cannot be asked to have deleted.
+func literalRepoPath(p string) bool {
+	if p == "" || strings.HasPrefix(p, "/") || strings.ContainsRune(p, '\\') {
+		return false
+	}
+	if strings.ContainsAny(p, "*?[]{}") {
+		return false
+	}
+	for _, part := range strings.Split(p, "/") {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+	}
+	return true
 }

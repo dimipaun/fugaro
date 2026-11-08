@@ -86,8 +86,11 @@ func TestReadV2Stream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if doc.SchemaVersion != SchemaVersion {
-		t.Errorf("schema_version = %d, want %d", doc.SchemaVersion, SchemaVersion)
+	// graph-v2.json is the v2 fixture, so the schema that added the stream is
+	// the one it is checked against: the current version is a later one, and a
+	// fixture is written to the schema it is the fixture of.
+	if doc.SchemaVersion != 2 {
+		t.Errorf("schema_version = %d, want the fixture's 2", doc.SchemaVersion)
 	}
 	if doc.Stream == nil || *doc.Stream != "cli" {
 		t.Fatalf("stream = %v, want the fixture's cli", doc.Stream)
@@ -233,8 +236,8 @@ func TestPlanRefusesWhatItCannotRead(t *testing.T) {
 	}{
 		{"not JSON at all", `{"schema_version": 1,`, "not JSON"},
 		{"no schema version", `{"plan": "p.md", "nodes": [], "edges": []}`, "carries no schema_version"},
-		{"a future schema version", `{"schema_version": 3, "plan": "p.md", "nodes": [], "edges": []}`,
-			"schema version 3 and this build reads version 2"},
+		{"a future schema version", `{"schema_version": 99, "plan": "p.md", "nodes": [], "edges": []}`,
+			"schema version 99 and this build reads version 3"},
 		{"an unknown field at this version", `{"schema_version": 1, "plan": "p.md", "nodes": [], "edges": [], "critical_path": 3}`,
 			"not a schema version 1 graph"},
 		{"no plan", `{"schema_version": 1, "nodes": [], "edges": []}`, "does not name the plan it came from"},
@@ -294,9 +297,9 @@ func TestPlanRefusesWhatItCannotRead(t *testing.T) {
 func TestPlanRefusesAFutureSchemaFromAFile(t *testing.T) {
 	_, err := ReadFile(filepath.Join("testdata", "future.json"))
 	if err == nil {
-		t.Fatal("a schema version 3 artifact was read as a graph this build knows")
+		t.Fatal("a schema version 99 artifact was read as a graph this build knows")
 	}
-	if !strings.Contains(err.Error(), "schema version 3 and this build reads version 2") {
+	if !strings.Contains(err.Error(), "schema version 99 and this build reads version 3") {
 		t.Errorf("refusal = %q, want it to name both versions", err)
 	}
 	if !strings.Contains(err.Error(), "upgrade fugaro") {
