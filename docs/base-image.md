@@ -59,23 +59,22 @@ Pin exact versions where your repository pins them (`.nvmrc`, `go.mod`, a CI ima
 
 **mise's registry carries more than language runtimes, and a tool that lints or scans what your runs change belongs in the same list.** This repository's own `mise.toml` is the example: it pins `tflint` at the version CI lints with and `trivy` at the version `images/scan.sh` scans with, so a run that changes Terraform can do what `.claude/rules/terraform.md` asks — `tflint --chdir=deploy/terraform/gcp --init && tflint --chdir=deploy/terraform/gcp --recursive`, and `sh deploy/terraform/scan.sh`. That script runs the `trivy` on `PATH` when the image carries one, and `images/scan.sh`'s pinned Trivy image through plain docker otherwise (CI; a developer's machine that has no `trivy` of its own), with the same flags and the same `.trivyignore` either way. `tflint`'s google plugin is fetched at image build time, under the `TFLINT_PLUGIN_DIR` the image sets, so the `--init` a run runs usually makes no GitHub API call and needs no token — "usually" because that fetch is best effort: an anonymous caller gets 60 GitHub API requests an hour from an address a shared builder can already be past, so the step must not fail the build, and the run's own `--init` downloads the plugin when the image has none.
 
-Without a `mise.toml`, list the tools in `fugaro.yaml`'s `image.tools` instead (never both):
+Without a `mise.toml` the runtimes come from the workflow's own image, and **the per-workflow image keys are removed**: `image.tools`, `image.apt`, `image.setup`, `image.skip_build_scripts`, `image.key_files` and `dockerfile:` are each refused by name and wherever they are written, with the sentence that names `fugaro image add` and [project-image-catalog](project-image-catalog/README.md). An image a workflow needs beyond the base is a **catalog entry** now — a named image of the project, whose source is an inline Dockerfile, a Dockerfile at a path in a repository, or a prebuilt image — and the workflow names it with `image_name:` (or the tags it needs with `needs:`):
 
 ```yaml
 workflows:
   web:
-    image:
-      tools: { node: "24.19.0" }
+    image_name: web-runtime   # one entry of the project's image catalog: fugaro image add
     commands: { build: npm run build, test: npm test }
 ```
 
-Without either, the image has no language runtime, and `fugaro validate` warns.
+Without either a `mise.toml` or such an entry, the image has no language runtime, and `fugaro validate` warns.
 
-**The key-file layer.** The image installs your dependencies above the source: it checks out, at the commit it bakes, only what the install reads — your `mise.toml` and its lockfile, your lockfile and `package.json`, each workspace member's `package.json`, the registry configuration, and the install files no lockfile carries (`.yarnrc`, `.yarnrc.yml`, `.pnpmfile.cjs`, `.yarn/releases/`, `.yarn/plugins/`, `.yarn/patches/`). `image.key_files` adds the paths of your own that list cannot know — a patch a postinstall applies, a vendored toolchain — each checked out as the path it is, a directory as the files under it. A change to any of them changes the image, so the daily image check rebuilds it. **One entry contributes at most 256 files:** a directory holding more refuses the render, naming the entry, and a repository that large is one whose Dockerfile is its own (below).
+**The key-file layer.** The image installs your dependencies above the source: it checks out, at the commit it bakes, only what the install reads — your `mise.toml` and its lockfile, your lockfile and `package.json`, each workspace member's `package.json`, the registry configuration, and the install files no lockfile carries (`.yarnrc`, `.yarnrc.yml`, `.pnpmfile.cjs`, `.yarn/releases/`, `.yarn/plugins/`, `.yarn/patches/`). The key that used to add to that list — `image.key_files`, for a patch a postinstall applies or a vendored toolchain — is **removed** with the other per-workflow image keys, so a repository whose install reads a path the list cannot know gives its workflow a catalog entry and copies the path in that image's own Dockerfile. A change to any of the key files changes the image, so the daily image check rebuilds it. **One entry contributes at most 256 files:** a directory holding more refuses the render, naming the entry, and a repository that large is one that writes its own Dockerfile in a catalog entry (below).
 
 ## System packages and services
 
-Add Debian packages with `image.apt`, and steps that need the checkout with `image.setup` (they run as `fugaro`, with `sudo` for those steps only). Services start in `commands.test`. A server whose tests need PostgreSQL with PostGIS and pgvector, Redis and the Firebase emulators:
+Debian packages and steps that need the checkout used to be `image.apt` and `image.setup`; **both are removed**, and they are written in the image's own Dockerfile now — the inline definition of a catalog entry, or a Dockerfile at a path in the repository that the entry points at. The steps run as `fugaro`, with `sudo` for those that need root. Services start in `commands.test`. A server whose tests need PostgreSQL with PostGIS and pgvector, Redis and the Firebase emulators:
 
 ```toml
 # mise.toml
@@ -85,13 +84,22 @@ node = "24"
 "npm:firebase-tools" = "15.32.1"
 ```
 
+```dockerfile
+# the catalog entry's source: the packages and the setup steps, in the image
+FROM ${FUGARO_BASE}
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      postgresql-17 postgresql-17-postgis-3 postgresql-17-pgvector redis-server
+USER fugaro
+RUN firebase setup:emulators:database && firebase setup:emulators:storage
+RUN ./gradlew --no-daemon testClasses
+```
+
 ```yaml
 # fugaro.yaml
 workflows:
   server:
-    image:
-      apt: [postgresql-17, postgresql-17-postgis-3, postgresql-17-pgvector, redis-server]
-      setup: ["firebase setup:emulators:database && firebase setup:emulators:storage", "./gradlew --no-daemon testClasses"]
+    image_name: server-tests           # the entry above, added with fugaro image add
     commands:
       build: ./gradlew --no-daemon testClasses
       test: fugaro-services start && ./gradlew --no-daemon integrationTest
@@ -100,16 +108,23 @@ workflows:
 
 `fugaro-services start` runs them as `fugaro`, on loopback, under `/tmp` (which is memory on Cloud Run: count it in `resources`). Its settings are at the top of `fugaro-services`.
 
-**An agent cannot `apt-get install` during a run.** It has no sudo, by design: a root-capable agent could rewrite the runner it shares the container with. Bake what your runs need into the image with `image.apt`, or install a standalone tool in user space mid-run with `mise use -g <tool>@<version>`.
+**An agent cannot `apt-get install` during a run.** It has no sudo, by design: a root-capable agent could rewrite the runner it shares the container with. Bake what your runs need into the image — the catalog entry's Dockerfile is where `image.apt` used to put a package — or install a standalone tool in user space mid-run with `mise use -g <tool>@<version>`.
 
-**A command-line tool that is not a language runtime comes from `image.apt` too, and an artifact recipe is the case that needs it most.** A `mode: artifact` run renders a file with a tool the base does not carry — ffmpeg is the standard example, and neither `image.tools` (mise's registry, for runtimes) nor a mid-run `mise use -g` fits a render that must work the same on every run. Put it in `apt`, where a Debian package exists and is pinned by the image's own build:
+**A command-line tool that is not a language runtime is a package in that same Dockerfile, and an artifact recipe is the case that needs it most.** A `mode: artifact` run renders a file with a tool the base does not carry — ffmpeg is the standard example, and neither `image.tools` (mise's registry, for runtimes, itself removed) nor a mid-run `mise use -g` fits a render that must work the same on every run. Put it in the image's Dockerfile, where a Debian package exists and is pinned by the image's own build:
+
+```dockerfile
+# the catalog entry's source: the render's tool, baked in at build time
+FROM ${FUGARO_BASE}
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg
+USER fugaro
+```
 
 ```yaml
 # fugaro.yaml
 workflows:
   sizzle:
-    image:
-      apt: [ffmpeg]                     # the render's tool, baked in at build time
+    image_name: sizzle-render           # the entry above
     commands:
       render: |
         set -eu
@@ -119,11 +134,11 @@ workflows:
     resources: { cpu: 4, memory: 8Gi }
 ```
 
-Changing `image.apt` needs a rebuild, and the command for it is `fugaro image build` in the repository's checkout, in your own terminal window (it asks for the project's name typed there, and a coding-agent session never confirms one). **`fugaro image refresh` is not that rebuild:** refresh rebuilds a workflow only when the base image the workflow was built from is not the one the config pins now — it reads the build record's `base_ref` and never the image config (`refreshVerdict`, `internal/cli/image_refresh_rules.go`) — so on a repository already built from the current base it prints `current: built from …`, submits no Cloud Build, and the package never arrives. Until a rebuild from the changed config has run, a job still lacks the package and the render fails with `ffmpeg: not found`. The recipe side of this — `mode: artifact`, `steps`, `outputs` and the probe — is [artifact-runs.md](artifact-runs.md).
+Changing what the image installs needs a rebuild, and the command for it is `fugaro image build` in the repository's checkout, in your own terminal window (it asks for the project's name typed there, and a coding-agent session never confirms one). **`fugaro image refresh` is not that rebuild:** refresh rebuilds a workflow only when the base image the workflow was built from is not the one the config pins now — it reads the build record's `base_ref` and never the image config (`refreshVerdict`, `internal/cli/image_refresh_rules.go`) — so on a repository already built from the current base it prints `current: built from …`, submits no Cloud Build, and the package never arrives. Until a rebuild from the changed config has run, a job still lacks the package and the render fails with `ffmpeg: not found`. The recipe side of this — `mode: artifact`, `steps`, `outputs` and the probe — is [artifact-runs.md](artifact-runs.md).
 
-## When `image:` is not enough: a Dockerfile
+## When the base is not enough: a Dockerfile
 
-Run `fugaro image render --workflow <name>`, save it as `.fugaro/<name>.Dockerfile`, point `dockerfile:` at it, and add your lines: system packages in a `USER root` block above the clone, steps that need the checkout after the `mise install` step. Keep everything else, which carries the security-critical parts (the credential handling, the sudo removal, `finalize-checkout`). A minimal one is exactly the render's output.
+Run `fugaro image render --workflow <name>` for a starting point, add your lines — `dockerfile:` itself is **removed** with the other per-workflow image keys, so the file goes where an image's Dockerfile goes now: as the source of a catalog entry, inline (`fugaro image add --inline`) or at a path in the repository the entry names. The render's shape is what that Dockerfile holds: system packages in a `USER root` block above the clone, steps that need the checkout after the `mise install` step. Keep everything else, which carries the security-critical parts (the credential handling, the sudo removal, `finalize-checkout`). A minimal one is exactly the render's output.
 
 ## Building it locally
 
@@ -135,7 +150,7 @@ Run `fugaro image render --workflow <name>`, save it as `.fugaro/<name>.Dockerfi
 - A base of your own: `fugaro update --base-image base=<image>` points the installation at it. It must keep the base contract the smoke test checks: the `fugaro` user (uid 1000), `tini` as entrypoint, `/work` with its modes, `/etc/claude-code` empty and owned by `fugaro`, `fugaro`, `claude`, `git`, `gh`, `mise` and `finalize-checkout` on their paths, no passwordless sudo, and no unexpected setuid, setgid or file capability. Check it with `fugaro image build --local --base <image>` first.
 - Another compute environment altogether is a backend ([backends.md](backends.md)).
 
-**What a catalog image's `ENV` does in a run.** A job whose image is one of the project's `image_catalog` entries passes that image's own `ENV` to the run's agent — every name except the ones Fugaro reserves (so nothing an image sets can shadow the routing, the credentials or a declared secret) and except a secret name the job mounts that the run's own task does not declare. Everything Fugaro sets is applied last, so the run's routing, auth and declared secrets always win. `fugaro doctor --all` names, per job, the names that job sets itself that a run drops — an image's own `ENV` lives in the image and not in the job, so no read of a job can list it — and `--json` carries the same list. **What is not promised:** a per-repository image — a `dockerfile:` of your own or `checkout: clone`'s base image — passes nothing at all. A job deployed before the stamp existed passes nothing either, **unless its image sets `FUGARO_IMAGE_ENTRY` itself**: the run reads whatever its environment holds under that name, and a variable on the job is what overrides an image's, so redeploying that repository closes it: `fugaro update --repo .` in the checkout, or the repository stage of a plain `fugaro update` run in the same checkout. And a value in an image is **not a secret** and is not redacted, so never bake a credential into one (above).
+**What a catalog image's `ENV` does in a run.** A job whose image is one of the project's `image_catalog` entries passes that image's own `ENV` to the run's agent — every name except the ones Fugaro reserves (so nothing an image sets can shadow the routing, the credentials or a declared secret) and except a secret name the job mounts that the run's own task does not declare. Everything Fugaro sets is applied last, so the run's routing, auth and declared secrets always win. `fugaro doctor --all` names, per job, the names that job sets itself that a run drops — an image's own `ENV` lives in the image and not in the job, so no read of a job can list it — and `--json` carries the same list. **What is not promised:** a job whose image the run does not stamp passes nothing at all — one deployed before the stamp existed, or one whose image was built before the catalog the run reads. That job passes nothing, **unless its image sets `FUGARO_IMAGE_ENTRY` itself**: the run reads whatever its environment holds under that name, and a variable on the job is what overrides an image's, so redeploying that repository closes it: `fugaro update --repo .` in the checkout, or the repository stage of a plain `fugaro update` run in the same checkout. And a value in an image is **not a secret** and is not redacted, so never bake a credential into one (above).
 
 ## Coming from `go`, `web-node` or `java-services`
 
