@@ -1139,7 +1139,16 @@ const projectJobSentinelPolicy = `{"version":4,"allow_repos":["github/acme/*"],`
 // segment of this one (gcp.ProjectJobName).
 func newProjectJobSentinelFixture(t *testing.T) *projectJobFixture {
 	t.Helper()
-	f := newProjectJobFixture(t)
+	return newProjectJobSentinelFixtureMode(t, "off")
+}
+
+// newProjectJobSentinelFixtureMode is newProjectJobSentinelFixture on a budget
+// installation whose local mode is mode, as newProjectJobFixtureMode is to
+// newProjectJobFixture: the mix's own conditions are read in the mode that
+// admits a mix at all (enforce), so the one test about a mixed run spells it.
+func newProjectJobSentinelFixtureMode(t *testing.T, mode string) *projectJobFixture {
+	t.Helper()
+	f := newProjectJobFixtureMode(t, mode)
 	rewriteProfileLine(t, f.cloudFixture, projectJobSentinelProfile)
 	publishPolicy(t, f.launchBudgetFixture, projectJobSentinelPolicy)
 	job := gcp.ProjectJobName("standard", "github", config.AnthropicKeyAccount)
@@ -1399,6 +1408,76 @@ func TestProjectJobSentinelIsAllowedOnlyForAnAPIKeyWorkflow(t *testing.T) {
 				t.Errorf("the refused launch minted a budget token: %s", tok)
 			}
 		})
+	}
+}
+
+// projectJobSentinelMixConfig is the sentinel's fixture with a mix declared:
+// one Claude account named for each of the two stages the ruling admits, which
+// is rung 2 (stageAccountOf) — the rung a launch resolves without reading a
+// provider route. The fixture itself carries the budget mode a mix is declared
+// under (enforce), so no key for it is written here.
+var projectJobSentinelMixConfig = "claude_accounts:\n  acme-overflow:\n    allow_data_to: [\"acme/app\"]\n" +
+	stagesBlock("review", "acme-overflow", "adversarial", "acme-overflow")
+
+// TestProjectJobSentinelRefusedOnAMixedRun is the pair claudeAccountFor's mix
+// resolution has to refuse: a launch naming the project's own Anthropic API key
+// (--token, claudeAccountAllowed's sentinel arm) on a repository whose project
+// declares a mix. The two are not two ways of holding the same thing — the mix
+// is the one Claude account an api-key run may hold, and it is what the launch's
+// own account has to be, because spec.OAuthToken is what picks the job variant
+// and only the account's own job mounts its token (mixedRunAccount). The
+// sentinel's job mounts no Claude token at all, while the runner resolves the
+// mix for the review and adversarial stages out of the *policy* — never out of
+// spec.OAuthToken (internal/runner's resolveMixedStages, agentenv's
+// stageAgentEnv) — so the launch passes every gate, takes the claim, mints the
+// budget token and starts Cloud Run on a job whose review stages then halt for a
+// token the run does not hold. The launch is refused where the mix is already
+// resolved instead, before the claim, as its neighbours are.
+//
+// Mutation (run, restore): drop the `mix != "" && name ==
+// config.AnthropicKeyAccount` arm in claudeAccountFor — the launch is admitted,
+// and the assertions below fail on the claim, on the executions, on the
+// jobs.run call and on the budget token.
+func TestProjectJobSentinelRefusedOnAMixedRun(t *testing.T) {
+	f := newProjectJobSentinelFixtureMode(t, "enforce")
+	isolateCache(t)
+	f.appendConfig(t, projectJobSentinelMixConfig)
+	projectJobCheckoutYAML(t, projectJobRefRepoYAML("api-key"))
+
+	claimed := false
+	launchHooks.beforeClaim = func() { claimed = true }
+	t.Cleanup(func() { launchHooks.beforeClaim = nil })
+
+	const run = "20261020-140000-cccc"
+	_, _, err := execute(t, "run", "--run-id", run, "--token", config.AnthropicKeyAccount, "Add a feature")
+	if err == nil {
+		t.Error("a launch naming the project's own key on a run that declares a mix was admitted")
+	} else {
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("a launch naming the project's own key on a run that declares a mix: %v, want a refusal", err)
+		}
+		for _, want := range []string{
+			config.AnthropicKeyAccount, // the value this run's account is
+			"acme-overflow",            // and the account the mix names for its stages
+			"one Claude account",       // the rule the pair breaks
+			"Nothing was launched",     // and that the refusal came before anything ran
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not name %q: %v", want, err)
+			}
+		}
+	}
+	if claimed {
+		t.Error("the refusal came after the launch claim")
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions, want none", n)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the refused launch made %d jobs.run calls (%+v), want none", len(calls), calls)
+	}
+	if tok := readToken(t, f.cloudFixture, run); tok != "" {
+		t.Errorf("the refused launch minted a budget token: %s", tok)
 	}
 }
 

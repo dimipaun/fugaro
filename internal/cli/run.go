@@ -2025,10 +2025,24 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 	// is left to the walk below, which refuses it unless it is the mix's own. A
 	// *stage* asked for is not this resolution: it has its own chain above, and
 	// the mix serves the two stages of the allow-list and no other.
+	//
+	// The sentinel and a declared mix are the one pair here that neither of
+	// those answers covers: the name is no account, so it is refused below only
+	// where the pair cannot be judged at all (claudeAccountAllowed admits it for
+	// api-key, which is the auth a mix is declared under), while the runner
+	// serves the run's review and adversarial stages out of the mix whatever the
+	// launch's own account is. Such a launch would start on the sentinel's job —
+	// the one whose account segment it is — which mounts no Claude token, and
+	// its review stages would halt for one. It is refused here instead, where
+	// the mix is known.
 	if stage == "" {
 		mix, err := mixedRunAccount(ctx, env, repo, auth, co)
 		if err != nil {
 			return "", err
+		}
+		if mix != "" && name == config.AnthropicKeyAccount {
+			return "", userErr("this launch names the project's own Anthropic API key (%s) as the run's own account, and this run declares a mix: %s serves its %s stages, and those stages read the account's token out of the runner's environment, which only the account's own job mounts — the mix is the one Claude account an api-key run may hold, and the key is not an account, so the launch would start on the key's job, whose review stages have no token to run on. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Launch without --token, which is where a mixed run starts — the mix is the run's own account — or remove the account this mix names for the %s stages",
+				config.AnthropicKeyAccount, mix, strings.Join(config.MixedAccountStages, " and "), strings.Join(config.MixedAccountStages, " and "))
 		}
 		if mix != "" && (name == "" || name == config.DefaultClaudeAccount) {
 			name = mix
