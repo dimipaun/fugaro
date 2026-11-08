@@ -2573,18 +2573,17 @@ func TestConsoleWorkflowJobIsGateable(t *testing.T) {
 		t.Errorf("%s's console job name %q interpolates: a matrix value in the name is a check name the gate cannot look up", consoleTestsWorkflowPath, job.Name)
 	}
 
-	// Triggers: every pull request and every push to main, which is ci.yml's
-	// pattern minus its docs-only skip.
-	if !slices.Equal(wf.On.Push.Branches, []string{"main"}) {
-		t.Errorf("%s's push trigger branches = %v, want [main]", consoleTestsWorkflowPath, wf.On.Push.Branches)
+	// Triggers: a manual dispatch only (owner's ruling 2026-11-07).
+	if len(wf.On.Push.Branches) != 0 {
+		t.Errorf("%s's push trigger branches = %v, want none: the console's tests run by hand", consoleTestsWorkflowPath, wf.On.Push.Branches)
 	}
 	keys := make([]string, 0, len(on))
 	for key := range on {
 		keys = append(keys, key)
 	}
 	slices.Sort(keys)
-	if !slices.Equal(keys, []string{"pull_request", "push"}) {
-		t.Errorf("%s triggers on %v, want exactly push and pull_request", consoleTestsWorkflowPath, keys)
+	if !slices.Equal(keys, []string{"workflow_dispatch"}) {
+		t.Errorf("%s triggers on %v, want exactly workflow_dispatch", consoleTestsWorkflowPath, keys)
 	}
 
 	// No `if:` on the job, in particular none on a `changes`/`docs_only` output:
@@ -7245,15 +7244,8 @@ func TestConsoleLinuxWorkflowIsBuildOnlyAndSecretless(t *testing.T) {
 	// A filter here is not the design section 9.4 bug (this job is in no gate's
 	// list) and it is still refused: the Linux packaging path is what rots when
 	// only a tag runs it.
-	if _, ok := rawOn["pull_request"]; !ok {
-		t.Errorf("%s does not run on pull_request: %v", path, rawOn)
-	}
-	push, ok := rawOn["push"].(map[string]any)
-	if !ok {
-		t.Fatalf("%s's push trigger is not a mapping: %v", path, rawOn["push"])
-	}
-	if branches, _ := push["branches"].([]any); len(branches) != 1 || branches[0] != "main" {
-		t.Errorf("%s's push trigger is %v, want branches: [main]", path, push["branches"])
+	if _, ok := rawOn["workflow_dispatch"]; !ok || len(rawOn) != 1 {
+		t.Errorf("%s triggers on %v, want only workflow_dispatch (owner's ruling 2026-11-07)", path, rawOn)
 	}
 	for name, trigger := range rawOn {
 		block, err := yaml.Marshal(trigger)
@@ -10089,6 +10081,22 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 		"it is the console's second",
 		"`settings set|unset KEY --layer <L> --dry-run --json",
 		"retried silently",
+		// The member the section had wrong: `target_layer` was written as
+		// "`project` or `local`, the two the generic path writes, or `""` when
+		// the generic path would not write the key at all", and the read answers
+		// `settingsDefaultLayer` instead -- the narrowest of the three the key may
+		// be set in, which is non-empty for a key the generic path refuses
+		// (`mailbox.keychain_item` is `local` on a `writable: false` row). Of the
+		// two phrases pinned below, the first is the schema's own
+		// (`schemas/settings.schema.json`, `$defs.row.target_layer`) and the
+		// second is this contract's: the schema's description does not carry it,
+		// and no test holds the two descriptions to each other -- the contract's
+		// claim is held to the read by TestSettingsConsoleFixtureOwnerAndWritable
+		// (internal/cli/settings_console_fixture_test.go), which asks
+		// settingsDefaultLayer for the fixture's own rows. The fixture the e2e
+		// draws is a document with it.
+		"the narrowest of `repo`, `project` and `local` the key may be set in",
+		"non-empty on a row the generic path refuses",
 	} {
 		if !strings.Contains(read, want) {
 			t.Errorf("%s's §6.19 does not state %q: the read's section is where a reader learns that the console also writes this group, and the screen C3 shipped does", path, want)

@@ -547,7 +547,7 @@ func selectedProjectConfig(ctx context.Context) *localcfg.Config {
 // always was: that is a problem with the file being validated, which validate
 // reports against the file itself, not a selection that failed.
 func selectedProjectConfigErr(ctx context.Context) (*localcfg.Config, error) {
-	return selectedProjectErr(ctx, checkoutProject)
+	return selectedProjectErr(ctx, cloudOptions{}, checkoutProject)
 }
 
 // selectedProjectConfigReadOnly is selectedProjectConfig without the
@@ -571,14 +571,15 @@ func selectedProjectConfigErr(ctx context.Context) (*localcfg.Config, error) {
 // checkout for its own work still records it, because it calls
 // checkoutProject.
 func selectedProjectConfigReadOnly(ctx context.Context) *localcfg.Config {
-	lc, _ := selectedProjectErr(ctx, resolveCheckout)
+	lc, _ := selectedProjectErr(ctx, cloudOptions{}, resolveCheckout)
 	return lc
 }
 
 // selectedProjectErr is selectedProjectConfigErr with the checkout resolver
 // given: checkoutProject remembers the checkout it resolves, resolveCheckout
-// does not.
-func selectedProjectErr(ctx context.Context, resolve func(context.Context, string) (*localcfg.Checkout, error)) (*localcfg.Config, error) {
+// does not. o is whose flags select, so a caller holding a command's options
+// gets the same project that command will act on.
+func selectedProjectErr(ctx context.Context, o cloudOptions, resolve func(context.Context, string) (*localcfg.Checkout, error)) (*localcfg.Config, error) {
 	co, err := resolve(ctx, "")
 	if err != nil {
 		return nil, nil
@@ -588,7 +589,7 @@ func selectedProjectErr(ctx context.Context, resolve func(context.Context, strin
 		// written is the one that lacks it.
 		co = nil
 	}
-	_, lc, err := selectFrom(cloudOptions{}, co, false)
+	_, lc, err := selectFrom(o, co, false)
 	if err == nil {
 		return lc, nil
 	}

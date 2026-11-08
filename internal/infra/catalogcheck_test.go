@@ -300,20 +300,40 @@ func TestCatalogCheckIsNilWhenThereIsNothingToCheck(t *testing.T) {
 	}
 }
 
-// TestCatalogCheckRefusesAMissingBaseImage: the job runs the installation's own
-// fugaro image and every build it submits is FROM it, so an installation that
-// has a catalog to build and no such image cannot be given a job — the same
-// refusal the repository's own daily check makes for the kinds its workflows
-// build FROM.
-func TestCatalogCheckRefusesAMissingBaseImage(t *testing.T) {
+// TestCatalogCheckHasNoJobWithoutABaseImage: the job runs the installation's
+// own fugaro image and every build it submits is FROM it, so an installation
+// that has a catalog to build and no such image is given no job at all. Not a
+// job running from an image this run guessed, and — since #1843 — not a
+// refusal either: the pin is the images stage's, in the same run, and the
+// installation root is applied again behind it. An installation that stays
+// without a base image is the state it was in before the job existed, which
+// the module's own null plans exactly.
+func TestCatalogCheckHasNoJobWithoutABaseImage(t *testing.T) {
 	lc := parseLC(t, strings.Replace(catalogCheckLocal,
 		"base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc }\n", "", 1))
-	_, err := CatalogCheck(lc, "fugaro-runs-proj-1234", 0, true)
-	if err == nil || !strings.Contains(err.Error(), "base_images."+config.BaseKind) {
-		t.Fatalf("err = %v, want the missing base image named with the key that fixes it", err)
+	cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", 0, true)
+	if err != nil || cc != nil {
+		t.Fatalf("CatalogCheck with the project's catalog and no base image = %+v, %v, want no job and no error", cc, err)
 	}
-	// ... and with no catalog to build, no job and no refusal: the image is the
-	// job's own need.
+	spec, err := Installation(lc, InstallOptions{})
+	if err != nil {
+		t.Fatalf("Installation: %v", err)
+	}
+	vars, err := InstallationVars(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(vars), "catalog_check") {
+		t.Errorf("the installation tfvars name catalog_check, want the key left out:\n%s", vars)
+	}
+	// The base image is the job's own need: with one recorded, the same catalog
+	// gets the job, so the two readings above are not a job that nothing
+	// deploys at all.
+	cc, err = CatalogCheck(parseLC(t, catalogCheckLocal), "fugaro-runs-proj-1234", 0, true)
+	if err != nil || cc == nil {
+		t.Fatalf("CatalogCheck with a base image = %+v, %v, want the job", cc, err)
+	}
+	// ... and with no catalog to build, no job and no error: the same nil.
 	lc = parseLC(t, m4LocalConfig)
 	if cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", 0, true); err != nil || cc != nil {
 		t.Fatalf("CatalogCheck with no catalog = %+v, %v, want no job and no error", cc, err)
@@ -339,6 +359,105 @@ func TestCatalogCheckCarriesTheManagedBound(t *testing.T) {
 	}
 	if _, err := CatalogCheck(lc, "Fugaro Runs", 0, true); err == nil {
 		t.Fatal("a runs bucket outside [a-z0-9._-] was accepted: the condition built from it would be one no comparison expects")
+	}
+}
+
+// catalogCheckReposLC is the repository the catalog's entries build in beside
+// m4LocalConfig's own: GitHub, because the entry it is assigned is a
+// Dockerfile's, with the App ID a build of it mints its installation token
+// from.
+const catalogCheckReposLC = `  acme/edge: { provider: github, base_branch: main, workflows: [web], github_app_id: "123456789" }
+`
+
+// catalogCheckCatalogLC is the project's image catalog: one entry in each of
+// the installation's repositories, and one with no repository of its own,
+// which the job assigns to the project's first.
+const catalogCheckCatalogLC = `image_catalog:
+  entries:
+    - name: tools
+      tags: [node]
+      source: { kind: dockerfile, repo: acme/sandbox, path: .fugaro/tools.Dockerfile }
+    - name: runtime
+      tags: [node]
+      source: { kind: dockerfile, repo: acme/edge, path: .fugaro/runtime.Dockerfile }
+    - name: scratch
+      tags: [node]
+      source: { kind: inline, inline: "FROM scratch\n" }
+`
+
+// catalogCheckAddedRepoLC and catalogCheckAddedEntryLC are what the second
+// fixture adds to the first's installation: one repository inside the repos
+// block and one catalog entry at the end of the entries, so the job's
+// assignment names one more repository and the module plans one more records
+// grant for it.
+const (
+	catalogCheckAddedRepoLC = `  acme/late: { provider: bitbucket, base_branch: main, workflows: [web] }
+`
+	catalogCheckAddedEntryLC = `    - name: late
+      tags: [node]
+      source: { kind: dockerfile, repo: acme/late, path: .fugaro/late.Dockerfile }
+`
+)
+
+// catalogCheckInstallLC is the local config the catalog-check installation
+// fixtures are built from: m4LocalConfig with the repositories the catalog's
+// entries build in, an M5 base image, and the catalog itself. added is the
+// same installation one repository later.
+func catalogCheckInstallLC(added bool) string {
+	repos, entries := "", ""
+	if added {
+		repos, entries = catalogCheckAddedRepoLC, catalogCheckAddedEntryLC
+	}
+	return m4LocalConfig + catalogCheckReposLC + repos + m5Additions + catalogCheckCatalogLC + entries
+}
+
+// TestCatalogCheckTfvarsGolden: the two fixtures the catalog check's golden
+// plan is made from (D1148). The first is a project that publishes a catalog:
+// the installation plans the job, its account and one objectUser records grant
+// per repository whose entries the catalog builds, under the condition
+// gcp builds for that repository. The second is the same installation one
+// repository later — the plan `fugaro update` writes when a repository is
+// added to a project that already has the job, which is the plan the managed
+// gate has to admit (scripts/gen-golden-plans.sh's
+// installation-catalog-add-repo, whose prior state is the first's plan): the
+// account exists by then, so the new repository's grant carries its name
+// rather than a value computed at apply time.
+func TestCatalogCheckTfvarsGolden(t *testing.T) {
+	var first, second []string
+	for _, c := range []struct {
+		name  string
+		added bool
+		got   *[]string
+	}{
+		{"installation-catalog.tfvars.json", false, &first},
+		{"installation-catalog-added.tfvars.json", true, &second},
+	} {
+		spec, err := Installation(parseLC(t, catalogCheckInstallLC(c.added)), InstallOptions{})
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if spec.CatalogCheck == nil || len(spec.CatalogCheck.Repositories) == 0 {
+			t.Fatalf("%s: the installation plans no catalog check, so the fixture is not the subject", c.name)
+		}
+		for _, r := range spec.CatalogCheck.Repositories {
+			*c.got = append(*c.got, r.Slug)
+		}
+		data, err := InstallationVars(spec)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		checkGolden(t, c.name, data)
+	}
+	// The second fixture is the first one repository later: without the pair
+	// the golden plan of the add-repo case would be a plan of a change nobody
+	// made.
+	if len(second) != len(first)+1 {
+		t.Fatalf("the added fixture names the repositories %v, want %v and one more", second, first)
+	}
+	for _, slug := range first {
+		if !slices.Contains(second, slug) {
+			t.Fatalf("the added fixture names the repositories %v, which no longer hold the first's %q: it is the first installation one repository later, and not another one", second, slug)
+		}
 	}
 }
 

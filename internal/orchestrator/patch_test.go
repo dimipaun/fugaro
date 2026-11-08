@@ -122,9 +122,9 @@ func TestStaleBaseRevIsRejected(t *testing.T) {
 	// And it lands on a copy: the maps and slices of the state the caller
 	// passed in are not the ones the new state carries, so a caller holding
 	// both cannot change one through the other.
-	facts := mustApply(t, s, orchestrator.Session, "session:20261107-090000-abcd", now, factOp("sweep.state", "retired"))
-	facts.Facts["sweep.state"] = orchestrator.Fact{Value: "changed", By: orchestrator.Person}
-	if got := s.Facts["sweep.state"]; got.Value != "" {
+	facts := mustApply(t, s, orchestrator.Session, "session:20261107-090000-abcd", now, factOp("sweep-state", "retired"))
+	facts.Facts["sweep-state"] = orchestrator.Fact{Value: "changed", By: orchestrator.Person}
+	if got := s.Facts["sweep-state"]; got.Value != "" {
 		t.Fatalf("the two states share their fact map: the old one now says %q", got.Value)
 	}
 }
@@ -176,8 +176,8 @@ func TestFactValuesAreCappedAndCleaned(t *testing.T) {
 	s := stateWithAQueuedItem(t, now)
 
 	long := "\x1b[31m" + strings.Repeat("v", orchestrator.MaxFactValueRunes+50) + "\nsecond line"
-	kept := mustApply(t, s, orchestrator.Session, "session:20260707-090000-abcd", now, factOp("sweep.state", long))
-	got := kept.Facts["sweep.state"].Value
+	kept := mustApply(t, s, orchestrator.Session, "session:20260707-090000-abcd", now, factOp("sweep-state", long))
+	got := kept.Facts["sweep-state"].Value
 	// The house cleaning, not an ad-hoc one: the same two calls every other
 	// surface puts a string through on its way into a document or a terminal.
 	if want := safetext.Clip(safetext.OneLine(long), orchestrator.MaxFactValueRunes); got != want {
@@ -189,22 +189,22 @@ func TestFactValuesAreCappedAndCleaned(t *testing.T) {
 	if strings.ContainsAny(got, "\x1b\n") {
 		t.Fatalf("the stored fact carries an escape or a newline: %q", got)
 	}
-	if kept.Facts["sweep.state"].By != orchestrator.Session {
-		t.Fatalf("the fact says a %s wrote it", kept.Facts["sweep.state"].By)
+	if kept.Facts["sweep-state"].By != orchestrator.Session {
+		t.Fatalf("the fact says a %s wrote it", kept.Facts["sweep-state"].By)
 	}
 
 	// A delete names a fact that is there and carries no value: a patch that
 	// means one and carries the other is refused rather than guessed at.
-	if _, err := applyAs(t, kept, orchestrator.Session, "session:20261107-090000-abcd", now, factOp("sweep.state", "")); !errors.Is(err, orchestrator.ErrInvalid) {
+	if _, err := applyAs(t, kept, orchestrator.Session, "session:20261107-090000-abcd", now, factOp("sweep-state", "")); !errors.Is(err, orchestrator.ErrInvalid) {
 		t.Fatalf("an empty value was stored as a fact: err = %v, want %v", err, orchestrator.ErrInvalid)
 	}
 	deleted := mustApply(t, kept, orchestrator.Session, "session:20261107-090000-abcd", now,
-		orchestrator.Op{Op: orchestrator.OpFactDelete, Fact: &orchestrator.FactOp{Key: "sweep.state"}})
-	if _, ok := deleted.Facts["sweep.state"]; ok {
+		orchestrator.Op{Op: orchestrator.OpFactDelete, Fact: &orchestrator.FactOp{Key: "sweep-state"}})
+	if _, ok := deleted.Facts["sweep-state"]; ok {
 		t.Fatal("the fact is still there after it was deleted")
 	}
 	if _, err := applyAs(t, deleted, orchestrator.Session, "session:20261107-090000-abcd", now,
-		orchestrator.Op{Op: orchestrator.OpFactDelete, Fact: &orchestrator.FactOp{Key: "sweep.state"}}); !errors.Is(err, orchestrator.ErrNotFound) {
+		orchestrator.Op{Op: orchestrator.OpFactDelete, Fact: &orchestrator.FactOp{Key: "sweep-state"}}); !errors.Is(err, orchestrator.ErrNotFound) {
 		t.Fatalf("deleting a fact that is not there: err = %v, want %v", err, orchestrator.ErrNotFound)
 	}
 }
@@ -1037,7 +1037,7 @@ func stateWithAPersonDecision(t *testing.T, now time.Time) orchestrator.State {
 		WaitingOn: orchestrator.OnPerson,
 		At:        now.Add(-time.Hour),
 	}}
-	s.Facts = map[string]orchestrator.Fact{"repo.primary": {Value: "owner/repo", By: orchestrator.Daemon}}
+	s.Facts = map[string]orchestrator.Fact{"repo-primary": {Value: "owner/repo", By: orchestrator.Daemon}}
 	return s
 }
 

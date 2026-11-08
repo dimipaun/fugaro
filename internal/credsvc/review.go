@@ -158,17 +158,42 @@ func ReviewJobAccountsFor(p *projectpolicy.Policy, gcpProject string) []ReviewJo
 			continue
 		}
 		for _, account := range config.ProjectJobAccounts(pr.JobProfile) {
-			if account == "" {
-				account = config.DefaultClaudeAccount
-			}
-			out = append(out, ReviewJobAccount{
-				Email:   serviceAccountEmail(ReviewServiceAccountID(name, pr.Provider, account), gcpProject),
-				Account: account,
-			})
+			out = append(out, ReviewJobAccountFor(name, pr.Provider, account, gcpProject))
 		}
 	}
 	slices.SortFunc(out, func(a, b ReviewJobAccount) int { return cmp.Compare(a.Email, b.Email) })
 	return slices.Compact(out)
+}
+
+// ReviewJobAccountFor derives ONE review job's row from the triple that names
+// it — the same derivation ReviewJobAccountsFor makes for every profile the
+// published policy holds, over the triple a *deployment* configured
+// (internal/cli's credentialsServiceConfig reads the installation module's
+// FUGARO_REVIEW_JOB_ACCOUNTS document, whose rows are exactly these three
+// fields, because the service reads no policy at its start-up).
+//
+// It is one function and not two spells of the same names on purpose: the
+// account a service admits has to be the account the deployer created
+// (docs/c39-review-identity/spec.md §2.2's one derivation), and the two callers
+// above are the deployment's document and the published policy — a second
+// spelling of ReviewServiceAccountID or of the email shape would be a service
+// that admits an account nobody deployed, or, worse, refuses the one that
+// exists.
+//
+// The account segment is config.ReviewVariantAccount's mapping of the axis's
+// value — the axis spells the default account as the empty string
+// (config.ProjectJobAccounts) and the variant, and the admissions, spell it
+// config.DefaultClaudeAccount — and it is that function rather than a second
+// `if` here because it is the mapping the deployer builds the variant's name
+// with and the one the pairing looks a review caller up under. The variant
+// mounts no token of its own to join (O1), which is why this is not
+// config.ProjectJobTokenAccount's.
+func ReviewJobAccountFor(profile, provider, account, gcpProject string) ReviewJobAccount {
+	name := config.ReviewVariantAccount(account)
+	return ReviewJobAccount{
+		Email:   serviceAccountEmail(ReviewServiceAccountID(profile, provider, name), gcpProject),
+		Account: name,
+	}
 }
 
 // RepositoryTableFor builds the installation's repository table: the slug a

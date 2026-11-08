@@ -5,26 +5,32 @@
 // read here, never the generator's own output and never a git tag (D100, finding 44). Six
 // things are checked:
 //
-//   1. **The page's release set equals the directory's, in both directions.** A release
-//      file the page omits fails, and a tag the page lists that no file backs fails. D100
-//      calls this the whole of the drift protection, because the page is the first
-//      reader-facing index of those files (the README keeps no changelog section).
+//   1. **The page's release set is the three newest release files** (D1640): every entry is
+//      one of the three newest files, in the order their filenames' versions give, and a tag
+//      the page lists that no file backs fails. The cut is a cut — `docs/releases/` holds
+//      more files than the page renders — and the files are still the source, read here
+//      rather than asked of the generator (D100). Under the entries the page renders the
+//      link to GitHub's releases page and one line per other stream (D1641, D1644, D1648).
 //   2. **The newest entry is the newest file**, by the version in the filename.
 //   3. **The page adds no sentence of its own beyond those two files**, and drops no line of
-//      any release file.** Every sentence the page renders is in a release file or in the
-//      summary the data file carries for that release, and every content line of every
-//      release file appears on the page. The only words the page writes itself are its
-//      title, the notes block's label, the "not yet released" marker, and the tags, which
-//      come from the filenames.
+//      any release file it renders.** Every sentence the page renders is in a release file
+//      or in the summary a data file carries for that release, and every content line of a
+//      rendered release file appears on the page. The only words the page writes itself are
+//      its title, the notes block's label, the "not yet released" marker, the tags (which
+//      come from the filenames), the link to the full list, and the label of each stream's
+//      line — named in the case below, and nothing else.
 //   4. **Every entry links to its GitHub release**, at a URL built from site.yaml's
 //      repository rather than typed into the page, and the page states no date — the files
 //      carry none, and the date a reader wants is the one GitHub states (D100).
 //   5. **Each release's summary is the one the data file carries for it** (the owner's brief
-//      of 2026-10-19): the page renders one summary per release, from
+//      of 2026-10-19): the page renders one summary per rendered release, from
 //      `website/data/release-summaries.yaml`, and the release file's own Highlights are the
 //      block a reader opens below it. Every release file has an entry in that file, none is
 //      empty, no entry outlives the file it names, and the words of an entry are the site's
-//      rather than an internal id or a repository path.
+//      rather than an internal id or a repository path. **Every release file, and not only
+//      the three the page renders** (F15, D1647): the page validates each `buildChangelog`
+//      entry's summary before it slices, so an older release with no line still stops the
+//      build — the fixture case near the foot of this file shows it failing.
 //   6. **The page wears the bold look, and wears no words to do it** (the owner's brief of
 //      2026-10-21, which applies the design the owner approved on the home page —
 //      `website/design-ref/HomeV3.dc.html` — to this page, which has no board of its own).
@@ -68,14 +74,15 @@
 
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { cssDeclarations, cssRules, parse, walk } from './lib/html.mjs'
 import { ancestorsOf, classesOf, matchesSelector, subjectOf } from './lib/selectors.mjs'
-import { READ_UNDER_PLUGIN, linkNodeModules } from './lib/build.mjs'
+import { READ_UNDER_PLUGIN, buildCopy, linkNodeModules } from './lib/build.mjs'
+import { latestMobileRelease } from '../src/lib/mobile-release.mjs'
 
 // website/test/changelog-page.mjs -> website/test -> website.
 const SITE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -114,6 +121,47 @@ function sectionHeading(title) {
 // and the whole of what the block adds to the page): a reader who wants the Highlights of a
 // release opens it, and the summary above says what the release gives them.
 const NOTES_LABEL = 'Highlights'
+
+// How many CLI releases the page renders: the three newest files, and no others (D1640). The
+// generator still returns every release file (`src/lib/changelog.mjs`), because the home page's
+// hero reads the newest published entry out of the same call (F10); the cut is made in the page.
+const SHOWN = 3
+
+// The page's own new words (D1644, D1648), named here rather than matched loosely: the link to
+// the full list, and the label each stream's line carries. The mobile line's sentence is not
+// among them — it is that release's `mobile-vX.Y.Z` line in
+// `website/data/mobile-release-summaries.yaml`, a file of this repository, so the case below
+// allows it as a summary rather than as a word of the page.
+const MORE_LABEL = 'See all releases on GitHub'
+const CONSOLE_LABEL = 'Desktop console'
+const MOBILE_LABEL = 'Mobile app'
+
+// The two streams beside the CLI, and the rule that names their latest release (D1641, D1644):
+// each stream's notes are its own directory under `docs/releases/` (`console/` and `mobile/`,
+// beside the CLI's own files), each stream's version line is its own package manifest, and its
+// latest release is the newest notes file at or below that version — the rule
+// `src/lib/console-release.mjs` applies to the console and `src/lib/mobile-release.mjs` to the
+// app. Read here from the tree, never asked of the page: what is asserted is the directory's
+// answer, not the page's.
+const CONSOLE = {
+  name: 'the desktop console',
+  notesDir: path.join(RELEASES_DIR, 'console'),
+  packageFile: path.join(REPO, 'console', 'package.json'),
+  // What its own releases' tags carry in front of the version, and what its notes' files do
+  // not: its notes are `v0.120.0.md` and its releases are `console-v0.120.0` (docs/release.md).
+  tagPrefix: 'console-',
+}
+const MOBILE = {
+  name: 'the phone app',
+  notesDir: path.join(RELEASES_DIR, 'mobile'),
+  packageFile: path.join(REPO, 'mobile', 'package.json'),
+  tagPrefix: 'mobile-',
+}
+
+// The phone app's own end-user summaries, keyed by its tag: the second summaries file, beside
+// the CLI's (its header says why it is a file of its own). Nothing reads it yet — no mobile
+// release exists — so it is read with no entry in it, and the case below proves that.
+const MOBILE_SUMMARIES_FILE = path.join(SITE, 'data', 'mobile-release-summaries.yaml')
 
 // What a site build cannot read, and therefore what the copy below leaves out: the Go
 // module's own tree and test data, the console application, and the installed and built
@@ -155,6 +203,15 @@ function build() {
   // The installed tree is symlinked rather than copied: it is the pinned tree `npm ci`
   // wrote, and this file installs nothing (W1.1).
   linkNodeModules(path.join(root, 'website', 'node_modules'))
+
+  // The console application is skipped by the copy above, and its `package.json` is the one
+  // file of it a build reads: the console's version line, from which the changelog page names
+  // the latest console release (`src/lib/console-release.mjs`, D1641). It is read from the
+  // checkout rather than typed, so the line these cases assert over carries the tree's own
+  // version — and a copy without it would build a page with no console line at all, which is
+  // not the page these cases are about.
+  mkdirSync(path.join(root, 'console'))
+  cpSync(path.join(REPO, 'console', 'package.json'), path.join(root, 'console', 'package.json'))
 
   // The plugin's version the copy is built with: the second-newest release file's, so the
   // build under test is a tree one release ahead of its version bump. Exactly the newest
@@ -227,6 +284,43 @@ function newestFirst() {
       }
       return 0
     })
+}
+
+/** The three newest release files: the entries the page renders, and nothing below them. */
+function shownReleases() {
+  return newestFirst().slice(0, SHOWN)
+}
+
+/**
+ * A stream's latest release — `{version, tag}`, as both stream modules return it — or null
+ * when that stream has none: the newest notes file in its directory at or below the version
+ * its package manifest carries, which is the rule `src/lib/console-release.mjs` and
+ * `src/lib/mobile-release.mjs` apply (see CONSOLE and MOBILE above).
+ */
+function newestNotes(stream) {
+  if (!existsSync(stream.notesDir) || !existsSync(stream.packageFile)) return null
+  const packaged = versionOf(`v${JSON.parse(readFileSync(stream.packageFile, 'utf8')).version}`)
+  const released = readdirSync(stream.notesDir)
+    .filter((name) => /^v\d+\.\d+\.\d+\.md$/.test(name))
+    .map(tagOf)
+    .filter((tag) => {
+      const file = versionOf(tag)
+      for (let i = 0; i < 3; i++) {
+        if (file[i] !== packaged[i]) return file[i] < packaged[i]
+      }
+      return true
+    })
+    .sort((a, b) => {
+      const va = versionOf(a)
+      const vb = versionOf(b)
+      for (let i = 0; i < 3; i++) {
+        if (va[i] !== vb[i]) return vb[i] - va[i]
+      }
+      return 0
+    })
+  if (released.length === 0) return null
+  const version = released[0].slice(1)
+  return { version, tag: `${stream.tagPrefix}v${version}` }
 }
 
 /** A release file's text with its authoring notes (an HTML comment, v0.7.5's) left out. */
@@ -303,6 +397,36 @@ function summaryEntries() {
   }
 
   assert.ok(entries.size > 0, `${path.relative(REPO, SUMMARIES_FILE)} carries no entry under \`summaries:\``)
+  return entries
+}
+
+// The phone app's summaries are keyed by its own tag, `mobile-vX.Y.Z` (that file's header,
+// `docs/releases/mobile/README.md`), and the same one-line shape holds. **Zero entries is the
+// file's state today and not a failure**: no mobile release exists, so the page renders no
+// mobile line to carry one, and the file is read here for the day one does.
+const MOBILE_SUMMARY_ENTRY = /^ {2}(mobile-v\d+\.\d+\.\d+): (.+)$/
+
+/** Every entry in `website/data/mobile-release-summaries.yaml`, by tag: today, none. */
+function mobileSummaryEntries() {
+  const lines = readFileSync(MOBILE_SUMMARIES_FILE, 'utf8').split('\n')
+  const start = lines.indexOf('summaries:')
+  assert.notEqual(start, -1, `${path.relative(REPO, MOBILE_SUMMARIES_FILE)} carries no \`summaries:\` line at the start of a line: the file states its entries under it`)
+
+  const entries = new Map()
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i]
+    if (line.trim() === '' || line.trimStart().startsWith('#')) continue
+    if (!line.startsWith(' ')) break // the next top-level key ends the map.
+    const match = MOBILE_SUMMARY_ENTRY.exec(line)
+    assert.ok(
+      match,
+      `${path.relative(REPO, MOBILE_SUMMARIES_FILE)}:${i + 1}: ${JSON.stringify(line)} is not \`  mobile-vX.Y.Z: one line of text\`: an entry is the app's tag and its summary on one line, and a value written another way is refused rather than read approximately`,
+    )
+    const [, tag, summary] = match
+    assert.ok(summary.trim().length > 0, `${path.relative(REPO, MOBILE_SUMMARIES_FILE)}:${i + 1}: ${tag} carries an empty summary, and the changelog renders it under the app's line`)
+    assert.equal(entries.has(tag), false, `${path.relative(REPO, MOBILE_SUMMARIES_FILE)}:${i + 1}: ${tag} is written twice, and the file's own reader keeps one entry per tag`)
+    entries.set(tag, summary)
+  }
   return entries
 }
 
@@ -387,6 +511,23 @@ function summariesOnPage(html) {
       text: decodeEntities(match[2].replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim(),
     }),
   )
+}
+
+/**
+ * The stream lines the page renders under the entries, in the order it renders them: the words
+ * of each line, the URL it links (or null for a line that links nothing, which is the mobile
+ * app's — it creates no GitHub release), and the line's own attributes, which is where the
+ * mobile line carries the tag it is about.
+ */
+function streamLines(html) {
+  return [...html.matchAll(/<p class="changelog-stream"([^>]*)>([\s\S]*?)<\/p>/g)].map((match) => {
+    const anchor = /<a\b[^>]*href="([^"]*)"/.exec(match[2])
+    return {
+      text: elementText(match[2]),
+      href: anchor === null ? null : anchor[1],
+      attrs: match[1],
+    }
+  })
 }
 
 /** The tags whose entry carries the "not yet released" marker, in the order they appear. */
@@ -556,22 +697,113 @@ function chipFailures(css, html) {
 // The cases.
 // ---------------------------------------------------------------------------------------
 
-test('the changelog page lists every release file and no others', () => {
+test('the changelog page lists exactly the three newest CLI releases', () => {
   // The build's HTML directly rather than `builtPage()`: with no page there are no tags on
-  // it, and the failure a reader needs is the one below — which release is missing — not
-  // "the page does not exist". The build's own failure is the next case's subject.
+  // it, and the failure a reader needs is the one below — which release is missing, or which
+  // one the page should not show — not "the page does not exist".
   const onPage = tagsOnPage(build().html ?? '')
   const files = releaseFiles().map(tagOf)
+  const expected = shownReleases()
+
+  // The cut is a cut: the directory holds more files than the page renders, so a page that
+  // once again listed all of them fails here rather than passing by having nothing to drop
+  // (D1640, D1645 — the three newest files, the "not yet released" one included).
+  assert.ok(
+    files.length > SHOWN,
+    `docs/releases/ holds ${files.length} release files, and this case is about the page rendering the ${SHOWN} newest of them: with no older file there is no cut to read`,
+  )
 
   // Newest first, so the release a reader would miss first is the one named: the newest
   // file is the one committed to main before its tag exists (D100).
-  for (const tag of newestFirst()) {
-    assert.ok(onPage.includes(tag), `page omits ${tag}, docs/releases/ holds it`)
+  for (const tag of expected) {
+    assert.ok(onPage.includes(tag), `page omits ${tag}, and it is one of the ${SHOWN} newest release files`)
   }
   for (const tag of onPage) {
     assert.ok(files.includes(tag), `page lists ${tag}, docs/releases/ holds no such file`)
   }
-  assert.equal(onPage.length, files.length, `page lists ${onPage.length} releases, docs/releases/ holds ${files.length}`)
+  assert.deepEqual(
+    onPage,
+    expected,
+    `page lists ${JSON.stringify(onPage)}, and the ${SHOWN} newest release files are ${JSON.stringify(expected)}: the page renders the newest releases and links the rest to GitHub (D1640)`,
+  )
+})
+
+test('the changelog page links the full list on GitHub', () => {
+  const html = builtPage()
+  const repository = /^repository:\s*(\S+)$/m.exec(readFileSync(path.join(SITE, 'data', 'site.yaml'), 'utf8'))[1]
+
+  // The link the spec asks for, under the entries: one anchor to the repository's releases
+  // page, which carries the CLI's and the console's releases (D1648). It is the one sentence
+  // of the page's own that the owner allowed (the reconciliation's section 4 item 3), which is
+  // why the "adds no sentence of its own" case names it in its allow-list.
+  const links = [...html.matchAll(/<a\b[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g)].filter(
+    (match) => elementText(match[2]) === MORE_LABEL,
+  )
+  assert.equal(links.length, 1, `the page carries ${links.length} ${JSON.stringify(MORE_LABEL)} link(s), and the reader who wants the full history is given one`)
+  assert.equal(
+    links[0][1],
+    `${repository}/releases`,
+    `the full list is linked at ${links[0][1]}, and the repository's releases page is ${repository}/releases — a URL built from site.yaml's own fact and never typed into the page`,
+  )
+})
+
+test('the dropped entries’ anchors and release links are gone', () => {
+  const html = builtPage()
+  const repository = /^repository:\s*(\S+)$/m.exec(readFileSync(path.join(SITE, 'data', 'site.yaml'), 'utf8'))[1]
+
+  // The entries below the three are gone rather than merely hidden: an anchor that resolves
+  // to nothing is worse than no anchor, and nothing in this repository links one (D1646). The
+  // GitHub release URL every entry used stays valid for the dropped ones, and the link under
+  // the entries is where a reader finds them now.
+  const dropped = newestFirst().slice(SHOWN)
+  assert.ok(dropped.length > 0, 'docs/releases/ holds no release below the three newest, so this case proves nothing')
+  for (const tag of dropped) {
+    assert.ok(!html.includes(`id="${tag}"`), `the page still carries an element with id="${tag}", and the release it anchors is not rendered (D1646)`)
+    assert.ok(
+      !html.includes(`href="${repository}/releases/tag/${tag}"`),
+      `the page still links ${tag}'s release directly, and the entry was dropped: the link to the full list is where a reader finds it now`,
+    )
+  }
+  for (const tag of shownReleases()) {
+    assert.ok(html.includes(`id="${tag}"`), `the page carries no id="${tag}", and the release it anchors is one of the three it renders`)
+  }
+})
+
+test('the changelog page names the latest console release, linking its GitHub release', () => {
+  const html = builtPage()
+  const release = newestNotes(CONSOLE)
+  const repository = /^repository:\s*(\S+)$/m.exec(readFileSync(path.join(SITE, 'data', 'site.yaml'), 'utf8'))[1]
+
+  assert.ok(release, `docs/releases/console/ names no release at or below console/package.json's version, so there is nothing for this case to hold the page to`)
+  const lines = streamLines(html)
+  assert.deepEqual(
+    lines.filter((line) => line.text.startsWith(CONSOLE_LABEL)).map((line) => line.text),
+    [`${CONSOLE_LABEL} v${release.version}`],
+    `the page's console line(s) are ${JSON.stringify(lines.map((line) => line.text))}, and ${CONSOLE.name}'s latest release is v${release.version}: the line names the newest notes file at or below the version console/package.json carries (D1641, D1644)`,
+  )
+  const console = lines.find((line) => line.text.startsWith(CONSOLE_LABEL))
+  assert.equal(
+    console.href,
+    `${repository}/releases/tag/${release.tag}`,
+    `the console line links ${console.href}, and its release is at ${repository}/releases/tag/${release.tag}`,
+  )
+})
+
+test('the changelog page names no mobile line while no mobile release exists', () => {
+  const html = builtPage()
+
+  // The premise, asserted rather than assumed: the day the app's first release lands, this
+  // case stops describing the tree and has to be replaced by one that reads its line (D1644).
+  assert.equal(
+    newestNotes(MOBILE),
+    null,
+    `docs/releases/mobile/ names a release at or below mobile/package.json's version, and the page renders a line for it: this case describes the tree before the app's first release and no longer applies`,
+  )
+  assert.deepEqual(
+    streamLines(html).filter((line) => line.attrs.includes('data-mobile-release')),
+    [],
+    'the page renders a mobile line, and no mobile release exists: the line is the app\'s own release\'s sentence, so there is nothing it could say (D1644)',
+  )
 })
 
 test('the build produces the changelog page', () => {
@@ -582,25 +814,44 @@ test('the build produces the changelog page', () => {
 
 test('the changelog page lists the newest release first', () => {
   const onPage = tagsOnPage(builtPage())
-  const expected = newestFirst()
+  const expected = shownReleases()
 
-  // The newest entry is the newest file, and the whole order is the files' own order: the
-  // newest release is the one a reader sees first, and it is the file the version in the
-  // filename says it is (D100 — no tag is read for this, and none is needed).
+  // The newest entry is the newest file, and the order of the three is the files' own order:
+  // the newest release is the one a reader sees first, and it is the file the version in the
+  // filename says it is (D100 — no tag is read for this, and none is needed). "Newest" is the
+  // version triple, never the file's time or its name's order — v0.9.7 comes after v0.10.0 by
+  // name and before it by version.
   assert.equal(onPage[0], expected[0], `the first entry is ${onPage[0]}, and the newest release file is ${expected[0]}`)
-  assert.deepEqual(onPage, expected, 'the entries are not the release files, newest first')
+  assert.deepEqual(onPage, expected, 'the entries are not the newest release files, newest first')
 })
 
 test('the changelog page adds no sentence of its own', () => {
   const html = builtPage()
   const files = releasesText()
-  const summaries = [...summaryEntries().values()].map(plain).join('\n')
+  // Both summaries files, because both kinds of line are the site's data rather than the
+  // page's prose: the CLI's, keyed by the release's tag, and the app's, keyed by the app's
+  // (the file its own header explains). The app's has no entry today, which is its state.
+  const summaries = [...summaryEntries().values(), ...mobileSummaryEntries().values()].map(plain).join('\n')
+  const consoleRelease = newestNotes(CONSOLE)
+  const mobileRelease = newestNotes(MOBILE)
   // The page's own words, and the whole of them: its title, the notes block's label — the
   // one word of an entry that names what the block is rather than saying anything about a
-  // release — the marker a release the plugin's version has not reached carries, and the
-  // tags, which come from the filenames. Every other word the page renders comes from a
-  // release file or from the release's own summary in website/data/release-summaries.yaml.
-  const own = new Set(['Changelog', NOTES_LABEL, 'not yet released', ...releaseFiles().map(tagOf)])
+  // release — the marker a release the plugin's version has not reached carries, the link to
+  // the full list, the label of each stream's line (the two the owner allowed in the
+  // reconciliation's section 4 item 3), and the tags, which come from the filenames. Every
+  // other word the page renders comes from a release file, from the release's own summary in
+  // website/data/release-summaries.yaml, or from the app's line in the summaries file beside
+  // it. Each label below is named by its words and the version the tree's own notes give, so
+  // a line that named another version, or said anything else, fails here.
+  const own = new Set([
+    'Changelog',
+    NOTES_LABEL,
+    'not yet released',
+    MORE_LABEL,
+    ...(consoleRelease === null ? [] : [`${CONSOLE_LABEL} v${consoleRelease.version}`]),
+    ...(mobileRelease === null ? [] : [`${MOBILE_LABEL} v${mobileRelease.version}`]),
+    ...releaseFiles().map(tagOf),
+  ])
 
   for (const sentence of pageSentences(html)) {
     if (files.includes(sentence) || summaries.includes(sentence)) continue
@@ -615,15 +866,15 @@ test('each release renders the summary its own entry in the data file carries', 
   const html = builtPage()
   const entries = summaryEntries()
   const onPage = summariesOnPage(html)
-  const releases = newestFirst()
+  const releases = shownReleases()
 
-  // One summary per release, in the order the entries are, and none anywhere else: a
+  // One summary per rendered release, in the order the entries are, and none anywhere else: a
   // release whose summary is missing is an entry with nothing under its heading, and a
-  // summary for a release the page does not list is a line nothing renders.
+  // summary for a release the page does not render is a line nothing renders.
   assert.deepEqual(
     onPage.map((item) => item.tag),
     releases,
-    'the page does not render one summary per release, in the newest-first order of the entries',
+    `the page does not render one summary per rendered release, in the newest-first order of the entries: it renders ${JSON.stringify(onPage.map((item) => item.tag))}, and the ${SHOWN} newest are ${JSON.stringify(releases)}`,
   )
 
   for (const item of onPage) {
@@ -641,8 +892,11 @@ test('each release renders the summary its own entry in the data file carries', 
     assert.ok(item.text.length > 0, `the summary rendered under ${item.tag} is empty`)
   }
 
-  // And the other direction: every entry in the data file is a release file this page
-  // lists, so an entry outliving its release is refused rather than left unrendered.
+  // And the other direction: every entry in the data file is a release file, so an entry
+  // outliving its release is refused rather than left behind. The page renders the three
+  // newest of them, so the entry a release below the three carries is not rendered and still
+  // has to be there (D1647): the page validates every release file's summary before it slices
+  // (the fixture case near the foot of this file).
   const files = new Set(releaseFiles().map(tagOf))
   for (const tag of entries.keys()) {
     assert.ok(files.has(tag), `website/data/release-summaries.yaml carries an entry for ${tag}, and docs/releases/ holds no such file`)
@@ -683,9 +937,10 @@ test('the release the plugin’s version has not reached is rendered as not yet 
   // The copy's manifest carries the second-newest release file's version and the copy has no
   // `.git` at all, so a tag cannot be the reason for this answer: the one release file ahead
   // of that version is the one entry the page marks, and every older one is published (the
-  // header says why the copy is built this way). Every release file is listed on the page, so
-  // "every older one is published" is the whole of the list minus the one marked — a page
-  // that marked nothing, or marked everything, differs here.
+  // header says why the copy is built this way). **The pill survives the cut** (D1645): the
+  // three newest files are the three the page renders, so the newest one — the file written
+  // ahead of its version bump — is among them, and a page that marked nothing, marked
+  // everything, or dropped the draft differs here.
   assert.equal(
     ahead.length,
     1,
@@ -701,28 +956,30 @@ test('the release the plugin’s version has not reached is rendered as not yet 
 test('the changelog page renders each release file, line for line and in the file’s order', () => {
   const html = builtPage()
 
-  // One comparison per release, of the whole entry against the whole file: every content
-  // line is rendered, none is added, and the order is the file's — the Highlights, then
-  // each section heading as its own `<h3>` with its lines under it, in the order the file
-  // writes the two sections. A `### Known limits` line that leaks into the page as text, a
-  // section rendered before the one the file puts first, or a line left out all differ from
-  // the file here, in the element that differs.
-  for (const fileName of releaseFiles()) {
-    const tag = tagOf(fileName)
+  // One comparison per rendered release, of the whole entry against the whole file: every
+  // content line is rendered, none is added, and the order is the file's — the Highlights,
+  // then each section heading as its own `<h3>` with its lines under it, in the order the
+  // file writes the two sections. A `### Known limits` line that leaks into the page as text,
+  // a section rendered before the one the file puts first, or a line left out all differ from
+  // the file here, in the element that differs. The files below the three are not rendered,
+  // so the comparison is the three the page shows (D1640).
+  for (const tag of shownReleases()) {
     assert.deepEqual(
       entryElements(html, tag),
-      fileElements(fileName),
-      `the entry for ${tag} is not docs/releases/${fileName} rendered, line for line and in the file’s order`,
+      fileElements(`${tag}.md`),
+      `the entry for ${tag} is not docs/releases/${tag}.md rendered, line for line and in the file’s order`,
     )
   }
 
-  // And the new section is on the page as a heading rather than only as text somewhere: the
-  // 0.8.5 release file carries the release's known limits, and a reader reads them under
-  // that heading — which is what the release rule asks the page for.
-  const withLimits = releaseFiles()
-    .map(tagOf)
-    .filter((tag) => contentLines(`${tag}.md`).includes(sectionHeading('Known limits')))
-  assert.ok(withLimits.length > 0, 'no release file carries a Known limits section, so this case proves nothing')
+  // And the section is on the page as a heading rather than only as text somewhere: a reader
+  // reads a release's known limits under that heading — which is what the release rule asks
+  // the page for. The files read are the three the page renders, because those are the
+  // entries whose headings are on it.
+  const withLimits = shownReleases().filter((tag) => contentLines(`${tag}.md`).includes(sectionHeading('Known limits')))
+  assert.ok(
+    withLimits.length > 0,
+    `none of the ${SHOWN} rendered release files carries a Known limits section, so this case proves nothing about the headings the page renders`,
+  )
   for (const tag of withLimits) {
     assert.deepEqual(
       entryElements(builtPage(), tag).filter((element) => element.kind === 'h3').map((element) => element.text),
@@ -744,10 +1001,11 @@ test('the changelog page states no date', () => {
 
   // The dates a release file's own notes mention stay: they are that file's text, and they
   // are rendered because the line around them is. The summaries are the site's own lines
-  // (the owner's brief of 2026-10-19), and they are the other half of what the page says
-  // besides the files — so the sentences held to "no date" are the ones that are neither.
+  // (the owner's brief of 2026-10-19) and the app's line is its file's, so they are the other
+  // half of what the page says besides the files — the sentences held to "no date" are the
+  // ones that are neither.
   const files = releasesText()
-  const summaries = [...summaryEntries().values()].map(plain)
+  const summaries = [...summaryEntries().values(), ...mobileSummaryEntries().values()].map(plain)
   const own = pageSentences(html).filter((sentence) => !files.includes(sentence) && !summaries.includes(sentence))
   for (const sentence of own) {
     assert.doesNotMatch(sentence, /\b\d{4}-\d{2}-\d{2}\b/, `the page writes a date of its own: ${JSON.stringify(sentence)}`)
@@ -760,7 +1018,7 @@ test('every entry links to its GitHub release, at a URL built from site.yaml', (
   const repository = /^repository:\s*(\S+)$/m.exec(readFileSync(path.join(SITE, 'data', 'site.yaml'), 'utf8'))[1]
   const canonical = /^canonical_url:\s*(\S+)$/m.exec(readFileSync(path.join(SITE, 'data', 'site.yaml'), 'utf8'))[1]
 
-  for (const tag of releaseFiles().map(tagOf)) {
+  for (const tag of shownReleases()) {
     assert.ok(
       html.includes(`href="${repository}/releases/tag/${tag}"`),
       `the page does not link ${tag} to its GitHub release, which is where its date and its artifacts are: ${repository}/releases/tag/${tag}`,
@@ -779,6 +1037,191 @@ test('every entry links to its GitHub release, at a URL built from site.yaml', (
       href.startsWith(repository) || href.startsWith(canonical),
       `the page carries an absolute link that is not built from site.yaml: ${href}`,
     )
+  }
+})
+
+// ---------------------------------------------------------------------------------------
+// The rules, on directories this file controls (D1640, D1644, F15, D1647).
+//
+// The cases above read the corpus on `main`, which sorts the same way by name and by version
+// and holds more than three release files. These build a copy whose `docs/releases/` holds
+// files of this file's choosing, so the rules the page is built on are the subject rather than
+// the corpus: "newest" is the version triple and not the filename's order, the summary check
+// covers every release file rather than the three the page renders, and the app's first
+// release has a sentence to say before the page renders a line for it.
+// ---------------------------------------------------------------------------------------
+
+test('the page’s releases are the newest by version, not by the filename’s order', (t) => {
+  // Three files whose names sort one way and whose versions sort another: `v0.10.0` is the
+  // first by name and the middle one by version, and `v0.20.3` is the last by name and the
+  // newest of the three. A rule that cut the list by the filenames' order — or that compared
+  // two filenames as strings — would drop the newest release of the three off the page here.
+  const files = [
+    ['v0.9.7', 'the middle file by name, and the oldest by version'],
+    ['v0.10.0', 'the first file by name, and the middle one by version'],
+    ['v0.20.3', 'the last file by name, and the newest by version'],
+  ]
+  const summary = (tag) => `the release filed as ${tag}`
+  const built = buildCopy(
+    t,
+    ({ root, site }) => {
+      const releasesDir = path.join(root, 'docs', 'releases')
+      for (const name of readdirSync(releasesDir)) {
+        if (name.endsWith('.md') && name !== NON_RELEASE) rmSync(path.join(releasesDir, name))
+      }
+      for (const [tag, line] of files) writeFileSync(path.join(releasesDir, `${tag}.md`), `- ${line}\n`)
+      writeFileSync(
+        path.join(site, 'data', 'release-summaries.yaml'),
+        ['version: 1', 'summaries:', ...files.map(([tag]) => `  ${tag}: ${summary(tag)}`)].join('\n') + '\n',
+      )
+    },
+    'fugaro-changelog-order-',
+  )
+
+  assert.equal(built.status, 0, `the site's build failed on a directory of three release files:\n${built.output}`)
+  const html = readFileSync(path.join(built.dist, 'changelog', 'index.html'), 'utf8')
+  assert.deepEqual(
+    tagsOnPage(html),
+    ['v0.20.3', 'v0.10.0', 'v0.9.7'],
+    'the page does not list the three releases newest first by version: "newest" is the version triple (`src/lib/changelog.mjs`), and an order read off the filenames would put v0.10.0 first and v0.20.3 — the newest of the three — last, where the three-entry cut drops it',
+  )
+})
+
+test('the build stops for an older release with no summary line', (t) => {
+  // The oldest release file is one the page does not render, so a check that ran over the
+  // three rendered entries would never look at it (D1647, the plan's F15). The fixture takes
+  // that one line out of the copy's summaries file, and the build has to stop.
+  const dropped = newestFirst().at(-1)
+  const built = buildCopy(
+    t,
+    ({ site }) => {
+      const file = path.join(site, 'data', 'release-summaries.yaml')
+      const before = readFileSync(file, 'utf8')
+      const after = before.replace(new RegExp(`^ {2}${dropped.replace(/\./g, '\\.')}: .*$`, 'm'), '')
+      assert.notEqual(
+        after,
+        before,
+        `website/data/release-summaries.yaml carries no \`  ${dropped}: \` line, and this case takes one away: a corpus where ${dropped} is already missing would pass this case for the wrong reason`,
+      )
+      writeFileSync(file, after)
+    },
+    'fugaro-changelog-summary-',
+  )
+
+  assert.notEqual(
+    built.status,
+    0,
+    `the build succeeded with ${dropped}'s summary line removed: the page renders the three newest releases, and ${dropped} is not one of them, so the check has to run over every release file before the cut (F15, D1647)`,
+  )
+  assert.match(
+    built.output,
+    /website\/data\/release-summaries\.yaml/,
+    `the failure does not name website/data/release-summaries.yaml, so it does not say which file the release has no line in:\n${built.output}`,
+  )
+  assert.ok(
+    built.output.includes(dropped),
+    `the failure does not name ${dropped}, so it does not say which release has no summary:\n${built.output}`,
+  )
+})
+
+test('the build stops for a mobile release with no line in the app’s summaries file', (t) => {
+  // The app's stream reaches this page the day the app has a release, and that release's
+  // sentence is its `mobile-vX.Y.Z` line in website/data/mobile-release-summaries.yaml (D1644).
+  // The file holds no entry today, so the fixture puts the app's first release on the tree and
+  // changes nothing else: a line with nothing to say is what the build has to refuse.
+  const first = 'v0.0.1'
+  const built = buildCopy(
+    t,
+    ({ root }) => {
+      const manifestFile = path.join(root, 'mobile', 'package.json')
+      const manifest = JSON.parse(readFileSync(manifestFile, 'utf8'))
+      writeFileSync(manifestFile, `${JSON.stringify({ ...manifest, version: first.slice(1) }, null, 2)}\n`)
+      writeFileSync(path.join(root, 'docs', 'releases', 'mobile', `${first}.md`), "- the app's first release\n")
+      assert.equal(
+        mobileSummaryEntries().size,
+        0,
+        `website/data/mobile-release-summaries.yaml carries a mobile entry, and this case is about the build refusing a release that has none: it describes the file before the app's first release`,
+      )
+    },
+    'fugaro-changelog-mobile-',
+  )
+
+  assert.notEqual(
+    built.status,
+    0,
+    `the build succeeded with the app's ${first} release on the tree and no \`mobile-${first}\` line in website/data/mobile-release-summaries.yaml: the page renders the app's line with that release's own sentence, so a release with no line is a line the page cannot write (D1644)`,
+  )
+  assert.match(
+    built.output,
+    /mobile-release-summaries\.yaml/,
+    `the failure does not name website/data/mobile-release-summaries.yaml:\n${built.output}`,
+  )
+  assert.ok(
+    built.output.includes(`mobile-${first}`),
+    `the failure does not name the app's release, \`mobile-${first}\`, so it does not say which line is missing:\n${built.output}`,
+  )
+})
+
+test('latestMobileRelease names the newest app note at or below the app’s version', () => {
+  // The rule the page reads the app's release by, on its own: the newest notes file at or
+  // below the version `mobile/package.json` carries, which is `latestConsoleRelease`'s rule
+  // (D1644). Nothing in this repository names an app release today, so the fixtures are the
+  // versions themselves rather than the tree's.
+  const dir = mkdtempSync(path.join(tmpdir(), 'fugaro-mobile-release-'))
+  try {
+    const notesDir = path.join(dir, 'notes')
+    const packageFile = path.join(dir, 'package.json')
+    mkdirSync(notesDir)
+    // Three notes of the fixture's own, and the file the directory skips by name.
+    for (const version of ['0.9.7', '0.10.0', '0.20.3']) writeFileSync(path.join(notesDir, `v${version}.md`), `- the app's ${version} release\n`)
+    writeFileSync(path.join(notesDir, NON_RELEASE), '# the app\n')
+
+    /** What the rule names for a package manifest carrying `version`. */
+    const named = (version) => {
+      writeFileSync(packageFile, `${JSON.stringify({ name: 'fugaro-mobile', version })}\n`)
+      return latestMobileRelease({ notesDir, packageFile })
+    }
+
+    // The note at the version line is the newest published release, and it is named.
+    assert.deepEqual(
+      named('0.20.3'),
+      { version: '0.20.3', tag: 'mobile-v0.20.3' },
+      'a note at the version the package carries is not named, and it is the app\'s latest published release',
+    )
+    // A note written ahead of the version line is not published: the newest note at or below
+    // it is named instead, which is why `v0.20.3.md` is not the answer here.
+    assert.deepEqual(
+      named('0.19.0'),
+      { version: '0.10.0', tag: 'mobile-v0.10.0' },
+      'a note above the version the package carries is named, and no release is out for it: the rule names the newest note at or below the version',
+    )
+    // Every note above it: nothing is published, and the page renders no line.
+    assert.equal(named('0.1.0'), null, 'no note is at or below the version the package carries, and a release was named')
+    // No note at all, which is the state `docs/releases/mobile/` is in today.
+    for (const name of readdirSync(notesDir)) {
+      if (name !== NON_RELEASE) rmSync(path.join(notesDir, name))
+    }
+    assert.equal(named('0.20.3'), null, 'the app has no release note, and one was named')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('latestMobileRelease names nothing when the app’s notes directory is not there', () => {
+  // A stream whose notes are not on the tree has no release, and the page renders no line:
+  // the module answers null rather than throwing, so a site built before the app's notes
+  // directory exists is a site with no app line rather than a failed build.
+  const dir = mkdtempSync(path.join(tmpdir(), 'fugaro-mobile-absent-'))
+  try {
+    const packageFile = path.join(dir, 'package.json')
+    writeFileSync(packageFile, `${JSON.stringify({ name: 'fugaro-mobile', version: '0.0.0' })}\n`)
+    assert.equal(
+      latestMobileRelease({ notesDir: path.join(dir, 'notes'), packageFile }),
+      null,
+      'the notes directory is not there, and a release was named',
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
   }
 })
 
@@ -844,15 +1287,15 @@ test('the page opens with the display scale’s headline, its word in the accent
 test('every release is a card, and the list is spaced by a step of the scale', () => {
   const html = builtPage()
 
-  // One card per release file, drawn on `base.css`'s own shape: the panel a page is drawn on,
-  // one step above the ground with a hairline and the larger radius. The page used to be a
+  // One card per rendered release, drawn on `base.css`'s own shape: the panel a page is drawn
+  // on, one step above the ground with a hairline and the larger radius. The page used to be a
   // list of entries separated by a hairline; the bold look makes each release a thing of its
   // own, and a class of this page's own would be a second card shape for the same site.
   const articles = [...html.matchAll(/<article\b([^>]*)>/g)]
   assert.equal(
     articles.length,
-    releaseFiles().length,
-    `the page renders ${articles.length} entries and docs/releases/ holds ${releaseFiles().length} release files`,
+    SHOWN,
+    `the page renders ${articles.length} entries, and it renders the ${SHOWN} newest release files — one card each (D1640)`,
   )
   for (const [, attrs] of articles) {
     assert.match(

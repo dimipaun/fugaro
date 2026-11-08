@@ -3318,7 +3318,7 @@ func TestValidateNotesTheCredentialsServicePrecondition(t *testing.T) {
 	}{
 		{
 			name: "both halves, on this tree", accounts: true,
-			want: []string{"both halves", "fugaro update --provision-credentials", "fugaro creds set github-app-key",
+			want: []string{"both halves", "fugaro update --firebase-project", "fugaro creds set github-app-key",
 				"the service's own admission of the review job's caller", "no fugaro update supplies that half"},
 		},
 		{
@@ -3328,7 +3328,7 @@ func TestValidateNotesTheCredentialsServicePrecondition(t *testing.T) {
 		},
 		{
 			name: "the service is off, and the admission is built", accounts: true, admitted: true,
-			want:  []string{"fugaro update --provision-credentials", "fugaro creds set github-app-key"},
+			want:  []string{"fugaro update --firebase-project", "fugaro creds set github-app-key"},
 			avoid: []string{"does not admit"},
 		},
 		{

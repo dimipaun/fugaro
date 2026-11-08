@@ -2,8 +2,9 @@
 
 **Status: written by task B0.4 of the secrets-brokering plan; run by the owner, task B0.5.** The owner
 ran it on **2026-10-30** and the >32 MiB push failed with a **413** — the answer task B1.0's h2c work
-was built on — but **the result block is not in the register**, whose section still says NOT RUN:
-[status-2026-11-07.md](status-2026-11-07.md) records it, and B0.6 is the task that closes the gap.
+was built on — and **B0.6 recorded the result**, so the register's `## Check 190:` section and its
+summary row carry the run instead of NOT RUN:
+[status-2026-11-07.md](status-2026-11-07.md) is the census that found the gap.
 **No agent runs any step of it**, and no agent has: what it measures is a live project and a real
 token.
 

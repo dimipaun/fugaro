@@ -537,6 +537,18 @@ const MODELS: JSONDoc = {
  * rows are the four the screen's rules are about -- a narrowing the generic path
  * writes, a widening it writes, a key another writer owns, and a sensitive one
  * that is drawn nowhere at all (D1111).
+ *
+ * **This document is what the golden tests photograph, so the committed darwin
+ * pair is a picture of the fixture as it was before C4.** The settings table
+ * draws the rows' own words (`settingsRowLine`: the scope, the value, the layer
+ * that won, the state, the owner), so the pair last recorded in `660baae4`
+ * draws `repo`/`set (project)`/`set (local)`/`default` and the sentence "Fugaro
+ * Mailbox" where these rows draw `project`, `stale 3h`, `ok`, `local` and the
+ * local config's compact JSON. Re-recording is the owner's, on macOS, with the
+ * command in this file's header; the frame is the same pixels on every run, so
+ * that recording is the only thing that clears the comparison. The freshness
+ * clock reads the theme directory and not the documents a spec mounts, so this
+ * staleness reaches the comparison rather than `assertGoldenFresh`.
  */
 const SETTINGS: JSONDoc = JSON.parse(
   readFileSync(join(consoleDir, 'test', 'fixtures', 'settings.json'), 'utf8'),
@@ -927,12 +939,26 @@ function readsOf(where: string): readonly SpawnLogEntry[] {
     .map((line) => JSON.parse(line) as SpawnLogEntry)
 }
 
-/** SETTINGS_KEY is the row the narrowing below edits, and SETTINGS_WIDENING_KEY
- * the one the widening edits: both are rows of `test/fixtures/settings.json`,
- * whose `target_layer` the console takes the `--layer` word from (D1102). The
- * first writes the layer that wins and the second a layer the CLI's dry run
- * classifies as a widening, which is the whole of the difference between the two
- * windows. */
+/** SETTINGS_KEY is the row the non-widening edit below writes, and
+ * SETTINGS_WIDENING_KEY the one the widening edits: both are rows of
+ * `test/fixtures/settings.json`, whose `target_layer` the console takes the
+ * `--layer` word from (D1102). The first writes the `repo` layer the read names
+ * as that row's target, and that is **not** the `project` layer that wins it:
+ * the repository's own `fugaro.yaml` overlays the project layer's defaults
+ * (`internal/config/resolve.go`, `TestResolveTable`'s "a repository scalar
+ * beats the project"), so this write does change what a run reads, while
+ * D1113's comparison -- two printed layer names, equal or not -- draws the
+ * sentence that says it will not. That is the limit
+ * `settingsview.ts` records where the sentence is built, and not something
+ * this fixture earns: comparing two names cannot tell a write that loses to the
+ * winner from one that outranks it, the layers' order is the CLI's (D1102), and
+ * the fix is the plan's own escape hatch -- a `shadowed` field in the dry run's
+ * document (D1113) -- rather than a second copy of that order here. The spec
+ * drives this row for the argv it writes, which is the property this spec exists
+ * for, never for the sentence. The second writes a layer the CLI's dry run
+ * classifies as a widening (`DRY_RUNS` below, which is the stub's answer and not
+ * a comparison this spec makes), which is the whole of the difference between
+ * the two windows. */
 const SETTINGS_KEY = 'agent.review_rounds'
 const SETTINGS_WIDENING_KEY = 'claude_account_auto'
 
@@ -945,8 +971,8 @@ const DRY_RUNS: Readonly<Record<string, JSONDoc>> = {
   [SETTINGS_KEY]: {
     version: 1,
     key: SETTINGS_KEY,
-    layer: 'project',
-    path: '/home/owner/.config/fugaro/projects/example.yaml',
+    layer: 'repo',
+    path: '/home/owner/src/example-project/fugaro.yaml',
     changed: true,
     widening: false,
     why: '',
@@ -1218,7 +1244,7 @@ test.describe('the Projects view in the dashboard', () => {
     expect(asked).toContainEqual(['settings', '--json', '--project', 'e2e'])
   })
 
-  test('writes a narrowing with the argv it showed, and records that same argv', async () => {
+  test('writes the edit the dry run does not classify as a widening, and records the argv it showed', async () => {
     // The first edit this spec drives, so the stub's record holds this flow's two
     // phases and nothing else: the dry run's line and the write's.
     expect(stubWrites(cli)).toEqual([])
@@ -1234,14 +1260,14 @@ test.describe('the Projects view in the dashboard', () => {
     const confirm = await confirmWindow(app)
     await expect(confirm.locator('#confirm-title')).toHaveText(TITLE_SETTINGS)
     // The window is the settings question and not the launch's: its confirming
-    // button is the settings window's word, and a narrowing has no tick at all
-    // (D1109) -- the tick is the widening's.
+    // button is the settings window's word, and a non-widening edit has no tick
+    // at all (D1109) -- the tick is the widening's.
     await expect(confirm.getByRole('button', { name: SAVE_LABEL })).toBeVisible()
     await expect(confirm.locator(`#${TICK_ID}`)).toHaveCount(0)
 
     const shown = await shownArgv(confirm)
     expect(shown.slice(1)).toEqual([
-      'settings', 'set', SETTINGS_KEY, '--layer', 'project', '--yes', '--project', 'e2e', '--', '3',
+      'settings', 'set', SETTINGS_KEY, '--layer', 'repo', '--yes', '--project', 'e2e', '--', '3',
     ])
     await pressWhenReady(confirm, SAVE_LABEL)
 
@@ -1255,7 +1281,7 @@ test.describe('the Projects view in the dashboard', () => {
     // carries **no** `--yes`: the CLI's confirmation is its own question and
     // `--yes` is the console's answer to it (D1107).
     const dryLine = [
-      shown[0], 'settings', 'set', SETTINGS_KEY, '--layer', 'project', '--dry-run', '--json', '--project', 'e2e', '--', '3',
+      shown[0], 'settings', 'set', SETTINGS_KEY, '--layer', 'repo', '--dry-run', '--json', '--project', 'e2e', '--', '3',
     ].join(' ')
     await expect
       .poll(() => stubWrites(cli).length, { message: 'the write never reached the stub' })

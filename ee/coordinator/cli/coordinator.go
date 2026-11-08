@@ -246,24 +246,50 @@ func ownCoordinatorDB(ctx context.Context, lc *localcfg.Config, declined string)
 	return fcli.RequireOwnBudgetDB(ctx, lc, db, declined)
 }
 
-// openCoordinatorStore opens the coordinator's store over the project's own
-// database: the same client, the same address and the same credential the
-// budget commands open (newBudgetClient, the caller's ADC with the database
-// scopes). The store's own check, and not the rules and not IAM, is what keeps
-// the writer to the coordinator's subtree (D194), and it mints nothing.
+// CoordinatorDB is the connection to the project's own database that the
+// coordinator's subtree lives in: the same address and the same credential the
+// budget commands open (fcli.NewBudgetClient, the caller's ADC with the
+// database scopes), and the same refusal — one sentence, in one place — for a
+// project whose config names no database at all, which is an installation that
+// never ran `fugaro update --firebase-project`. It mints nothing.
 //
-// A package variable, so a test replaces exactly the one thing that would
-// reach a database.
-var openCoordinatorStore = func(ctx context.Context, lc *localcfg.Config) (*coordinator.Store, error) {
+// It is exported for the one caller that needs the connection itself rather
+// than a store over it: `graph --watch --json` holds a subscription to the
+// subtree for as long as the console is looking at the graph (CG7 of
+// docs/cli-output-console-graph/implementation-plan-graph.md), and a project
+// with no database has to be refused there with the words the one-shot read
+// refuses it with — never opened a second way, and never dereferenced.
+func CoordinatorDB(ctx context.Context, lc *localcfg.Config) (*rtdb.Client, error) {
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
 		return nil, fcli.UserErr("project %s has no Firebase database to report to (budget.rtdb_url is not set in its project config): an operator runs fugaro update --firebase-project %s --name %s", lc.Name, lc.GCPProject, lc.Name)
 	}
-	db, err := fcli.NewBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
+	return fcli.NewBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
+}
+
+// CoordinatorStore is the coordinator's store over that same connection, and it
+// is exported for CoordinatorDB's reason: the readers of this subtree do not all
+// live in this package, and a read made from outside needs the store this one's
+// reads are made over and not a second one worded alike. The store's own check,
+// and not the rules and not IAM, is what keeps the writer to the coordinator's
+// subtree (D194).
+//
+// A caller that reads this node once opens one and drops it — `graph --json`
+// does, which is why it is reachable from there. A caller that reads it again
+// and again opens none of these: `graph --watch --json` builds its store over
+// the client its subscription already holds (coordinator.NewStore), so one
+// connection, and the one credential minted for it, serve the stream and every
+// read behind it (CG7).
+func CoordinatorStore(ctx context.Context, lc *localcfg.Config) (*coordinator.Store, error) {
+	db, err := CoordinatorDB(ctx, lc)
 	if err != nil {
 		return nil, err
 	}
 	return coordinator.NewStore(db), nil
 }
+
+// openCoordinatorStore is CoordinatorStore as a package variable, so a test
+// replaces exactly the one thing that would reach a database.
+var openCoordinatorStore = CoordinatorStore
 
 // writeCoordinatorReport prints the record the command wrote, and the path it
 // wrote it to. It is the record and nothing else: no advice, no comparison
@@ -955,7 +981,7 @@ func coordinatorReaderWith(mint coordinatorReadMint, warn io.Writer) (coordinato
 // refusal is the caller's and not the host's: there is no key to find and
 // nothing to retry.
 func coordinatorNoAppKey(context.Context, string) (string, time.Time, error) {
-	return "", time.Time{}, fcli.UserErr("the project-wide read mints its GitHub token at the installation's credentials service, and this project publishes none (no credentials_service block in its configuration). An operator turns the service on with `fugaro update --provision-credentials`; the read is refused rather than made with a GitHub App key, which a person's machine does not hold")
+	return "", time.Time{}, fcli.UserErr("the project-wide read mints its GitHub token at the installation's credentials service, and this project publishes none (no credentials_service block in its configuration). An ordinary `fugaro update` deploys the service on every installation that can carry one, which needs the installation's Firebase backend and at least one repository job; the read is refused rather than made with a GitHub App key, which a person's machine does not hold")
 }
 
 // coordinatorTokens remembers the installation tokens one status run minted, so
