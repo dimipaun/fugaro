@@ -173,6 +173,74 @@ func TestThePersonConfirmationShowsTheGoalThatLands(t *testing.T) {
 	}
 }
 
+// TestTheConfirmationShowsEveryOpThePatchCarries: there is one actor per
+// document, so the typed confirmation raises the whole patch to Person, and the
+// ops that ride along with a person's own land under that person's authority
+// and attribution. The person is therefore shown all of them, in the order they
+// are applied, with the ops that need the person's own word marked: closing a
+// question the daemon was asked is a person's to do (Apply lets a person close
+// any decision), and a person who did not see it in the list answered nothing.
+func TestTheConfirmationShowsEveryOpThePatchCarries(t *testing.T) {
+	f := newOrchestratorFixture(t)
+	asPerson(t)
+	typed(t)
+	// A question waiting on the daemon and an item: neither is an op only a
+	// person may land, and both are what a patch built by a session carries.
+	s := seedOrchestratorState(t, f,
+		workItemUpsert("web-fix", "fix the flaky test"),
+		orchestrator.Op{Op: orchestrator.OpDecisionAdd, Decision: &orchestrator.DecisionOp{
+			ID: "daemon-stuck", Question: "which branch should the retry cut from?", WaitingOn: orchestrator.OnDaemon,
+		}})
+	doc := patchDoc(t, s.Rev,
+		orchestrator.Op{Op: orchestrator.OpDecisionResolve, Resolve: &orchestrator.ResolveOp{
+			ID: "daemon-stuck", Answer: "cut from main and say so in the note"}},
+		orchestrator.Op{Op: orchestrator.OpFactSet, Fact: &orchestrator.FactOp{Key: "branch", Value: "release/1.2"}},
+		orchestrator.Op{Op: orchestrator.OpGoalSet, Goal: &orchestrator.GoalOp{Goal: "ship slice one"}})
+	path := patchFile(t, doc)
+
+	out, _, err := runOrchestrator(t, orchestratorTestID+"\n", "orchestrator", "patch", "-f", path)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"which branch should the retry cut from?",
+		"cut from main and say so in the note",
+		"setting fact branch = release/1.2",
+		"ship slice one",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the confirmation does not show %q:\n%s", want, out)
+		}
+	}
+	// The order the ops are listed in is the order they are applied in.
+	closed, goal := strings.Index(out, "closing decision"), strings.Index(out, "setting the goal")
+	if closed < 0 || goal < 0 || closed > goal {
+		t.Errorf("the confirmation does not list the ops in the order they are applied:\n%s", out)
+	}
+	// Which ops need the person's own word is marked, and which merely ride
+	// along is not, so the person can tell what the confirmation is for.
+	if !strings.Contains(out, "[person-only] setting the goal") {
+		t.Errorf("the confirmation does not mark the op that needs the person's own word:\n%s", out)
+	}
+	if strings.Contains(out, "[person-only] closing decision") {
+		t.Errorf("the confirmation marks a question the daemon was asked as an op only a person may land:\n%s", out)
+	}
+	// All of it landed as that person, the ops that ride along included.
+	after := storedOrchestratorState(t, f)
+	if after.Goal != "ship slice one" {
+		t.Errorf("the goal that landed is %q", after.Goal)
+	}
+	if d, _ := after.Decision("daemon-stuck"); !d.Resolved() || d.By != orchestrator.Person || d.Answer != "cut from main and say so in the note" {
+		t.Errorf("the daemon's question is %+v, and the answer that closed it is the person's own", d)
+	}
+	if got := after.Facts["branch"]; got.Value != "release/1.2" || got.By != orchestrator.Person {
+		t.Errorf("the fact that landed is %+v, and a fact this patch set is attributed to the actor that landed it", got)
+	}
+	if !strings.Contains(out, "as a person") {
+		t.Errorf("the write is not reported as the person's:\n%s", out)
+	}
+}
+
 // TestPatchFromAnAgentSessionRefusesPersonOps: a coding agent's session is
 // refused the person's word even at a real terminal — the accident G2 is
 // written against. It is a mitigation and not a barrier (P1's negative
@@ -253,10 +321,11 @@ func TestPatchRejectsAStaleRev(t *testing.T) {
 }
 
 // TestApproveShowsTheSpecItDigests: the confirmation shows the spec the
-// approval binds — the item's id and the digest the op carries — and the
-// approval is written with that digest and the person's own name. The approve
-// op is also the one op whose payload the person has to be shown: a digest
-// nobody saw is not an approval of anything.
+// approval binds — every field SpecDigest covers and not only the digest — and
+// the approval is written with that digest and the person's own name. The
+// approve op is also the one op whose payload the person has to be shown: an
+// opaque digest is not an approval of anything, and a person who types their
+// project's name over a digest alone has attested to nothing they could read.
 func TestApproveShowsTheSpecItDigests(t *testing.T) {
 	f := newOrchestratorFixture(t)
 	asPerson(t)
@@ -274,8 +343,18 @@ func TestApproveShowsTheSpecItDigests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out, "web-fix") || !strings.Contains(out, string(digest)) {
-		t.Errorf("the confirmation does not show the item and the digest it is about:\n%s", out)
+	// Every digested field: the person reads the repository, the recipe and the
+	// rigor tier they are about to launch a run for, and the brief the run is
+	// handed, and not an opaque digest alone.
+	for _, want := range []string{
+		"web-fix", string(digest),
+		"title: fix the flaky test",
+		"repo acme/repo, recipe code, rigor small",
+		"brief: make the change fix the flaky test",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the confirmation does not show %q:\n%s", want, out)
+		}
 	}
 	approved, _ := storedOrchestratorState(t, f).Item("web-fix")
 	if approved.Approved == nil {
@@ -286,11 +365,16 @@ func TestApproveShowsTheSpecItDigests(t *testing.T) {
 	}
 
 	// A patch that rewrites the item and approves it in the same document: the
-	// digest is the one the rewrite produces, so the title the person is shown
-	// has to be the title that digest binds and not the one the node still
-	// holds — otherwise the person attests to a spec by reading another one.
+	// digest is the one the rewrite produces, so what the person is shown has to
+	// be the spec that digest binds and not the one the node still holds —
+	// otherwise the person attests to a spec by reading another one. Nothing is
+	// hidden behind the title either: a rewrite can change where the run goes
+	// and what it is told to do, and both are what the person is approving.
 	before := storedOrchestratorState(t, f)
-	up := workItemUpsert("web-fix", "the title the person is approving")
+	up := orchestrator.Op{Op: orchestrator.OpWorkItemUpsert, WorkItem: &orchestrator.WorkItemOp{
+		ID: "web-fix", Title: strPtr("the title the person is approving"),
+		Repo: strPtr("acme/other-repo"), Brief: strPtr("delete the production database"),
+	}}
 	digest = digestAfter(t, before, up, "web-fix")
 	path = patchFile(t, patchDoc(t, before.Rev, up, orchestrator.Op{Op: orchestrator.OpWorkItemApprove,
 		Approve: &orchestrator.ApproveOp{ID: "web-fix", SpecDigest: digest}}))
@@ -298,11 +382,19 @@ func TestApproveShowsTheSpecItDigests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out, "the title the person is approving") {
-		t.Errorf("the confirmation does not show the title the digest binds:\n%s", out)
+	for _, want := range []string{
+		"title: the title the person is approving",
+		"repo acme/other-repo",
+		"brief: delete the production database",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the confirmation does not show %q, the rewritten spec the digest binds:\n%s", want, out)
+		}
 	}
-	if strings.Contains(out, "fix the flaky test") {
-		t.Errorf("the confirmation shows the title the node held before the patch:\n%s", out)
+	for _, unwanted := range []string{"fix the flaky test", "acme/repo", "make the change"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("the confirmation shows %q, the spec the node held before the patch:\n%s", unwanted, out)
+		}
 	}
 	if w, _ := storedOrchestratorState(t, f).Item("web-fix"); w.Approved == nil || w.Approved.SpecDigest != digest {
 		t.Errorf("the approval that landed is %+v, and it is the rewritten spec's", w.Approved)

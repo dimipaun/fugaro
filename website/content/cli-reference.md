@@ -3017,9 +3017,11 @@ somebody else has since changed is refused rather than landed on top of it.
 
 A run acts as a session. The ops only a person may land — approving a work
 item, setting the goal, and closing a decision that waits on a person — are
-confirmed at a real terminal, where the project's name is typed and the spec an
-approval binds is shown; every other session, --json, a pipe and a coding
-agent's environment are refused and write nothing, and --yes never covers them.
+confirmed at a real terminal, where the project's name is typed over the write
+that lands: the spec an approval binds, and every op the document carries,
+because the whole of it lands as the person who confirms it. Every other
+session, --json, a pipe and a coding agent's environment are refused and write
+nothing, and --yes never covers them.
 No flag, environment variable or field of the document makes this command the
 daemon or the decision agent: the daemon's bookkeeping is the daemon's.
 
