@@ -1057,15 +1057,21 @@ func TestDocsComputeBackendSecuritySensitiveSetIsComplete(t *testing.T) {
 // TestDocsComputeBackendCIReachMatchesTheTree: Global Constraint 3 rests on a
 // fact about CI — the compute root is already in the terraform job's root loop,
 // so the design's staged `docs/pending-workflows/ci.yml` request is satisfied
-// and this plan re-stages nothing — and on a disagreement it records rather
-// than edits: `CONTRIBUTING.md` still tells a contributor the compute root is
-// the one CI does not reach until that staged file is copied in.
+// for `compute` and no task in the plan re-stages it — and on a disagreement it
+// records rather than edits: `CONTRIBUTING.md` still tells a contributor the
+// compute root is the one CI does not reach until that staged file is copied
+// in.
 //
 // All three are checkable, and each is the kind of fact that moves silently:
-// the loop can lose the name, the staged file can appear, and the contributor
-// rule can be corrected. The plan is held to the tree in whichever direction
-// the tree moves, because Global Constraint 3 is what a reviewer of every task
-// in this plan reads before deciding that no workflow change is needed.
+// the loop can lose the name, the contributor rule can be corrected, and a
+// staged `ci.yml` can appear — it did, on 2026-11-08, for another work's root
+// (the workspaces work's W3), which is why the third assertion below reads the
+// staged copy instead of refusing it. What the plan's constraint claims is
+// about `compute` in the loop, and a staged file that adds a *different* root
+// leaves that claim standing. The plan is held to the tree in whichever
+// direction the tree moves, because Global Constraint 3 is what a reviewer of
+// every task in this plan reads before deciding that no workflow change is
+// needed.
 func TestDocsComputeBackendCIReachMatchesTheTree(t *testing.T) {
 	doc := readDoc(t, computeBackendPlan)
 	if !strings.Contains(doc, "for r in installation firebase repo compute; do") {
@@ -1080,10 +1086,17 @@ func TestDocsComputeBackendCIReachMatchesTheTree(t *testing.T) {
 	if !strings.Contains(ci, "for r in installation firebase repo compute; do") {
 		t.Errorf(".github/workflows/ci.yml's terraform job no longer names compute in its root loop: %s's Global Constraint 3 says it does, and the plan's answer to the design's staged-workflow request rests on it", computeBackendPlan)
 	}
-	// The staged file the design asked for is not here because the loop has the
-	// name: if it ever appears, one of the two claims in Constraint 3 is wrong.
-	if _, err := os.Stat("../../docs/pending-workflows/ci.yml"); err == nil {
-		t.Errorf("docs/pending-workflows/ci.yml now exists: %s's Global Constraint 3 says the staged request was applied to the workflow instead, so either the plan or that file has to go", computeBackendPlan)
+	// A staged copy is the real file plus one word, so while one exists it is a
+	// second place the loop is written down — and Constraint 3's claim has to
+	// hold there too. The copy is `compute`'s own answer for a *later* root
+	// (2026-11-08: the workspaces work's W3 stages `workspace`), and the word it
+	// adds may not be `compute`'s removal: a staged `ci.yml` whose loop dropped
+	// `compute` would leave this plan saying CI reaches the root while the file
+	// the owner is told to copy in says otherwise.
+	if staged, err := os.ReadFile("../../docs/pending-workflows/ci.yml"); err == nil {
+		if !strings.Contains(string(staged), "for r in installation firebase repo compute") {
+			t.Errorf("docs/pending-workflows/ci.yml's terraform job no longer names compute in its root loop: %s's Global Constraint 3 rests on the loop naming it, and the staged copy is the file the owner is told to copy in", computeBackendPlan)
+		}
 	}
 	// The two lines the plan cites are asserted separately and at their own line
 	// numbers, because the plan quotes each line's own sentence: `:25` and `:32`

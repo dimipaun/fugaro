@@ -1567,11 +1567,17 @@ var (
 	// one member its one database grant names, and — unlike every account
 	// above — an account no module creates. The expression is admitted for
 	// what it IS rather than for a path: the attribute only resolves in a root
-	// that declares that account, `terraform validate` runs for every root in
-	// CI, and the grant itself is refused unless it is that root's
-	// (internal/infra/tf's WorkspaceNotCovered, which reads the member out of
-	// the plan, and the runAccountGrants row in internal/infra/managed, which
-	// pins the whole grant).
+	// that declares that account, and the grant itself is refused unless it is
+	// that root's (internal/infra/tf's WorkspaceNotCovered, which reads the
+	// member out of the plan, and the runAccountGrants row in
+	// internal/infra/managed, which pins the whole grant).
+	// CI's `terraform` job does not reach this root yet — its loop names
+	// `installation firebase repo compute`, and the `workspace` root is staged
+	// as docs/pending-workflows/ci.yml for the owner to copy in
+	// (docs/pending-workflows/README.md, `## ci.yml`) — so what holds the
+	// expression here is the plan-shaped half of the suite and
+	// internal/infra/tf/workspace_test.go, which reads main.tf's own grant,
+	// rather than a `terraform validate` of this root.
 	// google_service_account.fugaro_verifier[0] is the installation's verifier
 	// (CSR14, D1068): the one account the credentials service's verify route
 	// admits, and the only grant that names it is roles/run.invoker on that

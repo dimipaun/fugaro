@@ -516,9 +516,12 @@ func TestCIWorkflowTestsEveryTerraformRoot(t *testing.T) {
 	}
 }
 
-// TestStagedCIWorkflowIsTheRealOnePlusTheComputeRoot pins the staged copy to
-// the real workflow: exactly one line may differ — the `terraform` job's root
-// loop — and the staged line must be the real one with `compute` appended.
+// TestStagedCIWorkflowIsTheRealOnePlusOneRoot pins the staged copy to the real
+// workflow: exactly one line may differ — the `terraform` job's root loop —
+// and the staged line must be the real one with the one root it does not name
+// yet appended. The word is read out of the tree rather than written here,
+// because it is a different root each time: `compute` when this test was
+// written, `workspace` while W3's copy is the staged one.
 //
 // The staged file is a snapshot of a file a run may not push, and a stale
 // snapshot is worse than a missing one: the README tells the owner to `cp` it
@@ -530,7 +533,7 @@ func TestCIWorkflowTestsEveryTerraformRoot(t *testing.T) {
 // would have re-enabled PR-triggered CI while claiming to change one word.
 // When this fails, re-stage: copy the real file here and add the word
 // (docs/pending-workflows/README.md, `## ci.yml`).
-func TestStagedCIWorkflowIsTheRealOnePlusTheComputeRoot(t *testing.T) {
+func TestStagedCIWorkflowIsTheRealOnePlusOneRoot(t *testing.T) {
 	real, err := os.ReadFile(ciWorkflowPath)
 	if err != nil {
 		t.Fatal(err)
@@ -562,12 +565,26 @@ func TestStagedCIWorkflowIsTheRealOnePlusTheComputeRoot(t *testing.T) {
 	loop := regexp.MustCompile(`^(\s*)for r in ([a-z ]+); do$`)
 	mReal, mStaged := loop.FindStringSubmatch(realLines[i]), loop.FindStringSubmatch(stagedLines[i])
 	if mReal == nil || mStaged == nil {
-		t.Fatalf("line %d is where the staged ci.yml differs and it is not the Terraform root loop: real %q, staged %q. The one staged change may only be the `compute` word on that line",
+		t.Fatalf("line %d is where the staged ci.yml differs and it is not the Terraform root loop: real %q, staged %q. The one staged change may only be a root name on that line",
 			i+1, realLines[i], stagedLines[i])
 	}
-	if want := mReal[1] + "for r in " + mReal[2] + " compute; do"; stagedLines[i] != want {
-		t.Fatalf("line %d: the staged loop is %q, want the real loop %q with `compute` appended (%q): the staged copy adds one word and changes nothing else",
-			i+1, stagedLines[i], realLines[i], want)
+	roots, err := os.ReadDir("../deploy/terraform/gcp/roots")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var missing []string
+	for _, r := range roots {
+		if r.IsDir() && !regexp.MustCompile(`\b`+r.Name()+`\b`).MatchString(mReal[2]) {
+			missing = append(missing, r.Name())
+		}
+	}
+	if len(missing) != 1 {
+		t.Fatalf("the real loop names %q and the roots under deploy/terraform/gcp/roots leave %v unnamed: the staged copy adds one word, so exactly one root may be missing from the real loop",
+			mReal[2], missing)
+	}
+	if want := mReal[1] + "for r in " + mReal[2] + " " + missing[0] + "; do"; stagedLines[i] != want {
+		t.Fatalf("line %d: the staged loop is %q, want the real loop %q with %q appended (%q): the staged copy adds one word and changes nothing else",
+			i+1, stagedLines[i], realLines[i], missing[0], want)
 	}
 }
 

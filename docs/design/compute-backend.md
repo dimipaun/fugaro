@@ -4148,7 +4148,12 @@ senior reviewer before merge, not just the normal one.
    `TestCIWorkflowTestsEveryTerraformRoot` reads the staged copy the same way
    it reads `images.yml`'s — until the copy lands, CI checks the root's files
    through `terraform fmt`, `tflint`, `scan.sh` and the Go-side pins, but does
-   not run its `validate` or its seventeen mock-provider runs.** Image
+   not run its `validate` or its seventeen mock-provider runs.** **Corrected
+   2026-11-08: that staging was applied on 2026-10-17 (#504) and its copy
+   removed in #508, so the loop names `compute` on the branch today. A `ci.yml`
+   is staged under that path again since 2026-11-08, and it is the workspaces
+   work's own root rather than this one (`docs/pending-workflows/README.md`,
+   `## ci.yml`); its staged loop still names `compute`.** Image
    streaming is **not** enabled (C4: the preloaded boot image is the
    fast-start path, and a Docker run's `options` needs streaming off), so
    `containerfilesystem` is not among the APIs it enables. The preload
