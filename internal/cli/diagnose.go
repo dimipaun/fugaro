@@ -66,8 +66,10 @@ type Diagnosis struct {
 	// closed vocabulary of docs/design/failure-classes.md §3 — the same value
 	// the row carries, on the diagnosis's own shape because diagnose is the
 	// command a person runs to be told why, and D1460 is that a reader of this
-	// document is never sent into the row for it. It is absent for a run that
-	// did not fail: a succeeded run has no cause to name.
+	// document is never sent into the row for it. Absent for a run that did
+	// not fail, and for a row the read side ended itself — a preemption, a
+	// lost execution — where nothing the run wrote named a cause and the row's
+	// own account of it is `derived` (runview.Row.FailureClass).
 	FailureClass failure.Class    `json:"failure_class,omitempty"`
 	Halt         *runstore.Halt   `json:"halt,omitempty"`     // why a halted run was halted
 	Verify       []verify.Record  `json:"verify,omitempty"`   // result.json's verify records
