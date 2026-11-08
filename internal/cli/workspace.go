@@ -250,7 +250,7 @@ func runWorkspaceAdd(cmd *cobra.Command, name string, o *workspaceAddOptions) er
 	// values, so the project's own name confirms it (D846) — or --yes outside a
 	// coding agent's session. A first membership widens nothing and is the
 	// ordinary y/N.
-	if lc.Workspace != "" || !lc.WorkspacePin.IsZero() {
+	if workspaceMember(lc) {
 		edit.Typed = true
 		edit.TypedWhy = fmt.Sprintf("this replaces what project %s trusts: the membership moves from %s to %s, or %s is re-pinned with different values, so the project's own name is what confirms it, or --yes outside a coding agent's session",
 			lc.Name, workspaceOrNone(lc.Workspace), name, name)

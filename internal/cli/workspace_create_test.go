@@ -171,6 +171,13 @@ func wsGrantChange(actions ...string) planChange {
 // stage is a SKIP with the reason and never an error — it is most
 // installations, and a Check that answered an error would stop their run — it
 // plans nothing to do, applies nothing, and never reaches terraform at all.
+//
+// The third case is the one config that carries BOTH halves: a member's project
+// whose file also writes workspace_cap, which is what `fugaro workspace cap set
+// --workspace <that project>` leaves behind. Creating the workspace's own
+// account and its one grant there is the widening spec §5 forbids, so the
+// member's half decides and the owner's half is not this installation's
+// (workspaceDeclared).
 func TestWorkspaceProjectStageSkipsAnInstallationThatIsNotAWorkspace(t *testing.T) {
 	for _, c := range []struct {
 		name  string
@@ -178,6 +185,7 @@ func TestWorkspaceProjectStageSkipsAnInstallationThatIsNotAWorkspace(t *testing.
 	}{
 		{"a plain installation", ""},
 		{"a member's project", wsPin},
+		{"a member's project that also declares the owner's half", wsPin + wsOwnerCap},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			g := newWSCreateRig(t, wsProjectName+"\n", c.extra)

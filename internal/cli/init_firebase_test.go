@@ -1130,7 +1130,10 @@ func TestIdentityPlatformRefusesPublicSignUp(t *testing.T) {
 //
 // A member's project is the other side of the same predicate: it carries a
 // pin, not the owner's half, and its Firebase project is a member's own, where
-// nothing but a Fugaro token may sign in.
+// nothing but a Fugaro token may sign in. A config carrying BOTH halves is that
+// side too: the member's half is the narrower claim, and reading it as a
+// workspace's own would leave a member's Firebase with the providers on and
+// every public sign-up path admitted.
 func TestIdentityPlatformAllowsTheWorkspacesOwnSignIn(t *testing.T) {
 	for _, c := range []struct {
 		name    string
@@ -1140,6 +1143,7 @@ func TestIdentityPlatformAllowsTheWorkspacesOwnSignIn(t *testing.T) {
 		{"a workspace's own project", wsOwnerTable + wsOwnerCap, false},
 		{"a workspace of its own with a cap and no member", wsOwnerCap, false},
 		{"a member's project", wsPin, true},
+		{"a member's project that also declares the owner's half", wsPin + wsOwnerCap, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			r := newFBRig(t)

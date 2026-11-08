@@ -153,19 +153,51 @@ func workspaceNoMemberReason(lc *localcfg.Config) string {
 
 // workspaceDeclared is whether THIS installation is a workspace's own: its
 // config carries the OWNER's half of the membership (workspace_members or
-// workspace_cap), which is the predicate workspaceRecordOf is built on. It is
-// one function because the question is one question, and three places ask it:
-// the record's own read, the workspace's own project's root (W3,
-// workspace_create.go) and the Identity Platform carve-out (init_firebase.go's
-// refusePublicSignUp) — a workspace's own project is the one Firebase project
-// whose public sign-up paths the owner enables (docs/workspaces/spec.md §3).
+// workspace_cap) and NOT the member's (workspace / workspace_pin), which is the
+// predicate workspaceRecordOf is built on. It is one function because the
+// question is one question, and three places ask it: the record's own read, the
+// workspace's own project's root (W3, workspace_create.go) and the Identity
+// Platform carve-out (init_firebase.go's refusePublicSignUp) — a workspace's own
+// project is the one Firebase project whose public sign-up paths the owner
+// enables (docs/workspaces/spec.md §3).
 //
 // A config that declares the cap and lists NO member is still this project's
 // workspace: `fugaro workspace cap set` writes the cap alone, and `workspace
 // member rm` of the last member leaves the table empty (workspaceNoMemberReason
 // is that state's own sentence, and it is a skip and never a "not ours").
+//
+// The MEMBER's half decides where both are written, and the narrow reading is
+// deliberate. The two halves are contradictory claims about one project: a
+// workspace's own project is the one Firebase whose public sign-up paths are
+// enabled, a member's the one where they are refused (spec §3); a workspace's
+// own project holds the workspace's service account and its one grant, a
+// member's holds neither, because the workspace holds nothing on a member's
+// project and a member nothing on the workspace's (spec §5). Read as a
+// workspace's own, such a config would enable the carve-out on a member's
+// Firebase and create the workspace's account — with the grant on the member's
+// own database — on the member's project, which is the widening rule 1 forbids;
+// read as a member's, it publishes no record and converges no root, and the
+// owner's remedy is to delete the half they did not mean. A config reaches the
+// state through this machine's own commands, which name the config they write
+// by the project and not by the half: `fugaro workspace cap set --workspace
+// <a member>` and `member add <a member> <project>` both write the owner's half
+// into a member's file.
 func workspaceDeclared(lc *localcfg.Config) bool {
+	if workspaceMember(lc) {
+		return false
+	}
 	return lc != nil && (lc.WorkspaceMembers != nil || lc.WorkspaceCap != nil)
+}
+
+// workspaceMember is whether a config carries the MEMBER's half of the
+// membership: the workspace it is in and the pin it trusts, which localcfg
+// requires together (validateWorkspace) and W1 reads as this project's
+// membership. The two keys are asked as one, because a pin without a workspace
+// is a trust nothing acts on and a workspace without a pin is a membership the
+// loader refuses — neither is a state a valid config reaches, and a config this
+// function is handed has not always been through that loader.
+func workspaceMember(lc *localcfg.Config) bool {
+	return lc != nil && (lc.Workspace != "" || !lc.WorkspacePin.IsZero())
 }
 
 // workspaceRecordOf builds the record this installation publishes. It answers

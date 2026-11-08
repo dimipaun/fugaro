@@ -737,8 +737,10 @@ func (s *idpStep) initialize(ctx context.Context) error {
 // tokens signed by our signer may work.
 //
 // A workspace's OWN project is the one exception, and it is the config's own
-// owner half that marks it (workspaceDeclared). The workspace's sign-in is the
-// owner's own Firebase project's, and the workspace's spec pins which paths
+// owner half that marks it (workspaceDeclared) — a config that carries the
+// member's half as well is a member's, because the two halves contradict each
+// other and the narrow one decides. The workspace's sign-in is the owner's own
+// Firebase project's, and the workspace's spec pins which paths
 // that project has on — email/password and google.com in, every other one out
 // (docs/workspaces/spec.md §3, and the pin the workspace's own service
 // enforces by admitting token hashes and nothing else, D1296) — so the

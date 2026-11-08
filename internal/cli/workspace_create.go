@@ -175,8 +175,16 @@ func workspaceProjectTodo(lc *localcfg.Config) string {
 // workspaceProjectSkip is why this installation has no workspace's own project
 // to converge, in the words the operator reads: the owner's half is what makes
 // an installation a workspace's, and its absence is a member's project or a
-// plain one — the two cases where no account may be created here.
+// plain one — the two cases where no account may be created here. The two are
+// said differently because the operator's remedy differs: a plain project has
+// nothing to read, and a member's file that also carries the owner's half — what
+// this machine's own `cap set --workspace` and `member add` write into a
+// member's config — is a file whose two halves contradict each other, and what
+// they have to delete is the half they did not mean (workspaceDeclared).
 func workspaceProjectSkip(lc *localcfg.Config) string {
+	if workspaceMember(lc) {
+		return fmt.Sprintf("this installation is a member of a workspace and not a workspace's own: %s's project config carries workspace and workspace_pin, and the member's half decides even where workspace_members or workspace_cap is written beside it, so there is no workspace service account to create and no database grant to make here (a member's project holds no grant on the workspace's project, spec §5)", lc.Name)
+	}
 	return fmt.Sprintf("this installation declares no workspace of its own: %s's project config carries neither workspace_members nor workspace_cap, so there is no workspace service account to create and no database grant to make here (a member's project holds no grant on the workspace's project, spec §5)", lc.Name)
 }
 
