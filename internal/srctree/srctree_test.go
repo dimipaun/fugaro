@@ -810,6 +810,10 @@ func anotherRepository(t *testing.T) string {
 	t.Helper()
 	mine := t.TempDir()
 	testutil.Git(t, mine, "init", "--quiet", "-b", "main")
+	// A commit starts git's detached auto-maintenance, whose lock file appears
+	// and vanishes while a test is comparing this repository's file list.
+	testutil.Git(t, mine, "config", "maintenance.auto", "false")
+	testutil.Git(t, mine, "config", "gc.auto", "0")
 	testutil.WriteFiles(t, mine, map[string]string{"notes": "mine\n"})
 	testutil.Git(t, mine, "add", "-A")
 	testutil.Git(t, mine, "commit", "--quiet", "-m", "mine")
