@@ -65,6 +65,7 @@ command that converges the installation: fugaro update.`,
 	cmd.AddCommand(
 		newWorkspaceLsCmd(),
 		newWorkspaceShowCmd(),
+		newWorkspaceLoginCmd(),
 		newWorkspaceAddCmd(),
 		newWorkspaceRmCmd(),
 		newWorkspaceMemberCmd(),

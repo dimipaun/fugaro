@@ -615,6 +615,7 @@ reads:
 | `artifact_bytes` | int64 | **yes** | the recorded total size of those artifacts (a negative recorded size counts as none) |
 | `changed_files` | `*runstore.ChangedFiles` | **yes** | the paths the run changed, as the run itself recorded them (design D27, console v2 plan V2.1.2): `paths`, `total` and `truncated` below. **Absent for a run that recorded none** — every record written before the field existed, and every run that died before finalize — and absence means **"no record of what this run changed"**, never "it changed nothing" (the `-` cell of `runs ls`'s `FILES` column) |
 | `rigor` | `*runstore.RigorRecord` | **yes** | the mode the run resolved, the layer that won and the areas that matched (docs/rigor-modes D22, D24, D25): `mode`, `from`, `areas`, `at` and `revision` below. **Absent for a run that resolved none** — a record written before the field existed, a run that died before bootstrap, or a block that cannot be read as a decision — and absence means **"no record of this run's rigor"**, never "it resolved nothing" (the `-` cell of `runs ls`'s `MODE` column) |
+| `owner_decisions` | `*runstore.OwnerDecisions` | **yes** | what the run's review left for the repository's owner to settle (OD1): `decisions` (each one `file`° and `summary`, below) and `total`. **Absent for a run that left none** — every run whose review named no such finding, every run that stopped for its own reason, and every record written before the field existed — and absence means **"nothing is pending"**, never "the review had nothing to say" (the row's `reason` says the same sentence, and the `halt.reason` of `owner_decision` is the other half of the same fact where the loop stopped on the finding) |
 
 **`rigor` is the mode the run resolved, and it is read from the base branch.**
 The block is one decision (docs/rigor-modes D24), carrying the mode, the layer
@@ -648,6 +649,33 @@ the rules strictest first before it caps them, so the rules that survive are the
 strictest ones and the first of them is the rule a reader names. A tampered
 `result.json` therefore reaches the console as no block or as a bounded one,
 never as a value no reader can check.
+
+**`owner_decisions` is what the run is waiting on, and it is a count and a list
+together.** A review finding whose only remedies are a decision the run cannot
+make — a licence or legal clearance, a product or policy choice, a step only the
+owner can run — is marked by the reviewer (`needs_owner`) and is never handed to
+a fixer. When every finding of the deciding round is one of those, the run halts
+with `halt.reason: "owner_decision"` (a reason of its own, beside the five
+governance ones) and its pull request stays a draft. A deciding round that left
+one beside a fixable finding, or that shipped while carrying one, ends no halt —
+the loop ran to its own end — but a draft for the same reason: the block is on
+the record, `reason` is the same waiting sentence, and readiness is blocked
+above every verdict, so a console that reads `outcome: "draft"` and a block
+together is reading one fact. Either way the list is:
+
+| Field | Type | omitempty | Note |
+|---|---|---|---|
+| `decisions` | `[]object` | no | the pending decisions, **`[]` when the block is present but empty — never null**; each one `file`° (the path the finding names) and `summary` (one sentence, clipped to `runstore.MaxOwnerDecisionText` = **200** runes) |
+| `total` | int | no | **how many decisions the review really left**, so a truncated block still says how big the set it is part of was |
+
+**`total` is the count and `decisions` is the list, and neither replaces the
+other.** The block is capped at `runstore.MaxOwnerDecisions` = **100** when it is
+written, and an entry without a sentence is not stored at all; the reader bounds
+it **again** (`runview.Join`, `OwnerDecisions.Bounded`), because the record is an
+object the job can write, and a block whose every sentence is unreadable reads as
+no block — the run's own `reason`, and its `halt.reason` where it halted on them,
+still says it is waiting. The count a reader
+shows is `total`, never `len(decisions)`.
 
 **The derived status (`derived`), and why it is not a status.** A Cloud Batch
 run on a Spot VM can be preempted: the platform reclaims the VM, the job ends
@@ -767,6 +795,7 @@ exactly its own tags and nothing is nested under a `process` or `checks` key:
 | `draft_note` | string | **yes** | a line about the run's draft PR, when it needs one |
 | `follow_up` | `*runstore.FollowUp` | **yes** | what a follow-up acted on; absent for a first run |
 | `comments_path` | string | **yes** | where the comments it was given are stored |
+| `owner_ruled` | string | **yes** | the repository owner's ruling this run worked from (OD1): the text the launcher appended to the run's brief verbatim — the ruling its own launch was given, or, for a follow-up launched without one, the one the run before it worked from, which it inherits — so the run the console diagnoses is one that was told the answer. Absent for a run that worked from no ruling: every run but a follow-up that answered an `owner_decisions` block, and every follow-up after a run that worked from none. **The run's own bytes**, exactly as the fields above. Redacted and clipped to `task.MaxOwnerRuledBytes` = 4 KiB on read, and held to `task.ValidateOwnerRuled` when a follow-up inherits it: a record whose ruling is not text a brief may hold (blank, a control character, over the bound) is read as a run that worked from none, and its `owner_ruled_decisions` with it. The decisions that ruling answered are the record's `owner_ruled_decisions`, and the rulings this run worked from behind it the record's `owner_ruled_earlier` — neither of which this shape carries: the console shows the run's own ruling, and the chain is the reviewers' |
 | `route_by`, `model_by` | `map[string]float64` | **yes** | the run's spend by provider route and by model (a Claude call has no route) |
 | `stages` | `[]runstore.StageTiming` | **yes** | the run's per-stage record (governance T1.1–T1.3), in the record's own order and bounded at `diagnoseStages` = 128: each entry is `name`, `started_at`, `duration_s`, `calls`°, `agents`°, `model_usd`°, `model`° and `model_notional_usd`°. `calls` and `agents` are **pointers**, so a stage nobody counted has the key absent, which is not the same fact as a stage counted at zero. `model_usd` is what the stage's calls cost, `model_notional_usd` the notional part of it (D140). The stages are the run's whole model spend but for gateway spend that settled after its stage's wait ran out, which is in `model_by["unattributed"]` and in no stage: exactly, `sum(stages[].model_usd) + model_by["unattributed"] == row.cost.model_usd`. **That identity is why the bound is where it is**: it holds only for the whole list, so `diagnoseStages` sits above the loop's own maximum (87 stages under the config limits, plus the provision and render stages) and never truncates a run the loop can make — it guards against the record a hand can edit, not against the loop. Absent when the record has no stages, and when there is no record at all |
 | `reviews` | `[]runstore.ReviewSummary` | **yes** | the record's review rounds, in the record's own order and bounded at `diagnoseReviews` = 96: each entry is `round`, `tier`, `verdict`, `findings` and, when the round recorded one, `bounce`°, `head`°, **`model`°** and **`effort`°** (CLI 0.16.0). `tier` is `first`, `senior` or `adversarial`, and `verdict` is the reviewer's own word or `none` for a round that returned nothing parseable. `model` and `effort` are what **reviewed** the round — the stage's pinned model and the reasoning effort that reached the stage — and the pair with `head`, the commit the round read, tells a reader which model the record says reviewed which head: these are the record's own unsigned bytes, recorded and not verified, so they are a hint for a person and never an input to a decision. `model`, `effort` and `head` are **absent** in a round that recorded none, which is every review written before CLI 0.16.0, so a reader tests the key rather than the empty string. Every string in the list is redacted, `model` and `effort` included: they are the record's bytes, which a hand can edit. The bound sits above the loop's own maximum (77 rounds), so it guards against the record a hand can edit, never against the loop; a run that reached it prints the first `diagnoseReviews` rounds and then the line `… at most 96 review rounds are printed`, which says the list is cut and not how many rounds it left out. Absent when the record has no reviews, and when there is no record at all |
@@ -2612,11 +2641,12 @@ than a document. The command is the same pair §6.19's paragraph describes, so t
 `--`-terminated value, the two spellings the console passes and the layer's
 provenance are written down there and not twice here.
 
-### 6.21 `fugaro managed status --json` — a managed project's marks and its trail
+### 6.21 `fugaro managed status --json` — a managed project's marks, its trail and its last update
 
 **Command:** `internal/cli/managed_status.go` `newManagedStatusCmd` /
-`managedStatus`, with the document built as `managedStatusDoc` and its trail
-read by `managedStatusTrail`. Cited by symbol, not by line, for §6.11's reason.
+`managedStatus`, with the document built as `managedStatusDoc`, its trail read
+by `managedStatusTrail` and the last update's retirement read by
+`managedStatusRetirementsOf`. Cited by symbol, not by line, for §6.11's reason.
 **It is the read the managed screens are built on**, and it is a command of its
 own rather than two members on doctor's document (the managed-screens plan's
 CM2, D1473): doctor's `--json` is a list of `id`/`ok`/`problem`/`fix` checks
@@ -2655,6 +2685,8 @@ parse of either.
 | `audit_day` | string | never | never | the UTC day `audit_count` counts and `audit` belongs to, spelled as the family spells a date directory (`2006-01-02`). **`""` exactly when no record was found in the window**, or when the trail was not read: a day with nothing in it is no day to name |
 | `audit_count` | int | never | never | how many records are filed under `audit_day`, and `0` in both of the cases above |
 | `audit_state` | string | never | never | the sentence for a read that **did not answer**, and `""` for one that did. Bounded text. It is set only for a managed project: a project that is not managed files no record at all (D1025), so there is no trail to read and no state to report about it |
+| `retirements` | object | never | **yes** | the project's entry in **this machine's record of its last plain update** — the entry below plus the record's `version` — and **null** when this machine has recorded no update for the project. Null is **not** "nothing was retired": that is an entry whose `retire` is `[]`, and the two are different facts about the machine (D1484). It is a local read and it is made whatever `managed` says, because a project that is not managed runs updates too |
+| `retirements_state` | string | never | never | the sentence for a record that **could not be read** — JSON this build cannot parse, a byte count over its bound, a file that is not a regular file, or a version this build does not write — and `""` for one that was. Bounded text. It is `audit_state`'s rule one subject over: a record that could not be read drawn as "no update recorded yet" would be a claim about the machine made out of a failure to read it. Unlike `audit_state` it is not gated on `managed` |
 
 **The `audit` member is the bounded subset, and the bound is the point**
 (D1476):
@@ -2709,6 +2741,63 @@ in the bucket for a project whose marks do not say so is not a fact about that
 project, and reading it anyway would let a trail outlive the marks that justify
 it.
 
+**The last update's retirement is in this document too** (the managed-screens
+plan's CM8; F21, D1484, D1485). The Project tab draws what the last plain
+`fugaro update` retired by itself and the runs it walked past while it did, and
+nothing else on the machine remembers that once the run is over: the summary is
+printed once and the plan file is overwritten by the next update. The record of
+it is CM1's own document on disk (`localcfg.UpdateProject`,
+`$XDG_CONFIG_HOME/fugaro/state/update.json`, beside the remembered checkouts),
+and this is where a screen reads it — **the same argv the marks are read with**,
+so a console spawns nothing extra for the retirement, which is what F21 means by
+filing the record as one of the managed screens' subjects. It is a **local**
+read, and the marks do not gate it: a project that is not managed runs updates
+too. **The entry is the record's own type**, embedded rather than retyped into a
+second struct with the same tags, so a member the record gains arrives here with
+this section moving or the contract test failing rather than as a row a screen
+has been told nothing about.
+
+**The three answers are three.** An entry is the record and its `version`. Null
+with no state is "this machine has recorded no update for the project" — a
+record file that is not there is an empty document and not an error. Null **with**
+a state is a record that is there and could not be read, and the state is the
+whole of why the member exists.
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `version` | int | never | never | the version of the record the entry was read from (`localcfg.UpdateRecordVersion`, `1` today). It is not a member of the record's entry: a consumer compares it against the shape it knows before it draws a row, and an entry of a version it does not know never reaches it — that answer is `retirements_state` |
+| `at` | string | never | never | when the run **settled its retirement**, as the record spells it: RFC 3339 with the offset the update ran in, and nanoseconds when it has them. It is **not** UTC: the record is written on the operator's own machine, from that machine's clock and zone, and this document carries the entry rather than re-spelling it — so a consumer draws it as it stands and never assumes a zone (`audit`'s `at` is the CLI's own UTC rendering, and the two are not the same claim). It is not the end of the command either, which may go on to build images and write the local config: the record's subject is the retirement, and `at` dates that |
+| `retire` | array | never | never | the retired addresses, in the run's own order, and the rows below. **`[]` is "the last update retired nothing"** — a set that was written — and never null, which is the record's own spelling |
+| `runs_in_flight` | int | **yes** | never | how many runs the registry held when the retirement was settled. **Absent when the number is not known** — the project has no budget backend, or the read did not answer — and never `0` in its place: a run that could not be counted must not be drawn as a run that was not there (D1483) |
+
+**One `retire` row is one address, and what a screen may draw of it is D1485's
+closed list.** The nine members are the record's own, member for member with
+`infra.Retirement` (and with the run's own `--json` rows), because the record is
+a document the console already knows how to draw. A screen draws seven of them:
+`job` and `region` are the members the later state-removal steps need, and they
+are carried here for the same reason the record holds them — the document is the
+record, and a screen that reads the keys it draws and only those leaves them in
+no cell. **A secret is drawn as its name and never as a value**: the record
+holds a container's `logical` name and its Secret Manager `secret_id`, both
+identifiers, and no secret's contents are in this document at all.
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `address` | string | never | never | the Terraform address that leaves the state |
+| `kind` | string | never | never | what it was: `secret container`, `workflow job`, `check job`, `IAM member`, … |
+| `cause` | string | never | never | the config change that retired it, in the user's words |
+| `kept` | string | **yes** | never | what survives the retirement, and **absent when nothing does**. A secret container's promise is `infra.KeptSecret`: the address leaves Terraform's state and nothing deletes the container or its versions |
+| `logical` | string | **yes** | never | a secret container's logical name, absent otherwise |
+| `secret_id` | string | **yes** | never | its Secret Manager **ID — a name, not a value** — absent otherwise |
+| `job` | string | **yes** | never | a job's Cloud Run job name, absent otherwise |
+| `region` | string | **yes** | never | its region, absent otherwise |
+| `protected` | bool | never | never | whether an ordinary apply can delete this address at all. It is not implied by the address: a secret container and the registry carry `prevent_destroy`, and a job whose state says `deletion_protection = true` does too |
+
+**The retirement half is the `--json` document's, and the text rendering is
+unchanged by it.** What a person reads from this command at a terminal is the
+marks and the trail: the update that wrote the record printed its own retirement
+summary when it ran, and a screen is what this half is for.
+
 **Flags** (`newManagedStatusCmd`): `--json`, and the aiming pair `--project
 <name>` and `--config <path>` that every project read carries. `--gcp-project
 <id>` and `--region <r>` come with `addCloudFlags` and are not part of the
@@ -2741,14 +2830,26 @@ the Coordinator tab's, because its `all` scope is the coordinator's stored view
 `graph.NodeKey` and the `--source` value parsed by `graph.ParseScope`
 (`ee/graph/key.go`). Cited by symbol, not by line, for §6.11's reason.
 
-**`fugaro graph --json` has landed; the stream and the console's own read have
-not.** CG1 (the document, the key and the scope pattern) and CG3 (`graph
---json`, the coordinator scope) are on `main`, so the command, its `--source`
-set and every field below are what the released CLI writes; CG7 (`graph --watch
---json`) and the console's own read of this document (CG9a, CG9b) are the tasks
-that follow, in that order. The fields are read off `ee/graph/document.go`'s
-struct tags and the rules off the plan's H1 to H5, so a task that finds the code
-disagreeing with this section has found a defect in one of the two.
+**`fugaro graph --json`, its stream and the console's one-shot read have
+landed; the console's live half has not.** CG1 (the document, the key and the
+scope pattern), CG3 (`graph --json`, the coordinator scope), CG7 (`graph
+--watch --json`, the stream) and CG9a (the console's own read of this document —
+the `graph.read` spawn row, its operation and bridge method, and the decoder
+`decodeGraphDocument`) are on `main`, so the command, its `--source` set, every
+field below and every rule of the stream — a whole document per change, the
+one-second floor, the keep-alive, a `stream_id` with a rising `seq`, a scope that
+is down as a state — are what the released CLI writes. The one exit is a
+**refusal**, which is a read this CLI may not make (below); a listen the server
+*withdrew* is not one of them — that scope goes `down` and the child stays alive
+with its last graph and its clock, which is the rule §10.6 gives `watch` for the
+same event and the rule the graph plan's CG7 pins for this scope, so a withdrawn
+feed is a state a screen ages rather than a child it waits to exit. The
+console's subscription to that stream, and the
+drawing of what it carries (CG9b, CG11), are the tasks that follow: the read the
+console makes today is the one-shot one. The fields are read off
+`ee/graph/document.go`'s struct tags and the rules off the plan's H1 to H5, so a
+task that finds the code disagreeing with this section has found a defect in one
+of the two.
 
 **The section is numbered §6.22, and that is not a typo.** §6.21 is already
 claimed for another command's document: `docs/console-managed-screens/implementation-plan.md`

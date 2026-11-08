@@ -240,6 +240,11 @@ variable "credentials_service" {
       repo     = string
       workflow = string
     }))
+    review_job_accounts = optional(list(object({
+      profile  = string
+      provider = string
+      account  = string
+    })), [])
     verifier_accounts = optional(list(string))
     url               = optional(string)
   })
@@ -256,7 +261,10 @@ variable "credentials_service" {
   # secret.
   # firebase_project, rtdb_url and job_accounts are the rest of the service's
   # environment (C1.14: the Firebase project, the database, and the jobs whose
-  # accounts may call it), url is the service's own URL — the audience its
+  # accounts may call it), review_job_accounts the review-only variants of
+  # those project jobs — the review class's admitted set, one {profile,
+  # provider, account} row per variant, empty for an installation that deploys
+  # none — url is the service's own URL — the audience its
   # callers' tokens are minted for — which Cloud Run assigns, so the module
   # carries its unassigned placeholder until the apply after the one that
   # creates the service (the module's own output reads the URL back, and the

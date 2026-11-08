@@ -55,6 +55,7 @@ Subcommands:
 - `fugaro review` -- Review a pull request in a job of its own, on a named account
 - `fugaro run` -- Launch a task in the cloud; it always ends with a PR
 - `fugaro runs` -- List and inspect runs
+- `fugaro seats` -- Estimate how many people a subscription's seat rule would count
 - `fugaro secrets` -- Store, list and withdraw a repository's secrets in Secret Manager
 - `fugaro settings` -- Show every setting, what decides it, and its default
 - `fugaro setup` -- Create a fresh GCP project and stand up its installation, or a repository's cloud resources, through Terraform
@@ -1903,9 +1904,14 @@ changes anything.
 Inside a checkout whose project publishes a project layer (fugaro config
 publish), doctor also names which layer applies, flags a run that launched
 without it or on an older generation, a stale per-repository copy (the one
-Cloud Build and the daily image check read), and a workflow whose image was
-last built from settings it no longer resolves to: every one of these
-degrades with a note instead of failing when the bucket is unreachable.
+Cloud Build and the daily image check read), and an image that is not the one
+the checkout resolves to now: a workflow whose image was last built from
+settings it no longer resolves to, and, for a workflow whose image is the
+project's catalog's own entry, an entry no build has built or one whose
+definition moved (fugaro image build <entry>). None of these fails when the
+bucket is unreachable: the layer line falls back to the offline cache and says
+so, and a bucket read that does not answer leaves its image line out instead
+of failing the command.
 
 --plugin checks only the plugin's wiring: offline, no credentials, safe for
 CI. --strict makes a stale, unpinned, foreign or unwired plugin fail the
@@ -1986,6 +1992,17 @@ when it was assembled, one entry per scope in sources, the nodes, the edges
 (the coordinator's view has none) and the warnings. Without it, a short
 table: each scope's state, then its nodes grouped by release.
 
+--watch --json prints a whole document per change instead of one and
+exits, one compact object per line: the first snapshot at once, then one
+document for every change of the scopes it covers, at most one a second,
+and a document every 30 seconds while nothing changes. Every document
+carries the stream's own id and a sequence that rises within it, so a
+reader reads a new id as a whole new snapshot rather than comparing its
+sequence with the one before. It subscribes to each scope once, and a
+scope it cannot reach is a state in the document rather than an exit.
+--watch needs --json, which is the only shape a reader of the stream can
+consume.
+
 Exit codes: 1 for a refused scope or a project with no database, 2 for a
 failure of the database or the runs bucket.
 
@@ -2002,6 +2019,7 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--source` | string | `all` | no | the scope to read: all, coordinator, orchestrator:<id> or local:<id> |
+| `--watch` | bool | `false` | no | print a whole document per change, one compact object per line (needs --json) |
 
 Subcommands:
 
@@ -2619,6 +2637,14 @@ This is the read a screen of a managed project is built on: one closed document
 about one project, holding the two marks' own answer and the bounded subset of
 the newest audit record — never a sentence to be parsed, whose next rewording
 would change what a screen draws.
+
+The document also carries this machine's record of the project's last plain
+"fugaro update": what that update retired by itself, when it settled the
+retirement and how many runs the registry held while it did, with the record's
+own version beside it — or a sentence instead of the entry when that record
+cannot be read, so a record that is corrupt is never drawn as a project nothing
+was recorded for. It is a local read, and it is made whatever the marks answer:
+a project that is not managed runs updates too.
 
 It reads the same two facts a managed apply reads, and changes no cloud object:
 whether the project is managed is the creation fact in its runs bucket and the
@@ -3895,6 +3921,7 @@ Flags:
 | `--mode` | string | "" | no | the rigor mode to ask for: poc, startup, pro, critical, hotfix; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it, and takes no hotfix; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps |
 | `--no-budget-check` | bool | `false` | no | skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts |
 | `--no-compression` | bool | `false` | no | turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change |
+| `--owner-ruled` | string | "" | no | the repository owner's ruling on the findings a run on this PR left for them (OD1): either the text itself, a file, or - for stdin. A follow-up on a pull request whose last run stopped waiting on owner decisions is refused without it, and one whose last run left no such decisions is refused with it: the ruling answers what that run left, and nothing else; it is appended to this run's brief verbatim and recorded in the run |
 | `--path` | stringArray | `[]` | no | declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none matches no area rule |
 | `--plan-task` | string | "" | no | record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given |
 | `--pr` | intSlice | `[]` | no | continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR) |
@@ -4252,6 +4279,77 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
 | `--since` | string | `7d` | no | the window of UTC days ending today (7d, 36h, 90m; a summary is per day, so 0 is refused) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro seats`
+
+Estimate how many people a subscription's seat rule would count
+
+Estimate how many people a subscription's seat rule would count on this
+installation, from the installation's own data alone: the people on this
+machine's launcher and operator lists, plus everyone who requested a run in the
+last 90 days, each counted once.
+
+The estimate is ADVISORY. A seat is a contract pricing rule of the Subscription
+Terms -- anyone who launches jobs, by any means (console, mobile, CLI, an agent)
+-- and nothing in the product can count one: the licence's seat is one person,
+no surface knows who a person is, and every identity a run records is
+self-declared. So this command reads and prints, and that is all: it stores
+nothing, sends nothing, and consults no key, licence or server. It is core MIT
+and reads only core data.
+
+The three sources, and what each one is worth:
+
+  - terraform.launchers and terraform.operators in this machine's own project
+    config: the two lists fugaro setup writes and fugaro update applies. They are
+    the operator's record of who may launch, and members the console or an agent
+    launch records elsewhere are not in them.
+  - The requesters of the runs the last 90 days minted, read from each run's
+    task.json in every repository of the installation's bucket. Every launcher
+    counts, an agent launch is recorded under the configured person, and an agent
+    with no configured identity is invisible here.
+
+What the estimate cannot tell, it lists and does not guess:
+
+  - A group: or domain: member of either list names an unknown number of people.
+    It is listed apart, with the lists that hold it, and counted nowhere: one
+    seat is not a safe reading of a group, and neither is none.
+  - A serviceAccount: member is one identity and no person, so it is listed and
+    not counted: the licence's seat is one person, and this command never decides
+    that a person holds a robot's account.
+  - A run's requester is a value the launching CLI wrote down and nothing
+    verifies, and an agent launch with no configured identity records none: the
+    window counts whoever the records name.
+  - The window is the last 90 days of run IDs, so a person whose runs are all
+    older is invisible unless a list names them. The estimate over the whole
+    installation is therefore a lower bound, never a ceiling.
+
+One identity is one row. The lists and the runs spell an address
+independently -- one is an IAM member a person was written to, the other is
+what the launching CLI typed -- so the comparison folds case, and the row's key
+is the text printed: two texts that print alike are one person, and the
+estimate is the number of rows.
+
+--json prints {project, days, since, until, people[], not_counted[],
+unreadable, notes}; people carry {person, sources[]} and not_counted {member,
+why, sources[]}, sources from launcher, operator and requester, and why is
+unknown_size or account.
+
+Usage: `fugaro seats`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for seats |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -5656,6 +5754,7 @@ Subcommands:
 
 - `fugaro workspace add` -- Join the selected project to a workspace, and pin what it trusts
 - `fugaro workspace cap` -- The workspace's own spend ceiling
+- `fugaro workspace login` -- Print the sign-in this project's pin asks for
 - `fugaro workspace ls` -- List the workspaces this machine's project configs name
 - `fugaro workspace member` -- Declare how the workspace reaches one of its members
 - `fugaro workspace rm` -- Leave a workspace: drop this project's membership key and its pin
@@ -5751,6 +5850,38 @@ Flags:
 | `--monthly` | float64 | `0` | no | the cap in US dollars per month, more than zero |
 | `--workspace` | string | "" | no | the workspace whose cap this is (required: a cap is never spelled globally) |
 | `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace login`
+
+Print the sign-in this project's pin asks for
+
+Print the sign-in this project's pin asks for, offline.
+
+A project that is a member of a workspace signs in at the WORKSPACE's own
+Firebase: that sign-in is what the workspace's signer endpoint turns into the
+member-bound assertion this project's exchange accepts. This command is the step
+before it — which workspace is this project pinned to, and which Firebase do I
+sign in at — and it reads nothing but this machine's own config.
+
+It refuses when no project config on this machine names the workspace: 'fugaro
+workspace rm' takes the membership key and the pin together, and a project with
+no pin has no key, no project and no issuer to verify an assertion against, so
+there is no sign-in to describe. Nothing here opens a bucket, calls an API or
+holds a credential, and the pin's assertion key is reported as set rather than
+printed.
+
+Usage: `fugaro workspace login <name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for login |
+| `--json` | bool | `false` | no | print machine-readable output |
 
 Subcommands:
 

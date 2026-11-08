@@ -42,8 +42,6 @@ name: ee-edition
 # filter: the change that breaks the tagged build is as likely to be in
 # internal/ as in go.mod.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 # Least privilege, at the top so that no step can widen it by omission. The
