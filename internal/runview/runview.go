@@ -476,8 +476,20 @@ type legacyReason struct {
 //
 // The order is what tells two rows apart where one sentence carries both: a
 // review round that answered nothing carries the "review round <n>" prefix
-// every review refusal has, so its own longer sentence is tried first.
+// every review refusal has, so its own longer sentence is tried first — and
+// the row whose reason carries the model's own text is tried before every
+// other, so that no word of that text can choose a class.
 var legacyReasons = []legacyReason{
+	// The OAuth account's spent allowance: stageErrorReason's own sentence for
+	// it, which carries no error envelope — the agent reported no error — and
+	// has the model's message after it. It is first because of that text: the
+	// rows below read their sentence as a substring of the whole reason, so a
+	// message that happens to say "is invalid: " or "review round " would
+	// otherwise class a stopped allowance as a configuration refusal or a
+	// review that did not converge. The runner answers the allowance before its
+	// own tables (stageFailureClass, FC4) and the reader has to answer it in
+	// the same place; the class is the runner's (FC4, O6).
+	{failure.StageErrorUnexplained, "the oauth account's subscription usage limit was reached"},
 	// Decide's refusals (internal/runner/outcome.go), the four classes it
 	// chooses where it refuses.
 	{failure.ReviewUnread, "returned no parseable verdict after a retry"},
@@ -496,10 +508,6 @@ var legacyReasons = []legacyReason{
 	// shape every configuration refusal takes, fugaro.yaml's own among them.
 	{failure.ConfigInvalid, "is above the model's maximum"},
 	{failure.ConfigInvalid, "is invalid: "},
-	// The OAuth account's spent allowance: stageErrorReason's own sentence for
-	// it, which carries no error envelope and is classed as the runner classes
-	// it (FC4, O6).
-	{failure.StageErrorUnexplained, "the oauth account's subscription usage limit was reached"},
 	// endUnchanged's reasons, the five shapes of "the pull request or the
 	// branch changed under the run" (internal/runner/followup.go, runner.go),
 	// which the writer classes branch_moved — and endRefused's, the same fact
