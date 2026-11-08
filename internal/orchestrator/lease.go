@@ -11,8 +11,8 @@
 //
 // The lease decides **who writes**, never **what may be written**: the state's
 // compare-and-swap is what serialises intents, because a daemon that has lost
-// its lease can still win a PutIfMatch after a re-read (G9, and that is why
-// Node.Save re-checks this lease before every retry). What the lease buys is
+// its lease still holds a fresh state ETag (G9, and that is why Node.Save
+// checks this lease before the one conditional write it makes). What the lease buys is
 // that two machines do not both drive the same id: a second daemon refuses to
 // start at all, so the person's second laptop is told rather than quietly
 // racing.
@@ -95,8 +95,8 @@ type Lease struct {
 	now     ServerNow
 }
 
-// The guard Node.Save re-checks is this type: a lease that stopped satisfying
-// it would make every retry unfenced.
+// The guard Node.Save consults is this type: a lease that stopped satisfying it
+// would make that write unfenced.
 var _ LeaseGuard = (*Lease)(nil)
 
 // NewLease builds the claim of one daemon on one orchestrator id.

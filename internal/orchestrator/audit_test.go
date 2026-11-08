@@ -161,9 +161,10 @@ func TestAuditAppendIsIdempotentOnADerivedId(t *testing.T) {
 		auditPath := mustPath(t, orchestrator.PathAudit)
 
 		for _, e := range []orchestrator.Entry{
-			// A dot is a name in the state (idRE admits one) and is forbidden
-			// in a database key: an id that carried one would be escaped into
-			// a node of its own, or refused by the client at the last moment.
+			// A dot is refused by the transport wherever it appears in the
+			// tree, so it is not a name here either: the subject is checked by
+			// the state model's own rule (idRE), which is what makes the key
+			// this log derives one the database carries.
 			{Subject: "run.20261107", Transition: "started"},
 			{Subject: winnerHolder, Transition: "Started"},
 			{Subject: winnerHolder + ":other", Transition: "started"},

@@ -396,23 +396,13 @@ func TestHeartbeatDoesNotMoveTheStateETag(t *testing.T) {
 // fixture with its version removed — a v0 node — so this test reads what the
 // previous generation really wrote rather than a shape invented here.
 //
-// Two of the fixture's facts are rekeyed here, and that is a defect this task
-// reports rather than one it hides — the pull request carries it under "A
-// defect to report before a daemon writes real state", with the reproduction
-// (validateOp, applyFactSet, ValidateState and EncodeState all pass; Save then
-// fails with the database's 400) and the two candidate fixes. The fixture's own
-// `repo.primary` and
-// `sweep.retired` are names the state model and
-// schemas/orchestrator-state.schema.json both allow — the schema's
-// propertyNames pattern admits a dot — while the Realtime Database refuses a
-// dot in a key anywhere in the tree, not just in a path (internal/gcpfake
-// mirrors that rule: TestRTDBFakeRejectsKeysRealRTDBRejects, "dot in a value
-// key"). So a state carrying one of those facts cannot be written to the node
-// at all, and the first writer of the node is this one. Escaping the map's keys
-// on the wire, the way budget.Key escapes a model name, or narrowing the
-// pattern to a key-safe name, is a change to O0's schema and the owner's call;
-// the pull request reports it, and this test writes a document the node can
-// really carry.
+// The fixture is written to the fake and saved back through the node, so this
+// is also where a name the transport refuses would show: a fact key is a
+// property name in the state document, and Save would fail with the database's
+// 400 rather than with a refusal this package made (D1231: the id would be
+// wedged, since every tick re-derives the same state and the intent that stops
+// a second spawn never commits). TestANameTheDatabaseRefusesIsRefusedHere is
+// the other half of that guard.
 //
 // Mutation: drop Migrate from Load (the version stays 0 and the validator
 // refuses the node) or write the state the caller held instead of the one
@@ -427,7 +417,6 @@ func TestLoadMigratesAnOlderSchemaVersion(t *testing.T) {
 		t.Fatal("the fixture no longer carries a schema version: this test would migrate nothing")
 	}
 	delete(v0, "schema_version")
-	rekeyFacts(t, v0)
 	f.Set(statePath, v0)
 
 	node := mustNode(t, &countingCAS{inner: rtdbClient(t, f)}, nil)
@@ -440,6 +429,9 @@ func TestLoadMigratesAnOlderSchemaVersion(t *testing.T) {
 	}
 	if s.Rev != 12 || len(s.WorkItems) != 2 {
 		t.Errorf("the migration lost the node's own data: rev %d, %d work items", s.Rev, len(s.WorkItems))
+	}
+	if got := s.Facts["repo-primary"].Value; got != "owner/repo" {
+		t.Errorf("the fixture's facts loaded as %q, so the document this test saves is not the one it read", got)
 	}
 
 	if err := node.Save(ctx, s, etag); err != nil {
@@ -455,22 +447,69 @@ func TestLoadMigratesAnOlderSchemaVersion(t *testing.T) {
 	}
 }
 
-// rekeyFacts moves the fixture's facts to names the Realtime Database can
-// carry, and fails if the fixture has stopped carrying the ones it names, so
-// this workaround cannot outlive the defect it works around unnoticed.
-func rekeyFacts(t *testing.T, doc map[string]any) {
-	t.Helper()
-	facts, ok := doc["facts"].(map[string]any)
-	if !ok {
-		t.Fatalf("the fixture carries facts as %#v", doc["facts"])
-	}
-	for from, to := range map[string]string{"repo.primary": "repo-primary", "sweep.retired": "sweep-retired"} {
-		fact, present := facts[from]
-		if !present {
-			t.Fatalf("the fixture no longer carries the fact %q: this test has nothing left to rekey", from)
-		}
-		delete(facts, from)
-		facts[to] = fact
+// TestANameTheDatabaseRefusesIsRefusedHere is the defect this task found and
+// fixed: a fact key is a property name in the state document, and the Realtime
+// Database refuses a dot in a key anywhere in the tree, so a name the model
+// admitted, validated and encoded was then refused by the node — the
+// orchestrator id wedged, because every tick derives the same state again, and
+// the intent that would stop a second spawn never committed (D1231). The name
+// rules now refuse it here (validate.go's idRE, the schema's patterns, the
+// audit's subject), which is the only place the refusal can be a Go error a
+// caller can act on rather than a 400 in the middle of a tick.
+//
+// The document is the real fixture, so the names it carries are the ones the
+// migration test writes through the node: the two together say that a state
+// this package accepts is one the database carries.
+//
+// Mutation: put the dot back in idRE (or drop the fact key's check in
+// ValidateState) and the first case fails with the transport's own refusal —
+// the state that validates and then cannot be written. The other three are
+// refused by the same rule although their dot sits in a value rather than in a
+// key, which is what keeps one rule for every name.
+func TestANameTheDatabaseRefusesIsRefusedHere(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name    string
+		corrupt func(t *testing.T, doc map[string]any)
+	}{
+		{"a fact key", func(_ *testing.T, doc map[string]any) {
+			doc["facts"].(map[string]any)["repo.primary"] = map[string]any{"value": "owner/repo", "by": "person"}
+		}},
+		{"a work item's id", func(t *testing.T, doc map[string]any) {
+			listAt(t, doc, "work_items")[0].(map[string]any)["id"] = "wi.1"
+		}},
+		{"a decision's id", func(t *testing.T, doc map[string]any) {
+			listAt(t, doc, "decisions")[0].(map[string]any)["id"] = "ask.1"
+		}},
+		{"the orchestrator's id", func(_ *testing.T, doc map[string]any) {
+			doc["agent_id"] = "orchestrator.a"
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := gcpfake.NewRTDB(t)
+			doc := document(t, readFixture(t))
+			tc.corrupt(t, doc)
+			f.Set(mustPath(t, orchestrator.PathState), doc)
+
+			cas := &countingCAS{inner: rtdbClient(t, f)}
+			node := mustNode(t, cas, nil)
+			s, etag, err := node.Load(ctx)
+			if errors.Is(err, orchestrator.ErrInvalid) {
+				if cas.puts != 0 {
+					t.Errorf("a document with a %s carrying a dot was written %d times after all", tc.name, cas.puts)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("loading a %s carrying a dot: %v", tc.name, err)
+			}
+			// Not a name this package refuses, so the node has to carry it —
+			// the defect's own shape: a state that loads, validates and is then
+			// refused by the database at the write, on every tick, for ever.
+			if err := node.Save(ctx, s, etag); err != nil {
+				t.Fatalf("a %s carrying a dot passed the validator and the database refused the write: %v", tc.name, err)
+			}
+		})
 	}
 }
 

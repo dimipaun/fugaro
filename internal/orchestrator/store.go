@@ -29,9 +29,10 @@ import (
 
 // The orchestrator subtree. SubtreeRoot is the prefix O2's rules grant and the
 // name a reader looks up, so it is one constant rather than four string
-// literals. It is deliberately not called PathRoot: that name is the
-// coordinator's subtree's (internal/coordpath), and one name for two subtrees
-// is the drift the rules cannot see (TestCoordpathIsTheOnlyCopy).
+// literals: which subtree a node belongs to is read from this and from nothing
+// else. The name is deliberately not PathRoot — that is the coordinator's
+// subtree's name (internal/coordpath, its one owner) — so the two subtrees
+// cannot be confused by a reader of this package.
 const (
 	// SubtreeRoot is the orchestrator's top-level subtree.
 	SubtreeRoot = "orchestrator"
@@ -93,10 +94,10 @@ type Store interface {
 // ok is false before any response has been read.
 type ServerNow func() (time.Time, bool)
 
-// LeaseGuard is the lease a writer holds (Lease). Save re-checks it before
-// every retry, because the lease and the state ETag are separate nodes: a
-// daemon that lost its lease can still win a PutIfMatch after a re-read, and
-// only this check stops it (G9).
+// LeaseGuard is the lease a writer holds (Lease). Save checks it before the one
+// write it makes, because the lease and the state ETag are separate nodes: a
+// daemon that lost its lease still holds a fresh state ETag, so nothing else in
+// this write would stop it (G9).
 type LeaseGuard interface {
 	Held(ctx context.Context) (bool, error)
 }

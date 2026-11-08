@@ -37,15 +37,11 @@ import (
 // daemon decided goes here.
 const MaxAuditTextRunes = 300
 
-// The two names an entry's key is built from. They are stricter than idRE,
-// which admits a dot and a colon because a work item's id is a name: this key
-// is a database key, where a dot is forbidden and where a colon would separate
-// the subject from the transition a second time, so `<a>:<b>` could not be
-// read back into the two names that made it.
-var (
-	auditSubjectRE    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
-	auditTransitionRE = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
-)
+// The transition is the half of an entry's key that has a shape of its own: a
+// subject is a work item's, a decision's or a run's name, so the state model's
+// own rule is what checks it (idRE, validate.go) — a name is a database key
+// there precisely so that a key built from names is one this log can carry.
+var auditTransitionRE = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 
 // PatchDB is the atomic multi-path half of the Realtime Database client. An
 // append has no ETag to write under and must not pretend to have one; it is
@@ -112,8 +108,8 @@ func (a *Audit) Path() string { return a.path }
 // The append is one atomic PATCH of one key: an entry is never half written,
 // and nothing else in the node is touched.
 func (a *Audit) Append(ctx context.Context, e Entry) (Entry, error) {
-	if !auditSubjectRE.MatchString(e.Subject) {
-		return Entry{}, fmt.Errorf("%w: the audit subject %q is not a name a key can carry", ErrInvalid, safetext.OneLine(e.Subject))
+	if !idRE.MatchString(e.Subject) {
+		return Entry{}, fmt.Errorf("%w: the audit subject %q is not a name", ErrInvalid, safetext.OneLine(e.Subject))
 	}
 	if !auditTransitionRE.MatchString(e.Transition) {
 		return Entry{}, fmt.Errorf("%w: the transition %q is not a name", ErrInvalid, safetext.OneLine(e.Transition))
