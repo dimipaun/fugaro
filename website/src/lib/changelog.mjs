@@ -44,10 +44,10 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 
 export const RELEASES_DIR = path.join(REPO_ROOT, 'docs', 'releases')
 
-// The CLI plugin's own manifest: the one fact that says which release is the newest one
-// published. `scripts/release.sh` bumps it in the commit that cuts a release, which lands on
-// `main` before the tag exists — so the version here IS the latest released version, and a
-// release file for a higher version is one written ahead of its release.
+// The CLI plugin's own manifest: the fact that says which release is the newest one published.
+// `scripts/release.sh` bumps it in the commit that cuts a release, which lands on `main` before
+// the tag exists — so the version here IS the latest released version, and a release file for a
+// higher version is one whose bump has not landed.
 export const PLUGIN_FILE = path.join(REPO_ROOT, 'plugin', '.claude-plugin', 'plugin.json')
 
 // The catalogue of the release streams: the CLI stream's own version line, which is the fact
