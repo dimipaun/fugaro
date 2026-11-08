@@ -477,6 +477,23 @@ type run struct {
 	// the run would go ready, or end a draft with the question recorded
 	// nowhere and the follow-up that answers it launched blind.
 	seniorLevelLast seniorRound
+	// reviewRoundsRun counts the review rounds the loop has run, over every
+	// enabled level: it is the loop's own count and not a level's, because
+	// the stop rule counts rounds across the levels a run has on (D727's
+	// doubling — the owner's ruling of 2026-11-08, item 6b — is what it
+	// answers). Read by stopNow, and by nothing that decides readiness: a
+	// level's own cap is still its own.
+	reviewRoundsRun int
+	// stopAt is the half of the stop rule that ended the run's rounds, or ""
+	// for a run that has not stopped: runstore.StopRoundsSpent when the last
+	// review step of the plan ended at its cap without shipping, and
+	// runstore.StopTimeThreshold when the fraction of the run's time budget
+	// elapsed before another round. It is the one input readiness reads to
+	// widen a mode's split to its at-the-stop row (findingsPolicyOf), and the
+	// value the record's accepted block and the run's reason carry, so a run
+	// that ships clears it: a later round that ships must not leave a stale
+	// stop widening the split. Written between stages only.
+	stopAt string
 	// ckpt is the checkpoint pushes' state (checkpoint.go).
 	ckpt checkpointState
 	// stageCkptStop is the running stage's checkpointer stop — startCheckpoints'
@@ -2425,7 +2442,8 @@ func (r *run) bootstrap(ctx context.Context) error {
 		r.addSecret(s)
 	}
 	r.budget = Budget{Start: r.rec.StartedAt, Total: wf.Timeouts.Total.Duration,
-		Reserve: wf.Timeouts.FinalizeReserve.Duration, Stage: wf.Timeouts.Stage.Duration, Now: r.d.Now}
+		Reserve: wf.Timeouts.FinalizeReserve.Duration, Stage: wf.Timeouts.Stage.Duration,
+		StopFraction: r.cfg.Agent.ReviewStopFraction, Now: r.d.Now}
 	if r.follow != nil {
 		if err := r.prepareFollowUp(ctx); err != nil {
 			return err
@@ -2818,12 +2836,19 @@ func (r *run) agentLoop(ctx context.Context) {
 		}
 	}
 	tier := ""
-	for _, st := range r.plan {
+	for i, st := range r.plan {
+		// last is whether this step is the plan's last review step: the stop
+		// rule's rounds half is spent there and nowhere else, because the
+		// mode's rounds are spent only when the last level it enabled has run
+		// its own out (the owner's ruling of 2026-11-08, item 6b: a run that
+		// enabled level 3 stops at the same moment as one that did not, and
+		// the senior step is not a stop while an adversarial step follows it).
+		last := i == len(r.plan)-1
 		switch st.Kind {
 		case recipe.StepFirstLine:
 			tier = runstore.TierSenior
 			var ok bool
-			if sessionID, ok = r.firstLine(ctx, st.Rounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID); !ok {
+			if sessionID, ok = r.firstLine(ctx, st.Rounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID, last); !ok {
 				return
 			}
 		case recipe.StepReview:
@@ -2832,15 +2857,35 @@ func (r *run) agentLoop(ctx context.Context) {
 			// could not finish — a failed stage, a cap, a closed pull request,
 			// an answer with no verdict — is where the run stops, and the
 			// levels after it are not run (checkPlan keeps the order fixed).
-			if !r.seniorLoop(ctx, st, tier, reviewPrompt, sys, sessionID) {
+			if !r.seniorLoop(ctx, st, tier, reviewPrompt, sys, sessionID, last) {
 				return
 			}
 		case recipe.StepAdversarial:
-			if !r.adversarialLoop(ctx, st, reviewPrompt, sys, sessionID) {
+			if !r.adversarialLoop(ctx, st, reviewPrompt, sys, sessionID, last) {
 				return
 			}
 		}
 	}
+}
+
+// stopNow reports whether the loop must go to finalize rather than start
+// another review or fix round: the configured share of the run's time budget
+// has elapsed (Budget.PastStop) and at least one review round has run.
+//
+// It is the time half of the owner's stop rule of 2026-11-08 (item 2), asked
+// between rounds and never inside one — a round already running is bounded by
+// the finalize reserve, not by this — and it is asked of every review level, so
+// a run that enabled level 3 stops at the same moment as one that did not
+// (item 6b). The guard is what keeps a run whose implement stage ate the budget
+// from being left with nothing reviewed: the loop buys its first review round
+// whatever the clock says, and stops from the second on. A run with no time
+// budget at all has no threshold (Budget.stopAt), so it never stops here.
+//
+// The caller sets r.stopAt to runstore.StopTimeThreshold when it acts on the
+// answer: this asks the question and records nothing, because the half is
+// recorded once, where the loop was ended.
+func (r *run) stopNow() bool {
+	return r.reviewRoundsRun > 0 && r.budget.PastStop()
 }
 
 // seniorLoop is a review step: up to (*run).reviewRounds senior reviews on the
@@ -2865,12 +2910,21 @@ func (r *run) agentLoop(ctx context.Context) {
 //
 // It reports whether the plan may go on to the step after it, which is false
 // for every way the run stops here.
-func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, sys, sessionID string) bool {
+func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, sys, sessionID string, last bool) bool {
 	// Level 2's own reviewer reads the level's focus quoted under the run's
 	// heading (reviewPromptWithFocus), exactly as level 3's does; the bounce's
 	// cheap loop below is level 1's and reads level 1's.
 	prompt := reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL2))
 	for round := 1; ; round++ {
+		if r.stopNow() {
+			r.stopAt = runstore.StopTimeThreshold
+			return false
+		}
+		// The loop counts the review rounds it starts, across every enabled
+		// level: it is what the time half of the stop rule asks before it
+		// fires (stopNow), so a run whose first stage ate its budget still
+		// buys one review of its change before the threshold can end the loop.
+		r.reviewRoundsRun++
 		// The head is read per round rather than once: a fix between two rounds
 		// moves the branch, and the summary keeps the commit *this* round read
 		// (D727), so the levels can be told apart by the head they approved.
@@ -2912,10 +2966,27 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			return false
 		}
 		if v.Verdict == "ship" || round >= r.reviewRounds(st) {
+			if v.Verdict != "ship" && last {
+				// The rounds half of the stop rule, at the moment it is spent:
+				// the plan's own rounds for its last review level are gone and
+				// no round shipped, so the loop starts no further round and
+				// finalize decides on what this one left (stopNow is the time
+				// half of the same rule, asked above and below).
+				r.stopAt = runstore.StopRoundsSpent
+			}
 			return true
 		}
 		r.afterStage(ctx, "review")
 		if r.pr.gone {
+			return false
+		}
+		if r.stopNow() {
+			// The time half: the share of the run's budget for reviewing has
+			// elapsed, so the fix that would be followed by another review is
+			// not bought. Without this the fix round runs into the run's own
+			// deadline and the run dies of "time budget exhausted during fix"
+			// instead of finalizing what it already has.
+			r.stopAt = runstore.StopTimeThreshold
 			return false
 		}
 		if sessionID, ok = r.fix(ctx, v, sys, sessionID); !ok {
@@ -2923,7 +2994,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		}
 		if st.Bounce && st.FirstRounds > 0 {
 			r.bounce++
-			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID); !ok {
+			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID, false); !ok {
 				return false
 			}
 		}
@@ -2946,9 +3017,17 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 // It reports whether the run may go on, which the plan does not ask of it: the
 // adversarial step is the plan's last, so the answer only decides whether the
 // loop returns early or falls out of its own bottom.
-func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sys, sessionID string) bool {
+func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sys, sessionID string, last bool) bool {
 	prompt := AdversarialPrompt(reviewPrompt, r.levelFocus(policy.LevelL3))
 	for round := 1; ; round++ {
+		if r.stopNow() {
+			r.stopAt = runstore.StopTimeThreshold
+			return false
+		}
+		// Counted exactly as seniorLoop counts it, and never per level: the
+		// stop rule's guard and its time half are the run's, not a level's
+		// (stopNow).
+		r.reviewRoundsRun++
 		head := r.reviewedHead(ctx)
 		v, parsed, ok := r.adversarialRound(ctx, round, prompt)
 		if !ok {
@@ -2982,10 +3061,21 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 			return false
 		}
 		if v.Verdict == "ship" || round >= r.adversarialRounds(st) {
+			if v.Verdict != "ship" && last {
+				// The rounds half of the stop rule, exactly as seniorLoop sets
+				// it, and here it is the level that decides readiness: the
+				// mode's own review rounds across every level it enabled are
+				// spent, and what level 3 left is what finalize reads.
+				r.stopAt = runstore.StopRoundsSpent
+			}
 			return true
 		}
 		r.afterStage(ctx, stageAdversarial)
 		if r.pr.gone {
+			return false
+		}
+		if r.stopNow() {
+			r.stopAt = runstore.StopTimeThreshold
 			return false
 		}
 		if sessionID, ok = r.fix(ctx, v, sys, sessionID); !ok {
@@ -2993,7 +3083,7 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 		}
 		if st.Bounce && st.FirstRounds > 0 {
 			r.bounce++
-			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID); !ok {
+			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID, false); !ok {
 				return false
 			}
 		}
@@ -3215,9 +3305,20 @@ func (r *run) fix(ctx context.Context, v Verdict, sys, sessionID string) (string
 // loop is never the decider, and a bounce's extra rounds must not overwrite the
 // senior round the mode's findings policy is read off (outcome.go,
 // findingsPolicy).
-func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sessionID string) (string, bool) {
+func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sessionID string, last bool) (string, bool) {
 	decides := !levelOn(r.levels, policy.LevelL2) && !levelOn(r.levels, policy.LevelL3)
 	for round := 1; round <= rounds; round++ {
+		if r.stopNow() {
+			// The stop rule's time half, asked of the cheap loop exactly as it
+			// is asked of the outer ones: level 1 is a review level, and a run
+			// whose clock ran out starts no round of it either (item 6b — the
+			// stop is the run's, not one level's).
+			r.stopAt = runstore.StopTimeThreshold
+			return sessionID, false
+		}
+		// Counted as seniorLoop counts its rounds: the stop's guard and its
+		// time half read the run's review rounds, never one level's.
+		r.reviewRoundsRun++
 		head := r.reviewedHead(ctx)
 		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
 		res, ok, err := r.stage(ctx, "review_first", req, stageOpts{Skippable: true})
@@ -3267,10 +3368,24 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 		if r.pr.gone {
 			return sessionID, false
 		}
+		if r.stopNow() {
+			// The time half again, before the fix this round would be followed
+			// by: a fix bought here is one the next round would review, and the
+			// stop says the loop starts neither.
+			r.stopAt = runstore.StopTimeThreshold
+			return sessionID, false
+		}
 		var more bool
 		if sessionID, more = r.fix(ctx, v, sys, sessionID); !more {
 			return sessionID, false
 		}
+	}
+	if last {
+		// The rounds half: this was the plan's last review step, every round it
+		// was given has run and none of them shipped, so the mode's review
+		// rounds are spent and finalize decides on the last one (item 1's
+		// rounds half of the stop — the same assignment seniorLoop makes).
+		r.stopAt = runstore.StopRoundsSpent
 	}
 	return sessionID, true
 }
@@ -4475,8 +4590,10 @@ func (r *run) finalize(ctx context.Context) error {
 	// reason records none (recordOwnerDecisions).
 	r.recordOwnerDecisions(halt)
 	pol := r.findingsPolicy()
-	ready, reason, class := Decide(records, decided, r.decidingReview(), pol, r.rec.OwnerDecisions)
+	decidedRound := r.decidingReview()
+	ready, reason, class := Decide(records, decided, decidedRound, pol, r.rec.OwnerDecisions)
 	r.rec.Tolerated = r.toleratedRecord(pol)
+	r.rec.Accepted = r.acceptedRecord(pol, decidedRound)
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
 	}

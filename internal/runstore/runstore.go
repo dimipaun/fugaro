@@ -554,6 +554,73 @@ func NewTolerated(findings []ToleratedFinding) *ToleratedFindings {
 	return tf
 }
 
+// The two halves of the stop rule, as the record's accepted block and the
+// runner's own reason spell them (the owner's ruling of 2026-11-08): the mode's
+// review rounds are spent, or the configured share of the run's time budget has
+// elapsed. They are the record's vocabulary rather than the runner's because a
+// reader outside this binary draws them — result.schema.json closes the enum on
+// these two — and the reason the runner writes and the value it stores are then
+// one spelling (runner.FindingsPolicy.AtStop).
+const (
+	// StopRoundsSpent is the stop the mode's own rounds reached: the loops ran
+	// every round the plan and the mode allow and no round shipped.
+	StopRoundsSpent = "rounds spent"
+	// StopTimeThreshold is the stop the clock reached: the run crossed the
+	// share of its time budget before another round, so no further round was
+	// bought whatever the plan had left (runner.Budget.PastStop).
+	StopTimeThreshold = "time threshold"
+)
+
+// AcceptedFindings is the findings a run accepted at its stop: what the mode
+// let through because no review round was left to spend on it (the owner's
+// ruling of 2026-11-08 — at the stop a Startup or POC run merges as-is and
+// follows up the rest). It is a block of its own beside Tolerated and never a
+// replacement for it: Tolerated is what the mode would not fix, and this is the
+// same account with the two facts a reader needs to tell a run that merged at
+// its time threshold from one whose review let the finding go — which round
+// left them and which half of the stop rule ended the run.
+//
+// The entries are ToleratedFinding's, so the pull request's body, the report
+// and the filing path read an accepted finding exactly as they read a tolerated
+// one, and Mode, Round and At are the same facts the runner's reason states.
+type AcceptedFindings struct {
+	// Findings is one entry per accepted finding, in the reviewer's order.
+	// Never empty: a run that accepted nothing carries no block at all.
+	Findings []ToleratedFinding `json:"findings"`
+	// Total is how many findings the stop accepted. Never less than
+	// len(Findings).
+	Total int `json:"total"`
+	// Mode is the mode the run resolved, which is the mode whose stop row
+	// accepted them (one value, D9, D22).
+	Mode rigor.Mode `json:"mode"`
+	// Round is the review round whose findings were accepted: the deciding
+	// level's last round, which is the round readiness read.
+	Round int `json:"round"`
+	// At is the half of the stop rule that ended the run's rounds:
+	// StopRoundsSpent or StopTimeThreshold.
+	At string `json:"at"`
+}
+
+// NewAccepted bounds the findings a run records as accepted at its stop and
+// returns the block to store, or nil when it holds none — for the reason
+// NewTolerated returns nil: a run that accepted nothing carries no block rather
+// than an empty one.
+//
+// The check is the same one NewTolerated makes, entry by entry, and the two
+// facts beside the entries are read here as well: a round is at least 1 and the
+// half is one of the two the schema closes on, so a caller cannot store a
+// block whose reason a reader cannot place.
+func NewAccepted(mode rigor.Mode, round int, at string, findings []ToleratedFinding) *AcceptedFindings {
+	if round < 1 || (at != StopRoundsSpent && at != StopTimeThreshold) {
+		return nil
+	}
+	tf := NewTolerated(findings)
+	if tf == nil {
+		return nil
+	}
+	return &AcceptedFindings{Findings: tf.Findings, Total: tf.Total, Mode: mode, Round: round, At: at}
+}
+
 // MaxOwnerDecisions bounds the pending owner decisions a record stores, for
 // the reason MaxTolerated bounds the tolerated findings: the list is a model's
 // output and the record is a small object every listing reads.
@@ -1045,6 +1112,17 @@ type Record struct {
 	// reader sees the record it always saw and the schema's version stays 1
 	// (F21).
 	Tolerated *ToleratedFindings `json:"tolerated,omitempty"`
+	// Accepted is the findings the run accepted at its stop: what its mode let
+	// through because the stop rule — the mode's review rounds spent, or the
+	// configured share of the run's time budget elapsed — left no round to
+	// spend on them, and so the run finalized ready where it would have ended a
+	// draft (AcceptedFindings; the owner's ruling of 2026-11-08). A block of
+	// its own and never a replacement for Tolerated: the two answer different
+	// questions, and a run can carry both. Absent — never an empty block — for
+	// every run that accepted nothing, which is every record written before
+	// this field existed: the field is additive, so an old reader sees the
+	// record it always saw and the schema's version stays 1 (F21).
+	Accepted *AcceptedFindings `json:"accepted,omitempty"`
 	// OwnerDecisions is what the run's review left for the repository's owner
 	// to settle (OD1): the findings a reviewer marked needs_owner, which no
 	// code change can fix, so the run spent no fix round on them — it stopped

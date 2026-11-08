@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // ErrCancelled is the context cause when a cancel marker was seen.
@@ -17,10 +19,43 @@ type Budget struct {
 	Total   time.Duration
 	Reserve time.Duration
 	Stage   time.Duration
-	Now     func() time.Time
+	// StopFraction is the share of Total after which the loop starts no new
+	// review or fix round: the owner's stop rule of 2026-11-08 makes a run
+	// finalize at the stop, and the stop is the earlier of the mode's review
+	// rounds being spent and this threshold. Zero means the default
+	// (config.DefaultReviewStopFraction), and so does a fraction that is
+	// negative or not a number: a caller that says nothing gets the rule.
+	// A Total of zero or less has no threshold at all.
+	StopFraction float64
+	Now          func() time.Time
 }
 
 func (b Budget) finalizeAt() time.Time { return b.Start.Add(b.Total - b.Reserve) }
+
+// stopAt is the moment the loop must stop starting rounds, and whether one can
+// be computed at all.
+func (b Budget) stopAt() (time.Time, bool) {
+	f := b.StopFraction
+	if f <= 0 || f != f {
+		f = config.DefaultReviewStopFraction
+	}
+	if b.Total <= 0 {
+		return b.Start, false
+	}
+	return b.Start.Add(time.Duration(float64(b.Total) * f)), true
+}
+
+// PastStop reports whether the loop must go to finalize rather than start
+// another review or fix round: the fraction of Total has elapsed. It is asked
+// between rounds only, so a round already running is never cut by it — the
+// finalize reserve is what bounds a stage.
+func (b Budget) PastStop() bool {
+	at, ok := b.stopAt()
+	if !ok {
+		return false
+	}
+	return !b.Now().Before(at)
+}
 
 // Exhausted reports whether only the finalize reserve is left.
 func (b Budget) Exhausted() bool { return !b.Now().Before(b.finalizeAt()) }

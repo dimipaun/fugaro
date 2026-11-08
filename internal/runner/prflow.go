@@ -643,6 +643,13 @@ func (r *run) levelsPart() string {
 // (rigor.Split), and the mode that let them through — the words Decide's own
 // reason uses, so the body and the record can be diffed (D18, T3.3).
 //
+// A round the stop rule ended the run's review on reads "accepted at <mode>
+// (<half>)": the same list, and the two facts Decide's own reason states for it
+// (FindingsPolicy.AtStop, the owner's ruling of 2026-11-08) — which half of the
+// stop left the findings, so a reader of the body can tell a run that merged at
+// its time threshold from one whose review rounds ran out. The words are still
+// the policy's, so the body and the record cannot disagree.
+//
 // "" for every other round, including a round the mode only partly tolerated:
 // what was let through is the whole round or nothing, and a line naming the
 // findings a mode would have tolerated in a round it blocked would be
@@ -658,7 +665,11 @@ func toleratedPart(pol FindingsPolicy, last runstore.ReviewSummary) string {
 	for _, s := range pol.Tolerated {
 		labels = append(labels, string(s.Label()))
 	}
-	return ", tolerated at " + inlineText(string(pol.Mode)) + " (" + inlineText(strings.Join(labels, ", ")) + ")"
+	part := ", tolerated at " + inlineText(string(pol.Mode))
+	if pol.AtStop != "" {
+		part = ", accepted at " + inlineText(string(pol.Mode)) + " (" + inlineText(pol.AtStop) + ")"
+	}
+	return part + " (" + inlineText(strings.Join(labels, ", ")) + ")"
 }
 
 // checkpointReportPart is the section's checkpoint report, written when a

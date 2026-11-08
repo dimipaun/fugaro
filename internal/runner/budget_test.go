@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -37,6 +38,76 @@ func TestBudget(t *testing.T) {
 	now = start.Add(8 * time.Minute)
 	if !b.Exhausted() {
 		t.Error("not exhausted at total-reserve")
+	}
+}
+
+// TestBudgetStopFraction: the stop's time half is the share of Total the
+// owner's ruling of 2026-11-08 names, read between rounds only. The zero
+// value takes config.DefaultReviewStopFraction, so a caller that says
+// nothing gets the rule; a run with no time budget has no threshold, so an
+// unset workflow cannot stop every run at its first round.
+func TestBudgetStopFraction(t *testing.T) {
+	start := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	now := start
+	b := Budget{Start: start, Total: 10 * time.Minute, Reserve: time.Minute, Now: func() time.Time { return now }}
+
+	if now = start.Add(8*time.Minute - time.Second); b.PastStop() {
+		t.Error("the default stop fired before 8m of a 10m budget")
+	}
+	// The threshold includes its own instant, as Exhausted() includes
+	// finalizeAt: the fraction has elapsed when the clock reaches it.
+	if now = start.Add(8 * time.Minute); !b.PastStop() {
+		t.Error("the default stop did not fire at 8m of a 10m budget")
+	}
+	if now = start.Add(9 * time.Minute); !b.PastStop() {
+		t.Error("the default stop did not fire past its fraction")
+	}
+
+	// The threshold sits before the reserve's own deadline, which is what
+	// makes it useful: a run that waits for Exhausted has no room left to
+	// finalize a stop it did not plan.
+	now = start.Add(8 * time.Minute)
+	if b.Exhausted() {
+		t.Error("the budget was exhausted at the stop threshold: the two are 8m and 9m here")
+	}
+
+	b.StopFraction = 0.5
+	if now = start.Add(5*time.Minute - time.Second); b.PastStop() {
+		t.Error("a 0.5 fraction fired before half the budget")
+	}
+	if now = start.Add(5 * time.Minute); !b.PastStop() {
+		t.Error("a 0.5 fraction did not fire at half the budget")
+	}
+
+	b.StopFraction = 1
+	if now = start.Add(9 * time.Minute); b.PastStop() {
+		t.Error("a fraction of 1 fired before the whole budget: it names the very end, so the reserve is what stops the run")
+	}
+	if now = start.Add(10 * time.Minute); !b.PastStop() {
+		t.Error("a fraction of 1 never fired")
+	}
+
+	for _, f := range []float64{0, -1, math.NaN()} {
+		b.StopFraction = f
+		if now = start.Add(8*time.Minute - time.Second); b.PastStop() {
+			t.Errorf("fraction %v fired before the default's 8m", f)
+		}
+		if now = start.Add(8 * time.Minute); !b.PastStop() {
+			t.Errorf("fraction %v did not take the default", f)
+		}
+	}
+
+	// No time budget at all: no threshold. Every stage is already outside
+	// finalizeAt (Total 0 leaves nothing), which is the pre-existing reading;
+	// the stop must not add a second, blanket one.
+	b.StopFraction = 0
+	b.Total = 0
+	b.Reserve = 0
+	if now = start.Add(time.Hour); b.PastStop() {
+		t.Error("a run with no time budget stopped past a threshold it does not have")
+	}
+	if !b.Exhausted() {
+		t.Error("a run with no time budget is not exhausted")
 	}
 }
 

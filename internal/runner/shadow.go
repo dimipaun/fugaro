@@ -380,8 +380,10 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	// runner.go): the reason and the class that describes it are handed over by
 	// the same three-way choice, so an arm that was refused and then halted is
 	// classed as a halt and one the agent left empty-handed is `no_commits`.
-	ready, reason, class := Decide(records, sha, r.decidingReview(), pol, r.rec.OwnerDecisions)
+	decidedRound := r.decidingReview()
+	ready, reason, class := Decide(records, sha, decidedRound, pol, r.rec.OwnerDecisions)
 	r.rec.Tolerated = r.toleratedRecord(pol)
+	r.rec.Accepted = r.acceptedRecord(pol, decidedRound)
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
 	}

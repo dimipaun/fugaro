@@ -121,7 +121,7 @@ func TestDecideByMode(t *testing.T) {
 		if tc.verdict != "" {
 			last = &runstore.ReviewSummary{Round: tc.round, Verdict: tc.verdict, Findings: len(tc.findings)}
 		}
-		ready, reason, _ := Decide(tc.records, "abc", last, findingsPolicyOf(optedIn, tc.mode, tc.round, tc.findings), nil)
+		ready, reason, _ := Decide(tc.records, "abc", last, findingsPolicyOf(optedIn, tc.mode, tc.round, tc.findings, ""), nil)
 		if ready != tc.ready || reason != tc.reason {
 			t.Errorf("%s: Decide = %v %q, want %v %q", tc.name, ready, reason, tc.ready, tc.reason)
 		}
@@ -136,7 +136,7 @@ func TestDecideUnscoredFindingBlocksEveryMode(t *testing.T) {
 	pass := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}
 	last := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: 2}
 	for _, mode := range rigor.Modes {
-		ready, reason, _ := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(optedIn, mode, 2, []rigor.Score{unscored, small}), nil)
+		ready, reason, _ := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(optedIn, mode, 2, []rigor.Score{unscored, small}, ""), nil)
 		if ready || reason != "review round 2 still has 2 findings" {
 			t.Errorf("%s: an unscored finding was tolerated: Decide = %v %q", mode, ready, reason)
 		}
@@ -165,7 +165,7 @@ func TestDecideToleratesOnlyWhatTheRunCanFile(t *testing.T) {
 		{"a repository that configured critical", optedIn, rigor.Critical, false},
 		{"a repository that configured nothing", rigor.Config{}, rigor.Pro, false},
 	} {
-		ready, reason, _ := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(tc.cfg, tc.mode, 2, []rigor.Score{tiny}), nil)
+		ready, reason, _ := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(tc.cfg, tc.mode, 2, []rigor.Score{tiny}, ""), nil)
 		if ready != tc.tolerated {
 			t.Errorf("%s: Decide = %v %q, want tolerated %v", tc.name, ready, reason, tc.tolerated)
 			continue
@@ -190,8 +190,8 @@ func TestDecideBlocksAPolicyItCannotPlace(t *testing.T) {
 		name string
 		pol  FindingsPolicy
 	}{
-		{"a split from another round", findingsPolicyOf(optedIn, rigor.Startup, 1, []rigor.Score{tiny})},
-		{"a split from fewer findings than the record counts", findingsPolicyOf(optedIn, rigor.Startup, 2, nil)},
+		{"a split from another round", findingsPolicyOf(optedIn, rigor.Startup, 1, []rigor.Score{tiny}, "")},
+		{"a split from fewer findings than the record counts", findingsPolicyOf(optedIn, rigor.Startup, 2, nil, "")},
 	} {
 		ready, reason, _ := Decide([]verify.Record{pass}, "abc", last, tc.pol, nil)
 		if ready || reason != "review round 2 still has 1 finding" {
@@ -213,7 +213,7 @@ func TestToleratedRecordKeepsWhatTheModeLetThrough(t *testing.T) {
 		{Severity: "minor", Summary: "a long comment restates the function", Likelihood: 2, Impact: 2, FixCost: 1, Class: "cosmetic"},
 	}
 	r := &run{lastSenior: seniorRound{Round: 2, Findings: findings}}
-	pol := findingsPolicyOf(optedIn, rigor.Startup, 2, scoresOf(findings))
+	pol := findingsPolicyOf(optedIn, rigor.Startup, 2, scoresOf(findings), "")
 	got := r.toleratedRecord(pol)
 	want := []runstore.ToleratedFinding{
 		{Title: "the retry loop has no backoff", Label: rigor.Nit, Mode: rigor.Startup, Likelihood: 1, Impact: 3, FixCost: 2, Class: rigor.Correctness},
@@ -231,7 +231,7 @@ func TestToleratedRecordKeepsWhatTheModeLetThrough(t *testing.T) {
 	const secret = "super-secret-token"
 	r.addSecret(secret)
 	r.lastSenior.Findings = []Finding{{Summary: "the token " + secret + " is logged", Likelihood: 1, Impact: 1, FixCost: 1, Class: "correctness"}}
-	got = r.toleratedRecord(findingsPolicyOf(optedIn, rigor.Startup, 2, scoresOf(r.lastSenior.Findings)))
+	got = r.toleratedRecord(findingsPolicyOf(optedIn, rigor.Startup, 2, scoresOf(r.lastSenior.Findings), ""))
 	if got == nil || strings.Contains(got.Findings[0].Title, secret) {
 		t.Fatalf("toleratedRecord left a credential in the record: %+v", got)
 	}
@@ -247,7 +247,7 @@ func TestToleratedRecordKeepsWhatTheModeLetThrough(t *testing.T) {
 		{"poc files nothing so it tolerates nothing", optedIn, rigor.POC},
 		{"a repository that configured nothing", rigor.Config{}, rigor.Pro},
 	} {
-		if pol := findingsPolicyOf(tc.cfg, tc.mode, 2, scoresOf(findings)); r.toleratedRecord(pol) != nil {
+		if pol := findingsPolicyOf(tc.cfg, tc.mode, 2, scoresOf(findings), ""); r.toleratedRecord(pol) != nil {
 			t.Errorf("%s: the record kept findings the mode did not tolerate", tc.name)
 		}
 	}
@@ -518,7 +518,7 @@ func TestDecideRefusalsCarryTheirClass(t *testing.T) {
 	changes := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: 3}
 	// A round the mode tolerates is ready, not a refusal: it is the one row
 	// below that asserts a class of its own.
-	tolerated := findingsPolicyOf(optedIn, rigor.Startup, 2, []rigor.Score{tiny})
+	tolerated := findingsPolicyOf(optedIn, rigor.Startup, 2, []rigor.Score{tiny}, "")
 	cases := []struct {
 		name    string
 		records []verify.Record
