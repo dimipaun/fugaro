@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
@@ -819,20 +820,30 @@ func policyEmptyAllowListWarning() string {
 }
 
 // confirmEmptyAllowList is the confirmation every publish that would write an
-// allow-list admitting nothing takes before its first write: a person types the
-// project's name at a terminal, no flag stands in for it, and a session with no
-// terminal — a script's, or a coding agent's — is refused, so an empty
-// allow-list is never written on the operator's behalf by something that cannot
-// have read the consequence (#1674). The same wording is both the confirmation
-// and the refusal, so the two cannot drift.
+// allow-list admitting nothing takes before its first write: the warning below
+// is what a person reads, and what answers for the write is the run's own
+// answer to it (askConfirm) — nothing where --ask is not passed, the question
+// where it is. Nothing is typed under it (T7, docs/no-prompt-policy), and a
+// session with no terminal — a script's, or a coding agent's — is still
+// refused, so an empty allow-list is never written on the operator's behalf by
+// something that cannot have read the consequence (#1674). The same wording is
+// both the note and the refusal, so the two cannot drift.
 func confirmEmptyAllowList(cmd *cobra.Command, lc *localcfg.Config, agent string) error {
 	why := policyEmptyAllowListWarning()
-	// A coding agent's session is refused before any prompt: a terminal it can
-	// give itself (a pty wrapper) is not a person reading the consequence.
+	// A coding agent's session is refused before anything else: a terminal it
+	// can give itself (a pty wrapper) is not a person reading the consequence.
 	if agent != "" {
 		return userErr("%s", why)
 	}
-	return confirmTypedStrict(cmd, lc, why, why)
+	fmt.Fprintf(cmd.OutOrStdout(), "⚠ CONFIRM (project %s): %s\n", safetext.Field(lc.Name), why)
+	ok, err := askConfirm(cmd, "write an allow-list that admits no repository?")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return userErr("%s", why)
+	}
+	return nil
 }
 
 // reseedPolicyKeys writes the published node's policy values back into the local

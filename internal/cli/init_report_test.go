@@ -9,7 +9,6 @@ package cli
 // which is the same one (G11).
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -591,7 +590,7 @@ func TestTheRunsOwnWriterTakesTheLineInFlightDown(t *testing.T) {
 	if got := out.String(); !strings.HasSuffix(got, "\r\x1b[KType aurora: ") {
 		t.Errorf("the run's own line was written over the line in flight: %q", got)
 	}
-	if _, err := run.in.ReadString('\n'); err != nil {
+	if _, err := readConfirmLine(run.in); err != nil {
 		t.Fatal(err)
 	}
 	if got := out.String(); !strings.HasSuffix(got, "installation") {
@@ -741,7 +740,7 @@ func answerAQuestionMidStage(t *testing.T, run *initRun, out *syncBuf, head stri
 	// the run's reader, which production builds over that same stdin
 	// (newInitRun) and which a run this one drives is given (refreshOptions.in).
 	run.cmd.SetIn(answer)
-	run.in = bufio.NewReader(answerReader{r: run, in: answer})
+	run.in = answer
 	done := make(chan error, 1)
 	go func() { done <- ask() }()
 

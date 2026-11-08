@@ -132,8 +132,14 @@ func pairRunIn(t *testing.T, stdin string, args ...string) (string, string, erro
 // pairRunCtx is pairRunIn under a caller's context, which is the only way a
 // test can be the operator who interrupts: the command's context is the one
 // main.go cancels on a signal.
+//
+// The input is a terminal (fakeTerminal): the code is read as a value at the
+// operator's own terminal (readValue, D1540), so a test that puts the code on
+// the reader below is the operator typing it there. The one test that has no
+// terminal says so itself (noTerminal, after this).
 func pairRunCtx(t *testing.T, ctx context.Context, stdin string, args ...string) (string, string, error) {
 	t.Helper()
+	fakeTerminal(t)
 	root := &cobra.Command{Use: "fugaro", SilenceUsage: true, SilenceErrors: true}
 	root.AddCommand(newPairCmd())
 	var out, errOut bytes.Buffer
@@ -576,45 +582,30 @@ func TestPairRefusalCodesNameTheCase(t *testing.T) {
 	}
 }
 
-// pairTTYReader is a terminal that fails the test when it is read. The two
-// seams below are different failures and both are needed: stdinIsTerminal is
-// the question "is this a terminal", which a --json pairing that asked it
-// would hang on, and this is the read itself, which catches the path that
-// reaches for the terminal without asking — the one that would sit on a
-// prompt nobody can see. The code step's reader is stdin in --json and
-// pairTerminal's otherwise, so pointing pairTerminal here is what makes the
-// test able to fail.
-type pairTTYReader struct{ t *testing.T }
-
-func (r pairTTYReader) Read([]byte) (int, error) {
-	r.t.Errorf("--json read the terminal")
-	return 0, io.EOF
-}
-
-// TestPairJSONNeverReadsTTY holds --json to the rule the console depends on:
-// the mode asks no terminal anything and writes no prompt — the code it needs
-// comes down the stdin line the caller handed it, both for the code step and
-// for the key that precedes it.
-func TestPairJSONNeverReadsTTY(t *testing.T) {
+// TestPairWithoutATerminalRefusesAndReadsNothing: the code is a value, and a
+// value is read at the operator's own terminal and nowhere else (readValue,
+// D1540). A pairing whose input is a pipe refuses at once, naming what it
+// needs, rather than reading the line a caller handed it — which is where the
+// code used to come from, and which is why the harness above says its readers
+// are terminals (pairRunCtx) and this one says there is none.
+func TestPairWithoutATerminalRefusesAndReadsNothing(t *testing.T) {
 	f := newPairFixture(t, pairMe)
-	prev, prevTerminal := stdinIsTerminal, pairTerminal
-	stdinIsTerminal = func(io.Reader) bool {
-		t.Fatal("--json opened the terminal")
-		return false
+	uid := pairFixedRand(t)
+	f.pairSeedRequest(uid, pairKey)
+	noTerminal(t)
+	out, _, err := pairRunIn(t, token.Fingerprint(pairKeyBytes), "--json")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("a pairing with no terminal: err = %v, want exit 1", err)
 	}
-	pairTerminal = func(*cobra.Command) io.Reader { return pairTTYReader{t} }
-	t.Cleanup(func() { stdinIsTerminal, pairTerminal = prev, prevTerminal })
-	out, _, err := pairPair(t, f, token.Fingerprint(pairKeyBytes), "--json")
-	if err != nil {
-		t.Fatal(err)
+	if !strings.Contains(err.Error(), "terminal") {
+		t.Errorf("the refusal does not name the terminal it needs: %v", err)
 	}
 	events := pairLines(t, out)
-	if len(events) != 4 || events[2].Event != pairEventCode || events[3].Event != pairEventDone {
-		t.Fatalf("events = %v, want the code step and the done event after the wait", events)
+	if len(events) != 2 || events[0].Event != pairEventCode ||
+		events[1].Event != pairEventRefused || events[1].Code != pairRefusedCodeMissing {
+		t.Fatalf("events = %v, want the code event and a refusal of the missing code", events)
 	}
-	if strings.Contains(out, "type that code") {
-		t.Fatalf("--json wrote a prompt:\n%s", out)
-	}
+	f.pairNoSideEffect(t, uid)
 }
 
 func TestPairJSONRefusalExitCodes(t *testing.T) {

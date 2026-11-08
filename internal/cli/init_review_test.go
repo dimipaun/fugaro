@@ -44,7 +44,7 @@ func (c condition) reviewRun(t *testing.T, stdin string, owned bool) (r *initRun
 
 func nextLine(t *testing.T, r *initRun) string {
 	t.Helper()
-	l, _ := r.in.ReadString('\n')
+	l, _ := readConfirmLine(r.in)
 	return strings.TrimSpace(l)
 }
 
