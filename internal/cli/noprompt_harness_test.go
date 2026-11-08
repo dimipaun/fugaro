@@ -85,28 +85,40 @@ import (
 // one that does not is the failure this file is about.
 const closedStdinDeadline = 10 * time.Second
 
-// closedStdinQuestion matches the three shapes a run prints when it asks a
-// person something: the ⚠ CONFIRM banner every typed step shows before it reads
-// the project's name (confirmTyped, confirmTypedStrict, confirmBuild,
-// confirmRemoval, the initflow steps, managed apply), the typed prompt line
-// itself, and the y/N question the other half of the same family prints with no
-// banner at all (askConfirm, confirmSettingsWrite, the two "Write this to …?"
-// steps, restore). A value's prompt — readValue's "Type the billing account
-// ID: " — is the same shape as the typed one and is matched too, which is
-// deliberate: it is only printed at a terminal, so a leaf that reaches it here
-// has found a way to ask where nobody can answer.
+// closedStdinQuestion matches what a run prints when it asks a person
+// something. There are two readings in it, and between them they cover every
+// prompt the tree writes.
 //
-// Each one reads the whole run, not its end, because a run goes on after it
-// asks: the refusal an ended stdin earns, the error cobra prints, whatever
-// comes next. The banner is matched anywhere. The typed prompt is a line that
-// ends in its own colon, and `(?m)` is what makes that `$` the end of a line
-// rather than the end of the run — without it the same prompt was caught when
-// it was the last thing a run printed and missed when one line followed it.
-// The y/N shape is not anchored even to a line, because the print-then-refuse
-// ordering it guards against puts the refusal on the prompt's own line, and
-// the five prints above are the only writers of the bracketed form, so it is a
-// question wherever it appears.
-var closedStdinQuestion = regexp.MustCompile(`(?m)⚠ CONFIRM|Type [^\n]*: $|\[y/N\]:`)
+// The ⚠ CONFIRM banner is the first: every typed step prints it before it reads
+// the project's name (confirmTyped, confirmTypedStrict, confirmBuild,
+// confirmRemoval, the initflow steps, managed apply). It is matched anywhere,
+// because it is a line of its own and the question comes after it.
+//
+// The second reading is the prompt line itself, and what every prompt in this
+// tree has in common is that its line ends in its own colon and a space. That
+// is the whole of it — the typed confirmations ("Type %s to confirm: "), the
+// setup wizard's answers (promptChoice's "%s [%s]: " and its " (or %s: %s)"
+// form, and the plain "%s: " when there is no default: the GCP project, the
+// billing account, the GitHub App ID, the region, the onboarding question),
+// initsecrets' "Paste the private key … then press Enter: ", pair's lower-case
+// "type that code: ", the y/N questions ("Write this to %s? [y/N]: "), and
+// readValue's value prompt ("Type the billing account ID: ") — and matching
+// the shape rather than the wording is what keeps a prompt this file has never
+// heard of from passing green. `(?m)` is what makes the `$` the end of a line
+// rather than the end of the run: a run goes on after it asks — with the
+// refusal an ended stdin earns, with the error cobra prints — and without the
+// flag the only prompt caught was the last thing a run printed.
+//
+// The y/N question is read a second time, unanchored, because the
+// print-then-refuse ordering it guards against puts the refusal on the
+// prompt's own line. The five prints of the bracketed form are its only
+// writers, so it is a question wherever it appears.
+//
+// Reading a line that ends in ": " as a question is deliberately generous: no
+// leaf of the clean tree prints one (TestEveryCommandRunsWithClosedStdin is
+// what says so), and a false positive is a failure that names the run and
+// prints its output, which is a sentence away from being read.
+var closedStdinQuestion = regexp.MustCompile(`(?m)⚠ CONFIRM|: $|\[y/N\]:`)
 
 // closedStdinFixture is one leaf's run: the arguments that put it on the path
 // where it would ask somebody something, and the sentence the run must still
@@ -779,6 +791,43 @@ func TestClosedStdinHarnessSeesAQuestion(t *testing.T) {
 			want: true,
 		},
 		{
+			// The wizard's own question, which says neither "Type" nor "[y/N]":
+			// promptChoice prints the label with the default it would take in
+			// brackets, and a leaf that reached it and read the ended stdin
+			// would answer it with the default rather than with a person.
+			name: "the setup wizard's answer, with its default in brackets",
+			out:  "GCP project ID [aurora]: ",
+			want: true,
+		},
+		{
+			// The same line with the second answer promptChoice offers: the
+			// brackets are not at the end here, so this is the case that says
+			// the reading is the line's ending and not the bracket.
+			name: "the wizard's question with the alternative answer after it",
+			out:  "GCP project ID [aurora] (or 123456: create that project instead): ",
+			want: true,
+		},
+		{
+			// promptChoice with no default prints no bracket at all: the GitHub
+			// App ID is asked this way on a repository that has no stored one.
+			name: "the wizard's question with no default",
+			out:  "GitHub App ID for acme/app (a number, not a secret; on the App's settings page): ",
+			want: true,
+		},
+		{
+			// The hidden value prompt, which is a sentence rather than a label.
+			name: "the hidden value prompt",
+			out:  "Paste the private key for fugaro-app (input hidden), from its -----BEGIN line to its -----END line, then press Enter: ",
+			want: true,
+		},
+		{
+			// Pairing's own question, in lower case, on the line after the code
+			// the phone shows.
+			name: "the pairing code prompt",
+			out:  "the phone shows AB-CD-EF\ntype that code: ",
+			want: true,
+		},
+		{
 			name: "the refusal that replaces the prompt",
 			out:  "the typed confirmation of this step needs a real terminal: run it in your own terminal window, not through a coding agent or a pipe\n",
 			want: false,
@@ -786,6 +835,14 @@ func TestClosedStdinHarnessSeesAQuestion(t *testing.T) {
 		{
 			name: "a note that merely mentions a prompt",
 			out:  "the value is empty; pipe it in on stdin or paste it at the prompt\n",
+			want: false,
+		},
+		{
+			// A colon that is not a question: no space, so no prompt. The help
+			// cobra and these commands print is full of these, and reading them
+			// as questions would make the harness cry wolf on every leaf.
+			name: "a heading that ends in a bare colon",
+			out:  "Usage:\n  fugaro version [flags]\n\nFlags:\n  -h, --help   help for version\n",
 			want: false,
 		},
 	} {
