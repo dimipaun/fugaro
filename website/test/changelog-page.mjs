@@ -195,8 +195,8 @@ function build() {
       const name = path.basename(src)
       const parent = path.basename(path.dirname(src))
       if (path.dirname(src) === REPO && SKIP.has(name)) return false
-      // `plugin/skills` and `plugin/.claude-plugin` are the parts of `plugin/` a build
-      // reads: the slider's "See it" panel quotes the skills (website/test/lib/build.mjs).
+      // `plugin/skills` is the part of `plugin/` a build reads: the slider's "See it" panel
+      // quotes the skills (website/test/lib/build.mjs).
       if (parent === 'plugin' && !READ_UNDER_PLUGIN.has(name)) return false
       if (parent === 'website' && SKIP_UNDER_WEBSITE.has(name)) return false
       return true
@@ -939,9 +939,10 @@ test('no entry carries a state marker: the page renders releases, and nothing el
   // A release file written ahead of its release is not an entry at all (`src/lib/changelog.mjs`
   // leaves it out), so the page has no "not yet released" state to render and no entry may
   // carry one: the marker this page used to print for the newest file — above the plugin's
-  // version — could never be set, because the release process records the CLI stream's current
-  // version and bumps the plugin in the same release commit. An entry here is a release that
-  // happened, and a page that marked one differs from the three release files it renders.
+  // version — needs an entry above the CLI stream's current version, and the filter keeps none.
+  // (It did fire before the filter: `v0.22.0` was an entry marked unpublished while the plugin
+  // was at 0.21.0.) An entry here is a release that happened, and a page that marked one
+  // differs from the three release files it renders.
   assert.ok(
     !html.includes('not-yet-released'),
     'the page renders a "not yet released" marker, and every entry it renders is a release: a file ahead of the CLI stream’s current version is not rendered at all (src/lib/changelog.mjs)',

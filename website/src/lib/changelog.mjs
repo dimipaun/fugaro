@@ -23,10 +23,10 @@
 // the *next* release, written ahead of it (docs/releases/README.md asks for exactly that: the
 // notes land in the pull request that makes the change). Such a file is a draft, and this module
 // leaves it out rather than rendering it or asking it for a summary line — which is also why an
-// entry carries no published/unpublished flag: the release process records `current` and bumps
-// the plugin's version in the same commit (`scripts/release.sh`'s "release: vX.Y.Z" PR), so
-// every file the rule below keeps is a release that has shipped, and the flag the page used to
-// carry for the newest one could never be set (see the entries' note below).
+// entry carries no published/unpublished flag: the flag said a file was above the version it was
+// held to, and every entry here is at or below `current`, so none is left to carry it. (The rule
+// before this filter held files to the plugin's version, and there the flag did fire: `v0.22.0`
+// came back marked unpublished while the plugin was at 0.21.0.)
 //
 // The version is a file in this repository rather than a tag, which is deliberate: the deploy
 // build checks out without tags, and a changelog that read `git tag --list` printed "not yet

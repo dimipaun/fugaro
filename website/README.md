@@ -261,8 +261,9 @@ added or removed without this sentence moving fails there:
   own `dist/` is held to the ceilings below like any other artifact.
 
   **No page of the site depends on the checkout's git state any more** (the owner's brief of
-  2026-10-19): which releases are published comes from `plugin/.claude-plugin/plugin.json`'s
-  version rather than from a tag, so the two checkout shapes above are one build now — the same
+  2026-10-19): which releases are published comes from a version recorded in a file — the CLI
+  stream's `current` in `docs/release-streams.yaml`, and the plugin's in `plugin.json` until
+  D1649 — rather than from a tag, so the two checkout shapes above are one build now — the same
   commit builds to **1,512,120 bytes in a checkout with no tags** and to **1,512,120 bytes with the
   tags this repository's own clone carries**. `test/budget.mjs` reads that pair **here and
   nowhere else** (a figure copied into the gate's own comments or another document is a second
@@ -426,7 +427,7 @@ added or removed without this sentence moving fails there:
     each release now carries its product summary line and wraps the release file's own
     Highlights in a `<details>` block, so a summary and a notes label per release arrive, and
     the page no longer prints a "not yet released" label for every release in the checkout with
-    no tags (which releases are published is the plugin's version now) or the "newest releases"
+    no tags (which releases are published was the plugin's version then) or the "newest releases"
     block the summaries replaced. The page weight and the script did not move: the changelog
     page is not the heaviest page, and nothing outside it changed. It is also the round that
     made the clone figure the no-tags figure (above).
@@ -1818,13 +1819,13 @@ package manifests, so no version is written into the page.
 
 **Which releases are published is a file in this repository, not a property of the
 checkout** (the owner's brief of 2026-10-19: *"Changelog: why do I see not yet released?"*).
-A release file is published when its version is at or below the version in
-`plugin/.claude-plugin/plugin.json`. The bump lands on `main` before the tag does, so on
-`main` the manifest names the newest released version and everything up to it reads as
-released; a release file written ahead of its bump carries the "not yet released" marker, and
-it is the only thing on the page that says so. `git tag --list` was the rule until this
-change, and the deploy build checks out without tags, which printed the marker under every
-release.
+A release file is published when its version is at or below the CLI stream's `current` version
+in `docs/release-streams.yaml`; one above it is the next release's notes, written ahead of
+their release, and it is not rendered and not asked for anything. `git tag --list` was the
+rule until this change, and the deploy build checks out without tags, which printed "not yet
+released" under every release; `plugin/.claude-plugin/plugin.json`'s version was the rule
+after it, and the site no longer reads the manifest at all — the stream's `current` is the
+catalogue's own statement of the release the CLI is at.
 
 **The release files stay the operator's document.** Their Highlights bullets are written for
 whoever runs Fugaro, so they are rendered as they are, inside a `<details>` block that opens
@@ -1833,13 +1834,12 @@ release file with no entry in `data/release-summaries.yaml` stops the build nami
 rather than rendering an entry with nothing under its heading. **That holds for every release
 file, and not only for the three the page renders** (D1647): the page asks for a summary line
 for every entry the generator returns, before it makes its cut, so an older release losing its
-line stops the build rather than going unmentioned. **A release file is a file at or below the
-CLI stream's `current` version in `docs/release-streams.yaml`**, and one above it is the next
-release's notes, written ahead of their release: the generator leaves those out, so they are
-neither rendered nor asked for a summary line, and no entry carries a "not yet released"
-state (D1649 — the flag and its marker went with the filter, because the release process
-records `current` and bumps the plugin in the same commit, so an entry could never be the file
-ahead of it). `website/test/changelog.mjs` holds the generator to the files, and
+line stops the build rather than going unmentioned. **The release set is the files at or below
+the CLI stream's `current` version** (above): the next release's notes are neither rendered nor
+asked for a summary line, and no entry carries a "not yet released" state (D1649 — the flag and
+its marker went with the filter, because with everything above `current` left out no entry is
+left for the marker to be set on. The rule before the filter did set it, on `v0.22.0` while the
+plugin's version was `0.21.0`). `website/test/changelog.mjs` holds the generator to the files, and
 `website/test/changelog-page.mjs` holds the page to both sources: every release file has a
 summary entry and none is empty, the three entries the page renders are the newest three and
 each one renders the summary its own entry in the data file carries, and the page writes only
@@ -2201,7 +2201,7 @@ website/
   design-ref/zoom-levels/*.dc.html # the four owner-approved zoom boards, redrawn as the site's SVG: the source of the levels' words (2026-10-22)
   data/console-sha256sums.txt      # the console release's own sums file, copied verbatim
   content/                         # generated, do not edit (see the table above)
-  src/lib/changelog.mjs            # reads docs/releases/ and the plugin's version at build time
+  src/lib/changelog.mjs            # reads docs/releases/ and the CLI stream's version at build time
   src/layouts/, src/components/, src/pages/, src/styles/   # W1.2-W1.12
   public/                          # icons, logo.png, site.webmanifest (scripts/gen-brand-icons.py)
   test/*.mjs                       # every one of them runs under `npm run check`

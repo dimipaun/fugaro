@@ -15,7 +15,7 @@
  * — printed as the heading element it is, so a section the format allows is a section the page
  * renders.
  *
- * Four decisions are worth stating rather than leaving in the code:
+ * Five decisions are worth stating rather than leaving in the code:
  *
  *   1. **No date.** The release files carry no date, the site's build is network-free, and
  *      the date a reader wants is the one the GitHub release states, so each heading links
@@ -43,9 +43,9 @@
  *      has not reached: `src/lib/changelog.mjs` leaves those out — they are drafts, and the page
  *      receives only releases. The entry used to print "not yet released" for one written ahead
  *      of the plugin's version (the owner's brief of 2026-10-19); that marker went with the
- *      filter, because the release process records the stream's `current` version and bumps the
- *      plugin in the same commit (`scripts/release.sh`), so an entry could never carry it. An
- *      entry here is a release that happened.
+ *      filter, because a marker for a file above `current` needs an entry above it and the
+ *      filter keeps none (the plugin rule did render it: `v0.22.0` above the plugin's 0.21.0).
+ *      An entry here is a release that happened.
  *
  * The notes block is a `<details>`, so it opens and closes with no JavaScript: the site's
  * pages are readable and usable with the one script off (D183).
