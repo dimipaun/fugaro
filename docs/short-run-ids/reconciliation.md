@@ -60,7 +60,7 @@ The spec has four parts: show only the last four characters of a run's ID (1), a
 
 ### Resolutions (one defensible answer, not asked)
 
-- **D1705. What stays full.** The branch name, the hidden PR marker, bucket paths, `task.json`, `--run-id` and `--retry` idempotency, `--json` everywhere, `filed_in`, the details views (`runs show`, the console Run screen's detail section) and an explicit "copy ID" action (F9, F8). A test per item pins that it stays whole.
+- **D1705. What stays full.** The branch name, the hidden PR marker, bucket paths, `task.json`, `--run-id` and `--retry` idempotency, `--json` everywhere, `filed_in`, the details views (the head of `diagnose`, the console Run screen's detail section) and an explicit "copy ID" action (F9, F8). A test per item pins that it stays whole.
 - **D1706. One rule, one helper per language** (F2): `task.ShortRun` and `task.DisplayRuns` in Go; the console helper in `console/src/shared`. The collision extension is computed over the rows a renderer prints.
 - **D1707. The console sends full IDs only.** The live row keeps the full ID in an attribute from the sanitized field; the door and the copy action read it (F8).
 - **D1708. No operator step.** Nothing is deployed or migrated, so `fugaro update` needs no new behaviour and the release's `### For operators` is the usual "run `fugaro update`". The plugin skills change in the same PR as the CLI (CLAUDE.md: a CLI change that touches a documented command changes the skill).
