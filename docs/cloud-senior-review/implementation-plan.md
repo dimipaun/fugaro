@@ -1214,25 +1214,37 @@ that is still the check's step 3.
   review launch reaches, since `spec.Mode` is what makes one and only `fugaro review` writes it
   (`internal/cli/review.go:153`; `run`'s `--pr` path is a different launch, which is why the refusal
   names it as the way to review meanwhile rather than as a spelling of the same gate). **The judge is the
-  installation's own base image**, and that is not a proxy by choice: the launcher can ask the service
-  nothing (D143, `reviewJobAdmitted`'s comment), while `fugaro update` pins `base_images.base` at the
-  release it runs and resolves and pins the service's image in the same run, so a base image below this
-  value is an installation whose service is below it too; a base image that carries no release, or none
-  at all, only warns (`releaseOf`'s rule). The refusal names `fugaro update` as the whole upgrade, and it
-  names the one way to review before that update has run — `fugaro run --pr N --recipe review-only`,
+  installation's own record of that service**, and that is not a proxy by choice: the launcher can ask the
+  service nothing (D143, `reviewJobAdmitted`'s comment), while every `fugaro update` writes the
+  installation root's `terraform.tfvars.json` with the service's image in it — `pinCredentialsImage`,
+  whether that run deploys the service or carries it forward — so the record names the release the run's
+  account actually comes from (`installationServiceRelease`); a record naming no image, or one whose
+  reference carries no release, only warns (`installationServiceUnknown`). **That record and not
+  `base_images.base`, which is what the gate was first written on** (the fourth review round's finding
+  2): `imagesStage.kinds` names `base` only for `--base`, for a checkout's workflows or for a catalog
+  build, and for nothing else, and `record` never re-pins a custom `--base-image` ref — so the ordinary
+  update, run from a directory that is not a repository, moves the service and leaves the base pin
+  exactly where the last in-checkout update put it, and a gate on the pin refuses every review on an
+  installation that same update has already converged, with `fugaro update` as a remedy that changes
+  nothing. That is the loop CLAUDE.md's HARD RULE forbids, and
+  `TestUpdateOutsideACheckoutConvergesTheReviewAdmissionGate` is the run that holds it shut: an
+  installation whose service record predates the class, with an older base pin to match, is refused
+  before one ordinary update and admitted after it, with the pin asserted unmoved. The refusal names
+  `fugaro update` as the whole upgrade, and it names the one way to review before that update has run — `fugaro run --pr N --recipe review-only`,
   which launches the repository's ordinary coding job, whose container carries its own account (only
   `fugaro review` sets `spec.Mode`, so this spelling never enters the `mode: review` block). It is **not**
   `reviewJobSince`'s `fugaro image refresh`, which moves no credentials service, and that is why this is a
   second constant rather than that value raised. Tests:
   `TestRecipesSkewRefusesAReviewServiceOlderThanTheClass` (0.20.x refused, 0.21.0 admitted, an unreadable
-  or absent base image warned about),
+  or absent service record warned about), `TestRecipesSkewAdmitsACurrentServiceBesideAnOlderBasePin` (the
+  older pin beside a current service, admitted),
   `TestReviewRefusesAnInstallationWhoseServicePredatesTheClass` (the command's own refusal, on the
-  fixture at `reviewJobSince` — the installation between the upgrade and the update the gate exists for),
-  `TestReviewAdmissionSinceHasAReleaseBullet` for the checklist bullet, and the review fixtures moved to
-  `reviewAdmissionSince` (`newReviewFixtureAt` names the release, since `setBaseImage` rewrites the pin
-  the fixture was built with). `docs/recipes.md`'s review paragraph, `plugin/skills/working/SKILL.md`'s
-  sentence about a service that does not admit the caller, and the rigor-modes census row that counts the
-  file's `…Since` constants (29, not 28) follow the same commit.
+  fixture whose service record is the older release — the installation between the upgrade and the update
+  the gate exists for), `TestReviewAdmissionSinceHasAReleaseBullet` for the checklist bullet, and the
+  review fixtures moved to `reviewAdmissionSince` (`newReviewFixtureAt` writes the installation's service
+  record under the test's own state home). `docs/recipes.md`'s review paragraph,
+  `plugin/skills/working/SKILL.md`'s sentence about a service that does not admit the caller, and the
+  rigor-modes census row that counts the file's `…Since` constants (29, not 28) follow the same commit.
 - **Interfaces:** `reviewJobAdmitted` (`internal/cli/review.go:55`) is `true`, with its comment rewritten
   to say **what made it true** — C3.9's merge, CSRW1's and CSRW2's, the owner's ruling of 2026-11-07 and
   the release the variant deploys in — rather than deleted: the next reader's question is why a constant
