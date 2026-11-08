@@ -1,6 +1,7 @@
 package runner_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -177,4 +178,62 @@ func TestStopStartupWithLevel3IsNoStricterThanWithoutIt(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestStopAcceptanceIsFiledOnThePullRequestAndTheReport is the filing half of
+// the ruling (item 3) at a real run's own output: the findings a stop accepted
+// are filed exactly as a tolerated round's are — the pull request's status line
+// and the report's table, each with the mode and the finding's own score — under
+// the words that say which of the two they are. The record's accepted block is
+// what both readers key on, so a run that stopped is never read as a run whose
+// review waved its findings through.
+func TestStopAcceptanceIsFiledOnThePullRequestAndTheReport(t *testing.T) {
+	h := newHarness(t, modeCfg(t, "startup", 1, ""), nil)
+	// Above Startup's floor and below the override: a finding the mode buys a
+	// fix round for while it has one, and one its stop still accepts. The round
+	// is the run's last, so no fix is bought and finalize decides on what this
+	// round left.
+	blocking := reviewScored("changes", map[string]any{
+		"summary": "unbounded retry loop in the fetch path", "likelihood": 3, "impact": 3, "fix_cost": 2, "class": "correctness",
+	})
+	rec, err := h.run(t, implement("feature"), blocking)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("outcome = %s (reason %q), want ready: startup's stop accepts this finding", rec.Outcome, rec.Reason)
+	}
+	if want := "review round 1 left 1 finding, accepted at startup (rounds spent)"; rec.Reason != want {
+		t.Errorf("reason = %q, want %q", rec.Reason, want)
+	}
+	if ac := rec.Accepted; ac == nil || ac.Mode != rigor.Startup || ac.Round != 1 || ac.At != runstore.StopRoundsSpent {
+		t.Fatalf("the record's accepted block = %+v, want the round the stop ended on and the half that ended it", ac)
+	}
+	pr := onlyPR(t, h.provider)
+	if pr.Draft {
+		t.Errorf("the pull request is a draft: %+v", pr)
+	}
+	// The status line is the tolerated line's own words with the stop's in
+	// place of the tolerance's: the mode, the half, and the labels the round's
+	// findings scored.
+	if !strings.Contains(pr.Body, ", accepted at startup (rounds spent) (medium)") {
+		t.Errorf("the status section does not file the stop's round as accepted:\n%s", pr.Body)
+	}
+	raw, err := h.bucket.ReadAll(context.Background(), h.store.Prefix()+"report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+	for _, want := range []string{
+		"#### Accepted at the stop",
+		"The run's review ended at the stop rule's rounds spent and the mode startup accepts these findings at the stop: they are left for a follow-up rather than fixed.",
+		"| medium | 3 | 3 | 2 | correctness | startup | `unbounded retry loop in the fetch path` |",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the run's report lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "#### Tolerated") {
+		t.Errorf("the run's report files the stop's findings under the tolerance heading, which says a review let them go:\n%s", got)
+	}
 }
