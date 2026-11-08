@@ -1430,18 +1430,30 @@ const (
 	endOther         = "other"
 )
 
-// The two HTTP/2 messages carry an error code, and each is read for its own
-// and for nothing else: the code position holds ErrCode.String, a name from
-// the transport's fixed list (an unregistered code prints as "unknown error
-// code 0x..", which neither matches and so leaves out), and every other word
-// the message says -- the GOAWAY's `debug` data above all -- is the peer's
-// text and is never taken. The stream message is anchored on its own fixed
-// opening, so a word shaped like a code further along it (in the cause the
-// transport appends) cannot be mistaken for one.
+// The two HTTP/2 codes, and each is read for its own and for nothing else:
+// the code position holds ErrCode.String, a name from the transport's fixed
+// list (an unregistered code prints as "unknown error code 0x..", which
+// neither matches and so leaves out), and every other word the message says
+// -- the GOAWAY's `debug` data above all -- is the peer's text and is never
+// taken. A GOAWAY spells its code two ways, "ErrCode=" in the error a body
+// read fails with and "ErrCode:" in the message a stream is aborted with; the
+// equals sign comes first here, so a `debug` carrying that spelling cannot
+// displace the transport's own. The stream message is anchored on its own
+// fixed opening, so a word shaped like a code further along it (in the cause
+// the transport appends) cannot be mistaken for one.
 var (
-	goAwayCodeRE = regexp.MustCompile(`ErrCode=([A-Z0-9_]{1,32})`)
+	goAwayCodeRE = regexp.MustCompile(`ErrCode[=:]([A-Z0-9_]{1,32})`)
 	streamCodeRE = regexp.MustCompile(`^stream error: stream ID [0-9]+; ([A-Z0-9_]{1,32})`)
 )
+
+// h2Code is the message's code as the attribute carries it, ":" and all, or
+// "" when the message names none.
+func h2Code(re *regexp.Regexp, s string) string {
+	if m := re.FindStringSubmatch(s); m != nil {
+		return ":" + m[1]
+	}
+	return ""
+}
 
 // streamEndError is what the read or the write that ended a streamed
 // response failed with, from the closed set above: "" when neither failed,
@@ -1471,17 +1483,18 @@ func streamEndError(e pumpEnd) string {
 		return endReset
 	}
 	s := e.err.Error()
-	if strings.HasPrefix(s, "http2: server sent GOAWAY") {
-		if m := goAwayCodeRE.FindStringSubmatch(s); m != nil {
-			return endGoAway + ":" + m[1]
-		}
-		return endGoAway
-	}
-	if m := streamCodeRE.FindStringSubmatch(s); m != nil {
-		return endStreamError + ":" + m[1]
-	}
-	if strings.HasPrefix(s, "stream error: stream ID ") {
-		return endStreamError
+	switch {
+	// The HTTP/2 transport's own words, and the openings it fixes them to:
+	// it is bundled unexported (net/http/internal/http2), so its errors
+	// cannot be matched as values and are recognized here as the text it
+	// writes. All three of its GOAWAY messages are this one case -- a server
+	// restarting or shutting down sends the frame and the body read fails
+	// with whichever of them the transport was in -- and the frame's word is
+	// the transport's, not the peer's, which is why it may be matched at all.
+	case strings.HasPrefix(s, "http2:") && strings.Contains(s, "GOAWAY"):
+		return endGoAway + h2Code(goAwayCodeRE, s)
+	case strings.HasPrefix(s, "stream error: stream ID "):
+		return endStreamError + h2Code(streamCodeRE, s)
 	}
 	if e.writeErr {
 		return endWriteFailed

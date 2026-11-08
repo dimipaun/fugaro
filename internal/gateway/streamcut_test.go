@@ -161,15 +161,31 @@ func TestClientCutStreamIsNotCounted(t *testing.T) {
 	}
 	// Which read or write failed here is the race this test starts on
 	// purpose -- the agent's cancel reaches the upstream read and this
-	// gateway's write at once -- so the value is not pinned, only that it
-	// is one of the closed set's words and not a sentence.
-	e, ok := line["error"].(string)
-	if !ok || e == "" {
-		t.Errorf("the line carries no failure kind: %v", line)
+	// gateway's write at once -- so the value is not pinned, only that it is
+	// one of the closed set's names: a sentence there, or anything the
+	// transport wrote, would mean the guard had let it through.
+	if e, ok := line["error"].(string); !ok || !streamEndName(e) {
+		t.Errorf("error = %v, want a name from the closed set", line["error"])
 	}
-	if strings.ContainsAny(e, " \n\r\t") {
-		t.Errorf("error = %q, want a name from the closed set, not a sentence", e)
+}
+
+// streamEndName reports whether e is one of the names the stream-cut line's
+// `error` attribute may hold: the closed set, the two HTTP/2 forms with the
+// peer's code appended, and the empty value a body that simply ended at an
+// event boundary leaves. The set is a contract -- a reader tells a lost
+// stream from a cancelled one by these words -- so the test names every
+// member rather than accepting any word that looks like one.
+func streamEndName(e string) bool {
+	switch e {
+	case "", endUnexpectedEOF, endCanceled, endDeadline, endReset, endWriteFailed, endOther:
+		return true
 	}
+	for _, coded := range []string{endGoAway, endStreamError} {
+		if code, ok := strings.CutPrefix(e, coded+":"); ok {
+			return code != "" && !strings.ContainsAny(code, " \n\r\t")
+		}
+	}
+	return false
 }
 
 // A whole stream is not a cut one: the count stays 0 and no warning is
@@ -343,6 +359,11 @@ func TestStreamEndErrorIsAClosedSet(t *testing.T) {
 		{"the peer's end is gone", pumpEnd{writeErr: true, err: syscall.EPIPE}, endReset},
 		{"a GOAWAY keeps its code and drops its debug", pumpEnd{readErr: true, err: goAway}, endGoAway + ":ENHANCE_YOUR_CALM"},
 		{"a GOAWAY with no code the transport knows", pumpEnd{readErr: true, err: errors.New("http2: server sent GOAWAY and closed the connection; LastStreamID=1, ErrCode=unknown error code 0x1f, debug=\"\"")}, endGoAway},
+		// A server that shuts down sends the frame while the stream is in
+		// flight, and the transport then fails the read with one of these two
+		// messages instead: same peer, same act, so the same name.
+		{"the transport's graceful shutdown GOAWAY", pumpEnd{readErr: true, err: errors.New("http2: Transport received Server's graceful shutdown GOAWAY")}, endGoAway},
+		{"a GOAWAY the transport aborted the stream with", pumpEnd{readErr: true, err: errors.New("http2: Transport received GOAWAY from server ErrCode:PROTOCOL_ERROR")}, endGoAway + ":PROTOCOL_ERROR"},
 		{"a stream error and its code", pumpEnd{readErr: true, err: errors.New("stream error: stream ID 5; REFUSED_STREAM")}, endStreamError + ":REFUSED_STREAM"},
 		{"a stream error whose cause is the peer's text", pumpEnd{readErr: true, err: errors.New("stream error: stream ID 5; PROTOCOL_ERROR; " + providerKey)}, endStreamError + ":PROTOCOL_ERROR"},
 		{"a write nobody named", pumpEnd{writeErr: true, err: errors.New("write: " + providerKey)}, endWriteFailed},
