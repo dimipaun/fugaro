@@ -24,11 +24,14 @@ is `e7193fde` (#1904); **R13** — `jobs.reports.paused` and `jobs.catalog_check
 project layer — is `1ad2d314` (#1858); and **R6** — the two ends of a learning, in `CONTRIBUTING.md`
 and §7 of the working skill's reference — lands with this change. **R5 is the owner's**, at their
 terminal, and has not been run (Check 136, **NOT RUN**). **R7, R10, R11, R12, R8 and R9 are written
-and not built**, and two of them are held rather than unstarted: **R12's Terraform waits on Check
+and not built**, and three of them are held rather than unstarted: **R12's Terraform waits on Check
 340**, whose script is in the tree (`scripts/live-checks/check340.sh`, `88c02cdd`, #1866) with two
 aborted attempts and nothing settled, so the job, its account, its grants and its Schedules are
-neither planned nor created; and **R9 waits on the designated-repo design item** (E6,
-[implementation-plan.md](implementation-plan.md), Open items). **So nothing of the reports job is in
+neither planned nor created; **R9 waits on the designated-repo design item** (E6,
+[implementation-plan.md](implementation-plan.md), Open items); and **R10 is held in one half** — its
+write into `reports/` waits on **Open item 5**, the grant that would make a launcher a second writer
+([implementation-plan.md](implementation-plan.md), `## R10`), the way R9 waits on E6, while its
+`--dir` path, its stored read and its wording wait on nothing. **So nothing of the reports job is in
 force**: no job, no `reports/` prefix, no aggregate, no stored reader and no change to where a report
 is written — what is in force is the shipped loop plus the due signal, the doctor line, the fifth
 rule, the two paused settings, and the two sentences R6 documents.
@@ -77,7 +80,7 @@ claim of the request against the tree and settles those.
 | --- | --- |
 | [spec.md](spec.md) | The recorded request (§1), what the periodic review is (§2–§7), what this design adds (§8–§9). The commands are written to the owner's answers of 2026-11-04, **and this run does not rewrite it**: §3, §5 and §6 keep their 2026-11-04 text and are read through [reconciliation.md](reconciliation.md) §5 |
 | [reconciliation.md](reconciliation.md) | Each spec claim against the code on `main`: what exists (F1–F13), what is missing or conflicts (F14–F24), the decisions **D960–D971** with the owner's answers (§3), what the 2026-11-04 refresh found (§4), **the owner's rulings of 2026-11-05 (§5, E1–E8)**, which amend D321, D322 and G2, and **the 2026-11-07 reconciliation (§6)**, which reads the folder against the failures report's design and holds F25–F34 and the decisions **D1430–D1449**. **Where it disagrees with `spec.md`, it wins** |
-| [implementation-plan.md](implementation-plan.md) | **Part I** — tasks R0–R13 (the reports job's module and grants, its paused setting, the plan and the command, the aggregate, the opt-in commit and the `runs digest` default among them) with the shared-files table, the levels, **Open items** and the release slot. **Part II** — the 0.22.0 release plan over Part I's reports job and `docs/design/failure-classes.md`'s FC1–FC8: the two works' one leveling, the shared-files table over the union, every task with its commit and reviewer tier, the critical path, the release slot with its `### For operators` text, and the owner-run checks **340–342**. **Plan only: nothing is implemented, and every task in both parts is approved (2026-11-07)** |
+| [implementation-plan.md](implementation-plan.md) | **Part I** — tasks R0–R13 (the reports job's module and grants, its paused setting, the plan and the command, the aggregate, the opt-in commit and the `runs digest` default among them) with the shared-files table, the levels, **Open items** and the release slot. **Part II** — the 0.22.0 release plan over Part I's reports job and `docs/design/failure-classes.md`'s FC1–FC8: the two works' one leveling, the shared-files table over the union, every task with its commit and reviewer tier, the critical path, the release slot with its `### For operators` text, and the owner-run checks **340–342**. **Plan only when this was written; not now** — every task in both parts is approved (2026-11-07), and what has landed since is Part I's R0–R4, R6 and R13, named with their commits in the status line above, and Part II's FC3 |
 
 ## The owner's answers, 2026-11-04
 
