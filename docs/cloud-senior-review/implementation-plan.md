@@ -1249,9 +1249,9 @@ that is still the check's step 3.
   to say **what made it true** — C3.9's merge, CSRW1's and CSRW2's, the owner's ruling of 2026-11-07 and
   the release the variant deploys in — rather than deleted: the next reader's question is why a constant
   that was `false` for a reason is now `true`, and the answer is not in the code. `checkReviewJobAdmitted`
-  (`:234`) keeps its sentence, and the current tree reaches it for no installation at all: it is the
+  (`:238`) keeps its sentence, and the current tree reaches it for no installation at all: it is the
   refusal a binary built **before** this flip prints, and the note that sentence's installation half
-  belongs to is `checkReviewService` (`:284`), which refuses an installation whose service is **not**
+  belongs to is `checkReviewService` (`:288`), which refuses an installation whose service is **not**
   enabled exactly as CSR2 wrote it. The test seam (`review_test.go`'s `unadmitReviewJob` puts the constant
   back to `false` for one test) stays, because that refusal is the only way to reach the sentence and the
   other refusals still need covering. **The switch came out in this commit**: CSR12's variable and the one
