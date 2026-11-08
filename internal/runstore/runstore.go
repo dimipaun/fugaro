@@ -997,6 +997,8 @@ type Record struct {
 	// Security is the security escalation the run took: its own diff matched a
 	// row of the list in force, so the runner turned review level 3 on for it
 	// (docs/security-classification/implementation-plan.md SC6, D1507, D1509).
+	// The member is present for a match whose level was refused too, with the
+	// escalation's own Refused set, and finalize keeps such a run out of ready.
 	// Absent for a run that escalated nothing — a diff that matched no row, a
 	// run that already carried level 3, and every record written before this
 	// field existed, so a reader from before it sees the record it always saw.

@@ -4746,6 +4746,13 @@ func (r *run) finalize(ctx context.Context) error {
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
 	}
+	// A run whose diff matched a security row and whose escalation was refused
+	// is not ready, whatever Decide answered (D1509): the level the
+	// classification required never ran, so the review the record shows did not
+	// cover the change. The run's own failure still outranks it (the override
+	// below), and the uncommitted case above keeps its more specific sentence
+	// when both hold.
+	ready, reason, class = r.applySecurityRefusal(ready, reason, class)
 	// The class follows the reason, and it is chosen by this same three-way
 	// choice in the same place by the same lines (design §4.2): the run's own
 	// first failure outranks what Decide read, a halt outranks both, and each

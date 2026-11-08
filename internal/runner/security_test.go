@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -211,6 +212,113 @@ func TestRunEscalationTurnsLevelThreeOnOverALayersNone(t *testing.T) {
 			}
 			if r.rec.Security == nil {
 				t.Fatal("the escalation fired and the record carries nothing, so the run looks like one whose diff matched nothing")
+			}
+		})
+	}
+}
+
+// reviewOnlyRecipe is a recipe whose mode allows exactly one review step and
+// nothing else: the one resolution the escalation's forced level 3 is refused
+// by for a reason unrelated to a layer's own settings, so a case can reach the
+// refusal without also turning the level off.
+const reviewOnlyRecipe = "version: 1\nname: review-only\nmode: review\nsteps:\n  - review: { max_rounds: 1 }\n"
+
+// TestRunRefusedEscalationRecordsTheMatchedRow: a diff that matched a floor row
+// and an escalation the run could not take leaves the account a taken one does,
+// with Refused set (D1509). Its refusal is a warning and the run goes on (F9),
+// but without the member the run is indistinguishable from one whose diff
+// matched nothing at all — level 3 off, no adversarial step, nothing recorded —
+// and the only trace of a matched sensitive path is a log line, which is not an
+// account the run keeps.
+//
+// The refusal here is the resolution's: recipe `mode: review` allows exactly
+// one review step, so a level 3 the owner's list requires has no step to run in
+// and is refused rather than dropped (G1, internal/config's reviewOnlyLevel).
+func TestRunRefusedEscalationRecordsTheMatchedRow(t *testing.T) {
+	r, repo := securityRun(t, rigor.Pro)
+	// The plan and the levels the run resolved at bootstrap stay as they are:
+	// only the recipe the forced resolution reads changes.
+	r.rcp = parseRecipe(t, reviewOnlyRecipe)
+	change(t, repo, map[string]string{listedPath: "package creds\n"}, "work on the credentials tree")
+	r.escalateSecurity(context.Background(), runstore.SecurityAtImplement)
+	if levelOn(r.levels, policy.LevelL3) {
+		t.Fatalf("the escalation was refused and level 3 runs anyway: %+v", r.levels.L3)
+	}
+	if hasAdversarialStep(r.plan) {
+		t.Fatalf("the escalation was refused and the plan carries an adversarial step: %+v", r.plan)
+	}
+	got := r.rec.Security
+	if got == nil {
+		t.Fatal("a refused escalation recorded nothing, so the run looks like one whose diff matched nothing")
+	}
+	if !got.Refused {
+		t.Fatalf("the escalation was refused and the record claims it happened: %+v", got)
+	}
+	if got.At != runstore.SecurityAtImplement {
+		t.Errorf("the moment = %q, want %q", got.At, runstore.SecurityAtImplement)
+	}
+	if got.Pattern != "credentials" || got.Category != sensitivity.Credentials {
+		t.Errorf("the record names %q (%s), want the floor row %s matches", got.Pattern, got.Category, listedPath)
+	}
+}
+
+// TestRunEscalationReplacesARefusalWhenItFires: the refusal is what the run
+// records *until* the escalation happens. A member left refused beside a level
+// that ran would keep a run out of ready for a refusal it no longer carries,
+// and the record would say level 3 was refused in the same breath as the plan
+// holding its step.
+func TestRunEscalationReplacesARefusalWhenItFires(t *testing.T) {
+	r, repo := securityRun(t, rigor.Pro)
+	r.rcp = parseRecipe(t, reviewOnlyRecipe)
+	change(t, repo, map[string]string{listedPath: "package creds\n"}, "work on the credentials tree")
+	r.escalateSecurity(context.Background(), runstore.SecurityAtImplement)
+	if r.rec.Security == nil || !r.rec.Security.Refused {
+		t.Fatalf("the refusal was not recorded, so the second half of the test proves nothing: %+v", r.rec.Security)
+	}
+	r.rcp = parseRecipe(t, "version: 1\nname: loop\nsteps:\n  - review: {}\n")
+	r.escalateSecurity(context.Background(), runstore.SecurityAtFix)
+	if !levelOn(r.levels, policy.LevelL3) || !hasAdversarialStep(r.plan) {
+		t.Fatalf("the escalation did not fire on the second seam: %+v, %+v", r.levels.L3, r.plan)
+	}
+	if got := r.rec.Security; got == nil || got.Refused || got.At != runstore.SecurityAtFix {
+		t.Fatalf("the record still carries the refusal after the escalation ran: %+v", got)
+	}
+}
+
+// TestSecurityRefusalKeepsTheRunOutOfReady: a refused escalation is not a
+// finding and not a failure — the run goes on and its answer is a draft, not a
+// stopped run — but it may not end ready either: the review the record shows
+// did not cover a diff the owner's list called sensitive, and no answer from
+// the run's own records can make that up (D1509).
+func TestSecurityRefusalKeepsTheRunOutOfReady(t *testing.T) {
+	rows := sensitivity.Match([]string{listedPath}, sensitivity.Floor())
+	if len(rows) == 0 {
+		t.Fatalf("the floor matches %s, so the record below is the shape the escalation writes", listedPath)
+	}
+	ran := runstore.NewSecurityEscalation(runstore.SecurityAtImplement, rows[0])
+	refused := runstore.NewRefusedSecurityEscalation(runstore.SecurityAtImplement, rows[0])
+	const testsFailed = "tests failing on the final commit"
+	for _, tc := range []struct {
+		name       string
+		sec        *runstore.SecurityEscalation
+		inReady    bool
+		inReason   string
+		inClass    failure.Class
+		wantReady  bool
+		wantReason string
+		wantClass  failure.Class
+	}{
+		{"a run that escalated nothing", nil, true, "", "", true, "", ""},
+		{"a run whose escalation ran", ran, true, "", "", true, "", ""},
+		{"a refused escalation turns a ready run into a draft", refused, true, "", "", false, ReasonSecurityRefused, failure.Unclassified},
+		{"a refused escalation replaces Decide's own refusal", refused, false, testsFailed, failure.TestsFailed, false, ReasonSecurityRefused, failure.Unclassified},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &run{rec: &runstore.Record{Security: tc.sec}}
+			ready, reason, class := r.applySecurityRefusal(tc.inReady, tc.inReason, tc.inClass)
+			if ready != tc.wantReady || reason != tc.wantReason || class != tc.wantClass {
+				t.Errorf("applySecurityRefusal(%v, %q, %q) = (%v, %q, %q), want (%v, %q, %q)",
+					tc.inReady, tc.inReason, tc.inClass, ready, reason, class, tc.wantReady, tc.wantReason, tc.wantClass)
 			}
 		})
 	}

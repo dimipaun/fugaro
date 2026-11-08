@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -21,10 +22,14 @@ import (
 // It is called at the two seams D1507 names — the post-implement window, which
 // a run that skips implement reaches without a stage of its own (a check gate
 // that fixed the tree, a digest step: runner.go) and the post-fix seam beside
-// roundRigor — and it never fails the run: a diff that cannot be read, a
-// resolution the forced level is refused by, and a plan that would not hold it
-// are each a warning, and the levels stay where they are — roundRigor's own
-// rule for the mode (F9).
+// roundRigor — and the escalation itself never fails the run: a diff that cannot
+// be read, a resolution the forced level is refused by, and a plan that would
+// not hold it are each a warning, and the levels stay where they are —
+// roundRigor's own rule for the mode (F9). The three refusals after a match are
+// recorded with Refused set, and finalize keeps a run carrying one out of ready
+// (ReasonSecurityRefused below): the level did not run, so the review a reader
+// can see does not cover the change the classification asked it to. A diff that
+// cannot be read is not a match and records nothing.
 //
 // The forced level is raise-only (D1517): a layer that wrote level 3's own
 // off-switch does not defeat the escalation, which clears it and says so
@@ -71,18 +76,21 @@ func (r *run) escalateSecurity(ctx context.Context, at string) {
 	if err != nil {
 		r.d.Log.Warn("resolving the review levels with the security escalation's level 3 failed; the levels stay where they are",
 			"at", at, "pattern", matched[0].Name, "err", r.redact(err.Error()))
+		r.recordRefusedSecurity(at, matched[0])
 		return
 	}
 	if !levelOn(levels, policy.LevelL3) {
 		// A run that resolved no mode at all answers with no levels: there is
 		// nothing to force a level into, and a plan built from them would be
 		// refused below anyway.
+		r.recordRefusedSecurity(at, matched[0])
 		return
 	}
 	plan, err := r.planFor(levels)
 	if err != nil {
 		r.d.Log.Warn("the plan does not hold the security escalation's level 3; the levels stay where they are",
 			"at", at, "pattern", matched[0].Name, "err", r.redact(err.Error()))
+		r.recordRefusedSecurity(at, matched[0])
 		return
 	}
 	r.levels, r.plan = levels, plan
@@ -110,4 +118,48 @@ func (r *run) levelThreeTurnedOff() bool {
 		return true
 	}
 	return r.spec.ReviewLevels != nil && levelThreeOff(r.spec.ReviewLevels.L3)
+}
+
+// recordRefusedSecurity is the record a matched row leaves when the escalation
+// could not be taken: the member carries the row and Refused, so the run is not
+// indistinguishable from one whose diff met nothing (D1509), and finalize reads
+// it to keep the run out of ready (ReasonSecurityRefused).
+//
+// The first refusal is kept. A run refuses at the seam its diff first matched
+// at, and a later seam that refuses again is the same answer: the record says
+// where the match was found, not where it was last seen. A later seam that
+// *succeeds* replaces the member outright — the escalation happened, and a
+// refusal left beside it would be a reason the run no longer carries.
+func (r *run) recordRefusedSecurity(at string, row sensitivity.Pattern) {
+	if r.rec.Security != nil {
+		return
+	}
+	r.rec.Security = runstore.NewRefusedSecurityEscalation(at, row)
+}
+
+// ReasonSecurityRefused is finalize's reason for a run whose diff matched a
+// security row and whose escalation was refused: the level never ran, so the
+// review a reader can see did not cover the change the classification asked it
+// to. It is a sentence of its own rather than one of Decide's, because it is
+// decided at that seam and not by the records Decide reads; the class is
+// failure.Unclassified, as the owner-waiting reason's is — the run is not
+// stopped for a cause the vocabulary holds, it is a draft the classification
+// would not let through.
+const ReasonSecurityRefused = "the run's diff matched a security pattern, but its required review level was refused"
+
+// applySecurityRefusal is finalize's readiness rule for a refused escalation:
+// the run is not ready, whatever the run's records answered, because the review
+// the record shows did not cover a diff the owner's list called sensitive
+// (D1509). It is a function of the record and the three answers beside it so
+// that the rule is testable where finalize is not — finalize is one long
+// sequence with no seam a test can call into, and this is the whole of what the
+// escalation adds to it.
+//
+// A member that is absent or carries the escalation is passed through
+// untouched: only Refused is a reason no run may be ready under.
+func (r *run) applySecurityRefusal(ready bool, reason string, class failure.Class) (bool, string, failure.Class) {
+	if r.rec.Security == nil || !r.rec.Security.Refused {
+		return ready, reason, class
+	}
+	return false, ReasonSecurityRefused, failure.Unclassified
 }

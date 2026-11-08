@@ -14,7 +14,9 @@ import (
 // It is a new member of the record and nothing else changes: no existing field
 // changes meaning, so no version bumps (F7). Absent means "this run escalated
 // nothing" — a diff that matched no row, a run that already carried level 3,
-// and every record written before this field existed alike.
+// and every record written before this field existed alike. A row that matched
+// and whose level was refused is not absent: it is the same member with Refused
+// set, so a reader can tell that run from one whose diff met nothing.
 
 // The two moments the escalation is decided at (D1507). Both are the runner's
 // own seams, not D22's rigor moments: the first reads the diff once implement
@@ -47,6 +49,19 @@ type SecurityEscalation struct {
 	// again, because the list is read from the base branch and the record has
 	// to explain itself without it.
 	Category sensitivity.Category `json:"category"`
+	// Refused says the diff matched this row and the escalation did not
+	// happen: the forced resolution refused level 3, or the plan would not
+	// hold it (runner's escalateSecurity). The match is recorded either way,
+	// because the alternative is a record that cannot be told apart from one
+	// whose diff matched nothing — level 3 off, no adversarial step, nothing
+	// in the member — and no account of a matched floor row survives only as a
+	// log line (D1509). A refusal does not fail the run (F9): the levels stay
+	// where they are, and finalize keeps the run out of ready for it.
+	//
+	// It is additive with the rest of the member, so it is not in the schema's
+	// required list and version stays 1: absent and false both mean the
+	// escalation ran, which is every record written before this field existed.
+	Refused bool `json:"refused,omitempty"`
 }
 
 // NewSecurityEscalation is the escalation to record for a row that matched at
@@ -59,4 +74,15 @@ func NewSecurityEscalation(at string, row sensitivity.Pattern) *SecurityEscalati
 		Pattern:  clipRunes(row.Name, sensitivity.MaxPatternName),
 		Category: row.Category,
 	}
+}
+
+// NewRefusedSecurityEscalation is the escalation to record for a row that
+// matched at a moment and was refused: the same member, carrying the row the
+// run's diff met, with Refused set. Every refusal path in the runner's
+// escalateSecurity records through this one, so the record never has to be
+// read back to work out which of them it was.
+func NewRefusedSecurityEscalation(at string, row sensitivity.Pattern) *SecurityEscalation {
+	esc := NewSecurityEscalation(at, row)
+	esc.Refused = true
+	return esc
 }
