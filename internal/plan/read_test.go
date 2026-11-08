@@ -438,6 +438,15 @@ func TestPlanFootprintMatchesTheRepositorysGlobSemantics(t *testing.T) {
 	if empty.Matches("internal/plan/read.go") {
 		t.Error("an empty footprint matched a path")
 	}
+	// In a pattern a backslash is doublestar's escape and not a separator, so
+	// a pattern that escapes a character still matches the file it escapes.
+	// That is why the artifact's rules refuse such a pattern outright rather
+	// than reading it as a path: normalising it here would turn a matching
+	// pattern into one that matches nothing.
+	escaped := NewFootprint([]string{`internal/plan/read\.go`})
+	if !escaped.Matches("internal/plan/read.go") {
+		t.Error("a pattern that escapes a character stopped matching the file it names")
+	}
 }
 
 // TestPlanRefusesAnOversizedArtifact: the artifact is a file in a checkout,

@@ -362,18 +362,42 @@ func TestContractFilesBelongToTheContractAndItsChanges(t *testing.T) {
 	// The same file written differently is the same file: a check that matched
 	// the literal spelling alone would let F10's rule be evaded by respelling
 	// the path, which is the whole of the rule's mechanical content (O1/D1823
-	// leave no runtime guard behind it).
+	// leave no runtime guard behind it). A leading element, a doubled
+	// separator and a `..` that comes back are respellings of a path and are
+	// read as the file they name.
 	for _, spelling := range []string{
 		"./internal/contract/types.go",      // a leading element
 		"internal//contract/types.go",       // a doubled separator
 		"internal/dep/../contract/types.go", // a `..` that comes back
-		`internal\contract\types.go`,        // a Windows separator
-		"./internal/contract/*.go",          // the same, through a glob
+		"./internal/contract/*.go",          // the same, through a respelled glob
 	} {
 		t.Run("a task naming a contract file as "+spelling, func(t *testing.T) {
 			refused(t, v3Doc(t, `{"id": "B", "title": "the dependent", "footprint": {"prediction": true, "paths": ["internal/dep/**"]}}`,
 				fmt.Sprintf(`{"id": "B", "title": "the dependent", "footprint": {"prediction": true, "paths": [%q]}}`, spelling)),
 				`node "B"'s footprint covers "internal/contract/types.go"`, "F10")
+		})
+	}
+
+	// The two spellings that are not a path at all are refused by name rather
+	// than read as the file they match: a backslash is doublestar's escape, so
+	// `types\.go` is a pattern for the contract's file and `type\s.go` is
+	// another; and a leading slash makes a pattern absolute, which no path of
+	// the graph is (`/internal/contract/types.go` matched nothing, so the rule
+	// below never saw it). Reading either one as written is how the file is
+	// claimed without the rule noticing.
+	for _, spelling := range []string{
+		`internal/contract/types\.go`, // an escaped character
+		`internal/contract/type\s.go`, // another escape, matching the same file
+		"/internal/contract/types.go", // an absolute path
+	} {
+		t.Run("a footprint pattern that is not a checkout path: "+spelling, func(t *testing.T) {
+			want := "has the footprint path"
+			if strings.HasPrefix(spelling, "/") {
+				want = "never filesystem ones"
+			}
+			refused(t, v3Doc(t, `{"id": "B", "title": "the dependent", "footprint": {"prediction": true, "paths": ["internal/dep/**"]}}`,
+				fmt.Sprintf(`{"id": "B", "title": "the dependent", "footprint": {"prediction": true, "paths": [%q]}}`, spelling)),
+				want)
 		})
 	}
 

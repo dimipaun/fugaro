@@ -1394,12 +1394,15 @@ footprint names no literal file, a `decoupling` entry whose integration node doe
 not depend on both sides of the edge it records, an edge that is recorded as
 broken and is still in `edges`, a `contract_change` naming a node that is not
 there, and a footprint that covers a merged contract's file from outside the
-contract and the change requests against it — **however the path is spelled**,
-because `./internal/contract/types.go`, `internal//contract/types.go`,
-`internal/dep/../contract/types.go` and a backslash-separated path all name the
-one file, and a rule that read only the literal spelling would be a rule two
-spellings of one path could step around. The console shows the CLI's sentence in
-each case, like every other refusal here.
+contract and the change requests against it — **however that path is spelled**,
+because `./internal/contract/types.go`, `internal//contract/types.go` and
+`internal/dep/../contract/types.go` all name the one file, and a rule that read
+only the literal spelling would be a rule a respelling steps around. And a
+footprint **pattern** that is not a checkout path at all is refused by name, so
+it can never be read as the contract's file: a **backslash** — doublestar's
+escape character, where `types\.go` is a pattern for `types.go` — and a **leading
+slash**, which makes the pattern absolute. The console shows the CLI's sentence
+in each case, like every other refusal here.
 
 **What the read computes, and why the done set is passed in.** `level`, `done`,
 `ready`, `blocked`, `critical_path_length`, `downstream`, `levels`,

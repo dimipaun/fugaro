@@ -366,6 +366,25 @@ func validateSchema3(path string, doc Document) error {
 		}
 	}
 
+	// The contract-file rule below turns on how a footprint spells a path, and
+	// the two spellings doublestar reads as something other than a path element
+	// are refused rather than normalised: a backslash is its escape character
+	// (`types\.go` is a pattern for types.go, and `type\s.go` for the same
+	// file), and a leading slash names a filesystem path rather than one in the
+	// checkout. Read as written, either one steps around the rule. It runs
+	// after the stubs so that a stub which is one of them is refused as a stub
+	// — the more specific sentence — rather than as a footprint.
+	for _, n := range doc.Nodes {
+		for _, pattern := range n.Footprint.Paths {
+			if strings.ContainsRune(pattern, '\\') {
+				return refuse(path, "node %q has the footprint path %q; a backslash is a glob escape rather than a separator, so a footprint that spells a path with one is refused instead of read as the file it happens to match", n.ID, pattern)
+			}
+			if strings.HasPrefix(pattern, "/") {
+				return refuse(path, "node %q has the footprint path %q; a footprint names paths in the checkout, never filesystem ones", n.ID, pattern)
+			}
+		}
+	}
+
 	// Which integration node covers a contract, and which nodes are the change
 	// requests against it: the two exemptions the contract-files rule below
 	// turns on (F10).
