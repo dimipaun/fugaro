@@ -100,8 +100,8 @@ var settingsGenericKeys = map[string]bool{
 	"default_claude_account":  true,
 	"claude_account_auto":     true,
 	"stages.*.claude_account": true,
-	// A repository's workflows.* (37 rows) and the project layer's profiles.*
-	// (36), in the registry's own order.
+	// A repository's workflows.* (38 rows) and the project layer's profiles.*
+	// (37), in the registry's own order.
 	"workflows.*.profile":                            true,
 	"workflows.*.job_profile":                        true,
 	"workflows.*.base":                               true,
@@ -131,6 +131,7 @@ var settingsGenericKeys = map[string]bool{
 	"workflows.*.timeouts.verify":                    true,
 	"workflows.*.timeouts.render":                    true,
 	"workflows.*.timeouts.finalize_reserve":          true,
+	"workflows.*.timeouts.review_budget_pct":         true,
 	"workflows.*.rebuild.check":                      true,
 	"workflows.*.rebuild.max_age":                    true,
 	"workflows.*.rebuild.lockfiles":                  true,
@@ -166,6 +167,7 @@ var settingsGenericKeys = map[string]bool{
 	"layer.profiles.*.timeouts.verify":               true,
 	"layer.profiles.*.timeouts.render":               true,
 	"layer.profiles.*.timeouts.finalize_reserve":     true,
+	"layer.profiles.*.timeouts.review_budget_pct":    true,
 	"layer.profiles.*.rebuild.check":                 true,
 	"layer.profiles.*.rebuild.max_age":               true,
 	"layer.profiles.*.rebuild.lockfiles":             true,

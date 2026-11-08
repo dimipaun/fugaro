@@ -87,7 +87,7 @@ const (
 )
 
 // The audit's two figures (F1): the registry's rows, and the rows the generic
-// write path's allowlist carries -- eighty-eight by name and the rest through
+// write path's allowlist carries -- ninety by name and the rest through
 // the nine prefixes. They are re-counted below rather than trusted, because the
 // whole of §1's argument is that the rows no writer carries are the defect.
 //
@@ -96,8 +96,8 @@ const (
 // path and the two budget keys D1179 does, and the two documents whose argument
 // is made of this count carry the number the count produced.
 const (
-	cfmRegistryRows   = 374
-	cfmAllowlistNamed = 88
+	cfmRegistryRows   = 376
+	cfmAllowlistNamed = 90
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {
@@ -324,8 +324,8 @@ func TestDocsConfigManagementRelativeCitationsResolve(t *testing.T) {
 }
 
 // TestDocsConfigManagementAllowlistCounts: the figure the audit's whole argument
-// is made of is re-counted here rather than trusted. The registry holds 374 rows
-// and the generic write path's allowlist carries eighty-eight of them by name
+// is made of is re-counted here rather than trusted. The registry holds 376 rows
+// and the generic write path's allowlist carries ninety of them by name
 // plus the rows its nine prefixes reach; the documents state the registry's
 // count and the allowlist's, and a row added to either -- which moves the gap
 // between the two -- fails here rather than leaving §1's "210 rows have no
