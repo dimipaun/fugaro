@@ -4624,9 +4624,11 @@ Print the list of paths this repository's runs treat as security-sensitive.
 
 Without --check the whole list in force is printed, each row with the layer it
 came from. With --check, each named path is answered against that list instead:
-whether it is security-sensitive, and the row that decided. A path no row
-matches and that the classifier cannot place inside a tree it knows is answered
-sensitive, never routine: an unknown path fails closed.
+whether the list treats it as security-sensitive, and the row that decided. The
+list is a positive one, so a path no row matches is answered not sensitive —
+except a path the reader cannot place at all (absolute, escaping, uncleaned,
+outside ASCII): that one is answered sensitive, never routine, because a
+spelling that means more than one path is one no list can speak about.
 
 The list is read at the base branch — the ref the next run from this checkout is
 cut from — and never from the working copy, so a change cannot carry the rule

@@ -157,19 +157,23 @@ func TestSecurityPathsPrintsTheListInForce(t *testing.T) {
 // TestSecurityPathsCheckAnswersPerPath: with --check the command answers one
 // path at a time — the row that answered, and whether the path is sensitive at
 // all — and a path the list in force has nothing to say about is answered `no`
-// with no row rather than left out. The three paths are Check 370's own: a
-// floor row's path, a routine tree the floor says nothing about, and the case
-// between them — a routine tree with a listed exception — which is the shape a
-// project's own list will have.
+// with no row rather than left out. Three paths are Check 370's own: a floor
+// row's path, a routine tree the floor says nothing about, and the case between
+// them — a routine tree with a listed exception — which is the shape a project's
+// own list will have. The fourth is the case that tells this command's rule from
+// the classifier's complement: a path the reader places perfectly well, sitting
+// in no routine tree and on no floor row, which a run does not escalate on and
+// which is therefore answered `no`.
 func TestSecurityPathsCheckAnswersPerPath(t *testing.T) {
 	securityCheckout(t, "acme/app", securityNoKeyYAML)
 
 	doc := securityDoc(t, "security", "paths",
 		"--check", "internal/creds/state.go",
 		"--check", "docs/recipes.md",
-		"--check", "docs/pending-workflows/console-tests.yml")
+		"--check", "docs/pending-workflows/console-tests.yml",
+		"--check", "internal/cli/registry.go")
 
-	if len(doc.Checked) != 3 {
+	if len(doc.Checked) != 4 {
 		t.Fatalf("checked = %d answers, want one per --check path", len(doc.Checked))
 	}
 	cred := doc.Checked[0]
@@ -211,14 +215,40 @@ func TestSecurityPathsCheckAnswersPerPath(t *testing.T) {
 		t.Errorf("checked[2].matched = %+v, want the floor's pending-workflows row (CI, floor)", *workflows.Matched)
 	}
 
+	// The discriminating case. internal/cli/registry.go is a clean
+	// repository-relative path, so the reader places it; no floor row matches it,
+	// so the list in force says nothing about it; and the classifier calls it
+	// Sensitive, because it sits in no routine tree — which is a large part of
+	// any repository, and the reason `sensitive` must not be the classifier's
+	// complement. The class is asserted here, and not only the answer, so this
+	// case keeps telling the two rules apart: if the tree ever becomes routine,
+	// this test says so instead of quietly agreeing with both rules.
+	unlisted := doc.Checked[3]
+	if unlisted.Path != "internal/cli/registry.go" {
+		t.Errorf("checked[3].path = %q, want %q", unlisted.Path, "internal/cli/registry.go")
+	}
+	if got := sensitivity.Classify([]string{"internal/cli/registry.go"}); got != sensitivity.Sensitive {
+		t.Fatalf("sensitivity.Classify(internal/cli/registry.go) = %v, want %v: this case is only discriminating while the class says Sensitive and the floor's rows do not", got, sensitivity.Sensitive)
+	}
+	if len(sensitivity.Match([]string{"internal/cli/registry.go"}, sensitivity.Floor())) != 0 {
+		t.Fatalf("the floor matches internal/cli/registry.go, want no row: this case is the placeable path the list in force says nothing about")
+	}
+	if unlisted.Sensitive {
+		t.Error("checked[3].sensitive = true, want false: the list in force matches no row, and a run escalates on the list, not on the classifier's class")
+	}
+	if unlisted.Matched != nil {
+		t.Errorf("checked[3].matched = %+v, want null: no row of the list in force matched it", *unlisted.Matched)
+	}
+
 	out, _, err := execute(t, "security", "paths",
 		"--check", "internal/creds/state.go",
 		"--check", "docs/recipes.md",
+		"--check", "internal/cli/registry.go",
 		"--check", "docs/pending-workflows/console-tests.yml")
 	if err != nil {
 		t.Fatalf("fugaro security paths --check: %v\n%s", err, out)
 	}
-	for _, want := range []string{"internal/creds/state.go", "docs/recipes.md", "docs/pending-workflows/console-tests.yml", "credentials", "pending-workflows"} {
+	for _, want := range []string{"internal/creds/state.go", "docs/recipes.md", "docs/pending-workflows/console-tests.yml", "internal/cli/registry.go", "credentials", "pending-workflows"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the printed answers do not name %q:\n%s", want, out)
 		}

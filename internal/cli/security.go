@@ -43,14 +43,19 @@ import (
 // reads as main here, and that is the one case where a run could be cut from a
 // branch this document does not name.
 //
-// Why a path no row matches is still answered. `sensitivity.Match` answers the
-// level question and `sensitivity.Classify` the class one; this command asks
-// both, and answers Sensitive when either does (F22). A path the matcher cannot
-// place — absolute, escaping, uncleaned, outside ASCII — is placed by no row
-// and is Sensitive, which is D1512's own rule, and a path outside every tree
-// the classifier knows is Sensitive for the reason classify.go's package doc
-// gives: a tree nobody classified yet is not a tree a reader may call routine.
-// The `matched` member is what tells the two apart.
+// Why `sensitive` is the list and not the classifier's complement (F22, D1512).
+// The two questions a change is escalated by are not the same question. A run
+// escalates on a row of the list in force that matches its diff (SC6, F7), so
+// `sensitive` is true when a row of the list matched the path — and true when
+// the reader cannot place the path at all, which is the one case the list can
+// never speak about: absolute, escaping, uncleaned, outside ASCII. Nothing else
+// makes it true. `sensitivity.Classify` is *not* asked, and this is deliberate:
+// its Sensitive is the complement of its routine trees, so asking it would
+// answer true for most of any repository (`internal/cli/registry.go` is in no
+// routine tree and on no floor row) and would tell the agent that a change
+// forces level 3 when the run will not. The floor is a positive list, and Check
+// 370's own ground is that a run whose diff touches nothing on it does not
+// escalate. The `matched` member is what tells the two reasons apart.
 //
 // What it never prints. Nothing here is a credential: the list is names,
 // globs and categories, the checked paths are the caller's own argv, and the
@@ -137,9 +142,10 @@ type securityPathAnswer struct {
 	// spelling of it: the answer is keyed by what the caller typed.
 	Path string `json:"path"`
 	// Sensitive is the fail-closed answer: true when a row of the list in force
-	// matched the path, and true when the path is one the classifier cannot
-	// place inside a tree it knows (F22, D1512) — which is every path that is
-	// not clean, repository-relative and inside a routine tree.
+	// matched the path, and true when the reader cannot place the path at all —
+	// not clean and repository-relative — because no list can speak about a
+	// spelling that means more than one path (F22, D1512). A placeable path no
+	// row matched is false, whatever the classifier calls the tree it sits in.
 	Sensitive bool `json:"sensitive"`
 	// Matched is the row that decided the answer, and null when no row did —
 	// which is a real answer and not a missing one: the list in force says
@@ -195,9 +201,11 @@ func newSecurityPathsCmd() *cobra.Command {
 
 Without --check the whole list in force is printed, each row with the layer it
 came from. With --check, each named path is answered against that list instead:
-whether it is security-sensitive, and the row that decided. A path no row
-matches and that the classifier cannot place inside a tree it knows is answered
-sensitive, never routine: an unknown path fails closed.
+whether the list treats it as security-sensitive, and the row that decided. The
+list is a positive one, so a path no row matches is answered not sensitive —
+except a path the reader cannot place at all (absolute, escaping, uncleaned,
+outside ASCII): that one is answered sensitive, never routine, because a
+spelling that means more than one path is one no list can speak about.
 
 The list is read at the base branch — the ref the next run from this checkout is
 cut from — and never from the working copy, so a change cannot carry the rule
@@ -260,13 +268,34 @@ func runSecurityPaths(cmd *cobra.Command, o *securityPathsOptions) error {
 	return writeSecurityPaths(cmd, doc)
 }
 
-// securityAnswer answers one path against the list in force. The two questions
-// are SC1's own two: Match names the rows of the list the path matches, and
-// Classify is what places it inside a tree at all — a path it cannot place is
-// Sensitive, and so is a path outside every routine tree (classify.go's package
-// doc). The first row of the list that matched is the one named, in the list's
-// own order, so a path matched by the floor and by a layer above it names the
-// floor's row rather than a later one.
+// securityProbeRow is a row the matcher is asked and no list ever holds: a glob
+// doublestar matches against every path. It is built here rather than written
+// anywhere, and `sensitivity.Pattern.Validate` refuses it (a row that matches
+// the whole repository is the project's always_level_3 setting, D1503) — which
+// is the point: it is not a rule, it is the question "can the reader place this
+// path at all?", asked of the one function that decides it.
+var securityProbeRow = sensitivity.Pattern{Name: "placeable", Match: "**", Category: sensitivity.Artifacts}
+
+// securityPlaceable reports whether the reader can place a path inside the
+// repository at all. Match asks cleanRelative of every path before it looks at
+// any row, so the probe row — a glob that covers everything — matches exactly
+// the paths the reader can place: an absolute, escaping, uncleaned or non-ASCII
+// spelling is skipped before the glob is reached, and D1512 answers it sensitive.
+//
+// The rule is the package's own and is not restated here: a second spelling of
+// "clean and repository-relative" in this file is the copy that drifts from the
+// one the matcher and the classifier ask. The direction is the safe one — a path
+// the probe does not match is answered sensitive, never routine.
+func securityPlaceable(path string) bool {
+	return len(sensitivity.Match([]string{path}, []sensitivity.Pattern{securityProbeRow})) > 0
+}
+
+// securityAnswer answers one path against the list in force. The first row of
+// the list that matched is the one named, in the list's own order, so a path
+// matched by the floor and by a layer above it names the floor's row rather than
+// a later one. `sensitive` is a row match, or a path the reader cannot place at
+// all: the classifier's class is deliberately not a third input, because a run
+// escalates on the list and not on the class (see this file's header).
 func securityAnswer(path string, list []sensitivity.Pattern) securityPathAnswer {
 	answer := securityPathAnswer{Path: path}
 	matched := sensitivity.Match([]string{path}, list)
@@ -277,7 +306,7 @@ func securityAnswer(path string, list []sensitivity.Pattern) securityPathAnswer 
 			Source:   securitySourceFloor,
 		}
 	}
-	answer.Sensitive = answer.Matched != nil || sensitivity.Classify([]string{path}) == sensitivity.Sensitive
+	answer.Sensitive = answer.Matched != nil || !securityPlaceable(path)
 	return answer
 }
 

@@ -2971,17 +2971,31 @@ base-branch half no `config` verb reaches at all.
 | `matched` | object | never | **yes** | the row that decided the answer — `{name, category, source}`, the same three words a `patterns` row carries — and **null** when no row of the list in force matched. Null is a real answer and not a missing one: the list says nothing about this path |
 
 **`sensitive` fails closed, and that is the field's whole rule** (F22, D1512). It
-is true when a row of the list in force matched the path, and true when the
-classifier cannot place the path inside a tree it knows: a spelling that is not a
-clean repository-relative path — `/etc/passwd`, `docs/../website/src/x.md`, the
-empty string, the three the plan's Check 370 names — is matched by no row, and a
-path outside the trees `sensitivity.Classify` calls routine is not placed by it
-either. So `matched` is what tells the two apart: `sensitive: true` with
-`matched: null` is a path the list in force says nothing about and the classifier
-will not call routine, while `sensitive: false` is a path both questions place —
-`docs/recipes.md` matches no row of the floor and sits in a routine tree, which
-is why Check 370 answers `false` for it and `true` for
-`docs/pending-workflows/console-tests.yml`, whose row the floor carries.
+is true when a row of the list in force matched the path — the list is a
+**positive** one, and this field answers what it says, not what it leaves out —
+and true when the reader cannot place the path at all: a spelling that is not a
+clean repository-relative path (`/etc/passwd`, `docs/../website/src/x.md`, the
+empty string, the three the plan's Check 370 names) means more than one path, and
+no list can speak about it. The two are told apart by `matched`: `sensitive:
+true` with `matched: null` is exactly that unplaceable case, and
+`docs/pending-workflows/console-tests.yml` is `true` **with** the floor's
+`pending-workflows` row.
+
+The classifier's class is deliberately **not** a third input, and this is the
+rule's one non-obvious half. `sensitivity.Classify` answers `Sensitive` for every
+path outside its routine trees as well, which on any real repository is most of
+the tree: `internal/cli/registry.go`, `internal/gitops/push.go` and
+`shared/lib.go` all sit in no routine tree and on no floor row. Asking it as well
+would make this field the classifier's complement rather than the list's answer,
+and would tell the agent reading it that a change forces level 3 when the run
+does not: **a run escalates on a row of the list in force that matches its diff
+and on nothing else** (SC6, F5, F7), which is the same ground Check 370's own
+pair stands on — `docs/recipes.md` matches no row and is `false`, while the
+`docs/pending-workflows/**` row makes the file staged there `true`. So a
+placeable path no row matches is `false` whatever tree it sits in, and
+`TestSecurityPathsCheckAnswersPerPath`'s fourth path is that case, asserted
+against the class as well as against the answer so the two rules cannot quietly
+agree.
 
 **The base branch, never the working copy** (F14, D1518). The list in force is
 read at the base branch, so a change can never carry the rule that governs its
@@ -3014,11 +3028,14 @@ and the command exits zero, §6.21's own rule for a state that is the answer, an
 the table a person reads says the same thing on stderr beside it: what it printed
 is the floor, and the repository's own rows are not in it.
 
-**What is not in it, and it is the whole of the bound: argv.** The document
-carries the caller's own `--check` paths and nothing else of the session — no
-environment, no path outside the repository, and no value read out of a file.
-**Nothing in it is a credential**: a row is a name, a glob and a category, and a
-checked path is the path the caller typed.
+**What is not in it, and it is the whole of the bound: the session.** The
+document carries the caller's own `--check` paths and nothing else of the machine
+it ran on — no environment, no path outside the repository, no argv beyond the
+flags it was given. The two values it does read are the repository's own and both
+are named members above: `project`, out of the repository's `fugaro.yaml` at the
+base ref, and `base`, the branch that file's own resolution names. **Nothing in
+it is a credential**: a row is a name, a glob and a category, and a checked path
+is the path the caller typed.
 
 **Flags** (`newSecurityPathsCmd`): `--check PATH` (repeatable) and `--json`, and
 nothing else. It carries no cloud flags — no `--project`, no `--config` — because
