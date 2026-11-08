@@ -98,9 +98,9 @@ func TestInitHardeningRefusesAMixedPlan(t *testing.T) {
 	}
 }
 
-// launcherReplaceChange is the 0.9.0 upgrade's replace of member's
-// runs_launcher grant, from the pre-0.9.0 runs/-only condition to the runs/
-// and tokens/ one, in the shape `terraform show -json` gives it.
+// launcherReplaceChange is the upgrade's replace of member's runs_launcher
+// grant, from one earlier form of the launchers' condition to the current one,
+// in the shape `terraform show -json` gives it.
 func launcherReplaceChange(bucket, member, beforeTitle, beforeExpr string) planChange {
 	side := func(title, expr string) map[string]any {
 		return map[string]any{"role": "roles/storage.objectUser", "member": member, "bucket": bucket,
@@ -113,8 +113,8 @@ func launcherReplaceChange(bucket, member, beforeTitle, beforeExpr string) planC
 			"after":  side(gcp.LauncherBucketConditionTitle, gcp.LauncherBucketCondition(bucket))}}
 }
 
-// Upgrading an installation set up before 0.9.0: each non-operator
-// launcher's runs_launcher grant is replaced (the condition gained tokens/,
+// Upgrading an installation one release behind this one: each non-operator
+// launcher's runs_launcher grant is replaced (the condition gained issues/,
 // and a condition is ForceNew), and init applies it with no --allow-delete,
 // naming the launchers. A replace from any other condition is still refused.
 func TestInitAdmitsTheLauncherGrantUpgrade(t *testing.T) {
@@ -127,9 +127,9 @@ func TestInitAdmitsTheLauncherGrantUpgrade(t *testing.T) {
 	r.setPlan(t, launcherReplaceChange(bucket, a, gcp.LegacyLauncherBucketConditionTitle, gcp.LegacyLauncherBucketCondition(bucket)))
 	out, _, err := executeStdin(t, "", args...)
 	if err != nil {
-		t.Fatalf("the 0.9.0 upgrade plan is refused: %v\n%s", err, out)
+		t.Fatalf("the upgrade plan is refused: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "bucket access (0.9.0)") || !strings.Contains(out, "  "+a+"\n") {
+	if !strings.Contains(out, "bucket access (0.23.0)") || !strings.Contains(out, "  "+a+"\n") {
 		t.Errorf("no banner naming %s:\n%s", a, out)
 	}
 	if len(r.ran(t, "apply")) != 1 {
@@ -143,10 +143,58 @@ func TestInitAdmitsTheLauncherGrantUpgrade(t *testing.T) {
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), `runs_launcher["`+a+`"]`) {
 		t.Fatalf("a replace from another condition: exit %d, err %v", ExitCode(err), err)
 	}
-	if strings.Contains(out, "bucket access (0.9.0)") {
+	if strings.Contains(out, "bucket access (0.23.0)") {
 		t.Errorf("a refused plan printed the upgrade banner:\n%s", out)
 	}
 	if len(r.ran(t, "apply")) != 0 {
 		t.Fatal("a replace from another condition was applied")
+	}
+}
+
+// TestInstallationAtThePreviousVersionConvergesIssuesGrant: the HARD RULE's
+// own test for this grant. An installation whose launchers carry an earlier
+// form of the condition — the runs/ and tokens/ one every release from 0.9.0
+// wrote, or the pre-0.9.0 runs/-only one — ends a plain `fugaro update` with
+// the grant replaced by the runs/, tokens/ and issues/ one (D1727), applied
+// with no --allow-delete and named in the banner. The update is the whole
+// upgrade: the launchers file their issues from that installation afterwards,
+// and no second command is owed.
+func TestInstallationAtThePreviousVersionConvergesIssuesGrant(t *testing.T) {
+	const a, o = "user:a@example.com", "user:o@example.com"
+	bucket := "fugaro-runs-" + initProject
+	for _, tc := range []struct{ name, title, expr string }{
+		{"the runs/ and tokens/ condition", gcp.LegacyLauncherBucketConditionTitle, gcp.LegacyLauncherBucketCondition(bucket)},
+		{"the pre-0.9.0 runs/-only condition", gcp.RunsOnlyLauncherBucketConditionTitle, gcp.RunsOnlyLauncherBucketCondition(bucket)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := updateRig(t)
+			// The installation's own members, as the local config records
+			// them: the guard judges the replace against the launcher list
+			// this run holds, and an installation's list is what its config
+			// says (or the outputs of a run that adopted it).
+			r.appendConfig(t, "terraform: { launchers: [\""+a+"\", \""+o+"\"], operators: [\""+o+"\"] }\n")
+			r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"launchers": []string{a, o}, "operators": []string{o}})}
+			r.script["plan@installation"] = map[string]any{"exit": 2}
+			r.script["show@installation"] = map[string]any{"stdout": planJSON(t, launcherReplaceChange(bucket, a, tc.title, tc.expr))}
+			r.save(t)
+			out, errOut, err := executeStdin(t, "", "update", "--yes")
+			if err != nil {
+				t.Fatalf("fugaro update left an installation at the previous version behind: %v\n%s%s", err, out, errOut)
+			}
+			all := out + errOut
+			if !strings.Contains(all, "bucket access (0.23.0)") || !strings.Contains(all, "  "+a+"\n") {
+				t.Errorf("the update does not name the launcher whose grant it replaces:\n%s", all)
+			}
+			if len(r.ran(t, "apply")) != 1 {
+				t.Fatalf("applies = %d, want the one the converge makes\n%s%s", len(r.ran(t, "apply")), out, errOut)
+			}
+			// The state the run wrote is the current condition, which is what
+			// the apply above makes real: the installation holds the issues/
+			// grant once it ends.
+			cond, _ := r.tfvars(t)["launcher_bucket_condition"].(map[string]any)
+			if cond["title"] != gcp.LauncherBucketConditionTitle || cond["expression"] != gcp.LauncherBucketCondition(bucket) {
+				t.Errorf("launcher_bucket_condition = %v, want the condition naming issues/", cond)
+			}
+		})
 	}
 }

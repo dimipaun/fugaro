@@ -25,6 +25,13 @@ type BucketFinding struct{ Severity, Member, Role, Problem, Fix string }
 // the runs/-only one. It names the release the seal ships in.
 const sealRelease = "0.9.0"
 
+// issuesGrantRelease is the release whose launchers file issues in the shared
+// issue store under issues/, and so need the condition widened again
+// (gcp.LauncherBucketCondition, D1727): an installation not re-applied since
+// it has the runs/ and tokens/ one. It names the release the issues grant
+// ships in, which is the release the operator's `fugaro update` has to reach.
+const issuesGrantRelease = "0.23.0"
+
 // bucketWriteRoles are the predefined roles that write objects.
 var bucketWriteRoles = []string{"roles/storage.objectAdmin", "roles/storage.objectUser", "roles/storage.objectCreator",
 	"roles/storage.legacyBucketWriter", "roles/storage.legacyBucketOwner", "roles/storage.admin"}
@@ -79,23 +86,33 @@ func RunsBucketFindings(p *storage.Policy, bucket, project string, launchers, op
 				writer[m] = true
 			case bd.Condition != nil && bd.Role == "roles/storage.objectUser" && bd.Condition.Title == gcp.LegacyLauncherBucketConditionTitle &&
 				bd.Condition.Expression == gcp.LegacyLauncherBucketCondition(bucket) && bd.Condition.Description == "":
-				// The launchers' own grant in its pre-0.9.0 form, on an
-				// installation not re-initialised since the budget token moved
-				// to tokens/. Not writer[m]: the run this member starts cannot
-				// write its sealed token, and the loop below says so from the
-				// launchers list. The fix is the init that replaces the
-				// binding, never a removal — the member holds the runs/ write
-				// it is supposed to hold, and taking it away would break
-				// launching (this case used to fall through to the catch-all
-				// below, which prints remove-iam-policy-binding --all).
+				// The launchers' own grant in the form 0.9.0 wrote, on an
+				// installation not re-applied since the shared issue store
+				// moved to issues/. Not writer[m]: a launcher of that
+				// installation cannot upload an issue, and the loop below says
+				// so from the launchers list. The fix is the update that
+				// replaces the binding, never a removal — the member holds the
+				// runs/ and tokens/ write it is supposed to hold, and taking
+				// it away would break launching (this case used to fall
+				// through to the catch-all below, which prints
+				// remove-iam-policy-binding --all).
 				out = append(out, BucketFinding{Severity: "warning", Member: pm, Role: bd.Role,
-					Problem: pm + " holds " + bd.Role + " on gs://" + bucket + " under the launchers' pre-0.9.0 runs/-only condition (titled " + gcp.LegacyLauncherBucketConditionTitle + "): the installation has not been re-initialised since the budget token moved to tokens/, so its launchers cannot write the sealed budget token",
+					Problem: pm + " holds " + bd.Role + " on gs://" + bucket + " and cannot upload an issue: the installation has not been re-applied since the shared issue store moved to issues/, so this grant (under the launchers' runs/ and tokens/ condition, titled " + gcp.LegacyLauncherBucketConditionTitle + ") is one release behind",
+					Fix:     "an operator runs fugaro update (" + issuesGrantRelease + " or later), which replaces the grant"})
+			case bd.Condition != nil && bd.Role == "roles/storage.objectUser" && bd.Condition.Title == gcp.RunsOnlyLauncherBucketConditionTitle &&
+				bd.Condition.Expression == gcp.RunsOnlyLauncherBucketCondition(bucket) && bd.Condition.Description == "":
+				// The same grant in its pre-0.9.0 form, on an installation
+				// not re-initialised since the budget token moved to tokens/.
+				// Not writer[m], for the reason above and this one: the run
+				// this member starts cannot write its sealed token.
+				out = append(out, BucketFinding{Severity: "warning", Member: pm, Role: bd.Role,
+					Problem: pm + " holds " + bd.Role + " on gs://" + bucket + " under the launchers' pre-0.9.0 runs/-only condition (titled " + gcp.RunsOnlyLauncherBucketConditionTitle + "): the installation has not been re-initialised since the budget token moved to tokens/, so its launchers cannot write the sealed budget token",
 					Fix:     "an operator runs fugaro update (" + sealRelease + " or later), which replaces the grant"})
 			case bd.Condition != nil && fugaroAccountMember.MatchString(m) && bd.Role == "roles/storage.objectUser":
 				// A job or build account under its own prefixes (the guard checks the shape).
 			case bd.Condition != nil:
 				out = append(out, BucketFinding{Severity: "warning", Member: pm, Role: bd.Role,
-					Problem: pm + " holds " + bd.Role + " on gs://" + bucket + " under a condition that is not the launchers' runs/ and tokens/ condition",
+					Problem: pm + " holds " + bd.Role + " on gs://" + bucket + " under a condition that is not the launchers' runs/, tokens/ and issues/ condition",
 					Fix:     removeCmd(m, bd.Role) + " --all"})
 			case slices.Contains(operators, m) && bd.Role == "roles/storage.objectAdmin":
 			case customRole(bd.Role):
@@ -130,8 +147,8 @@ func RunsBucketFindings(p *storage.Policy, bucket, project string, launchers, op
 	for _, m := range launchers {
 		if launcherOnly(m) && (!reader[m] || !writer[m]) {
 			out = append(out, BucketFinding{Severity: "warning", Member: pluginwire.Printable(m),
-				Problem: "launcher " + pluginwire.Printable(m) + " lacks the runs bucket grants (read everything, write runs/ and tokens/: the 0.7.0 hardening, widened to tokens/ when the budget token moved there)",
-				Fix:     "an operator runs fugaro update (" + sealRelease + " or later)"})
+				Problem: "launcher " + pluginwire.Printable(m) + " lacks the runs bucket grants (read everything, write runs/, tokens/ and issues/: the 0.7.0 hardening, widened to tokens/ when the budget token moved there and to issues/ with the shared issue store)",
+				Fix:     "an operator runs fugaro update (" + issuesGrantRelease + " or later)"})
 		}
 	}
 	return out
@@ -306,17 +323,19 @@ func HardeningAllowDelete(p *tf.Plan, launchers, operators []string) []string {
 	return out
 }
 
-// LauncherGrantUpgrade is the 0.9.0 upgrade's allow-list for p
+// LauncherGrantUpgrade is the upgrade's allow-list for p
 // (docs/design/bucket-iam.md H5): each replace of a launcher's
-// runs_launcher["<m>"] grant on bucket whose before is the pre-0.9.0 grant
-// (objectUser under gcp.LegacyLauncherBucketCondition and its title, no
-// description) and whose after is the same member's objectUser grant on the
-// same bucket under gcp.LauncherBucketCondition and its title. The widened
-// condition is ForceNew, so every installation set up before 0.9.0 plans
-// this replace once per launcher who is not an operator. Anything else — a
-// pure delete, another before or after, another bucket, role or member, an
-// operator, a member on no list — is never allowed: the guard refuses it as
-// before.
+// runs_launcher["<m>"] grant on bucket whose before is one of the earlier
+// forms of that grant (objectUser under gcp.LegacyLauncherBucketCondition or
+// gcp.RunsOnlyLauncherBucketCondition and its title, no description) and
+// whose after is the same member's objectUser grant on the same bucket under
+// gcp.LauncherBucketCondition and its title. The widened condition is
+// ForceNew, so every installation that has not been re-applied since the
+// launcher condition last changed plans this replace once per launcher who is
+// not an operator — from whichever form it was last applied at. Anything else
+// — a pure delete, another before or after, another bucket, role or member,
+// an operator, a member on no list — is never allowed: the guard refuses it
+// as before.
 func LauncherGrantUpgrade(p *tf.Plan, bucket string, launchers, operators []string) []string {
 	if p == nil || !gcp.ValidBucketName(bucket) {
 		return nil
@@ -335,7 +354,7 @@ func LauncherGrantUpgrade(p *tf.Plan, bucket string, launchers, operators []stri
 		if !slices.Contains(launchers, m) || slices.Contains(operators, m) {
 			continue
 		}
-		if !launcherGrantIs(rc.Change.Before, bucket, m, role, gcp.LegacyLauncherBucketConditionTitle, gcp.LegacyLauncherBucketCondition(bucket)) ||
+		if !launcherGrantOfAnEarlierRelease(rc.Change.Before, bucket, m, role) ||
 			!launcherGrantIs(rc.Change.After, bucket, m, role, gcp.LauncherBucketConditionTitle, gcp.LauncherBucketCondition(bucket)) {
 			continue
 		}
@@ -343,6 +362,25 @@ func LauncherGrantUpgrade(p *tf.Plan, bucket string, launchers, operators []stri
 	}
 	slices.Sort(out)
 	return out
+}
+
+// launcherGrantOfAnEarlierRelease reports whether side is the launchers' own
+// objectUser grant as some release before this one wrote it: the runs/ and
+// tokens/ form 0.9.0 wrote (gcp.LegacyLauncherBucketCondition) or the
+// pre-0.9.0 runs/-only one (gcp.RunsOnlyLauncherBucketCondition). Both are
+// the same grant under an older condition, and an installation sits at
+// whichever of them it was last applied at, so a replace from either is the
+// upgrade.
+func launcherGrantOfAnEarlierRelease(side map[string]any, bucket, member, role string) bool {
+	for _, form := range []struct{ title, expr string }{
+		{gcp.LegacyLauncherBucketConditionTitle, gcp.LegacyLauncherBucketCondition(bucket)},
+		{gcp.RunsOnlyLauncherBucketConditionTitle, gcp.RunsOnlyLauncherBucketCondition(bucket)},
+	} {
+		if launcherGrantIs(side, bucket, member, role, form.title, form.expr) {
+			return true
+		}
+	}
+	return false
 }
 
 // launcherGrantIs reports whether one side of a google_storage_bucket_iam_member
@@ -365,14 +403,14 @@ func launcherGrantIs(side map[string]any, bucket, member, role, title, expr stri
 }
 
 // LauncherGrantUpgradeBanner names the launchers whose runs_launcher grant
-// the plan replaces with the runs/ and tokens/ condition, "" when there are
-// none.
+// the plan replaces with the runs/, tokens/ and issues/ condition, "" when
+// there are none.
 func LauncherGrantUpgradeBanner(allowed []string) string {
 	if len(allowed) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("bucket access (0.9.0): these launchers' runs/ grant is replaced by one on runs/ and tokens/, so the runs they start can write their sealed budget token:\n")
+	b.WriteString("bucket access (0.23.0): these launchers' bucket write is replaced by one on runs/, tokens/ and issues/, so the launchers who file an issue can upload it:\n")
 	for _, a := range allowed {
 		m, _ := grantMember(a, "runs_launcher")
 		b.WriteString("  " + pluginwire.Printable(m) + "\n")

@@ -2607,9 +2607,10 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// grants; exactly those are allowed, and named (bucket-iam.md H7).
 		// A delete is never covered, so the step still asks its own name.
 		hardening := infra.HardeningAllowDelete(plan, spec.Launchers, spec.Operators)
-		// The 0.9.0 upgrade replaces each launcher's runs/-only grant with
-		// the runs/ and tokens/ one (a condition is ForceNew); exactly that
-		// replace is allowed, and named (bucket-iam.md H5).
+		// The upgrade replaces each launcher's grant under an earlier form of
+		// the launchers' condition with the current runs/, tokens/ and issues/
+		// one (a condition is ForceNew); exactly that replace is allowed, and
+		// named (bucket-iam.md H5).
 		upgrade := infra.LauncherGrantUpgrade(plan, spec.RunsBucket, spec.Launchers, spec.Operators)
 		allowed := append(append(slices.Clone(r.o.allowDelete), hardening...), upgrade...)
 		counts := infra.CountPlan(plan)
