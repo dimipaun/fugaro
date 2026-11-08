@@ -135,6 +135,40 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 	}
 }
 
+// The release note is an artifact beside the claim the doc makes about it: §3's
+// dated update of 2026-11-08 ends "The 0.23.0 notes' `### For operators` entry
+// is that one command", and a sentence that names a release file is a claim
+// that the file exists and carries the entry — which is the state the round-1
+// review found missing (the sentence named 0.23.0 while docs/releases/ held up
+// to v0.22.0.md and the launcher's grant had no note behind it). The version is
+// read off that sentence rather than typed here, so the file, the sentence and
+// the release the doctor text and the replace banner name
+// (`infra.issuesGrantRelease`) move together: the note is the step an operator
+// runs after this grant ships, and CLAUDE.md puts it in the release notes' own
+// `### For operators` section in the same PR.
+func TestDocsBucketIAMNamesTheReleaseThatCarriesTheGrant(t *testing.T) {
+	const path = "../../docs/design/bucket-iam.md"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const claim = "The <version> notes' `### For operators` entry is that one command."
+	m := regexp.MustCompile("The ([0-9]+\\.[0-9]+\\.[0-9]+) notes' `### For operators` entry is that one command\\.").FindStringSubmatch(string(data))
+	if m == nil {
+		t.Fatalf("%s no longer ends its 2026-11-08 note with %q: the sentence names the release whose notes carry the operator step for the launcher's grant, and this test reads that version off it", path, claim)
+	}
+	notes := "../../docs/releases/v" + m[1] + ".md"
+	body, err := os.ReadFile(notes)
+	if err != nil {
+		t.Fatalf("%s points an operator at the %s notes' `### For operators` entry, and %s holds no such file: %v", path, m[1], notes, err)
+	}
+	for _, want := range []string{"### For operators", "Run `fugaro update`", "`issues/`"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("%s lacks %q: it is the note %s names, and the entry it owes is the one command that replaces the launchers' grant with the one covering `issues/`", notes, want, path)
+		}
+	}
+}
+
 // The design doc that gcp/names.go, internal/infra/hardening.go and
 // internal/infra/tf/cover.go cite as the contract states the launchers'
 // condition in four places — §3's end-state table, §4's H5 bullets, §5's H6
