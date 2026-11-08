@@ -428,6 +428,21 @@ describe('the negative vectors', () => {
     expect(reason).not.toContain('report')
   })
 
+  it('the signature is checked before the payload is parsed, so an unparseable payload with a bad signature is refused as a signature', () => {
+    // The design's rule 2 and not an implementation order: the payload is
+    // verified as bytes, so a payload that is not even a claim set is still
+    // refused as a *signature* when the signature is what failed. Parsing
+    // first would answer "claims that are not a licence claim set" here, which
+    // is a statement about a payload nobody verified.
+    const other = signer('other-2026')
+    const payload = Buffer.from('this is not a claim set', 'utf8')
+    const key = spell(acme.id, payload, edSign(null, payload, other.privateKey))
+
+    const reason = refusalOf(verifyLicenceKey(key, at(ISSUED), keyringOf(acme, other)))
+    expect(reason).toMatch(/signature that does not verify/)
+    expect(reason).not.toMatch(/claim set|does not decode/)
+  })
+
   it('a payload that is JSON but not a claim set is refused: an array, a scalar, a missing or mistyped claim', () => {
     for (const payload of [
       '[1,2,3]',
@@ -495,6 +510,20 @@ describe('the negative vectors', () => {
       const reason = refusalOf(verifyLicenceKey(mint(acme, claimsFor(), id), at(ISSUED), acme.keyring))
       expect(reason, id).toMatch(/is not one the console holds/)
     }
+
+    // The guard and not a plain `keyring[id]`: the one ring that tells the two
+    // apart is a ring whose *prototype* carries a real Ed25519 public key under
+    // the id. That id is not an entry this ring holds, so the key is refused --
+    // where a plain lookup would find that PEM and verify a key minted by the
+    // other keypair, which is no key this build holds at all.
+    const inherited = signer('prod-inherited')
+    const ring = Object.create(inherited.keyring) as LicenceKeyring
+    expect(Object.hasOwn(ring, inherited.id)).toBe(false)
+
+    expect(verifyLicenceKey(mint(inherited, claimsFor()), at(ISSUED), ring)).toEqual({
+      ok: false,
+      reason: `licence key '${inherited.id}' is not one the console holds`,
+    })
   })
 
   it('a ring entry that is not an Ed25519 public key is refused, and never thrown from', () => {
