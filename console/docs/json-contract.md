@@ -3080,11 +3080,14 @@ the repository, and no list can speak about it. The spellings are the ones
 `TestSecurityPathsCheckFailsClosedOnAnUnplaceablePath` holds, drawn from
 `sensitivity`'s own table (`pattern_test.go`'s
 `TestUnplaceablePathMatchesNoRuleAndClassifiesSensitive`): `/etc/passwd` is
-absolute, `docs/../website/src/x.md` escapes, the empty string is no path at
-all, and a bare `.` and a bare `..` are the repository root as a directory
-reference and the tree above it — the pair the matcher's own rule *accepts*,
-since `path.Clean` leaves both exactly as they are, and that this command
-refuses where it composes the answer. The two are told apart by `matched`:
+absolute, `../SECURITY.md`, `../../etc/passwd` and a bare `..` escape the
+checkout, `docs/../website/src/x.md` is rewritten by `path.Clean`, and the empty
+string is no path at all — the matcher's own rule refuses every one of them, a
+leading `..` included, so no row can name them. A bare `.` is the one spelling
+that rule *accepts*, since `path.Clean` leaves it exactly as it is, and it names
+the repository root as a directory reference rather than a file of it: this
+command refuses it where it composes the answer. The two are told apart by
+`matched`:
 `sensitive: true` with `matched: null` is exactly that unplaceable case, and
 `docs/pending-workflows/console-tests.yml` is `true` **with** the floor's
 `pending-workflows` row.

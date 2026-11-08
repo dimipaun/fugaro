@@ -289,19 +289,19 @@ var securityProbeRow = sensitivity.Pattern{Name: "placeable", Match: "**", Categ
 // one the matcher and the classifier ask. The direction is the safe one — a path
 // the probe does not match is answered sensitive, never routine.
 //
-// `.` and `..` are the two spellings the matcher's own rule accepts and that
-// name no path in a checkout, and they are refused here rather than by that
-// rule: cleanRelative compares the path with path.Clean's answer, and
-// path.Clean leaves a bare `.` and a bare `..` exactly as they are, so both
-// pass it while every other spelling that holds a `.` or `..` component —
-// `./x`, `docs/..`, `a/./b` — is rewritten and refused. Neither names a file of
-// the repository (`.` is the repository root as a directory reference and `..`
-// is the tree above it), so a list can speak about neither, and answering
-// `sensitive: false` for them would be the one answer D1512 keeps out of this
-// field. Every spelling with a component to its name is left to the matcher:
-// `.gitignore` and `...` are ordinary file names and are placed.
+// `.` is the one spelling the matcher's own rule accepts and that names no path
+// in a checkout, and it is refused here rather than by that rule: cleanRelative
+// compares the path with path.Clean's answer, and path.Clean leaves a bare `.`
+// exactly as it is, so it passes while every other spelling that holds a `.` or
+// `..` component — `./x`, `docs/..`, `a/./b` — is rewritten and refused, and
+// every spelling that escapes the checkout, `..` included, is refused by that
+// rule itself. `.` names no file of the repository (it is the repository root
+// as a directory reference), so a list can speak about it neither, and
+// answering `sensitive: false` for it would be the one answer D1512 keeps out of
+// this field. Every spelling with a component to its name is left to the
+// matcher: `.gitignore` and `...` are ordinary file names and are placed.
 func securityPlaceable(path string) bool {
-	if path == "." || path == ".." {
+	if path == "." {
 		return false
 	}
 	return len(sensitivity.Match([]string{path}, []sensitivity.Pattern{securityProbeRow})) > 0

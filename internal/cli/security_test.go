@@ -256,22 +256,26 @@ func TestSecurityPathsCheckAnswersPerPath(t *testing.T) {
 }
 
 // TestSecurityPathsCheckFailsClosedOnAnUnplaceablePath: a path the reader
-// cannot place is sensitive, and no row is named for it (F22, D1512). Three of
-// the five spellings here are the ones SC1's own table refuses — `/etc/passwd`
-// is absolute, `docs/../website/src/x.md` escapes, and the empty string is no
-// path at all — and each of them means more than one path, so a list can never
-// answer `no` for one. The other two are `.` and `..`: the spellings that same
-// rule *accepts*, because path.Clean leaves a bare `.` and a bare `..` exactly
-// as they are, and that name no path in a checkout either (`.` is the
-// repository root as a directory reference and `..` is the tree above it). So
-// they are refused where this command composes the answer
-// (securityPlaceable) rather than by the matcher, and this test is what holds
-// that boundary: it is the pair a reader would otherwise be told the list says
-// nothing about, which is the one answer D1512 keeps out of this field.
+// cannot place is sensitive, and no row is named for it (F22, D1512). Every
+// spelling here but one is one SC1's own rule refuses — `/etc/passwd` is
+// absolute, `../SECURITY.md`, `../../etc/passwd` and a bare `..` escape the
+// checkout, `docs/../website/src/x.md` is rewritten by path.Clean, and the empty
+// string is no path at all — and each of them means more than one path, so a
+// list can never answer `no` for one. The escaping spellings are what make this
+// test the fail-closed one rather than a restatement: a rule that admitted a
+// leading `..` would place them, and the `**` probe this command asks would then
+// match them and answer `sensitive: false` for a path outside the repository.
+// The exception is `.`: the one spelling that same rule *accepts*, because
+// path.Clean leaves a bare `.` exactly as it is, and that names no path in a
+// checkout either (`.` is the repository root as a directory reference). So it
+// is refused where this command composes the answer (securityPlaceable) rather
+// than by the matcher, and this test is what holds that boundary: it is the
+// answer a reader would otherwise be told the list says nothing about, which is
+// the one answer D1512 keeps out of this field.
 func TestSecurityPathsCheckFailsClosedOnAnUnplaceablePath(t *testing.T) {
 	securityCheckout(t, "acme/app", securityNoKeyYAML)
 
-	paths := []string{"/etc/passwd", "docs/../website/src/x.md", "", ".", ".."}
+	paths := []string{"/etc/passwd", "../SECURITY.md", "../../etc/passwd", "docs/../website/src/x.md", "", ".", ".."}
 	args := []string{"security", "paths"}
 	for _, p := range paths {
 		args = append(args, "--check", p)
