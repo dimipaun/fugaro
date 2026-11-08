@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // ErrCancelled is the context cause when a cancel marker was seen.
@@ -17,13 +19,50 @@ type Budget struct {
 	Total   time.Duration
 	Reserve time.Duration
 	Stage   time.Duration
-	Now     func() time.Time
+	// ReviewPct is the share of Total, in percent, the review and fix
+	// rounds may spend (config.Timeouts.ReviewBudgetPct, default 80). Past
+	// it the loop starts no further round and the run finalizes with the
+	// last round's findings still open rather than failing (BF1). It is 0
+	// for a Budget nobody filled in — every test that builds one by hand —
+	// and 0 reads as the default, so such a Budget stops at the same share
+	// a run does.
+	ReviewPct int
+	Now       func() time.Time
 }
 
 func (b Budget) finalizeAt() time.Time { return b.Start.Add(b.Total - b.Reserve) }
 
 // Exhausted reports whether only the finalize reserve is left.
 func (b Budget) Exhausted() bool { return !b.Now().Before(b.finalizeAt()) }
+
+// reviewStopAt is the instant no further review or fix round may start at:
+// ReviewPct of Total into the run, never later than finalizeAt — a share
+// past the reserve asks for nothing the reserve does not already do, and
+// 100% with no reserve left is exactly that instant.
+func (b Budget) reviewStopAt() time.Time {
+	at := b.Start.Add(time.Duration(float64(b.Total) * float64(b.reviewPct()) / 100))
+	if f := b.finalizeAt(); f.Before(at) {
+		return f
+	}
+	return at
+}
+
+// reviewPct is the share reviewStopAt reads, with an unset or unreadable
+// value taken as the default: it is the number the record's open_findings
+// block carries (runstore.OpenFindings.ReviewPct), so what a reader is told
+// is the share the run was actually held to.
+func (b Budget) reviewPct() int {
+	if b.ReviewPct <= 0 || b.ReviewPct > config.MaxReviewBudgetPct {
+		return config.DefaultReviewBudgetPct
+	}
+	return b.ReviewPct
+}
+
+// ReviewBudgetSpent reports whether the run has spent its review share: past
+// it the review loop starts no further review or fix round (BF1). It is not
+// Exhausted — that is the finalize reserve, which ends a stage wherever it
+// is, mid-round included.
+func (b Budget) ReviewBudgetSpent() bool { return !b.Now().Before(b.reviewStopAt()) }
 
 // StageContext bounds one stage by the stage timeout and the finalize reserve.
 func (b Budget) StageContext(parent context.Context) (context.Context, context.CancelFunc) {

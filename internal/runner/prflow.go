@@ -782,6 +782,7 @@ func (r *run) sectionLines(head string, parts ...string) string {
 	id := inlineText(r.rec.RunID)
 	out := line + "\n"
 	out += r.ownerPart()
+	out += r.openPart()
 	if r.rec.DraftFallback {
 		out += "This host has no draft pull requests: this is a normal pull request marked [DRAFT], so reviews may already have been requested.\n"
 	}
@@ -831,6 +832,47 @@ func (r *run) ownerPart() string {
 		// The list is capped (runstore.MaxOwnerDecisions), and a section that
 		// stopped silently would read as the whole answer.
 		fmt.Fprintf(&b, "- and %s more; the run's record lists %d of them\n", Plural(od.Total-len(od.Decisions), "decision"), len(od.Decisions))
+	}
+	return b.String()
+}
+
+// openPart is the status section's list of the findings the run finalized
+// with still open (BF1): one line per finding — the word its score reads, the
+// path the reviewer named and the reviewer's own sentence — under a head that
+// says why the rounds stopped. "" for a run that spent no more than its review
+// share on them, which is every run whose review converged.
+//
+// It hangs off sectionLines beside ownerPart rather than being one of the
+// final section's parts: it is a list, and the line's parts are joined with a
+// separator that a list would run into. Only a run that has already stopped
+// carries the block, so no section before the last one can show it.
+//
+// Every field is the reviewer's own text about an untrusted diff, so the path
+// and the sentence both go through inlineText: a sentence carrying a newline
+// would end its own bullet, and a mention or a marker in one must not reach
+// the pull request as either.
+func (r *run) openPart() string {
+	of := r.rec.OpenFindings
+	if of == nil {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "**Still open** — the run reached its review share of the budget (%d%%), so it started no further round: these are the findings round %d left, for triage rather than for this run to fix.\n", of.ReviewPct, of.Round)
+	for _, f := range of.Findings {
+		word := string(f.Label)
+		if f.Sensitive {
+			word += ", security path"
+		}
+		if f.File != "" {
+			fmt.Fprintf(&b, "- %s `%s`: %s\n", inlineText(word), inlineText(f.File), inlineText(f.Title))
+			continue
+		}
+		fmt.Fprintf(&b, "- %s: %s\n", inlineText(word), inlineText(f.Title))
+	}
+	if of.Total > len(of.Findings) {
+		// The list is capped (runstore.MaxOpenFindings), and a section that
+		// stopped silently would read as the whole answer.
+		fmt.Fprintf(&b, "- and %s more; the run's record lists %d of them\n", Plural(of.Total-len(of.Findings), "finding"), len(of.Findings))
 	}
 	return b.String()
 }

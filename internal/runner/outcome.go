@@ -45,6 +45,16 @@ const ReasonNoVerifiedTest = "no verified test run on the final commit"
 // reason names the raise — the mode, the rule that raised it and the moment
 // (D22's third moment is the case a run cannot buy rounds with).
 //
+// open is what a run that stopped at its review share finalized with still
+// open (BF1, runstore.OpenFindings), nil for every run that spent no more than
+// its share on the rounds. It is read last of everything the run left behind:
+// a round a mode tolerates is decided by the tolerance above, a raise and an
+// unread round keep their own refusals, and the stop only turns "the round
+// asked for changes" into a list — ready unless openBlocker finds what nobody
+// merges. A stop that came before the level which decides readiness held a
+// round is read where a missing verdict is, and is a draft with a sentence
+// that says time ran out rather than that nobody reviewed.
+//
 // owner is what the run's review left for the repository's owner to settle
 // (OD1, runstore.OwnerDecisions), nil for a run that left none. It is checked
 // above the mode's tolerance and above every review verdict: a finding whose
@@ -57,7 +67,7 @@ const ReasonNoVerifiedTest = "no verified test run on the final commit"
 // the site that knows which refusal the run carries — nothing downstream reads
 // the sentence back to work one out (design §4.2). A run Decide makes ready
 // carries no class, the way a succeeded record carries none.
-func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSummary, pol FindingsPolicy, owner *runstore.OwnerDecisions) (bool, string, failure.Class) {
+func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSummary, pol FindingsPolicy, owner *runstore.OwnerDecisions, open *runstore.OpenFindings) (bool, string, failure.Class) {
 	latest := latestVerifiedTest(records, finalSHA)
 	switch {
 	case latest == nil:
@@ -77,6 +87,16 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 		// halt on the same decisions reads its class off the halt's own reason
 		// instead (haltClass), where no family holds it either.
 		return false, ownerWaitingReason(pendingOwner(owner)), failure.Unclassified
+	case last == nil && open != nil:
+		// The run stopped at its review share before the level that decides
+		// readiness held a round (BF1): the inner level's rounds are not the
+		// review this run is judged by (D723, G4), so nothing was read at the
+		// level the mode asks for and the pull request stays a draft. The
+		// reason says time ran out rather than that nobody reviewed — the
+		// rounds that were held are on the record and in the section beside
+		// this sentence — and the run ends completed and not failed: it
+		// stopped buying rounds, it did not botch one.
+		return false, fmt.Sprintf("the review budget ran out at %d%% of the run, before the review level that decides readiness held a round", open.ReviewPct), ""
 	case last == nil:
 		return false, "no review verdict", failure.ReviewUnread
 	case last.Verdict == "none":
@@ -97,6 +117,29 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 		if pol.Raised != nil {
 			return false, pol.raiseReason(last), failure.ReviewNotConverged
 		}
+		if open != nil {
+			// The rounds stopped at the run's own review share with this
+			// round's findings still open (BF1): the run ends completed, and
+			// the pull request is ready unless what is left is what nobody
+			// merges — a blocker anywhere, or a high finding in a path the
+			// repository's own security floor matches (openBlocker).
+			//
+			// It is deliberately looser than the tolerance above and it never
+			// widens it: a round a mode tolerates is decided there, a raise
+			// and an unread round are decided above and below, and only the
+			// stop turns "the round asked for changes" from a refusal into a
+			// list a coordinator works through (open.Total, the pull request's
+			// own section).
+			//
+			// The class stays empty on purpose in both directions: the run
+			// did not fail, and an empty class on a run that is not ready is
+			// exactly the stop (finalize writes succeeded and a draft from
+			// it). Every other refusal below and above hands a class over.
+			if why := openBlocker(*open); why != "" {
+				return false, fmt.Sprintf("review round %d left %s open when the review budget ran out: %s", open.Round, Plural(open.Total, "finding"), why), ""
+			}
+			return true, fmt.Sprintf("review round %d left %s open when the review budget ran out, none of them blocking", open.Round, Plural(open.Total, "finding")), ""
+		}
 		return false, fmt.Sprintf("review round %d still has %s", last.Round, Plural(last.Findings, "finding")), failure.ReviewNotConverged
 	case pol.HeldBack != nil:
 		// The level that decided shipped, and an enabled level above it did
@@ -108,6 +151,30 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 		return false, heldBackReason(*pol.HeldBack), failure.ReviewNotConverged
 	}
 	return true, "", ""
+}
+
+// openBlocker is why a run that stopped at its review share stays a draft, or
+// "" when nothing it left open blocks (BF1): a finding whose label is a
+// blocker — which is also what a finding whose score cannot be read at all
+// reads as, fail closed (D4, Score.Label) — and a high finding in a path the
+// repository's own security floor matched. The two are the owner's own line:
+// merge-as-is plus follow-ups is what such a run is for, and a blocker or a
+// security-path high finding is not something a follow-up triages later.
+func openBlocker(of runstore.OpenFindings) string {
+	for _, f := range of.Findings {
+		switch {
+		case f.Label == rigor.Blocker:
+			if f.File == "" {
+				return "a blocker finding, naming no file"
+			}
+			return fmt.Sprintf("a blocker finding in %s", f.File)
+		case f.Label == rigor.High && f.Sensitive:
+			// Sensitive is only ever set with a file (the floor is read
+			// against one), so this branch has a path to name.
+			return fmt.Sprintf("a high finding in %s, which is one of the repository's security paths", f.File)
+		}
+	}
+	return ""
 }
 
 // heldBackReason is Decide's reason for a run whose deciding level shipped and

@@ -554,6 +554,109 @@ func NewTolerated(findings []ToleratedFinding) *ToleratedFindings {
 	return tf
 }
 
+// MaxOpenFindings bounds the open findings a record stores, for the reason
+// MaxTolerated bounds the tolerated ones: the list is a model's output and the
+// record is a small object every listing reads.
+const MaxOpenFindings = 100
+
+// MaxOpenTitle bounds a stored open finding's title, and MaxOpenFile the path
+// beside it, in runes: both are the reviewer's own text about an untrusted
+// diff, and the whole of it stays in the transcript.
+const (
+	MaxOpenTitle = 200
+	MaxOpenFile  = 200
+)
+
+// OpenFindings is what a run that stopped for time finalized with still open
+// (BF1): the findings of the last review round the loop held, recorded where
+// the run's review budget ran out before the rounds converged.
+//
+// The block is written exactly when the run stopped that way — its presence is
+// the stop, which is what readiness reads (runner.Decide's open-findings case)
+// — and not only when it holds findings: a round may ask for changes and name
+// nothing, and a run that stopped on it is still a run that stopped. That is
+// the one difference from ToleratedFindings, where an empty block is the fact
+// that nothing was tolerated and the absence of the block is the fact that
+// nothing happened at all.
+//
+// It is bounded data — enums, three small integers, a word and two clipped
+// lines — and the list is capped at MaxOpenFindings with Total saying how many
+// the round really left, so a truncated list is never presented as the whole
+// one. The field is additive: every record written before it existed reads the
+// same as it always did, and the schema's version stays 1.
+type OpenFindings struct {
+	// Findings is one entry per finding the last round left open, in the
+	// reviewer's order. It may be empty, which is a round that asked for
+	// changes and named nothing.
+	Findings []OpenFinding `json:"findings"`
+	// Total is how many findings the round left. Never less than
+	// len(Findings).
+	Total int `json:"total"`
+	// Round is the review round the findings came from: the round the loop
+	// stopped after, whose verdict the record's Reviews carries.
+	Round int `json:"round"`
+	// ReviewPct is the share of the budget the run stopped at: the percentage
+	// the run's own timeouts.review_budget_pct resolved to.
+	ReviewPct int `json:"review_pct"`
+}
+
+// OpenFinding is one finding a run finalized with still open: the reviewer's
+// own words for it, clipped, the word a person reads for its score, where it
+// is and whether that is a path the repository's own guards live in.
+type OpenFinding struct {
+	// Title is the reviewer's own summary of the finding, clipped to
+	// MaxOpenTitle runes. An entry without one is not stored.
+	Title string `json:"title"`
+	// Label is the word for the score (rigor.Label): blocker, high, medium,
+	// low or nit, and blocker for a finding whose score cannot be read at all
+	// (D4, Score.Label — fail closed). It is derived from the axes beside it
+	// and never an input to a decision (D2), so NewOpenFindings fills it from
+	// them and no caller can store a word that disagrees with them.
+	Label rigor.Label `json:"label"`
+	// File is the path the reviewer named, clipped to MaxOpenFile runes. ""
+	// when it named none, and the record writes no key for it then — a
+	// finding with no path is one the security floor cannot be read against,
+	// which blocks a high finding like any other path (runner.Decide).
+	File string `json:"file,omitempty"`
+	// Sensitive reports whether File matched the repository's own security
+	// floor (internal/orchestrator/sensitivity) when the runner stored the
+	// entry. A high finding in such a path is what keeps a run that ran out of
+	// review budget a draft (BF1), so it is recorded beside the finding rather
+	// than worked out again by every reader.
+	Sensitive bool `json:"sensitive,omitempty"`
+	// Likelihood, Impact, FixCost and Class are the score the finding carries,
+	// as the reviewer wrote it (D3).
+	Likelihood int         `json:"likelihood"`
+	Impact     int         `json:"impact"`
+	FixCost    int         `json:"fix_cost"`
+	Class      rigor.Class `json:"class,omitempty"`
+}
+
+// NewOpenFindings bounds the findings a run records as left open and returns
+// the block to store, which is never nil: the block is the stop itself, and a
+// run that stopped for time carries it whether or not the last round named
+// anything.
+//
+// The label is taken from the score here and never from the caller, exactly as
+// NewTolerated takes it, and an entry whose title cannot be read is dropped:
+// the record is what a coordinator triages from, and a finding with nothing to
+// read is not one it can act on.
+func NewOpenFindings(findings []OpenFinding, round, reviewPct int) *OpenFindings {
+	of := &OpenFindings{Findings: []OpenFinding{}, Total: len(findings), Round: round, ReviewPct: reviewPct}
+	for _, f := range findings {
+		if f.Title == "" {
+			continue
+		}
+		if len(of.Findings) >= MaxOpenFindings {
+			break
+		}
+		s := rigor.Score{Likelihood: f.Likelihood, Impact: f.Impact, FixCost: f.FixCost, Class: f.Class}
+		f.Title, f.File, f.Label = clipRunes(f.Title, MaxOpenTitle), clipRunes(f.File, MaxOpenFile), s.Label()
+		of.Findings = append(of.Findings, f)
+	}
+	return of
+}
+
 // MaxOwnerDecisions bounds the pending owner decisions a record stores, for
 // the reason MaxTolerated bounds the tolerated findings: the list is a model's
 // output and the record is a small object every listing reads.
@@ -1045,6 +1148,16 @@ type Record struct {
 	// reader sees the record it always saw and the schema's version stays 1
 	// (F21).
 	Tolerated *ToleratedFindings `json:"tolerated,omitempty"`
+	// OpenFindings is what a run finalized with still open (BF1): the
+	// findings of the last review round the run held when its review budget
+	// ran out, which no further round was bought on. It is written exactly
+	// when the run stopped that way, and its presence is the stop — readiness
+	// reads it (runner.Decide) — so a run that stopped with findings and a run
+	// that stopped with none both carry it. Absent for every run that spent no
+	// more than its review share on the rounds, which is every record written
+	// before this field existed: the field is additive, so an old reader sees
+	// the record it always saw and the schema's version stays 1.
+	OpenFindings *OpenFindings `json:"open_findings,omitempty"`
 	// OwnerDecisions is what the run's review left for the repository's owner
 	// to settle (OD1): the findings a reviewer marked needs_owner, which no
 	// code change can fix, so the run spent no fix round on them — it stopped

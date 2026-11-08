@@ -380,7 +380,7 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	// runner.go): the reason and the class that describes it are handed over by
 	// the same three-way choice, so an arm that was refused and then halted is
 	// classed as a halt and one the agent left empty-handed is `no_commits`.
-	ready, reason, class := Decide(records, sha, r.decidingReview(), pol, r.rec.OwnerDecisions)
+	ready, reason, class := Decide(records, sha, r.decidingReview(), pol, r.rec.OwnerDecisions, r.rec.OpenFindings)
 	r.rec.Tolerated = r.toleratedRecord(pol)
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
@@ -398,6 +398,14 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	case r.isCancelled():
 		r.recordEnd(runstore.StatusCancelled, runstore.OutcomeNone, failure.Cancelled, reason)
 	case ready:
+		r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeNone, "", reason)
+	case r.rec.OpenFindings != nil && class == "":
+		// The arm stopped at its review share with findings still open
+		// (BF1): it completed, exactly as the champion's finalize reads the
+		// same stop, and the reason is the sentence Decide gave it. The two
+		// arms of a pair are judged from records that agree about what a stop
+		// means (D559), and the arm opens no pull request for the outcome to
+		// be read off.
 		r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeNone, "", reason)
 	default:
 		r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, class, reason)

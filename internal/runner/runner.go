@@ -2425,7 +2425,8 @@ func (r *run) bootstrap(ctx context.Context) error {
 		r.addSecret(s)
 	}
 	r.budget = Budget{Start: r.rec.StartedAt, Total: wf.Timeouts.Total.Duration,
-		Reserve: wf.Timeouts.FinalizeReserve.Duration, Stage: wf.Timeouts.Stage.Duration, Now: r.d.Now}
+		Reserve: wf.Timeouts.FinalizeReserve.Duration, Stage: wf.Timeouts.Stage.Duration,
+		ReviewPct: wf.Timeouts.ReviewBudgetPct, Now: r.d.Now}
 	if r.follow != nil {
 		if err := r.prepareFollowUp(ctx); err != nil {
 			return err
@@ -2914,6 +2915,12 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		if v.Verdict == "ship" || round >= r.reviewRounds(st) {
 			return true
 		}
+		// No further round is bought once the run has spent its review share
+		// (BF1): the fix and the review round after it are both rounds, and
+		// the run finalizes with this round's findings still open instead.
+		if r.stopForTime(ctx) {
+			return false
+		}
 		r.afterStage(ctx, "review")
 		if r.pr.gone {
 			return false
@@ -2922,6 +2929,12 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			return false
 		}
 		if st.Bounce && st.FirstRounds > 0 {
+			// The bounce is a round of its own — the cheap loop the fix
+			// bought — and the fix may have spent the rest of the share, so
+			// it is asked again here before it starts.
+			if r.stopForTime(ctx) {
+				return false
+			}
 			r.bounce++
 			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID); !ok {
 				return false
@@ -2984,6 +2997,11 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 		if v.Verdict == "ship" || round >= r.adversarialRounds(st) {
 			return true
 		}
+		// As seniorLoop stops: level 3's fix and the round after it are
+		// rounds, and none is bought past the run's review share (BF1).
+		if r.stopForTime(ctx) {
+			return false
+		}
 		r.afterStage(ctx, stageAdversarial)
 		if r.pr.gone {
 			return false
@@ -2992,6 +3010,9 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 			return false
 		}
 		if st.Bounce && st.FirstRounds > 0 {
+			if r.stopForTime(ctx) {
+				return false
+			}
 			r.bounce++
 			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID); !ok {
 				return false
@@ -4475,7 +4496,7 @@ func (r *run) finalize(ctx context.Context) error {
 	// reason records none (recordOwnerDecisions).
 	r.recordOwnerDecisions(halt)
 	pol := r.findingsPolicy()
-	ready, reason, class := Decide(records, decided, r.decidingReview(), pol, r.rec.OwnerDecisions)
+	ready, reason, class := Decide(records, decided, r.decidingReview(), pol, r.rec.OwnerDecisions, r.rec.OpenFindings)
 	r.rec.Tolerated = r.toleratedRecord(pol)
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
@@ -4635,6 +4656,16 @@ func (r *run) finalize(ctx context.Context) error {
 		r.recordEnd(runstore.StatusHalted, runstore.OutcomeDraft, haltClass(halt.Reason), reason)
 	case r.isCancelled():
 		r.recordEnd(runstore.StatusCancelled, runstore.OutcomeDraft, failure.Cancelled, reason)
+	case r.rec.OpenFindings != nil && class == "":
+		// A run that stopped at its review share with findings still open
+		// (BF1) completed: it pushed its work and opened a pull request, and
+		// the rounds it did not buy are not a failure. It is the one case
+		// that reaches this switch not ready and without a class — Decide
+		// hands one over for every other refusal, r.failure() names the run's
+		// own, the halt and the cancel name theirs — and the two together are
+		// what says so. The pull request is a draft whose reason is Decide's
+		// sentence; where it was ready, the case above ended it.
+		r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeDraft, "", reason)
 	default:
 		r.recordEnd(runstore.StatusFailed, runstore.OutcomeDraft, class, reason)
 	}

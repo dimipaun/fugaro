@@ -445,6 +445,37 @@
         "total": { "type": "integer", "minimum": 0, "description": "How many findings the mode tolerated, so a record whose list was capped still says how many were let through. Never less than the length of findings." }
       }
     },
+    "open_findings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["findings", "total", "round", "review_pct"],
+      "description": "What a run finalized with still open (BF1): the findings of the last review round it held, recorded where its review budget ran out — `timeouts.review_budget_pct` of `timeouts.total`, 80% by default — before the rounds converged. The loop bought no further review or fix round past that share, so the run ends completed with the work pushed and the pull request open, ready unless a finding blocks (runner.Decide: a blocker anywhere, or a high finding in a path the repository's own security floor matches, keeps it a draft). The block is written exactly when the run stopped that way, and its presence is the stop — a run that stopped with no finding named carries it too — which is the one difference from `tolerated`, where an empty block is the fact that nothing was tolerated. Bounded: at most 100 findings (runstore.MaxOpenFindings), each a score, a word, and two clipped lines. Absent for every run that spent no more than its review share on the rounds, which is every record written before this field existed; the field is additive, so an old reader sees the record it always saw and `version` stays 1.",
+      "properties": {
+        "findings": {
+          "type": "array",
+          "maxItems": 100,
+          "description": "One entry per finding the last round left open, in the reviewer's order. May be empty: a round that asked for changes and named nothing is still a round the run stopped after. Shorter than total only when the round left more than 100 findings, which the cap makes a record of the first 100 rather than of the whole set.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["title", "label", "likelihood", "impact", "fix_cost"],
+            "properties": {
+              "title": { "type": "string", "minLength": 1, "maxLength": 200, "description": "The reviewer's own summary of the finding, clipped to 200 runes (runstore.MaxOpenTitle). It is the one piece of the finding's text the record carries; the whole summary stays in the transcript." },
+              "label": { "enum": ["blocker", "high", "medium", "low", "nit"], "description": "The word a person reads for the score (internal/rigor's label vocabulary), and blocker for a finding whose score cannot be read at all (fail closed). It is derived from the axes beside it and never an input to a decision, so a reader takes the word from the axes rather than trusting this one. Readiness turns on it: blocker keeps the pull request a draft, and so does high where `sensitive` is true." },
+              "file": { "type": "string", "maxLength": 200, "description": "The path the reviewer named, clipped to 200 runes (runstore.MaxOpenFile). Absent when it named none, which the security floor cannot be read against and which therefore blocks a high finding like any other path." },
+              "sensitive": { "type": "boolean", "description": "Whether the path matched the repository's own security floor (internal/orchestrator/sensitivity) when the runner stored the entry. A high finding in such a path is what keeps the pull request a draft; it is recorded beside the finding rather than worked out again by every reader." },
+              "likelihood": { "type": "integer", "minimum": 0, "maximum": 5, "description": "How often the finding's condition will occur, on the anchored 1-5 scale (D1). 0 is a finding the reviewer did not score, which the label above already reads as a blocker." },
+              "impact": { "type": "integer", "minimum": 0, "maximum": 5, "description": "How bad it is when it does (D1). 0 is unscored, like likelihood." },
+              "fix_cost": { "type": "integer", "minimum": 0, "maximum": 5, "description": "The effort to address it (D1). 0 is unscored, like likelihood." },
+              "class": { "enum": ["correctness", "performance", "security", "data_loss", "maintainability", "cosmetic"], "description": "What kind of issue it is (D3, internal/rigor's vocabulary). Absent when the reviewer named none." }
+            }
+          }
+        },
+        "total": { "type": "integer", "minimum": 0, "description": "How many findings the round left, so a record whose list was capped, or whose entries carried no title to store, still says how many there were. Never less than the length of findings." },
+        "round": { "type": "integer", "minimum": 1, "description": "The review round the findings came from: the round the loop stopped after, whose verdict the record's `reviews` carries." },
+        "review_pct": { "type": "integer", "minimum": 0, "maximum": 100, "description": "The share of the budget the run stopped at: the percentage the run's own timeouts.review_budget_pct resolved to (config.DefaultReviewBudgetPct when the file named none)." }
+      }
+    },
     "owner_decisions": {
       "type": "object",
       "additionalProperties": false,
