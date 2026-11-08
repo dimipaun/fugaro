@@ -181,16 +181,20 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 // The two refusals, and both are fail-closed rather than a fallback to a
 // credential of the job's:
 //
-//   - a repository whose own agent.auth is a credential of its own. The class's
-//     one credential is the pairing account's tier-A one (reviewCandidates),
-//     which is a Claude OAuth account by construction (ReviewJobAccount), and
-//     0.20.0 ships the OAuth review alone: the api-key review — a provider key,
-//     OpenRouter or Anthropic — is a later release (§6.7). Both halves are
-//     refused: an api-key or vertex repository would need a key CSR7's variant
-//     deliberately does not mount, and a pairing naming anything but a Claude
-//     account is one pairReview never builds. So a repository's own api-key
-//     configuration can never produce an api-key review, and nothing reads as
-//     though it can.
+//   - a repository whose own agent.auth is a credential of its own, unless the
+//     pairing names the project's key. The class's one credential is the
+//     pairing's (reviewCandidates, AK4): the Claude OAuth account the review job
+//     is the variant of (ReviewJobAccount), or — where that job's account
+//     segment is the sentinel config.AnthropicKeyAccount — the project's own
+//     Anthropic API key, the bundle's tier-B entry (D1417). So which auths the
+//     class can be served under is not a fact about the repository's file
+//     alone: an api-key repository — its model calls are a key's, and its
+//     reviews are served by the project's own — is admitted where the launch
+//     admitted it to the key's variant and refused otherwise, and a vertex
+//     repository is refused either way, because its calls are a GCP service's
+//     and CSR7's variant mounts no credential of the repository's for it. A
+//     repository's own api-key configuration therefore cannot produce a review
+//     served by a key of its own, and nothing reads as though it can.
 //
 //   - a budget mode that leaves the class no gateway. The class's calls are the
 //     service's, and the service is reached through the gateway — the only
@@ -203,10 +207,19 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 //     The class does not force the gateway on: a mode the installation set to
 //     off keeps its one meaning (Open item 6's answer of 2026-11-05/06).
 func (r *run) checkReviewClassModelPath() error {
-	switch r.cfg.Agent.Auth {
-	case "oauth", config.AuthCascade:
+	// The class's credential is the pairing's, and the pairing is the job the
+	// platform put this run in: an OAuth account's review variant, whose class
+	// credential is that account's own token, or the sentinel
+	// config.AnthropicKeyAccount's, whose class credential is the project's own
+	// Anthropic API key (reviewCandidates, D1417). The repository's own auth
+	// says which of the two a launch can be admitted to and is never itself the
+	// credential: a repository whose calls are a key's is the one the key's
+	// variant serves, and vertex is refused either way.
+	switch {
+	case r.cfg.Agent.Auth == "oauth", r.cfg.Agent.Auth == config.AuthCascade:
+	case r.cfg.Agent.Auth == "api-key" && r.pairingNamesTheProjectsKey():
 	default:
-		return fmt.Errorf("this run is a review, and its repository's fugaro.yaml writes agent.auth: %s: the independent review's model calls are served by the credentials service's review class from the installation's Claude OAuth account, and the api-key review — a provider key, OpenRouter or Anthropic — is a later release (§6.7 of docs/cloud-senior-review/implementation-plan.md): 0.20.0 ships the OAuth review alone. A review carries no credential of its own, so no key of this repository's can serve it: agent.auth oauth (or cascade) is the OAuth path the class is served from", r.cfg.Agent.Auth)
+		return fmt.Errorf("this run is a review, and its repository's fugaro.yaml writes agent.auth: %s: the independent review's model calls are served by the credentials service's review class, and the class's one credential is the pairing's — the Claude OAuth account the review job is the variant of, or, where that job's account segment is %s, the project's own Anthropic API key, which is the one pairing an api-key repository's review is served from. This run's pairing is not that one, and a review carries no credential of its own, so no key of this repository's can serve it: agent.auth oauth (or cascade) is the OAuth path the class is served from", r.cfg.Agent.Auth, config.AnthropicKeyAccount)
 	}
 	if !r.gatewayOn() {
 		mode := r.spend.Mode
@@ -216,6 +229,22 @@ func (r *run) checkReviewClassModelPath() error {
 		return fmt.Errorf("this run is a review, and this installation's budget mode is %s: the review class's model calls are carried by the gateway, which only budget.mode %s or %s starts, and a review does not run with the installation's budget off — set budget.mode to %s or %s in the project policy and publish it (fugaro project policy publish), and the review reaches the credentials service's review class. The class does not force the gateway on: a mode the installation set to %s keeps its one meaning", mode, policy.ModeObserve, policy.ModeEnforce, policy.ModeObserve, policy.ModeEnforce, policy.ModeOff)
 	}
 	return nil
+}
+
+// pairingNamesTheProjectsKey reports whether this run was admitted to the
+// review variant of the account the project's own Anthropic API key is spelled
+// as on the axis (config.AnthropicKeyAccount): the job's own account segment is
+// that variant's name for it, which is the sentinel itself —
+// config.ReviewVariantAccount is the identity on a value that is no Claude
+// account — plus config.ReviewVariantSuffix.
+//
+// It is the whole admission of an api-key repository's review, and it is the
+// job and not the file because the file cannot tell the two apart: a repository
+// whose calls are a key's writes the same agent.auth whether the launch named
+// the key's variant or not, so only the job the platform put this run in says
+// which credential the class is served by.
+func (r *run) pairingNamesTheProjectsKey() bool {
+	return r.job.Account == reviewVariantAccount(config.AnthropicKeyAccount)
 }
 
 // GatewayOn reports whether a configuration routes its calls through the

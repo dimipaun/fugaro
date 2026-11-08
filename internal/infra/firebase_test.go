@@ -489,12 +489,12 @@ func TestDBDeploysAndThenChangesNothing(t *testing.T) {
 	for _, a := range acts {
 		paths = append(paths, a.Path)
 	}
-	// The rules are last of the database's own writes; the one action after
-	// them is the rules-generation marker, which must not be written unless
-	// the deploy succeeded (TestRulesMarkerOnlyAfterTheRulesDeploy in
-	// internal/cli drives the failing case through init).
+	// The rules are last of the database's own writes; the actions after them
+	// are the generation markers, one per family, and none of them may be
+	// written unless the deploy succeeded (TestRulesMarkerOnlyAfterTheRulesDeploy
+	// in internal/cli drives the failing case through init).
 	wantPaths := []string{"fugaro/mark", "fugaro/project", "config/mode", "config/limits", "rules",
-		projectpolicy.PathRulesMarker(), rules.PathCredsRulesMarker()}
+		projectpolicy.PathRulesMarker(), rules.PathCredsRulesMarker(), rules.PathOrchestratorRulesMarker()}
 	if !slices.Equal(paths, wantPaths) {
 		t.Fatalf("actions = %v, want %v (the rules last, their marker after them)", paths, wantPaths)
 	}
@@ -507,9 +507,12 @@ func TestDBDeploysAndThenChangesNothing(t *testing.T) {
 	if got := f.Value(rules.PathCredsRulesMarker()); got != json.Number(strconv.Itoa(rules.CredsRulesVersion)) {
 		t.Errorf("%s = %#v, want %d (CredsRulesVersion): the credentials children's generation", rules.PathCredsRulesMarker(), got, rules.CredsRulesVersion)
 	}
+	if got := f.Value(rules.PathOrchestratorRulesMarker()); got != json.Number(strconv.Itoa(rules.OrchestratorRulesVersion)) {
+		t.Errorf("%s = %#v, want %d (OrchestratorRulesVersion): the orchestrator subtree's generation", rules.PathOrchestratorRulesMarker(), got, rules.OrchestratorRulesVersion)
+	}
 	lim, _ := f.Value(budget.PathLimits).(map[string]any)
-	if len(lim) != 3 || lim["maxReserveMicros"] == nil {
-		t.Errorf("config/limits = %v, want the two markers beside maxReserveMicros", lim)
+	if len(lim) != 4 || lim["maxReserveMicros"] == nil {
+		t.Errorf("config/limits = %v, want the three markers beside maxReserveMicros", lim)
 	}
 	want, _ := rules.Generate()
 	if !SameJSON(f.Rules(), want) {
