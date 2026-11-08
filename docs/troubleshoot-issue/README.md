@@ -1,6 +1,6 @@
 # Troubleshoot findings to `fugaro issue`
 
-**Status (2026-11-08, later): one task of the plan below is written — T-IS2, the issue redaction gate (`internal/redact/redact.go` and `redact_test.go`, `internal/issues/redact.go` and `redact_test.go`, on the branch `fugaro/20261108-174015-f89c`, where its red step has run); everything else the folder holds is plan only, and no other task is approved.** Spec owner: Dimi Paun. Written 2026-11-08. Two independent review rounds ran; see the pull request.
+**Status (2026-11-08, later): one task of the plan below is written — T-IS2, the issue redaction gate (`internal/redact/redact.go` and `redact_test.go`, `internal/issues/redact.go` and `redact_test.go`, on the branch `fugaro/20261108-174015-f89c`, where its red step has run) — and T-IS1 and T-IS15 have merged on `main` while that branch was open; everything else the folder holds is plan only, and no other task is written.** Spec owner: Dimi Paun. Written 2026-11-08. Two independent review rounds ran; see the pull request.
 
 *The status as first written, kept:* **Status: plan only; nothing is implemented; no task approved.** Spec owner: Dimi Paun. Written 2026-11-08. Two independent review rounds ran; see the pull request.
 
