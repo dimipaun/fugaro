@@ -185,11 +185,10 @@ type LayerPlanning struct {
 }
 
 // SetsPlanning reports whether the layer's text writes defaults.planning, at
-// any value: a runner older than the release that ships the key decodes the
-// layer with KnownFields, so the key alone is what it refuses, and
-// LayerPlanning's zero value cannot tell an absent block from one written
-// with decoupling: true — and the skew gate judges both files by the key, not
-// by the value.
+// any value: a runner before planningSince decodes the layer with KnownFields,
+// so the key alone is what it refuses, and LayerPlanning's zero value cannot
+// tell an absent block from one written with decoupling: true — and the skew
+// gate judges both files by the key, not by the value.
 func (l *ProjectLayer) SetsPlanning() bool {
 	if l == nil {
 		return false

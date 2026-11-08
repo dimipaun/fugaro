@@ -113,6 +113,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		repo.RepoGovernanceSet = setsGovernance(tree)
 		repo.RepoGitAuthorSet = setsGitAuthor(tree)
 		repo.RepoLevelsNoneModelSet = setsLevelsNoneModel(tree)
+		repo.RepoPlanningSet = setsPlanning(tree)
 		res := &Resolution{Sources: map[string]string{}}
 		markLeaves(tree, "", SourceRepo, res.Sources)
 		res.ConfigSHA256 = repo.SHA256()
@@ -160,6 +161,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	c.RepoGovernanceSet = setsGovernance(tree)
 	c.RepoGitAuthorSet = setsGitAuthor(tree)
 	c.RepoLevelsNoneModelSet = setsLevelsNoneModel(tree)
+	c.RepoPlanningSet = setsPlanning(tree)
 	applyDefaults(&c)
 	if ps := Validate(&c); len(ps) > 0 {
 		return nil, nil, annotate(ps, res, profileOf)
@@ -491,6 +493,15 @@ func levelsNoneModel(agent any) bool {
 		}
 	}
 	return false
+}
+
+// setsPlanning is ProjectLayer.SetsPlanning for a repository file's own tree:
+// whether the text writes the planning: key, at any value, which is the same
+// question setsGovernance answers for governance:, for the same reason. Its
+// answer becomes Config.RepoPlanningSet.
+func setsPlanning(tree map[string]any) bool {
+	_, ok := tree["planning"]
+	return ok
 }
 
 // docTree is a YAML document as Resolve merges it (nodeTree).

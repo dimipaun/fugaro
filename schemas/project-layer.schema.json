@@ -91,7 +91,7 @@
         "planning": {
           "type": "object",
           "additionalProperties": false,
-          "description": "What the planning pass does for every repository of this project (docs/contract-first-decoupling). The same key may be set in a repository's own planning: block, where it replaces the project's value: the pass's switch is a preference and not a bound, so a repository may turn it back on where the project turned it off. No version gate judges the block yet and nothing reads the key yet: the plan that introduces it (docs/contract-first-decoupling/implementation-plan.md, CD7) adds the `…Since` constant and the gates that refuse a layer an older runner cannot decode, and until that lands a job image predating the block refuses the layer on the key.",
+          "description": "What the planning pass does for every repository of this project (docs/contract-first-decoupling). The same key may be set in a repository's own planning: block, where it replaces the project's value: the pass's switch is a preference and not a bound, so a repository may turn it back on where the project turned it off. Fugaro before 0.22.0 refuses the key, in every repository of the project. The layer is decoded strictly, so a job image older than the release that reads it fails at bootstrap on a key its runner does not know: `fugaro update --repo` refuses to deploy such a job before any cloud effect, and `fugaro run` refuses the launch from a checkout of the repository.",
           "properties": {
             "decoupling": { "type": "boolean", "description": "The dependency-breaking pass, for every repository of the project that sets no planning.decoupling of its own: true runs the pass, false leaves it out." }
           }

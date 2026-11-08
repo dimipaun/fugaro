@@ -68,10 +68,10 @@ type Config struct {
 	// that writes none, moving the hash of a file that did not change.
 	Rigor *Rigor `yaml:"rigor,omitempty" json:"rigor,omitempty"`
 	// Planning is the repository's planning: block (docs/contract-first-decoupling,
-	// D1813). The json tag gives the block its snake_case name on the wire for a
-	// --json consumer, and it is not what keeps the hash still the way Rigor's
-	// is: applyDefaults fills the block (defaults.go), so the pointer is never
-	// nil and every repository's resolved sha256 moves with this release.
+	// D1813). A file that writes none keeps it nil — what the pass defaults to
+	// is Planning.DecouplingOn's answer, not a block applyDefaults writes — so
+	// the json tag keeps an absent block out of the resolved config's hash the
+	// way Rigor's does, and names the block on the wire when one is written.
 	Planning *Planning `yaml:"planning,omitempty" json:"planning,omitempty"`
 
 	// Layer is the project layer Resolve resolved this config over, nil
@@ -120,6 +120,13 @@ type Config struct {
 	// reads the literal as a model ID. Like the fields above it is never part
 	// of the file or of SHA256.
 	RepoLevelsNoneModelSet bool `yaml:"-" json:"-"`
+	// RepoPlanningSet is whether the repository's own file wrote the
+	// planning: key at all, at any value, the question RepoRigorSet answers
+	// for rigor:. Planning cannot answer for an explicit null (`planning:`,
+	// which decodes to a nil block), and a runner older than planningSince
+	// refuses the key alone. Like the fields above it is never part of the
+	// file or of SHA256.
+	RepoPlanningSet bool `yaml:"-" json:"-"`
 }
 
 // Planning is fugaro.yaml's planning: block and the project layer's
@@ -132,7 +139,8 @@ type Planning struct {
 	// planning skill asks of each dependency edge whether a contract task
 	// could break it and writes the contract, integration and change nodes
 	// into the graph artifact; off, it plans the edge as it always did. Unset
-	// means on (applyDefaults); the pass adds no spend path of its own — its
+	// means on (DecouplingOn, from DefaultPlanningDecoupling); the pass adds
+	// no spend path of its own — its
 	// tasks are ordinary tasks under the same caps and the same go-ahead rule
 	// (D1820) — so the switch is a preference and not a budget.
 	Decoupling *bool `yaml:"decoupling"`

@@ -65,10 +65,12 @@ const (
 	DefaultCPU    = 4
 	DefaultMemory = "8Gi"
 	// DefaultPlanningDecoupling is planning.decoupling's default: the
-	// dependency-breaking pass is on. applyDefaults applies it and the
-	// settings registry's row for the key reads this constant rather than
-	// restating the value, so `fugaro settings planning.decoupling` and a
-	// real run cannot part company.
+	// dependency-breaking pass is on. Nothing applies it — the block stays
+	// nil for a file that writes none, so that a file's resolved sha256 does
+	// not move over a key it does not carry — and Planning.DecouplingOn is
+	// where it answers. The settings registry's row for the key reads this
+	// constant rather than restating the value, so `fugaro settings
+	// planning.decoupling` and a real run cannot part company.
 	DefaultPlanningDecoupling = true
 	// DefaultUpdateCheck is update_check's default: the daily update check
 	// and its stderr nag run unless the local config turns them off. The
@@ -294,13 +296,6 @@ func applyDefaults(c *Config) {
 	}
 	if c.Agent.MaxBudgetUSD == 0 {
 		c.Agent.MaxBudgetUSD = DefaultMaxBudgetUSD
-	}
-	if c.Planning == nil {
-		c.Planning = &Planning{}
-	}
-	if c.Planning.Decoupling == nil {
-		d := DefaultPlanningDecoupling
-		c.Planning.Decoupling = &d
 	}
 	for name, w := range c.Workflows {
 		if len(w.Commands.Reports) == 0 {

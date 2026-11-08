@@ -3757,6 +3757,11 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gateGitAuthor(o, repo, lc, cfg); err != nil {
 		return err
 	}
+	// The planning: block, in either file, is the same kind of break, on
+	// planningSince.
+	if err := r.gatePlanning(o, repo, lc, cfg); err != nil {
+		return err
+	}
 	if !o.forget {
 		w := r.w
 		if o.printVars {
@@ -4260,6 +4265,23 @@ func (r *initRun) gateGitAuthor(o *initOptions, repo string, lc *localcfg.Config
 		w = r.cmd.ErrOrStderr()
 	}
 	return refuseGitAuthorSkew(repo, cfg.RepoGitAuthorSet, lc.BaseImage(config.BaseKind), w)
+}
+
+// gatePlanning is fugaro update --repo's gate for planningSince:
+// refusePlanningSkew, with gateRigor's escapes and for its reason. The judged
+// half is the key being written (RepoPlanningSet) and not the value it holds:
+// a runner older than planningSince refuses planning: whatever it says, so an
+// explicit null and planning.decoupling: true are deployed by a value test and
+// die at bootstrap.
+func (r *initRun) gatePlanning(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refusePlanningSkew(repo, cfg.RepoPlanningSet, cfg.Layer.SetsPlanning(), lc.BaseImage(config.BaseKind), w)
 }
 
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates
