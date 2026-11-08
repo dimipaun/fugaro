@@ -16,24 +16,35 @@
 # check runs BEFORE that Terraform lands.
 #
 # What it asserts, as the throwaway account, under each candidate form:
-# `runs/<slug>/` lists, `reports/` lists, one `runs/` object reads, the root
-# listing is refused, a `tokens/` read is refused, and a `tokens/` and a
-# `cache/` listing are refused. The form under which all seven hold is the one
-# R12's builder must write, and the block names it in one line. **If neither form
-# lists, R12's Terraform must not land and the plan stops and asks** (ruling E4);
-# the bucket-wide viewer a listing would otherwise need is deliberately NOT a
-# fallback here, because it reads `tokens/` and `cache/` too.
+# `runs/<slug>/` lists, `reports/` lists at the bare prefix AND at the slug level
+# under it, one `runs/` object reads, the root listing is refused, a `tokens/`
+# read is refused, and a `tokens/` and a `cache/` listing are refused. The form
+# under which all seven hold is the one R12's builder must write, and the block
+# names it in one line. BOTH forms are read to the end of their criteria whatever
+# the first one did: a failed criterion is that form's failure and nothing more,
+# and the answer is decided from the two result sets rather than from the first
+# form to finish. **If neither form lists, R12's Terraform must not land and the
+# plan stops and asks** (ruling E4); the bucket-wide viewer a listing would
+# otherwise need is deliberately NOT a fallback here, because it reads `tokens/`
+# and `cache/` too.
 #
 # A grant the bucket refuses is NOT a form that does not list: the run stops with
 # exit 2 and an `aborted` row rather than reading a permission error as the
 # attribute's own answer, because every reading under a grant that never landed
 # would be a refusal for a reason that has nothing to do with the clause. The
 # four refusals are read the same way round: a command that fails is a criterion
-# only when the failure IS the refusal — a denial naming the permission the
-# clause would have carried — so a call that did not answer (a 5xx gcloud did
-# not retry, an expired session, a killed request, a denial of another kind)
-# stops the run rather than being recorded as a criterion that held, which would
-# name a form R12 must not write on a reading nobody took. Every failure a row
+# only when the failure IS the refusal — a denial, for this account and about a
+# resource inside this check's own bucket, naming a permission the missing clause
+# could have carried. That is `storage.objects.list` for the root listing, and
+# EITHER permission for the `tokens/` read and the two listings: gcloud probes a
+# prefix as an object before it lists it, so a refused `ls gs://B/tokens/` names
+# `storage.objects.get` — the refusal the check's second live run (2026-11-07)
+# read as "a call that did not answer", which stopped the run and kept the second
+# form from ever being tried. Everything else — a 5xx gcloud did not retry, an
+# expired session, a killed request, a denial naming another permission or
+# another bucket's resource — stops the run rather than being recorded as a
+# criterion that held, which would name a form R12 must not write on a reading
+# nobody took. Every failure a row
 # quotes is gcloud's WHOLE output with its impersonation WARNING dropped: that
 # warning is the first line of every call made as the account, and quoting the
 # first line alone is what this check's first run did, which is how a refused
@@ -395,17 +406,38 @@ guard_belong() {
   fact belong PASS "neither the project ($P) nor the bucket ($B) names the owner's own installation (nothing typed contains 'belong')"
 }
 
+# bucket_missing OUTPUT: whether gcloud's own words say the BUCKET is not there
+# at all. It is not the same stop as a bucket this identity may not list: a
+# bucket that does not exist is created — by the operator, never by this check —
+# and one whose permission is refused is a matter of the name or of who is signed
+# in. gcloud answers the first with a 404 on the bucket itself (`BucketNotFound`,
+# "bucket does not exist"), which is what this reads; a 403 names a permission
+# instead and does not match.
+bucket_missing() {
+  grep -qiE '404|bucket does not exist|no such bucket|BucketNotFound' <<<"$1"
+}
+
 # guard_bucket_reachable: the bucket is read back with YOUR identity first. A
 # mistyped or unreadable bucket answers 403 to every step below, and a bucket-wide
 # denial is not what this check measures — it would read as "both forms are
 # refused" and the run would end with a verdict about a bucket that is not there.
 guard_bucket_reachable() {
-  local out
+  local out why
   if ! out=$(gcloud storage ls --project="$P" "gs://$B/" 2>&1); then
+    if bucket_missing "$out"; then
+      # A bucket that is not there is its own stop, with its own answer: the
+      # check grants IAM on the bucket it is given and creates none, so this is
+      # the one failure the reader can fix on the spot — and the row says how.
+      why="gs://$B/ does not exist: gcloud answers that the bucket is not there (gcloud's own words: $(gcloud_said "$out")). This check never creates the bucket — it grants IAM on it and writes four objects into it — so create it yourself on a SANDBOX project and run the check again: gcloud storage buckets create gs://$B --project=$P --location=us-central1 --uniform-bucket-level-access"
+    else
+      why="gs://$B/ is not listable by your own identity, so this check has nothing to measure: every reading below would be a refusal about a bucket that is not there rather than about the listing attribute (gcloud's own words: $(gcloud_said "$out")). Check the bucket name, and that you are signed in as an operator of $P"
+    fi
     # The FAIL is recorded before the stop: this guard RAN and decided, and the
     # block's "not reached" row is reserved for a step that was never measured.
-    fact bucket-reachable FAIL "gs://$B/ is not listable by your own identity, so this check has nothing to measure: every reading below would be a refusal about a bucket that is not there rather than about the listing attribute (gcloud's own words: $(gcloud_said "$out")). Check the bucket name, and that you are signed in as an operator of $P"
-    stop "gs://$B/ is not listable by your own identity, so this check has nothing to measure (gcloud's own words: $(gcloud_said "$out")). Check the bucket name, and that you are signed in as an operator of $P"
+    # The row and the stop carry the same words, so a paste-back of the block
+    # carries everything the stop said.
+    fact bucket-reachable FAIL "$why"
+    stop "$why"
   fi
   fact bucket-reachable PASS "gs://$B/ is there and listable by your own identity, so every reading below is about the throwaway account and not about a bucket that cannot be reached ($(printf '%s' "$out" | grep -c . || true) entries at the root)"
 }
@@ -697,12 +729,45 @@ gcloud_said() {
 
 # missing_permission REFUSAL — the storage permissions gcloud's own refusal
 # names, when it names any. It is here because a refusal that names something
-# OTHER than storage.objects.list is not this check's answer: an account holding
-# the two conditioned object roles holds no bucket-level permission, so a command
-# that asks for one is refused whatever the listing clause says, and that reading
-# must not be taken for "this form does not work".
+# OTHER than the permission the criterion's missing clause would have carried is
+# not this check's answer: an account holding the two conditioned object roles
+# holds no bucket-level permission, so a command that asks for one is refused
+# whatever the listing clause says, and that reading must not be taken for "this
+# form does not work".
 missing_permission() {
   printf '%s' "$1" | grep -oE 'storage\.[a-zA-Z.]+' | sort -u | tr '\n' ' ' || true
+}
+
+# permission_words "PERM[ PERM...]": the permissions as one English clause, for
+# the rows and the stop messages — "storage.objects.list", or "storage.objects.get
+# or storage.objects.list" where a criterion accepts either.
+permission_words() {
+  local out="" perm
+  for perm in $1; do
+    if [ -z "$out" ]; then out=$perm; else out="$out or $perm"; fi
+  done
+  printf '%s' "$out"
+}
+
+# other_bucket_named OUTPUT: whether a failure's own words put its denial on a
+# bucket other than this check's. A refusal is only this criterion's when it is
+# about a resource inside THIS bucket — and the account is the call's own, since
+# every reading below is made impersonating the throwaway account against a URL
+# that names no other bucket. A message naming another bucket is a denial about
+# something else, and taking it for this criterion's refusal would record a
+# criterion nobody observed. gcloud spells the resource both ways — the URL it was
+# handed (`gs://<bucket>/…`) and IAM's own path
+# (`//storage.googleapis.com/projects/_/buckets/<bucket>/objects/…`) — so both
+# shapes are read. A message that names no bucket names no other one.
+other_bucket_named() {
+  local names name
+  names=$(printf '%s\n' "$1" |
+    grep -oE 'gs://[^/[:space:]]+|buckets/[^/[:space:]]+' |
+    sed -e 's|^gs://||' -e 's|^buckets/||' | sort -u || true)
+  for name in $names; do
+    [ "$name" = "$B" ] || return 0
+  done
+  return 1
 }
 
 # policy_names_binding MEMBER ROLE: whether the bucket policy names a binding for
@@ -749,39 +814,59 @@ reports_binding_state() {
   fi
 }
 
-# must_list KEY URL WANT [POLICY_ROLE]: the listing half of the grant. The third
-# argument, given only for the `reports/` criterion, is the role whose binding the
-# row has to say was or was not in the bucket policy at that moment — see
-# reports_binding_state.
-must_list() { # must_list KEY URL WANT [POLICY_ROLE]
-  local key=$1 url=$2 want=$3 policy_role=${4:-} named extra="" policy=""
-  if ! poll_list "$url"; then
+# must_list KEY WANT POLICY_ROLE URL...: the listing half of the grant, read at
+# every URL the criterion asks for and only holding when EVERY one of them listed
+# and every listing names WANT. Each URL's own answer goes into the row's detail:
+# the `reports/` criterion asks two of them — the bare `reports/` the reports job
+# lists and the slug level under it — and a clause that covers the slug level and
+# not the bare prefix has to be readable as exactly that, not folded into one FAIL
+# that says nothing about which of the two the attribute failed to match. The
+# second argument is the role whose binding the row has to say was or was not in
+# the bucket policy at that moment — given for the `reports/` criterion alone, and
+# empty for the others; see reports_binding_state.
+must_list() { # must_list KEY WANT POLICY_ROLE URL [URL...]
+  local key=$1 want=$2 policy_role=$3 url named extra="" policy="" answers="" listed="" subject="the listing" failed=no
+  shift 3
+  for url in "$@"; do
+    if poll_list "$url"; then
+      case "$LIST_OUT" in
+      *"$want"*)
+        answers="${answers}${answers:+; }$url listed and names $want"
+        listed="${listed}${listed:+ and }$url"
+        ;;
+      *)
+        answers="${answers}${answers:+; }$url listed but does not name $want (it answered: $(gcloud_said "$LIST_OUT"))"
+        failed=yes
+        ;;
+      esac
+      continue
+    fi
+    # Only a refusal naming the permission the clause would have carried says
+    # anything about this form; a denial of another kind is flagged here, and the
+    # same reading stops the criteria that must be refused (see must_refuse).
     named=$(missing_permission "$LAST_ERROR")
     case "$named" in
     "" | *storage.objects.list*) ;;
-    *) extra=" — NOTE: the refusal names ${named}and not storage.objects.list, so this listing was refused for a reason other than the clause this check settles: read it before taking it as 'this form does not work'" ;;
+    *) extra=" — NOTE: the refusal of $url names ${named}and not storage.objects.list, so this listing was refused for a reason other than the clause this check settles: read it before taking it as 'this form does not work'" ;;
     esac
-    if [ -n "$policy_role" ]; then
-      reports_binding_state
-      case "$REPORTS_BINDING" in
-      present) policy=" — the bucket policy was read back with your own identity at that moment and it DOES name the reports binding ($policy_role for $SA_EMAIL), so this failure is the listing clause not matching the request and NOT a binding that never landed" ;;
-      absent) policy=" — the bucket policy was read back with your own identity at that moment and it does NOT name the reports binding ($policy_role for $SA_EMAIL): the grant was accepted and never landed, so this failure says nothing about the listing clause, and no form can be read from it" ;;
-      unknown) policy=" — the bucket policy could not be read back with your own identity, so whether the reports binding was there at that moment is not known (gcloud said: $(gcloud_said "$REPORTS_BINDING_SAID"))" ;;
-      esac
-    fi
-    fact "$key" FAIL "the account could not list $url: the prefix is not covered by this form's listing clause, or the grant had not taken effect within ${PROPAGATION_SECONDS}s (gcloud said: $(gcloud_said "$LAST_ERROR"))${extra}${policy}"
-    return 1
-  fi
-  case "$LIST_OUT" in
-  *"$want"*)
-    fact "$key" PASS "the account listed $url and the listing names $want, so this form's listing clause covers it"
+    answers="${answers}${answers:+; }$url was refused within ${PROPAGATION_SECONDS}s (gcloud said: $(gcloud_said "$LAST_ERROR"))"
+    failed=yes
+  done
+  if [ "$failed" = no ]; then
+    case "$listed" in *" and "*) subject="every one of those listings" ;; esac
+    fact "$key" PASS "the account listed $listed and $subject names $want, so this form's listing clause covers it"
     return 0
-    ;;
-  *)
-    fact "$key" FAIL "the account listed $url but the listing does not name $want (it answered: $(gcloud_said "$LIST_OUT"))"
-    return 1
-    ;;
-  esac
+  fi
+  if [ -n "$policy_role" ]; then
+    reports_binding_state
+    case "$REPORTS_BINDING" in
+    present) policy=" — the bucket policy was read back with your own identity at that moment and it DOES name the reports binding ($policy_role for $SA_EMAIL), so this failure is the listing clause not matching the request and NOT a binding that never landed" ;;
+    absent) policy=" — the bucket policy was read back with your own identity at that moment and it does NOT name the reports binding ($policy_role for $SA_EMAIL): the grant was accepted and never landed, so this failure says nothing about the listing clause, and no form can be read from it" ;;
+    unknown) policy=" — the bucket policy could not be read back with your own identity, so whether the reports binding was there at that moment is not known (gcloud said: $(gcloud_said "$REPORTS_BINDING_SAID"))" ;;
+    esac
+  fi
+  fact "$key" FAIL "the account could not list every prefix this criterion asks for, and each answer is its own: ${answers} — the prefix is not covered by this form's listing clause, or the grant had not taken effect within ${PROPAGATION_SECONDS}s${extra}${policy}"
+  return 1
 }
 
 # must_read KEY URL: the read half of the same grant, and it is retried too.
@@ -800,35 +885,47 @@ must_read() {
   return 1
 }
 
-# must_refuse KEY WHAT PERMISSION CMD...: the four refusals. A refusal is the
-# criterion, so a command that SUCCEEDS here is the failure — and its own words
-# are what the detail carries, because a grant that is too wide has to say what
-# it opened.
+# must_refuse KEY WHAT "PERM[ PERM...]" CMD...: the four refusals. A refusal is
+# the criterion, so a command that SUCCEEDS here is the failure — and its own
+# words are what the detail carries, because a grant that is too wide has to say
+# what it opened.
 #
 # A command that FAILS is not the reading yet: the failure has to BE the refusal,
-# a denial naming the permission the missing clause would have carried. A call
-# that did not answer — a 5xx gcloud did not retry, an expired session, a killed
-# request, a denial naming another permission — says nothing about the clause, and
-# recording it as "refused" would report a criterion that held when it was never
-# observed. Those stop the run instead, which is the same reading the wait between
-# the two forms gives a listing that did not answer.
+# a denial naming a permission the missing clause could have carried, on a
+# resource inside this check's bucket. The `tokens/` read and the `tokens/` and
+# `cache/` listings accept EITHER permission name — see the header: gcloud probes
+# a prefix as an object before it lists it, so a refused `ls gs://B/tokens/` names
+# storage.objects.get, and reading that as a call that did not answer is what
+# stopped this check's second live run and kept the second form from being tried.
+# The root listing stays on storage.objects.list, the permission that listing has
+# to be refused by. A call that did not answer
+# — a 5xx gcloud did not retry, an expired session, a killed request, a denial
+# naming another permission or another bucket's resource — still says nothing
+# about the clause, and recording it as "refused" would report a criterion that
+# held when it was never observed. Those stop the run instead, which is the same
+# reading the wait between the two forms gives a listing that did not answer.
 #
 # These are read after a listing that must succeed already did, so "refused" can
 # never be the grant simply not being in effect yet: by this point the account has
 # listed, under this form, with the same two bindings.
 must_refuse() {
-  local key=$1 what=$2 perm=$3 out named
+  local key=$1 what=$2 perms=$3 out named perm matched=""
   shift 3
   if out=$("$@" 2>&1); then
     fact "$key" FAIL "$what was ALLOWED to the account under this form, which is wider than R12's two prefixes: a grant that opens it is not the grant the reports job is written against (what came back: $(gcloud_said "$out"))"
     return 1
   fi
   named=$(missing_permission "$out")
-  case "$named" in
-  *"$perm"*) ;;
-  *) stop "$what could not be read as a refusal: the call failed without naming $perm, the permission the clause this criterion is about would have carried, so it is a call that did not answer — an expired session, a 5xx gcloud did not retry, a killed request or a denial naming another permission all read like this, and none of them is a reading about this form's clause (gcloud said: $(gcloud_said "$out")). The form is neither PASSing nor failing here: nothing was measured under it, so run the check again" ;;
-  esac
-  fact "$key" PASS "$what is refused to the account under this form, and refused for the reason the criterion is about — the denial names $perm (gcloud: $(gcloud_said "$out"))"
+  for perm in $perms; do
+    case " $named " in *" $perm "*) matched=$perm ;; esac
+  done
+  if [ -z "$matched" ]; then
+    stop "$what could not be read as a refusal: the call failed without naming $(permission_words "$perms"), the permissions the clause this criterion is about would have carried, so it is a call that did not answer — an expired session, a 5xx gcloud did not retry, a killed request or a denial naming another permission all read like this, and none of them is a reading about this form's clause (gcloud said: $(gcloud_said "$out")). The form is neither PASSing nor failing here: nothing was measured under it, so run the check again"
+  fi
+  if other_bucket_named "$out"; then
+    stop "$what could not be read as a refusal: the denial names a resource outside gs://$B, and this criterion is about this check's own bucket — a refusal about another bucket's object is a call about something else, and recording it as this criterion holding would report a reading nobody took of this bucket (gcloud said: $(gcloud_said "$out")). The form is neither PASSing nor failing here: nothing was measured under it, so run the check again"
+  fi
+  fact "$key" PASS "$what is refused to the account under this form, and refused for the reason the criterion is about — the denial names $matched (gcloud: $(gcloud_said "$out"))"
   return 0
 }
 
@@ -894,22 +991,32 @@ try_form() {
   # Order matters: the two listings and the read that MUST succeed are polled,
   # and the four refusals come after, so a "refused" reading cannot be a grant
   # that has not arrived yet.
-  if ! must_list "$how-lists-runs" "gs://$B/runs/$SLUG/" "runs/$SLUG/"; then ok=no; else held=yes; fi
-  # The reports criterion is the one row whose failure has two readings that look
-  # alike, so it carries the role its own binding would have: see must_list.
-  if ! must_list "$how-lists-reports" "gs://$B/reports/" "reports/$SLUG/" roles/storage.objectUser; then ok=no; else held=yes; fi
+  if ! must_list "$how-lists-runs" "runs/$SLUG/" "" "gs://$B/runs/$SLUG/"; then ok=no; else held=yes; fi
+  # The reports criterion is read at both prefixes the reports job uses, and it is
+  # the one row whose failure has two readings that look alike, so it carries the
+  # role its own binding would have: see must_list.
+  if ! must_list "$how-lists-reports" "reports/$SLUG/" roles/storage.objectUser \
+    "gs://$B/reports/$SLUG/" "gs://$B/reports/"; then ok=no; else held=yes; fi
   if ! must_read "$how-reads-runs" "gs://$B/$RUN_OBJ"; then ok=no; else held=yes; fi
   if [ "$held" = yes ]; then
     # The root listing is the one the two prefixes must NOT reach: a listing of
     # `gs://$B/` carries an empty prefix (or the bucket's own path), and neither
-    # candidate form may match it.
+    # candidate form may match it. It is refused by storage.objects.list alone:
+    # a root listing probes no object, so any other permission in the denial is a
+    # refusal of another kind.
     if ! must_refuse "$how-root-refused" "the root listing of gs://$B/" storage.objects.list \
       list_as_sa "gs://$B/"; then ok=no; fi
-    if ! must_refuse "$how-tokens-read-refused" "the read of the seeded tokens/ object gs://$B/$TOKEN_OBJ" storage.objects.get \
+    # The other three accept either permission: the read's own clause is about
+    # storage.objects.get, and gcloud refuses a listing of a prefix it probes as
+    # an object by naming that same permission — see must_refuse.
+    if ! must_refuse "$how-tokens-read-refused" "the read of the seeded tokens/ object gs://$B/$TOKEN_OBJ" \
+      "storage.objects.get storage.objects.list" \
       cat_as_sa "gs://$B/$TOKEN_OBJ"; then ok=no; fi
-    if ! must_refuse "$how-tokens-list-refused" "the listing of gs://$B/tokens/" storage.objects.list \
+    if ! must_refuse "$how-tokens-list-refused" "the listing of gs://$B/tokens/" \
+      "storage.objects.get storage.objects.list" \
       list_as_sa "gs://$B/tokens/"; then ok=no; fi
-    if ! must_refuse "$how-cache-list-refused" "the listing of gs://$B/cache/" storage.objects.list \
+    if ! must_refuse "$how-cache-list-refused" "the listing of gs://$B/cache/" \
+      "storage.objects.get storage.objects.list" \
       list_as_sa "gs://$B/cache/"; then ok=no; fi
   else
     # Nothing under this form held, so the grant is either not in effect or not
@@ -926,33 +1033,37 @@ try_form() {
   return 0
 }
 
-# not_tried HOW: the form that was not reached, recorded rather than left reading
-# "not reached". A run stops at the form that works, and the other form is what
-# the difference between the two answers is — not a second reading to make.
-not_tried() {
-  local how=$1 key
-  for key in lists-runs lists-reports reads-runs root-refused tokens-read-refused tokens-list-refused cache-list-refused; do
-    fact "$how-$key" INFO "not tried: the form tried before this one passed every criterion, and this check stops at the form that works"
-  done
-}
-
+# step_forms: both candidate forms, each read to the end of its seven criteria,
+# and the answer taken from the two result sets. A failed criterion under one form
+# is a failure of THAT form and nothing more — the second form is read whatever
+# the first one did, so a form that fails one listing never leaves the other
+# unmeasured, which is what this check's second live run (2026-11-07) ended with:
+# the relative form failed its `reports/` listing and the run stopped before the
+# full-path form was ever read.
 step_forms() {
   local passed=""
   FORM_OK=no
   # Neither call sits under an `if`: see try_form. Both always succeed, and the
   # answer is the FORM_OK they leave behind.
   try_form relative "$(relative_prefix runs)" "$(relative_prefix reports)"
+  if [ "$FORM_OK" = yes ]; then passed=relative; fi
+  # The relative form's bindings were removed at the end of try_form, and a
+  # removal propagates like a grant: the second form is granted only once this
+  # account is refused the listing the first form allowed, whether or not the
+  # first form passed. That teardown and its wait are the ones a run that stopped
+  # at the first form already made — reading the second form as well does not
+  # shorten them. See wait_for_removal.
+  wait_for_removal
+  try_form full "$(full_prefix runs)" "$(full_prefix reports)"
   if [ "$FORM_OK" = yes ]; then
-    passed=relative
-    not_tried full
-  else
-    # The relative form's bindings were removed at the end of try_form, and a
-    # removal propagates like a grant: the second form is granted only once this
-    # account is refused the listing the first form allowed. See
-    # wait_for_removal.
-    wait_for_removal
-    try_form full "$(full_prefix runs)" "$(full_prefix reports)"
-    if [ "$FORM_OK" = yes ]; then passed=full; fi
+    if [ -n "$passed" ]; then
+      # No single attribute value can start with both forms' strings, so both
+      # clauses covering their own requests is a contradiction rather than an
+      # answer — and picking one of the two would name a form on a reading that
+      # does not agree with itself.
+      stop "both the RELATIVE and the FULL PATH forms passed every criterion, which one attribute value cannot do: the two listing clauses cover their own requests under two different strings, so the two result sets contradict each other and neither can be read as the form the attribute carries. Nothing of this run's answer can be taken; check that the two forms' bindings were really removed between them and run the check again"
+    fi
+    passed=full
   fi
   PASSED_FORM=$passed
 }
@@ -972,7 +1083,7 @@ step_verdict() {
     fact list-prefix PASS "the FULL PATH form passed all seven criteria, so the attribute carries the bucket's object path: R12's builder must pass \"projects/_/buckets/$B/objects/runs/\" for the runs binding and \"projects/_/buckets/$B/objects/reports/\" for the reports binding, each in api.getAttribute('storage.googleapis.com/objectListPrefix', '').startsWith(\"<prefix>\")"
     ;;
   *)
-    fact list-prefix FAIL "NEITHER form listed: under both, the account could not list runs/$SLUG/ or reports/, with the root listing and the tokens/ and cache/ listings refused. R12's Terraform must NOT land on this reading — the plan stops and asks the owner (ruling E4) — and the bucket-wide objectViewer a listing would otherwise need is deliberately not planned here, because it would also read tokens/ and cache/. Read the two forms' rows above: a listing that failed only after ${PROPAGATION_SECONDS}s of retries says the attribute does not carry that form, and a refusal that was ALLOWED says the grant is wider than R12's two prefixes"
+    fact list-prefix FAIL "NEITHER form listed: under both, the account could not list runs/$SLUG/, or reports/ at the bare prefix and at the slug level under it, with the root listing and the tokens/ and cache/ listings refused. R12's Terraform must NOT land on this reading — the plan stops and asks the owner (ruling E4) — and the bucket-wide objectViewer a listing would otherwise need is deliberately not planned here, because it would also read tokens/ and cache/. Read the two forms' rows above: a listing that failed only after ${PROPAGATION_SECONDS}s of retries says the attribute does not carry that form, and a refusal that was ALLOWED says the grant is wider than R12's two prefixes"
     ;;
   esac
   REACHED_END=yes
@@ -993,20 +1104,20 @@ step_verdict() {
 # command and never evaluates one.
 print_plan() {
   say "dry run: NOTHING below was run. A real run would run, in this order:"
-  say "  [network, reads] gcloud storage ls --project=$P gs://$B/ — the bucket, with YOUR identity (a bucket that cannot be reached is a stop)"
+  say "  [network, reads] gcloud storage ls --project=$P gs://$B/ — the bucket, with YOUR identity (a bucket that is not there is a stop whose row and message name the command to create it — this check creates no bucket — and a bucket this identity cannot list is a stop too)"
   say "  [network, reads] gcloud iam service-accounts list --project=$P --filter=email=<the account this run drew> --format=value(email) — the account guard, and again in the Restore: presence is read from THIS and never from a describe, which IAM answers with PERMISSION_DENIED for an account that is not there"
   say "  [network, writes] gcloud iam service-accounts create ${SA_ID%????}XXXX --project=$P --display-name='Check 340 throwaway (safe to delete)' — the suffix is drawn per run"
   say "  [network, writes] gcloud iam service-accounts add-iam-policy-binding $SA_EMAIL --project=$P --member=user:<you> --role=roles/iam.serviceAccountTokenCreator"
   say "  [local, writes] the four seeded files in \$SCRATCH"
   say "  [network, writes] gcloud storage cp --project=$P <file> gs://$B/$RUN_OBJ, and the same for gs://$B/$REPORT_OBJ, gs://$B/$TOKEN_OBJ and gs://$B/$CACHE_OBJ"
-  say "  [network, writes] for the form \"relative\" first, and for \"full\" only if that one fails: the two JSON condition files, then"
+  say "  [network, writes] for the form \"relative\" first and for \"full\" second, whatever the first one did — both forms are read to the end of their criteria: the two JSON condition files, then"
   say "      gcloud storage buckets add-iam-policy-binding gs://$B --project=$P --member=serviceAccount:$SA_EMAIL --role=roles/storage.objectViewer --condition-from-file=<the runs/ condition>"
   say "      gcloud storage buckets add-iam-policy-binding gs://$B --project=$P --member=serviceAccount:$SA_EMAIL --role=roles/storage.objectUser --condition-from-file=<the reports/ condition>"
   say "    the first carrying $(clause_read runs) || $(clause_list "runs/") and the second $(clause_read reports) || $(clause_list "reports/") under the relative form, and the same two with projects/_/buckets/$B/objects/runs/ and .../objects/reports/ under the full one"
-  say "  [network, reads, as the account] gcloud storage ls --recursive --impersonate-service-account=$SA_EMAIL --project=$P gs://$B/runs/$SLUG/ and gs://$B/reports/ (must list, and the listing must name the seeded object; retried for up to ${PROPAGATION_SECONDS}s for the grant to take effect); gcloud storage cat of the seeded runs/ object (must read, and retried the same way); then, only if one of those three held, the four refusals: ls gs://$B/, cat the seeded tokens/ object, ls gs://$B/tokens/ and ls gs://$B/cache/ (each has to be REFUSED, and refused by a denial naming storage.objects.list or storage.objects.get as the clause it is about would carry; a call that did not answer stops the run instead of counting as one of them)"
+  say "  [network, reads, as the account] gcloud storage ls --recursive --impersonate-service-account=$SA_EMAIL --project=$P gs://$B/runs/$SLUG/ and gs://$B/reports/$SLUG/ and gs://$B/reports/ (each must list, and each listing must name the seeded object; retried for up to ${PROPAGATION_SECONDS}s for the grant to take effect, and each URL's own answer goes into the row); gcloud storage cat of the seeded runs/ object (must read, and retried the same way); then, only if one of those held, the four refusals: ls gs://$B/, cat the seeded tokens/ object, ls gs://$B/tokens/ and ls gs://$B/cache/ (each has to be REFUSED, and refused by a denial for this account about a resource inside this bucket naming a permission the clause it is about would carry — storage.objects.list for the root listing, and either storage.objects.list or storage.objects.get for the other three, because gcloud refuses a listing of a prefix it probes as an object by naming the read permission; a call that did not answer, or a denial naming another permission or another bucket, stops the run instead of counting as one of them)"
   say "  [network, reads, with YOUR identity] whenever the reports/ listing fails: gcloud storage buckets get-iam-policy gs://$B --project=$P, to say whether the reports binding ($SA_EMAIL under roles/storage.objectUser) was in the bucket policy at that moment — a clause that does not match the request and a binding that never landed are two different failures and the row has to say which one it is"
   say "  [network, writes] gcloud storage buckets remove-iam-policy-binding ... --all for both roles, between the two forms and again in the Restore"
-  say "  [network, reads, as the account] between the two forms only: ls --impersonate-service-account=$SA_EMAIL --project=$P gs://$B/runs/$SLUG/, retried until the account is REFUSED it by a denial naming storage.objects.list, the permission the removed clause carried (the removal has taken effect, so the next form cannot read through the earlier clause), or for up to ${PROPAGATION_SECONDS}s — a failure that names no permission, or another one, is a call that did not answer and is retried like a listing that still succeeds, and a wait that never sees the denial is a stop rather than a verdict"
+  say "  [network, reads, as the account] between the two forms, always: ls --impersonate-service-account=$SA_EMAIL --project=$P gs://$B/runs/$SLUG/, retried until the account is REFUSED it by a denial naming storage.objects.list, the permission the removed clause carried (the removal has taken effect, so the next form cannot read through the earlier clause), or for up to ${PROPAGATION_SECONDS}s — a failure that names no permission, or another one, is a call that did not answer and is retried like a listing that still succeeds, and a wait that never sees the denial is a stop rather than a verdict"
   say "and its Restore (also from the exit trap) would run:"
   say "  [network, deletes] gcloud storage rm -r --project=$P gs://$B/runs/$SLUG/ gs://$B/reports/$SLUG/ gs://$B/tokens/$SLUG/ gs://$B/cache/$SLUG/"
   say "  [network, deletes] gcloud storage buckets remove-iam-policy-binding gs://$B --member=serviceAccount:$SA_EMAIL --role=roles/storage.objectViewer --all, and the same for roles/storage.objectUser"
