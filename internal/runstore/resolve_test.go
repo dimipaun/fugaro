@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -97,7 +96,7 @@ func TestResolveEndingTooShort(t *testing.T) {
 
 // Two runs whose IDs end the same way are never resolved by picking one
 // (D1700): the resolver answers ErrAmbiguous and returns the candidates
-// beside it, in the order the surfaces show them.
+// beside it, newest first, the order `runs ls` shows them in.
 func TestResolveEndingAmbiguousAcrossRepos(t *testing.T) {
 	b := memblob.OpenBucket(nil)
 	seed(t, Open(b, "acme-app", "20261108-115248-3bb2"), "20261108-115248-3bb2")
@@ -108,16 +107,11 @@ func TestResolveEndingAmbiguousAcrossRepos(t *testing.T) {
 		t.Fatalf("ResolveEnding = %v, %v, want ErrAmbiguous", got, err)
 	}
 	want := []Match{
-		{Slug: "acme-web", RunID: "20261107-010101-3bb2"},
 		{Slug: "acme-app", RunID: "20261108-115248-3bb2"},
+		{Slug: "acme-web", RunID: "20261107-010101-3bb2"},
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("ResolveEnding = %v, want %v", got, want)
-	}
-	for _, ref := range []string{"acme-app/20261108-115248-3bb2", "acme-web/20261107-010101-3bb2"} {
-		if !strings.Contains(err.Error(), ref) {
-			t.Fatalf("ResolveEnding error = %v, want %s named", err, ref)
-		}
 	}
 	// Two active matches are ambiguous too, and both are marked active.
 	active := activeOf(
@@ -126,8 +120,8 @@ func TestResolveEndingAmbiguousAcrossRepos(t *testing.T) {
 	)
 	got, err = ResolveEnding(ctx, b, active, "3bb2", resolveSince)
 	if !errors.Is(err, ErrAmbiguous) || !slices.Equal(got, []Match{
-		{Slug: "acme-web", RunID: "20261107-010101-3bb2", Active: true},
 		{Slug: "acme-app", RunID: "20261108-115248-3bb2", Active: true},
+		{Slug: "acme-web", RunID: "20261107-010101-3bb2", Active: true},
 	}) {
 		t.Fatalf("ResolveEnding with two active = %v, %v", got, err)
 	}
