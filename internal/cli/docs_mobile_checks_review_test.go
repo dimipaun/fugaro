@@ -1815,15 +1815,21 @@ func TestDocsCheck81StatedCountsMatchTheirBlocks(t *testing.T) {
 }
 
 // TestDocsGeneratorSizeAndMailboxCountAreTheGoldens: check 81 step 8 and check
-// 82 step 5 both state the generated document's size and check 82 states the
-// mailbox subtree's count (1). The three `grep -o` counts of check 81 step 8
-// are held to the golden document; these two numbers, which the owner pastes
-// back as the deployment's fingerprint, were not. Both are read out of the
-// file the checks name -- `rules.Generate()`'s own document, which
+// 82 step 5 both state the generated document's size, and check 82 states three
+// of the counts its own step prints -- the mailbox subtree's, D166's device
+// conjunct's and D165's pairing subtree's. The three `grep -o` counts of check
+// 81 step 8 are held to the golden document; these numbers, which the owner
+// pastes back as the deployment's fingerprint, were not, and the orchestrator
+// release moved one of them: `/orchestrator` carries the `USER` predicate too,
+// so the device conjunct went from 13 to 14 while check 82's FACT went on
+// saying 13 -- the check printing `devices: 14` in the step above a FACT that
+// calls 13 the pass value, which is a correct deployment read as a fingerprint
+// mismatch. Every number here is read out of the file the checks name --
+// `rules.Generate()`'s own document, which
 // `internal/budget/rules/testdata/rules.golden.json` holds byte for byte -- so
-// a template change moves them together. Neither number is written down here:
-// the size was 42687 bytes under the generation-2 template, and what the test
-// uses now is `len(golden)`.
+// a template change moves them together. None of them is written down here: the
+// size was 42687 bytes under the generation-2 template, and what the test uses
+// now is `len(golden)`.
 func TestDocsGeneratorSizeAndMailboxCountAreTheGoldens(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
@@ -1841,6 +1847,8 @@ func TestDocsGeneratorSizeAndMailboxCountAreTheGoldens(t *testing.T) {
 		{"## Check 81:", `generator's own \*\*(\d+)\*\* bytes`, "the generated document's size", len(golden)},
 		{"## Check 82:", `\*\*(\d+) is the generator's own size\*\*`, "the generated document's size", len(golden)},
 		{"## Check 82:", "its `mailbox` count \\(\\*\\*(\\d+)\\*\\*", "the mailbox subtree's count", strings.Count(string(golden), "mailbox")},
+		{"## Check 82:", "its `config/admin/devices` count \\(\\*\\*(\\d+)\\*\\*", "D166's device conjunct, one per expansion of the `USER` predicate", strings.Count(string(golden), "config/admin/devices")},
+		{"## Check 82:", "its `pairing` count \\(\\*\\*(\\d+)\\*\\*", "D165's pairing subtree", strings.Count(string(golden), `"pairing"`)},
 	} {
 		section := docSection(t, path, doc, c.heading)
 		m := regexp.MustCompile(c.re).FindStringSubmatch(section)
