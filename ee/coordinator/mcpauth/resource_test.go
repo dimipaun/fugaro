@@ -103,6 +103,19 @@ func (ts *testServer) serve(t *testing.T, name string, handler Handler) {
 // half-finished installation would present.
 func (ts *testServer) seedAccessToken(t *testing.T, value string, token Token) {
 	t.Helper()
+	ts.seedTokenOfKind(t, value, KindAccess, token)
+}
+
+// seedTokenOfKind is seedAccessToken for the record's other half too, because
+// the kind is a thing the door reads on its own: the flow writes a refresh
+// record with no ExpiresAt (a refresh token is bounded by rotation and by
+// revocation, D930), so a refresh token presented as a bearer is refused by the
+// missing expiry and says nothing about the kind check. A record of that kind
+// which is otherwise a usable token is a shape only a later build that gave a
+// refresh token a lifetime of its own would write, and it is what makes the
+// door's kind check testable rather than incidental.
+func (ts *testServer) seedTokenOfKind(t *testing.T, value string, kind TokenKind, token Token) {
+	t.Helper()
 	ctx := context.Background()
 	fam := Family{
 		ID:        "family-" + TokenHash(value)[:16],
@@ -114,7 +127,7 @@ func (ts *testServer) seedAccessToken(t *testing.T, value string, token Token) {
 	if err := ts.store.Store.PutFamily(ctx, fam, 0); err != nil {
 		t.Fatalf("seeding the family: %v", err)
 	}
-	rec := TokenRecord{Hash: TokenHash(value), FamilyID: fam.ID, Kind: KindAccess, Token: token}
+	rec := TokenRecord{Hash: TokenHash(value), FamilyID: fam.ID, Kind: kind, Token: token}
 	if err := ts.store.Store.PutToken(ctx, rec); err != nil {
 		t.Fatalf("seeding the token record: %v", err)
 	}
@@ -543,6 +556,34 @@ func TestTheBearerCredentialIsTheOnlyWayIn(t *testing.T) {
 		req.Header.Add("Authorization", "Bearer "+tokens.AccessToken)
 		req.Header.Add("Authorization", "Bearer "+tokens.AccessToken)
 		wantBearerRefusal(t, ts.do(t, req), http.StatusUnauthorized, "invalid_token")
+	})
+
+	t.Run("a refresh token that is otherwise a usable token", func(t *testing.T) {
+		// The table above refuses the flow's own refresh token, whose record
+		// carries no expiry (D930), so that row is satisfied by the expiry
+		// check and would stay green if the kind check went away. This record
+		// is the other
+		// shape: the family's refresh half, alive at the test's instant and
+		// holding both scopes, which is what a later build that gave a refresh
+		// token a lifetime of its own would write — and then a refresh token
+		// would be a working bearer here with nothing flagging it. What has to
+		// refuse it is the kind, so the refusal names it.
+		value := "token-marker-of-a-refresh-record-seeded-by-a-test"
+		ts.seedTokenOfKind(t, value, KindRefresh, Token{
+			Identity:  testIdentity,
+			ClientID:  "client-that-minted-it",
+			Limits:    Limits{Scopes: []string{ScopeTasksRead, ScopeTasksWrite}},
+			ExpiresAt: testNow.Add(AccessTokenTTL),
+		})
+		rec := ts.rpc(t, value, toolsListBody)
+		wantBearerRefusal(t, rec, http.StatusUnauthorized, "invalid_token")
+		body := rec.Body.String()
+		if !strings.Contains(body, string(KindRefresh)+" token") {
+			t.Errorf("the refusal is %s; want it to name the kind it refused, so a client holding the family's other half learns which of the two it has", strings.TrimSpace(body))
+		}
+		if strings.Contains(body, value) {
+			t.Errorf("the refusal quotes the credential it refused: %s", body)
+		}
 	})
 
 	t.Run("a family that was revoked", func(t *testing.T) {
