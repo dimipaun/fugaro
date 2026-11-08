@@ -360,7 +360,7 @@ person decides whether storing one value for sixty-five repositories is safe.
   `docs/project-layer.md:244` (the parenthesis that says a name with a project-wide meaning cannot be
   shared through a workflow's block), `docs/design/project-secrets.md` §4 item 4 (a pointer to this
   folder, not a rewrite — that document's §4 *Decision: storage*, the fourth point of "Who writes a
-  version"), and `plugin/skills/setup/SKILL.md:130` (a covered workflow secret is not prompted for
+  version"), and `plugin/skills/setup/SKILL.md:128` (a covered workflow secret is not prompted for
   either).
 - **Red step.** Extend `internal/cli/docs_project_wide_git_test.go`'s discipline in a new
   `internal/cli/docs_project_workflow_secrets_test.go` — which W7 finishes — with the two sentences

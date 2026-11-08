@@ -38,6 +38,45 @@ func TestHaltTextNamesEachGovernanceStop(t *testing.T) {
 	}
 }
 
+// TestOwnerDecisionReportSendsTheReaderBelow: the halted report writes its To
+// continue line before the decisions that line remembers, because the only
+// place a decision is named is the Waiting-on-you list (followUpReport writes
+// haltLines and then ownerSection, and the Halted line above carries the count
+// alone). So the remedy has to send the reader down to that list: it said "the
+// decisions above", which named a place in the report where nothing about a
+// decision is printed. This renders the whole report, which is what a reader
+// sees, and checks the list really is under the line that points at it.
+func TestOwnerDecisionReportSendsTheReaderBelow(t *testing.T) {
+	at := time.Date(2026, 10, 2, 10, 0, 0, 0, time.UTC)
+	rec := &runstore.Record{
+		Version: 1, RunID: "20261002-100000-abcd",
+		Status: runstore.StatusHalted, Outcome: runstore.OutcomeDraft,
+		Reason: "review is waiting on 2 owner decisions",
+		Halt: &runstore.Halt{Reason: runstore.HaltOwnerDecision, Scope: "run", At: at,
+			Detail: "review is waiting on 2 owner decisions"},
+		OwnerDecisions: runstore.NewOwnerDecisions([]runstore.OwnerDecision{
+			{File: "LICENSE.md", Summary: "the licence text needs counsel's clearance"},
+			{File: "internal/approval/flow.go", Summary: "the approval flow is a product decision"},
+		}),
+	}
+	got := followUpReport(rec, "", nil, nil, nil)
+	const remedy = "To continue: the owner answers 2 decisions below, then run `fugaro run --pr N` with `--owner-ruled <text-or-file>` carrying the ruling."
+	line := strings.Index(got, remedy)
+	if line < 0 {
+		t.Fatalf("the report does not carry the remedy line %q:\n%s", remedy, got)
+	}
+	list := strings.Index(got, "**Waiting on you**")
+	if list < line {
+		t.Fatalf("the decisions are not under the line that sends the reader to them:\n%s", got)
+	}
+	for _, want := range []string{"`LICENSE.md`: the licence text needs counsel's clearance",
+		"`internal/approval/flow.go`: the approval flow is a product decision"} {
+		if !strings.Contains(got[list:], want) {
+			t.Errorf("the list under the remedy does not name %q:\n%s", want, got[list:])
+		}
+	}
+}
+
 // TestHaltedReportNamesCauseAndRemedy: each halt of the shared budget says
 // what stopped the run and what to do next, in the report people read.
 func TestHaltedReportNamesCauseAndRemedy(t *testing.T) {

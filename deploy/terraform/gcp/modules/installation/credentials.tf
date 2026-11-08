@@ -367,16 +367,17 @@ resource "google_cloud_run_v2_service" "credentials" {
       # it spells. `h2c` is HTTP/2 cleartext, which is what B1.0 is for — the
       # plan made that task conditional on the owner's Check 190 failing a large
       # push, because the hop in front of this process buffers an HTTP/1 request
-      # body and refuses one a large git pack exceeds (413). None of that is
-      # measured on this tree: the checklist still records Check 190 as not run,
-      # and the reconciliation marks the reading it rests on (U2: that HTTP/2
-      # streaming keeps the pack off that buffer) unverified. So the name is
-      # what the plan expects to turn that hop's HTTP/2 on, not a result. The
-      # service's own server speaks both protocols on its one listener
-      # (internal/cli/credentials_serve.go), so the HTTP/1.1 callers it has
-      # today keep working. 8080 is the number the process itself falls back to
-      # when Cloud Run's PORT is unset (servePort), and it is Cloud Run's own
-      # default.
+      # body and refuses one a large git pack exceeds (413). The register now
+      # records that run, and it is the FAIL: a 33 MiB pack on HTTP/1.1 was
+      # answered 413, so refusing an oversized HTTP/1 body is measured. The
+      # other half is not — the reconciliation still marks it (U2: that HTTP/2
+      # streaming keeps the pack off that buffer) unverified, and no live step
+      # has read it. So the name is what the plan expects to turn that hop's
+      # HTTP/2 on, not a result. The service's own server speaks both protocols
+      # on its one listener (internal/cli/credentials_serve.go), so the HTTP/1.1
+      # callers it has today keep working. 8080 is the number the process itself
+      # falls back to when Cloud Run's PORT is unset (servePort), and it is
+      # Cloud Run's own default.
       #
       # The name follows the image: an unnamed port is HTTP/1.1, and a front end
       # told h2c in front of a process that cannot answer it serves nothing at
