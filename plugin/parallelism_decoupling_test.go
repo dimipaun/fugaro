@@ -104,7 +104,10 @@ func TestParallelismSkillHasDecouplingSection(t *testing.T) {
 // least as strictly as its strictest consumer (D1819). `fugaro run --mode` is
 // that "at least": it may raise the mode a run resolves and never lower it. The
 // mode a task resolves is read from the settings and matched to the task's
-// footprint by the agent itself (F18), so the text has to name the read.
+// footprint by the agent itself (F18), so the text has to name the read — and
+// name it against the repository: an unaimed read covers the installation's own
+// scopes and never opens the repository's fugaro.yaml, so it would report a mode
+// that repository's runs do not resolve.
 //
 // The same table says what the mode does to the pass (D1818), and the two rows
 // that decide whether the pass runs at all are the two a later edit is likeliest
@@ -116,7 +119,8 @@ func TestParallelismSkillContractTaskRigor(t *testing.T) {
 	for _, want := range []string{
 		"the highest rigor of the tasks that consume it",
 		"fugaro run --mode",
-		"fugaro settings rigor.default rigor.areas --json",
+		"fugaro settings rigor.default rigor.areas --repo",
+		`"scope": "repo:<owner/name>"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the decoupling text never says %q, so a contract can be launched below the rigor of what depends on it", want)
