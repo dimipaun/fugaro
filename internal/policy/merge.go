@@ -40,8 +40,10 @@ func layerName(i int) string {
 // Merge applies layers in order (the ceiling first, then tighten[0] as the
 // default branch, tighten[1] as the run's branch). A later layer may only
 // tighten: the smaller positive cap, the stricter mode (enforce > observe >
-// off), the intersection of allow-lists. A key a layer leaves unset passes the
-// earlier layers through. A value a later layer sets that does not tighten is
+// off), the intersection of allow-lists, a craft that selects among the
+// project's credentials and pools and narrows a pool. A key a layer leaves
+// unset passes the earlier layers through. A value a later layer sets that does
+// not tighten is
 // dropped and recorded in Ignored (equal values are not ignored; the ceiling
 // is never ignored). Later layers are compared to the running effective value.
 func Merge(ceiling Layer, tighten ...Layer) Effective {
@@ -133,6 +135,15 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 		for _, class := range DecisionClasses {
 			e.tightenDecisionModel(class, o.DecisionModelPerClass[class], src)
 		}
+
+		// The credentials, the pools and the crafts of docs/model-crafts are the
+		// same question asked of a spending and a data-egress grant rather than
+		// of a bound: the first layer, the project's own, creates them, and
+		// every layer above it may only select among what it created and narrow
+		// a pool (F12, D1628). It is the one block whose first layer is
+		// privileged rather than merely being merged first, so the rule is told
+		// which layer it is looking at (tightenCraft).
+		e.tightenCraft(l.Craft, src, i == 0)
 
 		if r := modeRank(l.Mode); r > 0 {
 			cur := modeRank(e.Mode)

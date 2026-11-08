@@ -17,6 +17,13 @@ func pool(strategy string, members ...string) CraftPool {
 	return CraftPool{Strategy: strategy, Members: members}
 }
 
+// repo is a project's layer merged with a repository's own: a run's three
+// layers are the project's ceiling, the default branch and the branch the run
+// checked out, the last two being the repository's file at two revisions
+// (internal/runner's policyCeiling and its two fugaro.yaml layers). Only the
+// branch's is written here, so the value it sets is sourced as the branch's.
+func repo(project, r Layer) Effective { return Merge(project, Layer{}, r) }
+
 // TestRepoCannotAddCredential: a credential is a secret reference and so a
 // spending and data-egress grant, and only the project (the merge's first
 // layer) hands one out. A later layer's credential is dropped and recorded,
@@ -25,7 +32,7 @@ func pool(strategy string, members ...string) CraftPool {
 func TestRepoCannotAddCredential(t *testing.T) {
 	project := craftLayer([]string{"openrouter-main", "vertex"}, nil, nil)
 
-	e := Merge(project, craftLayer([]string{"repo-key"}, nil, nil))
+	e := repo(project, craftLayer([]string{"repo-key"}, nil, nil))
 	if want := []string{"openrouter-main", "vertex"}; !reflect.DeepEqual(e.Craft.Credentials, want) {
 		t.Fatalf("credentials = %v, want %v", e.Craft.Credentials, want)
 	}
@@ -38,12 +45,13 @@ func TestRepoCannotAddCredential(t *testing.T) {
 
 	// A layer that lists a credential the project has adds nothing: it is not
 	// an introduction and not a loosening, so nothing is recorded for it.
-	if e := Merge(project, craftLayer([]string{"vertex"}, nil, nil)); len(e.Ignored) != 0 {
+	if e := repo(project, craftLayer([]string{"vertex"}, nil, nil)); len(e.Ignored) != 0 {
 		t.Fatalf("ignored = %+v", e.Ignored)
 	}
 
 	// A merge of layers that carry no craft at all stays as silent as it was.
-	if e := Merge(Layer{}, Layer{}, Layer{}); e.Craft != (CraftLayer{}) || len(e.Sources) != 0 || len(e.Ignored) != 0 {
+	e = Merge(Layer{}, Layer{}, Layer{})
+	if len(e.Craft.Credentials) != 0 || len(e.Craft.Pools) != 0 || len(e.Craft.Access) != 0 || len(e.Sources) != 0 || len(e.Ignored) != 0 {
 		t.Fatalf("empty layers -> %+v", e)
 	}
 }
@@ -53,9 +61,9 @@ func TestRepoCannotAddCredential(t *testing.T) {
 // what "failover" walks.
 func TestRepoCanOnlyNarrowPool(t *testing.T) {
 	project := craftLayer(nil, map[string]CraftPool{"claude": pool("", "c1", "c2", "c3")}, nil)
-	repo := craftLayer(nil, map[string]CraftPool{"claude": pool("", "c1", "c3")}, nil)
+	narrowed := craftLayer(nil, map[string]CraftPool{"claude": pool("", "c1", "c3")}, nil)
 
-	e := Merge(project, repo)
+	e := repo(project, narrowed)
 	if got := e.Craft.Pools["claude"].Members; !reflect.DeepEqual(got, []string{"c1", "c3"}) {
 		t.Fatalf("members = %v", got)
 	}
@@ -78,7 +86,7 @@ func TestRepoCanOnlyNarrowPool(t *testing.T) {
 func TestLooserPoolNeverWins(t *testing.T) {
 	project := craftLayer(nil, map[string]CraftPool{"claude": pool(PoolStrategyFailover, "c1", "c2")}, nil)
 
-	e := Merge(project, craftLayer(nil, map[string]CraftPool{"claude": pool("", "c1", "c2", "c3")}, nil))
+	e := repo(project, craftLayer(nil, map[string]CraftPool{"claude": pool("", "c1", "c2", "c3")}, nil))
 	if got := e.Craft.Pools["claude"].Members; !reflect.DeepEqual(got, []string{"c1", "c2"}) {
 		t.Fatalf("added member won: %v", got)
 	}
@@ -88,7 +96,7 @@ func TestLooserPoolNeverWins(t *testing.T) {
 	}
 
 	// A pool only the later layer has is one it may not create at all.
-	e = Merge(project, craftLayer(nil, map[string]CraftPool{"repo-pool": pool("", "c1")}, nil))
+	e = repo(project, craftLayer(nil, map[string]CraftPool{"repo-pool": pool("", "c1")}, nil))
 	if len(e.Craft.Pools) != 1 {
 		t.Fatalf("pools = %+v", e.Craft.Pools)
 	}
@@ -97,7 +105,7 @@ func TestLooserPoolNeverWins(t *testing.T) {
 	}
 
 	// A layer that repeats the project's own members is not a loosening.
-	if e := Merge(project, craftLayer(nil, map[string]CraftPool{"claude": pool("", "c1", "c2")}, nil)); len(e.Ignored) != 0 {
+	if e := repo(project, craftLayer(nil, map[string]CraftPool{"claude": pool("", "c1", "c2")}, nil)); len(e.Ignored) != 0 {
 		t.Fatalf("ignored = %+v", e.Ignored)
 	}
 }
@@ -110,7 +118,7 @@ func TestLooserPoolNeverWins(t *testing.T) {
 func TestRepoCannotReorderOrChangeStrategy(t *testing.T) {
 	project := craftLayer(nil, map[string]CraftPool{"claude": pool(PoolStrategyFailover, "c1", "c2", "c3")}, nil)
 
-	e := Merge(project, craftLayer(nil, map[string]CraftPool{"claude": pool("", "c3", "c1")}, nil))
+	e := repo(project, craftLayer(nil, map[string]CraftPool{"claude": pool("", "c3", "c1")}, nil))
 	if got := e.Craft.Pools["claude"].Members; !reflect.DeepEqual(got, []string{"c1", "c2", "c3"}) {
 		t.Fatalf("reordered members won: %v", got)
 	}
@@ -118,7 +126,7 @@ func TestRepoCannotReorderOrChangeStrategy(t *testing.T) {
 		t.Fatalf("ignored = %+v", e.Ignored)
 	}
 
-	e = Merge(project, craftLayer(nil, map[string]CraftPool{"claude": pool(PoolStrategyRoundRobin)}, nil))
+	e = repo(project, craftLayer(nil, map[string]CraftPool{"claude": pool(PoolStrategyRoundRobin)}, nil))
 	if got := e.Craft.Pools["claude"].Strategy; got != PoolStrategyFailover {
 		t.Fatalf("looser strategy won: %q", got)
 	}
@@ -130,7 +138,7 @@ func TestRepoCannotReorderOrChangeStrategy(t *testing.T) {
 	// The other direction is the repository's to take: a pool the project
 	// round-robins may be pinned to an order.
 	rr := craftLayer(nil, map[string]CraftPool{"claude": pool(PoolStrategyRoundRobin, "c1", "c2")}, nil)
-	e = Merge(rr, craftLayer(nil, map[string]CraftPool{"claude": pool(PoolStrategyFailover)}, nil))
+	e = repo(rr, craftLayer(nil, map[string]CraftPool{"claude": pool(PoolStrategyFailover)}, nil))
 	if got := e.Craft.Pools["claude"].Strategy; got != PoolStrategyFailover {
 		t.Fatalf("strategy = %q", got)
 	}
@@ -150,7 +158,7 @@ func TestCraftAccessSelectsWhatTheProjectMakesAvailable(t *testing.T) {
 		map[string]string{"coder": "openrouter-main"},
 	)
 
-	e := Merge(project, craftLayer(nil, nil, map[string]string{"coder": "vertex", "senior-review": "claude"}))
+	e := repo(project, craftLayer(nil, nil, map[string]string{"coder": "vertex", "senior-review": "claude"}))
 	if got := e.Craft.Access["coder"]; got != "vertex" {
 		t.Fatalf("coder access = %q", got)
 	}
@@ -165,7 +173,7 @@ func TestCraftAccessSelectsWhatTheProjectMakesAvailable(t *testing.T) {
 	// so the craft keeps what the project selected for it — and a craft the
 	// project selected nothing for is left unset, for the resolver to answer
 	// (MC2).
-	e = Merge(project, craftLayer(nil, nil, map[string]string{"coder": "repo-key", "review": "repo-key"}))
+	e = repo(project, craftLayer(nil, nil, map[string]string{"coder": "repo-key", "review": "repo-key"}))
 	if got := e.Craft.Access["coder"]; got != "openrouter-main" {
 		t.Fatalf("coder access = %q", got)
 	}

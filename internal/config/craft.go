@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/policy"
 )
 
 // A craft is what the spec calls a model role: one model and one credential or
@@ -172,9 +173,15 @@ type Credential struct {
 
 // Pool strategies (spec §2). Failover is the default: it is the shape that
 // exists today and it hides nothing about which credential served (D1632).
+//
+// The two names live in internal/policy, beside the rule that orders them —
+// failover is the tighter of the two for a repository that narrows a pool
+// (F12, D1628) — and are aliased here the way this file aliases that package's
+// budget modes, so a strategy written in a file and a strategy the merge
+// compares cannot be two vocabularies.
 const (
-	PoolStrategyFailover   = "failover"
-	PoolStrategyRoundRobin = "round-robin"
+	PoolStrategyFailover   = policy.PoolStrategyFailover
+	PoolStrategyRoundRobin = policy.PoolStrategyRoundRobin
 )
 
 // PoolStrategies are the strategies a pool may be written with.
