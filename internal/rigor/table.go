@@ -140,9 +140,56 @@ func (o override) blocks(s Score) bool {
 	return s.catastrophic()
 }
 
+// stop is one mode's at-the-stop row (the owner's ruling of 2026-11-08): what
+// the mode does with the findings a run still has when it stops — the moment
+// its review rounds are spent or the run reaches the configured fraction of its
+// time budget (runner.Budget.PastStop), whichever comes first, without a ship
+// verdict. It is the second rule the mode holds, beside the threshold its
+// rounds are spent under, and it is data here for the same reason that one is:
+// "merge as-is, follow up the rest" is Startup's own sentence read at the
+// moment it applies.
+type stop int
+
+const (
+	// stopDraft keeps every finding a stopped round left blocking: the pull
+	// request stays a draft with the findings and the round named in its reason,
+	// which is what every mode did before this row existed. It is the zero
+	// value, so a mode that says nothing about the stop — and a mode the table
+	// does not hold — keeps that behaviour rather than gaining an acceptance
+	// nobody wrote.
+	stopDraft stop = iota
+	// stopCatastrophic accepts at the stop every finding the spec's severity
+	// override does not cover: what still blocks is a Security or DataLoss class
+	// or an impact of 5 (catastrophic), whatever the axes say. Startup's row,
+	// whose sentence is "fix common; log rare/expensive to backlog" and whose
+	// point is time to market, and POC's, whose own row already tolerates
+	// everything else.
+	stopCatastrophic
+	// stopSecurity accepts at the stop every finding but an exploitable
+	// weakness: Hotfix's reading of its sentence — "only findings that make the
+	// fix wrong or unsafe block" — applied at the stop exactly as its override
+	// applies it in a round. It names the reading rather than leaving it to the
+	// override so the mode's answer at the stop is stated here beside every other
+	// mode's, and not inferred from which half of the row is asked.
+	stopSecurity
+)
+
+// blocks reports whether this reading of the stop rule still blocks s. A value
+// outside the three above is read as stopDraft — the strict answer — the way an
+// unknown mode blocks everything.
+func (o stop) blocks(s Score) bool {
+	switch o {
+	case stopCatastrophic:
+		return s.catastrophic()
+	case stopSecurity:
+		return s.Class == Security
+	}
+	return true
+}
+
 // threshold is one mode's findings policy, as data: how it reads the severity
-// override, where on the risk axis the mode starts to block, and the one escape
-// its spec sentence names.
+// override, where on the risk axis the mode starts to block, the one escape
+// its spec sentence names, and what it does with the findings left at the stop.
 type threshold struct {
 	// Risk is the smallest likelihood × impact that blocks. Zero means the
 	// axes never block in this mode, so only the override and an unscored
@@ -159,13 +206,20 @@ type threshold struct {
 	// than inside a condition because it is the one part of the rule that two
 	// modes read differently (D2).
 	Override override
+	// Stop is what the mode does with the findings a stopped run has left:
+	// stopDraft, the zero value, keeps the pull request a draft, and the other
+	// two accept everything the row names and file it (BlocksAtStop, D30). It
+	// sits beside Risk because it is the mode's own sentence at a second moment
+	// and not a second table: Pro's row says Pro's stop is a draft and POC's
+	// says POC's is an acceptance, and no code outside this file asks which.
+	Stop stop
 }
 
 // thresholds is the table, one row per mode, each row the mode's own sentence
-// in spec.md read as a number. It is unexported and Blocks is the only reader:
-// the rule has one statement, and a second caller reaching for the numbers
-// would be the second answer to "does this finding block" that D7's answer and
-// F4 exist to prevent.
+// in spec.md read as a number. It is unexported and Blocks and BlocksAtStop are
+// the only readers: each rule has one statement, and a second caller reaching
+// for the numbers would be the second answer to "does this finding block" that
+// D7's answer and F4 exist to prevent.
 //
 // Pro's row is the behaviour of every repository that configures nothing
 // (D19), so it is the row a reviewer should read first and the one whose
@@ -173,18 +227,28 @@ type threshold struct {
 var thresholds = map[Mode]threshold{
 	// "POC — Ignore (except catastrophic)". The axes never block: what is left
 	// goes to the pull request body's one line and the run record, which is
-	// the whole account a POC run keeps (D30).
-	POC: {},
+	// the whole account a POC run keeps (D30). Its stop row states the same
+	// reading, so a POC run that spends its rounds is ready on the same terms
+	// it reviewed under rather than a draft on the last round's count.
+	POC: {Stop: stopCatastrophic},
 	// "Startup — Fix common; log rare/expensive to backlog", and "Rare,
 	// expensive corner cases go to the backlog": the floor is where a finding
 	// stops being a corner case, and no fix-cost escape belongs beside it — a
 	// rare finding is one the floor already tolerates, whatever its fix costs.
-	Startup: {Risk: 8},
+	//
+	// The stop row is where the mode's other sentence lives — "merge as-is,
+	// follow up the rest", the owner's ruling of 2026-11-08 — and it is wider
+	// than the floor on purpose: a documentation-drift finding the mode would
+	// have spent a round on blocks nothing once the rounds are gone, and the
+	// override alone is what ends a Startup run a draft.
+	Startup: {Risk: 8, Stop: stopCatastrophic},
 	// "Pro — Weigh fix cost vs. likelihood × severity … extremely rare,
 	// high-effort issues may stay unfixed": the lowest floor of the four
 	// on-axis modes, which is what "aim for bug-free patches" costs, with the
 	// spec's own escape for the one case it names — likelihood 1, fix cost 4
-	// or more.
+	// or more. It names no stop row: Pro's sentence is "aim for bug-free
+	// patches", so a run of it stops at the stop on the terms it reviewed
+	// under, which is the draft stopDraft is.
 	Pro: {Risk: 4, Rare: 1, Expensive: 4},
 	// "Critical — Every finding blocks": the whole scale is above the floor.
 	// D7's answer keeps this mode's outcome and reason byte-identical to the
@@ -199,7 +263,12 @@ var thresholds = map[Mode]threshold{
 	// hotfix's record of them belongs. What makes a hotfix's fix *wrong* is not
 	// a finding at all: D14's deterministic diff rule gates the run, and the
 	// agent's own confidence number is recorded and never trusted.
-	Hotfix: {Override: overrideSecurity},
+	//
+	// Its stop row is that same security gate written again: at the stop a
+	// hotfix run accepts what it tolerates in a round, which is what keeps the
+	// mode's answer the same at both moments and the ruling of 2026-10-26
+	// intact there.
+	Hotfix: {Override: overrideSecurity, Stop: stopSecurity},
 }
 
 // Blocks reports whether a finding blocks at mode m.
@@ -238,8 +307,50 @@ func Blocks(m Mode, s Score) bool {
 // wanted the count of tolerated findings, or the ones to file, must not be
 // able to disagree with the readiness rule about which they are.
 func Split(m Mode, findings []Score) (blocking, tolerated []Score) {
+	return splitWith(m, findings, Blocks)
+}
+
+// BlocksAtStop reports whether s still blocks at mode m's stop: the mode's own
+// stop row read over its ordinary one, so what a mode already tolerates in a
+// round is tolerated at the stop too and the stop can only ever widen what a
+// run accepts. A mode whose row names no stop — Pro, Critical, the zero mode,
+// and every name outside the vocabulary — answers exactly what Blocks does,
+// which is the fail-closed zero value: a mode that says nothing about the stop
+// keeps the draft.
+//
+// The order is Blocks first for the same reason Blocks asks the override before
+// its floor: a finding the mode never blocks on is not one its stop row has to
+// be consulted about, and an unscored finding blocks on both paths (D4).
+func BlocksAtStop(m Mode, s Score) bool {
+	if !Blocks(m, s) {
+		return false
+	}
+	row, known := thresholds[m]
+	if !known || !s.Scored() {
+		// D4's rule, asked before the row for the same reason Blocks asks it
+		// there: a table cannot accept a finding it cannot read, and the stop is
+		// the moment a reviewer that stopped scoring would otherwise be rewarded
+		// for it — the run is out of rounds and nothing more would be asked.
+		return true
+	}
+	return row.Stop.blocks(s)
+}
+
+// SplitAtStop is Split at the stop (SplitAtStop's own rule): what the run still
+// blocks on when it stops without a ship verdict, and what it accepts and files
+// (D30). The two groups keep the order they were given, exactly as Split's do,
+// and a mode that names no stop row answers with every finding blocking — which
+// is the split that keeps Decide's tolerance from applying at all.
+func SplitAtStop(m Mode, findings []Score) (blocking, accepted []Score) {
+	return splitWith(m, findings, BlocksAtStop)
+}
+
+// splitWith is Split and SplitAtStop's one loop: the group each finding falls in
+// is the predicate's answer, so neither reader can disagree with the rule it
+// names about which findings they are.
+func splitWith(m Mode, findings []Score, blocks func(Mode, Score) bool) (blocking, tolerated []Score) {
 	for _, s := range findings {
-		if Blocks(m, s) {
+		if blocks(m, s) {
 			blocking = append(blocking, s)
 			continue
 		}
