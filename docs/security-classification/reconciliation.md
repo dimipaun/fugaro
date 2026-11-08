@@ -414,7 +414,7 @@ The level-3 trigger has to be a **positive list**, which is exactly why the ask 
   may be documents alone; `docs/image-env/` is the four-document precedent this folder follows. The
   brief's DOCS ONLY left the pin to the plan's tasks, which name the one each adds: this folder's is
   `internal/cli/docs_security_classification_test.go` (SC2, D1519), and its arrival moved
-  `docs/rigor-modes/reconciliation.md`'s census row **112 → 113**, as that row's own amendment
+  `docs/rigor-modes/reconciliation.md`'s census row **113 → 114**, as that row's own amendment
   sentence records. The three census re-check tests (§7, D1519, F17) re-derive the count from the tree
   and needed no edit.
 - **It does not build OD1, OD2, the needs_owner work, the orchestrator or the console screen.** OD1
