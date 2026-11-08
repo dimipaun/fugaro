@@ -21,6 +21,29 @@
  *     ("Accept all") from the secondary ("Decline"). There is no "reject all" buried in a
  *     settings page and no pre-ticked box: accepting and declining are one press each, and
  *     neither is the one the layout nudges a visitor towards by being easier to reach.
+ *   - **A third control, which decides nothing by itself** (the owner's request of
+ *     2026-11-08). "Cookie Settings" is a native `<button type="button">` in the same box as
+ *     the pair and in the pair's own grid, so it is the same target and never the nudged-to
+ *     one — it carries the quiet fill, not the accent — and it opens a panel in the banner's
+ *     own flow: no modal, no focus trap, and focus moves into the panel when it opens and
+ *     back to this control when it closes. The panel holds one switch per decision this bar
+ *     stores, and each switch is a native `<input type="checkbox" role="switch">` with its own
+ *     `<label>`: keyboard-reachable, labelled, and off in the markup — the panel is drawn with
+ *     no box ticked, and `site.js` sets each switch from what the browser holds when the panel
+ *     opens. "Save my choices" writes exactly what the switches say — `granted` for the ones
+ *     that are on, `denied` for the ones that are off — through the same two keys the pair
+ *     writes, and "Back" puts the panel away without deciding anything. The panel's markup
+ *     carries no script and names no fetched host; the gate that reacts to a stored decision
+ *     is `site.js`, and it stays gated: a stored `denied` loads nothing and a missing decision
+ *     loads nothing.
+ *   - **What the panel says, and what it may answer.** Each switch carries one sentence naming
+ *     what it loads and saying that nothing is loaded until it is on, so a visitor who turns
+ *     one on has been told what it is — which is what lets the panel answer the campaign
+ *     question on the privacy page, where the bar's own Accept may not (below): the bar never
+ *     put the three vendors to the visitor in two words, and the panel names all three. The
+ *     switches are the decisions this bar carries, so a bar that carries no campaign key
+ *     renders no Marketing switch, and one that carries the key renders it whether or not it
+ *     carries the campaign's configuration.
  *   - **Dismissal is a refusal.** Escape hides the banner and records `denied`, and a
  *     visitor who navigates away without choosing loads nothing either — the default when
  *     nobody chooses is that nothing is measured, because the gate needs a stored `granted`
@@ -42,6 +65,9 @@
  *     decision's key as well as the site's (`marketingKey`), so the refusal it offers takes
  *     back both answers — a campaign decision is made on a campaign page, where the bar is
  *     gone once it has been answered, and this is the page a visitor comes to to undo one.
+ *     The settings panel works on that page too: its switches are set from what the browser
+ *     holds, so a visitor sees the answers they gave, and turning one off and saving runs the
+ *     same withdrawal the pair's refusal runs — the same cookie deletion, from the same gate.
  *   - **One question, in two sentences.** The bar asks about measurement as a whole — cookies
  *     and identifiers, Google Analytics 4, and the marketing trackers and the booking widget
  *     the campaign pages carry — in the same two sentences on every page, rather than in four
@@ -107,6 +133,12 @@ const {
 // reads it back out of the markup below, so the banner that writes the decision and the gate
 // that reads it cannot drift apart.
 import { CONSENT_KEY } from '../lib/consent-key.mjs'
+
+// The campaign decision's key, wherever this bar carries one: the four campaign pages' own
+// configuration (`marketing`), or the privacy page's key-without-configuration (`marketingKey`,
+// withdrawal). A bar that carries no key stores no campaign decision, so it renders no
+// Marketing switch either — the panel offers a switch only for a decision this bar can write.
+const marketingConsentKey = marketing?.key ?? marketingKey ?? null
 ---
 
 <aside
@@ -118,7 +150,7 @@ import { CONSENT_KEY } from '../lib/consent-key.mjs'
   data-consent-always={alwaysOffer ? 'true' : undefined}
   data-analytics-id={measurementID}
   data-analytics-origin={analyticsOrigin}
-  data-marketing-consent-key={marketing?.key ?? marketingKey ?? undefined}
+  data-marketing-consent-key={marketingConsentKey ?? undefined}
   data-marketing-path={marketing?.path}
   data-meta-pixel-id={marketing?.metaID}
   data-meta-origin={marketing?.metaOrigin}
@@ -142,7 +174,46 @@ import { CONSENT_KEY } from '../lib/consent-key.mjs'
         <button type="button" class="consent-banner__button consent-banner__button--decline" data-consent="denied">
           Decline
         </button>
+        {/* The third control: the pair's own box, in the pair's own grid, and the quiet fill —
+            never the accent, so it is not the one the layout nudges a visitor towards. It
+            decides nothing by itself; it opens the panel below. */}
+        <button
+          type="button"
+          class="consent-banner__button consent-banner__button--settings"
+          id="consent-banner-settings-button"
+          aria-expanded="false"
+          aria-controls="consent-banner-settings"
+        >
+          Cookie Settings
+        </button>
       </div>
+      {/* The panel, in the banner's own flow: drawn with no box ticked, and every switch set
+          from what the browser holds when `site.js` opens it. `role="switch"` on a native
+          checkbox is the control the platform already draws, labels and focuses; the panel
+          carries no script and names no fetched host. */}
+      <fieldset class="consent-banner__settings" id="consent-banner-settings" hidden>
+        <legend class="consent-banner__settings-legend">Cookie settings</legend>
+        <div class="consent-banner__switch">
+          <input type="checkbox" role="switch" id="consent-switch-analytics" data-consent-switch="analytics" />
+          <label class="consent-banner__switch-label" for="consent-switch-analytics">Analytics</label>
+          <p class="consent-banner__switch-note">Google Analytics, on every page — nothing is loaded from it until this is on.</p>
+        </div>
+        {marketingConsentKey && (
+          <div class="consent-banner__switch">
+            <input type="checkbox" role="switch" id="consent-switch-marketing" data-consent-switch="marketing" />
+            <label class="consent-banner__switch-label" for="consent-switch-marketing">Marketing</label>
+            <p class="consent-banner__switch-note">Meta's pixel, LinkedIn's insight tag and Calendly's booking widget, on the campaign pages — nothing is loaded from them until this is on.</p>
+          </div>
+        )}
+        <div class="consent-banner__settings-actions">
+          <button type="button" class="consent-banner__button consent-banner__button--accept" id="consent-banner-save">
+            Save my choices
+          </button>
+          <button type="button" class="consent-banner__button consent-banner__button--decline" id="consent-banner-back">
+            Back
+          </button>
+        </div>
+      </fieldset>
       <p class="consent-banner__status" id="consent-banner-status" role="status" hidden>
         Your browser is not storing this choice, so this site cannot keep it: nothing is loaded, and you will be asked again on your next visit.
       </p>
@@ -271,7 +342,11 @@ import { CONSENT_KEY } from '../lib/consent-key.mjs'
 
   /* The secondary: the shape the bar's choices were, a tone step above the bar. It is the same
      box as the primary and a step quieter, which is the whole of the difference between them. */
-  .consent-banner__button--decline {
+  .consent-banner__button--decline,
+  /* And the third control, which is the same quiet fill as the secondary and never the accent:
+     it opens the panel and decides nothing, so it is not the one the bar points a visitor at.
+     It sits in the pair's own grid and is therefore the same box and the same width. */
+  .consent-banner__button--settings {
     background: var(--surface);
     color: var(--accent-on-dark);
   }
@@ -285,10 +360,84 @@ import { CONSENT_KEY } from '../lib/consent-key.mjs'
       background: var(--accent-on-dark);
     }
 
-    .consent-banner__button--decline:hover {
+    .consent-banner__button--decline:hover,
+    /* The third control wears the secondary's fill, so it hovers as the secondary does: the
+       one rule covers both, and the pair's accent fill is not one of them. */
+    .consent-banner__button--settings:hover {
       background: var(--border);
       color: var(--text);
     }
+  }
+
+  /* The panel: in the banner's own flow, below the row, and a tone step quieter than the bar
+     so it reads as a thing opened under it rather than as another row of the bar. `flex-basis:
+     100%` is what puts it on a line of its own whatever the row above did, and the bar's own
+     `--frame-gutter` padding is the only horizontal room it needs — nothing here is wider than
+     the bar, so a phone-width bar scrolls sideways no more than it did before the panel. */
+  .consent-banner__settings {
+    display: grid;
+    gap: var(--space-2xs);
+    flex-basis: 100%;
+    margin: 0;
+    padding: var(--space-2xs) var(--space-sm);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
+  }
+
+  /* `hidden` is the panel's own state and the one `site.js` sets: the rule below wins over the
+     grid above, so the panel is out of the flow until the third control opens it. */
+  .consent-banner__settings[hidden] {
+    display: none;
+  }
+
+  .consent-banner__settings-legend {
+    padding: 0;
+    color: var(--text);
+    font-size: var(--font-size-sm);
+    font-weight: var(--weight-semibold);
+  }
+
+  /* One switch and its sentence: the box in the first column, the label beside it and the
+     sentence under the label, so the note is the label's own line rather than a second column
+     of the row. The box is the platform's, sized to the touch target's own 1.25 rem. */
+  .consent-banner__switch {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 var(--space-2xs);
+    align-items: center;
+  }
+
+  .consent-banner__switch input {
+    width: 1.25rem;
+    height: 1.25rem;
+    margin: 0;
+    accent-color: var(--accent);
+  }
+
+  .consent-banner__switch-label {
+    font-size: var(--font-size-sm);
+  }
+
+  /* What the switch loads, and that nothing loads until it is on: the sentence that lets the
+     panel answer a question the bar's own Accept may not (`marketing`), so it names the
+     vendors in the same words the privacy page's copy is held to. */
+  .consent-banner__switch-note {
+    grid-column: 2;
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    line-height: var(--leading-snug);
+  }
+
+  /* Save and Back are the bar's own pair again — the same two-column grid, the same box — so
+     the panel's two controls are the same size and the same pair of fills as the bar's. */
+  .consent-banner__settings-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-2xs);
+    max-width: 22rem;
   }
 
   .consent-banner__status {
