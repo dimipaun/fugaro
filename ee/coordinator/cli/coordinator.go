@@ -266,19 +266,30 @@ func CoordinatorDB(ctx context.Context, lc *localcfg.Config) (*rtdb.Client, erro
 	return fcli.NewBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
 }
 
-// openCoordinatorStore opens the coordinator's store over that same connection.
-// The store's own check, and not the rules and not IAM, is what keeps the
-// writer to the coordinator's subtree (D194).
+// CoordinatorStore is the coordinator's store over that same connection, and it
+// is exported for CoordinatorDB's reason: the readers of this subtree do not all
+// live in this package, and a read made from outside needs the store this one's
+// reads are made over and not a second one worded alike. The store's own check,
+// and not the rules and not IAM, is what keeps the writer to the coordinator's
+// subtree (D194).
 //
-// A package variable, so a test replaces exactly the one thing that would
-// reach a database.
-var openCoordinatorStore = func(ctx context.Context, lc *localcfg.Config) (*coordinator.Store, error) {
+// A caller that reads this node once opens one and drops it — `graph --json`
+// does, which is why it is reachable from there. A caller that reads it again
+// and again opens none of these: `graph --watch --json` builds its store over
+// the client its subscription already holds (coordinator.NewStore), so one
+// connection, and the one credential minted for it, serve the stream and every
+// read behind it (CG7).
+func CoordinatorStore(ctx context.Context, lc *localcfg.Config) (*coordinator.Store, error) {
 	db, err := CoordinatorDB(ctx, lc)
 	if err != nil {
 		return nil, err
 	}
 	return coordinator.NewStore(db), nil
 }
+
+// openCoordinatorStore is CoordinatorStore as a package variable, so a test
+// replaces exactly the one thing that would reach a database.
+var openCoordinatorStore = CoordinatorStore
 
 // writeCoordinatorReport prints the record the command wrote, and the path it
 // wrote it to. It is the record and nothing else: no advice, no comparison

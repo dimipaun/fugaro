@@ -38,8 +38,10 @@ package cli
 //     and a withdrawal before the opening put ever arrived, which is a document
 //     rather than a wait for a bound that nothing can beat.
 //   - TestWatchRefusedReadIsTerminalAndNamesTheCommand: the listen *refused* —
-//     a 401 or 403 on the subscription itself — ends the child and names the
-//     command, which is what a console reads as "this CLI has no graph" (T3).
+//     a 401 or 403 on the subscription itself — ends the child, its sentence
+//     carrying the database's own cause and naming the command that fixes it
+//     (a re-login, or the role an owner grants), which is what a console reads
+//     as "this CLI has no graph" (T3).
 //   - TestWatchRefusedReadIsTerminalWhileTheListenStands: a *read* this CLI is
 //     refused, with the listen served throughout, is the other refusal: exit 1
 //     and no document, where a read that merely failed is a scope marked down
@@ -1086,13 +1088,20 @@ func TestWatchAWithdrawnListenIsADownScopeAtEveryInstantItCanLand(t *testing.T) 
 }
 
 // TestWatchRefusedReadIsTerminalAndNamesTheCommand: a refusal is what ends the
-// child, and the sentence it ends with names what to do instead, because a
-// console shows that sentence and draws no graph (H3, T3, contract §6.22).
-// Three refusals reach it — the listen refused when it opens, the listen refused
-// on a reconnect, and a caller asking for the stream without --json — and each
-// names its own way out. A listen the server *withdrew* is not one of them:
-// that is a scope that is down, and
+// child, and the sentence it ends with is the command's own, naming what to do
+// about it, because a console shows that sentence and draws no graph (H3, T3,
+// contract §6.22). Three refusals reach it — the listen refused when it opens,
+// the listen refused on a reconnect, and a caller asking for the stream without
+// --json — and each names its own way out. A listen the server *withdrew* is not
+// one of them: that is a scope that is down, and
 // TestWatchAWithdrawnListenIsADownScopeAndNotAnExit holds it.
+//
+// The two credential refusals are asserted on the database's own cause — the
+// status and the message it answered with, which the sentence carries (the
+// one-shot read's refusal keeps its cause the same way, coordinatorStoredErr) —
+// and on what a person has to do about it. They no longer point at `graph
+// --json`: that read goes through the same credential, to the same node, and is
+// refused in the same breath, so a person sent there only makes the trip twice.
 func TestWatchRefusedReadIsTerminalAndNamesTheCommand(t *testing.T) {
 	t.Run("the listen is refused when the stream opens", func(t *testing.T) {
 		f := newGraphFixture(t)
@@ -1110,8 +1119,14 @@ func TestWatchRefusedReadIsTerminalAndNamesTheCommand(t *testing.T) {
 		if err == nil {
 			t.Fatalf("the child streamed a project it may not read")
 		}
-		if !strings.Contains(err.Error(), "fugaro graph") {
-			t.Errorf("the refusal is %q, want it to name the command to run instead", err)
+		// What the sentence must carry: the database's own answer (the status a
+		// person greps for and the words it sent), that it is the credential
+		// that was refused rather than this build being unable to stream, and
+		// the two things that fix it.
+		for _, want := range []string{"refused this CLI's credential", "403", "Permission denied", "roles/firebasedatabase.viewer", "gcloud auth application-default login"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal is %q, want it to carry %q", err, want)
+			}
 		}
 		if got := sink.text(); got != "" {
 			t.Errorf("the refused stream wrote %q, want no document at all: a refusal is not a graph with nothing in it", got)
@@ -1140,8 +1155,10 @@ func TestWatchRefusedReadIsTerminalAndNamesTheCommand(t *testing.T) {
 		if err == nil {
 			t.Fatalf("the child kept streaming after the listen was refused")
 		}
-		if !strings.Contains(err.Error(), "fugaro graph") {
-			t.Errorf("the refusal is %q, want it to name the command to run instead", err)
+		for _, want := range []string{"refused this CLI's credential", "403", "Permission denied", "roles/firebasedatabase.viewer"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal is %q, want it to carry %q", err, want)
+			}
 		}
 		// The down document came first, and it is what tells a reader the two
 		// apart: the transport fell over, and then this CLI was refused.

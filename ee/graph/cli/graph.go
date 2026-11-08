@@ -170,10 +170,19 @@ func runGraph(cmd *cobra.Command, o *graphOptions) error {
 	// below. Either way they are carried once.
 	var warned bytes.Buffer
 	now := time.Now()
+	// The read goes through a store its caller holds, because the other caller
+	// of the same read — the stream — holds one for its whole life. This caller
+	// reads once, so it opens one here and drops it with the command; the
+	// refusal a project with no database gets is CoordinatorStore's own sentence,
+	// the one this read has always answered with.
+	store, err := coordcli.CoordinatorStore(ctx, env.Config())
+	if err != nil {
+		return err
+	}
 	// A one-shot read has no time of its own to give for the stored view (the
 	// sweep's own design), so its `as_of` is null and the scope claims no age:
 	// the zero time is the caller saying it has none (contract §6.22).
-	doc, err := readGraph(ctx, env, now, time.Time{}, &warned)
+	doc, err := readGraph(ctx, env, store, now, time.Time{}, &warned)
 	if err != nil {
 		return err
 	}
@@ -212,12 +221,20 @@ func runGraph(cmd *cobra.Command, o *graphOptions) error {
 // to decide because it is not a fact the stored view carries (CG2): the one-shot
 // read has none to give — the zero time, and §6.22's `as_of` is null for it —
 // while the stream knows its own read's time and fills it.
-func readGraph(ctx context.Context, env *fcli.Cloud, now, asOf time.Time, warned *bytes.Buffer) (graph.Document, error) {
+//
+// store is the connection the read goes through, and it is the caller's to open
+// for the same reason asOf is the caller's to pass: a caller that reads once
+// opens one and drops it, while the stream opens one for its whole life and
+// hands the same one here every time (CoordinatorStore, CG7). A store opened is
+// an rtdb client built and a token source with it, so a stream that opened one
+// per document would read the caller's ADC file and fetch a fresh OAuth token on
+// every change, every keep-alive and every retry of a failed read.
+func readGraph(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, now, asOf time.Time, warned *bytes.Buffer) (graph.Document, error) {
 	window, err := fcli.ParseSince(fcli.LsDefaultSince())
 	if err != nil {
 		return graph.Document{}, fcli.UserErr("%v", err)
 	}
-	project, err := coordcli.StoredProject(ctx, env, graphRepos(env), fcli.LsSince(window), warned)
+	project, err := coordcli.StoredProjectThrough(ctx, env, store, graphRepos(env), fcli.LsSince(window), warned)
 	switch {
 	case err == nil:
 		src := graph.CoordinatorSource{View: project, AsOf: asOf, Now: now}

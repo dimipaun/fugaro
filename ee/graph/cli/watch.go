@@ -10,6 +10,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/dimipaun/fugaro/ee/coordinator"
 	coordcli "github.com/dimipaun/fugaro/ee/coordinator/cli"
 	"github.com/dimipaun/fugaro/ee/graph"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
@@ -94,12 +95,19 @@ func runGraphWatch(ctx context.Context, out io.Writer, env *fcli.Cloud) error {
 	if err != nil {
 		return err
 	}
+	// The store the child reads through is opened once, over the same client the
+	// subscription is on, and lives as long as the child: a document per change,
+	// per keep-alive and per retry of a failed read, each answered by a read that
+	// goes through it (readGraph, StoredProjectThrough). One per document would
+	// build an rtdb client, and mint its credential, on every change a console is
+	// watching for, which is the cost this one store is here to take off it.
+	store := coordinator.NewStore(db)
 	stream, err := graph.NewStream()
 	if err != nil {
 		return fcli.RemoteErr(err)
 	}
 	stream.Floor, stream.Keep = graphFloor, graphKeepAlive
-	w := &watcher{env: env, out: out, st: stream}
+	w := &watcher{env: env, out: out, st: stream, store: store}
 	return w.run(ctx, db)
 }
 
@@ -109,6 +117,9 @@ type watcher struct {
 	env *fcli.Cloud
 	out io.Writer
 	st  graph.Stream
+	// store is the connection every document's read goes through, and the same
+	// one for as long as the child lives (runGraphWatch).
+	store *coordinator.Store
 	// last is the document written most recently. It is what a scope that is
 	// down still draws: the nodes are the last thing the scope said, and the
 	// state beside them is what has changed (H3).
@@ -213,7 +224,7 @@ func (w *watcher) first(ctx context.Context, events <-chan rtdb.Event) error {
 			case ev.Type == "put" && ev.Path == "/":
 				return w.write(ctx, time.Now())
 			case ev.Type == "error" && errors.Is(ev.Err, rtdb.ErrPermission):
-				return refusedStream()
+				return refusedStream(ev.Err)
 			}
 		}
 	}
@@ -248,7 +259,7 @@ func (w *watcher) observe(ev rtdb.Event) error {
 		w.dirty = true
 	case "error":
 		if errors.Is(ev.Err, rtdb.ErrPermission) {
-			return refusedStream()
+			return refusedStream(ev.Err)
 		}
 		w.down, w.dirty = "the database stream is down: "+ev.Err.Error(), true
 	}
@@ -307,7 +318,7 @@ func (w *watcher) snapshot(ctx context.Context, now time.Time) (graph.Document, 
 	// The read's own instant is the age the stream can give (contract §6.22):
 	// it is the caller that read the views and knows when (CG7), where the
 	// one-shot read has no such time to hand over.
-	doc, err := readGraph(ctx, w.env, now, now, &warned)
+	doc, err := readGraph(ctx, w.env, w.store, now, now, &warned)
 	switch {
 	case err == nil:
 		return doc, nil
@@ -349,12 +360,23 @@ func downDoc(last graph.Document, reason string) graph.Document {
 	return doc
 }
 
-// refusedStream is the refusal that ends the child: the database answered 401
-// or 403 to the subscription itself, so this CLI may not read the graph at all
-// — which is the refusal a console shows as "this CLI has no graph", beside the
-// sentence that names the command a person can run instead (T3, contract §6.22,
-// §10.5). It is told apart from a scope that is down by exactly that: a
-// transport that fell over, or a listen withdrawn, is a state in the document.
-func refusedStream() error {
-	return fcli.UserErr("graph: the database refused the stream and this build cannot stream the graph: run fugaro graph --json to read it once")
+// refusedStream is the refusal that ends the child: the database refused the
+// credential this CLI listens with. Three failures arrive as one event of that
+// kind — a 401 or 403 on the subscription itself, a token endpoint refusing the
+// stored grant (tokenErr: an expired or revoked ADC grant answers 400, 401 or
+// 403), and the transport's three revokes in a row — and all three are the same
+// fact about the caller: the read is one this CLI may not make, which is what a
+// console shows as "this CLI has no graph" (T3, contract §6.22, §10.5), and not
+// a scope that is down. It is told apart from a scope that is down by exactly
+// that: a transport that fell over, or a listen withdrawn, is a state in the
+// document.
+//
+// The sentence carries the event's own error, as the one-shot read's refusal
+// carries its own (coordinatorStoredErr), because the cause is what tells a
+// person which of the three it was, and it names what to do about it rather than
+// a command to run: `graph --json` reads the same node with the same credential
+// and is refused in the same breath, so sending a person there is sending them
+// in a circle.
+func refusedStream(err error) error {
+	return fcli.UserErr("graph: the database refused this CLI's credential and it may not listen to /coordinator: that read is a signed-in reader's and the database role its caller holds (roles/firebasedatabase.viewer, which terraform.launchers and terraform.operators have), so run gcloud auth application-default login if the grant has expired, and otherwise ask an owner to add the role (%v)", err)
 }
