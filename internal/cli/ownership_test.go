@@ -340,6 +340,66 @@ func TestBudgetKillRefusesAnotherInstallationsDatabase(t *testing.T) {
 	}
 }
 
+// TestWorkspaceKillRefusesAnotherInstallationsDatabase: the workspace scope of
+// `budget kill` is the third door this command opens into a budget database,
+// beside --all and --repo, and it asks the one ownership question before the
+// switch is written. It is a case of its own and not one of the two above,
+// because the scope reaches its database a way nothing else here does: it
+// resolves the project the workspace is named after (workspaceOwnerConfig)
+// instead of selecting the project the command runs in, so a fixture built from
+// the selected project cannot exercise it — and every case in
+// budget_kill_workspace_test.go hands the path a database carrying the
+// installation's own mark, which is exactly the answer this refusal is not.
+//
+// The database is one whose config names its own GCP project as its Firebase
+// project (wsUpdateHome's installations record both as the same name), the shape
+// whose budget.firebase_project is its own: with a mark in it the question is
+// answered by the mark alone, which is what makes this case the ownership check's
+// and not the name check's.
+func TestWorkspaceKillRefusesAnotherInstallationsDatabase(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTable)
+	db := h.project(t, "workspace-alpha").db
+	db.Set(budget.PathProject, "workspace-alpha")
+
+	// The installation's own marked database: the switch is written, as in the
+	// workspace scope's own tests.
+	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha"); err != nil {
+		t.Fatalf("budget kill --workspace on the workspace's own marked database was refused: %v", err)
+	}
+	if db.Value(budget.PathKillGlobal) == nil {
+		t.Fatal("the kill on the installation's own marked database wrote no switch")
+	}
+	// Cleared again, so what the refusals below are held to is "nothing was
+	// written" and not an earlier write standing there.
+	db.Set(budget.PathKillGlobal, nil)
+
+	// Another installation's mark: a workspace kill may not throw a switch in
+	// another installation's database — it would halt runs that are not this
+	// project's, in a database this one has no claim on.
+	db.Set(budget.PathMark, birchMark())
+	_, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha")
+	refusedByTheOwnershipCheck(t, "budget kill --workspace", err, "nothing was killed")
+	if err != nil && !strings.Contains(err.Error(), "one Firebase project serves one installation") {
+		t.Errorf("the refusal is not the shared one (the mark it found): %v", err)
+	}
+	if db.Value(budget.PathKillGlobal) != nil {
+		t.Errorf("the refused kill wrote the switch into another installation's database: %v", db.Value(budget.PathKillGlobal))
+	}
+
+	// Data and no mark at all: the other half of the same answer, on the
+	// direction that would lift a stop — it is the same path, so it holds the
+	// same question.
+	db.Set(budget.PathMark, nil)
+	_, _, err = execute(t, "budget", "resume", "--workspace", "workspace-alpha")
+	refusedByTheOwnershipCheck(t, "budget resume --workspace", err, "nothing was resumed")
+	if err != nil && !strings.Contains(err.Error(), "and no Fugaro mark") {
+		t.Errorf("the refusal does not name the data and the absent mark: %v", err)
+	}
+	if db.Value(budget.PathKillGlobal) != nil {
+		t.Errorf("the refused resume wrote the switch into a database that is not this installation's: %v", db.Value(budget.PathKillGlobal))
+	}
+}
+
 // TestPolicyPublishRefusesAnotherInstallationsDatabase: `project policy publish`
 // (and, through the same opener, `--delete`) writes the node every run of the
 // project is admitted by, and it is the door the ruling names first.
