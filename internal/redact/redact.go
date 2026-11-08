@@ -259,17 +259,24 @@ var (
 	// role rather than a credential. The user may be absent — a Redis URL with
 	// no user is written `redis://:<password>@host` — and the host has to
 	// follow, which is what keeps a URL that merely carries a port
-	// (`https://host:8080/x`) out of it.
-	connString = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*://[^\s:/@?#]*):([^\s:/@?#]+)@`)
+	// (`https://host:8080/x`) out of it: a password may itself hold a colon
+	// (`user:pa:ss@host`, which libpq reads up to the first one), so the `@` is
+	// the only thing that tells the password from what comes after it.
+	connString = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*://[^\s:/@?#]*):([^\s/@?#]+)@`)
 
 	// passwordValue is the credential a name introduces with a sign, wherever
 	// that is written: an environment dump (`PGPASSWORD=…`), a config or a
 	// record (`{"db_password":"…"}`), the field of a keyword connection string
 	// (`Password=…;`), and a transcript's escaped record
 	// (`{\"password\":\"…\"}`), which is what the doubling of the quotes and
-	// of the opening one reads. signedParam above knows the same name only
-	// where a URL query parameter puts it, which is the one place a delimiter
-	// tells the value from the text around it.
+	// of the opening one reads. A quote on either side of the name and of the
+	// value may be a single one as well — a shell writes `PGPASSWORD='…'` and
+	// `--password '…'`, and a record written in Python or in YAML is
+	// `{'password': '…'}` — so the rules here read the two, and none of them
+	// requires the closing quote: an unterminated one still hides a value.
+	// signedParam above knows the same name only where a URL query parameter
+	// puts it, which is the one place a delimiter tells the value from the text
+	// around it.
 	//
 	// What may stand before the name is anything but a lower-case letter: a
 	// name is written `DB_PASSWORD`, `PGPASSWORD` or `AWS_SECRET_ACCESS_KEY`,
@@ -284,7 +291,7 @@ var (
 	// value needs four bytes, the floor the exact pass uses and for its
 	// reason: a shorter one is not a credential, and replacing it mangles the
 	// text around it.
-	passwordValue = regexp.MustCompile(`(?i)(^|(?-i:[^a-z]))(pass(?:word|phrase|wd)?s?|pwd|secret(?:[_-]?(?:access[_-])?key)?)(\\*"?)(\s*[:=]\s*)((?:\\+)?")?([^\s"',;&\\]{4,})`)
+	passwordValue = regexp.MustCompile(`(?i)(^|(?-i:[^a-z]))(pass(?:word|phrase|wd)?s?|pwd|secret(?:[_-]?(?:access[_-])?key)?)(\\*["']?)(\s*[:=]\s*)((?:\\+)?["'])?([^\s"',;&\\]{4,})`)
 
 	// passwordCamel is the same name written inside another word, which is how
 	// a record, a config or a keyword connection string spells a field:
@@ -293,7 +300,7 @@ var (
 	// carries one in its middle — so this rule reads the name case by case and
 	// lets anything precede it, where passwordValue above, whose name may be
 	// written in lower case, has to keep its boundary.
-	passwordCamel = regexp.MustCompile(`(^|[A-Za-z0-9_]*)(Pass(?:word|Phrase|Wd)?s?|Pwd|Secret(?:[_-]?(?:Access[_-])?Key)?)(\\*"?)(\s*[:=]\s*)((?:\\+)?")?([^\s"',;&\\]{4,})`)
+	passwordCamel = regexp.MustCompile(`(^|[A-Za-z0-9_]*)(Pass(?:word|Phrase|Wd)?s?|Pwd|Secret(?:[_-]?(?:Access[_-])?Key)?)(\\*["']?)(\s*[:=]\s*)((?:\\+)?["'])?([^\s"',;&\\]{4,})`)
 
 	// passwordFlag is the same credential on a command line, where the value
 	// follows the flag after a space rather than a sign
@@ -302,7 +309,7 @@ var (
 	// This is the one spelling of it with nothing between the name and the
 	// value to read by, so the dashes before the name are what keeps a
 	// sentence out of the rule.
-	passwordFlag = regexp.MustCompile(`(?i)(-{1,2}(?:pass(?:word|phrase|wd)?s?|pwd|secret(?:[_-]?(?:access[_-])?key)?))\s+("?)([^\s"',;&\\]{4,})`)
+	passwordFlag = regexp.MustCompile(`(?i)(-{1,2}(?:pass(?:word|phrase|wd)?s?|pwd|secret(?:[_-]?(?:access[_-])?key)?))\s+(["']?)([^\s"',;&\\]{4,})`)
 
 	// keyBlock is a PEM private key, terminated or not: an unterminated block
 	// is still a key, so an END that never comes redacts to the end of the

@@ -393,6 +393,35 @@ var patternCases = []struct {
 		leak: strings.Repeat("Qw3", 5),
 		keep: "smtp refused",
 	},
+	{
+		name: "password in single quotes",
+		in:   "PGPASSWORD='" + fake(strings.Repeat("Qw3", 5)) + "' psql: connection refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "psql: connection refused",
+	},
+	{
+		name: "password field of a record in single quotes",
+		in:   `{'password': '` + fake(strings.Repeat("Qw3", 5)) + `'}`,
+		leak: strings.Repeat("Qw3", 5),
+	},
+	{
+		name: "password field of a camel-case record in single quotes",
+		in:   `{'dbPassword': '` + fake(strings.Repeat("Qw3", 5)) + `'}`,
+		leak: strings.Repeat("Qw3", 5),
+	},
+	{
+		name: "password on a command line in single quotes",
+		in:   "--password '" + fake(strings.Repeat("Qw3", 5)) + "' --user someone failed",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "--user someone failed",
+	},
+	{
+		name: "password holding a colon in a connection string",
+		in: "postgres://app:" + fake("pa", ":", strings.Repeat("Qw3", 5)) +
+			"@db.example.com:5432/app refused",
+		leak: "pa" + ":" + strings.Repeat("Qw3", 5),
+		keep: "db.example.com:5432/app refused",
+	},
 }
 
 // TestRedactCorpus: a shape the exact pass cannot name is still a credential,
@@ -597,6 +626,7 @@ func TestRedactPassesLeaveCleanTextAlone(t *testing.T) {
 		"https://host/cb?token=&state=ok returned nothing",
 		"retrying with Bearer\nQWERTYUIOPASDFGHJKLZXCVBNM now",
 		"the password is wrong, so the update stops",
+		"the password's wrong, so the update stops",
 		"the secret: it was rotated by the operator",
 		"compass: north, and bypass the cache to surpass it",
 		"a Compass: north, and the Surpass: 3 points",
