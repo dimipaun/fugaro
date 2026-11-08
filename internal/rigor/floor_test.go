@@ -34,6 +34,39 @@ func TestFloorMatchesBlocksOverrides(t *testing.T) {
 			}
 		}
 	}
+	// The predicate is strictly narrower than the table, which is the whole
+	// point of the slice: a finding only the risk axis blocks is blocking and
+	// not floor, and that set — the judge's reach (D1857) — is non-empty in
+	// every mode whose row has an axis. Were Floor to answer with Blocks, the
+	// triage stage would have nothing to defer and the suite would say so.
+	for _, m := range []Mode{Startup, Pro, Critical} {
+		var reachable []Score
+		for _, s := range everyScore() {
+			if Blocks(m, s) && !Floor(m, s) {
+				reachable = append(reachable, s)
+			}
+		}
+		if len(reachable) == 0 {
+			t.Errorf("no finding is blocking and deferrable at %q; the judge's reach is empty there", m)
+		}
+	}
+	onAxis := []struct {
+		m Mode
+		s Score
+	}{
+		{Startup, Score{Likelihood: 4, Impact: 4, FixCost: 1, Class: Correctness}},
+		{Pro, Score{Likelihood: 2, Impact: 3, FixCost: 1, Class: Correctness}},
+		{Critical, Score{Likelihood: 1, Impact: 1, FixCost: 1, Class: Cosmetic}},
+	}
+	for _, c := range onAxis {
+		if !Blocks(c.m, c.s) {
+			t.Errorf("Blocks(%q, %+v) is false; the case is about a finding the axis blocks", c.m, c.s)
+		}
+		if Floor(c.m, c.s) {
+			t.Errorf("Floor(%q, %+v) is true; the risk axis is the judge's to weigh", c.m, c.s)
+		}
+	}
+
 	// A mode the table does not hold blocks on everything (D4's fail-closed
 	// reading), and it is floor on everything: the leniency a value the table
 	// cannot place must never get is not the judge's to hand out either.
