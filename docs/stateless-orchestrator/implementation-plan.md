@@ -905,5 +905,7 @@ follows the ruling through O9, G11 and the conventions above.
   "completed with open findings" outcome, no findings file under the runs bucket and no 80%-of-budget rule in `internal/runner` or `internal/config`
   (reconciliation U10). O14 is therefore written against the brief's description of BF1 and **follows it rather than leads it**: the findings file's own
   shape is BF1's to fix, and until it does, the triage's read of it is a shape this plan does not own. What it does own is the behaviour without it — the
-  rule **fails closed**, reading an absent file as a critical finding set rather than as an empty (therefore non-critical) one, which is what its red
-  step proves.
+  rule **fails closed**, reading an absent or unattributable file as an **unreadable input**, which is the **recommend-only** outcome: nothing merged,
+  cancelled or restarted (D1247). It is never an empty (therefore non-critical) finding set, which would let the merge through, and **never a critical
+  one**: the fixed order tries `Escalate` first, so a "critical" reading of a file nobody wrote would cancel every long run while BF1 is missing. That is
+  what its red step proves.

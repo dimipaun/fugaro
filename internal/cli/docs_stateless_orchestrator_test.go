@@ -470,6 +470,22 @@ func TestDocsStatelessOrchestratorLongRunTriageIsFollowedThrough(t *testing.T) {
 			}
 		}
 	}
+	// P5's open item is where the first draft's reading of a missing findings file
+	// survived: an absent or unattributable file is an unreadable input — the
+	// recommend-only outcome — and not a critical finding set. With the fixed order
+	// trying Escalate first, the draft's reading would cancel every long run while
+	// BF1 is missing, which D1247 and TestTriageNeverCancelsOnAnUnreadableFindingsFile
+	// both forbid.
+	for _, f := range []struct{ name, text string }{{soPlan, plan}, {soReconciled, rec}} {
+		for _, bad := range []string{"as a critical finding set", "absent file as a critical"} {
+			if strings.Contains(f.text, bad) {
+				t.Errorf("%s: an absent findings file reads as critical again (%q)", f.name, bad)
+			}
+		}
+	}
+	if !strings.Contains(plan, "reading an absent or unattributable file as an **unreadable input**") {
+		t.Errorf("%s: P5 no longer reads an absent findings file as an unreadable input", soPlan)
+	}
 	// The CI read is new code, not a read the tree already makes: D1244 must keep
 	// saying so, or the merge's one input reads as free when O14 has to write it.
 	for _, want := range []string{"and this CI read does not exist yet", "so **O14 adds it**"} {
