@@ -6,6 +6,7 @@ package mcpauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"go/parser"
 	"go/token"
 	"os"
@@ -148,6 +149,164 @@ func TestAuditRecordIsBounded(t *testing.T) {
 	}
 	if other.Identity != auditLauncher {
 		t.Errorf("the empty record names %q; want the identity it was read for", other.Identity)
+	}
+}
+
+// contendingObjects is one store's view of a bucket with other calls of the
+// same person in it: while rounds remain, a read of the record is followed by
+// another call's append to it, which moves the generation this store's write is
+// matched against. The interleave is made deterministic rather than left to a
+// scheduler — a goroutine test would be red or green by machine — and it is the
+// ordinary shape of a client that runs tools in parallel, which is what the
+// record's own retry exists for.
+type contendingObjects struct {
+	objects
+	at      string
+	rounds  int
+	contend func()
+}
+
+func (o *contendingObjects) read(ctx context.Context, key string) ([]byte, int64, error) {
+	data, gen, err := o.objects.read(ctx, key)
+	if err == nil && key == o.at && o.rounds > 0 {
+		o.rounds--
+		o.contend()
+	}
+	return data, gen, err
+}
+
+// TestAContendedRecordKeepsTheEntry is the fourth call of a client that runs
+// four tools at once. The record is one object and every call rewrites it, so a
+// call whose write loses a round re-reads and writes again — and how many
+// rounds it needs is how many calls of that person land first, which is the
+// client's business and not something a small count can bound: at three
+// attempts, four calls at once lose one entry, and lose it quietly, because the
+// door answers the call either way (auditCall).
+func TestAContendedRecordKeepsTheEntry(t *testing.T) {
+	ctx := context.Background()
+	b := newFakeBucket(t)
+
+	// The competing calls write through a store of their own over the same
+	// bucket, so what this store loses its round to is a real write to the same
+	// object and not a stub that says "changed".
+	other := newBucketStore(b)
+	record := AuditEntry{Tool: "list_tasks", Outcome: OutcomeOK}
+	if err := other.AppendAudit(ctx, testIdentity, record); err != nil {
+		t.Fatalf("the record's first entry: %v", err)
+	}
+
+	key, err := auditKey(testIdentity)
+	if err != nil {
+		t.Fatalf("the key of %s's record: %v", testIdentity, err)
+	}
+	contended := &contendingObjects{objects: bucketObjects{b: b}, at: key, rounds: 3}
+	contended.contend = func() {
+		if err := other.AppendAudit(ctx, testIdentity, record); err != nil {
+			t.Errorf("another call's own entry: %v", err)
+		}
+	}
+
+	own := AuditEntry{Tool: "get_task_status", Outcome: OutcomeOK}
+	if err := newRecords(contended).AppendAudit(ctx, testIdentity, own); err != nil {
+		t.Fatalf("an entry into a record three other calls were writing at once: %v", err)
+	}
+	rec, err := other.GetAudit(ctx, testIdentity)
+	if err != nil {
+		t.Fatalf("reading the record the contended call wrote into: %v", err)
+	}
+	if len(rec.Entries) != 5 {
+		t.Fatalf("the record holds %d entries after one call contended with three; want all five calls:\n%+v", len(rec.Entries), rec.Entries)
+	}
+	if rec.Entries[0].Tool != own.Tool {
+		t.Errorf("the record's newest entry is %q; want the call that had to re-read and write again", rec.Entries[0].Tool)
+	}
+	if rec.Incomplete {
+		t.Error("the record says it is short after every entry it was given was written: a record that cried wolf would send an operator to the log for nothing")
+	}
+}
+
+// unwritableAuditRecord is one identity's record as a store that never lets it
+// be written: every attempt at that object is answered errChanged, which is
+// what a record contended past the loop's bound amounts to. The marker beside
+// the record is a different key and is written as usual.
+type unwritableAuditRecord struct {
+	objects
+	at string
+}
+
+func (o unwritableAuditRecord) create(ctx context.Context, key string, data []byte) (int64, error) {
+	if key == o.at {
+		return 0, errChanged
+	}
+	return o.objects.create(ctx, key, data)
+}
+
+func (o unwritableAuditRecord) replace(ctx context.Context, key string, data []byte, gen int64) (int64, error) {
+	if key == o.at {
+		return 0, errChanged
+	}
+	return o.objects.replace(ctx, key, data, gen)
+}
+
+// TestARecordThatCouldNotTakeAnEntrySaysSo is what is left when the entry is
+// lost: the door answers the call anyway — the line is the copy that cannot be
+// lost (the amendment of 2026-11-04) — so the record is the only thing that can
+// tell its reader that it is short, and a record that reads as a whole history
+// of a person while missing one of their calls is the answer an operator acts
+// on wrongly.
+func TestARecordThatCouldNotTakeAnEntrySaysSo(t *testing.T) {
+	ctx := context.Background()
+	b := newFakeBucket(t)
+	key, err := auditKey(testIdentity)
+	if err != nil {
+		t.Fatalf("the key of %s's record: %v", testIdentity, err)
+	}
+	store := newRecords(unwritableAuditRecord{objects: bucketObjects{b: b}, at: key})
+
+	if err := store.AppendAudit(ctx, testIdentity, AuditEntry{Tool: "get_task_status", Outcome: OutcomeOK}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("an entry the record would not take is answered %v; want ErrConflict, which is the door's own complaint (auditCall)", err)
+	}
+
+	rec, err := store.GetAudit(ctx, testIdentity)
+	if err != nil {
+		t.Fatalf("reading a record an entry was lost from: %v", err)
+	}
+	if len(rec.Entries) != 0 {
+		t.Fatalf("the record of a lost entry holds %d entries; want the entry gone, which is what makes the record's own word the only report of it", len(rec.Entries))
+	}
+	if !rec.Incomplete {
+		t.Fatal("a record an entry was lost from reads as a whole history of that person")
+	}
+	// The tool answers the record itself, so the claim has to be in the JSON an
+	// operator's own reader parses and not only in the struct a Go caller sees.
+	answer, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatalf("encoding the record as the tool answers it: %v", err)
+	}
+	if !strings.Contains(string(answer), `"incomplete":true`) {
+		t.Errorf("the record the tool serves is %s; want the loss stated in it", answer)
+	}
+
+	// And it is this record's state and not a word the answer always carries:
+	// another person's record, which took every entry it was given, says the
+	// opposite, and the marker is one identity's and not the store's.
+	whole := newBucketStore(b)
+	if err := whole.AppendAudit(ctx, auditLauncher, AuditEntry{Tool: "get_task_status", Outcome: OutcomeOK}); err != nil {
+		t.Fatalf("the second person's entry: %v", err)
+	}
+	other, err := whole.GetAudit(ctx, auditLauncher)
+	if err != nil {
+		t.Fatalf("reading the second person's record: %v", err)
+	}
+	if other.Incomplete {
+		t.Error("a record that took every entry it was given says it is short: the marker is being read as the store's rather than as one record's")
+	}
+	answer, err = json.Marshal(other)
+	if err != nil {
+		t.Fatalf("encoding the second person's record: %v", err)
+	}
+	if strings.Contains(string(answer), `"incomplete":true`) {
+		t.Errorf("the second person's record is %s; want no loss in it", answer)
 	}
 }
 

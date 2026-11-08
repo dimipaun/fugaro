@@ -55,11 +55,34 @@ const MaxAuditEntries = 64
 // this file's: the store's layout is M2's, and this is one more tree in it.
 const auditPrefix = PathPrefix + "audit/"
 
-// auditAttempts bounds the read-modify-write below. Two writers of one person's
-// record are two calls that person made at once, and a lost round is retried
-// rather than refused: the entry is one line of an audit, and dropping it
-// because somebody else's call landed first would lose an event that happened.
-const auditAttempts = 3
+// auditAttempts bounds the read-modify-write below. It is the record's own
+// bound and not a small count, because a lost round is a lost entry and the
+// number of rounds a writer needs is the number of calls of that person that
+// interleave with it: the loser of a round re-reads and writes against the
+// newer generation, so it needs about one attempt for each writer that lands
+// first. A client that runs tools in parallel is the ordinary case this loop
+// exists for — audit_record.go's own comment says so — which makes a small
+// count lose an entry on arithmetic rather than under load: three attempts
+// lose the fourth call of a client running four tools at once, and the fourth
+// call is no less a call than the others.
+const auditAttempts = MaxAuditEntries
+
+// auditGapSuffix names the marker a record keeps beside itself when an entry it
+// should hold was lost. It is a second object and not a field of the record's
+// own for the one reason a field cannot serve: the write that lost the entry is
+// the write that could not touch the record. The key cannot collide with a
+// record's own, which is the audit prefix and a hash.
+const auditGapSuffix = ".gap"
+
+// auditGapMarker is what the marker above holds: the same claim GetAudit
+// answers as AuditRecord.Incomplete, written where a reader of the bucket can
+// see it too.
+var auditGapMarker = []byte(`{"incomplete":true}`)
+
+// auditGapTimeout bounds the marker's own write, which is made on a context of
+// its own (markAuditGap) and has no caller left to bound it: a write that
+// reports a loss must not be the one that holds an answer open.
+const auditGapTimeout = 2 * time.Second
 
 // AuditEntry is one call as the record keeps it: what was called, by which
 // token family, with which scopes, and how the door answered.
@@ -104,6 +127,16 @@ type AuditRecord struct {
 	// empty list is an answer, and a client that has to tell it from a missing
 	// field is reading this tool wrong.
 	Entries []AuditEntry `json:"entries"`
+	// Incomplete is true when this record is known to be short: a call the door
+	// audited and could not place here (AppendAudit's own bound). It is the one
+	// difference between a record that lost an entry and a record of a person
+	// who has called this many times, which is why it is answered beside the
+	// entries rather than inside them — a reader that has to tell the two apart
+	// by counting would take a short history for a whole one. It is sticky: the
+	// entry is gone and the record never stops saying so. The line is the copy
+	// that cannot be lost (audit.go), so a record that says this sends its
+	// reader to the log rather than to another read of the same object.
+	Incomplete bool `json:"incomplete"`
 }
 
 // auditKey is where one identity's record lives: the audit prefix and the hash
@@ -132,7 +165,10 @@ func auditKey(identity string) (string, error) {
 // A lost round is retried rather than refused (auditAttempts): the record is a
 // view, and the line is the copy that cannot be lost (audit.go). Only a record
 // that changed under every attempt is an error, because at that point this
-// store is not writing what it is asked to write.
+// store is not writing what it is asked to write — and then the entry is gone
+// (auditCall answers the call anyway, which the amendment of 2026-11-04
+// decides), so the one thing this method owes the reader who comes next is that
+// the record does not go on looking whole: the loss is marked beside it.
 func (r records) AppendAudit(ctx context.Context, identity string, entry AuditEntry) error {
 	key, err := auditKey(identity)
 	if err != nil {
@@ -169,13 +205,40 @@ func (r records) AppendAudit(ctx context.Context, identity string, entry AuditEn
 		}
 		return nil
 	}
+	r.markAuditGap(ctx, key)
 	return fmt.Errorf("mcpauth: the audit record changed under every write of it: %w", ErrConflict)
+}
+
+// markAuditGap records, beside the record, that an entry it should hold is not
+// in it. It is a create and its failure is dropped: the first loss writes the
+// marker and a later one finds it already there, which is the same fact
+// arriving twice rather than a write that could lose the same race the entry
+// was lost to, and a marker that could not be written at all is the store fault
+// auditCall reports on the door's logger — where a fault of this installation
+// is read, this layer having no logger of its own.
+//
+// The write is made on a context of its own, bounded, for the reason the marker
+// exists: the loss is owed to the record and to whoever reads it next, not to
+// the caller whose request has already ended, and a marker written on that
+// caller's context would be the one write that reports the loss and cannot
+// arrive.
+func (r records) markAuditGap(ctx context.Context, key string) {
+	gctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), auditGapTimeout)
+	defer cancel()
+	_, _ = r.objs.create(gctx, key+auditGapSuffix, auditGapMarker)
 }
 
 // GetAudit reads one identity's record. An identity no call has been served for
 // has an empty record — an answer and not an error, because "this person has
 // called nothing" is what an operator asking about them wants to know, and a
 // refusal would read as a fault of the installation.
+//
+// Whether the record is short is read from the marker beside it and not from
+// the record, because the write that lost the entry is the write that could not
+// touch the record (AppendAudit). A marker that cannot be read is not a record
+// that may be called whole: what cannot be settled is answered as incomplete,
+// which is the answer that sends a reader to the log rather than the one that
+// takes a short history for a whole one.
 func (r records) GetAudit(ctx context.Context, identity string) (AuditRecord, error) {
 	key, err := auditKey(identity)
 	if err != nil {
@@ -188,6 +251,9 @@ func (r records) GetAudit(ctx context.Context, identity string) (AuditRecord, er
 	rec.Identity = identity
 	if rec.Entries == nil {
 		rec.Entries = []AuditEntry{}
+	}
+	if _, _, err := r.objs.read(ctx, key+auditGapSuffix); !errors.Is(err, errMissing) {
+		rec.Incomplete = true
 	}
 	return rec, nil
 }

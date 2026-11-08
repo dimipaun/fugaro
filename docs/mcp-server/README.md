@@ -191,7 +191,8 @@ README, in its own diff, is where the block above D1189 is written.
   coordinator ran it on 2026-11-04) and its findings are answered in
   [reconciliation.md](reconciliation.md) §4a; **M4 and M6 were cancelled by those findings** and were
   to be **rerun from the amended plan**, and **M1 and M3 may continue** — **and the tree has gone past
-  that**, five tasks merged, M5 built and the rest of the plan not started
+  that**: five tasks merged, M5, M7 and M10 built, each apart from the half behind it, and what is
+  left is M4's store half, M5b, M8 and M9
   ([reconciliation.md](reconciliation.md) §4a, "What has happened since"). **The first owner check of
   §6 was the licence, and the owner cleared it on 2026-11-07** — [licence-gate.md](licence-gate.md)
   is the record and [licence-table.md](licence-table.md) the evidence — and the one **UNVERIFIED**

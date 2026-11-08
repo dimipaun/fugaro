@@ -1011,9 +1011,13 @@ here, unchanged, as the plan for when it is designed and the owner approves it.
   It fails because there is no audit writer.
 - **Tests:** `TestEveryRefusalWritesOneLineNamingNoValue`, `TestAuditRecordIsBounded`,
   `TestRevokedFamilyIsRefusedOnTheNextCall`, `TestOperatorSeesTheRecordAndALauncherDoesNot`,
-  `TestTheRecordIsNotInTheProjectsDatabase` (the record the tools serve comes out of the store, and
-  the same read against the `mcpauth` node returns nothing — the assertion that fails the day a
-  later task decides to write the audit where it used to live).
+  `TestTheRecordIsNotInTheProjectsDatabase` (the record is the store's own object, keyed by the hash
+  of the identity and written through M2's `Store`, and no file of this package reaches the project's
+  Realtime Database: the database half is an import scan over the package's own non-test sources —
+  `internal/rtdb` and the rules package whose `PathMCPAuth` names the node — and not the read against
+  the `mcpauth` node this section first asked for, because a fake opened inside the test is written
+  to by nobody and would answer nothing however the front door behaved, which is the assertion that
+  cannot fail the day a later task decides to write the audit where it used to live).
 - **SEC:** yes — it decides who can read the audit record and what revocation destroys, and both are
   now decided by an IAM binding rather than by a rule.
 - **Depends on:** M5, M7.
