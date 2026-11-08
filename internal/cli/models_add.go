@@ -101,9 +101,10 @@ func runModelsAdd(cmd *cobra.Command, id string, o *modelsAddOptions) error {
 	// D846's two widening halves: the claim, which puts the model on a route a
 	// repository may send its code to, and the allow-list entry, which is the key
 	// `settings set budget.allowed_models --add` already makes the typed form.
-	// Either one asks for the project's own name — or --yes, outside a coding
-	// agent's session (D1107). A step that changed nothing (the note it returned
-	// is empty) widens nothing.
+	// Either one is a widening, and a widening is the owner's own step: it asks
+	// nothing at their terminal and a coding agent's session is refused it
+	// (modelsAddTypedWhy, D1552). A step that changed nothing (the note it
+	// returned is empty) widens nothing.
 	claimAppended, allowAppended := claim.by == "", allowed.summary != ""
 	what := modelsAddWhat(id, route, claim, price, allowed)
 	edit := settingsEdit{

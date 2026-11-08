@@ -393,7 +393,9 @@ func TestBudgetRaiseNeedsNoPromptAtATerminal(t *testing.T) {
 // it bounds can lift is not a limit, so the one form a coding agent's session
 // cannot make is the raise — and what it reads is the owner's own command, not a
 // prompt it could answer (the same accident F20 is about: the fence is a
-// courtesy, as strong as the markers and no stronger).
+// courtesy, as strong as the markers and no stronger). Each form is asked twice,
+// with --yes and without: --yes is accepted and ignored (it answered a prompt
+// that no longer exists), and a fence a flag lifts is not a fence.
 func TestBudgetRaiseRefusesInAnAgentSession(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	seedCaps(f, 100, 20)
@@ -406,8 +408,11 @@ func TestBudgetRaiseRefusesInAnAgentSession(t *testing.T) {
 		command string
 	}{
 		{[]string{"budget", "set", "--global", "--daily", "150"}, "fugaro budget set --daily=150 --global"},
+		{[]string{"budget", "set", "--global", "--daily", "150", "--yes"}, "fugaro budget set --daily=150 --global --yes"},
 		{[]string{"budget", "set", "--global", "--per-run", "30"}, "fugaro budget set --global --per-run=30"},
+		{[]string{"budget", "set", "--global", "--per-run", "30", "--yes"}, "fugaro budget set --global --per-run=30 --yes"},
 		{[]string{"budget", "set", "--defaults", "--daily", "500"}, "fugaro budget set --daily=500 --defaults"},
+		{[]string{"budget", "set", "--defaults", "--daily", "500", "--yes"}, "fugaro budget set --daily=500 --defaults --yes"},
 	} {
 		_, _, err := execute(t, c.args...)
 		if err == nil || ExitCode(err) != ExitUserError {
@@ -423,6 +428,9 @@ func TestBudgetRaiseRefusesInAnAgentSession(t *testing.T) {
 	// not the ones a cap bounds it by.
 	if v := f.db.Value(nodeCG).(map[string]any)["dailyMicros"].(json.Number).String(); v != "100000000" {
 		t.Fatalf("a refused raise moved the cap: %s", v)
+	}
+	if d := f.db.Value(budget.PathCapsDefaults); d != nil {
+		t.Fatalf("a refused raise wrote the defaults: %v", d)
 	}
 	if _, _, err := execute(t, "budget", "set", "--global", "--daily", "50"); err != nil {
 		t.Fatalf("a tightening was refused in an agent session: %v", err)
@@ -661,13 +669,23 @@ func TestBudgetResumeRefusesInAnAgentSession(t *testing.T) {
 	if _, _, err := execute(t, "budget", "kill", "--repo", "acme/app", "--reason", "looping"); err != nil {
 		t.Fatalf("a kill was refused in an agent session: %v", err)
 	}
-	_, _, err := execute(t, "budget", "resume", "--all")
-	if err == nil || ExitCode(err) != ExitUserError {
-		t.Fatalf("err = %v, want a refusal", err)
-	}
-	for _, want := range []string{"CLAUDECODE", "owner's own step", "fugaro budget resume --all", "nothing was changed"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not say %q: %v", want, err)
+	// Both spellings of the resume are refused: --yes is accepted and ignored
+	// here, and a fence a flag lifts is not a fence.
+	for _, c := range []struct {
+		args    []string
+		command string
+	}{
+		{[]string{"budget", "resume", "--all"}, "fugaro budget resume --all"},
+		{[]string{"budget", "resume", "--all", "--yes"}, "fugaro budget resume --all --yes"},
+	} {
+		_, _, err := execute(t, c.args...)
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("%v: err = %v, want a refusal", c.args, err)
+		}
+		for _, want := range []string{"CLAUDECODE", "owner's own step", c.command, "nothing was changed"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%v: the refusal does not say %q: %v", c.args, want, err)
+			}
 		}
 	}
 	if k := f.db.Value(budget.PathKillGlobal).(map[string]any); k["on"] != true {
