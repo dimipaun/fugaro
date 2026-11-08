@@ -610,6 +610,47 @@ describe('the row model', () => {
     ).toEqual(['20261108-115248-3bb2', '20261107-010101-3bb2'])
   })
 
+  it('cuts the ending from the id the console would draw, not from the wire text', () => {
+    // **The ending is a cut of the *sanitized* id.** A run id arrives as
+    // untrusted text, and the `runId` class strips an invisible character
+    // (a bidi override here, `‮`) before its shape check -- so the wire
+    // value below is accepted and the cell keeps the clean id as
+    // `data-run-id`. An ending cut from the raw value would carry the override
+    // into the four characters a person reads and types back, and would not be
+    // a suffix of the id the door opens at all.
+    const frame = theLastFrame()
+    const runs = [{ ...theRun(frame, OAUTH_RUN), run: `${OAUTH_RUN}‮` }, theRun(frame, QUEUED_RUN)]
+    const cells = all(
+      renderLive(factory, buildLiveModel({ ...frame, runs }, new BurnHistory()), 'light'),
+      'live-run-id',
+    )
+    expect(cells[0]?.textContent).toBe(OAUTH_ENDING)
+    expect(cells[0]?.getAttribute('data-run-id')).toBe(OAUTH_RUN)
+    for (const cell of cells) {
+      expect(cell.getAttribute('data-run-id')?.endsWith(cell.textContent ?? '')).toBe(true)
+    }
+  })
+
+  it('sanitizes the repository the collision rule prefixes, not only the ending', () => {
+    // The cross-repository branch of `displayRuns` draws `<slug>/<ending>`, and
+    // the repository is untrusted text too. Two runs of the same id under two
+    // repositories are the case that branch exists for (F15); the slug in front
+    // of the ending goes through the class a repository is drawn in, so a
+    // zero-width space in one of them cannot ride into the cell.
+    const frame = theLastFrame()
+    const base = theRun(frame, OAUTH_RUN)
+    const runs = [
+      { ...base, slug: 'orphan​one' },
+      { ...base, slug: 'orphan-two' },
+    ]
+    const tree = renderLive(factory, buildLiveModel({ ...frame, runs }, new BurnHistory()), 'light')
+    expect(texts(tree, 'live-run-id')).toEqual([`orphanone/${OAUTH_ENDING}`, `orphan-two/${OAUTH_ENDING}`])
+    expect(all(tree, 'live-run-id').map((cell) => cell.getAttribute('data-run-id'))).toEqual([
+      OAUTH_RUN,
+      OAUTH_RUN,
+    ])
+  })
+
   it('orders a repository’s rows by start time, and then by id', () => {
     // `watch`'s own order (`internal/watch/build.go`'s `sortRuns`: `StartedAt`,
     // then the run id), which is what the live tab follows (D1704). **The frame
