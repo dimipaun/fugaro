@@ -56,19 +56,26 @@ type testSigner struct {
 func newTestSigner(t *testing.T, project string, opts ...SignerOption) *testSigner {
 	t.Helper()
 	idKey, assertionKey := testKey(t), testKey(t)
-	der, err := x509.MarshalPKCS8PrivateKey(assertionKey)
-	if err != nil {
-		t.Fatalf("marshalling a test signing key: %v", err)
-	}
 	signer, err := NewSigner(SignerConfig{
 		FirebaseProject: project,
-		AssertionKeyPEM: string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})),
+		AssertionKeyPEM: assertionKeyPEM(t, assertionKey),
 		Keys:            fakeKeys{testKid: &idKey.PublicKey},
 	}, opts...)
 	if err != nil {
 		t.Fatalf("NewSigner: %v", err)
 	}
 	return &testSigner{Signer: signer, idKey: idKey, ascKey: assertionKey}
+}
+
+// assertionKeyPEM is a signing key as the workspace's own configuration carries
+// it: the private half, in the PEM shape NewSigner reads.
+func assertionKeyPEM(t *testing.T, key *rsa.PrivateKey) string {
+	t.Helper()
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshalling a test signing key: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
 }
 
 // idTokenFields is one ID token's claims as a test writes them. The zero value
@@ -82,7 +89,11 @@ type idTokenFields struct {
 	Provider      string
 	IssuedAt      time.Time
 	ExpiresAt     time.Time
-	KeyID         string
+	// NotBefore is the token's `nbf`, absent unless a test sets it: a token
+	// Firebase mints for a person carries none, and the case that matters is the
+	// token that carries one in the future.
+	NotBefore *time.Time
+	KeyID     string
 }
 
 // defaultIDToken is the token the workspace's Firebase would mint for the
@@ -123,6 +134,9 @@ func firebaseIDToken(t *testing.T, key *rsa.PrivateKey, f idTokenFields) string 
 	if f.EmailVerified != nil {
 		claims["email_verified"] = f.EmailVerified
 	}
+	if f.NotBefore != nil {
+		claims["nbf"] = f.NotBefore.Unix()
+	}
 	head, err := json.Marshal(map[string]string{"alg": "RS256", "kid": f.KeyID})
 	if err != nil {
 		t.Fatalf("encoding a test ID token header: %v", err)
@@ -138,6 +152,43 @@ func firebaseIDToken(t *testing.T, key *rsa.PrivateKey, f idTokenFields) string 
 		t.Fatalf("signing a test ID token: %v", err)
 	}
 	return signing + "." + base64.RawURLEncoding.EncodeToString(sig)
+}
+
+// TestNewSignerRefusesAConfigurationThatCouldNotSign: every argument the signer
+// needs is required at construction rather than at somebody's sign-in, because a
+// signer built without one refuses the person's own token and reports a
+// deployment mistake as a refusal of a stranger. The key set is the one worth
+// naming: with the guard gone nothing here fails until Mint reads through the
+// nil interface and panics, which is a crash in a request handler rather than a
+// refusal an operator can act on.
+func TestNewSignerRefusesAConfigurationThatCouldNotSign(t *testing.T) {
+	key := testKey(t)
+	whole := SignerConfig{
+		FirebaseProject: testProject,
+		AssertionKeyPEM: assertionKeyPEM(t, key),
+		Keys:            fakeKeys{testKid: &key.PublicKey},
+	}
+	if _, err := NewSigner(whole); err != nil {
+		t.Fatalf("NewSigner refused a configuration that has everything it needs: %v", err)
+	}
+
+	for what, edit := range map[string]func(*SignerConfig){
+		"no project":        func(c *SignerConfig) { c.FirebaseProject = "" },
+		"no published keys": func(c *SignerConfig) { c.Keys = nil },
+		"no assertion key":  func(c *SignerConfig) { c.AssertionKeyPEM = "" },
+		"a TTL longer than the longest a member accepts": func(c *SignerConfig) {
+			c.TTL = maxAssertionLifetime + time.Minute
+		},
+		"a negative TTL": func(c *SignerConfig) { c.TTL = -time.Minute },
+	} {
+		t.Run(what, func(t *testing.T) {
+			cfg := whole
+			edit(&cfg)
+			if s, err := NewSigner(cfg); err == nil {
+				t.Fatalf("NewSigner accepted %s and answered %+v, which would fail at somebody's sign-in", what, s)
+			}
+		})
+	}
 }
 
 // TestSignerMintsAnAssertionTheMemberAdmits is the round trip the two halves
@@ -391,6 +442,12 @@ func TestSignerVerifiesWhatTheFrontDoorVerifies(t *testing.T) {
 		"another project's issuer":   func(f *idTokenFields) { f.Issuer = WorkspaceIssuer(testProject2) },
 		"an expired token":           func(f *idTokenFields) { f.ExpiresAt = time.Now().UTC().Add(-time.Minute) },
 		"a token from the future":    func(f *idTokenFields) { f.IssuedAt = time.Now().UTC().Add(time.Hour) },
+		// The row that holds the signer's own `nbf` refusal to the front door's:
+		// without it this deliberate copy could lose the rule and still pass here.
+		"a token that is not valid yet": func(f *idTokenFields) {
+			nbf := time.Now().UTC().Add(time.Hour)
+			f.NotBefore = &nbf
+		},
 		"an unverified address":      func(f *idTokenFields) { f.EmailVerified = false },
 		"no verified claim at all":   func(f *idTokenFields) { f.EmailVerified = nil },
 		"no uid":                     func(f *idTokenFields) { f.Subject = "" },

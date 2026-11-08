@@ -262,6 +262,81 @@ func TestExchangeRefusesAnExpiredAssertion(t *testing.T) {
 	refuse(t, mustErr(member.ex.Admit(context.Background(), long)), "an assertion with a lifetime of hours")
 }
 
+// TestExchangeRefusesAnAssertionWhoseAddressIsNotVerified is the member's own
+// re-check of a fact the signer states (spec.md §3 step 2, and the package's own
+// claim that this end re-checks rather than takes the workspace's word): in the
+// hostile-workspace model the signer never runs at all, so an assertion that
+// says its address is unverified arrives from anybody holding the pinned key,
+// and it is refused here or nowhere. The token is signed by hand rather than
+// minted, because the signer refuses to write such an assertion at all — that is
+// a fact about the signer's own field checks, and it is not this member's.
+func TestExchangeRefusesAnAssertionWhoseAddressIsNotVerified(t *testing.T) {
+	key := testKey(t)
+	member := newTestMember(t, testMemberA, testPin(t, testWorkspace, testProject, &key.PublicKey))
+
+	claims := testAssertion(testProject, member.url).claims()
+	claims["email_verified"] = false
+	raw := signClaims(t, key, claims)
+
+	refuse(t, mustErr(member.ex.Admit(context.Background(), raw)), "an assertion whose address is not marked verified")
+	if len(jtisSpent(member)) != 0 {
+		t.Fatalf("the refused assertion spent %d ids, and a refusal must write none", len(jtisSpent(member)))
+	}
+}
+
+// TestExchangeHoldsTheAddressToTheMembersOwnRule: the address a session carries
+// is this member's own spelling of it (mobileauth.NormalizeEmail, the one rule
+// W5's lists are written and compared with), and never the string the workspace
+// sent. An address this member cannot read is a refusal rather than a value that
+// travels on, and two spellings of one address are one identity here.
+func TestExchangeHoldsTheAddressToTheMembersOwnRule(t *testing.T) {
+	key := testKey(t)
+	member := newTestMember(t, testMemberA, testPin(t, testWorkspace, testProject, &key.PublicKey))
+
+	unreadable := assertionFor(t, key, testProject, member.url, func(a *assertion) {
+		a.Email = "not an address"
+	})
+	refuse(t, mustErr(member.ex.Admit(context.Background(), unreadable)), "an assertion carrying an address nobody can read")
+
+	varianced := assertionFor(t, key, testProject, member.url, func(a *assertion) {
+		a.Email = "Person-1@EXAMPLE.com"
+	})
+	sess, err := member.ex.Admit(context.Background(), varianced)
+	if err != nil {
+		t.Fatalf("Admit refused an address this member can read: %v", err)
+	}
+	if sess.Identity.Email != "Person-1@example.com" {
+		t.Fatalf("the session answers the address %q, and this member's rule answers %q", sess.Identity.Email, "Person-1@example.com")
+	}
+}
+
+// TestExchangeRefusesAnAssertionIssuedInTheFuture reads the window against this
+// member's own clock in both directions. A future iat is how an assertion
+// outlives the bound the lifetime rule puts on it: the window is short either
+// way, but a clock years ahead is a document this member has no reason to
+// honour, and the spent-jti entry the exchange writes is held until the
+// assertion's OWN expiry — so one crafted assertion would park a replay entry
+// for that whole span.
+func TestExchangeRefusesAnAssertionIssuedInTheFuture(t *testing.T) {
+	key := testKey(t)
+	member := newTestMember(t, testMemberA, testPin(t, testWorkspace, testProject, &key.PublicKey))
+
+	for what, ahead := range map[string]time.Duration{
+		"minutes ahead": 10 * time.Minute,
+		"years ahead":   200 * 365 * 24 * time.Hour,
+	} {
+		raw := assertionFor(t, key, testProject, member.url, func(a *assertion) {
+			now := time.Now().UTC()
+			a.IssuedAt = now.Add(ahead).Unix()
+			a.ExpiresAt = now.Add(ahead + time.Minute).Unix()
+		})
+		refuse(t, mustErr(member.ex.Admit(context.Background(), raw)), "an assertion issued "+what)
+	}
+	if len(jtisSpent(member)) != 0 {
+		t.Fatalf("the refused assertions parked %d spent ids, and a refusal must write none", len(jtisSpent(member)))
+	}
+}
+
 // TestExchangeNeverEchoesTheAssertion is the credsvc rule applied to this
 // endpoint: a refusal reaches a log line and an answer body, and neither is a
 // place for the document a stranger sent.
@@ -337,6 +412,16 @@ func TestExchangeVerifiesTheMembersPinnedIssuerNotTheRecords(t *testing.T) {
 
 	otherProject := assertionFor(t, key, testProject2, member.url, nil)
 	refuse(t, mustErr(member.ex.Admit(context.Background(), otherProject)), "an assertion naming another workspace's project")
+
+	// The pin's two halves are compared separately and neither holds the other
+	// up: an assertion that states the issuer this member pins — the workspace it
+	// signed for — with some other project is refused by the project's own line,
+	// so a session can never be marked with a workspace project the pin never
+	// named.
+	otherSubject := assertionFor(t, key, testProject, member.url, func(a *assertion) {
+		a.Subject = testProject2
+	})
+	refuse(t, mustErr(member.ex.Admit(context.Background(), otherSubject)), "an assertion naming a workspace project this member does not pin")
 
 	signer := newTestSigner(t, testProject)
 	fields := defaultIDToken(testProject)
