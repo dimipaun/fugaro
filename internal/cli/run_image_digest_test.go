@@ -187,36 +187,70 @@ func TestRunDigestNoRecordYet(t *testing.T) {
 	})
 }
 
-// TestRunDigestReadFailureIsAWarningOnly: the registry read behind the digest
-// comparison fails, and the launch says so and starts anyway. Nothing pins the
-// digest a build recorded (D619: Cloud Run cannot vary the image per
-// execution), so a read the launcher cannot complete is never a reason to
-// refuse the launch — C4's "a read failure is a warning only". The launcher
-// then makes no claim about the image either way: a read that failed is not a
-// mismatch, so the drift wording must not appear.
+// TestRunDigestReadFailureIsAWarningOnly: each of the two reads behind the
+// digest comparison fails, and the launch says so and starts anyway. Nothing
+// pins the digest a build record names (D619: Cloud Run cannot vary the image
+// per execution), so a read the launcher cannot complete is never a reason to
+// refuse the launch — C4's "a read failure is a warning only". Neither failure
+// is a drift either: the launcher makes no claim about the image when it could
+// not compare, so the mismatch wording must not appear.
 //
-// This is the read failure a launch can meet. The record half of the rule —
-// the records bucket or the record read itself failing — is a refusal one gate
-// earlier (checkImageSince judges the same record, and a record it cannot read
-// is a refusal there rather than a warning), so it is pinned at the warning's
-// own level by TestWarnImageDigestDriftSkips.
+// The build record is the read that is a refusal in most launches: the recipe,
+// title, rigor and governance gates judge that same record and refuse one they
+// cannot read (checkImageSince). A launch that trips none of them — this
+// fixture's, which carries no such field and resolves no repository recipe —
+// reaches the warning with the failure instead, which is what makes the record
+// half of the rule reachable here at all.
 func TestRunDigestReadFailureIsAWarningOnly(t *testing.T) {
-	f := newCloudFixture(t)
-	hookDigestRegistryUnavailable(t)
-	writeDigestBuildRecord(t, f, appSlug, "web", digestImage, recordDigest)
-	_, warn, err := execute(t, "run", "--repo", "acme/app", "--run-id", wallRunID(t, time.Minute, "d5a1"), "A task")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "warning: the image digest of acme/app workflow web is not compared with its build record: reading " + digestImage + ":latest's manifest: HTTP 500\n"
-	if !strings.Contains(warn, want) {
-		t.Fatalf("warn = %q, want it to carry %q", warn, want)
-	}
-	if strings.Contains(warn, "is at digest ") {
-		t.Fatalf("warn = %q, want no drift claim from a read that failed", warn)
-	}
-	if n := len(f.run.Executions()); n != 1 {
-		t.Fatalf("%d executions, want 1: a read failure must never refuse the launch", n)
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, f *cloudFixture)
+		want  string
+		// reads is how many manifest requests the registry fake must have
+		// seen, or -1 when the case does not care.
+		reads int
+	}{{
+		name: "the build record cannot be read",
+		setup: func(t *testing.T, f *cloudFixture) {
+			// Over MaxReadBytes: a read failure that is not ErrNotExist, so
+			// what is tested is the failure rather than the record's absence.
+			writeBucketFile(t, f, imagecheck.RecordKey(appSlug, "web"), strings.Repeat("x", blobx.MaxReadBytes+1))
+		},
+		want:  "warning: the image digest of acme/app workflow web is not compared with its build record: " + imagecheck.RecordKey(appSlug, "web") + ": object is too large",
+		reads: 0,
+	}, {
+		name: "the registry cannot be read",
+		setup: func(t *testing.T, f *cloudFixture) {
+			hookDigestRegistryUnavailable(t)
+			writeDigestBuildRecord(t, f, appSlug, "web", digestImage, recordDigest)
+		},
+		want:  "warning: the image digest of acme/app workflow web is not compared with its build record: reading " + digestImage + ":latest's manifest: HTTP 500",
+		reads: -1,
+	}}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			reg := hookDigestRegistry(t)
+			c.setup(t, f)
+			_, warn, err := execute(t, "run", "--repo", "acme/app", "--run-id", wallRunID(t, time.Minute, "d5a1"), "A task")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(warn, c.want) {
+				t.Fatalf("warn = %q, want it to carry %q", warn, c.want)
+			}
+			if strings.Contains(warn, "is at digest ") {
+				t.Fatalf("warn = %q, want no drift claim from a read that failed", warn)
+			}
+			if n := len(f.run.Executions()); n != 1 {
+				t.Fatalf("%d executions, want 1: a read failure must never refuse the launch", n)
+			}
+			if c.reads >= 0 {
+				if n := len(reg.Accepts()); n != c.reads {
+					t.Fatalf("%d registry reads, want %d", n, c.reads)
+				}
+			}
+		})
 	}
 }
 
