@@ -75,14 +75,14 @@ import (
 //     (fugaro allow-delete) and the recorded budget — things an ordinary
 //     project does not have — so its applies are MORE checked. What it also
 //     does is remove the typed confirmation, and the command prints that,
-//     before anything is typed, as what the owner is giving up. Against a
+//     before anything is written, as what the owner is giving up. Against a
 //     session that goes around the program it is not a boundary: a coding
 //     agent holds the operator's credentials, can write this object directly
 //     and can unset its own marker (SECURITY.md records the wider Owner/Editor
 //     bypass). The refusal below stops an agent that uses the program.
 //   - belong is never a target of any task in the plan (Global Constraint 7).
 //     This command has no batch form, and flagging belong would be the owner's
-//     own deliberate act, by its exact project ID, at their own terminal.
+//     own deliberate act, by its exact project ID as the argument.
 //
 // What it is not, stated rather than implied: it does not create or change a
 // budget alert. The amount it records is the amount the owner states, in the
@@ -177,9 +177,9 @@ is overwritten blind.`,
 
 // managedFlag is newManagedFlagCmd's body. The order is the answer's: who is
 // running, what is being asked for, which project it is, that the bucket is
-// that project's own — and only then the typed confirmation and the write.
-// Every refusal before the write is a hard return, and nothing is written by
-// any of them.
+// that project's own — and only then the statement of what the write does and
+// the write itself. Every refusal before the write is a hard return, and
+// nothing is written by any of them.
 func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, currency string) error {
 	ctx := cmd.Context()
 	// A credential leak first, before anything opens the cloud: GODEBUG is
@@ -301,10 +301,10 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	// the narrowing mark that completes it.
 	//
 	// The gate is this command's own and not WriteManagedLabel's: the owner
-	// typed this project's GCP project ID at a real terminal to get here, and
-	// this process is neither a coding agent's session nor a Fugaro run's
-	// (both refused above, before anything was read). WriteFlag's marker was
-	// gated on the same thing. What the label may write is unchanged: other
+	// named this project's GCP project ID as this command's argument to get
+	// here, and this process is neither a coding agent's session nor a Fugaro
+	// run's (both refused above, before anything was read). WriteFlag's marker
+	// was gated on the same thing. What the label may write is unchanged: other
 	// labels are kept, and a value someone else put there is refused rather
 	// than overwritten.
 	if err := managed.WriteManagedLabelForFlag(ctx, c.CRM, lc.GCPProject); err != nil {
@@ -323,7 +323,7 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	}
 	// Read back through the managed read itself, with its project-number
 	// check (the plan's step 3): a marker the apply would not believe, or one
-	// recording another amount than the one typed, is not a flagged project,
+	// recording another amount than the flags gave, is not a flagged project,
 	// and the command does not say it is.
 	got, ok, reason, err := managedFlagReadBack(ctx, c.Storage, c.CRM, lc.Name, lc.GCPProject)
 	if err != nil || !ok || got != budget {

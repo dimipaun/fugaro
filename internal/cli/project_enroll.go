@@ -823,7 +823,10 @@ func newProjectSyncCmd() *cobra.Command {
 // What it never does is remove: the list it writes is the list it read plus
 // what it was told to add. It asks nothing: the policy removed the typed
 // confirmation this batch used to take, and what it wrote is printed after the
-// write (putAllowRepos).
+// write (putAllowRepos). The --yes that answered that confirmation is still
+// registered and now changes nothing: `--yes` and `--non-interactive` are
+// removed together, by T11 of docs/no-prompt-policy/implementation-plan.md,
+// which owns every flag that registers them.
 func runProjectSync(cmd *cobra.Command, o *projectSyncOptions) error {
 	ctx := cmd.Context()
 	// SD8: sync writes the same allow_repos `repos add` writes, so it carries

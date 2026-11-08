@@ -2540,10 +2540,12 @@ confirmation, and it is normally written by the run that created the project
 (fugaro setup --create-project --managed). Flagging is the after-the-fact way,
 answered by the owner on 2026-10-16 (design D58).
 
-Run it in your own terminal, as an operator, with your own credentials, and
-type the GCP project ID it asks for. A coding agent's session is refused, and
-nothing stands in for the typed ID — not --yes, not --non-interactive, not a
-pipe.
+Run it as an operator, with your own credentials. A coding agent's session is
+refused, and so is a Fugaro run's process. The permission you give is the
+PROJECT_ID argument itself: naming the exact GCP project ID on the command line
+is the declaration that this project is managed (design D1541), and nothing is
+typed at a prompt — this command registers no --yes and no --non-interactive,
+so no flag stands in for naming the project either.
 
 PROJECT_ID must be the exact GCP project ID of the installation selected by
 --project, --config or the checkout: one invocation names one project, and
@@ -2692,10 +2694,11 @@ update --forget stays refused for a fenced installation. This command makes no
 IAM call at all; undoing the fence is not revocation and is not offered here
 (docs/design/managed-projects.md §10.2).
 
-Run it in your own terminal, as an operator, with your own credentials, and
-type the GCP project ID it asks for. A coding agent's session is refused, a
-Fugaro run's own process is refused, and nothing stands in for the typed ID —
-not --yes, not --non-interactive, not a pipe.
+Run it in your own terminal, as an operator, with your own credentials. The
+permission you give is the PROJECT_ID argument itself: it names the one project
+whose marks come off, and nothing stands in for naming it — not --yes, not
+--non-interactive, not a pipe. A coding agent's session is refused, and a
+Fugaro run's own process is refused.
 
 PROJECT_ID must be the exact GCP project ID of the installation selected by
 --project, --config or the checkout: one invocation names one project, and
