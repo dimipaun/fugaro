@@ -18,12 +18,20 @@ import (
 	"github.com/dimipaun/fugaro/internal/tier"
 )
 
-// The shapes the document's own names take. A work item's id and a decision's
-// id may not contain a colon: an intent's id is "<item>:<attempt>", so an item
-// whose id carried one would name two attempts at once.
+// The shapes the document's own names take. A name is also a database key: the
+// state node is a JSON document in the Realtime Database, where a property name
+// is a path segment and the transport refuses `. $ # [ ] /` and control
+// characters anywhere in the tree (internal/gcpfake mirrors that rule:
+// TestRTDBFakeRejectsKeysRealRTDBRejects). A fact key is written as a property
+// name, so a name carrying a dot would validate, encode and then be refused by
+// the node itself — the orchestrator id wedged, because every tick re-derives
+// the same state, and the intent that would stop a second spawn never
+// committed (D1231). No name carries a colon either: an intent's id is
+// "<item>:<attempt>", so an item whose id carried one would name two attempts
+// at once.
 var (
-	idRE    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
-	agentRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+	idRE    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
+	agentRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 	roleRE  = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 )
 

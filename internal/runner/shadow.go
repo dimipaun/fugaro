@@ -351,7 +351,7 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 			return fmt.Errorf("counting the run's own commits: %w", err)
 		}
 		if ahead == 0 {
-			r.failClass(failure.NoCommits, "the agent made no commits")
+			r.failWithClass(failure.NoCommits, "the agent made no commits")
 			if err := r.repo.CommitEmpty(ctx, "fugaro: "+r.failure()); err != nil {
 				return fmt.Errorf("recording an empty commit: %w", err)
 			}
@@ -372,12 +372,13 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	r.uploadVerifyRecords(ctx, records)
 	r.uploadPatch(ctx, sha)
 
+	r.recordOwnerDecisions(halt)
 	pol := r.findingsPolicy()
 	// The arm's ending is chosen the way the champion's is chosen (finalize,
 	// runner.go): the reason and the class that describes it are handed over by
 	// the same three-way choice, so an arm that was refused and then halted is
 	// classed as a halt and one the agent left empty-handed is `no_commits`.
-	ready, reason, class := Decide(records, sha, r.decidingReview(), pol)
+	ready, reason, class := Decide(records, sha, r.decidingReview(), pol, r.rec.OwnerDecisions)
 	r.rec.Tolerated = r.toleratedRecord(pol)
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"

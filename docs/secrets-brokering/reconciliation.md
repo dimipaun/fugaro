@@ -218,12 +218,14 @@ are trusted, D475) or the push rule is repository-only. D497.
 
 **F13, Gap.** Cloud Run limits on the proxy path (U2). A request's timeout is configurable to 60
 minutes (`credentials.tf` sets `timeout = "3600s"`): a long clone or push binds one request, not a
-run. A request body over **32 MiB on HTTP/1** is believed refused; git's large pushes are chunked
-POSTs, and whether Cloud Run's front end accepts a chunked body above that limit is UNVERIFIED.
-End-to-end HTTP/2 (h2c) lifts the request limit but needs the container to serve h2c. Responses
-(a clone's pack) stream. Check 91, which measures the HTTP/1.1 body limit, is written and **not
-run**. *Consequence:* a first live check (Check 190) must push a pack above 32 MiB through the
-proxy before the design commits to HTTP/1.
+run. A request body over **32 MiB on HTTP/1** is refused; git's large pushes are chunked POSTs, and
+a chunked body above that limit is refused too — no longer UNVERIFIED: Check 190 (RUN 2026-10-30) got
+a **413** for a 33 MiB pack, and its proxy saw four bytes of it. End-to-end HTTP/2 (h2c) lifts the
+request limit but needs the container to serve h2c. Responses (a clone's pack) stream. Check 91,
+which measures the HTTP/1.1 body limit, is written and **not run**. *Consequence:* a first live check
+(Check 190) had to push a pack above 32 MiB through the proxy before the design commits to HTTP/1, and
+it did: the design does
+**not** commit to HTTP/1, and S1 serves h2c end to end (B1.0, B1.5).
 
 **F14, Gap.** Blobless clones multiply requests. The runner clones with
 `gitops.CloneBlobless`, so later commands fetch missing blobs lazily, each a request. Through the
@@ -473,8 +475,12 @@ D460–D489 and Checks 180–189. They were checked against `main` and the docs 
 - **U1.** Cloud Run accepts a Google ID token in `X-Serverless-Authorization` for IAM when the
   application uses `Authorization` itself (D495's alternative).
 - **U2.** Cloud Run's request-body limit (believed 32 MiB on HTTP/1), whether a chunked git push
-  above it is accepted, and whether h2c end to end lifts it (F13). Check 91 measures the HTTP/1.1
-  half and is not run; Check 190 would measure a git push.
+  above it is accepted, and whether h2c end to end lifts it (F13). **Two of the three are answered
+  by Check 190 (RUN 2026-10-30, its run record in the register):** a **33 MiB** pack on HTTP/1.1 is
+  refused — the front end answers **413** before the proxy sees four bytes of it — so the limit is
+  measured and S1 serves **h2c end to end** (B1.0, B1.5). Whether **h2c end to end lifts it** stays
+  UNVERIFIED: no live step has read a push over h2c. Check 91 measures the HTTP/1.1 half and is not
+  run.
 - **U3.** Whether Bitbucket's API reveals an access token's expiry to the token itself (F19).
 - **U4.** Whether a Cloud Build step can fetch a Google ID token for the build account to call the
   service (F23).
@@ -482,6 +488,9 @@ D460–D489 and Checks 180–189. They were checked against `main` and the docs 
   exactly as a repository token (U1 of the workspace-token work, Check 180, not run).
 - **U6.** Whether any enrolled Bitbucket repository uses Git LFS, which a git-only proxy would not
   cover (F11).
-- **U7.** The latency and request count of a blobless clone through the proxy (F14); Check 190.
+- **U7.** The latency and request count of a blobless clone through the proxy (F14); **answered by
+  Check 190** (RUN 2026-10-30): a blobless clone took **3 s** in **5** requests, where a full clone
+  took **10 s** in **3** (1080 B in / 23008 out).
 - **U8.** Cold-start latency of the service as the first hop of a git request after idle (D501's
-  consequence); Check 190 records it.
+  consequence); **answered by Check 190** (RUN 2026-10-30): the first git request after **2100 s**
+  idle took **1 s**, on a **new** instance.

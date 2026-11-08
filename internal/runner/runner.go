@@ -285,19 +285,18 @@ type run struct {
 	// for this run (accountchoice.go, D874): off unless the owner's published
 	// policy turns it on, and the account each stage has reached.
 	accounts accountChoice
-	// mu guards halt, cancelled, failReason, failReasonClass, tokens,
-	// gatewayTokens and haltStage: the cancel watcher and, with the gateway,
-	// its halt callback record into them from other goroutines. Whichever of a
-	// halt and a cancel is recorded first wins (see haltNow and markCancelled).
-	mu         sync.Mutex
+	// mu guards halt, cancelled, failReason, failClass, tokens, gatewayTokens
+	// and haltStage: the cancel watcher and, with the gateway, its halt
+	// callback record into them from other goroutines. Whichever of a halt
+	// and a cancel is recorded first wins (see haltNow and markCancelled).
+	mu sync.Mutex
+	// failClass is the class of the reason in failReason, when the site that
+	// recorded the failure could name one: the two are one fact, so they are
+	// written together by failWithClass and the first failure keeps both.
+	failClass  failure.Class
 	failReason string
-	// failReasonClass is the class of that first reason, written with it
-	// (failClass) and read where finalize ends the run on it (failureClass).
-	// It is empty for a reason whose cause the runner's own state does not
-	// name, which reads as unclassified.
-	failReasonClass failure.Class
-	cancelled       bool
-	halt            *runstore.Halt
+	cancelled  bool
+	halt       *runstore.Halt
 	// haltDone is closed by the first halt recorded (recordHaltLocked), so a
 	// caller waiting outside a stage stops at once: the credential wait
 	// (C1.17) sleeps for a reset that may be hours away, and nothing else
@@ -468,6 +467,16 @@ type run struct {
 	// returns, which is the only one readiness reads: level 3's where it ran,
 	// level 2's otherwise, and level 1's where no outer level ran at all.
 	lastSenior seniorRound
+	// seniorLevelLast is the senior level's own last round, kept beside
+	// lastSenior because level 3 overwrites that one. Readiness is decided on
+	// the highest enabled level, but the decisions the run owes the owner are
+	// what the last round of every enabled OUTER level left (OD1,
+	// decidingOwnerDecisions): without this, a senior round that shipped while
+	// carrying one — or that ran out of rounds with one beside a fixable
+	// finding — would be forgotten the moment the adversarial review ran, and
+	// the run would go ready, or end a draft with the question recorded
+	// nowhere and the follow-up that answers it launched blind.
+	seniorLevelLast seniorRound
 	// ckpt is the checkpoint pushes' state (checkpoint.go).
 	ckpt checkpointState
 	// stageCkptStop is the running stage's checkpointer stop — startCheckpoints'
@@ -1562,19 +1571,19 @@ func (r *run) fail(reason string) {
 	r.failLocked(reason)
 }
 
-// failClass is fail for a site whose own state names the class of the reason
-// it is recording: the class is written with the first reason and never
-// without one, because it describes that sentence and nothing else — the
-// runner's own count of the commits it made is the cause, and `no_commits` is
-// its name. A site that cannot name one calls fail and leaves the class empty,
-// which finalize reads as unclassified rather than inventing a family for it.
-func (r *run) failClass(class failure.Class, reason string) {
+// failWithClass is fail for a site that can also name the class the cause is
+// in: the two answer one question, so they are written together and the first
+// failure keeps both, and a class can never describe a sentence the record
+// does not carry. finalize's failed case is what reads the pair back
+// (failureClass), and a site that knows only the reason leaves the class to
+// whichever task reads that cause from the run's own state.
+func (r *run) failWithClass(class failure.Class, reason string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.failReason != "" {
 		return
 	}
-	r.failReason, r.failReasonClass = reason, class
+	r.failReason, r.failClass = reason, class
 }
 
 // failLocked is fail for a caller holding r.mu.
@@ -1584,19 +1593,18 @@ func (r *run) failLocked(reason string) {
 	}
 }
 
-// failureClass is the class of the run's first failure reason, unclassified
-// when the site that wrote the reason named none: finalize ends the run on
-// this reason and hands the class over with it (design §4.2's "the class of
-// the call that wrote the terminal status wins"), so a reason whose cause
-// nothing here names is exactly the class that means the vocabulary does not
-// hold it.
+// failureClass is the class of the reason the run failed for, and
+// unclassified when no site named one: a failure the vocabulary does not hold
+// is counted rather than dropped, and its count is the signal to name it.
+// Every site that chooses a class of its own writes the record's ending
+// itself, so this is only what finalize's failed case reads.
 func (r *run) failureClass() failure.Class {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.failReasonClass != "" {
-		return r.failReasonClass
+	if r.failClass == "" {
+		return failure.Unclassified
 	}
-	return failure.Unclassified
+	return r.failClass
 }
 
 // endClass is an error that carries the class of the ending it will cause. The
@@ -1749,6 +1757,13 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.spec = spec
 	r.rec.RunID, r.rec.Repo = spec.RunID, spec.Repo
+	// The owner's ruling this launch was given (OD1), onto the record with the
+	// rest of what the task says the run is: it is the answer the brief below
+	// works from, and a reader of the record has to find the same text the
+	// agent was given. A follow-up launched without one refines this with the
+	// ruling the run before it worked from, once that record has been read
+	// (recordRuling, owner.go).
+	r.rec.OwnerRuled = spec.OwnerRuled
 	// The task's arm, before anything else the task's text can reach: an
 	// arm refuses the run further down the very path an unsampled run
 	// takes (shadow.go, readArm).
@@ -1952,6 +1967,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// of the resolved config and the job identity is a fact of admissionCheck,
 	// which ran before any git credential existed.
 	if err := r.checkProjectJobAccount(ctx, cfg.Agent.Auth); err != nil {
+		return err
+	}
+	// The shared job's own task timeout is the run's ceiling (clampTotalToJob):
+	// applied here, to the workflow every later reader takes its timeouts from
+	// and after the overrides above, so a run launched onto a job shorter than
+	// its total still finalizes and opens its pull request instead of being
+	// killed with neither.
+	if err := r.clampTotalToJob(ctx, &wf); err != nil {
 		return err
 	}
 	rcp, rrec, err := r.resolveRecipe(ctx, cfg)
@@ -2406,6 +2429,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 		if err := r.prepareFollowUp(ctx); err != nil {
 			return err
 		}
+		// The ruling this run works from, with the decisions it answers (OD1):
+		// its launch's own, or the pair the run before it worked from, which it
+		// inherits. Written here and not with the task's other text above
+		// because only now has the previous record been read.
+		r.recordRuling()
 	}
 	// A kill switch or the grace may have halted the run while bootstrap
 	// was busy: nothing is pushed yet, so it ends as a bootstrap halt.
@@ -2772,6 +2800,21 @@ func (r *run) agentLoop(ctx context.Context) {
 		if add := followup.ReviewAddendum(f.sel, f.nonce); add != "" {
 			reviewPrompt += "\n\n" + add
 		}
+		// The ruling the run was launched with (OD1) reaches the reviewer here
+		// and not only the implement brief: the review stages read in sessions
+		// of their own, and a reviewer that does not know the run was answered
+		// marks the same finding needs_owner again — the run stops where it
+		// stopped and the next follow-up is refused, which is the loop the
+		// ruling exists to end. Every ruling the run works from goes in, each
+		// with the decisions it answers listed beside it, so a ruling settles
+		// those and not whatever else it names — including the rulings behind
+		// the newest one, whose questions are as settled as its own: the
+		// reviewer that re-raises one of those stops the run on a question the
+		// owner answered two rulings ago. All three levels are handed this one
+		// brief (reviewPromptWithFocus, AdversarialPrompt), so they all read it.
+		if add := followup.RulingAddendum(r.ownerRulings(), f.nonce, r.redactor()); add != "" {
+			reviewPrompt += "\n\n" + add
+		}
 	}
 	tier := ""
 	for _, st := range r.plan {
@@ -2837,6 +2880,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		}
 		if !parsed {
 			r.lastSenior = seniorRound{Round: round}
+			r.seniorLevelLast = r.lastSenior
 			model, effort := r.reviewFacts("review")
 			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: "none", Head: head, Model: model, Effort: effort})
 			r.save(ctx)
@@ -2845,12 +2889,25 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		}
 		// The round is kept whole as well as counted: the mode's threshold
 		// table reads the findings' scores, which the summary does not carry
-		// (outcome.go, T3.1).
+		// (outcome.go, T3.1). The senior level's own copy of it is kept too, so
+		// the owner decisions it left survive level 3's round overwriting this
+		// one (seniorLevelLast).
 		r.lastSenior = seniorRound{Round: round, Findings: v.Findings}
+		r.seniorLevelLast = r.lastSenior
 		model, effort := r.reviewFacts("review")
 		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: v.Verdict, Findings: len(v.Findings), Head: head, Model: model, Effort: effort})
 		r.save(ctx)
 		if r.capReached() {
+			return false
+		}
+		// OD1: a round that asks for changes and names nothing but decisions
+		// only the owner can make is where the loop stops. No fix round is
+		// dispatched — there is nothing a coder could change — and no further
+		// round is bought, because the reviewer would be asked the same
+		// question about the same unchanged code. The decisions are recorded
+		// and the run ends waiting for them (ownerStop).
+		if v.Verdict != "ship" && allOwner(v.Findings) {
+			r.ownerStop(ctx, v.Findings)
 			return false
 		}
 		if v.Verdict == "ship" || round >= r.reviewRounds(st) {
@@ -2913,6 +2970,14 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: runstore.TierAdversarial, Verdict: v.Verdict, Findings: len(v.Findings), Head: head, Model: model, Effort: effort})
 		r.save(ctx)
 		if r.capReached() {
+			return false
+		}
+		// OD1, exactly as seniorLoop stops: level 3 is the deciding level of a
+		// run whose mode enabled it, so a round that names only the owner's
+		// decisions stops the run here rather than buying a fix round and a
+		// further adversarial review of code that cannot change.
+		if v.Verdict != "ship" && allOwner(v.Findings) {
+			r.ownerStop(ctx, v.Findings)
 			return false
 		}
 		if v.Verdict == "ship" || round >= r.adversarialRounds(st) {
@@ -3182,6 +3247,19 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 			return sessionID, false
 		}
 		if sum.Verdict != "changes" {
+			return sessionID, true
+		}
+		if allOwner(v.Findings) {
+			// OD1: the round names nothing but decisions only the owner can
+			// make, so the cheap loop fixes nothing here. Where it decides
+			// readiness — a run whose level 2 and level 3 are both off (POC) —
+			// that is the run's stop; where an outer level does, the round is
+			// handed on and that level's review is what decides, the first line
+			// advising it and never overruling it (seniorReview).
+			if decides {
+				r.ownerStop(ctx, v.Findings)
+				return sessionID, false
+			}
 			return sessionID, true
 		}
 		r.afterStage(ctx, "review_first")
@@ -3918,9 +3996,12 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	// result event's text, and its subtype says nothing: Claude Code reports
 	// a refused API call as subtype "success". The reason therefore quotes
 	// that text, and one stop gets a name of its own (stageErrorReason): the
-	// OAuth account's subscription usage limit.
+	// OAuth account's subscription usage limit. The same text, folded the
+	// same way, is what the record's class is read from (stageFailureClass),
+	// so the reason and the class are written together and the class
+	// describes the sentence the record carries.
 	case res.IsError:
-		r.fail(r.stageErrorReason(name, res))
+		r.failWithClass(r.stageFailureClass(r.cfg.Agent.Auth, res), r.stageErrorReason(name, res))
 		r.keepTail(fmt.Sprintf("%s-%d", name, n), stderrTail, transcriptTail)
 		return res, false, nil
 	}
@@ -4007,6 +4088,66 @@ func subscriptionUsageLimit(auth, text string) bool {
 		}
 	}
 	return false
+}
+
+// authRefusedPhrases are what a provider or a gateway that refused the run's
+// credential is reported as, each matched as the shape it is rather than as
+// English, the way oauthLimitPhrases is: the gateway's own sentence for a
+// refusal it relayed from the provider (internal/gateway, providerError), and
+// the API error type a failed authentication arrives under -- read inside the
+// envelope that carries it, so that a type merely named in a result text (an
+// echoed snippet, a "previous_error_type" field) is not taken for the refusal
+// itself.
+var authRefusedPhrases = []string{"the provider answered with status 403", `"error":{"type":"authentication_error"`}
+
+// transportFailedPhrases are what a model stream or connection that ended
+// before its response finished is reported as: Claude Code's own sentence
+// (issue #1827), which is the phrase transientStagePhrases matches too.
+//
+// The two lists are separate lists on purpose, though today they hold one
+// phrase in common: they answer different questions -- whether a stage may be
+// run again, and which family the run's failure is counted in -- so a member
+// added to one of them is not silently a member of the other.
+var transportFailedPhrases = []string{"stream closed before completion"}
+
+// stageFailureClass names the cause inside an is_error result. The text is
+// model output, and it is read for one thing only: to pick a value of the
+// closed vocabulary. The class is a value of the runner's own words, so no
+// byte of the message reaches the record through it, and nothing in the runner
+// branches on it -- it is written and reported, never acted on. The reason
+// already quotes the text, redacted and on one line (stageErrorReason); the
+// class adds no second copy for a secret to travel in.
+//
+// It reads the folded text the reason carries and for that reason: what the
+// reason may hold is what may be matched, so a phrase cannot be recognised in
+// a byte the run would not otherwise publish. A phrase table is the rule
+// subscriptionUsageLimit already follows (oauthLimitPhrases): shapes are
+// matched rather than English, and a text the table does not know is
+// stage_error_unexplained -- counted rather than guessed at, which is the
+// class the runs that ended this way after writing a normal final message
+// take.
+//
+// The subtype is deliberately not read: Claude Code reports a refused API call
+// as subtype "success". The OAuth account's spent subscription allowance stays
+// stage_error_unexplained whatever its text says, because the class that stop
+// deserves is O6's to answer and subscriptionUsageLimit is unchanged until it
+// is; the auth is asked here so that the two answers cannot drift apart.
+func (r *run) stageFailureClass(auth string, res agent.Result) failure.Class {
+	text := strings.ToLower(r.stageErrorText(res.Text))
+	if text == "" || subscriptionUsageLimit(auth, res.Text) {
+		return failure.StageErrorUnexplained
+	}
+	for _, p := range authRefusedPhrases {
+		if strings.Contains(text, p) {
+			return failure.ProviderAuthRefused
+		}
+	}
+	for _, p := range transportFailedPhrases {
+		if strings.Contains(text, p) {
+			return failure.TransportFailed
+		}
+	}
+	return failure.StageErrorUnexplained
 }
 
 // transientStagePhrases are what a model stream closed before its response
@@ -4282,7 +4423,7 @@ func (r *run) finalize(ctx context.Context) error {
 			// The count is the runner's own — it read the branch — so the
 			// class is known here and no other site can name it later
 			// (design §3's no_commits, which cites this count).
-			r.failClass(failure.NoCommits, "the agent made no commits")
+			r.failWithClass(failure.NoCommits, "the agent made no commits")
 			if err := r.repo.CommitEmpty(ctx, "fugaro: "+r.failure()); err != nil {
 				return fmt.Errorf("recording an empty commit: %w", err)
 			}
@@ -4326,8 +4467,14 @@ func (r *run) finalize(ctx context.Context) error {
 	// challenger's is the diff it holds back.
 	r.uploadPatch(ctx, sha)
 
+	// The decisions the deciding round left go into the record before Decide
+	// reads it: the loop stops on an all-owner round (ownerStop), and a round
+	// that shipped with one or left it beside a fixable finding ends a draft
+	// that waits on it just the same (OD1). A run that stopped for its own
+	// reason records none (recordOwnerDecisions).
+	r.recordOwnerDecisions(halt)
 	pol := r.findingsPolicy()
-	ready, reason, class := Decide(records, decided, r.decidingReview(), pol)
+	ready, reason, class := Decide(records, decided, r.decidingReview(), pol, r.rec.OwnerDecisions)
 	r.rec.Tolerated = r.toleratedRecord(pol)
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
@@ -4343,8 +4490,20 @@ func (r *run) finalize(ctx context.Context) error {
 		ready, reason, class = false, fr, r.failureClass()
 	}
 	if halt != nil {
-		// Never ready, and the reason is the halt's, whatever failed first.
-		ready, reason, class = false, (&HaltError{*halt}).Error(), haltClass(halt.Reason)
+		// Never ready, and the reason is the halt's, whatever failed first. The
+		// owner-decision stop is the one halt that is not a limit the run
+		// passed but a question it cannot answer, so its reason is the plain
+		// sentence the record, the pull request's status block and the
+		// launcher's refusal all print, and not the halt's own
+		// "halted: <reason>: <detail>" spelling of it (OD1). The class is the
+		// halt's own family either way: the sentence a reader sees changes with
+		// the reason, and what the run stopped for does not.
+		ready, class = false, haltClass(halt.Reason)
+		if halt.Reason == runstore.HaltOwnerDecision {
+			reason = halt.Detail
+		} else {
+			reason = (&HaltError{*halt}).Error()
+		}
 	}
 	// Finalize's push must not outlive its token either; a short reserve
 	// still asks for at least what bootstrap's fetch does.

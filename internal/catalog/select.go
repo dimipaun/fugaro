@@ -321,15 +321,31 @@ func Choose(j Job) (Choice, error) {
 // asked for a Docker socket it never needed, so the predicate lives here and
 // not twice.
 func Applies(c config.Catalog, w config.Workflow) bool {
-	if w.Checkout == config.CheckoutClone || w.Checkout == config.CheckoutShared {
-		return false
-	}
-	if !w.Image.IsZero() || w.Dockerfile != "" {
+	if !MayApply(w) {
 		return false
 	}
 	if w.ImageName == "" && len(w.Needs) == 0 {
 		_, ok := Default(c)
 		return ok
+	}
+	return true
+}
+
+// MayApply is the half of Applies that does not read the catalog: whether w is
+// a workflow a catalog can speak for at all — one that runs an image built for
+// it, and not one that brings an image definition of its own or a checkout kind
+// whose job holds no repository source. It is for a caller holding a catalog it
+// could not read, where the one clause Applies would ask of that catalog —
+// whether it marks a default entry — is exactly what is not known, and a
+// workflow that names nothing runs the default's image when it does. Such a
+// caller treats a workflow as the catalog's when MayApply says so; the three
+// kinds it refuses are not the catalog's in any state.
+func MayApply(w config.Workflow) bool {
+	if w.Checkout == config.CheckoutClone || w.Checkout == config.CheckoutShared {
+		return false
+	}
+	if !w.Image.IsZero() || w.Dockerfile != "" {
+		return false
 	}
 	return true
 }

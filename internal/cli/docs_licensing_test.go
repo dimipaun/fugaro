@@ -186,6 +186,28 @@ func TestDocsLicensingNamesTheMovedFeatures(t *testing.T) {
 	}
 }
 
+// TestDocsLicensingNamesTheFeaturesBornInEE (S0.3, D435, T20): the statement
+// says which parts are business-licensed, and two of them were never in the
+// core. The central orchestrators and the hosted MCP server are born under
+// `ee/`, so a reader who meets `fugaro orchestrator` and looks for the move
+// that put it there finds none: the sentence has to say they were born here.
+//
+// It reads the born half, and TestDocsLicensingNamesTheMovedFeatures above
+// reads the moved half. Only together do they say what the folder holds: a
+// statement that named the moved parts alone would leave the orchestrators
+// looking like core code that nobody had got round to licensing.
+func TestDocsLicensingNamesTheFeaturesBornInEE(t *testing.T) {
+	const path = "LICENSING.md"
+	// The sentence the README and the rule file state too, read here as one
+	// phrase: the statement, the folder's page and the folder's rule say the
+	// same thing about which features were born there.
+	const bornHere = "the central orchestrators and the hosted mcp server are born here"
+	flat := strings.ToLower(flattenDoc(readDoc(t, path)))
+	if !strings.Contains(flat, bornHere) {
+		t.Errorf("%s never says %q: D435/T20 puts the central orchestrators and the hosted MCP server in the business-licensed folder from the start, so a reader who meets `fugaro orchestrator` has to learn here that they are paid rather than conclude they are core code nothing has moved", path, bornHere)
+	}
+}
+
 // TestDocsLicensingReadmeSection: the README's `## Licensing` section is where
 // most readers meet the split, so it states it in two or three sentences, links
 // both files a reader can go on to, carries the earlier-releases sentence (R4),

@@ -77,7 +77,7 @@ workflows:
       # config's claude_accounts, never here) are reserved and refused as a workflow's own name
       - { name: npm-token, env: NPM_TOKEN }
     resources: { cpu: 4, memory: 8Gi }
-    timeouts: { total: 90m, stage: 40m, verify: 30m, finalize_reserve: 5m }
+    timeouts: { total: 3h, stage: 60m, verify: 30m, finalize_reserve: 5m }   # the defaults; a stage and the verify step may not exceed the total
     # rebuild:                # optional; the daily image check. A changed image:, dockerfile:, base or image.setup always rebuilds
     #   check: daily          # daily | off (off: rebuilt only by fugaro image build)
     #   max_age: 14d          # rebuild an image older than this (1h to 90d); 0 turns the age trigger off
@@ -97,4 +97,4 @@ workflows:
     secrets:
       - { name: artifactory-token, env: ARTIFACTORY_TOKEN }
     resources: { cpu: 8, memory: 32Gi }
-    timeouts: { total: 90m, stage: 40m, verify: 30m, finalize_reserve: 5m }
+    timeouts: { total: 3h, stage: 60m, verify: 30m, finalize_reserve: 5m }   # the defaults; a stage and the verify step may not exceed the total

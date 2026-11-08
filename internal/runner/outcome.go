@@ -45,18 +45,38 @@ const ReasonNoVerifiedTest = "no verified test run on the final commit"
 // reason names the raise — the mode, the rule that raised it and the moment
 // (D22's third moment is the case a run cannot buy rounds with).
 //
+// owner is what the run's review left for the repository's owner to settle
+// (OD1, runstore.OwnerDecisions), nil for a run that left none. It is checked
+// above the mode's tolerance and above every review verdict: a finding whose
+// only remedies are the owner's is not a finding a mode may let through, and
+// the round it came from is not one the run was read by — the run is waiting
+// for a person, which no configuration can answer.
+//
 // The class is returned beside the reason and never instead of it: it is why
 // the run did not become ready, as one of the vocabulary's values, and this is
 // the site that knows which refusal the run carries — nothing downstream reads
 // the sentence back to work one out (design §4.2). A run Decide makes ready
 // carries no class, the way a succeeded record carries none.
-func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSummary, pol FindingsPolicy) (bool, string, failure.Class) {
+func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSummary, pol FindingsPolicy, owner *runstore.OwnerDecisions) (bool, string, failure.Class) {
 	latest := latestVerifiedTest(records, finalSHA)
 	switch {
 	case latest == nil:
 		return false, ReasonNoVerifiedTest, failure.ClassForVerify(verify.Record{}, finalSHA)
 	case !latest.Passed:
 		return false, "tests failing on the final commit", failure.ClassForVerify(*latest, finalSHA)
+	case pendingOwner(owner) > 0:
+		// Above the verdicts, and above the tolerance below: the round that
+		// left these did not fail, it asked a question the run cannot answer,
+		// and the pull request stays a draft until someone does (OD1). The
+		// tests are read first because a failing suite is a thing the run can
+		// still act on; nothing here can act on an owner's decision.
+		//
+		// It carries no class of its own: the run is waiting, not stopped for a
+		// cause the vocabulary holds — a person is what comes next, and the
+		// design's §3 has no row for it, which is what unclassified says. A
+		// halt on the same decisions is left to the halt's own family instead
+		// (haltClass), because a halt is a stop the runner made.
+		return false, ownerWaitingReason(pendingOwner(owner)), failure.Unclassified
 	case last == nil:
 		return false, "no review verdict", failure.ReviewUnread
 	case last.Verdict == "none":

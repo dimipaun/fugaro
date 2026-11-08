@@ -46,7 +46,7 @@ func TestReportOmitsToleratedForARoundTheModeBlocked(t *testing.T) {
 	}
 	pol := FindingsPolicy{Mode: rigor.Startup, Round: 2, Tolerated: []rigor.Score{tol}, Blocking: []rigor.Score{blocked}}
 	pass := verify.Record{Kind: verify.KindTest, HeadSHA: rec.HeadSHA, CleanTree: true, Passed: true}
-	ready, reason, _ := Decide([]verify.Record{pass}, rec.HeadSHA, seniorReview(rec.Reviews), pol)
+	ready, reason, _ := Decide([]verify.Record{pass}, rec.HeadSHA, seniorReview(rec.Reviews), pol, nil)
 	if ready {
 		t.Fatalf("the round was tolerated: %q", reason)
 	}

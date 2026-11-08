@@ -2,8 +2,9 @@
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
 merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
-prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); the rest is
-not started; this folder approves no task.**
+prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
+except the reading of the installation's published state its lists come from, which no task of this
+plan carries; M8–M10 are not started; this folder approves no task.**
 
 What the owner's spec ([spec.md](spec.md) §0) says, checked one claim at a time against the code as
 it is at this work's base, and then the decisions the planning found.
@@ -204,7 +205,10 @@ built and merged on `main`; M5 is built except the paired device M-a asks for, w
 owner; the rest is not started; this folder approves no task.** **That quotation is the line as it
 stood on 2026-11-04**: the clause after "asks for" was replaced on 2026-11-07, and the line every
 file carries today reads "...which is M5b and is a hard prerequisite before any binary links the
-front door (the owner's ruling of 2026-11-07)" (§4a).
+front door (the owner's ruling of 2026-11-07); M7 is built except the reading of the installation's
+published state its lists come from, which no task of this plan carries; M8–M10 are not started" —
+**the last two clauses moving when M7 landed** (§4a), the exception added with its landing because
+the task builds the seam that reading goes through and not the reading itself.
 
 ### The answer of 2026-11-05
 
@@ -518,7 +522,10 @@ config** (`terraform.launchers` / `terraform.operators`, `internal/cli/user.go:3
 installation's Terraform outputs, so a front door that read "the lists" would be reading one
 operator's file. The amended answer: **the front door reads a source only an operator can write** —
 the installation's own published state, reachable through the coordinator's account and not through
-anything a caller or a run can reach, which [spec.md](spec.md) §4 states and M7 builds. The rest of
+anything a caller or a run can reach, which [spec.md](spec.md) §4 states. **M7 builds the seam that
+reading goes through and not the reading**: `ee/coordinator/mcpauth/identity.go` holds the `Roster`
+interface the door resolves an identity through, **no implementation of it over the published state
+is in the tree, and no task of this plan carries one** (spec.md §11). The rest of
 the answer is unchanged: exact `user:` entries only, and `group:`, `domain:` and `serviceAccount:`
 refused.
 
@@ -586,8 +593,12 @@ pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §1
   owner approved them one at a time, which is what "may continue" turned into.** **M5 is built** —
   the two metadata documents, the four endpoints and
   the approve step, **except the paired device M-a asks for**, which is **M5b** and is a task of its
-  own since the owner's ruling of 2026-11-07 — and **the rest is not**: M4's store half (`mcpauth_store.tf`, the bucket
-  and its one grant) and M7–M10; **M3's node is in with its parity test while the comment D935 asks
+  own since the owner's ruling of 2026-11-07 — **M7 is built** (the resource server and the tool
+  registry, dormant with the rest of the door) **except the reading of the installation's published
+  state its lists come from**: `identity.go` holds the `Roster` seam D933's answer goes through and
+  **nothing in the tree implements it over that state, because no task of the plan carries the
+  reading** — **and the rest is not**: M4's store half (`mcpauth_store.tf`, the bucket
+  and its one grant) and M8–M10; **M3's node is in with its parity test while the comment D935 asks
   for above it is not written**; and **what merged as M6 is the draft M-a predates** — no approve-step
   POST and no `TestAnIDTokenInAQueryStringIsRefused`, because M5, which defines the approve step, was
   built after M6 rather than with it. **And one row of an already-merged task

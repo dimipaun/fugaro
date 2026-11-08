@@ -50,6 +50,16 @@ func haltFamilies() map[runstore.HaltReason]failure.Class {
 		runstore.HaltFanout:             failure.HaltedGovernance,
 		runstore.HaltReviewScope:        failure.HaltedGovernance,
 		runstore.HaltExpectedExceeded:   failure.HaltedGovernance,
+		// The owner-decision stop is the one halt with no family of its own in
+		// the design's §3: it is deliberately not a governance tripwire, so no
+		// checkpoint is written and its row is not that one (OD1), and what
+		// comes next is a person rather than the run — which is what
+		// unclassified says, and the whole vocabulary says it: the terminal has
+		// no class of its own, the report prints its count, and that count is
+		// the signal to name one. It is written down here because the walk is
+		// over the closed set, where a reason with no line is a family nobody
+		// chose.
+		runstore.HaltOwnerDecision: failure.Unclassified,
 	}
 }
 
