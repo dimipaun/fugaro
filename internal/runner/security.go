@@ -26,13 +26,12 @@ import (
 // are each a warning, and the levels stay where they are — roundRigor's own
 // rule for the mode (F9).
 //
-// The forced level is a requirement of this resolution and not an override of
-// the run's own configuration: a layer that wrote level 3's own off-switch
-// (`none: true`, or the level's model named none) is refused by the resolution,
-// as D722 refuses a level the owner's floor requires and a layer turned off. At
-// these seams the launcher is gone — there is nobody to tell that a `none`
-// makes the list's requirement unreachable — so the refusal is the warning
-// below and the levels stay where they are.
+// The forced level is raise-only (D1517): a layer that wrote level 3's own
+// off-switch does not defeat the escalation, which clears it and says so
+// (plan.go's forcedLevelsAreRaiseOnly). Every other rule a level's settings
+// have to pass still refuses — an allowed_models list that does not name the
+// level's model, the same-model rule, a provider-served effort — because those
+// are about *which* model the level runs and not about whether it runs.
 
 // escalateSecurity classifies the run's diff and, on a match, turns review
 // level 3 on and rebuilds the plan so the adversarial step is in it. at is the
@@ -41,7 +40,7 @@ import (
 //
 // A run that already runs level 3 escalates nothing and records nothing: it is
 // already the level the escalation would reach, so nothing happened (D1509).
-// It only ever turns the level on — a later moment that matches again, or that
+// The escalation is raise-only — a later moment that matches again, or that
 // matches nothing because the round changed nothing, leaves the level and the
 // record where they are — and level 3 is the whole of it: the rigor mode does
 // not move, because a mode raise would rewrite the round counts and the
@@ -64,9 +63,13 @@ func (r *run) escalateSecurity(ctx context.Context, at string) {
 	if len(matched) == 0 {
 		return
 	}
+	// Read before the resolution: a level that runs has its model written into
+	// the run's own configuration (setLevelModel), so the layer's own block is
+	// not what a read after the resolution would see.
+	turnedOff := r.levelThreeTurnedOff()
 	levels, err := r.resolveLevelsForcing([]policy.Level{policy.LevelL3})
 	if err != nil {
-		r.d.Log.Warn("the security escalation's level 3 was refused; the levels stay where they are",
+		r.d.Log.Warn("resolving the review levels with the security escalation's level 3 failed; the levels stay where they are",
 			"at", at, "pattern", matched[0].Name, "err", r.redact(err.Error()))
 		return
 	}
@@ -84,6 +87,27 @@ func (r *run) escalateSecurity(ctx context.Context, at string) {
 	}
 	r.levels, r.plan = levels, plan
 	r.rec.Security = runstore.NewSecurityEscalation(at, matched[0])
+	if turnedOff {
+		// A layer wrote the level's own off-switch and the forced resolution
+		// cleared it (plan.go, D1517). The run says so rather than overriding a
+		// layer's setting in silence: the record carries that the escalation
+		// happened and what matched, and this line is the only place the
+		// overridden setting is named.
+		r.d.Log.Warn("a layer turns review level 3 off and the run's diff matched a security pattern: the escalation's level is raise-only, so level 3 runs for this run (D1517)",
+			"at", at, "pattern", matched[0].Name, "category", string(matched[0].Category))
+		return
+	}
 	r.d.Log.Info("the run's diff matched a security pattern, so review level 3 is on for it",
 		"at", at, "pattern", matched[0].Name, "category", string(matched[0].Category))
+}
+
+// levelThreeTurnedOff reports whether a layer wrote level 3's own off-switch,
+// which the escalation's forced resolution clears (plan.go's
+// forcedLevelsAreRaiseOnly): the escalation says so rather than overriding the
+// setting in silence.
+func (r *run) levelThreeTurnedOff() bool {
+	if levelThreeOff(r.cfg.Agent.Levels.L3) {
+		return true
+	}
+	return r.spec.ReviewLevels != nil && levelThreeOff(r.spec.ReviewLevels.L3)
 }
