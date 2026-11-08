@@ -95,6 +95,11 @@ type authorized struct {
 	identity string
 	role     Role
 	clientID string
+	// familyID is the token family this call's token belongs to (D930). It is
+	// read for the audit record alone: the family is what a revocation ends, so
+	// the record names it and an operator can withdraw a call that was not the
+	// person's own.
+	familyID string
 }
 
 // serveMCP is the MCP endpoint: the resource server of spec.md §2.
@@ -164,7 +169,7 @@ func (s *Server) serveMCP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request) (authorized, bool) {
 	value, ok := bearerToken(r)
 	if !ok {
-		s.refuseBearer(w, http.StatusUnauthorized, "invalid_token", "", "", "the MCP endpoint needs one bearer token in an Authorization header: read the resource metadata document named in the WWW-Authenticate header, register a client and sign in", challengeBare)
+		s.refuseToken(r.Context(), w, http.StatusUnauthorized, "invalid_token", ReasonNoCredential, "", "", "the MCP endpoint needs one bearer token in an Authorization header: read the resource metadata document named in the WWW-Authenticate header, register a client and sign in", challengeBare)
 		return authorized{}, false
 	}
 	rec, err := s.store.LookupByHash(r.Context(), TokenHash(value))
@@ -176,23 +181,23 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) (authorized, 
 			// it was never minted, and they would stop asking. It is the same
 			// distinction the revoke path and resolveIdentity make, and the
 			// same reason for it.
-			s.refuseBearer(w, http.StatusInternalServerError, "server_error", "", "", "the front door could not read this installation's token records, so it admits nobody: this is a fault of the installation and not of this token", challengeBare)
+			s.refuseToken(r.Context(), w, http.StatusInternalServerError, "server_error", ReasonUnreadable, "", "", "the front door could not read this installation's token records, so it admits nobody: this is a fault of the installation and not of this token", challengeBare)
 			return authorized{}, false
 		}
-		s.refuseBearer(w, http.StatusUnauthorized, "invalid_token", "", "", "the bearer token is not one this endpoint can use: it was not issued here, or the family it belongs to was revoked; the resource metadata document named in the WWW-Authenticate header says how to get one", challengeNamesTheError)
+		s.refuseToken(r.Context(), w, http.StatusUnauthorized, "invalid_token", ReasonUnknownToken, "", "", "the bearer token is not one this endpoint can use: it was not issued here, or the family it belongs to was revoked; the resource metadata document named in the WWW-Authenticate header says how to get one", challengeNamesTheError)
 		return authorized{}, false
 	}
 	if err := usable(rec, s.now()); err != nil {
-		s.refuseBearer(w, http.StatusUnauthorized, "invalid_token", "", rec.Token.Identity, err.Error()+": the resource metadata document named in the WWW-Authenticate header says how to get another one", challengeNamesTheError)
+		s.refuseToken(r.Context(), w, http.StatusUnauthorized, "invalid_token", ReasonUnusableToken, "", rec.Token.Identity, err.Error()+": the resource metadata document named in the WWW-Authenticate header says how to get another one", challengeNamesTheError)
 		return authorized{}, false
 	}
 	role, err := s.resolveIdentity(r.Context(), rec.Token.Identity)
 	if err != nil {
 		if errors.Is(err, ErrIdentityOffTheLists) {
-			s.refuseBearer(w, http.StatusForbidden, "insufficient_scope", "", rec.Token.Identity, "this identity holds no role at this installation: the front door serves the people on its launcher and operator lists, and fugaro user is the command that changes them", challengeNamesTheError)
+			s.refuseToken(r.Context(), w, http.StatusForbidden, "insufficient_scope", ReasonNoRole, "", rec.Token.Identity, "this identity holds no role at this installation: the front door serves the people on its launcher and operator lists, and fugaro user is the command that changes them", challengeNamesTheError)
 			return authorized{}, false
 		}
-		s.refuseBearer(w, http.StatusInternalServerError, "server_error", "", rec.Token.Identity, "the front door could not read this installation's member lists, so it admits nobody: this is a fault of the installation and not of this token", challengeBare)
+		s.refuseToken(r.Context(), w, http.StatusInternalServerError, "server_error", ReasonUnreadable, "", rec.Token.Identity, "the front door could not read this installation's member lists, so it admits nobody: this is a fault of the installation and not of this token", challengeBare)
 		return authorized{}, false
 	}
 	return authorized{
@@ -200,6 +205,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) (authorized, 
 		identity: rec.Token.Identity,
 		role:     role,
 		clientID: rec.Token.ClientID,
+		familyID: rec.FamilyID,
 	}, true
 }
 
@@ -301,6 +307,15 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, auth authorize
 // failure at all — no scope is mapped to it — so a caller asking for one
 // learns the name is not served, which is exactly what finding M-e's "a tool
 // with no mapping is refused" looks like from outside.
+//
+// **Every answer below the tool's name is audited once** (M10, audit.go): the
+// call reached a tool of this installation, so its line and its record entry
+// are written whatever the answer is — the door's own 403, a name nothing
+// serves yet, a tool's own refusal, or the tool's data. The two refusals above
+// the name are not: a request whose params are not an object and one naming no
+// tool at all have no tool to name, and they are the JSON-RPC layer's answers
+// rather than events about a person's call (SECURITY.md says the same in the
+// operator's words).
 func (s *Server) callTool(w http.ResponseWriter, r *http.Request, auth authorized, req rpcRequest) {
 	var params callParams
 	if len(req.Params) > 0 {
@@ -319,10 +334,16 @@ func (s *Server) callTool(w http.ResponseWriter, r *http.Request, auth authorize
 		return
 	}
 	if !slices.Contains(auth.scopes, scope) {
+		if !s.auditedCall(w, r, req.ID, auth, params.Name, OutcomeRefused, ReasonScopeNotHeld) {
+			return
+		}
 		s.refuseBearer(w, http.StatusForbidden, "insufficient_scope", scope, auth.identity, fmt.Sprintf("the tool %q maps to the scope %q, which this token does not hold", params.Name, scope), challengeNamesTheError)
 		return
 	}
 	if !argumentsAreAnObject(params.Arguments) {
+		if !s.auditedCall(w, r, req.ID, auth, params.Name, OutcomeRefused, ReasonBadArguments) {
+			return
+		}
 		s.rpcError(w, http.StatusOK, req.ID, codeInvalidParams, "tools/call takes the arguments as one JSON object")
 		return
 	}
@@ -336,7 +357,13 @@ func (s *Server) callTool(w http.ResponseWriter, r *http.Request, auth authorize
 	})
 	if err != nil {
 		if errors.Is(err, ErrNoSuchTool) {
+			if !s.auditedCall(w, r, req.ID, auth, params.Name, OutcomeRefused, ReasonNoSuchTool) {
+				return
+			}
 			s.rpcError(w, http.StatusOK, req.ID, codeInvalidParams, fmt.Sprintf("no tool named %q is served here: the name is one this endpoint knows and does not serve yet", params.Name))
+			return
+		}
+		if !s.auditedCall(w, r, req.ID, auth, params.Name, OutcomeRefused, ReasonToolRefused) {
 			return
 		}
 		// A tool's own refusal is the tool's answer and not the protocol's:
@@ -348,7 +375,13 @@ func (s *Server) callTool(w http.ResponseWriter, r *http.Request, auth authorize
 	}
 	text, err := answerText(out)
 	if err != nil {
+		if !s.auditedCall(w, r, req.ID, auth, params.Name, OutcomeFailed, ReasonUnreadable) {
+			return
+		}
 		s.rpcError(w, http.StatusOK, req.ID, codeInternal, "the tool's answer could not be encoded as JSON")
+		return
+	}
+	if !s.auditedCall(w, r, req.ID, auth, params.Name, OutcomeOK, "") {
 		return
 	}
 	s.rpcAnswer(w, req.ID, toolResult(text, false))
