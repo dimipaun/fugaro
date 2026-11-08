@@ -1,0 +1,50 @@
+{
+  "min_ending": 4,
+  "short": [
+    {"id": "20261108-115248-3bb2", "short": "3bb2"},
+    {"id": "20261107-010101-3bb2", "short": "3bb2"},
+    {"id": "abcd", "short": "abcd"},
+    {"id": "abc", "short": "abc"},
+    {"id": "", "short": ""},
+    {"id": "日本語テキスト", "short": "テキスト"}
+  ],
+  "display": [
+    {
+      "kind": "unique",
+      "refs": [
+        {"slug": "acme-app", "run_id": "20261108-115248-3bb2", "shown": "3bb2"},
+        {"slug": "acme-app", "run_id": "20261107-010101-a1c4", "shown": "a1c4"}
+      ]
+    },
+    {
+      "kind": "collision",
+      "refs": [
+        {"slug": "acme-app", "run_id": "20261108-115248-3bb2", "shown": "8-3bb2"},
+        {"slug": "acme-app", "run_id": "20261107-010101-3bb2", "shown": "1-3bb2"}
+      ]
+    },
+    {
+      "kind": "dash",
+      "refs": [
+        {"slug": "acme-app", "run_id": "20261108-115248-3bb2", "shown": "8-3bb2"},
+        {"slug": "acme-app", "run_id": "20261107-010101-3bb2", "shown": "1-3bb2"},
+        {"slug": "acme-app", "run_id": "20261108-115243-3bb2", "shown": "3-3bb2"}
+      ]
+    },
+    {
+      "kind": "same_id_two_repos",
+      "refs": [
+        {"slug": "acme-app", "run_id": "20261108-115248-3bb2", "shown": "acme-app/3bb2"},
+        {"slug": "acme-web", "run_id": "20261108-115248-3bb2", "shown": "acme-web/3bb2"}
+      ]
+    },
+    {
+      "kind": "same_id_two_repos",
+      "refs": [
+        {"slug": "acme-app", "run_id": "20261108-115248-3bb2", "shown": "acme-app/8-3bb2"},
+        {"slug": "acme-web", "run_id": "20261108-115248-3bb2", "shown": "acme-web/8-3bb2"},
+        {"slug": "acme-app", "run_id": "20261107-010101-3bb2", "shown": "1-3bb2"}
+      ]
+    }
+  ]
+}
