@@ -26,8 +26,9 @@
  *      the source of an entry, and the page renders the three newest of them: a reader who
  *      wants the rest is sent to GitHub's releases page, which is where every one of them is
  *      stated with its date — and which is also where the console's releases are, beside them.
- *      Every release file still needs its summary line whether or not the page shows it
- *      (F15, D1647), which is why the check below runs over the whole directory.
+ *      Every release still needs its summary line whether or not the page shows it (F15,
+ *      D1647), which is why the check below runs over every release the generator returned —
+ *      a file above the CLI's current version is the next release's notes, so it is not one.
  *   5. **The two streams beside the CLI are one line each** (D1641, D1644): the desktop
  *      console's latest release, and the phone app's when it has one. Both are read from the
  *      notes directories and package manifests of those streams (`src/lib/console-release.mjs`,
@@ -84,12 +85,13 @@ const entries = buildChangelog({ releasesDir, pluginFile, streamsFile })
 // and stops the build when a release has none.
 const summaries = loadReleaseSummaries()
 
-// **Every release file needs its line, and not only the ones below the cut** (F15, D1647).
+// **Every release needs its line, and not only the ones below the cut** (F15, D1647).
 // The page renders the three newest releases and links the rest to GitHub, so a check that ran
-// over the rendered entries alone would let an older release file lose its line without saying
+// over the rendered entries alone would let an older release lose its line without saying
 // so — and the line is the one thing that file has on this site. So the check runs here, over
-// every entry the generator returned, before the cut below. The component holds the rendered
-// entries to the same rule while it renders them.
+// every entry the generator returned, before the cut below — the generator's entries are the
+// releases, the drafts above the CLI's current version having been left out there. The
+// component holds the rendered entries to the same rule while it renders them.
 for (const entry of entries) {
   if (summaries[entry.tag] === undefined) {
     throw new Error(

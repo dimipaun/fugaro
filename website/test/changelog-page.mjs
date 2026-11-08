@@ -11,6 +11,9 @@
 //      more files than the page renders — and the files are still the source, read here
 //      rather than asked of the generator (D100). Under the entries the page renders the
 //      link to GitHub's releases page and one line per other stream (D1641, D1644, D1648).
+//      **Only releases are counted**: a file for a version above the CLI stream's `current`
+//      (`docs/release-streams.yaml`) is the next release's notes, written ahead of their
+//      release, and the page renders — and counts — the three newest releases without it.
 //   2. **The newest entry is the newest file**, by the version in the filename.
 //   3. **The page adds no sentence of its own beyond those two files**, and drops no line of
 //      any release file it renders.** Every sentence the page renders is in a release file
@@ -64,10 +67,11 @@
 // which is what makes the released state deterministic without any test reading a tag: which
 // releases are published is decided by the plugin's own version
 // (`plugin/.claude-plugin/plugin.json`, the owner's brief of 2026-10-19), a file this copy
-// carries. The copy's manifest is written with **the second-newest release file's version**,
-// so the build under test is the state of a tree one release ahead of its version bump:
-// exactly the newest release file is not yet released, and every older one is. A build whose
-// "not yet released" came from the checkout's tags could not produce that answer at all.
+// carries. The copy's manifest is written with **the second-newest release's version** (the
+// files above the CLI stream's `current` are drafts of the next release, not releases), so the
+// build under test is the state of a tree one release ahead of its version bump: exactly the
+// newest release file is not yet released, and every older one is. A build whose "not yet
+// released" came from the checkout's tags could not produce that answer at all.
 //
 // The build is network-free: `npm ci` is not run here, and the only executable it starts is
 // the site's own installed Astro.
@@ -95,6 +99,12 @@ const RELEASES_DIR = path.join(REPO, 'docs', 'releases')
 // 2026-10-19), and the plugin manifest whose version decides which releases are published.
 const SUMMARIES_FILE = path.join(SITE, 'data', 'release-summaries.yaml')
 const PLUGIN_FILE = path.join(REPO, 'plugin', '.claude-plugin', 'plugin.json')
+
+// The release streams catalogue, whose CLI stream's `current` version says which release files
+// are releases at all: a file above it is the next release's notes, written ahead of their
+// release, and the page does not render it (src/lib/changelog.mjs). Read here from the file
+// rather than asked of the generator, as every other fact in this file is.
+const STREAMS_FILE = path.join(REPO, 'docs', 'release-streams.yaml')
 
 // `docs/releases/README.md` describes the format; it is the one file in the directory that
 // is not a release, and it is skipped by name rather than by the `vX.Y.Z.md` pattern, so a
@@ -213,11 +223,12 @@ function build() {
   mkdirSync(path.join(root, 'console'))
   cpSync(path.join(REPO, 'console', 'package.json'), path.join(root, 'console', 'package.json'))
 
-  // The plugin's version the copy is built with: the second-newest release file's, so the
-  // build under test is a tree one release ahead of its version bump. Exactly the newest
-  // release file is then not yet released, and every older one is — an answer a tag-reading
-  // rule could not produce, because the copy has no `.git` at all (the header says why).
-  const rank = newestFirst()
+  // The plugin's version the copy is built with: the second-newest **release's** — the files
+  // above the CLI's current version are the next release's notes and are not rendered at all —
+  // so the build under test is a tree one release ahead of its version bump. Exactly the newest
+  // release is then not yet released, and every older one is — an answer a tag-reading rule
+  // could not produce, because the copy has no `.git` at all (the header says why).
+  const rank = releasedFirst()
   assert.ok(rank.length >= 2, 'docs/releases/ carries fewer than two release files, so this file cannot build the state of a tree one release ahead')
   const publishedVersion = rank[1].slice(1)
   writeFileSync(
@@ -286,9 +297,47 @@ function newestFirst() {
     })
 }
 
-/** The three newest release files: the entries the page renders, and nothing below them. */
+/**
+ * The CLI stream's current release, as the tag of the file it names, read off
+ * `docs/release-streams.yaml` by this file — the file the rule names rather than the module
+ * that applies it. Every release file above it is the next release's notes, written ahead of
+ * its release, and the changelog leaves it out.
+ */
+function cliCurrent() {
+  const lines = readFileSync(STREAMS_FILE, 'utf8').split('\n')
+  const start = lines.findIndex((line) => /^\s*-\s*name:\s*cli\s*$/.test(line))
+  assert.notEqual(
+    start,
+    -1,
+    'docs/release-streams.yaml carries no `- name: cli` stream, and the changelog reads the CLI’s current release from that stream',
+  )
+  for (let at = start + 1; at < lines.length; at++) {
+    if (/^\s*-\s*name:/.test(lines[at])) break
+    const m = /^\s*current:\s*"?(\d+\.\d+\.\d+)"?\s*$/.exec(lines[at])
+    if (m !== null) return `v${m[1]}`
+  }
+  throw new Error('docs/release-streams.yaml carries no `current: x.y.z` line under the cli stream, and the changelog compares every release file’s version with it')
+}
+
+/** The release files that are releases: the ones at or below the CLI stream's current version. */
+function releasedFirst() {
+  const current = versionOf(cliCurrent())
+  return newestFirst().filter((tag) => {
+    const file = versionOf(tag)
+    for (let i = 0; i < 3; i++) {
+      if (file[i] !== current[i]) return file[i] < current[i]
+    }
+    return true
+  })
+}
+
+/**
+ * The three newest release files: the entries the page renders, and nothing below them. The
+ * files above the CLI's current version are not among them — a draft of the next release is
+ * neither rendered nor counted against the three (src/lib/changelog.mjs).
+ */
 function shownReleases() {
-  return newestFirst().slice(0, SHOWN)
+  return releasedFirst().slice(0, SHOWN)
 }
 
 /**
@@ -755,7 +804,7 @@ test('the dropped entries’ anchors and release links are gone', () => {
   // to nothing is worse than no anchor, and nothing in this repository links one (D1646). The
   // GitHub release URL every entry used stays valid for the dropped ones, and the link under
   // the entries is where a reader finds them now.
-  const dropped = newestFirst().slice(SHOWN)
+  const dropped = releasedFirst().slice(SHOWN)
   assert.ok(dropped.length > 0, 'docs/releases/ holds no release below the three newest, so this case proves nothing')
   for (const tag of dropped) {
     assert.ok(!html.includes(`id="${tag}"`), `the page still carries an element with id="${tag}", and the release it anchors is not rendered (D1646)`)
@@ -922,10 +971,12 @@ test('a release’s summary is the site’s words, not an internal id or a repos
 test('the release the plugin’s version has not reached is rendered as not yet released', () => {
   const html = builtPage()
   const { publishedVersion } = build()
-  // The release files above the version the copy's plugin manifest carries — the same rule
-  // the generator applies (`src/lib/changelog.mjs`), computed here from the filenames so the
-  // expectation is the directory's rather than the generator's own answer.
-  const ahead = newestFirst().filter((tag) => {
+  // The releases above the version the copy's plugin manifest carries — the same rule the
+  // generator applies (`src/lib/changelog.mjs`), computed here from the filenames so the
+  // expectation is the directory's rather than the generator's own answer. The files above the
+  // CLI's current version are not among them: those are the next release's notes, and the page
+  // does not render them at all.
+  const ahead = releasedFirst().filter((tag) => {
     const file = versionOf(tag)
     const published = versionOf(`v${publishedVersion}`)
     for (let i = 0; i < 3; i++) {
@@ -934,13 +985,13 @@ test('the release the plugin’s version has not reached is rendered as not yet 
     return false
   })
 
-  // The copy's manifest carries the second-newest release file's version and the copy has no
-  // `.git` at all, so a tag cannot be the reason for this answer: the one release file ahead
-  // of that version is the one entry the page marks, and every older one is published (the
-  // header says why the copy is built this way). **The pill survives the cut** (D1645): the
-  // three newest files are the three the page renders, so the newest one — the file written
-  // ahead of its version bump — is among them, and a page that marked nothing, marked
-  // everything, or dropped the draft differs here.
+  // The copy's manifest carries the second-newest **release's** version and the copy has no
+  // `.git` at all, so a tag cannot be the reason for this answer: the one release ahead of that
+  // version is the one entry the page marks, and every older one is published (the header says
+  // why the copy is built this way). **The pill survives the cut** (D1645): the three newest
+  // releases are the three the page renders, so the newest one — the file written ahead of its
+  // version bump — is among them, and a page that marked nothing, marked everything, or dropped
+  // the draft differs here.
   assert.equal(
     ahead.length,
     1,
@@ -1121,6 +1172,83 @@ test('the build stops for an older release with no summary line', (t) => {
   assert.ok(
     built.output.includes(dropped),
     `the failure does not name ${dropped}, so it does not say which release has no summary:\n${built.output}`,
+  )
+})
+
+test('a release file written ahead of the CLI’s current release is not rendered, and needs no summary line', (t) => {
+  // The release process writes the next release's highlights into the pull request that makes
+  // the change (docs/releases/README.md), so docs/releases/ holds a file for a version the CLI
+  // stream has not reached — v0.22.0 sat there while the stream was at v0.21.0, and the build
+  // stopped on it for a summary line it does not have to carry. The fixture is that tree: the
+  // draft, with no line in the summaries file, and the page renders the three newest **releases**
+  // without it.
+  const draft = 'v0.99.0'
+  const built = buildCopy(
+    t,
+    ({ root }) => {
+      writeFileSync(path.join(root, 'docs', 'releases', `${draft}.md`), '- the next release’s highlights, written ahead of its release\n')
+      assert.ok(
+        !summaryEntries().has(draft),
+        `website/data/release-summaries.yaml carries a ${draft} line, and this case is about the draft the page must not ask one of`,
+      )
+    },
+    'fugaro-changelog-draft-',
+  )
+
+  assert.equal(
+    built.status,
+    0,
+    `the site's build failed on a tree carrying ${draft}.md, a release file above the CLI’s ${cliCurrent()} with no summary line: a draft of the next release is neither rendered nor asked for one\n${built.output}`,
+  )
+  const html = readFileSync(path.join(built.dist, 'changelog', 'index.html'), 'utf8')
+
+  // The cut counts releases only: the draft would otherwise be the newest file of all, take the
+  // first slot and push the newest release off the page.
+  assert.deepEqual(
+    tagsOnPage(html),
+    shownReleases(),
+    `the page renders ${JSON.stringify(tagsOnPage(html))}, and the ${SHOWN} newest releases are ${JSON.stringify(shownReleases())}: ${draft} is above the CLI’s ${cliCurrent()} and is not one of them`,
+  )
+  assert.ok(!html.includes(`id="${draft}"`), `the page carries an element with id="${draft}", and the release it anchors is a draft of the next release (src/lib/changelog.mjs)`)
+  assert.ok(!html.includes(`/releases/tag/${draft}`), `the page links ${draft} at its GitHub release, and no such release exists yet`)
+})
+
+test('the build stops for the release at the CLI’s current version with no summary line', (t) => {
+  // The same draft file, with the CLI stream raised to its version: it is the release the stream
+  // is at, so it is an entry like any other and the page stops the build for the summary line it
+  // has not got. The boundary is "at or below the current version is a release", and a page that
+  // skipped everything it had no summary for fails here.
+  const release = 'v0.99.0'
+  const built = buildCopy(
+    t,
+    ({ root }) => {
+      writeFileSync(path.join(root, 'docs', 'releases', `${release}.md`), '- a release with no summary line\n')
+      const streams = path.join(root, 'docs', 'release-streams.yaml')
+      const before = readFileSync(streams, 'utf8')
+      const after = before.replace(`current: "${cliCurrent().slice(1)}"`, `current: "${release.slice(1)}"`)
+      assert.notEqual(
+        after,
+        before,
+        `docs/release-streams.yaml no longer carries \`current: "${cliCurrent().slice(1)}"\` under the cli stream, and this case raises it to make ${release} a release`,
+      )
+      writeFileSync(streams, after)
+    },
+    'fugaro-changelog-at-current-',
+  )
+
+  assert.notEqual(
+    built.status,
+    0,
+    `the build succeeded with ${release} at the CLI’s current version and no summary line: a release file at or below that version is a release, and every release file needs its line in website/data/release-summaries.yaml (F15, D1647)\n${built.output}`,
+  )
+  assert.match(
+    built.output,
+    /website\/data\/release-summaries\.yaml/,
+    `the failure does not name website/data/release-summaries.yaml, so it does not say which file the release has no line in:\n${built.output}`,
+  )
+  assert.ok(
+    built.output.includes(release),
+    `the failure does not name ${release}, so it does not say which release has no summary:\n${built.output}`,
   )
 })
 
