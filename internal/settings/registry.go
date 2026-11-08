@@ -283,6 +283,17 @@ var yamlMeta = map[string]Row{
 		Doc:     "docs/rigor-modes/spec.md",
 	},
 	"rigor.areas": {Owner: "rigor", Merge: Union, Default: unset("no area rules"), Doc: "docs/rigor-modes/spec.md"},
+
+	// The security list is rigor.areas' twin in the two fields a Scopes row
+	// cannot answer. Its merge is Union and not the default Replace (D1506):
+	// the repository's rows are added to the project's and the engine's, never
+	// put in their place, so a layer that writes the key can only ever say
+	// more. And its owner is not `settings set`, though that is the row a key
+	// with no entry here takes: D1515 decides the editor is fugaro.yaml and the
+	// project layer file — a list has no scalar floor for the allow-list's rule
+	// to raise — and `fugaro config publish` is the command that carries the
+	// layer's half, which is what the row names.
+	"security.patterns": {Owner: "config", Merge: Union, Default: unset("the engine's floor alone")},
 }
 
 // buildRows is the table, assembled from the three documents' own sources: the
