@@ -455,6 +455,47 @@ func TestAnAbandonedBuildLeaseIsReclaimed(t *testing.T) {
 	}
 }
 
+// TestAnAbandonedLeaseIsFoundUnderItsEscapedKey: a build id is escaped for its
+// path (budget.Key), so the id build.2026-11-08/1 is the child key
+// build%2E2026-11-08%2F1. A reclaim that compared the escaped child key with
+// the lease's own ID would read every such lease as one whose name does not
+// match the node it was read from, leave it open and keep its reservation
+// counted in the day for good (F19).
+func TestAnAbandonedLeaseIsFoundUnderItsEscapedKey(t *testing.T) {
+	f, c := imageCostFixture(t, fakePricer{book: pricedBook()})
+	const id = "build.2026-11-08/1"
+	path := budget.PathBuildLease(appSlug, id)
+	if key := path[strings.LastIndex(path, "/")+1:]; key == id {
+		t.Fatalf("the fixture's id is not escaped in its path: %q", path)
+	}
+	dead := budget.BuildLease{
+		State: budget.BuildLeaseOpen, Repo: appSlug, ID: id, By: "someone@example.com",
+		Reserved: 936_000, StartedAt: imageCostDay.Add(-2 * time.Hour).UnixMilli(),
+		Exp: imageCostDay.Add(-time.Hour).UnixMilli(),
+	}
+	f.db.Set(path, dead)
+	f.db.Set(budget.PathSpendRepo(imageCostDayNo(), appSlug), map[string]any{"counted": 936_000})
+	f.db.Set(budget.PathSpendGlobal(imageCostDayNo()), map[string]any{"counted": 936_000})
+
+	n, err := c.reclaim(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("reclaimed %d leases, want the abandoned one, whose node key is its id escaped", n)
+	}
+	var got budget.BuildLease
+	if _, err := c.db.Get(context.Background(), path, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.State != budget.BuildLeaseReleased || got.Released != 936_000 {
+		t.Errorf("the abandoned lease is %+v, want it released and holding nothing", got)
+	}
+	if w := repoCounter(t, c, "counted"); w != 0 {
+		t.Errorf("the repository counts %d µ$, want the dead build's reservation given back", w)
+	}
+}
+
 // TestALeaseFromAClosedDayIsClosedWithoutACounterWrite: a lease abandoned days
 // ago reserved from a day no cap compares against any more. It is closed — the
 // lease family does not grow forever — and the counters of that day are left as

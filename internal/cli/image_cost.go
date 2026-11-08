@@ -304,9 +304,18 @@ func (c *imageCost) reclaim(ctx context.Context) (int, error) {
 	}
 	now, today := c.now(), budget.Day(c.now())
 	closed := 0
-	for _, id := range slices.Sorted(maps.Keys(leases)) {
-		l := leases[id]
-		if !l.Abandoned(now) || l.ID != id || l.Repo != c.slug {
+	for _, key := range slices.Sorted(maps.Keys(leases)) {
+		l := leases[key]
+		// The child key is the id escaped for a path (budget.Key), while the
+		// lease carries the id as it was taken: comparing the two raw would read
+		// every lease whose id holds a dot, a slash or another character RTDB
+		// forbids in a key as one whose name does not match the node it was read
+		// from, leave it open and keep its reservation counted for good. A key
+		// that does not unescape is not one this writer made, and the write below
+		// would go to a node of its own — so it is left alone, which is the side
+		// that keeps the money counted.
+		id, err := budget.Unkey(key)
+		if err != nil || l.ID != id || l.Repo != c.slug || !l.Abandoned(now) {
 			continue
 		}
 		after, err := l.Reclaim()
