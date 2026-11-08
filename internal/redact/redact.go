@@ -175,18 +175,21 @@ var (
 	// bounds the value. Four shapes of value, each ending where the text
 	// around it can still be read:
 	//
-	//   - a plain value — a bearer token, a key — ends at a quote as well as
-	//     at the end of the line, because a header also appears inside a
-	//     string value of a record (`{"message":"… Authorization: Bearer
-	//     …","step":"…"}`); a rule that ran to the line would take the fields
-	//     after it, which are the diagnosis the record exists to carry.
-	//   - a quoted value behind a scheme word (`Bearer "<token>"`, and the
-	//     same with the quotes escaped inside a record) ends at its own
-	//     closing quote. Quoting only the value is a spelling neither rule
-	//     above reads — one wants the quote right after the name, the other an
-	//     escaped name — and the plain rule would end the value at the opening
-	//     quote and leave the token between the two. Only a scheme word can
-	//     start this shape, so no plain value is taken by it.
+	//   - a plain value — a bearer token, a key — ends at a quote, single or
+	//     double, as well as at the end of the line. A header also appears
+	//     inside a string value of a record (`{"message":"… Authorization:
+	//     Bearer …","step":"…"}`) and inside the single quotes of a shell
+	//     command (`curl -H 'Authorization: Bearer …' <url>`), and in both the
+	//     text after the value is the diagnosis; a rule that ran to the line
+	//     would take it. No credential shape carries either quote, so ending
+	//     the value at one leaves nothing behind.
+	//   - a value in quotes — `'<token>'`, or behind a scheme word
+	//     (`Bearer "<token>"`, and the same with those quotes escaped inside a
+	//     record) — ends at its own closing quote, or at the line when that
+	//     quote never arrives. Quoting a value is a spelling the two rules
+	//     above do not read — one wants the quote right after the name, the
+	//     other an escaped name — and this rule would otherwise stop at the
+	//     opening quote and leave the token between the two.
 	//   - a bracketed value with no quote in it ends at its own bracket. That
 	//     covers a list a log printed (`authorization: [1, 2]`) and, since
 	//     the marker is bracketed too, the rule's own replacement, which is
@@ -203,7 +206,7 @@ var (
 	// quote — a quoted value is the form above, already redacted — and a
 	// leading backslash counts only when what follows it is not a quote, or
 	// this rule would eat the line from the escaped form's `\"[REDACTED]\"`.
-	authHeader = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api[_-]?key|private[_-]?token)"?\s*:\s*)(?:\[[^"\r\n]*?\]|[\[{][^\r\n]*|(?:bearer|basic)[ \t]+\\+"(?:\\.|[^"\\\r\n])*\\+"|(?:bearer|basic)[ \t]+"(?:\\.|[^"\\\r\n])*"|(?:[^\s"\\\r\n\[{]|\\[^\s"\r\n])[^"\r\n]*)`)
+	authHeader = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api[_-]?key|private[_-]?token)"?\s*:\s*)(?:\[[^"\r\n]*?\]|[\[{][^\r\n]*|(?:bearer|basic)[ \t]+\\+"(?:\\.|[^"\\\r\n])*\\+"|(?:bearer|basic)[ \t]+"(?:\\.|[^"\\\r\n])*"?|(?:bearer|basic)[ \t]+'(?:\\.|[^'\\\r\n])*'?|'(?:\\.|[^'\\\r\n])*'?|(?:[^\s"'\\\r\n\[{]|\\[^\s"\r\n])[^"'\r\n]*)`)
 
 	// authScheme is the same credential where no header name introduces it:
 	// a curl line or an error body prints `Bearer <token>` on its own. The
@@ -212,7 +215,10 @@ var (
 	// instead (`basic command-line-interface tool`): over-redacting a phrase
 	// that reads like a scheme is the cheaper mistake of the two, and a short
 	// bare credential is still caught when a header name introduces it (above).
-	authScheme = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{16,}`)
+	// What separates the word from the value is a space or a tab and not any
+	// whitespace, so a line that ends on the word is not joined to the one
+	// after it.
+	authScheme = regexp.MustCompile(`(?i)\b(bearer|basic)[ \t]+[A-Za-z0-9._~+/=-]{16,}`)
 
 	// signedParam is the query parameter of a signed URL — the one place
 	// these names are known to carry a credential — and of a URL fragment,
@@ -221,7 +227,7 @@ var (
 	// URL (the bucket, the object, the expiry) stays readable. An assignment
 	// elsewhere, such as `CLIENT_SECRET=...` in an environment dump, is not
 	// one of the shapes this pass claims.
-	signedParam = regexp.MustCompile(`(?i)([?&#])(x-amz-signature|x-amz-credential|x-amz-security-token|x-goog-signature|x-goog-credential|googleaccessid|awsaccesskeyid|signature|sig|access_token|id_token|refresh_token|api_key|apikey|client_secret|password|token)=([^&\s"'<>]*)`)
+	signedParam = regexp.MustCompile(`(?i)([?&#])(x-amz-signature|x-amz-credential|x-amz-security-token|x-goog-signature|x-goog-credential|googleaccessid|awsaccesskeyid|signature|sig|access_token|id_token|refresh_token|api_key|apikey|client_secret|password|token)=([^&\s"'<>]+)`)
 
 	// keyBlock is a PEM private key, terminated or not: an unterminated block
 	// is still a key, so an END that never comes redacts to the end of the

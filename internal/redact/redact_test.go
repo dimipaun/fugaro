@@ -169,6 +169,29 @@ var patternCases = []struct {
 		leak: strings.Repeat("A1b2C3d4", 3),
 	},
 	{
+		name: "quoted token after the scheme word that is never closed",
+		in:   `Authorization: Bearer "` + fake(strings.Repeat("A1b2C3d4", 3)),
+		leak: strings.Repeat("A1b2C3d4", 3),
+	},
+	{
+		name: "single quoted header value",
+		in:   `x-api-key: '` + fake(strings.Repeat("Zx9", 8)) + `'`,
+		leak: strings.Repeat("Zx9", 8),
+	},
+	{
+		name: "single quoted token after the scheme word",
+		in:   `Authorization: Bearer '` + fake(strings.Repeat("A1b2C3d4", 3)) + `' and then some`,
+		leak: strings.Repeat("A1b2C3d4", 3),
+		keep: " and then some",
+	},
+	{
+		name: "header in single quotes over a shell command",
+		in: `curl -H 'Authorization: Bearer ` + fake(strings.Repeat("A1b2C3d4", 3)) +
+			`' https://api.example.com failed`,
+		leak: strings.Repeat("A1b2C3d4", 3),
+		keep: `' https://api.example.com failed`,
+	},
+	{
 		name: "quoted token after the scheme word inside a record",
 		in: `{"message":"Authorization: Bearer \"` + fake(strings.Repeat("A1b2C3d4", 3)) +
 			`\"","step":"terraform apply"}`,
@@ -451,6 +474,8 @@ func TestRedactPassesLeaveCleanTextAlone(t *testing.T) {
 		"retrying in 30s, attempt 3 of 5",
 		"the task-sk-1234567890abcdefghij note is not a key",
 		"see https://example.com/home/page and /var/home/user for the shape",
+		"https://host/cb?token=&state=ok returned nothing",
+		"retrying with Bearer\nQWERTYUIOPASDFGHJKLZXCVBNM now",
 	} {
 		if got := Text(s, []string{"a-secret-value"}); got != s {
 			t.Errorf("Text(%q) = %q, want it unchanged", s, got)
