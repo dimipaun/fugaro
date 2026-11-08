@@ -207,14 +207,22 @@ func TestDocsCheck340RecordsTheSecondRun(t *testing.T) {
 		// paste-back knows what the next run will do differently.
 		"either permission is a refusal",
 		// The other half of the widened refusal rule, and the half the second
-		// run's own reading forced: a listing denial that names only the read
-		// permission is gcloud's prefix probe, so the row is NOT OBSERVED
-		// rather than a criterion that held, and a listing that WAS allowed is
-		// the failure instead. A section that stopped at "either permission is
-		// a refusal" would have the owner read the two listing rows as readings
-		// about the listing clause whatever the clause allows.
+		// run's own reading forced: the two guarded listings are asked with a
+		// WILDCARD so the List request is the one that goes out, and a denial
+		// naming only the object permission says it did not — so the row is NOT
+		// OBSERVED rather than a criterion that held, it FAILS the form, and the
+		// run ends exit 2 with no string for R12's builder rather than exit 0
+		// with the guard unmeasured. A section that stopped at "either
+		// permission is a refusal" would have the owner read the two listing
+		// rows as readings about the listing clause whatever the clause allows.
 		"recorded as **NOT OBSERVED**",
 		"neither a criterion that held nor one that failed",
+		"it **fails the form**",
+		"/tokens/*",
+		// The third reading of the row that matters, and the one no string comes
+		// with: a form whose readable criteria held is still not an answer while
+		// the guard is unread.
+		"**`list-prefix: INFO — not settled`**",
 		"reads **both** candidate forms to the end of their criteria",
 		// The other half of "both forms are read": one form passing is the
 		// answer, and two passing is a contradiction the run stops on — a

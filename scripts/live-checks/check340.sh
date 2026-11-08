@@ -20,18 +20,21 @@
 # under it, one `runs/` object reads, the root listing is refused, a `tokens/`
 # read is refused, and a `tokens/` and a `cache/` listing are refused. The form
 # under which they hold is the one R12's builder must write, and the block names
-# it in one line. The two prefixed listings are the pair that can come back
-# UNREAD: gcloud resolves the prefix as an object before it lists it, so a
-# refusal naming `storage.objects.get` alone is that probe — a call the listing
-# clause never governed — and the row then says NOT OBSERVED rather than reading
-# a listing clause, which may be wider than R12's two prefixes, as one that
-# refused. BOTH forms are read to the end of their criteria whatever the first
-# one did: a failed criterion is that form's failure and nothing more, and the
-# answer is decided from the two result sets rather than from the first form to
-# finish. **If neither form lists, R12's Terraform must not land and the plan
-# stops and asks** (ruling E4); the bucket-wide viewer a listing would otherwise
-# need is deliberately NOT a fallback here, because it reads `tokens/` and
-# `cache/` too.
+# it in one line. The two prefixed listings are asked with a WILDCARD
+# (`gs://B/tokens/*`): gcloud resolves a plain prefix as an object before it
+# lists it, and that object request is refused whatever the listing clause says,
+# so the List request the guard is about would never be sent. A denial naming
+# `storage.objects.get` on one of them says the List request did not go out after
+# all: the row reads NOT OBSERVED and FAILS the form — the pair that guards R12's
+# two prefixes (the H3 veto) is half of what this check is for, and a run that
+# never measured it ends exit 2 with no string for R12's builder rather than 0
+# with a hole in it. BOTH forms are read to the end of their criteria whatever
+# the first one did: a failed criterion is that form's failure and nothing more,
+# and the answer is decided from the two result sets rather than from the first
+# form to finish. **If neither form lists, R12's Terraform must not land and the
+# plan stops and asks** (ruling E4); the bucket-wide viewer a listing would
+# otherwise need is deliberately NOT a fallback here, because it reads `tokens/`
+# and `cache/` too.
 #
 # A grant the bucket refuses is NOT a form that does not list: the run stops with
 # exit 2 and an `aborted` row rather than reading a permission error as the
@@ -44,14 +47,14 @@
 # permission for the `tokens/` READ (the object permission is what refusing a
 # read of a `runs/`-only grant looks like), and `storage.objects.list` again for
 # the `tokens/` and `cache/` LISTINGS — with `storage.objects.get` there read as
-# gcloud's prefix probe and the row left NOT OBSERVED, because the probe is a
-# call about an object under `tokens/` or `cache/` that neither clause of R12's
+# the object request gcloud makes before it lists, a call neither clause of R12's
 # binding governs, so a denial naming it says nothing about the listing clause's
-# reach. The check's second live run (2026-11-07) read that probe as "a call that
-# did not answer", stopped the run and kept the second form from ever being
-# tried; the fix records what could not be read instead of stopping, and the row
-# stops short of claiming the listing was refused. Everything else — a 5xx gcloud
-# did not retry, an expired session, a killed request, a denial naming another
+# reach: that row reads NOT OBSERVED and the form does not pass. The check's
+# second live run (2026-11-07) read that denial as "a call that did not answer",
+# stopped the run outright and kept the second form from ever being tried; the
+# fix records what could not be read and keeps reading, and the run then ends
+# exit 2 instead of handing R12 a string off an unmeasured veto. Everything else
+# — a 5xx gcloud did not retry, an expired session, a killed request, a denial naming another
 # permission or another bucket's resource — stops the run rather than being
 # recorded as a criterion that held, which would name a form R12 must not write on
 # a reading nobody took. Every failure a row
@@ -232,6 +235,12 @@ FORM_OK=no
 FORM_UNOBSERVED=""
 UNOBSERVED_RELATIVE=""
 UNOBSERVED_FULL=""
+# Whether a form FAILED a criterion, which is a different thing from a row it
+# could not read: a FAIL is a reading about that form's clause, an unread row is
+# no reading at all, and the verdict has to tell them apart.
+FORM_FAILED=no
+FAILED_RELATIVE=no
+FAILED_FULL=no
 HELPED=no
 
 # rand_hex: four hex digits from bash's own $RANDOM, so this run's names are its
@@ -891,6 +900,7 @@ must_list() { # must_list KEY WANT POLICY_ROLE URL [URL...]
     unknown) policy=" — the bucket policy could not be read back with your own identity, so whether the reports binding was there at that moment is not known (gcloud said: $(gcloud_said "$REPORTS_BINDING_SAID"))" ;;
     esac
   fi
+  FORM_FAILED=yes
   fact "$key" FAIL "the account could not list every prefix this criterion asks for, and each answer is its own: ${answers} — the prefix is not covered by this form's listing clause, or the grant had not taken effect within ${PROPAGATION_SECONDS}s${extra}${policy}"
   return 1
 }
@@ -907,6 +917,7 @@ must_read() {
   "" | *storage.objects.get*) ;;
   *) extra=" — NOTE: the refusal names ${named}and not storage.objects.get, so this read was refused for a reason other than the clause this check settles: read it before taking it as 'this form does not work'" ;;
   esac
+  FORM_FAILED=yes
   fact "$key" FAIL "the account could not read $url within ${PROPAGATION_SECONDS}s, which its resource.name clause has to cover: the reports job reads the records it summarises, and a listing half that cannot read an object is half a grant (gcloud said: $(gcloud_said "$LAST_ERROR"))${extra}"
   return 1
 }
@@ -927,20 +938,25 @@ must_read() {
 #
 # PROBE_PERM is the permission gcloud asks for when it resolves a prefix as an
 # OBJECT before it lists it, and it is what keeps the two prefixed LISTINGS
-# honest. `ls gs://B/tokens/` is not one request: gcloud reads `tokens/` as an
-# object first, and the read clause never covers `tokens/`, so that probe is
-# refused whatever the listing clause says and the List request is never sent —
-# the refusal the check's second live run (2026-11-07) read as "a call that did
-# not answer", which stopped the run and kept the second form from being tried.
-# Accepting that name as the criterion would therefore record a PASS on a listing
-# that was never requested: the row would hold whatever the listing clause allows,
-# including a clause wider than R12's two prefixes, which is the one thing these
-# two rows exist to catch. So a denial naming the probe permission AND NOTHING
-# ELSE is recorded as INFO — not observed — and neither fails nor holds the form:
-# what the listing clause does with that URL is simply not measured by this call.
-# The root listing and the `tokens/` read pass an empty PROBE_PERM: the root is
-# one request (a listing of the bucket, which no prefix probe precedes), and the
-# read IS the object request, so for it either name is the refusal itself.
+# honest. Those two are asked with a wildcard so that the List request goes out —
+# `ls gs://B/tokens/` names a prefix, gcloud reads `tokens/` as an object first,
+# and since the read clause never covers `tokens/` that object request is refused
+# whatever the listing clause says, leaving the List request unsent (the reading
+# this check's second live run, 2026-11-07, died on). `gs://B/tokens/*` names a
+# pattern, so gcloud goes straight to listing with prefix `tokens/`, which is the
+# request the H3 veto is about. A denial naming the probe permission anyway says
+# the List request still did not go out, and then nothing about the listing
+# clause can be read from the call: accepting that name as the criterion would
+# record a PASS on a listing that was never requested — the row would hold
+# whatever the listing clause allows, including a clause wider than R12's two
+# prefixes, which is the one thing these two rows exist to catch. So a denial
+# naming the probe permission AND NOTHING ELSE is recorded as INFO — not observed
+# — and FAILS the form: the run reads on to the end of both forms and then ends
+# exit 2 with no string for R12's builder, because a grant whose guard was never
+# measured is not a grant R12 may land. The root listing and the `tokens/` read
+# pass an empty PROBE_PERM: the root is one request (a listing of the bucket,
+# which no prefix probe precedes), and the read IS the object request, so for it
+# either name is the refusal itself.
 #
 # These are read after a listing that must succeed already did, so "refused" can
 # never be the grant simply not being in effect yet: by this point the account has
@@ -949,6 +965,7 @@ must_refuse() {
   local key=$1 what=$2 perms=$3 probe=$4 out named perm matched=""
   shift 4
   if out=$("$@" 2>&1); then
+    FORM_FAILED=yes
     fact "$key" FAIL "$what was ALLOWED to the account under this form, which is wider than R12's two prefixes: a grant that opens it is not the grant the reports job is written against (what came back: $(gcloud_said "$out"))"
     return 1
   fi
@@ -958,8 +975,8 @@ must_refuse() {
   done
   if [ -z "$matched" ] && [ -n "$probe" ] && [ "$named" = "$probe " ]; then
     FORM_UNOBSERVED="${FORM_UNOBSERVED}${FORM_UNOBSERVED:+, }${key}"
-    fact "$key" INFO "not observed: $what was refused by a denial naming $probe and not $(permission_words "$perms") — but gcloud resolves this prefix as an object BEFORE it lists it, so the call that came back with this denial is that prefix probe and whether the listing itself was sent, or refused, cannot be read from it. The listing clause's reach over this URL is NOT measured here, and this row is neither a criterion that held nor one that failed — it is the reading this call cannot make (gcloud said: $(gcloud_said "$out"))"
-    return 0
+    fact "$key" INFO "not observed: $what was refused by a denial naming $probe and not $(permission_words "$perms") — a denial naming the object permission is the prefix PROBE gcloud makes before it sends a listing, and the URL this criterion lists is a wildcard precisely so that the List request goes out instead. Nothing about the listing CLAUSE can be read from what came back: whether the List request was ever sent cannot be told from it, and the clause's reach over this prefix is NOT measured. The row is neither a criterion that held nor one that failed, and it fails the form — a run that did not measure this pair cannot be an answer about R12's grant (gcloud said: $(gcloud_said "$out"))"
+    return 1
   fi
   if [ -z "$matched" ]; then
     stop "$what could not be read as a refusal: the call failed without naming $(permission_words "$perms"), the permissions the clause this criterion is about would have carried, so it is a call that did not answer — an expired session, a 5xx gcloud did not retry, a killed request or a denial naming another permission all read like this, and none of them is a reading about this form's clause (gcloud said: $(gcloud_said "$out")). The form is neither PASSing nor failing here: nothing was measured under it, so run the check again"
@@ -1028,6 +1045,7 @@ step_seed() {
 try_form() {
   local how=$1 lruns=$2 lreports=$3 ok=yes held=no key
   FORM_OK=no
+  FORM_FAILED=no
   FORM_UNOBSERVED=""
   say "form '$how': the listing clauses name \"$lruns\" and \"$lreports\""
   grant_bindings "$lruns" "$lreports"
@@ -1054,17 +1072,22 @@ try_form() {
     if ! must_refuse "$how-tokens-read-refused" "the read of the seeded tokens/ object gs://$B/$TOKEN_OBJ" \
       "$PREFIX_LISTING_REFUSALS" "" \
       cat_as_sa "gs://$B/$TOKEN_OBJ"; then ok=no; fi
-    # These two are the listings gcloud probes first, and the LISTING permission
-    # is the only name that makes them a criterion: a denial naming
-    # storage.objects.get is that probe and NOT the listing's own refusal, so it
-    # is recorded as not observed rather than as a criterion that held — see
-    # must_refuse, and the header's account of the second live run.
-    if ! must_refuse "$how-tokens-list-refused" "the listing of gs://$B/tokens/" \
+    # These two are the listings of a prefix R12's grant must not reach, and the
+    # URL is a WILDCARD on purpose: `ls gs://B/tokens/` is refused at the object
+    # request gcloud makes before it lists — the read clause never covers
+    # `tokens/` — so the List request this criterion is about would never be sent
+    # and the row would say nothing about the listing clause. `gs://B/tokens/*`
+    # is a pattern, so gcloud goes straight to listing with prefix `tokens/`, and
+    # that request is the one the H3 veto is about. The LISTING permission is
+    # then the only name that makes the row a criterion: a denial naming
+    # storage.objects.get says the List request did not go out after all, and
+    # that row fails the form rather than passing it — see must_refuse.
+    if ! must_refuse "$how-tokens-list-refused" "the listing of gs://$B/tokens/* (a wildcard, so the List request is the one that is sent)" \
       storage.objects.list storage.objects.get \
-      list_as_sa "gs://$B/tokens/"; then ok=no; fi
-    if ! must_refuse "$how-cache-list-refused" "the listing of gs://$B/cache/" \
+      list_as_sa "gs://$B/tokens/*"; then ok=no; fi
+    if ! must_refuse "$how-cache-list-refused" "the listing of gs://$B/cache/* (a wildcard, so the List request is the one that is sent)" \
       storage.objects.list storage.objects.get \
-      list_as_sa "gs://$B/cache/"; then ok=no; fi
+      list_as_sa "gs://$B/cache/*"; then ok=no; fi
   else
     # Nothing under this form held, so the grant is either not in effect or not
     # the grant this form describes — and a "refused" read now would be the
@@ -1076,8 +1099,14 @@ try_form() {
     done
   fi
   case "$how" in
-  relative) UNOBSERVED_RELATIVE=$FORM_UNOBSERVED ;;
-  full) UNOBSERVED_FULL=$FORM_UNOBSERVED ;;
+  relative)
+    UNOBSERVED_RELATIVE=$FORM_UNOBSERVED
+    FAILED_RELATIVE=$FORM_FAILED
+    ;;
+  full)
+    UNOBSERVED_FULL=$FORM_UNOBSERVED
+    FAILED_FULL=$FORM_FAILED
+    ;;
   esac
   remove_bindings
   if [ "$ok" = yes ]; then FORM_OK=yes; fi
@@ -1124,25 +1153,44 @@ step_forms() {
 # printed above the block as well, so a paste-back carries it even to a reader
 # who skims the facts.
 step_verdict() {
-  local UNOBSERVED_NOTE=""
-  case "$PASSED_FORM" in
-  relative) FORM_UNOBSERVED=$UNOBSERVED_RELATIVE ;;
-  full) FORM_UNOBSERVED=$UNOBSERVED_FULL ;;
-  *) FORM_UNOBSERVED="" ;;
-  esac
-  if [ -n "$FORM_UNOBSERVED" ]; then
-    UNOBSERVED_NOTE=" — NOTE: the rows ${FORM_UNOBSERVED} were NOT OBSERVED under this form: what came back was the prefix probe gcloud makes BEFORE it lists, so the listing request itself was never read and the listing clause's outward reach over those URLs is not measured here. The form is answered on the criteria that were read; those rows say what they could not"
+  # A form that ends up not-OK did so in one of two ways, and they are different
+  # readings: a criterion FAILED (a reading about that form's clause), or a row
+  # could not be READ at all (no reading taken). The second is why a form whose
+  # every readable criterion held is still not an answer: the two prefixed
+  # listings guard the H3 veto, and a run that never measured them must not hand
+  # R12 its string — see the UNREAD branch below.
+  local UNREAD_FORMS="" UNREAD_ROWS="" unread_rel=no unread_full=no
+  if [ -n "$UNOBSERVED_RELATIVE" ] && [ "$FAILED_RELATIVE" = no ]; then
+    unread_rel=yes
+    UNREAD_ROWS=$UNOBSERVED_RELATIVE
   fi
+  if [ -n "$UNOBSERVED_FULL" ] && [ "$FAILED_FULL" = no ]; then
+    unread_full=yes
+    UNREAD_ROWS="${UNREAD_ROWS}${UNREAD_ROWS:+, }$UNOBSERVED_FULL"
+  fi
+  case "$unread_rel$unread_full" in
+  yesyes) UNREAD_FORMS="the relative and full forms" ;;
+  yesno) UNREAD_FORMS="the relative form" ;;
+  noyes) UNREAD_FORMS="the full form" ;;
+  esac
   case "$PASSED_FORM" in
   relative)
     ANSWER="runs/ on the runs binding and reports/ on the reports binding (the request's own prefix, not the bucket's object path)"
-    fact list-prefix PASS "the RELATIVE form passed every criterion it could read, so the attribute carries the request's own prefix: R12's builder must pass \"runs/\" for the runs binding and \"reports/\" for the reports binding, each in api.getAttribute('storage.googleapis.com/objectListPrefix', '').startsWith(\"<prefix>/\")${UNOBSERVED_NOTE}"
+    fact list-prefix PASS "the RELATIVE form passed every criterion, so the attribute carries the request's own prefix: R12's builder must pass \"runs/\" for the runs binding and \"reports/\" for the reports binding, each in api.getAttribute('storage.googleapis.com/objectListPrefix', '').startsWith(\"<prefix>/\")"
     ;;
   full)
     ANSWER="projects/_/buckets/$B/objects/runs/ on the runs binding and projects/_/buckets/$B/objects/reports/ on the reports binding (the bucket's object path, not the request's own prefix)"
-    fact list-prefix PASS "the FULL PATH form passed every criterion it could read, so the attribute carries the bucket's object path: R12's builder must pass \"projects/_/buckets/$B/objects/runs/\" for the runs binding and \"projects/_/buckets/$B/objects/reports/\" for the reports binding, each in api.getAttribute('storage.googleapis.com/objectListPrefix', '').startsWith(\"<prefix>\")${UNOBSERVED_NOTE}"
+    fact list-prefix PASS "the FULL PATH form passed every criterion, so the attribute carries the bucket's object path: R12's builder must pass \"projects/_/buckets/$B/objects/runs/\" for the runs binding and \"projects/_/buckets/$B/objects/reports/\" for the reports binding, each in api.getAttribute('storage.googleapis.com/objectListPrefix', '').startsWith(\"<prefix>\")"
     ;;
   *)
+    if [ -n "$UNREAD_FORMS" ]; then
+      # Not exit 0 and not the E4 row either: the form the other rows point at
+      # was read, but the pair that guards R12's two prefixes was not, and a
+      # check whose whole reason to run before R12 is that guard cannot hand
+      # over a string off half a reading.
+      fact list-prefix INFO "not settled: under ${UNREAD_FORMS} every criterion that could be read held, but the two listings that guard R12's two prefixes could not be read — ${UNREAD_ROWS} came back as a denial naming the object permission, which is the request gcloud makes before it ever sends a List, so the listing clause's reach over tokens/ and cache/ is NOT measured by this run. R12's two prefixes are the whole point of the guard (the H3 veto), so this run answers it for neither form: the rows above say which form the attribute's own criteria point at, and that form's string is NOT handed over here"
+      stop "the tokens/ and cache/ listings could not be read under ${UNREAD_FORMS} (${UNREAD_ROWS}), so this run is a could-not-tell about the guard R12's two prefixes exist for — nothing measured it, and R12's Terraform must NOT land on this reading. The block above still carries both forms' rows and says which form the attribute appears to carry; paste it back, and run the check again. If it repeats, the rows say why: a wildcard listing refused by a denial naming storage.objects.get means gcloud refused before the List request, and no reading of the listing clause can be had this way"
+    fi
     fact list-prefix FAIL "NEITHER form listed: under both, the account could not list runs/$SLUG/, or reports/ at the bare prefix and at the slug level under it. The root listing and the tokens/ and cache/ listings carry their own answer in their own rows above — a row that says NOT OBSERVED is not one of them, and a row that was ALLOWED is the failure of that form. R12's Terraform must NOT land on this reading — the plan stops and asks the owner (ruling E4) — and the bucket-wide objectViewer a listing would otherwise need is deliberately not planned here, because it would also read tokens/ and cache/. Read the two forms' rows above: a listing that failed only after ${PROPAGATION_SECONDS}s of retries says the attribute does not carry that form, and a refusal that was ALLOWED says the grant is wider than R12's two prefixes"
     ;;
   esac
@@ -1174,7 +1222,7 @@ print_plan() {
   say "      gcloud storage buckets add-iam-policy-binding gs://$B --project=$P --member=serviceAccount:$SA_EMAIL --role=roles/storage.objectViewer --condition-from-file=<the runs/ condition>"
   say "      gcloud storage buckets add-iam-policy-binding gs://$B --project=$P --member=serviceAccount:$SA_EMAIL --role=roles/storage.objectUser --condition-from-file=<the reports/ condition>"
   say "    the first carrying $(clause_read runs) || $(clause_list "runs/") and the second $(clause_read reports) || $(clause_list "reports/") under the relative form, and the same two with projects/_/buckets/$B/objects/runs/ and .../objects/reports/ under the full one"
-  say "  [network, reads, as the account] gcloud storage ls --recursive --impersonate-service-account=$SA_EMAIL --project=$P gs://$B/runs/$SLUG/ and gs://$B/reports/$SLUG/ and gs://$B/reports/ (each must list, and each listing must name the seeded object; retried for up to ${PROPAGATION_SECONDS}s for the grant to take effect, and each URL's own answer goes into the row); gcloud storage cat of the seeded runs/ object (must read, and retried the same way); then, only if one of those held, the four refusals: ls gs://$B/, cat the seeded tokens/ object, ls gs://$B/tokens/ and ls gs://$B/cache/ (each has to be REFUSED, and refused by a denial for this account about a resource inside this bucket naming a permission the clause it is about would carry — storage.objects.list for the root listing, either permission for the tokens/ read, and storage.objects.list for the tokens/ and cache/ listings, where a denial naming storage.objects.get alone is gcloud's prefix probe rather than the listing, so that row is recorded NOT OBSERVED and neither holds nor fails the form; a call that did not answer, or a denial naming another permission or another bucket, stops the run instead of counting as one of them)"
+  say "  [network, reads, as the account] gcloud storage ls --recursive --impersonate-service-account=$SA_EMAIL --project=$P gs://$B/runs/$SLUG/ and gs://$B/reports/$SLUG/ and gs://$B/reports/ (each must list, and each listing must name the seeded object; retried for up to ${PROPAGATION_SECONDS}s for the grant to take effect, and each URL's own answer goes into the row); gcloud storage cat of the seeded runs/ object (must read, and retried the same way); then, only if one of those held, the four refusals: ls gs://$B/, cat the seeded tokens/ object, ls gs://$B/tokens/* and ls gs://$B/cache/* (each has to be REFUSED, and refused by a denial for this account about a resource inside this bucket naming a permission the clause it is about would carry — storage.objects.list for the root listing, either permission for the tokens/ read, and storage.objects.list for the two listings, which are asked with a WILDCARD so gcloud sends the List request instead of refusing the prefix at the object request it makes first; a denial naming storage.objects.get on one of those two is that object request, so the row is recorded NOT OBSERVED and FAILS the form — a run that did not measure the pair that guards R12's two prefixes ends exit 2 and hands R12 no string; a call that did not answer, or a denial naming another permission or another bucket, stops the run instead of counting as one of them)"
   say "  [network, reads, with YOUR identity] whenever the reports/ listing fails: gcloud storage buckets get-iam-policy gs://$B --project=$P, to say whether the reports binding ($SA_EMAIL under roles/storage.objectUser) was in the bucket policy at that moment — a clause that does not match the request and a binding that never landed are two different failures and the row has to say which one it is"
   say "  [network, writes] gcloud storage buckets remove-iam-policy-binding ... --all for both roles, between the two forms and again in the Restore"
   say "  [network, reads, as the account] between the two forms, always: ls --impersonate-service-account=$SA_EMAIL --project=$P gs://$B/runs/$SLUG/, retried until the account is REFUSED it by a denial naming $(permission_words "$PREFIX_LISTING_REFUSALS"), the permissions the removed clause carried (the removal has taken effect, so the next form cannot read through the earlier clause), or for up to ${PROPAGATION_SECONDS}s — a failure that names no permission, or another one, is a call that did not answer and is retried like a listing that still succeeds, and a wait that never sees the denial is a stop rather than a verdict"
