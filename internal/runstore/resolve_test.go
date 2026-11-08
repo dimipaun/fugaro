@@ -46,6 +46,16 @@ func TestResolveEndingActiveBeatsRecent(t *testing.T) {
 	if _, err := ResolveEnding(ctx, b, nil, "3bb2", resolveSince); !errors.Is(err, ErrAmbiguous) {
 		t.Fatalf("ResolveEnding without the feed = %v, want ErrAmbiguous", err)
 	}
+	// A feed that cannot be read is handed back, never answered from the
+	// window — not even when the window holds the run, which this one does:
+	// falling through here is the silent narrowing F6 forbids, and the
+	// caller's supplier is where the failure is said out loud.
+	feedErr := errors.New("feed is down")
+	failing := func(context.Context) ([]task.Ref, error) { return nil, feedErr }
+	seed(t, Open(b, "acme-app", "20261106-080000-a1c4"), "20261106-080000-a1c4")
+	if _, err := ResolveEnding(ctx, b, failing, "a1c4", resolveSince); !errors.Is(err, feedErr) {
+		t.Fatalf("ResolveEnding with an unreadable feed = %v, want %v", err, feedErr)
+	}
 }
 
 // The window is the caller's: an ending resolves against the runs minted at
@@ -71,6 +81,19 @@ func TestResolveEndingWindow(t *testing.T) {
 	// The same run by its full ID: the window bounds an ending, never a run.
 	if got, err := ResolveEnding(ctx, b, nil, "20261031-090000-cccc", resolveSince); err != nil || len(got) != 1 {
 		t.Fatalf("ResolveEnding of the full ID = %v, %v", got, err)
+	}
+	// The matches are ordered newest first, then by ID, and the window does
+	// not come in that order on its own: it walks the repositories in slug
+	// order, so an answer grouped by repository (the older run first, here)
+	// is what dropping the sort would print.
+	seed(t, Open(b, "acme-app", "20261104-090000-c0de"), "20261104-090000-c0de")
+	seed(t, Open(b, "acme-web", "20261106-090000-c0de"), "20261106-090000-c0de")
+	got, err = ResolveEnding(ctx, b, nil, "c0de", resolveSince)
+	if !errors.Is(err, ErrAmbiguous) || !slices.Equal(got, []Match{
+		{Slug: "acme-web", RunID: "20261106-090000-c0de"},
+		{Slug: "acme-app", RunID: "20261104-090000-c0de"},
+	}) {
+		t.Fatalf("ResolveEnding across repositories = %v, %v", got, err)
 	}
 }
 
