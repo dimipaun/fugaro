@@ -1512,7 +1512,13 @@ func (r *run) endArtifactFailed(ctx context.Context) {
 	if reason == "" {
 		reason = "the plan stage ended without a result"
 	}
-	r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, failure.Unclassified, r.redact(reason))
+	// The class is the one the site that wrote this reason chose, exactly as
+	// finalize's failed case reads it: the reason here *is* r.failure(), so a
+	// class written independently of it would describe a different sentence
+	// (a plan stage whose result reported an error carries
+	// stage_error_unexplained — or the provider-auth or transport class beside
+	// it — and unclassified would drop it).
+	r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, r.failureClass(), r.redact(reason))
 	r.skipPR = true
 	r.storeArtifactEnded(ctx)
 }

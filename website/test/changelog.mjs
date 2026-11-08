@@ -3,9 +3,13 @@
 // The source of truth of every assertion here is `docs/releases/` — the directory of
 // Highlights files, read directly by this file — never the generator's own output and
 // never a git tag or a commit date (D100): a release file is committed to `main` before
-// its tag exists, and a shallow checkout has no tags to read at all. Which releases count
-// as published is the plugin's own version (`plugin/.claude-plugin/plugin.json`), a file in
-// this repository rather than a tag of the checkout the build runs in.
+// its tag exists, and a shallow checkout has no tags to read at all.
+//
+// One version line outside the directory is read here, from this repository and compared
+// against the directory rather than against the generator's own answer: the CLI stream's
+// `current` version (`docs/release-streams.yaml`) decides which files are releases at all. A
+// file above it is the next release's notes, written ahead of their release, and it is left
+// out — neither an entry nor a file the summary check has to cover.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -18,10 +22,11 @@ import { buildChangelog } from '../src/lib/changelog.mjs'
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const RELEASES_DIR = path.join(REPO_ROOT, 'docs', 'releases')
 
-// The plugin's manifest, whose version decides which releases are published (the owner's
-// brief of 2026-10-19). Read here rather than asked of the generator: the point of the cases
-// below is to compare the generator's answer against the file the rule names.
-const PLUGIN_FILE = path.join(REPO_ROOT, 'plugin', '.claude-plugin', 'plugin.json')
+// The release streams catalogue, whose CLI stream's `current` version decides which release
+// files are releases at all: a file for a version above it is the next release's notes, written
+// ahead of their release (docs/releases/README.md asks for them in the pull request that makes
+// the change), and the generator leaves it out.
+const STREAMS_FILE = path.join(REPO_ROOT, 'docs', 'release-streams.yaml')
 
 // `docs/releases/README.md` explains the format; it is skipped by name, not by pattern.
 const NON_RELEASE = 'README.md'
@@ -96,6 +101,68 @@ function newestFirst(a, b) {
   return 0
 }
 
+/**
+ * The CLI stream's current release, as the tag of the file it names, read off
+ * `docs/release-streams.yaml` by this file — the file the rule names rather than the
+ * generator's reader of it (the same reason the release files are read here rather than asked
+ * of the generator).
+ */
+function cliCurrent() {
+  const lines = readFileSync(STREAMS_FILE, 'utf8').split('\n')
+  const start = lines.findIndex((line) => /^\s*-\s*name:\s*cli\s*$/.test(line))
+  assert.notEqual(
+    start,
+    -1,
+    'docs/release-streams.yaml carries no `- name: cli` stream, and the changelog reads the CLI’s current release from that stream',
+  )
+  for (let at = start + 1; at < lines.length; at++) {
+    if (/^\s*-\s*name:/.test(lines[at])) break
+    const m = /^\s*current:\s*"?(\d+\.\d+\.\d+)"?\s*$/.exec(lines[at])
+    if (m !== null) return `v${m[1]}`
+  }
+  throw new Error('docs/release-streams.yaml carries no `current: x.y.z` line under the cli stream, and the changelog compares every release file’s version with it')
+}
+
+/** True when the file's version is at or below the version of `other`: a release, not a draft. */
+function atOrBelow(fileName, other) {
+  const file = versionOf(fileName)
+  const limit = versionOf(other)
+  for (let i = 0; i < 3; i++) {
+    if (file[i] !== limit[i]) return file[i] < limit[i]
+  }
+  return true
+}
+
+/** The files that are releases: the ones at or below the CLI stream's current version. */
+function releasedFiles() {
+  return releaseFiles().filter((name) => atOrBelow(name, `${cliCurrent()}.md`))
+}
+
+/**
+ * A release streams catalogue for a fixture, in the shape `docs/release-streams.yaml` carries,
+ * cut down to the one stream the changelog reads: the CLI's current version. A fixture names
+ * its own `current` so its cases depend on no file outside its directory — and the version
+ * below is above every fixture file's, unless the case is about the boundary itself.
+ */
+function writeCatalogue(dir, current) {
+  const file = path.join(dir, 'release-streams.yaml')
+  writeFileSync(
+    file,
+    [
+      '# a release streams catalogue, cut down to the CLI’s own version line',
+      'streams:',
+      '  - name: cli',
+      '    theme: animals',
+      '    names: [Badger, Camel]',
+      `    current: "${current}"`,
+      '    next: Dolphin',
+      '    tag_prefix: v',
+      '',
+    ].join('\n'),
+  )
+  return file
+}
+
 // The lines a reader is meant to see: the file's own lines, with the authoring notes an
 // HTML comment wraps (v0.7.5 carries one) left out.
 function contentLines(fileName) {
@@ -115,13 +182,12 @@ test('changelog builds from docs/releases', () => {
     // date a reader wants is the one the GitHub release states (D100).
     assert.deepEqual(
       Object.keys(entry).sort(),
-      ['highlights', 'released', 'sections', 'tag', 'version'],
-      `${entry.tag}: the entry carries exactly the five designed fields`,
+      ['highlights', 'sections', 'tag', 'version'],
+      `${entry.tag}: the entry carries exactly the four designed fields`,
     )
     assert.equal('date' in entry, false, `${entry.tag}: no date field`)
     assert.match(entry.tag, /^v\d+\.\d+\.\d+$/, `${entry.tag}: the tag is vX.Y.Z`)
     assert.equal(entry.tag.slice(1), entry.version, `${entry.tag}: version is the tag without the v`)
-    assert.equal(typeof entry.released, 'boolean', `${entry.tag}: released is a boolean`)
     assert.ok(Array.isArray(entry.highlights) && entry.highlights.length > 0, `${entry.tag}: highlights is a non-empty array`)
     assert.ok(Array.isArray(entry.sections), `${entry.tag}: sections is an array`)
     for (const section of entry.sections) {
@@ -148,23 +214,108 @@ test('changelog builds from docs/releases', () => {
 })
 
 test('changelog covers every release file', () => {
-  const files = releaseFiles()
+  const files = releasedFiles()
   const entries = buildChangelog()
 
   // `docs/releases/README.md` is the one file that is not a release; the count below is
-  // every other `*.md` in the directory, so a release file the generator does not
-  // recognise shrinks the answer and fails here.
+  // every other `*.md` in the directory at or below the CLI stream's current version, so a
+  // release file the generator does not recognise shrinks the answer and fails here — and a
+  // file above that version (the next release's notes, written ahead of its release) is
+  // deliberately not an entry, which the case after this one holds.
   assert.ok(existsSync(path.join(RELEASES_DIR, NON_RELEASE)), 'docs/releases/README.md is the file skipped by name')
   assert.equal(
     entries.length,
     files.length,
-    `changelog lists ${entries.length} releases, docs/releases/ holds ${files.length}`,
+    `changelog lists ${entries.length} releases, docs/releases/ holds ${files.length} release files at or below ${cliCurrent()}`,
   )
   assert.deepEqual(
     new Set(entries.map((entry) => entry.tag)),
     new Set(files.map(tagOf)),
-    'every *.md in docs/releases/ other than README.md is an entry, and no entry is outside the directory',
+    'every *.md in docs/releases/ other than README.md and the drafts above the CLI’s current version is an entry, and no entry is outside the directory',
   )
+})
+
+test('a release file for a version above the CLI’s current one is left out, and needs no summary line', () => {
+  // The release process writes the next release's highlights into the pull request that makes
+  // the change (docs/releases/README.md), so `docs/releases/` holds files for versions the CLI
+  // stream has not reached: v0.22.0 sat there while `current` was 0.21.0. Such a file is a
+  // draft of the next release, not a release, so the changelog leaves it out — it is not
+  // rendered, and it is not held to the summary line every release file needs. The fixture is
+  // the shape of that tree: three released files, one draft above them with no summary at all,
+  // and a catalogue naming the version the stream is at.
+  const dir = mkdtempSync(path.join(tmpdir(), 'fugaro-changelog-draft-'))
+  const releasesDir = path.join(dir, 'releases')
+  try {
+    mkdirSync(releasesDir)
+    writeFileSync(path.join(releasesDir, 'v1.2.0.md'), '- a released file with one bullet\n')
+    writeFileSync(path.join(releasesDir, 'v1.2.1.md'), '- a released file with one bullet\n')
+    writeFileSync(path.join(releasesDir, 'v1.2.2.md'), '- a released file with one bullet\n')
+    // The draft: a Highlights file with no summary line anywhere, which is the file the site's
+    // page stops the build for when it is a release.
+    writeFileSync(path.join(releasesDir, 'v1.3.0.md'), '- the next release’s highlights, written ahead of it\n')
+
+    // The catalogue, written in the shape docs/release-streams.yaml carries.
+    const streamsFile = path.join(dir, 'release-streams.yaml')
+    writeFileSync(
+      streamsFile,
+      [
+        '# the release streams catalogue, cut down to the CLI’s own version line',
+        'streams:',
+        '  - name: cli',
+        '    theme: animals',
+        '    names: [Badger, Camel]',
+        '    current: "1.2.2"',
+        '    next: Dolphin',
+        '    tag_prefix: v',
+        '',
+        '  - name: console',
+        '    theme: fruits',
+        '    names: [Cherry, Mango]',
+        '    current: "0.110.0"',
+        '    next: Melon',
+        '    tag_prefix: console-v',
+        '',
+      ].join('\n'),
+    )
+
+    const tags = () => buildChangelog({ releasesDir, streamsFile }).map((entry) => entry.tag)
+
+    assert.deepEqual(
+      tags(),
+      ['v1.2.2', 'v1.2.1', 'v1.2.0'],
+      'the file above the CLI’s current version is an entry: the release files are the ones at or below it, and a draft of the next release is neither an entry nor a file the summary check has to cover',
+    )
+
+    // And the boundary is "at or below": the version the stream is at is a release, not a draft.
+    writeFileSync(
+      streamsFile,
+      readFileSync(streamsFile, 'utf8').replace('current: "1.2.2"', 'current: "1.3.0"'),
+    )
+    assert.deepEqual(
+      tags(),
+      ['v1.3.0', 'v1.2.2', 'v1.2.1', 'v1.2.0'],
+      'the file at the version the CLI stream is at is not an entry, and it is the release the stream has reached',
+    )
+
+    // A catalogue with no CLI stream, and one whose current version is not x.y.z, stop the
+    // build rather than reading as "every release file is a draft".
+    const withoutCurrent = path.join(dir, 'no-cli.yaml')
+    writeFileSync(withoutCurrent, 'streams:\n  - name: console\n    current: "0.110.0"\n')
+    assert.throws(
+      () => buildChangelog({ releasesDir, streamsFile: withoutCurrent }),
+      new RegExp(`^Error: ${withoutCurrent.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}: no \`cli\` stream`),
+      'a catalogue with no CLI stream left every release file out instead of stopping the build',
+    )
+    const badCurrent = path.join(dir, 'bad-current.yaml')
+    writeFileSync(badCurrent, 'streams:\n  - name: cli\n    current: 1.3\n')
+    assert.throws(
+      () => buildChangelog({ releasesDir, streamsFile: badCurrent }),
+      /version is 1\.3/,
+      'a current version that is not x.y.z was compared with the release files rather than refused',
+    )
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('changelog lists no release that is not a file', () => {
@@ -263,14 +414,11 @@ test('the generator splits a file at both section headings, in the file’s own 
       ].join('\n'),
     }
     for (const [fileName, text] of Object.entries(files)) writeFileSync(path.join(releasesDir, fileName), `${text}\n`)
-    // The published version the fixture's entries are judged against: one of its own, so the
-    // shape cases below depend on no file outside this directory. It is written beside the
-    // release directory rather than inside it, because everything in the release directory
-    // but README.md has to be a release file.
-    const pluginFile = path.join(dir, 'plugin.json')
-    writeFileSync(pluginFile, `${JSON.stringify({ name: 'fugaro', version: '1.2.4' })}\n`)
+    // A catalogue of the fixture's own, at a version above its files: the case is about the
+    // split, and a fixture whose files read as drafts of the next release would have no entries.
+    const streamsFile = writeCatalogue(dir, '9.9.9')
 
-    const entries = buildChangelog({ releasesDir, pluginFile })
+    const entries = buildChangelog({ releasesDir, streamsFile })
 
     // Newest first, so the fixture's version tells the case which file it is looking at.
     assert.deepEqual(
@@ -314,85 +462,23 @@ test('the generator splits a file at both section headings, in the file’s own 
   }
 })
 
-test('a release is published when its version is at or below the plugin’s, whatever the checkout carries', () => {
-  // The owner's brief of 2026-10-19: the deploy build checks out without tags, so a rule read
-  // from `git tag --list` printed "not yet released" for every release on the deployed site.
-  // The rule is now the plugin's own version against the release's, and the fixture below is
-  // held to it in a directory that is not a git repository at all: a tag cannot be the reason
-  // any of these answers is what it is.
-  const dir = mkdtempSync(path.join(tmpdir(), 'fugaro-changelog-published-'))
-  const releasesDir = path.join(dir, 'releases')
-  try {
-    mkdirSync(releasesDir)
-    for (const fileName of ['v1.2.0.md', 'v1.2.1.md', 'v1.2.2.md']) {
-      writeFileSync(path.join(releasesDir, fileName), '- a release file with one bullet\n')
-    }
-    const pluginFile = path.join(dir, 'plugin.json')
-    const published = (version) => {
-      writeFileSync(pluginFile, `${JSON.stringify({ name: 'fugaro', version }, null, 2)}\n`)
-      return Object.fromEntries(buildChangelog({ releasesDir, pluginFile }).map((entry) => [entry.tag, entry.released]))
-    }
+test('the CLI stream’s current version names a release file, and it is the newest entry', () => {
+  const current = cliCurrent()
+  const entries = buildChangelog()
 
-    assert.ok(!existsSync(path.join(dir, '.git')), 'the fixture directory must not be a git repository, or a tag could be the reason for an answer below')
-
-    assert.deepEqual(
-      published('1.2.1'),
-      { 'v1.2.2': false, 'v1.2.1': true, 'v1.2.0': true },
-      'a release file above the plugin’s version is not yet released, and one at or below it is',
-    )
-    assert.deepEqual(
-      published('1.2.2'),
-      { 'v1.2.2': true, 'v1.2.1': true, 'v1.2.0': true },
-      'the version the plugin carries is published: the bump lands before the tag, so an equal version is a released one',
-    )
-    assert.deepEqual(
-      published('9.9.9'),
-      { 'v1.2.2': true, 'v1.2.1': true, 'v1.2.0': true },
-      'a plugin from a later minor releases everything below it',
-    )
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
-
-test('the plugin’s own version names a release file, and that release is published', () => {
-  const { version } = JSON.parse(readFileSync(PLUGIN_FILE, 'utf8'))
-  const entry = buildChangelog().find((candidate) => candidate.version === version)
-
-  // The version in the manifest is the newest released one, and the changelog's whole reason
-  // for reading it is to say which entries those are: a manifest naming a release with no
-  // file, or a file whose release reads as unpublished, is the drift this case refuses.
+  // The catalogue's `current` is the release the stream is at, and the changelog's whole reason
+  // for reading it is to tell a release file from the next release's notes: a stream at a
+  // version docs/releases/ holds no file for, or one that is not the newest entry, is the drift
+  // this case refuses — either a release the page cannot render or a draft it would.
   assert.ok(
-    entry !== undefined,
-    `plugin/.claude-plugin/plugin.json names ${version} and docs/releases/ has no v${version}.md: the manifest's version is the newest released one, and the file it names is the changelog's own entry for it`,
+    existsSync(path.join(RELEASES_DIR, `${current}.md`)),
+    `docs/release-streams.yaml puts the cli stream at ${current} and docs/releases/ has no ${current}.md: the version the stream is at is a release, and its file is the changelog's own entry for it`,
   )
-  assert.equal(entry.released, true, `docs/releases/v${version}.md reads as not yet released: the plugin's version is ${version}, and the release it names is published`)
-})
-
-test('a plugin manifest the changelog cannot read stops the build, naming the file', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'fugaro-changelog-plugin-'))
-  const releasesDir = path.join(dir, 'releases')
-  try {
-    mkdirSync(releasesDir)
-    writeFileSync(path.join(releasesDir, 'v1.2.3.md'), '- a release file with one bullet\n')
-    const pluginFile = path.join(dir, 'plugin.json')
-
-    writeFileSync(pluginFile, '{ not json\n')
-    assert.throws(
-      () => buildChangelog({ releasesDir, pluginFile }),
-      new RegExp(`^Error: ${pluginFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} cannot be read as JSON`),
-      'a manifest that is not JSON is not a changelog with nothing released',
-    )
-
-    writeFileSync(pluginFile, `${JSON.stringify({ name: 'fugaro', version: '0.9' })}\n`)
-    assert.throws(
-      () => buildChangelog({ releasesDir, pluginFile }),
-      /carries the version "0\.9"/,
-      'a version that is not x.y.z is refused rather than compared',
-    )
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
+  assert.equal(
+    entries[0].tag,
+    current,
+    `the changelog's newest entry is ${entries[0].tag} and the cli stream is at ${current}: the stream's current version is the newest release, so the file it names is the newest entry`,
+  )
 })
 
 test('the generator steps over the mobile app’s notes directory, and nothing else', () => {
@@ -413,10 +499,9 @@ test('the generator steps over the mobile app’s notes directory, and nothing e
       '- the app’s first release, Falcon\n',
     )
     writeFileSync(path.join(releasesDir, 'mobile', 'README.md'), 'the app’s notes format\n')
-    const pluginFile = path.join(dir, 'plugin.json')
-    writeFileSync(pluginFile, `${JSON.stringify({ name: 'fugaro', version: '1.2.0' })}\n`)
+    const streamsFile = writeCatalogue(dir, '9.9.9')
 
-    const entries = buildChangelog({ releasesDir, pluginFile })
+    const entries = buildChangelog({ releasesDir, streamsFile })
     assert.deepEqual(
       entries.map((entry) => entry.tag),
       ['v1.2.0'],
@@ -428,7 +513,7 @@ test('the generator steps over the mobile app’s notes directory, and nothing e
     // at the top level is a mistake this build stops on, naming it.
     writeFileSync(path.join(releasesDir, 'draft.md'), '- a stray note\n')
     assert.throws(
-      () => buildChangelog({ releasesDir, pluginFile }),
+      () => buildChangelog({ releasesDir, streamsFile }),
       /docs\/releases\/draft\.md is not a release file/,
       'a stray file in docs/releases/ is still refused by name, so the skipped directory did not widen into a general “ignore what does not parse”',
     )

@@ -45,10 +45,11 @@ import (
 // session that could remove the mark could remove it mid-command and keep
 // applying ungated — and a Fugaro run's own process is refused beside it,
 // because a run credential holds the operator's credentials and could revoke
-// the marks its own project is managed by. The confirmation is the exact GCP
-// project ID typed at a real terminal, and nothing stands in for it: this
-// command registers no --yes and no --non-interactive, has no bulk form, no
-// wildcard and no prefix, and takes exactly one project ID.
+// the marks its own project is managed by. The consent is the exact GCP project
+// ID as the argument itself (D1541, the flag's own rule): nothing stands in for
+// naming the project, so this command registers no --yes and no
+// --non-interactive, has no bulk form, no wildcard and no prefix, and takes
+// exactly one project ID.
 //
 // What it is not, stated rather than implied: it is not a boundary against a
 // session that goes around this program. A coding agent's session holds the
@@ -85,10 +86,11 @@ update --forget stays refused for a fenced installation. This command makes no
 IAM call at all; undoing the fence is not revocation and is not offered here
 (docs/design/managed-projects.md §10.2).
 
-Run it in your own terminal, as an operator, with your own credentials, and
-type the GCP project ID it asks for. A coding agent's session is refused, a
-Fugaro run's own process is refused, and nothing stands in for the typed ID —
-not --yes, not --non-interactive, not a pipe.
+Run it in your own terminal, as an operator, with your own credentials. The
+permission you give is the PROJECT_ID argument itself: it names the one project
+whose marks come off, and nothing stands in for naming it — not --yes, not
+--non-interactive, not a pipe. A coding agent's session is refused, and a
+Fugaro run's own process is refused.
 
 PROJECT_ID must be the exact GCP project ID of the installation selected by
 --project, --config or the checkout: one invocation names one project, and
@@ -176,28 +178,25 @@ func managedUnflag(cmd *cobra.Command, o cloudOptions, id string) error {
 	defer rep.Summary()
 	// The number is what says a bucket name is this project's (a bucket name
 	// is global), and it is what the removal proves the bucket with. It is
-	// read before the confirmation so a project this credential cannot read is
-	// refused before the owner is asked to type anything for it.
+	// read before the statement above so a project this credential cannot read
+	// is refused before anything is said to have been agreed to.
 	number, err := infra.ProjectNumber(ctx, c, lc.GCPProject)
 	if err != nil {
 		return remote(fmt.Errorf("reading the number of GCP project %s: %s", safetext.Field(lc.GCPProject), safetext.Field(err.Error())))
 	}
 	w := cmd.OutOrStdout()
 	// What is about to be removed, what it gives back, and what it leaves in
-	// place — all before anything is typed, because the owner typing the ID is
-	// agreeing to all of it.
-	fmt.Fprintf(w, "⚠ CONFIRM (project %s): unflagging GCP project %s removes both marks that make it managed:\n", safetext.Field(lc.Name), safetext.Field(lc.GCPProject))
+	// place — all of it before the first write, because the PROJECT_ID argument
+	// is the whole of the consent and the owner is entitled to see what they
+	// have just agreed to.
+	fmt.Fprintf(w, "unflagging GCP project %s removes both marks that make it managed (project %s):\n", safetext.Field(lc.GCPProject), safetext.Field(lc.Name))
 	fmt.Fprintf(w, "  the marker object gs://%s/%s in its runs bucket, and the label %s=%s on the project itself — the read requires both, so the project is managed only while the two are there\n",
 		safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue)
 	fmt.Fprintf(w, "  it gives back: the typed confirmation for this project's applies. From the next apply on a person is asked again, and a coding agent's session is refused as it was before the project was flagged (D55).\n")
 	fmt.Fprintf(w, "  it does not remove: the deployer fence. Its scoped roles and their conditioned bindings stay in the project and in the installation, fugaro update --forget stays refused for a fenced installation, and this command makes no IAM call at all (D75; docs/design/managed-projects.md §10.2).\n")
 	fmt.Fprintf(w, "  a half already gone is not a failure: a project whose object or label is already absent is converged by this one command, and which half it was is said below.\n")
-	if err := confirmTypedGCPProject(cmd, lc.GCPProject); err != nil {
-		return err
-	}
-	// Both halves and the read that settles them are one step, opened once the
-	// confirmation is answered so nothing in flight is drawn over the prompt
-	// (G1).
+	// Both halves and the read that settles them are one step, opened after the
+	// statement above so nothing in flight is drawn over it (G1).
 	step := rep.Step("unflag")
 	fail := func(err error) error {
 		step.Failed(err, nil)

@@ -93,6 +93,42 @@ const cloneShipped = true
 // does for planTaskSince's 0.11.2 and digestSince's 0.13.0.
 const sharedSince = "0.14.0"
 
+// proxySince is the first fugaro release whose runner serves a repository's
+// Bitbucket access through the run's own loopback forwarder and the
+// installation's credentials service (B1.7, the plan's S1; D495): such a run's
+// job holds no Bitbucket token at all (G1 — the flip takes the mount off it),
+// so its git environment is rewritten to the forwarder and the credential it
+// pushes with is the service's. A runner older than this release knows none of
+// that, so it would start on a job that has no token and no forwarder and die
+// at bootstrap over a repository it cannot even clone.
+//
+// The launch gate (proxyGate, launch_budget.go) refuses such a launch, judged
+// the way every other *Since gate is (checkImageSince, or
+// checkCloneImageSince for a checkout: clone workflow): a release older than
+// this one refuses, a base with no release tag (a dev or hand-pushed image) is
+// only warned about. It carries no shipped flag: refusing every image that
+// predates it is exactly the direction the gate wants, since a proxied run on
+// an older runner cannot work at all.
+//
+// It names 0.22.0, the CLI minor after the 0.21.0 tag, and NOT the plan's own
+// S1 number 0.15.0: that slot was spent on other work and 0.15.0 is tagged, so
+// a gate naming it would refuse nothing — every image in the field is at or
+// past it. It named 0.21.0 until 2026-11-08, while that release was not yet
+// tagged, and the tag was then cut without the runner half: its tree has no
+// proxySince, nothing of the proxy in internal/runner, and no proxied path in
+// internal/gitprov's providers, while internal/infra's resolveBitbucketProxied
+// — the flip that takes the mount off the job — is already in it and carries no
+// image-version condition of its own. 0.21.0 is therefore the one release this
+// gate must refuse, and the base image `fugaro update` installs today: a value
+// naming it admits exactly the launch the gate exists to refuse, which is the
+// "refuses too late" failure the number exists to avoid. The number is the
+// release that carries the runner half, not the one the work was first slotted
+// for. docs/release.md's Before-you-tag list verifies it against the release
+// actually cut, as it does for the other *Since constants. A wrong value
+// refuses too late (a proxied run reaches a runner that cannot do it) or too
+// early (an image that would have worked stays blocked).
+const proxySince = "0.22.0"
+
 // policySince is the first fugaro release whose launcher and runner read the
 // project's policy (the release phase 1 of the project-centric model ships
 // in, R4). Like cloneSince and unlike the policy's own integer `version` or
