@@ -285,11 +285,15 @@ type run struct {
 	// for this run (accountchoice.go, D874): off unless the owner's published
 	// policy turns it on, and the account each stage has reached.
 	accounts accountChoice
-	// mu guards halt, cancelled, failReason, tokens, gatewayTokens and
-	// haltStage: the cancel watcher and, with the gateway, its halt
+	// mu guards halt, cancelled, failReason, failClass, tokens, gatewayTokens
+	// and haltStage: the cancel watcher and, with the gateway, its halt
 	// callback record into them from other goroutines. Whichever of a halt
 	// and a cancel is recorded first wins (see haltNow and markCancelled).
-	mu         sync.Mutex
+	mu sync.Mutex
+	// failClass is the class of the reason in failReason, when the site that
+	// recorded the failure could name one: the two are one fact, so they are
+	// written together by failWithClass and the first failure keeps both.
+	failClass  failure.Class
 	failReason string
 	cancelled  bool
 	halt       *runstore.Halt
@@ -1551,11 +1555,40 @@ func (r *run) fail(reason string) {
 	r.failLocked(reason)
 }
 
+// failWithClass is fail for a site that can also name the class the cause is
+// in: the two answer one question, so they are written together and the first
+// failure keeps both, and a class can never describe a sentence the record
+// does not carry. finalize's failed case is what reads the pair back
+// (failureClass), and a site that knows only the reason leaves the class to
+// whichever task reads that cause from the run's own state.
+func (r *run) failWithClass(class failure.Class, reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.failReason != "" {
+		return
+	}
+	r.failReason, r.failClass = reason, class
+}
+
 // failLocked is fail for a caller holding r.mu.
 func (r *run) failLocked(reason string) {
 	if r.failReason == "" {
 		r.failReason = reason
 	}
+}
+
+// failureClass is the class of the reason the run failed for, and
+// unclassified when no site named one: a failure the vocabulary does not hold
+// is counted rather than dropped, and its count is the signal to name it.
+// Every site that chooses a class of its own writes the record's ending
+// itself, so this is only what finalize's failed case reads.
+func (r *run) failureClass() failure.Class {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.failClass == "" {
+		return failure.Unclassified
+	}
+	return r.failClass
 }
 
 // stateDirOutsideCheckout validates that stateDir is non-empty, resolvable,
@@ -3841,9 +3874,12 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	// result event's text, and its subtype says nothing: Claude Code reports
 	// a refused API call as subtype "success". The reason therefore quotes
 	// that text, and one stop gets a name of its own (stageErrorReason): the
-	// OAuth account's subscription usage limit.
+	// OAuth account's subscription usage limit. The same text, folded the
+	// same way, is what the record's class is read from (stageFailureClass),
+	// so the reason and the class are written together and the class
+	// describes the sentence the record carries.
 	case res.IsError:
-		r.fail(r.stageErrorReason(name, res))
+		r.failWithClass(r.stageFailureClass(r.cfg.Agent.Auth, res), r.stageErrorReason(name, res))
 		r.keepTail(fmt.Sprintf("%s-%d", name, n), stderrTail, transcriptTail)
 		return res, false, nil
 	}
@@ -3930,6 +3966,66 @@ func subscriptionUsageLimit(auth, text string) bool {
 		}
 	}
 	return false
+}
+
+// authRefusedPhrases are what a provider or a gateway that refused the run's
+// credential is reported as, each matched as the shape it is rather than as
+// English, the way oauthLimitPhrases is: the gateway's own sentence for a
+// refusal it relayed from the provider (internal/gateway, providerError), and
+// the API error type a failed authentication arrives under -- read inside the
+// envelope that carries it, so that a type merely named in a result text (an
+// echoed snippet, a "previous_error_type" field) is not taken for the refusal
+// itself.
+var authRefusedPhrases = []string{"the provider answered with status 403", `"error":{"type":"authentication_error"`}
+
+// transportFailedPhrases are what a model stream or connection that ended
+// before its response finished is reported as: Claude Code's own sentence
+// (issue #1827), which is the phrase transientStagePhrases matches too.
+//
+// The two lists are separate lists on purpose, though today they hold one
+// phrase in common: they answer different questions -- whether a stage may be
+// run again, and which family the run's failure is counted in -- so a member
+// added to one of them is not silently a member of the other.
+var transportFailedPhrases = []string{"stream closed before completion"}
+
+// stageFailureClass names the cause inside an is_error result. The text is
+// model output, and it is read for one thing only: to pick a value of the
+// closed vocabulary. The class is a value of the runner's own words, so no
+// byte of the message reaches the record through it, and nothing in the runner
+// branches on it -- it is written and reported, never acted on. The reason
+// already quotes the text, redacted and on one line (stageErrorReason); the
+// class adds no second copy for a secret to travel in.
+//
+// It reads the folded text the reason carries and for that reason: what the
+// reason may hold is what may be matched, so a phrase cannot be recognised in
+// a byte the run would not otherwise publish. A phrase table is the rule
+// subscriptionUsageLimit already follows (oauthLimitPhrases): shapes are
+// matched rather than English, and a text the table does not know is
+// stage_error_unexplained -- counted rather than guessed at, which is the
+// class the runs that ended this way after writing a normal final message
+// take.
+//
+// The subtype is deliberately not read: Claude Code reports a refused API call
+// as subtype "success". The OAuth account's spent subscription allowance stays
+// stage_error_unexplained whatever its text says, because the class that stop
+// deserves is O6's to answer and subscriptionUsageLimit is unchanged until it
+// is; the auth is asked here so that the two answers cannot drift apart.
+func (r *run) stageFailureClass(auth string, res agent.Result) failure.Class {
+	text := strings.ToLower(r.stageErrorText(res.Text))
+	if text == "" || subscriptionUsageLimit(auth, res.Text) {
+		return failure.StageErrorUnexplained
+	}
+	for _, p := range authRefusedPhrases {
+		if strings.Contains(text, p) {
+			return failure.ProviderAuthRefused
+		}
+	}
+	for _, p := range transportFailedPhrases {
+		if strings.Contains(text, p) {
+			return failure.TransportFailed
+		}
+	}
+	return failure.StageErrorUnexplained
 }
 
 // transientStagePhrases are what a model stream closed before its response
@@ -4385,7 +4481,12 @@ func (r *run) finalize(ctx context.Context) error {
 	case r.isCancelled():
 		r.recordEnd(runstore.StatusCancelled, runstore.OutcomeDraft, failure.Cancelled, reason)
 	default:
-		r.recordEnd(runstore.StatusFailed, runstore.OutcomeDraft, failure.Unclassified, reason)
+		// The reason is r.failure() when the run failed for one, so the class
+		// is the one that site wrote beside it (failureClass) and the two
+		// describe the same sentence. A reason Decide chose — a review that did
+		// not converge — has no class of its own yet, which is unclassified and
+		// counted rather than dropped.
+		r.recordEnd(runstore.StatusFailed, runstore.OutcomeDraft, r.failureClass(), reason)
 	}
 	r.updateCost()
 	r.narrowText = r.narrowSummary(ctx)

@@ -345,7 +345,9 @@ func TestAnUnknownBackendHasNoDockerDaemon(t *testing.T) {
 // refuses on the answer: the deploy-time job spec, and the launcher judging
 // the same job's image against the backend it picks. A workflow one of them
 // judged by the catalog and the other did not would be refused for an entry it
-// does not run, or asked for a Docker socket it never needed.
+// does not run, or asked for a Docker socket it never needed. MayApply, the
+// half of the question that reads no catalog, is pinned here beside it: doctor
+// asks it for a catalog it could not read.
 //
 // Mutation (drop the override arm, or the clone/shared arm): the launcher
 // judges a job the deploy gave the repository's own image — and a catalog
@@ -380,6 +382,18 @@ func TestAppliesIsTheJobsTheCatalogGivesAnImageTo(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if got := Applies(tt.cat, tt.w); got != tt.want {
 				t.Fatalf("Applies = %v, want %v", got, tt.want)
+			}
+			// MayApply is the half of it that reads no catalog: it answers the
+			// same except for the one row where the default is what decides —
+			// a workflow that names nothing, in a catalog that marks none.
+			// Doctor asks it for a catalog it could not read, where whether a
+			// default is marked is exactly what is not known.
+			wantMay := tt.want
+			if name == "a repository that names nothing, no default" {
+				wantMay = true
+			}
+			if got := MayApply(tt.w); got != wantMay {
+				t.Fatalf("MayApply = %v, want %v", got, wantMay)
 			}
 		})
 	}
