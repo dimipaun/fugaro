@@ -76,8 +76,9 @@ section and the cited number — rather than claiming all four.
   (F25), so a folder may be documents alone — `docs/image-env/` is the four-document precedent this
   folder follows — and the brief's DOCS ONLY left the pin to the plan's tasks, which name the one each
   adds: this folder's is `internal/cli/docs_security_classification_test.go` (SC2, D1519), and its
-  arrival moved `docs/rigor-modes/reconciliation.md`'s census row **111 → 112**. The three census
-  re-check tests in other folders' files (F17) re-derive the count from the tree and needed no edit.
+  arrival moved `docs/rigor-modes/reconciliation.md`'s census row **112 → 113**, as that row's own
+  amendment sentence records. The three census re-check tests in other folders' files (F17) re-derive
+  the count from the tree and needed no edit.
 - It **implements neither OD1 nor OD2 nor any part of the needs_owner work**; **none of the three exists
   in this tree** (F15), and the design is written to be independent of them (D1518).
 - It **builds no console screen** (D1514): the ask defers it and the console's own rule agrees — a read
