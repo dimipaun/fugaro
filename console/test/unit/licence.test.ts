@@ -496,6 +496,32 @@ describe('the negative vectors', () => {
       expect(reason, id).toMatch(/is not one the console holds/)
     }
   })
+
+  it('a ring entry that is not an Ed25519 public key is refused, and never thrown from', () => {
+    // The ring is the build's own and S2.9 hand-edits it, so an entry that is
+    // not an Ed25519 public key is a defect in the console rather than in the
+    // key -- and it still has to be an answer, because the module's contract is
+    // that it throws nothing. X25519 is the shape that makes the difference:
+    // `verify` does not answer false for it, it throws
+    // ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE, so a verifier
+    // without the key-type check breaks that contract on the main process.
+    const { publicKey } = generateKeyPairSync('x25519')
+    const id = 'prod-x25519'
+    const ring: LicenceKeyring = { [id]: publicKey.export({ type: 'spki', format: 'pem' }) }
+
+    expect(verifyLicenceKey(mint(acme, claimsFor(), id), at(ISSUED), ring)).toEqual({
+      ok: false,
+      reason: `licence key '${id}' is not one the console holds`,
+    })
+
+    // The same refusal for an entry that is not a key at all: `createPublicKey`
+    // refuses it, and that refusal is caught rather than raised, which is the
+    // other way a hand-edited ring reaches this answer.
+    expect(verifyLicenceKey(mint(acme, claimsFor(), id), at(ISSUED), { [id]: 'not a pem' })).toEqual({
+      ok: false,
+      reason: `licence key '${id}' is not one the console holds`,
+    })
+  })
 })
 
 describe('the module itself', () => {
