@@ -386,6 +386,14 @@ const (
 	// schedule on are stated there and nowhere else yet, and a spec of the
 	// installation's own would be the document that takes the rows over.
 	docPeriodicReviews = "docs/periodic-reviews/implementation-plan.md"
+	// docTroubleshoot is the document that states the issue nudge's
+	// thresholds (docs/troubleshoot-issue/). The spec states the behaviour
+	// (§6: the wording gets firmer as an issue ages or recurs more often, at
+	// thresholds config may set) and leaves the keys unnamed, so the row
+	// points at the plan for docOrchestrator's reason: the key names and their
+	// defaults are stated there and nowhere else yet, and a spec of the
+	// section's own would be the document that takes the rows over.
+	docTroubleshoot = "docs/troubleshoot-issue/implementation-plan.md"
 )
 
 // layerRow is a row of the project layer's file. The layer is its only store,
@@ -856,6 +864,17 @@ var localRows = []Row{
 	locLocal("workspace_members.*.fp", "none", "workspace", docWorkspace),
 	locLocal("workspace_members.*.exchange_url", "none", "workspace", docWorkspace),
 	locLocal("workspace_cap.monthly", "the workspace states no cap", "workspace", docWorkspace),
+
+	// The terminal Issues section's nudge thresholds (T-IS15). They are
+	// local-only rather than loc's two layers: the section is printed on the
+	// machine running the digest, the committed report carries no part of it,
+	// and no other machine acts on this one's thresholds — so the shared file
+	// never holds the block (Shared drops it) and a row advertising the shared
+	// layer would name a store the key cannot have. Their defaults are values
+	// the loader leaves in place, so they come from defaultValues below, as
+	// update_check's does, rather than from an "unset means" sentence.
+	{Key: "issues.nudge_after_days", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config", Doc: docTroubleshoot},
+	{Key: "issues.nudge_recurrence", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config", Doc: docTroubleshoot},
 }
 
 // defaultValues are the rows whose default is a value the loaders leave in
@@ -872,6 +891,12 @@ var defaultValues = map[string]Default{
 	// sets it nowhere (localcfg.Parse) and no constant holds it, so the value
 	// is written here and read back out of a parsed config like the two above.
 	"local.version": value("1", ""),
+	// The Issues section's nudge thresholds (T-IS15): the loader answers the
+	// constants for a file that sets neither, through the accessors rather
+	// than the fields, so "the file wrote nothing" and "the file wrote the
+	// default" are one reading here.
+	"issues.nudge_after_days": value("7", "localcfg.DefaultIssuesNudgeAfterDays"),
+	"issues.nudge_recurrence": value("3", "localcfg.DefaultIssuesNudgeRecurrence"),
 }
 
 // sensitiveKeys are the keys whose value is never printed (spec §2.3): the
