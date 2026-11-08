@@ -27,19 +27,20 @@ import (
 
 // The gate at the call site, which internal/infra/managed's own test cannot
 // pin: managed.WriteMarker trusts its created argument, and this is the one
-// place that argument is read off a run — init's r.res.Created. A run that
-// created no project must write no marker, whatever else it did; the mutation
-// this exists to catch is dropping that check and marking the project the run
-// installs into (r.res.Created = r.gcpProject in markCreated), which in
+// place that argument is read off a run — init's r.res.Created, or a creation
+// the run resumed (fugaro_created=true, see (c')). A run that neither created
+// nor resumed a project must write no marker, whatever else it did; the
+// mutation this exists to catch is dropping that check and marking the project
+// the run installs into (r.res.Created = r.gcpProject in markCreated), which in
 // production would mark every installation an ordinary converge touches
 // — fugaro's own, belong, the owner's — as managed, and turn the
 // confirmations off for them (design D73: adding Firebase to a project is
 // never what makes it managed).
 //
-// The bucket is seeded in all three cases, labelled and numbered as the
+// The bucket is seeded in every case, labelled and numbered as the
 // installation's own, so a mutation that writes really does write: what is
 // asserted is the gate, not the bucket check.
-func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
+func TestMarkCreatedWritesOnlyForACreationThisRunCreatedOrResumed(t *testing.T) {
 	// (a) The ordinary run of an existing installation: no project created,
 	// and none of the buckets gets the object.
 	t.Run("an existing installation", func(t *testing.T) {
@@ -201,6 +202,11 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 	// --firebase-project (b), a different stage. The bucket is the project's
 	// own, seeded and numbered as (c) seeds it, so a mutation that marks the
 	// project on adding Firebase really writes.
+	//
+	// It carries fugaro_created=true, though, so it is a creation this run is
+	// resuming rather than a project an installation merely lives in, and the
+	// resumed mark IS written — behind the one confirmation that is now the
+	// person at the terminal (T7) — which is what this case pins.
 	t.Run("--create-project adding Firebase to a resumed project", func(t *testing.T) {
 		r := newProjectRig(t)
 		const number = 424242
@@ -231,7 +237,13 @@ func TestMarkCreatedWritesOnlyForAProjectThisRunCreated(t *testing.T) {
 		if !strings.Contains(out, "added Firebase to project "+newProj) {
 			t.Fatalf("the run did not reach the add (err %v):\n%s", err, out)
 		}
-		noMarker(t, r.gcs, bucket)
+		if !strings.Contains(out, "this MARKS project "+newProj+" as Fugaro-managed") {
+			t.Errorf("the resumed mark's banner is missing:\n%s", out)
+		}
+		b, ok := markerAt(t, r.gcs, bucket)
+		if want := `{"version":1,"gcp_project":"` + newProj + `"}`; !ok || b != want {
+			t.Errorf("the resumed project's fact = %q (present %v), want %s", b, ok, want)
+		}
 	})
 
 	// (c'') --create-project with --firebase-project set to the same project: the

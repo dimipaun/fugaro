@@ -218,9 +218,10 @@ func TestRunConfirmationNeverCoversTheSeparateSteps(t *testing.T) {
 
 // A plan outside the allowlist (a destroy, a replace, an IAM binding, a
 // grant to someone the review did not list, an import the root's discovery did
-// not write) is not covered: the step shows why
-// and asks its own typed confirmation, even after the run confirmation was
-// taken; a known additive plan is covered.
+// not write) is not covered: after the run's confirmation was taken, the step
+// says why on a note of its own, prints its own banner, and goes on — the
+// person at the terminal is the answer, and nothing is read (T7). A known
+// additive plan is covered.
 func TestPlanOutsideTheAllowlistAsksItsOwn(t *testing.T) {
 	c := condition{"a terminal", initOptions{}, true, ""}
 	mk := func(typ string, after map[string]any, acts ...string) *tf.Plan {
@@ -236,27 +237,27 @@ func TestPlanOutsideTheAllowlistAsksItsOwn(t *testing.T) {
 		"an import discovery did not write": {ResourceChanges: []tf.ResourceChange{{Address: "module.x.google_storage_bucket.z", Type: "google_storage_bucket",
 			Change: tf.Change{Actions: []string{"no-op"}, Importing: &tf.Importing{ID: initProject + "/elsewhere"}, After: map[string]any{"public_access_prevention": "enforced", "uniform_bucket_level_access": true}, AfterUnknown: map[string]any{}}}}},
 	} {
-		for sname, tc := range map[string]struct {
-			stdin string
-			err   bool
-		}{"its own answer": {initProjectName + "\n" + initProjectName + "\n", false}, "only the run's answer": {initProjectName + "\n", true}} {
-			t.Run(name+"/"+sname, func(t *testing.T) {
-				r, _, out, _, _ := c.reviewRun(t, tc.stdin, true)
-				if r.notCovered(additive, nil) != "" || r.notCovered(bad, nil) == "" {
-					t.Fatalf("notCovered: additive %q, bad %q", r.notCovered(additive, nil), r.notCovered(bad, nil))
-				}
-				if err := r.confirmOrdinary("applies the additive plan", "x", r.notCovered(additive, nil)); err != nil {
-					t.Fatal(err)
-				}
-				err := r.confirmOrdinary("applies the other plan", "nothing was applied", r.notCovered(bad, nil))
-				if (err != nil) != tc.err {
-					t.Fatalf("err %v\n%s", err, out)
-				}
-				if !strings.Contains(out.String(), "not covered by the run confirmation") || strings.Count(out.String(), "Type aurora to apply to GCP project") != 1 {
-					t.Errorf("\n%s", out)
-				}
-			})
-		}
+		t.Run(name, func(t *testing.T) {
+			r, spy, out, _, _ := c.reviewRun(t, "", true)
+			if r.notCovered(additive, nil) != "" || r.notCovered(bad, nil) == "" {
+				t.Fatalf("notCovered: additive %q, bad %q", r.notCovered(additive, nil), r.notCovered(bad, nil))
+			}
+			if err := r.confirmOrdinary("applies the additive plan", "x", r.notCovered(additive, nil)); err != nil {
+				t.Fatal(err)
+			}
+			if err := r.confirmOrdinary("applies the other plan", "nothing was applied", r.notCovered(bad, nil)); err != nil {
+				t.Fatalf("err %v\n%s", err, out)
+			}
+			if !strings.Contains(out.String(), "note: this step is not covered by the run confirmation: "+r.notCovered(bad, nil)+"; it asks for its own") {
+				t.Errorf("the step did not say why it asks its own:\n%s", out)
+			}
+			if !strings.Contains(out.String(), "⚠ CONFIRM") {
+				t.Errorf("the step's own banner was not shown:\n%s", out)
+			}
+			if spy.read {
+				t.Errorf("the step's own confirmation read the terminal's input: it is not typed any more (T7)")
+			}
+		})
 	}
 }
 
@@ -272,52 +273,49 @@ func TestPlanOutsideTheAllowlistAsksItsOwn(t *testing.T) {
 // telling the person this step asks for its own.
 //
 // The run with no marker is the control: the same two arguments do print that
-// note there, so the silence under the marker is the arm's and not the
-// arguments'.
+// note there, and then take the step's own banner, so the silence under the
+// marker is the arm's and not the arguments'.
 func TestReviewSeamRefusesAnAgentMarkerBeforeItPrintsAnything(t *testing.T) {
 	const notCovered = "the plan is outside what the review announced (a replace)"
-	for _, c := range []struct {
-		where     string
-		cond      condition
-		note      bool
-		becauseOf string
-	}{
-		{"a terminal", condition{"a terminal", initOptions{}, true, ""}, true, "the same arguments at the same seam"},
-		{"a terminal in a coding agent's session", condition{"a terminal", initOptions{}, true, "CLAUDECODE"}, false, "the agent marker"},
-	} {
-		t.Run(c.where, func(t *testing.T) {
-			r, spy, out, owner, screens := c.cond.reviewRun(t, "", true)
-			r.review.state = reviewTaken
-			ok, err := r.askOrdinary("applies the other plan", notCovered)
-			if ok || *owner != 0 || *screens != 0 {
-				t.Fatalf("allowed %v, owner %d, screens %d", ok, *owner, *screens)
-			}
-			// The control case ends in the per-step confirmation, which an empty
-			// stdin declines: what this checks is where it got to, not the answer.
-			if got := strings.Contains(out.String(), "not covered by the run confirmation: "); got != c.note {
-				t.Errorf("the note about the review is printed %v, want %v, so this says nothing about %s:\n%s", got, c.note, c.becauseOf, out)
-			}
-			if c.note {
-				if err != nil {
-					t.Fatalf("the step's own confirmation returned %v", err)
-				}
-				if !strings.Contains(out.String(), "⚠ CONFIRM") {
-					t.Errorf("the step's own banner was not shown:\n%s", out)
-				}
-				return
-			}
-			var ae *initflow.AgentError
-			if !errors.As(err, &ae) || ae.Marker != "CLAUDECODE" {
-				t.Fatalf("the seam answered %v, want the agent refusal", err)
-			}
-			if spy.read {
-				t.Error("the refusal read the terminal's input")
-			}
-			if strings.Contains(out.String(), "⚠ CONFIRM") {
-				t.Errorf("the banner was printed before the refusal:\n%s", out)
-			}
-		})
-	}
+	// The control: the note, the step's own banner, and the step confirmed by
+	// the person at the terminal, who is read nothing (T7).
+	t.Run("a terminal", func(t *testing.T) {
+		c := condition{"a terminal", initOptions{}, true, ""}
+		r, spy, out, owner, screens := c.reviewRun(t, "", true)
+		r.review.state = reviewTaken
+		ok, err := r.askOrdinary("applies the other plan", notCovered)
+		if !ok || err != nil || *owner != 0 || *screens != 0 {
+			t.Fatalf("allowed %v, err %v, owner %d, screens %d", ok, err, *owner, *screens)
+		}
+		if !strings.Contains(out.String(), "not covered by the run confirmation: "+notCovered) {
+			t.Errorf("the note about the review is not printed:\n%s", out)
+		}
+		if !strings.Contains(out.String(), "⚠ CONFIRM") {
+			t.Errorf("the step's own banner was not shown:\n%s", out)
+		}
+		if spy.read {
+			t.Error("the step's own confirmation read the terminal's input")
+		}
+	})
+	t.Run("a terminal in a coding agent's session", func(t *testing.T) {
+		c := condition{"a terminal", initOptions{}, true, "CLAUDECODE"}
+		r, spy, out, owner, screens := c.reviewRun(t, "", true)
+		r.review.state = reviewTaken
+		ok, err := r.askOrdinary("applies the other plan", notCovered)
+		if ok || *owner != 0 || *screens != 0 {
+			t.Fatalf("allowed %v, owner %d, screens %d", ok, *owner, *screens)
+		}
+		var ae *initflow.AgentError
+		if !errors.As(err, &ae) || ae.Marker != "CLAUDECODE" {
+			t.Fatalf("the seam answered %v, want the agent refusal", err)
+		}
+		if spy.read {
+			t.Error("the refusal read the terminal's input")
+		}
+		if strings.Contains(out.String(), "⚠ CONFIRM") || strings.Contains(out.String(), "not covered by the run confirmation") {
+			t.Errorf("a line was printed before the refusal:\n%s", out)
+		}
+	})
 }
 
 // Only ordinary steps may ask the run's one confirmation. These are the
@@ -396,13 +394,23 @@ func (r *initRig) markedRuns(t *testing.T, name, gcp string) {
 	}
 }
 
+// prompts counts the two ways a step of a run is confirmed now: the review
+// screen the run's one confirmation is shown in, and the banner of a step
+// that asks its own. Only the ordinary steps' banner names both projects (the
+// Firestore location's names the project alone, and the tests that expect it
+// count it themselves), and a step the run's confirmation covered says so on
+// the line under its banner — which is what tells the two apart.
 func prompts(out string) (run, step int) {
-	return strings.Count(out, "Type aurora to apply all of the above"), strings.Count(out, "Type aurora to apply to GCP project")
+	run = strings.Count(out, "share ONE confirmation")
+	step = strings.Count(out, "⚠ CONFIRM (project "+initProjectName+", GCP project "+initProject+")") -
+		strings.Count(out, "covered by the run confirmation")
+	return
 }
 
-// A marked project asks the project's name once for the Viewer-read removal
-// and the apply and the local config; each step still prints its banner.
-func TestMarkedProjectTakesOnePrompt(t *testing.T) {
+// A marked project takes the run's one confirmation (the review screen, shown
+// once) for the Viewer-read removal and the apply and the local config; each
+// step still prints its banner and says it was covered.
+func TestMarkedProjectTakesOneConfirmation(t *testing.T) {
 	r := newInitRig(t)
 	r.markedRuns(t, initProjectName, initProject)
 	fakeTerminal(t)
@@ -411,7 +419,7 @@ func TestMarkedProjectTakesOnePrompt(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if run, step := prompts(out); run != 1 || step != 0 {
-		t.Fatalf("%d run prompt(s), %d per-step prompt(s):\n%s", run, step, out)
+		t.Fatalf("%d run confirmation(s), %d step confirmation(s):\n%s", run, step, out)
 	}
 	if len(r.ran(t, "apply")) != 1 || len(policySets(r.gcs, initRunsBucket)) != 1 || hasViewer(r.gcs.BucketPolicy(initRunsBucket)) {
 		t.Fatalf("apply %d, policy sets %d", len(r.ran(t, "apply")), len(policySets(r.gcs, initRunsBucket)))
@@ -428,19 +436,22 @@ func TestMarkedProjectTakesOnePrompt(t *testing.T) {
 	if strings.Index(out, "Review:") > strings.Index(out, "applies 0 imports") {
 		t.Errorf("the review does not come before the apply:\n%s", out)
 	}
-	// A rerun has nothing to do, and asks nothing.
+	// A rerun has nothing to do, and asks nothing: no step's banner is printed
+	// and the review is not shown.
 	r.script["plan"] = map[string]any{"exit": 0}
 	r.save(t)
 	out, _, err = executeStdin(t, "", "setup")
-	if err != nil || strings.Contains(out, "Type aurora") {
+	if err != nil || strings.Contains(out, "⚠ CONFIRM") || strings.Contains(out, "Review:") {
 		t.Fatalf("rerun: %v\n%s", err, out)
 	}
 }
 
-// An unmarked project (adopted, first run, a mark for another project) keeps
-// the per-step prompts exactly as before, and a typed name for one step
-// confirms only that step.
-func TestUnmarkedProjectKeepsPerStepPrompts(t *testing.T) {
+// An unmarked project (adopted, first run, a mark for another project) keeps a
+// confirmation per step exactly as before: no review screen, and every step
+// prints its own banner, which the person at the terminal reads. Nothing is
+// typed for any of them (T7), so there is no answer that could confirm one step
+// and decline the next.
+func TestUnmarkedProjectKeepsPerStepConfirmations(t *testing.T) {
 	for name, mark := range map[string][2]string{"no mark": {"", ""}, "another project's mark": {"other", initProject}, "another GCP project": {initProjectName, "elsewhere-1"}} {
 		t.Run(name, func(t *testing.T) {
 			r := newInitRig(t)
@@ -451,34 +462,36 @@ func TestUnmarkedProjectKeepsPerStepPrompts(t *testing.T) {
 				t.Fatalf("%v\n%s", err, out)
 			}
 			if run, step := prompts(out); run != 0 || step < 2 || strings.Contains(out, "Review:") || strings.Contains(out, "covered by the run") {
-				t.Fatalf("%d run prompt(s), %d per-step:\n%s", run, step, out)
+				t.Fatalf("%d run confirmation(s), %d step(s):\n%s", run, step, out)
 			}
-			// One answer is one step: the next one is declined.
-			r2 := newInitRig(t)
-			r2.markedRuns(t, mark[0], mark[1])
-			_, _, err = executeStdin(t, initProjectName+"\n", "setup")
-			if err == nil || len(r2.ran(t, "apply")) != 0 {
-				t.Fatalf("one answer confirmed more than one step: %v", err)
+			if strings.Contains(out, "Type ") {
+				t.Errorf("a step asked for something to be typed:\n%s", out)
+			}
+			// Each banner was answered by the person being there: the run
+			// applies, with one line left in stdin for every step.
+			if len(r.ran(t, "apply")) != 1 {
+				t.Errorf("the run did not apply: %q", r.calls(t))
 			}
 		})
 	}
 }
 
-// A wrong name at the review applies nothing, the Viewer removal included,
-// and the run says what to do.
-func TestMarkedProjectWrongNameAppliesNothing(t *testing.T) {
+// The review's confirmation reads no name any more (T7): a wrong one left in
+// stdin is nobody's, and the run applies — the person at the terminal is the
+// confirmation, and there is no longer a name that could be refused.
+func TestMarkedProjectConfirmationIsNotATypedName(t *testing.T) {
 	r := newInitRig(t)
 	r.markedRuns(t, initProjectName, initProject)
 	fakeTerminal(t)
 	out, _, err := executeStdin(t, "nope\n"+initProjectName+"\n", "setup")
-	if ExitCode(err) != ExitUserError {
-		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
 	}
-	if len(r.ran(t, "apply")) != 0 || len(policySets(r.gcs, initRunsBucket)) != 0 {
-		t.Fatalf("something was applied: %q", r.calls(t))
+	if len(r.ran(t, "apply")) != 1 || len(policySets(r.gcs, initRunsBucket)) != 1 {
+		t.Fatalf("the review's confirmation did not apply: %q", r.calls(t))
 	}
-	if !strings.Contains(out, "type the project's name") || strings.Contains(out, "--yes") {
-		t.Errorf("\n%s", out)
+	if strings.Contains(out, "type the project's name") || strings.Contains(out, "Type ") || strings.Contains(out, "--yes") {
+		t.Errorf("a name was asked for:\n%s", out)
 	}
 }
 
@@ -494,7 +507,7 @@ func TestMarkedProjectInAnAgentSession(t *testing.T) {
 		if err == nil || len(r.ran(t, "apply")) != 0 || len(policySets(r.gcs, initRunsBucket)) != 0 {
 			t.Fatalf("%v: %v, calls %q", args, err, r.calls(t))
 		}
-		if strings.Contains(out, "Review:") || strings.Contains(out, "Type aurora") || strings.Contains(out+err.Error(), "pass --yes") {
+		if strings.Contains(out, "Review:") || strings.Contains(out, "⚠ CONFIRM") || strings.Contains(out+err.Error(), "pass --yes") {
 			t.Errorf("%v:\n%s", args, out)
 		}
 	}
@@ -507,7 +520,7 @@ func TestMarkedProjectYesAsBefore(t *testing.T) {
 	r.markedRuns(t, initProjectName, initProject)
 	fakeTerminal(t)
 	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes")
-	if err != nil || strings.Contains(out, "Review:") || strings.Contains(out, "Type aurora") || len(r.ran(t, "apply")) != 1 {
+	if err != nil || strings.Contains(out, "Review:") || strings.Contains(out, "covered by the run confirmation") || len(r.ran(t, "apply")) != 1 {
 		t.Fatalf("%v, calls %q\n%s", err, r.calls(t), out)
 	}
 	if !strings.Contains(out, "confirmed by --yes") {
@@ -582,12 +595,13 @@ func TestReviewScreenGolden(t *testing.T) {
 }
 
 // The whole first-run shape of update --firebase-project with the images: in a project
-// marked as Fugaro's, one typed project name covers the installation apply,
+// marked as Fugaro's, the run's one confirmation covers the installation apply,
 // the Viewer-read removal, the Firebase apply, the Firestore writes, the image
 // copy, the history job's apply and the local config; the Firestore database's
-// permanent location is typed on its own. The same run in an unmarked project
-// asks for the name at each of those steps.
-func TestFirebaseRunTakesOnePromptPlusTheLocation(t *testing.T) {
+// permanent location is asked on its own (the review lists it, and only it and
+// the other separate steps print a banner the run's confirmation does not
+// cover). The same run in an unmarked project asks a confirmation per step.
+func TestFirebaseRunTakesOneConfirmationPlusTheLocation(t *testing.T) {
 	run := func(t *testing.T, fp string, marked bool, stdin string) (string, error, *imagesRig) {
 		t.Helper()
 		r := newImagesRigFor(t, "1.2.3", fp)
@@ -616,9 +630,12 @@ func TestFirebaseRunTakesOnePromptPlusTheLocation(t *testing.T) {
 	if r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] != "" {
 		t.Errorf("a base kind was copied into the base registry: %v", r.dst.tags)
 	}
-	runP, stepP := prompts(out)
-	if runP != 1 || stepP != 0 || strings.Count(out, "Type "+infra.FirestoreLocation+" to create it there") != 1 {
-		t.Fatalf("%d run prompt(s), %d per-step, location prompts %d\n%s", runP, stepP, strings.Count(out, "Type "+infra.FirestoreLocation), out)
+	// The location's banner is its own: it names the project alone, so no step
+	// of the run's confirmation is counted among the steps below it.
+	location := "⚠ CONFIRM (project " + initProjectName + "): the Firestore database is created in"
+	runC, stepC := prompts(out)
+	if runC != 1 || stepC != 0 || strings.Count(out, location) != 1 {
+		t.Fatalf("%d run confirmation(s), %d step confirmation(s), location banners %d\n%s", runC, stepC, strings.Count(out, location), out)
 	}
 	if n := strings.Count(out, "covered by the run confirmation"); n < 5 {
 		t.Errorf("%d covered steps:\n%s", n, out)
@@ -626,20 +643,21 @@ func TestFirebaseRunTakesOnePromptPlusTheLocation(t *testing.T) {
 	if !strings.Contains(out, "images:         base (pinned by digest through the remote repository), history latest") ||
 		!strings.Contains(out, "NOT pinned with --expect-digest: history") ||
 		strings.Contains(out, "NOT pinned with --expect-digest: history, base") {
-		t.Errorf("the review does not name the images and their pinning before the typed name:\n%s", out)
+		t.Errorf("the review does not name the images and their pinning before the steps:\n%s", out)
 	}
-	if i, j := strings.Index(out, "NOT pinned"), strings.Index(out, "Type aurora to apply all of the above"); i < 0 || j < i {
-		t.Errorf("the pinning is not shown before the typed name:\n%s", out)
+	if i, j := strings.Index(out, "NOT pinned"), strings.Index(out, "⚠ CONFIRM"); i < 0 || j < i {
+		t.Errorf("the pinning is not shown before the first step's banner:\n%s", out)
 	}
 	if !strings.Contains(out, "the installation's own project") {
 		t.Errorf("the screen does not say which project the Firebase root applies to:\n%s", out)
 	}
-	if i, j := strings.Index(out, "this does NOT create the Firestore database"), strings.Index(out, "Type "+infra.FirestoreLocation+" to create it there"); i < 0 || j < i {
+	if i, j := strings.Index(out, "this does NOT create the Firestore database"), strings.Index(out, location); i < 0 || j < i {
 		t.Errorf("the covered write does not say the database creation is asked next:\n%s", out)
 	}
-	// The name does not give the location.
-	if _, err, r2 := run(t, initProject, true, initProjectName+"\n"+initProjectName+"\n"); err == nil || len(r2.dst.tags) != 0 {
-		t.Errorf("the project's name confirmed the Firestore location (err %v, copied %v)", err, r2.dst.tags)
+	// The location is not covered by the run's confirmation: it is on the
+	// review's own list of what still asks separately.
+	if !strings.Contains(out, "the Firestore database's creation (its location is permanent)") {
+		t.Errorf("the review does not list the location among the steps that ask separately:\n%s", out)
 	}
 	// Another project for Firebase is no layout any more (Fugaro only starts
 	// fresh): it is refused before anything is asked or applied.
@@ -648,15 +666,15 @@ func TestFirebaseRunTakesOnePromptPlusTheLocation(t *testing.T) {
 		t.Fatalf("separate Firebase project: %v\n%s", err, out)
 	}
 	if runP, stepP := prompts(out); runP != 0 || stepP != 0 || len(r.dst.tags) != 0 {
-		t.Fatalf("a refused separate Firebase project asked %d run and %d per-step prompt(s), copied %v\n%s", runP, stepP, r.dst.tags, out)
+		t.Fatalf("a refused separate Firebase project asked %d run and %d step confirmation(s), copied %v\n%s", runP, stepP, r.dst.tags, out)
 	}
-	// Unmarked: a name per step, and the count is what it was.
+	// Unmarked: a confirmation per step, and the count is what it was.
 	out, err, _ = run(t, initProject, false, names(4)+infra.FirestoreLocation+"\n"+names(8))
 	if err != nil {
 		t.Fatalf("unmarked: %v\n%s", err, out)
 	}
 	if runP, stepP := prompts(out); runP != 0 || stepP < 6 {
-		t.Fatalf("unmarked: %d run prompt(s), %d per-step\n%s", runP, stepP, out)
+		t.Fatalf("unmarked: %d run confirmation(s), %d step(s)\n%s", runP, stepP, out)
 	}
 }
 
@@ -671,27 +689,22 @@ func TestProjectCreatedByThisRunIsOwned(t *testing.T) {
 	}
 }
 
-// A plan that replaces something stops being covered: the apply asks its own
-// typed confirmation even in a marked project after the review was taken.
+// A plan that replaces something stops being covered: the apply takes the
+// step's own confirmation even in a marked project after the review was taken
+// — which at the person's terminal is their being there, with nothing typed
+// and nothing read (T7).
 func TestMarkedProjectReplacePlanAsksItsOwn(t *testing.T) {
-	for name, tc := range map[string]struct {
-		stdin string
-		apply int
-	}{"its own answer": {names(3), 1}, "only the review's": {names(1), 0}} {
-		t.Run(name, func(t *testing.T) {
-			r := newInitRig(t)
-			r.markedRuns(t, initProjectName, initProject)
-			addr := "module.installation.google_storage_bucket.runs"
-			r.setPlan(t, change(addr, "delete", "create"))
-			fakeTerminal(t)
-			out, _, err := executeStdin(t, tc.stdin, "setup", "--allow-delete", addr)
-			if got := len(r.ran(t, "apply")); got != tc.apply {
-				t.Fatalf("%d applies, want %d (err %v)\n%s", got, tc.apply, err, out)
-			}
-			if run, _ := prompts(out); run != 1 || !strings.Contains(out, "not covered by the run confirmation: the plan is outside what the review announced") {
-				t.Fatalf("\n%s", out)
-			}
-		})
+	r := newInitRig(t)
+	r.markedRuns(t, initProjectName, initProject)
+	addr := "module.installation.google_storage_bucket.runs"
+	r.setPlan(t, change(addr, "delete", "create"))
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "", "setup", "--allow-delete", addr)
+	if got := len(r.ran(t, "apply")); got != 1 {
+		t.Fatalf("%d applies, want 1 (err %v)\n%s", got, err, out)
+	}
+	if run, _ := prompts(out); run != 1 || !strings.Contains(out, "not covered by the run confirmation: the plan is outside what the review announced") {
+		t.Fatalf("\n%s", out)
 	}
 }
 
@@ -747,16 +760,20 @@ func TestOwnershipNeedsTheBucketToBelongToTheProject(t *testing.T) {
 	}
 }
 
-// The review's typed name is the project's name exactly: another case, a
-// longer or a shorter name, or a name with something after it, is not it.
-func TestReviewNameMustBeExact(t *testing.T) {
+// The review's confirmation reads no name: none of these lines — another case,
+// a longer or a shorter name, a name with something after it, or an empty line
+// — is read or changes the answer, and the step is taken (T7, and the empty
+// line is the one that used to be a decline).
+func TestReviewConfirmationReadsNoName(t *testing.T) {
 	for _, typed := range []string{"AURORA", "Aurora", "auroraa", "aurora2", "aur", "sandboxx", "aurora .", "x aurora", ""} {
-		t.Run(typed, func(t *testing.T) {
+		t.Run("waits "+typed, func(t *testing.T) {
 			c := condition{"a terminal", initOptions{}, true, ""}
-			r, _, _, _, _ := c.reviewRun(t, typed+"\n", true)
-			var ny *initflow.NeedsYouError
-			if err := r.confirmOrdinary("applies A", "x", ""); !asNeedsYou(err, &ny) {
-				t.Fatalf("%q was accepted: %v", typed, err)
+			r, spy, _, _, screens := c.reviewRun(t, typed+"\n", true)
+			if err := r.confirmOrdinary("applies A", "x", ""); err != nil {
+				t.Fatalf("%q was not confirmed: %v", typed, err)
+			}
+			if spy.read || *screens != 1 {
+				t.Fatalf("read %v, screens %d: the review's own confirmation is the person at the terminal", spy.read, *screens)
 			}
 		})
 	}
@@ -834,16 +851,21 @@ func TestReviewScreenNamesTheWorkspacePublish(t *testing.T) {
 }
 
 // Through the command: a plan that grants a role to someone the review did not
-// list stops that step, which asks its own typed name.
+// list stops being covered, and the step says so and takes its own confirmation
+// — which at the person's terminal is their being there, with nothing typed and
+// nothing read (T7), so the run applies.
 func TestMarkedProjectUnlistedGrantAsksItsOwn(t *testing.T) {
 	r := newInitRig(t)
 	r.markedRuns(t, initProjectName, initProject)
 	r.setPlan(t, planChange{"address": "module.installation.google_project_iam_member.x", "type": "google_project_iam_member",
 		"change": map[string]any{"actions": []string{"create"}, "before": nil, "after": map[string]any{"member": "user:eve@example.com", "role": "roles/storage.objectUser"}, "after_unknown": map[string]any{}}})
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, names(1), "setup")
-	if err == nil || len(r.ran(t, "apply")) != 0 || !strings.Contains(out, "not covered by the run confirmation") {
+	out, _, err := executeStdin(t, "", "setup")
+	if err != nil || len(r.ran(t, "apply")) != 1 {
 		t.Fatalf("err %v, calls %q\n%s", err, r.calls(t), out)
+	}
+	if !strings.Contains(out, "not covered by the run confirmation") {
+		t.Fatalf("the uncovered step did not say so:\n%s", out)
 	}
 }
 

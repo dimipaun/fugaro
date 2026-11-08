@@ -159,32 +159,38 @@ func TestOnboardRepoFlag(t *testing.T) {
 	}
 }
 
-// The typed confirmation names owner/name and the checkout's path; only the
-// exact repository name opts it in, and one answer serves the plugin and the
-// repository stages.
-func TestTypedRepoConfirmation(t *testing.T) {
+// The gate's banner names owner/name and the checkout's path, and since T7 the
+// person at the terminal is the whole of the answer: the repository is
+// onboarded with nothing typed and nothing read, whatever is waiting on stdin,
+// and one confirmation serves the plugin and the repository stages.
+func TestRepoGateReadsNoName(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	dir := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
 	t.Chdir(dir)
 	fakeTerminal(t)
-	for _, wrong := range []string{"yes\n", "acme\n", "ACME/APP\n", "\n"} {
-		e, out := stageEngine(t, wrong, &initOptions{githubAppID: "12345"})
+	for _, ans := range []string{"yes\n", "acme\n", "ACME/APP\n", "\n"} {
+		e, out := stageEngine(t, ans, &initOptions{githubAppID: "12345"})
 		unknownRepo(e)
+		read := false
+		spy := &firstReadSpy{Reader: strings.NewReader(ans), fn: func() { read = true }}
+		e.r.cmd.SetIn(spy)
+		e.r.in = bufio.NewReader(spy)
+		runs := 0
 		rs := newRepositoryStage(e)
-		rs.engineStage.run = neverRun(t)
+		rs.engineStage.run = func(context.Context) error { runs++; return nil }
 		res, err := initflow.Run(t.Context(), []initflow.Stage{newPluginStage(e), rs}, e.options())
-		if err != nil || stateOf(res, "plugin") != initflow.NeedsYou || !strings.Contains(out.String(), "acme/app") || !strings.Contains(out.String(), dir) {
-			t.Fatalf("answer %q: %v %+v\n%s", wrong, err, res.Stages, out.String())
+		// The first answer wires the plugin, so the answers after it find the
+		// pin already written: the plugin stage is done, changed or not.
+		plugin := stateOf(res, "plugin")
+		if err != nil || (plugin != initflow.Changed && plugin != initflow.Done) || stateOf(res, "repository") != initflow.Done || runs != 1 {
+			t.Fatalf("answer %q: %v runs %d %+v\n%s", ans, err, runs, res.Stages, out.String())
 		}
-	}
-	e, out := stageEngine(t, "acme/app\ny\n", &initOptions{githubAppID: "12345"})
-	unknownRepo(e)
-	runs := 0
-	rs := newRepositoryStage(e)
-	rs.engineStage.run = func(context.Context) error { runs++; return nil }
-	res, err := initflow.Run(t.Context(), []initflow.Stage{newPluginStage(e), rs}, e.options())
-	if err != nil || stateOf(res, "plugin") != initflow.Changed || stateOf(res, "repository") != initflow.Done || runs != 1 || strings.Count(out.String(), "Type acme/app") != 1 {
-		t.Fatalf("%v runs %d %+v\n%s", err, runs, res.Stages, out.String())
+		if read {
+			t.Errorf("answer %q: stdin was read at the gate's confirmation (T7)", ans)
+		}
+		if !strings.Contains(out.String(), "acme/app") || !strings.Contains(out.String(), dir) || strings.Contains(out.String(), "Type ") {
+			t.Errorf("answer %q: the banner names neither the repository nor the checkout, or asks for a name:\n%s", ans, out.String())
+		}
 	}
 }
 
@@ -407,16 +413,18 @@ func TestKnownNameOnAnotherHostIsUnknown(t *testing.T) {
 	if res, err := initflow.Run(t.Context(), []initflow.Stage{rs}, e.options()); err != nil || stateOf(res, "repository") != initflow.NeedsYou {
 		t.Errorf("bitbucket.org: %v %+v", err, res.Stages)
 	}
-	// Typed with its host it goes ahead; the bare name does not.
+	// At the person's own terminal the gate's own question is the whole of the
+	// answer (T7): the repository is onboarded whatever is waiting on stdin,
+	// and the banner names the host the gate refused to cover with --yes.
 	fakeTerminal(t)
-	for typed, want := range map[string]bool{"acme/app\n": false, "evil.example/acme/app\n": true} {
+	for _, typed := range []string{"acme/app\n", "evil.example/acme/app\n"} {
 		dir := repoCheckout(t, "https://evil.example/acme/app.git", checkoutYAML("github", "oauth", "aurora", ""))
 		t.Chdir(dir)
 		e, out := stageEngine(t, typed, &initOptions{githubAppID: "12345"})
 		ran := false
 		rs := newRepositoryStage(e)
 		rs.engineStage.run = func(context.Context) error { ran = true; return nil }
-		if _, err := initflow.Run(t.Context(), []initflow.Stage{rs}, e.options()); err != nil || ran != want || !strings.Contains(out.String(), "host evil.example") {
+		if _, err := initflow.Run(t.Context(), []initflow.Stage{rs}, e.options()); err != nil || !ran || !strings.Contains(out.String(), "host evil.example") {
 			t.Errorf("typed %q: ran %v, err %v\n%s", typed, ran, err, out.String())
 		}
 	}
@@ -502,55 +510,76 @@ func (s *firstReadSpy) Read(p []byte) (int, error) {
 	return s.Reader.Read(p)
 }
 
+// gateBannerSpy runs fn the first time the gate's banner is written, so a test
+// can record what had already happened. The banner must precede the first cloud
+// call, and since T7 it — not a read — is what marks the gate: nothing is typed
+// at it, so there is no read left to hang the order on.
+type gateBannerSpy struct {
+	io.Writer
+	once sync.Once
+	fn   func()
+}
+
+func (s *gateBannerSpy) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), "this checkout's repository is not one of the project's yet") {
+		s.once.Do(s.fn)
+	}
+	return s.Writer.Write(p)
+}
+
 // Live Check 27: the repository question came only after the slow Terraform
 // plans. It is asked first now, before any plan touches the cloud for the
-// checkout, and the answer is the same gate: typed, or the stages say what to
-// do and do not ask again.
+// checkout — and since T7 it is asked by the banner alone, with the person at
+// the terminal as the answer — and the stages go on to plan.
 func TestUnknownRepoQuestionComesBeforeAnyPlan(t *testing.T) {
-	for name, answer := range map[string]string{"typed": "acme/app\n", "not typed": "no\n"} {
-		t.Run(name, func(t *testing.T) {
-			releaseBuild(t, "0.2.0")
-			r := newInitRig(t)
-			r.stateBucket()
-			t.Chdir(repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", initProjectName, "")))
-			fakeTerminal(t)
-			e := rigEngine(t, r, &initOptions{planOnly: true, githubAppID: "12345"})
-			before := -1
-			e.r.in = bufio.NewReader(&firstReadSpy{Reader: strings.NewReader(answer + answer + answer), fn: func() { before = len(r.calls(t)) }})
-			var out syncBuf
-			e.r.w = &out
-			_ = e.converge(t.Context())
-			if before != 0 {
-				t.Fatalf("the question was asked after %d terraform calls, want before the first", before)
-			}
-			if n := strings.Count(out.String(), "Type acme/app"); n != 1 {
-				t.Errorf("the question was asked %d times, want once:\n%s", n, out.String())
-			}
-			if len(r.calls(t)) == 0 {
-				t.Error("no stage planned after the question")
-			}
-			if name == "not typed" && !strings.Contains(out.String(), "--onboard-repo acme/app") {
-				t.Errorf("not typed, and the opt-in line is missing:\n%s", out.String())
-			}
-		})
-	}
-	// --yes never asks, early or late: nothing is typed for it.
+	releaseBuild(t, "0.2.0")
 	r := newInitRig(t)
 	r.stateBucket()
 	t.Chdir(repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", initProjectName, "")))
 	fakeTerminal(t)
-	e := rigEngine(t, r, &initOptions{planOnly: true, yes: true, githubAppID: "12345"})
-	asked := false
-	e.r.in = bufio.NewReader(&firstReadSpy{Reader: strings.NewReader("acme/app\n"), fn: func() { asked = true }})
-	e.r.w = &syncBuf{}
+	e := rigEngine(t, r, &initOptions{planOnly: true, githubAppID: "12345"})
+	before := -1
+	var out syncBuf
+	e.r.w = &gateBannerSpy{Writer: &out, fn: func() { before = len(r.calls(t)) }}
+	read := false
+	spy := &firstReadSpy{Reader: strings.NewReader("acme/app\n"), fn: func() { read = true }}
+	e.r.cmd.SetIn(spy)
+	e.r.in = bufio.NewReader(spy)
 	_ = e.converge(t.Context())
-	if asked {
-		t.Error("--yes asked for the repository")
+	if before != 0 {
+		t.Fatalf("the gate's banner was written after %d terraform calls, want before the first", before)
+	}
+	if read {
+		t.Error("the gate's confirmation read stdin: the person at the terminal is the whole of the answer (T7)")
+	}
+	if n := strings.Count(out.String(), "this checkout's repository is not one of the project's yet"); n != 1 {
+		t.Errorf("the gate's banner was printed %d times, want once:\n%s", n, out.String())
+	}
+	if strings.Contains(out.String(), "Type acme/app") {
+		t.Errorf("a name is asked for:\n%s", out.String())
+	}
+	if len(r.calls(t)) == 0 {
+		t.Error("no stage planned after the gate")
+	}
+	// --yes never asks and prints no banner: nothing is typed for it, and the
+	// gate's own question is not put back either.
+	r2 := newInitRig(t)
+	r2.stateBucket()
+	t.Chdir(repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", initProjectName, "")))
+	fakeTerminal(t)
+	e2 := rigEngine(t, r2, &initOptions{planOnly: true, yes: true, githubAppID: "12345"})
+	var out2 syncBuf
+	e2.r.w = &out2
+	e2.r.cmd.SetIn(&firstReadSpy{Reader: strings.NewReader("acme/app\n"), fn: func() { t.Error("--yes read stdin for the repository") }})
+	e2.r.in = bufio.NewReader(strings.NewReader(""))
+	_ = e2.converge(t.Context())
+	if strings.Contains(out2.String(), "this checkout's repository is not one of the project's yet") {
+		t.Errorf("--yes printed the gate's banner:\n%s", out2.String())
 	}
 }
 
 // An installation-only flag run inside a checkout of a repository the project
-// does not list yet gets one note, immediately before the guard's prompt: the
+// does not list yet gets one note, immediately before the guard's banner: the
 // converge in a checkout also onboards its repository, unless the question
 // about it is answered no (W3.4). The note is the wizard's question's own
 // introduction, so it is printed exactly where that question is asked — a run
@@ -558,6 +587,7 @@ func TestUnknownRepoQuestionComesBeforeAnyPlan(t *testing.T) {
 // prints it; the guard itself is unchanged.
 func TestInstallationFlagNoteInUnonboardedCheckout(t *testing.T) {
 	const note = "this checkout's repository is not onboarded; the converge in a checkout also onboards its repository, unless the question about it is answered no. To set up only the installation, run fugaro setup from outside the checkout."
+	const banner = "this checkout's repository is not one of the project's yet"
 	releaseBuild(t, "0.2.0")
 	checkout := func(t *testing.T) {
 		t.Chdir(repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", "")))
@@ -587,11 +617,10 @@ func TestInstallationFlagNoteInUnonboardedCheckout(t *testing.T) {
 				checkout(t)
 			}
 			fakeTerminal(t)
-			// The question is answered yes, so the note's own claim — it
-			// comes before the guard's prompt — is the thing under test; the
-			// owner/name the guard asks for is not typed (the input ends
-			// there), which is a decline either way.
-			e, out := stageEngine(t, onboardAnswerYes+"\n", tc.o)
+			// The guard's own confirmation is the person at the terminal
+			// (T7): nothing is typed at it, so the note's claim is that it
+			// comes before the banner, which is all the gate prints now.
+			e, out := stageEngine(t, "", tc.o)
 			if !tc.known {
 				unknownRepo(e)
 			}
@@ -600,8 +629,11 @@ func TestInstallationFlagNoteInUnonboardedCheckout(t *testing.T) {
 			if n := strings.Count(out.String(), note); n != tc.want {
 				t.Errorf("the note printed %d times, want %d:\n%s", n, tc.want, out.String())
 			}
-			if tc.want == 1 && strings.Index(out.String(), note) > strings.Index(out.String(), "Type acme/app") {
-				t.Errorf("the note came after the prompt:\n%s", out.String())
+			if tc.want == 1 {
+				noteAt, bannerAt := strings.Index(out.String(), note), strings.Index(out.String(), banner)
+				if bannerAt < 0 || noteAt > bannerAt {
+					t.Errorf("the note did not come before the guard's banner:\n%s", out.String())
+				}
 			}
 		})
 	}

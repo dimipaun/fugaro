@@ -178,10 +178,10 @@ func TestTheHostileGatesTypedRouteNamesTheReadersDoor(t *testing.T) {
 			t.Setenv("CLAUDECODE", "1")
 			out, errOut, err := executeStdin(t, "", door, "--repo", "--github-app-id", "42", "--yes", dir)
 			all := out + errOut + ErrorText(err)
-			if !strings.Contains(all, " "+door+" --repo and type ") {
+			if !strings.Contains(all, " "+door+" --repo and answer the question it asks about") {
 				t.Errorf("the typed route does not name fugaro %s --repo, the door this run is:\n%s", door, all)
 			}
-			if strings.Contains(all, "run fugaro "+otherDoorName(door)+" --repo") {
+			if strings.Contains(all, otherDoorName(door)+" --repo") {
 				t.Errorf("the typed route names the other door:\n%s", all)
 			}
 		})
@@ -422,65 +422,34 @@ const gateRepo = "acme/hostile"
 
 func gateOrigin() string { return "https://github.com/" + gateRepo + ".git" }
 
-// TestSetupAsksToOnboardTheCheckoutsRepository is Task W3.4's red step: in a
-// checkout whose repository the project's local config does not list yet,
-// `fugaro setup` asks the wizard's first-repository question — "onboard
-// <owner/name>?" — at the start of the converge, before any stage plans, and
-// Enter takes yes (D5, answered 2026-10-20 as recommended).
-//
-// The question is the wizard's and it authorizes nothing: it is asked in
-// front of the gate, not instead of it. An answer of yes goes on to the same
-// typed owner/name confirmation an unlisted repository always needed, and an
-// answer of no onboards nothing, skips the repository stage — nothing about
-// the repository is left for the user, they answered — and says how to enrol
-// it later.
-func TestSetupAsksToOnboardTheCheckoutsRepository(t *testing.T) {
-	// Yes, the answer Enter takes: the question is asked first, the typed
-	// owner/name behind it is unchanged, and the repository is opted in.
-	e, out := gateRig(t, setupDoor.name, gateOrigin(), gateCheckoutYAML(), "\n"+gateRepo+"\n", nil, true)
-	asked := "Onboard " + gateRepo
-	if !strings.Contains(out.String(), asked) {
-		t.Errorf("setup did not ask whether to onboard the checkout's repository:\n%s", out)
+// TestSetupOnboardsTheCheckoutsRepositoryAtTheGate is Task W3.4's step, since
+// T7: in a checkout whose repository the project's local config does not list
+// yet, `fugaro setup` prints the gate's banner at the start of the converge,
+// before any stage plans, and the person at the terminal is the whole of the
+// answer. The wizard's own "Onboard <owner/name>?" question is not put: it is
+// askConfirm's, whose [y/N] exists only under --ask, and setup refuses --ask —
+// so nothing is typed, nothing is read, and the repository is opted in. A run
+// that cannot ask prints nothing about the repository at all.
+func TestSetupOnboardsTheCheckoutsRepositoryAtTheGate(t *testing.T) {
+	e, out := gateRig(t, setupDoor.name, gateOrigin(), gateCheckoutYAML(), "no\n", nil, true)
+	for _, want := range []string{
+		"this checkout's repository is not one of the project's yet",
+		"acme/hostile on host github.com",
+		"checkout:",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the gate's banner lacks %q:\n%s", want, out)
+		}
 	}
-	if !strings.Contains(out.String(), "["+onboardAnswerYes+"]") {
-		t.Errorf("the question does not offer %s as the answer Enter takes:\n%s", onboardAnswerYes, out)
-	}
-	if strings.Index(out.String(), asked) > strings.Index(out.String(), "Type "+gateRepo+" to onboard it") {
-		t.Errorf("the question came after the typed confirmation it is asked in front of:\n%s", out)
+	if e.repo.notOnboarding {
+		t.Errorf("a waiting \"no\" changed the answer: the run is at the terminal and reads nothing (T7)\n%s", out)
 	}
 	if !e.authorized[gateRepo] {
-		t.Errorf("the answer %s and the owner/name typed did not opt the repository in:\n%s", onboardAnswerYes, out)
+		t.Errorf("the person at the terminal did not opt the repository in:\n%s", out)
 	}
 
-	// No: nothing is onboarded, the typed confirmation is not asked at all,
-	// and the stage is skipped rather than left for the user — they answered.
-	e, out = gateRig(t, setupDoor.name, gateOrigin(), gateCheckoutYAML(), onboardAnswerNo+"\n", nil, true)
-	if !strings.Contains(out.String(), asked) {
-		t.Errorf("setup did not ask whether to onboard the checkout's repository:\n%s", out)
-	}
-	if strings.Contains(out.String(), "Type "+gateRepo+" to onboard it") {
-		t.Errorf("the answer %s still reached the typed confirmation:\n%s", onboardAnswerNo, out)
-	}
-	if e.authorized[gateRepo] {
-		t.Errorf("the answer %s opted the repository in:\n%s", onboardAnswerNo, out)
-	}
-	st, err := e.repo.Check(t.Context())
-	if err != nil {
-		t.Fatalf("the stage's check failed: %v", err)
-	}
-	if st.State != initflow.Skipped {
-		t.Errorf("state %q, want %q: the answer was not to onboard it, so there is nothing left for the user\n%s", st.State, initflow.Skipped, out)
-	}
-	if !strings.Contains(st.Detail, gateRepo) {
-		t.Errorf("the skip does not name the repository it is about: %q", st.Detail)
-	}
-	if !strings.Contains(st.Detail, "--repo") {
-		t.Errorf("the skip does not say how to onboard the repository later: %q", st.Detail)
-	}
-
-	// A run that does not ask the question is not asked it: --yes, --json and
-	// --non-interactive never cover onboarding an unlisted repository, a pipe
-	// is not a terminal to ask at, and `fugaro update` is not the wizard.
+	// A run that cannot ask the question — --yes, --json, --non-interactive, a
+	// pipe, or the update door — prints nothing about the repository.
 	for name, tc := range map[string]struct {
 		door     string
 		o        *initOptions
@@ -494,24 +463,23 @@ func TestSetupAsksToOnboardTheCheckoutsRepository(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, out := gateRig(t, tc.door, gateOrigin(), gateCheckoutYAML(), "\n", tc.o, tc.terminal)
-			if strings.Contains(out.String(), asked) {
-				t.Errorf("a run that does not ask was asked whether to onboard the repository:\n%s", out)
+			if out.String() != "" {
+				t.Errorf("a run that cannot ask printed about the repository:\n%s", out)
 			}
 		})
 	}
 }
 
-// TestSetupConvergeAfterNoLeavesTheRepositoryAlone drives a whole converge in a
-// checkout of a repository the project does not list and answers no to the
-// wizard's question (W3.4). The answer is the run's, not the repository
-// stage's: the stages behind the same gate take it through the engine's
-// declined set — so the secrets stage (7) and the plugin wiring (8), which
-// write into the project and the checkout, do not offer to ask for the
-// owner/name again — and the repository stage (9) is the one that says it is
-// not onboarding it. Without that the answer is asked again straight away, and
-// typing the name there stores the repository's secrets and wires its checkout
-// while the repository stage reports that nothing is being onboarded.
-func TestSetupConvergeAfterNoLeavesTheRepositoryAlone(t *testing.T) {
+// TestSetupConvergeOnboardsAtTheGate drives a whole converge in a checkout of a
+// repository the project does not list (W3.4, T7). Since T7 there is no answer
+// to give: the gate's banner is printed at the start of the converge, the
+// person at the terminal is the whole of the confirmation, and the repository
+// is opted in for every stage behind the gate — the secrets stage (7) and the
+// plugin wiring (8), which write into the project and the checkout, see it
+// authorized instead of asking for the owner/name again — and the repository
+// stage (9) runs it. A run that read a line here would be a prompt nobody had
+// to answer, which is what the policy removes.
+func TestSetupConvergeOnboardsAtTheGate(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	r := newInitRig(t)
 	r.stateBucket()
@@ -519,14 +487,26 @@ func TestSetupConvergeAfterNoLeavesTheRepositoryAlone(t *testing.T) {
 	fakeTerminal(t)
 	e := rigEngine(t, r, &initOptions{planOnly: true, githubAppID: "12345", door: setupDoor.name})
 	var out syncBuf
-	e.r.in = bufio.NewReader(strings.NewReader(onboardAnswerNo + "\n"))
+	read := false
+	spy := &firstReadSpy{Reader: strings.NewReader("no\n"), fn: func() { read = true }}
+	e.r.cmd.SetIn(spy)
+	e.r.in = bufio.NewReader(spy)
 	e.r.w = &out
 	_ = e.converge(t.Context())
-	if !strings.Contains(out.String(), "Onboard acme/app") {
-		t.Fatalf("the converge did not ask whether to onboard the checkout's repository:\n%s", out.String())
+	if !strings.Contains(out.String(), "this checkout's repository is not one of the project's yet") {
+		t.Fatalf("the converge did not print the gate's banner:\n%s", out.String())
+	}
+	if read {
+		t.Error("the gate read stdin: the person at the terminal is the whole of the answer (T7)")
+	}
+	if !e.authorized["acme/app"] {
+		t.Errorf("the person at the terminal did not opt the repository in:\n%s", out.String())
+	}
+	if len(e.declined) != 0 {
+		t.Errorf("the repository was declined: %v", e.declined)
 	}
 	if strings.Contains(out.String(), "Type acme/app") {
-		t.Errorf("a stage behind the gate asked for the owner/name again:\n%s", out.String())
+		t.Errorf("a stage behind the gate asked for the owner/name:\n%s", out.String())
 	}
 	for _, willAsk := range []string{
 		"after you confirm the repository",       // the secrets stage
@@ -535,12 +515,6 @@ func TestSetupConvergeAfterNoLeavesTheRepositoryAlone(t *testing.T) {
 		if strings.Contains(out.String(), willAsk) {
 			t.Errorf("a stage still means to ask for the repository (%q):\n%s", willAsk, out.String())
 		}
-	}
-	if !strings.Contains(out.String(), "not onboarding acme/app") {
-		t.Errorf("the repository stage does not say it is not onboarding it:\n%s", out.String())
-	}
-	if len(e.authorized) != 0 {
-		t.Errorf("the answer no opted the repository in: %v", e.authorized)
 	}
 }
 

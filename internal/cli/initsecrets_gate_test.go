@@ -78,54 +78,36 @@ func TestSecretsGateInAnAgentSession(t *testing.T) {
 	}
 }
 
-// At a real terminal the repository is typed first (its name and host are
-// shown, a wrong answer stores nothing and shows no secret prompt), and only
-// then does the hidden prompt come, naming the repository and its host.
-func TestSecretsTypedOptInThenPrompt(t *testing.T) {
-	for _, tc := range []struct {
-		name, typed string
-		stored      bool
-	}{{"wrong", "acme/other\n", false}, {"right", "acme/app\n", true}} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newTTY(t)
-			r := newSecretsRig(t, bitbucketOrigin, f.tty)
-			r.unknown()
-			r.e.r.in = bufio.NewReader(f.tty)
-			done := r.start(context.Background())
-			r.waitOut(t, f, "Type acme/app to onboard it")
-			if out := r.out.String(); !strings.Contains(out, "acme/app on host bitbucket.org") {
-				t.Errorf("the prompt does not state the repository and its host:\n%s", out)
-			}
-			if _, err := f.master.WriteString(tc.typed); err != nil {
-				t.Fatal(err)
-			}
-			if tc.stored {
-				r.answer(t, f, "bitbucket-token (input hidden)", 1, "bb-secret-value-EXAMPLE\n")
-				r.answer(t, f, "claude-oauth-token (input hidden)", 1, tokenValue+"\n")
-			}
-			lr := waitLoop(t, done)
-			if lr.err != nil {
-				t.Fatal(lr.err)
-			}
-			if tc.stored {
-				// bitbucket-token has no project-wide default (a repository
-				// access token is per repository), so the stage that runs after
-				// the typed opt-in stores this repository's own copy.
-				if stateOf(lr.res, initflow.Secrets) != initflow.Changed || r.store.latest(bitbucketSlug, "bitbucket-token") == "" {
-					t.Fatalf("%+v", lr.res.Stages)
-				}
-				if !strings.Contains(r.errOut.String(), "bitbucket-token for acme/app on bitbucket.org") {
-					t.Errorf("the hidden prompt does not say whose secret it is:\n%s", r.errOut.String())
-				}
-				if !r.e.authorized["acme/app"] {
-					t.Error("the typed opt-in is not remembered for the stages after")
-				}
-				return
-			}
-			if stateOf(lr.res, initflow.Secrets) != initflow.NeedsYou || r.store.setCalls() != 0 || strings.Contains(r.errOut.String(), "input hidden") {
-				t.Fatalf("stages %+v, stderr %q", lr.res.Stages, r.errOut.String())
-			}
-		})
+// At a real terminal the gate's banner is the whole of the repository's
+// confirmation — the name and host are shown, nothing is typed and nothing is
+// read (T7) — and only then does the hidden prompt come, naming the repository
+// and its host.
+func TestSecretsOptInAtATerminalThenPrompt(t *testing.T) {
+	f := newTTY(t)
+	r := newSecretsRig(t, bitbucketOrigin, f.tty)
+	r.unknown()
+	r.e.r.in = bufio.NewReader(f.tty)
+	done := r.start(context.Background())
+	r.waitOut(t, f, "this checkout's repository is not one of the project's yet")
+	if out := r.out.String(); !strings.Contains(out, "acme/app on host bitbucket.org") {
+		t.Errorf("the gate's banner does not state the repository and its host:\n%s", out)
+	}
+	r.bitbucketSession(t, f, "claude-oauth-token")
+	lr := waitLoop(t, done)
+	if lr.err != nil {
+		t.Fatal(lr.err)
+	}
+	// bitbucket-token has no project-wide default (a repository access token is
+	// per repository), so the stage that runs after the gate stores this
+	// repository's own copy.
+	if stateOf(lr.res, initflow.Secrets) != initflow.Changed || r.store.latest(bitbucketSlug, "bitbucket-token") == "" {
+		t.Fatalf("%+v", lr.res.Stages)
+	}
+	if !strings.Contains(r.errOut.String(), "bitbucket-token for acme/app on bitbucket.org") {
+		t.Errorf("the hidden prompt does not say whose secret it is:\n%s", r.errOut.String())
+	}
+	if !r.e.authorized["acme/app"] {
+		t.Error("the gate's confirmation is not remembered for the stages after")
 	}
 }
 

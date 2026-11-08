@@ -132,7 +132,6 @@ func TestInitAsksNoConfirmation(t *testing.T) {
 			{name: "--ask, a pipe", opts: initOptions{ask: true}},
 			{name: "--ask --json at a terminal", opts: initOptions{ask: true, asJSON: true}, terminal: true},
 			{name: "--ask --non-interactive at a terminal", opts: initOptions{ask: true, nonInteractive: true}, terminal: true},
-			{name: "--ask in a coding agent's session", opts: initOptions{ask: true}, terminal: true, agent: "CLAUDECODE"},
 		} {
 			t.Run(c.name, func(t *testing.T) {
 				r, spy, out := c.run(t, "y\n")
@@ -141,6 +140,20 @@ func TestInitAsksNoConfirmation(t *testing.T) {
 					t.Fatalf("confirmed %v, err %v, read %v, printed %q: --ask a confirmation nobody can answer is a refusal", ok, err, spy.read, out.String())
 				}
 			})
+		}
+		// A coding agent's marker is read before --ask's own question, so the
+		// agent's session gets the marker's refusal rather than the asked-for
+		// one: the marker is the whole of what keeps an agent out of a write,
+		// and it must not be answered by the flag either.
+		c := condition{name: "--ask in a coding agent's session", opts: initOptions{ask: true}, terminal: true, agent: "CLAUDECODE"}
+		r, spy, out := c.run(t, "y\n")
+		ok, err := r.confirmNow(question)
+		var ag *initflow.AgentError
+		if ok || err == nil || !errors.As(err, &ag) || ag.Marker != c.agent {
+			t.Fatalf("confirmed %v, err %v: --ask does not answer an agent's session", ok, err)
+		}
+		if spy.read || strings.Contains(out.String(), "[y/N]") {
+			t.Fatalf("read %v, printed %q: nothing is asked of an agent's session", spy.read, out.String())
 		}
 	})
 }

@@ -61,12 +61,12 @@ func TestPtyFirstRunPrompts(t *testing.T) {
 	}
 }
 
-// The plugin's [y/N] and the typed repository confirmation at a real
-// terminal: the repository's name is typed once, then the write is confirmed.
-func TestPtyPluginConfirmAndTypedRepo(t *testing.T) {
+// The plugin's write at a real terminal: the person's being there is the whole
+// of the confirmation — no name typed, no [y/N] — and the repository is wired.
+func TestPtyPluginConfirmationAtATerminal(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	settings := wiringCheckout(t, settingsWithOthers)
-	e, out, typeAt := ttyEngine(t, &initOptions{})
+	e, out, _ := ttyEngine(t, &initOptions{})
 	unknownRepo(e)
 	type result struct {
 		res *initflow.Result
@@ -77,8 +77,6 @@ func TestPtyPluginConfirmAndTypedRepo(t *testing.T) {
 		res, err := initflow.Run(t.Context(), []initflow.Stage{newPluginStage(e)}, e.options())
 		done <- result{res, err}
 	}()
-	typeAt("Type acme/app to onboard it", 1, "acme/app\n")
-	typeAt("[y/N]", 1, "y\n")
 	select {
 	case r := <-done:
 		if r.err != nil || stateOf(r.res, "plugin") != initflow.Changed {
@@ -90,14 +88,17 @@ func TestPtyPluginConfirmAndTypedRepo(t *testing.T) {
 	if data, _ := os.ReadFile(settings); !strings.Contains(string(data), `"fugaro@fugaro": true`) {
 		t.Errorf("not wired:\n%s", data)
 	}
+	if strings.Contains(out.String(), "Type acme/app to onboard it") || strings.Contains(out.String(), "[y/N]") {
+		t.Errorf("a confirmation was asked at the terminal:\n%s", out.String())
+	}
 }
 
-// The repository stage's own typed confirmation at a real terminal, then the
-// engine runs once.
-func TestPtyRepositoryTypedConfirmation(t *testing.T) {
+// The repository stage's own confirmation at a real terminal: the person is
+// there, so the engine runs once with nothing typed.
+func TestPtyRepositoryConfirmationAtATerminal(t *testing.T) {
 	dir := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
 	t.Chdir(dir)
-	e, out, typeAt := ttyEngine(t, &initOptions{githubAppID: "12345"})
+	e, out, _ := ttyEngine(t, &initOptions{githubAppID: "12345"})
 	unknownRepo(e)
 	runs := 0
 	rs := newRepositoryStage(e)
@@ -111,7 +112,6 @@ func TestPtyRepositoryTypedConfirmation(t *testing.T) {
 		res, err := initflow.Run(t.Context(), []initflow.Stage{rs}, e.options())
 		done <- result{res, err}
 	}()
-	typeAt("Type acme/app to onboard it", 1, "acme/app\n")
 	select {
 	case r := <-done:
 		if r.err != nil || runs != 1 || stateOf(r.res, "repository") != initflow.Done || !strings.Contains(out.String(), dir) {
