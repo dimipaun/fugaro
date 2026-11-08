@@ -291,10 +291,12 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		// project before it starts, which is doctor's allow-list-empty state —
 		// and the diff that shows the empty list prints only after the write, so
 		// it would announce the consequence only once it was in force. It is
-		// said here, before the first write, and a person has to type the
-		// project's name: no flag stands in, and a session with no terminal is
-		// refused (#1674). Asked once across the retries below, because it is a
-		// decision about the document and not about the attempt.
+		// said here, before the first write, and the person at the terminal is
+		// what answers it: no flag stands in, nothing is typed (T7,
+		// docs/no-prompt-policy), and a session with no terminal — a script's,
+		// or a coding agent's — is refused (#1674). Asked once across the
+		// retries below, because it is a decision about the document and not
+		// about the attempt.
 		if len(pol.AllowRepos) == 0 && !emptyAllowListConfirmed {
 			if err := confirmEmptyAllowList(cmd, lc, agent); err != nil {
 				return publishFailure(err, narrowedSoFar)

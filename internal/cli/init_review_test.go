@@ -134,7 +134,7 @@ func TestDeclinedReviewAppliesNothing(t *testing.T) {
 	if !asNeedsYou(err, &ny) || *screens != 1 || !spy.read {
 		t.Fatalf("err %v, screens %d, read %v", err, *screens, spy.read)
 	}
-	if !strings.Contains(strings.Join(ny.Left.Commands, " "), "setup") || !strings.Contains(ny.Left.Text, "review's question") || strings.Contains(ny.Left.Text+out.String(), "--yes") {
+	if !strings.Contains(strings.Join(ny.Left.Commands, " "), "setup") || !strings.Contains(ny.Left.Text, "review's screen is printed again") || strings.Contains(ny.Left.Text+out.String(), "--yes") {
 		t.Errorf("left %+v\n%s", ny.Left, out)
 	}
 	if ok, err := r.askOrdinary("applies B", ""); ok || !asNeedsYou(err, &ny) {
@@ -400,10 +400,16 @@ func (r *initRig) markedRuns(t *testing.T, name, gcp string) {
 // Firestore location's names the project alone, and the tests that expect it
 // count it themselves), and a step the run's confirmation covered says so on
 // the line under its banner — which is what tells the two apart.
+//
+// The covered line is counted with its own indentation, which is how the step
+// prints it (init_review.go's askOrdinary). The same phrase sits inside the
+// other sentence a step prints, "note: this step is not covered by the run
+// confirmation: …", so the bare phrase counts that one too: a step that asked
+// its own would read as a covered step, and a run with one of each as none.
 func prompts(out string) (run, step int) {
 	run = strings.Count(out, "share ONE confirmation")
 	step = strings.Count(out, "⚠ CONFIRM (project "+initProjectName+", GCP project "+initProject+")") -
-		strings.Count(out, "covered by the run confirmation")
+		strings.Count(out, "\n  covered by the run confirmation (")
 	return
 }
 

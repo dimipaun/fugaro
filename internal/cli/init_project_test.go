@@ -152,29 +152,23 @@ func (j projectJSON) state(name string) string {
 	return ""
 }
 
-// The flag alone creates nothing; neither does a wrong ID; the typed ID
-// creates exactly one project and adds Firebase, and billing stays the
-// user's.
+// The flag alone creates nothing, and --plan-only creates nothing; the
+// creation is Typed in both doors, so a person at the terminal is the
+// confirmation and nothing is typed under it (T7): exactly one project is
+// created, Firebase is added to it, and billing stays the user's.
 func TestCreateProjectNeedsFlagAndConfirm(t *testing.T) {
 	r := newProjectRig(t)
 
 	// No flag: the project stage is not even registered.
 	// (The installation's own checks then find no such project.)
-	_, _, err := r.run(t, true, newProj+"\n", "--plan-only")
+	_, _, err := r.run(t, true, "", "--plan-only")
 	if err == nil || !strings.Contains(err.Error(), "reading project") {
 		t.Errorf("err = %v", err)
 	}
 	r.nothingDone(t, "no --create-project")
 
-	// The flag, and a wrong confirmation.
-	_, _, err = r.run(t, true, "yes\n", "--create-project")
-	if err == nil {
-		t.Error("an unconfirmed creation exited 0")
-	}
-	r.nothingDone(t, "a wrong confirmation")
-
 	// The flag, with --plan-only: shows the plan and does nothing.
-	out, _, err := r.run(t, true, newProj+"\n", "--create-project", "--plan-only")
+	out, _, err := r.run(t, true, "", "--create-project", "--plan-only")
 	if err != nil && ExitCode(err) != ExitUserError {
 		t.Fatal(err)
 	}
@@ -183,8 +177,8 @@ func TestCreateProjectNeedsFlagAndConfirm(t *testing.T) {
 	}
 	r.nothingDone(t, "--plan-only")
 
-	// The right ID.
-	_, _, _ = r.run(t, true, newProj+"\n", "--create-project", "--display-name", "Fugaro New")
+	// The flag at a person's terminal: the creation goes on with nothing typed.
+	_, _, _ = r.run(t, true, "", "--create-project", "--display-name", "Fugaro New")
 	cs := r.crm.Creates()
 	if len(cs) != 1 || cs[0].ID != newProj || cs[0].DisplayName != "Fugaro New" || cs[0].Parent != "" {
 		t.Fatalf("creates = %+v: want exactly one, with no parent", cs)

@@ -579,7 +579,7 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 		what = "writes the database as listed and " + infra.IdentityPlatformStep + ", as you (project owner, editor or budget admin), and then the local config"
 	}
 	if fs.CreatesDatabase() {
-		what += fmt.Sprintf("; this does NOT create the Firestore database: its creation in %s, whose location is permanent and can never be changed, is asked next, separately (the location typed)", infra.FirestoreLocation)
+		what += fmt.Sprintf("; this does NOT create the Firestore database: its creation in %s, whose location is permanent and can never be changed, is asked next, separately (its own confirmation, with nothing typed)", infra.FirestoreLocation)
 	}
 	if err := r.confirmOrdinary(what, "the database was not written", r.firebaseReason()); err != nil {
 		return false, err
@@ -625,7 +625,7 @@ func (r *initRun) confirmLocation() error {
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s): the Firestore database is created in %s, and a database's location can NEVER be changed.\n", r.projectName, infra.FirestoreLocation)
 	switch r.stepConfirmation(r.stepClass()) {
 	case stepLeave:
-		lf := promptLeft(initflow.Firebase, "run this in a terminal window, where the note about the Firestore database's permanent location can be read, after running", r.o.doorName(), "--firebase-project", quoteWord(r.o.firebaseProject()))
+		lf := promptLeft(initflow.Firebase, "run the command below: it prints the note about the Firestore database's permanent location and then creates the database, asking you nothing", r.o.doorName(), "--firebase-project", quoteWord(r.o.firebaseProject()))
 		return &initflow.NeedsYouError{Left: lf}
 	case stepByYes:
 		fmt.Fprintln(r.w, "  confirmed by --yes")

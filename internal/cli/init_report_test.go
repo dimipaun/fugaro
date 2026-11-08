@@ -19,7 +19,6 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -499,80 +498,50 @@ func writerAsTerminal(t *testing.T) {
 	t.Cleanup(func() { writerIsTerminal = old })
 }
 
-// promptWatch is a run's stdout, watched as it is written: it keeps the bytes
-// that were on the screen at the moment a prompt was printed.
-type promptWatch struct {
-	mu     sync.Mutex
-	buf    bytes.Buffer
-	at     string
-	before string
-	found  bool
-}
-
-func (w *promptWatch) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	n, err := w.buf.Write(p)
-	if !w.found && strings.Contains(w.buf.String(), w.at) {
-		w.found = true
-		w.before, _, _ = strings.Cut(w.buf.String(), w.at)
-	}
-	return n, err
-}
-
-func (w *promptWatch) String() string {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.buf.String()
-}
-
-// TestConfirmPromptsAreNeverSuppressed: the typed confirmation of an apply is
-// a prompt, not a step: it is on the screen whether or not the reporter is
-// drawing, and nothing is drawn on the line the run is about to read stdin
-// on — a line in flight would swallow it (G1).
-func TestConfirmPromptsAreNeverSuppressed(t *testing.T) {
+// TestUpdateAppliesWithoutAPrompt: the apply takes no confirmation any more
+// (T7): a person at the terminal is the whole of it, nothing is typed — --ask
+// is the flag that puts the review's question back — and every step of the run
+// goes ahead with no prompt on the screen for the reporter to draw over. The
+// account is still the reporter's.
+func TestUpdateAppliesWithoutAPrompt(t *testing.T) {
 	applyingRig(t)
 	fakeTerminal(t)
 	writerAsTerminal(t)
 	// The reporter draws a line in flight only where colour is allowed, and a
-	// `TERM=dumb` console is not (G4): without this the "nothing in flight"
-	// half of this test would pass on a machine whose TERM happens to be dumb,
-	// which is what a build box's is.
+	// `TERM=dumb` console is not (G4): without this a machine whose TERM
+	// happens to be dumb, which is what a build box's is, would take a
+	// different path through the reporter.
 	t.Setenv("TERM", "xterm-256color")
-	watch := &promptWatch{at: "Type " + initProjectName + " to apply to GCP project " + initProject + ": "}
+	var out, errOut bytes.Buffer
 	cmd := NewRootCmd()
-	var errOut bytes.Buffer
 	cmd.SetIn(strings.NewReader(initProjectName + "\n"))
-	cmd.SetOut(watch)
+	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
 	cmd.SetArgs(NormalizeArgs([]string{"update"}))
-	err := cmd.Execute()
-	out := watch.String()
-	if !watch.found {
-		t.Fatalf("the typed confirmation never reached the screen (err %v):\n%s%s", err, out, errOut.String())
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("the run did not apply with nothing typed: %v\n%s%s", err, out.String(), errOut.String())
 	}
-	if !strings.HasSuffix(watch.before, "\n") {
-		t.Errorf("a line was in flight when the run read stdin, so the prompt is drawn over it: %q", watch.before)
+	if got := out.String(); strings.Contains(got, "Type ") || strings.Contains(got, "[y/N]") {
+		t.Errorf("the apply asked a confirmation, and nothing is typed at one:\n%s", got)
 	}
-	if err != nil {
-		t.Fatalf("the typed name did not confirm the apply: %v\n%s%s", err, out, errOut.String())
+	if !strings.Contains(out.String(), "installation") {
+		t.Errorf("the run printed no account:\n%s", out.String())
 	}
-	if !strings.Contains(out, "installation") {
-		t.Errorf("the run printed no account after the confirmation:\n%s", out)
-	}
-	// The account is the reporter's: the confirmation above was the only
-	// reason this run printed at all before it.
-	if !strings.Contains(out, markDone) {
-		t.Errorf("the run's steps are not the reporter's:\n%s", out)
+	// The account is the reporter's.
+	if !strings.Contains(out.String(), markDone) {
+		t.Errorf("the run's steps are not the reporter's:\n%s", out.String())
 	}
 }
 
 // TestTheRunsOwnWriterTakesTheLineInFlightDown: the converge's own writer is
 // where a person's lines go, and the reporter's line in flight is down before
 // the first byte of one — a frame drawn on the line a prompt is written on
-// swallows the prompt and the answer typed under it (G1). The answer puts the
-// line back: a stage that prompts in the middle of its minutes is still a
-// stage somebody is watching, and one is open across every stage (the loop).
+// swallows the prompt and the answer typed under it (G1). The line comes back
+// on the next whole line the run prints: the answer itself is no line of the
+// run's (T7 removed the confirmations, and a value is read under a prompt the
+// writer keeps down), so a stage that prompts in the middle of its minutes is
+// still a stage somebody is watching, and one is open across every stage (the
+// loop).
 func TestTheRunsOwnWriterTakesTheLineInFlightDown(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	var out bytes.Buffer
@@ -593,8 +562,14 @@ func TestTheRunsOwnWriterTakesTheLineInFlightDown(t *testing.T) {
 	if _, err := readConfirmLine(run.in); err != nil {
 		t.Fatal(err)
 	}
+	if got := out.String(); strings.HasSuffix(got, "installation") {
+		t.Errorf("the answer drew the line in flight back: %q", got)
+	}
+	if _, err := fmt.Fprintln(run.w, "nothing was changed"); err != nil {
+		t.Fatal(err)
+	}
 	if got := out.String(); !strings.HasSuffix(got, "installation") {
-		t.Errorf("the answer did not put the line in flight back: %q", got)
+		t.Errorf("the next whole line did not put the line in flight back: %q", got)
 	}
 	step.Done("")
 }

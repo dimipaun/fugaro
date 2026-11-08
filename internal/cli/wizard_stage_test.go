@@ -73,8 +73,8 @@ func TestWizardCollectsEveryAnswerBeforeTheFirstApply(t *testing.T) {
 	}
 	// Every question the table lists was asked, and asked by the phase.
 	for _, q := range setupQuestions {
-		if !slicesContains(ws.a.asked, q.label) && !askedByPrefix(ws.a.asked, q.label) {
-			t.Errorf("%s: the phase did not ask %q, and the table says it does:\n%s", q.flag, q.label, out)
+		if !askedByPrefix(ws.a.asked, q.label) && !askedByPrefix(ws.a.asked, q.what) {
+			t.Errorf("%s: the phase did not ask %q, and the table says it does:\n%s", q.flag, q.what, out)
 		}
 	}
 }
@@ -96,12 +96,14 @@ func leftAt(t *testing.T, s *wizardStage, st initflow.Status) initflow.Left {
 	return lf
 }
 
-// askedByPrefix is whether the phase asked a question whose printed label
-// begins with the table's: the name question's label carries the suggestion's
-// provenance on the end of it.
-func askedByPrefix(asked []string, label string) bool {
+// askedByPrefix is whether the phase asked a question under a name that begins
+// with one the table gives it: the ID and the region are recorded under the
+// row's own label, and the name question under the label the wizard prints for
+// it, which begins with the row's `what` and carries the suggestion's
+// provenance on the end.
+func askedByPrefix(asked []string, name string) bool {
 	for _, a := range asked {
-		if strings.HasPrefix(a, label) {
+		if strings.HasPrefix(a, name) {
 			return true
 		}
 	}
@@ -217,22 +219,22 @@ func TestWizardNeedsYouNamesTheQuestionAndAKind(t *testing.T) {
 	})
 
 	t.Run("asked, and no answer came: the question, as a prompt", func(t *testing.T) {
-		// The input ends at the first question: the run stopped there, and
-		// that is the question the line names — with the kind that says it is
-		// answered at a terminal, not with a flag.
-		_, ws, out := wizardStageRun(t, "", nil)
+		// Three answers the question's own check refuses: the run stopped
+		// there, and that is the question the line names — with the kind that
+		// says it is answered at a terminal, not with a flag.
+		_, ws, out := wizardStageRun(t, "nope!\nnope!\nnope!\n", nil)
 		st, err := ws.Check(t.Context())
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
 		if st.State != initflow.NeedsYou {
-			t.Fatalf("state %q, want needs-you: the input ended at the first question:\n%s", st.State, out)
+			t.Fatalf("state %q, want needs-you: the run got no usable answer to the first question:\n%s", st.State, out)
 		}
 		lf := leftAt(t, ws, st)
 		if lf.Kind != initflow.LeftPrompt {
 			t.Errorf("kind %q, want %q: the run stopped at a prompt, and a prompt is where the answer is", lf.Kind, initflow.LeftPrompt)
 		}
-		if !strings.Contains(lf.Text, "GCP project ID") {
+		if !strings.Contains(lf.Text, questionFor("--gcp-project").what) {
 			t.Errorf("the left-for-you line does not name the question it stopped at: %s", lf.Text)
 		}
 	})
@@ -290,7 +292,8 @@ func TestWizardResumesAtTheUnansweredQuestion(t *testing.T) {
 		// stdin and o are the run that stops.
 		stdin string
 		o     *initOptions // nil for a bare first run
-		// at is the question the run stops at, as the table labels it.
+		// at is the question the run stops at, as the table names it: what the
+		// Left prints is the question's own name, not the row's label.
 		at string
 		// And these are the rerun: the same questions with the one it stopped
 		// at now answered, which is the flag of that question.
@@ -299,18 +302,22 @@ func TestWizardResumesAtTheUnansweredQuestion(t *testing.T) {
 	}{
 		{
 			name: "the first question",
-			at:   setupQuestions[0].label,
-			reO:  optionsFor(setupQuestions[0].flag),
-			reIn: stdinFor(setupQuestions[0].flag),
+			// Three answers the ID's check refuses: a question with a
+			// suggestion takes an ending input as that suggestion, so an input
+			// that cannot answer has to be made of answers instead.
+			stdin: "nope!\nnope!\nnope!\n",
+			at:    setupQuestions[0].what,
+			reO:   optionsFor(setupQuestions[0].flag),
+			reIn:  stdinFor(setupQuestions[0].flag),
 		},
 		{
 			name: "a later question, the ones before it answered",
 			// --gcp-project answered the first question and the region was
-			// answered at the terminal; the input ends at the question after
-			// them, which is the one this run stopped at.
-			stdin: "\n",
+			// answered at the terminal; the name question's three answers are
+			// all unusable, and that is the question this run stopped at.
+			stdin: "\nBad Name!\nBad Name!\nBad Name!\n",
 			o:     optionsFor(setupQuestions[0].flag),
-			at:    setupQuestions[2].label,
+			at:    setupQuestions[2].what,
 			reO:   optionsFor(setupQuestions[2].flag),
 			reIn:  "\n\n\n",
 		},

@@ -337,15 +337,18 @@ func TestAResumedCreationIsMarkedManaged(t *testing.T) {
 // r.res.Created is what a resumed creation leaves behind and also what every other way
 // a --managed run creates nothing leaves behind, so the message may only say
 // "already existed" when the project stage actually read a project that was
-// already there. Here it does not exist and the typed confirmation is
-// declined, so nothing was adopted and nothing was created: the warning says
-// the creation did not happen, and a reader is not sent to look for a project
-// that is not there.
+// already there. Here it does not exist and the step is left for the user —
+// a person at the terminal who passed --yes, which is the one way one of
+// these steps is declined now that nothing is typed at a confirmation (T7,
+// docs/no-prompt-policy: --yes stands in for no Typed step, so the step is
+// left rather than taken) — so nothing was adopted and nothing was created:
+// the warning says the creation did not happen, and a reader is not sent to
+// look for a project that is not there.
 func TestManagedWarningDoesNotClaimAdoptionWithoutOne(t *testing.T) {
 	r := newProjectRig(t)
 	r.bill.AddAccount(billingAcc, true)
-	out, errOut, err := r.run(t, true, "not-the-project-id\n",
-		"--create-project", "--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
+	out, errOut, err := r.run(t, true, "",
+		"--yes", "--create-project", "--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
 	all := refusalText(out, errOut, err)
 	if err == nil {
 		t.Fatalf("a declined creation returned no error:\n%s", all)
@@ -355,7 +358,7 @@ func TestManagedWarningDoesNotClaimAdoptionWithoutOne(t *testing.T) {
 	// rather than about an earlier refusal.
 	r.nothingDone(t, "a managed creation whose confirmation was declined")
 	if !strings.Contains(all, "not confirmed") {
-		t.Fatalf("the run did not stop at the project's typed confirmation:\n%s", all)
+		t.Fatalf("the run did not stop at the project's confirmation:\n%s", all)
 	}
 	if !strings.Contains(all, "--managed was not applied") {
 		t.Errorf("the run created no project under --managed and did not say --managed was not applied:\n%s", all)

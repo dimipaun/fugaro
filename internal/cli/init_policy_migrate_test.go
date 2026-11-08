@@ -473,6 +473,12 @@ func setCatalogConfigWithNoRepos(t *testing.T, f *projectFixture) {
 // name, and a session with no terminal is refused — the confirmation D846
 // reserves for the boundary every run is admitted by, and the class a coding
 // agent's session never reaches under the managed gate (D1026).
+//
+// A config that lists no repository is the publisher's own warning instead
+// (#1674): that node admits nothing, so every run of the project stops before
+// it starts, and since T7 nothing is typed under the sentence — the person at
+// the terminal is the whole of the answer, and a session without one is refused
+// with the publisher's sentence before the write.
 func TestUpdatePolicyFirstPublishIsRefusedWithoutAConfirmation(t *testing.T) {
 	f := newProjectFixture(t, catalogConfigYAML)
 	h := newMigrationRig(t, f, &initOptions{})
@@ -491,7 +497,10 @@ func TestUpdatePolicyFirstPublishIsRefusedWithoutAConfirmation(t *testing.T) {
 
 	// A config that lists no repository is the other refusal of the same write,
 	// and the sentence is the publisher's own (#1674): the node admits nothing,
-	// so every run of the project stops before it starts.
+	// so every run of the project stops before it starts. Nothing is typed
+	// under it any more (T7): the person at the terminal is what answers it,
+	// and this session — still without one — is refused with that same
+	// sentence, before anything is written.
 	ger := newProjectFixture(t, catalogConfigYAML)
 	setCatalogConfigWithNoRepos(t, ger)
 	h2 := newMigrationRig(t, ger, &initOptions{})
@@ -499,8 +508,10 @@ func TestUpdatePolicyFirstPublishIsRefusedWithoutAConfirmation(t *testing.T) {
 	if err == nil {
 		t.Fatalf("--yes published a policy that admits no repository:\n%s", out)
 	}
-	if !strings.Contains(err.Error(), "every run stops before it starts") {
-		t.Errorf("the refusal does not say the consequence: %v", err)
+	for _, want := range []string{"needs a real terminal", "every run stops before it starts"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
 	}
 	if v := ger.db.Value(projectpolicy.PathShared()); v != nil {
 		t.Fatalf("the refused publish wrote a node: %v", v)
@@ -1449,8 +1460,9 @@ func TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject(t *testing.T) {
 	// The write replaces nothing and deletes nothing, its document is entirely
 	// the person's own local config, and the diff above the note is the first
 	// publish's own — every member the node is created with, named against the
-	// empty document it is created from. The first publish that does keep the
-	// typed name is the empty allow-list one, which the last subtest here pins.
+	// empty document it is created from. The first publish that does keep a
+	// warning of its own is the empty allow-list one, which the subtest after
+	// this one pins.
 	t.Run("a managed project with no node to publish yet", func(t *testing.T) {
 		h, f := firstPublishRig(t, "", true)
 		out := h.out.String()
@@ -1465,15 +1477,21 @@ func TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject(t *testing.T) {
 		}
 	})
 	// The empty allow-list first publish is the one write of that case that
-	// keeps the confirmation: the node it writes admits no repository, so from
-	// the moment it lands every run of the project stops before it starts.
+	// says the consequence before it: the node it writes admits no repository,
+	// so from the moment it lands every run of the project stops before it
+	// starts. Nothing is typed under the warning any more (T7): the publisher's
+	// own sentence is printed, and the write goes ahead — --ask is the flag
+	// that would put the question back.
 	t.Run("a managed project with no node and no repository listed", func(t *testing.T) {
 		h, f := firstPublishRig(t, "no-repos", true)
 		if !strings.Contains(h.out.String(), "⚠ CONFIRM (project aurora)") {
-			t.Errorf("a node that admits nothing was written without the confirmation:\n%s", h.out)
+			t.Errorf("a node that admits nothing was written without the warning:\n%s", h.out)
 		}
-		if v := f.db.Value(projectpolicy.PathShared()); v != nil {
-			t.Errorf("the node that admits nothing was written: %v", v)
+		if !strings.Contains(h.out.String(), "every run stops before it starts") {
+			t.Errorf("the warning does not say the consequence:\n%s", h.out)
+		}
+		if f.db.Value(projectpolicy.PathShared()) == nil {
+			t.Error("the warned publish wrote no node")
 		}
 	})
 	// The note is the person's, so a first publish reached without one keeps
@@ -1494,7 +1512,7 @@ func TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject(t *testing.T) {
 // publish rather than nothing to do — and runs the tail over it: managed, a
 // person at the terminal unless terminal is false, and nothing on stdin. extra
 // "no-repos" rewrites the config so the node it would write admits no
-// repository, which is the first publish that keeps the typed name.
+// repository, which is the first publish that warns before it writes.
 func firstPublishRig(t *testing.T, extra string, terminal bool) (*migrationRig, *projectFixture) {
 	t.Helper()
 	f := newProjectFixture(t, catalogConfigYAML)

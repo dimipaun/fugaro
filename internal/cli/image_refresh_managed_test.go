@@ -566,18 +566,18 @@ func TestImageRefreshReadsTheGateBeforeAnyWrite(t *testing.T) {
 // build either (the ruling of 2026-11-01: the whole point of a managed project
 // is that the gate manages it on the owner's behalf, without the prompts). The
 // marks are read because this is exactly the run the per-build question would
-// have stopped at, the gate judges THIS build, and the typed project name is
-// replaced by the verdict: the cost line is printed with it, and the admission
-// the owner finds later in their own bucket is written by refreshBuilds once
-// the build is out.
+// have stopped at, the gate judges THIS build, and what the owner reads in
+// place of a typed name is the verdict's own sentence (GateProceeded): the cost
+// line is printed with it, and the admission the owner finds later in their own
+// bucket is written by refreshBuilds once the build is out.
 //
-// The first case is that; the second is the control, and it is the whole of
-// what "the gate is the confirmation" means — an unproven project keeps
-// today's behaviour exactly, so the same build is the typed question this
-// command has always asked, which a terminal with nothing to type leaves
-// unanswered. The mutations caught: Managed.Removes answering true for every
-// project (the control's question is skipped and the build confirmed), and the
-// gate's own read being dropped so that any project is treated as managed.
+// The control is the same build at the same terminal with a creation fact this
+// program does not believe: nothing is typed (T7: the person being there IS the
+// confirmation), so the build goes ahead — but the gate judged no document, so
+// its own sentence is the one thing the owner does not read. The mutations
+// caught: Managed.Removes answering true for every project (the control's
+// verdict sentence is printed where the gate judged nothing), and the gate's
+// own read being dropped so that any project is treated as managed.
 func TestImageRefreshManagedOwnerTerminalAsksNoBuildQuestion(t *testing.T) {
 	useVersion(t, "0.5.1")
 	for _, tc := range []struct {
@@ -586,7 +586,7 @@ func TestImageRefreshManagedOwnerTerminalAsksNoBuildQuestion(t *testing.T) {
 		managed bool
 	}{
 		{"the project is managed, so the verdict is the confirmation", managedRefreshMarker(1), true},
-		{"the project is unproven, so the build is asked for as it always was", managedRefreshUnknownVersionMarker(), false},
+		{"the project is unproven, so the person at the terminal confirms it", managedRefreshUnknownVersionMarker(), false},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			r := newManagedRefreshRig(t, tc.marker)
@@ -600,15 +600,17 @@ func TestImageRefreshManagedOwnerTerminalAsksNoBuildQuestion(t *testing.T) {
 				t.Fatalf("the gate's door answered %v, want managed=%v", m != nil, tc.managed)
 			}
 			if !tc.managed {
-				// The control: the same build, the same terminal, and the
-				// question this command has always asked. Nothing is typed, so
-				// nothing is confirmed and no build is submitted.
+				// The control: the same build, the same terminal. Nothing is
+				// typed at a confirmation any more (T7): the person being
+				// there is the whole answer, so the build goes ahead — and the
+				// gate's own sentence is not printed, because the gate judged
+				// nothing here.
 				ok, reachable, err := r.e.r.askBuild("submits a Cloud Build", initflow.Managed{})
-				if err != nil || ok || !reachable {
-					t.Fatalf("a project that is not managed was answered without the typed name (ok=%v reachable=%v): %v", ok, reachable, err)
+				if err != nil || !ok || !reachable {
+					t.Fatalf("a person at the terminal did not confirm a project that is not managed (ok=%v reachable=%v): %v", ok, reachable, err)
 				}
-				if !strings.Contains(out.String(), "Type "+initProjectName+" to confirm") {
-					t.Errorf("the terminal was not asked for the project's name:\n%s", out)
+				if strings.Contains(out.String(), initflow.GateProceeded()) {
+					t.Errorf("the gate's sentence was printed for a project it did not judge:\n%s", out)
 				}
 				return
 			}
@@ -629,8 +631,8 @@ func TestImageRefreshManagedOwnerTerminalAsksNoBuildQuestion(t *testing.T) {
 			if got := out.String(); !strings.Contains(got, banner) || !strings.Contains(got, initflow.GateProceeded()) {
 				t.Errorf("what the owner read is not the cost line and the verdict:\n%s", got)
 			}
-			if strings.Contains(out.String(), "Type "+initProjectName+" to confirm") {
-				t.Errorf("a managed project's own terminal was asked for the project's name anyway:\n%s", out)
+			if strings.Contains(out.String(), "[y/N]") {
+				t.Errorf("a managed project's own terminal was asked a question anyway:\n%s", out)
 			}
 		})
 	}
@@ -657,8 +659,9 @@ func (r *managedRefresh) terminalRefresh(t *testing.T, want bool) *syncBuf {
 // managedOrUnproven is the two worlds every test below is run in: a managed
 // project, whose marks the gate read and where the owner is asked nothing, and
 // a project whose creation fact this program does not believe (a marker a newer
-// Fugaro wrote), which is where every question this command has always asked
-// stays exactly as it was.
+// Fugaro wrote), where the person at the terminal is the whole answer (nothing
+// is typed any more: T7) and the gate's own sentence is the one thing they do
+// not read.
 func managedOrUnproven() []struct {
 	what    string
 	marker  []byte
@@ -670,25 +673,24 @@ func managedOrUnproven() []struct {
 		managed bool
 	}{
 		{"managed: the marks are read and the step asks nothing", managedRefreshMarker(1), true},
-		{"unproven: the step is the question it has always been", managedRefreshUnknownVersionMarker(), false},
+		{"unproven: the person at the terminal confirms it, without the gate's sentence", managedRefreshUnknownVersionMarker(), false},
 	}
 }
 
 // The daily image check job (step 3) takes no confirmation in a managed
 // project's own terminal either (the ruling of 2026-11-01: the whole point of a
 // managed project is that the gate manages it on the owner's behalf, without
-// the prompts). What replaces the typed project name is the gate's own read of
-// the marks and the sentence that says so, printed under the diff the typed
-// name would have been asked above; the job is updated.
+// the prompts). What replaces a typed name is the gate's own read of the marks
+// and the sentence that says so, printed under the diff; the job is updated.
 //
 // The control is the whole of what makes that safe, and it is the same step
-// with the same terminal: an unproven project is asked exactly as it always
-// was, and with nothing typed the job is not written.
+// with the same terminal: an unproven project's step goes ahead too (T7: the
+// person at the terminal is the whole answer, nothing is typed), but the gate's
+// sentence is not printed, because the gate judged nothing.
 //
 // The mutation caught: refreshManaged.asksNothing answering true whatever it is
-// handed — the unproven project's job is then updated with no question asked at
-// all and this test fails on its own control (1 patch, no error, no typed
-// name).
+// handed — the unproven project then prints the gate's sentence where no gate
+// judged, and this test fails on its own control.
 func TestImageRefreshManagedOwnerTerminalAsksNoCheckJobQuestion(t *testing.T) {
 	useVersion(t, "0.5.1")
 	for _, tc := range managedOrUnproven() {
@@ -707,14 +709,14 @@ func TestImageRefreshManagedOwnerTerminalAsksNoCheckJobQuestion(t *testing.T) {
 			r.tg.lc.BaseImages = map[string]string{"base": newRef}
 			err = r.e.r.refreshCheckJob(t.Context(), r.tg)
 			if !tc.managed {
-				if err == nil || len(r.run.Patches()) != 0 {
-					t.Fatalf("an unproven project's check job was updated without the typed name: %v, %d patches\n%s", err, len(r.run.Patches()), out)
-				}
-				if !strings.Contains(out.String(), "Type "+initProjectName+" to apply to GCP project") {
-					t.Errorf("the terminal was not asked for the project's name:\n%s", out)
+				if err != nil {
+					t.Fatalf("a person at the terminal was stopped at the check job: %v\n%s", err, out)
 				}
 				if strings.Contains(out.String(), initflow.GateOrdinary()) {
 					t.Errorf("the gate's sentence was printed for a project it did not judge:\n%s", out)
+				}
+				if n := len(r.run.Patches()); n != 1 {
+					t.Fatalf("%d patches, want 1 (the check job's image and its spec moved together)", n)
 				}
 				return
 			}
@@ -726,8 +728,8 @@ func TestImageRefreshManagedOwnerTerminalAsksNoCheckJobQuestion(t *testing.T) {
 					t.Errorf("output lacks %q:\n%s", want, out)
 				}
 			}
-			if strings.Contains(out.String(), "Type "+initProjectName+" to apply to GCP project") {
-				t.Errorf("a managed project's own terminal was asked for the project's name anyway:\n%s", out)
+			if strings.Contains(out.String(), "[y/N]") {
+				t.Errorf("a managed project's own terminal was asked a question anyway:\n%s", out)
 			}
 			if n := len(r.run.Patches()); n != 1 {
 				t.Fatalf("%d patches, want 1 (the check job's image and its spec moved together)", n)
@@ -741,12 +743,13 @@ func TestImageRefreshManagedOwnerTerminalAsksNoCheckJobQuestion(t *testing.T) {
 // Cloud Build: what the owner reads is the old and new image, the sentence
 // that says why nothing is asked, and the line that the job was updated. The
 // control is the same move in the same terminal with a creation fact this
-// program does not believe: the typed name is asked, and a terminal with
-// nothing typed leaves the job at the image it had.
+// program does not believe: the step goes ahead too (T7: the person at the
+// terminal is the whole answer, nothing is typed), but the gate's sentence is
+// not printed, because the gate judged nothing.
 //
 // The mutation caught: refreshManaged.asksNothing answering true whatever it is
-// handed — the control's job is moved with no question asked, which is the
-// write this whole rule exists to keep behind the marks.
+// handed — the control then prints the gate's sentence where no gate judged,
+// and this test fails on its own control.
 func TestImageRefreshManagedOwnerTerminalAsksNoCloneJobQuestion(t *testing.T) {
 	useVersion(t, "0.5.1")
 	for _, tc := range managedOrUnproven() {
@@ -769,11 +772,17 @@ func TestImageRefreshManagedOwnerTerminalAsksNoCloneJobQuestion(t *testing.T) {
 			p := &refreshPlan{workflows: []string{"app"}}
 			err := r.e.r.refreshBuilds(t.Context(), p, r.tg)
 			if !tc.managed {
-				if err == nil || len(r.run.Patches()) != 0 {
-					t.Fatalf("an unproven project's clone job was moved without the typed name: %v, %d patches\n%s", err, len(r.run.Patches()), out)
+				if err != nil {
+					t.Fatalf("a person at the terminal was stopped at the clone job: %v\n%s", err, out)
 				}
-				if !strings.Contains(out.String(), "Type "+initProjectName+" to apply to GCP project") {
-					t.Errorf("the terminal was not asked for the project's name:\n%s", out)
+				if strings.Contains(out.String(), initflow.GateOrdinary()) {
+					t.Errorf("the gate's sentence was printed for a project it did not judge:\n%s", out)
+				}
+				if n := len(r.run.Patches()); n != 1 {
+					t.Fatalf("%d patches, want 1 (the clone job's image moved)", n)
+				}
+				if len(fb.specs) != 0 {
+					t.Fatalf("a Cloud Build was submitted for a checkout: clone workflow: %+v", fb.specs)
 				}
 				return
 			}
@@ -785,8 +794,8 @@ func TestImageRefreshManagedOwnerTerminalAsksNoCloneJobQuestion(t *testing.T) {
 					t.Errorf("output lacks %q:\n%s", want, out)
 				}
 			}
-			if strings.Contains(out.String(), "Type "+initProjectName+" to apply to GCP project") {
-				t.Errorf("a managed project's own terminal was asked for the project's name anyway:\n%s", out)
+			if strings.Contains(out.String(), "[y/N]") {
+				t.Errorf("a managed project's own terminal was asked a question anyway:\n%s", out)
 			}
 			if n := len(r.run.Patches()); n != 1 {
 				t.Fatalf("%d patches, want 1 (the clone job's image moved)", n)
@@ -804,13 +813,13 @@ func TestImageRefreshManagedOwnerTerminalAsksNoCloneJobQuestion(t *testing.T) {
 // refresh sets no review, so there is no run confirmation for a plan to be
 // outside of). In a managed project's own terminal it is confirmed by the
 // gate's read and the sentence that says so; in a project the gate did not
-// believe, it is the typed question it has always been, which a terminal with
-// nothing typed leaves unconfirmed.
+// believe it goes ahead too (T7: the person at the terminal is the whole
+// answer, nothing is typed), and the gate's own sentence is not printed,
+// because the gate judged nothing.
 //
 // The mutation caught: refreshManaged.asksNothing answering true whatever it is
-// handed — the control is confirmed with nothing typed, so the caller is told
-// nothing was copied and nothing was pinned and this test fails on its own
-// control.
+// handed — the control then prints the gate's sentence where no gate judged, and
+// this test fails on its own control.
 func TestImageRefreshManagedOwnerTerminalAsksNoBasePinQuestion(t *testing.T) {
 	useVersion(t, "0.5.1")
 	const what = "copies the release base image into this project's registry and pins it by digest in the local config, as listed above"
@@ -820,11 +829,14 @@ func TestImageRefreshManagedOwnerTerminalAsksNoBasePinQuestion(t *testing.T) {
 			out := r.terminalRefresh(t, tc.managed)
 			err := r.e.r.confirmOrdinary(what, "nothing was copied and nothing was pinned", "")
 			if !tc.managed {
-				if err == nil || !strings.Contains(err.Error(), "not confirmed") {
-					t.Fatalf("an unproven project's base pin was confirmed without the typed name: %v\n%s", err, out)
+				if err != nil {
+					t.Fatalf("a person at the terminal was stopped at the base pin: %v\n%s", err, out)
 				}
-				if !strings.Contains(out.String(), "Type "+initProjectName+" to apply to GCP project") {
-					t.Errorf("the terminal was not asked for the project's name:\n%s", out)
+				if strings.Contains(out.String(), initflow.GateOrdinary()) {
+					t.Errorf("the gate's sentence was printed for a project it did not judge:\n%s", out)
+				}
+				if !strings.Contains(out.String(), what) {
+					t.Errorf("what the owner read is not the plan:\n%s", out)
 				}
 				return
 			}
@@ -834,8 +846,8 @@ func TestImageRefreshManagedOwnerTerminalAsksNoBasePinQuestion(t *testing.T) {
 			if got := out.String(); !strings.Contains(got, what) || !strings.Contains(got, initflow.GateOrdinary()) {
 				t.Errorf("what the owner read is not the plan and the sentence that says why nothing is asked:\n%s", got)
 			}
-			if strings.Contains(out.String(), "Type "+initProjectName+" to apply to GCP project") {
-				t.Errorf("a managed project's own terminal was asked for the project's name anyway:\n%s", out)
+			if strings.Contains(out.String(), "[y/N]") {
+				t.Errorf("a managed project's own terminal was asked a question anyway:\n%s", out)
 			}
 		})
 	}

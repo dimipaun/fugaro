@@ -74,6 +74,14 @@ func (c condition) run(t *testing.T, stdin string) (*initRun, *readSpy, *strings
 	// run has (newInitRun writes through the command's own output).
 	cmd.SetOut(out)
 	r := &initRun{cmd: cmd, o: &o, w: out, in: bufio.NewReader(spy), projectName: initProjectName, gcpProject: initProject}
+	if o.ask {
+		// A rig that passes --ask is the project whose marks answered
+		// "managed": that is the only project the flag has a confirmation to
+		// put back in (initRun.gateRestores, and initflow.AskDecision's first
+		// rule — in any other project it is the no-op line its own help
+		// describes). The read is the converge's own, made before the loop.
+		r.gate = &initGate{managed: true}
+	}
 	return r, spy, out
 }
 

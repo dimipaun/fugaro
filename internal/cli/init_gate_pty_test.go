@@ -3,7 +3,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"os"
 	"strings"
@@ -20,7 +19,7 @@ func ttyEngine(t *testing.T, o *initOptions) (*initEngine, *syncBuf, func(marker
 	f := newTTY(t)
 	e, out := stageEngine(t, "", o)
 	e.r.cmd.SetIn(f.tty)
-	e.r.in = bufio.NewReader(f.tty)
+	e.r.in = f.tty
 	typeAt := func(marker string, n int, input string) {
 		t.Helper()
 		for deadline := time.Now().Add(5 * time.Second); strings.Count(out.String(), marker) < n; time.Sleep(5 * time.Millisecond) {
@@ -45,9 +44,9 @@ func TestPtyFirstRunPrompts(t *testing.T) {
 	e, out, typeAt := ttyEngine(t, &initOptions{})
 	done := make(chan error, 1)
 	go func() { done <- e.r.gatherInputs(t.Context()) }()
-	typeAt("GCP project ID", 1, "my-proj-42\n")
-	typeAt("Region", 1, "\n")
-	typeAt("Fugaro project name", 1, "\n") // last: its default can come from an installation in that project
+	typeAt("Type the GCP project's ID", 1, "my-proj-42\n")
+	typeAt("Type the region the installation's jobs and the scheduler run in", 1, "\n")
+	typeAt("Type the Fugaro project's name", 1, "\n") // last: its default can come from an installation in that project
 	select {
 	case err := <-done:
 		if err != nil {

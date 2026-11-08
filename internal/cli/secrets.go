@@ -1524,18 +1524,19 @@ func storeSecret(run *stepRun, cmd *cobra.Command, env *cloudEnv, o secretsOptio
 }
 
 // readSecret reads the value of secret name. From a terminal it prompts on
-// prompt and reads without echo (see readHidden); otherwise it reads in to
-// EOF. It drops one trailing "\n" or "\r\n" (and notes that on prompt), and
-// refuses a value that is empty, shorter than the redaction floor, over
-// 64 KiB, holds a NUL, or, unless multiline, spans lines or has whitespace
-// at either end. Errors never quote the value.
+// prompt and reads without echo (see readHidden), through the one value entry
+// every other value comes through (readValue's hidden path, D1540); otherwise
+// it reads in to EOF. It drops one trailing "\n" or "\r\n" (and notes that on
+// prompt), and refuses a value that is empty, shorter than the redaction
+// floor, over 64 KiB, holds a NUL, or, unless multiline, spans lines or has
+// whitespace at either end. Errors never quote the value.
 func readSecret(ctx context.Context, in io.Reader, prompt io.Writer, name string, multiline bool) ([]byte, error) {
 	var raw []byte
-	if f, ok := in.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+	if stdinIsTerminal(in) {
 		if multiline {
 			return nil, userErr("%s spans several lines, which the hidden prompt can't take; redirect it from a file: fugaro secrets set %s < FILE", name, name)
 		}
-		b, err := readHidden(ctx, f, prompt, name)
+		b, err := readValueIn(ctx, in, prompt, valueSpec{what: name, secret: true})
 		if err != nil {
 			return nil, err
 		}

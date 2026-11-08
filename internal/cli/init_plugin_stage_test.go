@@ -58,30 +58,39 @@ func runPlugin(t *testing.T, e *initEngine) *initflow.Result {
 	return res
 }
 
-// The wiring is confirmed first (declined: nothing is written, the one-line
-// command that does it is left for the user), shows the diff, and merges only
-// the plugin's two entries into the file, pinned to the binary's tag.
+// The wiring merges only after the owner's own confirmation (T7: a person at
+// the terminal, nothing typed), and a coding agent's session confirms nothing
+// at all: the step is left for the user with nothing written. It shows the
+// diff, and merges only the plugin's two entries into the file, pinned to the
+// binary's tag.
 func TestWiringStageConfirmsAndMergesOnly(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	settings := wiringCheckout(t, settingsWithOthers)
 	fakeTerminal(t)
 
-	// Declined at the prompt (or anything but yes).
-	e, out := stageEngine(t, "n\n", nil)
+	// A coding agent's session confirms nothing, whatever is on stdin: the
+	// step is the user's and nothing is written.
+	e, _ := stageEngine(t, "y\n", nil)
+	t.Setenv(agentMarkers[0], "1")
 	res := runPlugin(t, e)
 	got, _ := os.ReadFile(settings)
 	if string(got) != settingsWithOthers || stateOf(res, "plugin") != initflow.NeedsYou || len(res.Left) != 1 || !strings.HasSuffix(res.Left[0].Text, "update-skills") {
-		t.Fatalf("declined: stages %+v left %v\n%s", res.Stages, res.Left, got)
+		t.Fatalf("agent session: stages %+v left %v\n%s", res.Stages, res.Left, got)
 	}
-	if !strings.Contains(out.String(), "Write this to") || !strings.Contains(out.String(), `+    "fugaro": {`) && !strings.Contains(out.String(), `"fugaro"`) {
-		t.Errorf("the diff was not shown before the question:\n%s", out.String())
-	}
+	t.Setenv(agentMarkers[0], "")
 
-	// Confirmed.
-	e, out = stageEngine(t, "y\n", nil)
+	// Confirmed: the person is at their terminal, so nothing is typed at all
+	// — "n" on stdin would decline the step if anything were read.
+	e, out := stageEngine(t, "n\n", nil)
 	res = runPlugin(t, e)
 	if stateOf(res, "plugin") != initflow.Changed || len(res.Left) != 0 {
 		t.Fatalf("stages %+v left %v", res.Stages, res.Left)
+	}
+	// The diff of the file it would write is on the screen before the write:
+	// the added marketplace entry is its own line, at the file's own
+	// indentation under the diff's marker.
+	if !strings.Contains(out.String(), "+ "+`    "fugaro": {`) {
+		t.Errorf("the diff was not shown before the write:\n%s", out.String())
 	}
 	var m map[string]json.RawMessage
 	data, _ := os.ReadFile(settings)

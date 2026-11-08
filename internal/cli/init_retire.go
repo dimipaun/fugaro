@@ -246,7 +246,7 @@ func (r *initRun) printRetirements(spec infra.RepoSpec, rets []infra.Retirement)
 	n := len(infra.Removals(r.retireState, rets))
 	fmt.Fprintf(r.w, "\nOrder of operations:\n  1. remove %d %s from Terraform's state without destroying %s: the addresses no apply can delete (a secret container's prevent_destroy, a job whose deletion_protection the state says is on). Nothing in the cloud is deleted by this step.\n",
 		n, plural(n, "address", "addresses"), plural(n, "it", "them"))
-	fmt.Fprintln(r.w, "  2. plan, show the plan's own counts and its full delete list, and ask again — the project's name typed at a real terminal, never --yes.")
+	fmt.Fprintln(r.w, "  2. plan, show the plan's own counts and its full delete list, and ask again — answered by the person at a real terminal, never by --yes.")
 	fmt.Fprintf(r.w, "  3. apply, then delete the %d orphaned Cloud Run %s through the API.\n", len(api), plural(len(api), "job", "jobs"))
 	fmt.Fprintln(r.w, "\nNext command:\n  fugaro update --repo . --retire")
 	return nil
@@ -733,18 +733,21 @@ func (r *initRun) retireLeftover(spec infra.RepoSpec, err error) error {
 	return err
 }
 
-// retireConfirm is one of the retirement's two typed confirmations. It is
-// askTyped and never ask: ask is covered by --yes, and a retirement that
-// --yes could confirm is exactly what the design forbids. reachable=false
-// means the run cannot ask at all (--yes, --non-interactive, --json, a pipe,
-// a coding agent), and then nothing is removed and nothing is deleted.
+// retireConfirm is one of the retirement's two confirmations. It is askTyped
+// and never ask: ask is covered by --yes, and a retirement that --yes could
+// confirm is exactly what the design forbids -- the Typed class is what keeps
+// it out. Nothing is typed for it any more (T7, docs/no-prompt-policy): the
+// person at their own terminal is the confirmation, and --ask asks the y/N of
+// the managed project that passed it. reachable=false means the run cannot ask
+// at all (--yes, --non-interactive, --json, a pipe, a coding agent), and then
+// nothing is removed and nothing is deleted.
 //
 // The refusal for that case is the retirement's own, not notConfirmed's
 // (review round 4): askTyped showed no prompt at all -- canConfirmTyped
-// refuses before typed runs -- so "the project's name was not typed" is not
-// what happened, and the ordinary refusal's ", or pass --yes once you have
-// read what it does" names the one flag design §4.2 forbids for a retirement,
-// which would send the reader straight back to the same refusal.
+// refuses before typed runs -- so a step that was never put to anybody is not
+// a step that was declined, and the ordinary refusal's ", or pass --yes once
+// you have read what it does" names the one flag design §4.2 forbids for a
+// retirement, which would send the reader straight back to the same refusal.
 func (r *initRun) retireConfirm(rets []infra.Retirement, spec infra.RepoSpec, undone string) error {
 	what := r.retireWhat(spec, rets)
 	confirmed, reachable, err := r.askTyped(what)
@@ -764,13 +767,14 @@ func (r *initRun) retireConfirm(rets []infra.Retirement, spec infra.RepoSpec, un
 	return nil
 }
 
-// retireUnaskable is why a retirement's typed confirmation could not be
+// retireUnaskable is why a retirement's confirmation could not be
 // asked: initflow's own "needs a real terminal" sentence, plus the flags of
-// this run that make it unreachable. It never offers --yes -- the design
-// forbids it for a retirement -- so the flag list is written as what those
-// flags do not do, not as a route to take.
+// this run that make it unreachable. Nothing is typed at a confirmation any
+// more (T7), so the sentence names the confirmation and not a name to type. It
+// never offers --yes -- the design forbids it for a retirement -- so the flag
+// list is written as what those flags do not do, not as a route to take.
 func retireUnaskable(c initflow.Conditions) string {
-	msg := initflow.NeedsTerminal("the typed confirmation of a retirement")
+	msg := initflow.NeedsTerminal("the confirmation of a retirement")
 	var flags []string
 	if c.Yes {
 		flags = append(flags, "--yes")

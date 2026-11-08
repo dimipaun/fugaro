@@ -44,7 +44,7 @@ func newRepositoryStage(e *initEngine) *repositoryStage {
 			}
 			return e.r.repoEngine(ctx, ".", e.bin, true)
 		},
-		left: promptLeft(initflow.Repository, "in the checkout, type the project's name at each apply", e.r.o.doorName()),
+		left: promptLeft(initflow.Repository, "in the checkout, run the command below: it asks you nothing and each apply goes ahead", e.r.o.doorName()),
 	}
 	return s
 }

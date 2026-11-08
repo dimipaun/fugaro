@@ -489,7 +489,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	if d.takes("forget") {
 		stops = "--forget and --config-only"
 	}
-	f.BoolVar(&o.ask, "ask", false, "ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the project's name typed at the review, each step's own, the y/Ns. It is the symmetric half of --yes, which is the same flag for a project that is NOT managed, and the two contradict each other: pass one, or neither. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never reaches a Typed step (money, permanence, a secret: the owner's own word, which no flag stands in for). In a project whose marks do not answer \"managed\" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, --non-interactive, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed")
+	f.BoolVar(&o.ask, "ask", false, "ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the review's own question, and each step's own, the billable builds included. It is the symmetric half of --yes, which is the same flag for a project that is NOT managed, and the two contradict each other: pass one, or neither. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never stands in for a confirmation: the step's own question is asked, and a no is a no. In a project whose marks do not answer \"managed\" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, --non-interactive, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed")
 	f.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs its typed confirmation even then, so that plan exits 1); --yes never covers the typed-only steps (see --yes). With "+stops+" it only stops them prompting: their confirmations then need --yes")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON on stdout (progress goes to stderr)")
 	f.BoolVar(&o.repo, "repo", false, "onboard the repository of the checkout at PATH (default: the current directory) instead of the installation")
@@ -497,7 +497,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.StringVar(&o.githubAppID, "github-app-id", "", "the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; "+d.name+" asks once at a terminal, and --non-interactive needs it)")
 	f.BoolVar(&o.noBuild, "no-build", false, "with --repo: don't offer the first image builds")
 	f.BoolVar(&o.allowJobDelete, "allow-job-delete", false, "with --repo: lower the jobs' deletion protection, for offboarding")
-	f.BoolVar(&o.retire, "retire", false, "with --repo: run the retirement this config change needs (a workflow or a named account removed, a secret no longer mounted): remove the protected addresses from Terraform's state (destroying nothing), apply, then delete the orphaned Cloud Run jobs through the API. The project's name is typed twice at a real terminal, and --yes, --non-interactive, --json, a pipe and a coding agent cover neither. Excludes --plan-only, --print-vars and --forget, which read or forget rather than apply")
+	f.BoolVar(&o.retire, "retire", false, "with --repo: run the retirement this config change needs (a workflow or a named account removed, a secret no longer mounted): remove the protected addresses from Terraform's state (destroying nothing), apply, then delete the orphaned Cloud Run jobs through the API. Both confirmations are a real terminal's, and nothing is typed at them; --yes, --non-interactive, --json, a pipe and a coding agent cover neither. Excludes --plan-only, --print-vars and --forget, which read or forget rather than apply")
 	// The other door's flags are declared above and hidden here: a user
 	// reading this door's help must not be offered a flag it refuses, and
 	// --non-interactive's own list of what a run needs must not gain one.
@@ -1920,6 +1920,16 @@ func (r *initRun) confirm(what, undone string) error {
 // managed_ask.go), and it is the only arm that reads: it puts the step's own
 // [y/N] back at an owner terminal and refuses where nobody can answer it.
 //
+// It puts back only what the gate took away, so the arm is reached only where
+// the run's own read of the marks answered managed (r.gateRestores: `update`'s
+// gate or the one `fugaro image refresh` makes for itself): in a project whose
+// marks did not answer
+// "managed" there were no confirmations for the flag to restore, and its own
+// rule is the no-op line gateRun already printed (initflow.AskDecision, and
+// the flag's help) — asking there would put a question to a run that behaves
+// exactly as it always has, and refusing it in a session that cannot answer
+// would stop a command that reads nothing.
+//
 // The other three arms are the answer a step that used to ask gets, in the
 // order that keeps the two ways of running told apart:
 //
@@ -1938,7 +1948,7 @@ func (r *initRun) confirmNow(question string) (bool, error) {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		return false, &initflow.AgentError{Marker: m}
 	}
-	if r.o.ask {
+	if r.o.ask && r.gateRestores() {
 		return askConfirm(r.cmd, question)
 	}
 	if r.o.yes && !r.o.planOnly {
@@ -1964,7 +1974,11 @@ func (r *initRun) notConfirmed(undone string) error {
 // same session.
 func (r *initRun) unconfirmedWhy() string {
 	switch {
-	case r.o.ask:
+	// --ask is asked only where the run's own read of the marks answered
+	// managed (confirmNow), so a step that came back unconfirmed in a project
+	// that is not managed was not asked about: the sentence below it names the
+	// session instead, which is what this step was left by.
+	case r.o.ask && r.gateRestores():
 		return "not confirmed (the question was answered no)"
 	case r.o.asJSON:
 		return "not confirmed (--json confirms no step: run this one in your own terminal window, without --json)"
@@ -2726,7 +2740,7 @@ func (r *initRun) runsBucketViewers(ctx context.Context, c *infra.Clients, spec 
 		return err
 	}
 	if !ok {
-		r.warn(fmt.Sprintf("project Viewers can still read gs://%s, transcripts and caches included: the removal was declined; rerun "+r.o.doorProgram()+" to remove it", spec.RunsBucket))
+		r.warn(fmt.Sprintf("project Viewers can still read gs://%s, transcripts and caches included: the removal was not confirmed; rerun "+r.o.doorProgram()+" to remove it", spec.RunsBucket))
 		return nil
 	}
 	if err := infra.RemoveProjectViewers(ctx, c, spec.RunsBucket, p); err != nil {
@@ -3646,9 +3660,9 @@ func runInitRepo(r *initRun, args []string) error {
 // (setup_refusals_test.go) calls this too, so a change here moves it there.
 func billableBuildLeft(embedded bool, door string) initflow.Left {
 	if embedded {
-		return promptLeft(initflow.Repository, "in the checkout, type the project's name at the first image build's prompt (it is billable)", door)
+		return promptLeft(initflow.Repository, "in the checkout, run the command below: it asks you nothing and builds the images (the first build is billable)", door)
 	}
-	return promptLeft(initflow.Repository, "type the project's name at the first image build's prompt (it is billable)", door, "--repo")
+	return promptLeft(initflow.Repository, "run the command below: it asks you nothing and builds the images (the first build is billable)", door, "--repo")
 }
 
 // repoEngine is update --repo's engine for the checkout at dir. The converge's
@@ -4023,7 +4037,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		if err := finish(); err != nil {
 			return err
 		}
-		return userErr("the first image build of %s is billable and needs the project's name typed at a real terminal: %s: %s", strings.Join(r.buildsLeft, ", "), left.Text, left.Commands[0])
+		return userErr("the first image build of %s is billable and needs a real terminal of its own, where the person running it is the confirmation: %s: %s", strings.Join(r.buildsLeft, ", "), left.Text, left.Commands[0])
 	}
 	return finish()
 }
@@ -4737,11 +4751,11 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 		}
 		if !reachable {
 			r.buildsLeft = append(r.buildsLeft, name)
-			r.warn(fmt.Sprintf("the first image build of %s/%s is billable and was not confirmed: it needs the project's name typed at a real terminal ("+neverConfirmsBuild(r.conditions().Agent != "")+"), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks for the project's name too), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
+			r.warn(fmt.Sprintf("the first image build of %s/%s is billable and was not confirmed: it needs the person at a real terminal ("+neverConfirmsBuild(r.conditions().Agent != "")+"), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (a person at that terminal confirms it, with nothing typed), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
 			continue
 		}
 		if !ok {
-			r.warn(fmt.Sprintf("the first image build of %s/%s was not confirmed (the project's name was not typed), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks for the project's name too), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
+			r.warn(fmt.Sprintf("the first image build of %s/%s was not confirmed (the question was answered no), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (a person at that terminal confirms it, with nothing typed), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
 			continue
 		}
 		if _, err := r.submitAndWait(ctx, b, lc, cfg, spec, name, base, appliedGitSecretID(spec)); err != nil {

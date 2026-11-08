@@ -380,8 +380,8 @@ func TestRefreshPlanSaysKeptForANewerCopy(t *testing.T) {
 	}
 }
 
-// The plan's build line names how the builds are confirmed: typed, or
-// --yes with no prompt.
+// The plan's build line names how the builds are confirmed: at the person's
+// own terminal, with nothing typed (T7), or --yes with no prompt.
 func TestRefreshPlanBuildConfirmationWording(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
@@ -394,9 +394,9 @@ func TestRefreshPlanBuildConfirmationWording(t *testing.T) {
 		}
 		var out bytes.Buffer
 		p.print(&out)
-		typed := strings.Contains(out.String(), "confirmed by typing the project's name")
+		viaTerminal := strings.Contains(out.String(), "confirmed at your own terminal (nothing is typed)")
 		viaYes := strings.Contains(out.String(), "confirmed by --yes (no prompt)")
-		if typed == yes || viaYes != yes {
+		if viaTerminal == yes || viaYes != yes {
 			t.Errorf("yes=%v plan:\n%s", yes, out.String())
 		}
 	}
@@ -575,7 +575,7 @@ func TestRefreshStopsSayWhatFinished(t *testing.T) {
 		err  error
 		exit int
 	}{
-		{"declined", userErr("not confirmed (the project's name was not typed); nothing was changed"), ExitUserError},
+		{"declined", userErr("not confirmed (the question was answered no); nothing was changed"), ExitUserError},
 		{"remote failure", remote(errors.New("503 from the cloud")), ExitRemoteError},
 	}
 	for _, st := range steps {
@@ -703,15 +703,18 @@ func TestRefreshPreflightStopTexts(t *testing.T) {
 	})
 }
 
-// The options the command builds for its
-// steps carry yes, nonInteractive and asJSON all false, so r.ask (the base
-// copy's and the check job's confirmations) cannot auto-confirm and a wrong
-// or missing typed name changes nothing. The real base step and the real
-// check-job step run through runImageRefresh.
+// The options the command builds for its steps carry yes, nonInteractive and
+// asJSON all false, so no flag stands in for a confirmation; what confirms a
+// step is the owner at the terminal, with nothing typed (T7), and with no
+// terminal the command itself refuses before it plans anything — every step of
+// this run is confirmed by the person at the terminal who runs it, so a run
+// with none has nothing to confirm with (refuseRefreshHere, and
+// TestRefreshYesRunsEndToEndNoTerminal for the --yes way past it). The real
+// base step and the real check-job step run through runImageRefresh.
 // Mutation (run, restore): `iopts := &initOptions{yes: true, ...}` in
-// runImageRefresh: both subtests fail (the options, and a patch / a copy
-// that went through "confirmed by --yes").
-func TestRefreshConfirmationsNeedTheTypedName(t *testing.T) {
+// runImageRefresh: checkOpts fails (the options carry a flag that would stand
+// in for the confirmation).
+func TestRefreshConfirmationsNeedTheOwnerAndNoFlag(t *testing.T) {
 	useSelf(t)
 	checkOpts := func(t *testing.T, o *initOptions) {
 		t.Helper()
@@ -719,14 +722,24 @@ func TestRefreshConfirmationsNeedTheTypedName(t *testing.T) {
 			t.Fatal("the steps were never built")
 		}
 		if o.yes || o.nonInteractive || o.asJSON || o.planOnly {
-			t.Errorf("the command builds options that can bypass the typed name: yes=%v nonInteractive=%v asJSON=%v planOnly=%v", o.yes, o.nonInteractive, o.asJSON, o.planOnly)
+			t.Errorf("the command builds options that can auto-confirm a step: yes=%v nonInteractive=%v asJSON=%v planOnly=%v", o.yes, o.nonInteractive, o.asJSON, o.planOnly)
 		}
 	}
-	for _, typed := range []string{"wrong\n", ""} {
-		t.Run("check job "+strings.TrimSpace(typed), func(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		terminal bool
+	}{
+		{"no terminal is refused at the door", false},
+		{"the owner's terminal moves the check job, with nothing typed", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			useVersion(t, "0.5.1")
 			r := newAnchorModeRig(t, refreshYAML, true)
-			fakeTerminal(t)
+			if tc.terminal {
+				fakeTerminal(t)
+			} else {
+				noTerminal(t)
+			}
 			slug, label := checkJobOwner(t, "github", "acme/app")
 			oldRef, newRef := managedRef("base", "0.4.0"), managedRef("base", "0.5.1")
 			spec, _ := json.Marshal(infra.CheckJobSpec{Repo: "acme/app", BaseImages: map[string]string{"base": oldRef}})
@@ -749,20 +762,39 @@ func TestRefreshConfirmationsNeedTheTypedName(t *testing.T) {
 				}
 			}
 			t.Cleanup(func() { newRefreshSteps = old })
-			out, _, err := executeStdin(t, typed, "image", "refresh", "--workflow", "app")
+			out, _, err := executeStdin(t, "", "image", "refresh", "--workflow", "app")
+			if !tc.terminal {
+				// A run with no terminal is refused before a step is built:
+				// every step of this command is confirmed by the person at
+				// the terminal who runs it, so this one has nothing to
+				// confirm with and never reaches a plan.
+				if seen != nil {
+					t.Fatalf("the command planned its steps for a run it refuses: %+v", seen)
+				}
+				if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "needs a real terminal") {
+					t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
+				}
+				if n := len(r.run.Patches()); n != 0 || strings.Contains(out, "updated the daily image check job") {
+					t.Fatalf("the check job was updated without a terminal (%d patches):\n%s", n, out)
+				}
+				return
+			}
 			checkOpts(t, seen)
-			if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "stopped at step 3 (check job)") {
-				t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
+			if err != nil {
+				t.Fatalf("%v\n%s", err, out)
 			}
-			if n := len(r.run.Patches()); n != 0 || strings.Contains(out, "confirmed by --yes") || strings.Contains(out, "updated the daily image check job") {
-				t.Fatalf("the check job was updated without the typed name (%d patches):\n%s", n, out)
+			if n := len(r.run.Patches()); n != 1 {
+				t.Fatalf("%d patches, want 1 (the check job moved):\n%s", n, out)
 			}
-			if !strings.Contains(out, "Type "+initProjectName+" to apply") {
-				t.Errorf("the typed name was never asked for:\n%s", out)
+			if !strings.Contains(out, "updated the daily image check job") {
+				t.Errorf("the check job was not updated:\n%s", out)
 			}
 		})
 	}
-	t.Run("base copy", func(t *testing.T) {
+	// The base pin is the other step the typed name used to hold back, and
+	// what holds it back now is the same door: with no terminal the run never
+	// reaches a plan, so nothing is copied and no base is pinned.
+	t.Run("base with no terminal is refused before anything is pinned", func(t *testing.T) {
 		useSelf(t)
 		r := newImagesRig(t, "1.2.3")
 		t.Chdir(repoCheckout(t, githubOrigin, refreshYAML))
@@ -771,29 +803,13 @@ func TestRefreshConfirmationsNeedTheTypedName(t *testing.T) {
 		prevOpen := openRecordBucket
 		openRecordBucket = openFakeRecords
 		t.Cleanup(func() { openRecordBucket = prevOpen })
-		fakeTerminal(t)
-		var seen *initOptions
-		old := newRefreshSteps
-		newRefreshSteps = func(rr *initRun, e *initEngine, p *refreshPlan) refreshSteps {
-			seen = rr.o
-			return refreshSteps{
-				base: func(ctx context.Context) error { return rr.refreshBase(ctx, e, p.kinds) },
-				reload: func(context.Context) (*refreshTarget, error) {
-					t.Error("the run went on after a declined base copy")
-					return nil, errors.New("unreachable")
-				},
-				checkJob: func(context.Context, *refreshTarget) error { return nil },
-				builds:   func(context.Context, *refreshTarget) error { return nil },
-			}
-		}
-		t.Cleanup(func() { newRefreshSteps = old })
-		out, _, err := executeStdin(t, "wrong\n", "image", "refresh")
-		checkOpts(t, seen)
-		if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "stopped at step 2 (base)") {
+		noTerminal(t)
+		out, _, err := executeStdin(t, "", "image", "refresh")
+		if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "needs a real terminal") {
 			t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 		}
-		if r.dst.puts != 0 || strings.Contains(out, "confirmed by --yes") {
-			t.Fatalf("the base was copied without the typed name (%d writes):\n%s", r.dst.puts, out)
+		if r.dst.puts != 0 {
+			t.Fatalf("the base was copied without a terminal (%d writes):\n%s", r.dst.puts, out)
 		}
 		if got := r.localConfig(t).BaseImages["base"]; got != "" {
 			t.Errorf("base_images.base was recorded: %s", got)

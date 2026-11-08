@@ -492,13 +492,14 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		// project stops before it starts (doctor's allow-list-empty). The diff
 		// above shows the empty list as one line among the ones a first publish
 		// adds, which reads as harmless, so the consequence is said before the
-		// write and a person has to type the project's name — the publisher's own
-		// confirmation, reused rather than worded a second time, and the same one
-		// the explicit door asks (#1674). It replaces the confirmations below
-		// rather than joining them: it is the stricter of the two (no flag stands
-		// in, and a session with no terminal or a coding agent's is refused), and
-		// a document this node's confirmation already covers needs no second
-		// question.
+		// write and the person at the terminal is what answers it (nothing is
+		// typed, T7) — the publisher's own confirmation, reused rather than
+		// worded a second time, and the same one the explicit door asks
+		// (#1674). It replaces the confirmations below rather than joining
+		// them: it is the stricter of the two (only --ask puts the question
+		// back, and a session with no terminal or a coding agent's is refused),
+		// and a document this node's confirmation already covers needs no
+		// second question.
 		if err := confirmEmptyAllowList(cmd, m.lc, c.Agent); err != nil {
 			return err
 		}

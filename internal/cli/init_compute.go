@@ -78,7 +78,7 @@ func (s *computeStage) Check(context.Context) (initflow.Status, error) {
 }
 
 func (s *computeStage) Left() initflow.Left {
-	return promptLeft(initflow.Compute, "type the project's name at the provisioning confirmation", s.e.r.o.doorName(), "--provision-batch")
+	return promptLeft(initflow.Compute, "run the command below: it asks you nothing and provisions the batch", s.e.r.o.doorName(), "--provision-batch")
 }
 
 // Verify has nothing of its own to read back, and this is deliberately not a

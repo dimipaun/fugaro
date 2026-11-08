@@ -521,27 +521,31 @@ func TestInitRemovesRunsBucketViewers(t *testing.T) {
 	}
 }
 
-// Declining the viewers' removal is allowed; the run goes on and says so. The
-// question is the removal's own, and --ask is what puts it back: nothing is
-// typed at a confirmation by default (T7).
-func TestInitRunsBucketViewersDeclined(t *testing.T) {
+// The viewers' removal is a step nobody can confirm where stdin is not a
+// terminal: the run leaves it — an IAM call of its own is not made by a session
+// that cannot be asked about it — and says which read access is still there.
+// Nothing is typed at a confirmation any more (T7, docs/no-prompt-policy), so
+// the run does not read a line either: what this pins is the step that is left
+// and the sentence left about it, not a run that finished. The run stops later,
+// at the apply's own confirmation, which is why nothing is applied.
+func TestInitRunsBucketViewersNotConfirmed(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{"fugaro": "managed"})
 	r.gcs.SetBucketPolicy(initRunsBucket, gcpfake.ConvenienceBindings(initProject))
-	fakeTerminal(t)
-	out, _, err := executeStdin(t, "n\ny\n", "setup", "--ask")
-	if err != nil {
-		t.Fatal(err)
+	noTerminal(t)
+	out, _, err := executeStdin(t, "", "setup")
+	if err == nil {
+		t.Fatalf("a run nobody could confirm applied something:\n%s", out)
 	}
 	if len(policySets(r.gcs, initRunsBucket)) != 0 || !hasViewer(r.gcs.BucketPolicy(initRunsBucket)) {
-		t.Fatal("the viewers were removed although the user declined")
+		t.Fatal("the viewers were removed although nobody could confirm it")
 	}
 	if !strings.Contains(out, "project Viewers can still read gs://"+initRunsBucket) {
-		t.Errorf("the summary doesn't note the declined removal:\n%s", out)
+		t.Errorf("the summary doesn't note the removal that was left:\n%s", out)
 	}
-	if len(r.ran(t, "apply")) != 1 {
-		t.Fatal("the apply's own question was answered yes and nothing was applied")
+	if n := len(r.ran(t, "apply")); n != 0 {
+		t.Fatalf("a plan nobody confirmed was applied (%d apply call(s))", n)
 	}
 }
 

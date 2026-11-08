@@ -107,13 +107,15 @@ func switchLeft(branch string) initflow.Left {
 	return initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand, Text: "git switch -- " + quoteWord(branch)}
 }
 
-// promptLeft is a Left for a step typed at the user's own terminal: what is
-// typed there is the prose, the one-line command that starts it is the only
-// thing to paste. args are the command's words after the binary, already
-// quoted.
-func promptLeft(stage, typed string, args ...string) initflow.Left {
+// promptLeft is a Left for a step only a person at their own terminal can
+// take: what that run does there is the prose, and the one-line command that
+// starts it is the only thing to paste. Nothing is typed at it any more (T7,
+// docs/no-prompt-policy): what the person supplies is the step's own
+// confirmation, by being there. args are the command's words after the
+// binary, already quoted.
+func promptLeft(stage, what string, args ...string) initflow.Left {
 	return initflow.Left{Stage: stage, Kind: initflow.LeftPrompt,
-		Text:     "in your own terminal window, not through a coding agent or a pipe, " + typed + " after running",
+		Text:     "in your own terminal window, not through a coding agent or a pipe, " + what,
 		Commands: []string{selfCommand() + " " + strings.Join(args, " ")}}
 }
 

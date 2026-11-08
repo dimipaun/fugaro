@@ -31,25 +31,39 @@ import (
 // reached by the Repository stage's repoEngine call, and the managed gate is
 // read by the converge alone — `update --repo` is the repo engine's own door
 // and reads no mark at all, so a retirement there can never be the managed
-// project's own. The rig is built for the other door, so the two things the
+// project's own. The rig is built for the other door, so the three things the
 // converge needs and the repo engine does not have are added below: the
 // repository's secrets stored (its secrets step runs before the repository
-// one) and, at the end of every run, the billable first image build, which an
-// empty stdin cannot confirm — the run ends on that step, after the
-// retirement, and the tests read it as the hold it is.
-const firstBuildHold = "the first image build of acme/sandbox/app was not confirmed"
-
-// newManagedRetireRig is newRetireRig on a managed project, run by its owner:
-// the two marks (the runs bucket's object and the project's label), a fake
-// terminal with no agent marker (newRetireRig clears them), the repository's
-// secrets stored, and the credentials an audit record is written with
-// isolated.
+// one), a fake Cloud Build (the converge's own image step builds), and the
+// credentials an audit record is written with isolated.
+//
+// The build is scripted rather than left to fail, and the run therefore goes
+// all the way through: the person at the rig's fake terminal confirms the
+// billable first build with nothing typed (T7), the re-plan that follows it
+// finds the root settled, and the retirement's last step — the API delete of
+// the orphaned job, which comes after every apply by design (init.go's step
+// 7b) — is reached and recorded. A rig without the builder stops at the
+// submit, before that step, and the tests would read a retirement that never
+// finished.
+//
+// The re-plan is scripted apart from the retirement's own, because the fake
+// terraform answers every invocation of a key from the same script and the
+// retirement's plan is not what a root whose deletes have applied shows: the
+// second plan is the one the world the retirement left makes. Nothing in the
+// rig writes that world — the fake applies nothing — so what the re-plan
+// finds is a repository with no changes left, which is the answer the
+// converge's own repository root has everywhere else (repoReady, and the
+// checkout upgrade's rig): the plan before the images are built is the
+// retirement's, and this is the one after them.
 func newManagedRetireRig(t *testing.T, o retireOpts) *retireRig {
 	t.Helper()
+	useFakeBuilder(t)
 	r := newRetireRig(t, o)
 	r.managedRuns(t, initProjectName, initProject)
 	isolateGateCredentials(t)
 	storedRepoSecrets(t, r)
+	r.script["plan@repo"] = []map[string]any{{"exit": 2}, {"exit": 0}}
+	r.save(t)
 	return r
 }
 
@@ -191,7 +205,7 @@ func TestUpdateManagedRetiresItsOwnDerivedResources(t *testing.T) {
 	r := newManagedRetireRig(t, retireOpts{protection: true, keptAsNote: true, member: true})
 	out, errOut, err := executeStdin(t, "", "update")
 	text := out + errOut
-	if err != nil && !strings.Contains(text, firstBuildHold) {
+	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, text)
 	}
 	// Nothing was asked. The retirement's own first confirmation opens with
@@ -402,8 +416,10 @@ func flatten(calls [][]string) []string {
 
 // TestUpdateManagedRetirementDoesNotCarryALooseningIn: the plan the automatic
 // retirement applies is judged by the cover an ordinary step is, less the
-// retirement's own deletes, so an owner binding riding in the same plan asks
-// the typed confirmation instead of going through under the retirement's name.
+// retirement's own deletes, so an owner binding riding in the same plan takes
+// the step's own confirmation (T7: the person at the terminal, with nothing
+// typed) instead of going through under the retirement's name and the gate's
+// verdict.
 func TestUpdateManagedRetirementDoesNotCarryALooseningIn(t *testing.T) {
 	r := newManagedRetireRig(t, retireOpts{protection: true, keptAsNote: true, member: true, loosen: true})
 	out, errOut, err := executeStdin(t, "", "update")
@@ -411,8 +427,12 @@ func TestUpdateManagedRetirementDoesNotCarryALooseningIn(t *testing.T) {
 	if !strings.Contains(text, "outside what the review announced") {
 		t.Fatalf("the uncovered create was not named (exit %d, err %v):\n%s", ExitCode(err), err, text)
 	}
-	if !strings.Contains(text, "Type aurora to confirm") {
-		t.Errorf("the typed confirmation was not asked for a plan carrying an uncovered create:\n%s", text)
+	// The uncovered create is not admitted under the retirement's name: it
+	// takes the plan back to the retirement's own confirmation (T7: the
+	// person at the terminal, with nothing typed), so the banner is printed
+	// and answered where an admitted plan prints the gate's verdict instead.
+	if !strings.Contains(text, "⚠ CONFIRM (project "+initProjectName+", GCP project "+initProject+"): retire") {
+		t.Errorf("the retirement's own confirmation was not asked for a plan carrying an uncovered create:\n%s", text)
 	}
 	if recs := retirementRecords(t, r); len(recs) != 0 {
 		t.Errorf("an uncovered plan was recorded as admitted: %+v", recs)

@@ -269,8 +269,15 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 	// different from the default branch): the job images are built here, from
 	// the repository this run converged, and a skipped cloud step would be a
 	// run refusing to build from a file it did onboard.
-	if n := len(r.builder.specs); n != 2 {
-		t.Errorf("%d job image(s) reached Cloud Build, want the checkout's two workflows: the job images of a repository this run onboarded are refreshed here\n%s", n, out)
+	//
+	// Four builds reach Cloud Build: the repository stage's own first builds
+	// first (the first build of each workflow is billable, and it is confirmed
+	// as every other step of this --yes run is), and then the checkout's cloud
+	// step, which builds the same two because the record it reads is still the
+	// previous release's base -- this rig's, and the whole of what the count
+	// below is.
+	if n := len(r.builder.specs); n != 4 {
+		t.Errorf("%d job image(s) reached Cloud Build, want the checkout's two workflows, built by the repository stage and then by the checkout: the job images of a repository this run onboarded are refreshed here\n%s", n, out)
 	}
 }
 

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -843,8 +844,7 @@ func TestUpdateReadsTheGateBeforeAnyWrite(t *testing.T) {
 }
 
 // A project the owner unflags while the run is in flight is a project that is
-// not managed from that moment on, and the confirmations come back with it —
-// which is a thing a terminal can witness and a coding agent's session cannot.
+// not managed from that moment on, and the confirmations come back with it.
 // The run's own read (gateRun, before the first stage) finds both marks; the
 // helper's second read, immediately before the first step's write (D1024),
 // finds the label gone.
@@ -854,15 +854,16 @@ func TestUpdateReadsTheGateBeforeAnyWrite(t *testing.T) {
 // is then removed underneath it, and the gate that read left is handed to the
 // run. That is exactly the pair of facts the bug's window holds — a run whose
 // read said "managed" in a project that is not managed any more — and what the
-// run does next is the whole assertion: the step's own confirmation is asked
-// (the project's name at the review) with nothing on stdin, so nothing is
-// applied. A run that kept the first read's answer never asks, prints the
-// gate's own sentence, and applies the plan with nothing typed.
+// run does next is the whole assertion: the step's own confirmation is the
+// person in front of the terminal, answered by being there with nothing typed
+// (T7), so the plan is applied under the run's own confirmation. A run that
+// kept the first read's answer applies the very same plan under the gate's own
+// sentence instead, which is what the assertions below read the output for.
 //
 // The mutation this is for: dropping the second half of initGate.underway, so a
 // revoked run goes on standing in for the confirmations of a project that is
 // not managed.
-func TestUpdateRevokedMidRunKeepsTheConfirmations(t *testing.T) {
+func TestUpdateRevokedMidRunKeepsTheOwnersTerminal(t *testing.T) {
 	const additive = "module.installation.google_service_account.scheduler"
 	releaseBuild(t, "0.2.0")
 	r := updateRig(t)
@@ -901,18 +902,26 @@ func TestUpdateRevokedMidRunKeepsTheConfirmations(t *testing.T) {
 	e := rigEngine(t, r, &initOptions{door: updateDoor.name})
 	out := &syncBuf{}
 	e.r.w = out
+	// The run's own input, spied: a person at the terminal confirms a step by
+	// being there, so nothing reads it (T7).
+	spy := &readSpy{Reader: strings.NewReader("")}
+	e.r.in = bufio.NewReader(spy)
+	e.r.cmd.SetIn(spy)
 	e.r.gate = &initGate{g: gate, managed: true}
 	_ = e.converge(t.Context())
 
 	got := out.String()
-	if n := len(r.ran(t, "apply")); n != 0 {
-		t.Errorf("%d terraform apply(s) ran in a project the second read found unmanaged:\n%s", n, got)
+	if n := len(r.ran(t, "apply")); n != 1 {
+		t.Errorf("%d terraform apply(s) ran in a project the second read found unmanaged, want the one the owner's terminal answers:\n%s", n, got)
 	}
 	if strings.Contains(got, initflow.GateOrdinary()) || strings.Contains(got, initflow.GateProceeded()) {
 		t.Errorf("the revoked run applied a step under the gate's own sentence:\n%s", got)
 	}
-	if !strings.Contains(got, "Type "+initProjectName) {
-		t.Errorf("the revoked run asked nothing at the owner's own terminal:\n%s", got)
+	if !strings.Contains(got, "covered by the run confirmation") {
+		t.Errorf("the revoked run's step was not answered by the run's own confirmation, so the gate still stood in for it:\n%s", got)
+	}
+	if spy.read || strings.Contains(got, "Type "+initProjectName) || strings.Contains(got, "[y/N]") {
+		t.Errorf("the revoked run was asked for something (input read: %v) at the owner's own terminal:\n%s", spy.read, got)
 	}
 	if e.r.gateUnderway() {
 		t.Error("the gate is still underway after the read that found the project unmanaged")
@@ -977,13 +986,13 @@ func coveredJobReplace() planChange {
 //
 // Why the cost arm is the one that has to be here. It is the arm whose plan is
 // INSIDE the run's cover — the control below runs the same plan in a project
-// that is not managed, where one typed name at the review confirms it and the
-// step is "covered by the run confirmation", with no question of its own — so a
-// gateStep that swallowed a refusal (returning false, nil where the gate said
-// no) would hand this step to a confirmation that says yes, and the plan would
-// be applied with nothing typed. The outsider's grant is not that witness: it
-// is outside the cover, so the ordinary path would ask its own typed name on
-// the way down and stop there anyway.
+// that is not managed, where the person at the terminal answers it with nothing
+// typed (T7) and the step is "covered by the run confirmation", with no
+// question of its own — so a gateStep that swallowed a refusal (returning
+// false, nil where the gate said no) would hand this step to a confirmation
+// that says yes, and the plan would be applied. And it is the arm a gate that
+// judged only the cover would pass: the outsider's grant is the cover's own
+// refusal, and this one is the cost list's.
 func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 	costPlan := gpuJobPlan()
 	outsiderGrant := grantChange("runs_outsider", "user:a@example.com", "roles/storage.objectViewer", "create")
@@ -1079,22 +1088,22 @@ func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 	}
 
 	// The control for the cost arm: the same plan, the same terminal, a project
-	// that is not managed — one typed name at the review, no question about the
-	// step, and it is applied. That is what the gate's refusal holds back.
+	// that is not managed — the person at the terminal answers it with nothing
+	// typed (T7), no question about the step, and it is applied. That is what
+	// the gate's refusal holds back.
 	r := updateRig(t)
 	// A project of Fugaro's own that is not managed: the marker names it, so
-	// the review is a run confirmation a person can type (markedRuns writes no
-	// management label and no mark of the gate's), and no grant for the runs
-	// bucket's project Viewers to lose, so that removal's own question —
-	// which in this project has no gate standing in for it — does not read the
-	// typed name before the review does.
+	// the review is a run confirmation a person answers by being there
+	// (markedRuns writes no management label and no mark of the gate's), and no
+	// grant for the runs bucket's project Viewers to lose, so that removal is
+	// not a step of this run at all.
 	r.markedRuns(t, initProjectName, initProject)
 	r.gcs.SetBucketPolicy(initRunsBucket, nil)
 	fakeTerminal(t)
 	noAgentSession(t)
 	updating(t, r)
 	r.setPlan(t, costPlan)
-	got, _, err := executeStdin(t, initProjectName+"\n", "update")
+	got, _, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("the cost-blocked plan was not applied in a project that is not managed: %v\n%s", err, got)
 	}
@@ -1151,9 +1160,9 @@ func TestUpdateManagedLeavesAnOwnersRunAlone(t *testing.T) {
 // stage reaches it, and the verdict is what applies it — the plan the stages
 // print is still printed, and the admission is in the owner's own bucket.
 //
-// Nothing is typed: the terminal's stdin is empty, so a run that asked at all
-// would stop where it asked (the typed name never arrives) and no apply would
-// run. That is what makes "the apply ran" the assertion about the prompt.
+// Nothing is typed and nothing is on the input for a question to read: the
+// terminal's stdin is empty, so a run that asked at all would stop where it
+// asked, and no apply would run.
 func TestUpdateManagedTerminalAsksNothing(t *testing.T) {
 	const additive = "module.installation.google_service_account.scheduler"
 	r := updateRig(t)
@@ -1200,98 +1209,153 @@ func TestUpdateManagedTerminalAsksNothing(t *testing.T) {
 }
 
 // The other half, and the control the whole rule is read against: the same run
-// with the same empty terminal on a project that is NOT managed keeps every
-// prompt exactly as it was — the run's one confirmation is asked, nothing is
-// typed, and no stage applies. The mutations caught: initRun.gateUnderway
-// answering true for every project, and Managed.Removes with it.
-func TestUpdateManagedTerminalControlKeepsEveryPrompt(t *testing.T) {
+// on a project that is NOT managed. A person at the terminal is answered
+// exactly as the managed project's owner is — the step runs, nothing is typed,
+// and nothing reads the run's input (T7) — and the sentence that says what
+// decided the step is the only thing missing from the output. The session with
+// nobody at it keeps the refusal the project always had: the step needs the
+// person, nothing is read, and no stage applies. The mutations caught:
+// initRun.gateUnderway answering true for every project (the pipe arm would
+// then apply a step under the gate's own sentence), and Managed.Removes with
+// it.
+func TestUpdateManagedTerminalControlKeepsTheRefusal(t *testing.T) {
 	const additive = "module.installation.google_service_account.scheduler"
-	r := updateRig(t)
-	r.markedRuns(t, "", "")
-	isolateGateCredentials(t)
-	fakeTerminal(t)
-	updating(t, r)
-	r.setPlan(t, change(additive, "create"))
+	for _, tc := range []struct {
+		what     string
+		terminal bool
+	}{
+		{"a person at the terminal: the step is answered by being there", true},
+		{"nobody at the terminal: the step is left", false},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			r := updateRig(t)
+			r.markedRuns(t, "", "")
+			isolateGateCredentials(t)
+			updating(t, r)
+			r.setPlan(t, change(additive, "create"))
 
-	got, err := updateRun(t, r, "update")
-	if err == nil {
-		t.Fatalf("a project that is not managed ran to completion with nothing typed at its terminal:\n%s", got)
-	}
-	// The stage's own question, which is the one this path asks: this rig has no
-	// checkout, so the run's review is not the owner's to confirm and each stage
-	// asks separately — exactly the sentence the docs carry ("a terminal run
-	// still asks separately, never covered by this confirmation").
-	if !strings.Contains(got, "Type "+initProjectName+" to apply to GCP project") {
-		t.Errorf("the step's own confirmation was not asked:\n%s", got)
-	}
-	if strings.Contains(got, initflow.GateProceeded()) || strings.Contains(got, initflow.GateOrdinary()) {
-		t.Errorf("a project that is not managed printed the managed gate's sentence:\n%s", got)
-	}
-	if n := len(r.ran(t, "apply")); n != 0 {
-		t.Errorf("a project that is not managed applied %d steps with nothing confirmed", n)
-	}
-	if recs := audits(t, r); len(recs) != 0 {
-		t.Errorf("a project that is not managed filed %+v", recs)
+			spy := &readSpy{Reader: strings.NewReader("")}
+			if tc.terminal {
+				fakeTerminal(t)
+			} else {
+				noTerminal(t)
+			}
+			got, _, err := executeStdinReader(t, spy, "update")
+			if err != nil {
+				got += ErrorText(err)
+			}
+			if spy.read {
+				t.Errorf("a run in a project that is not managed read its own input: nothing is typed at a confirmation any more (T7):\n%s", got)
+			}
+			if strings.Contains(got, "Type "+initProjectName) || strings.Contains(got, "[y/N]") {
+				t.Errorf("a project that is not managed asked a question:\n%s", got)
+			}
+			if strings.Contains(got, initflow.GateProceeded()) || strings.Contains(got, initflow.GateOrdinary()) {
+				t.Errorf("a project that is not managed printed the managed gate's sentence:\n%s", got)
+			}
+			if recs := audits(t, r); len(recs) != 0 {
+				t.Errorf("a project that is not managed filed %+v", recs)
+			}
+			if tc.terminal {
+				if err != nil {
+					t.Fatalf("a person's own run on a project that is not managed failed: %v\n%s", err, got)
+				}
+				if n := len(r.ran(t, "apply")); n == 0 {
+					t.Errorf("the step did not run at the person's own terminal: a project that is not managed kept a prompt the policy took away:\n%s", got)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("a project that is not managed ran to completion with nobody at its terminal:\n%s", got)
+			}
+			if n := len(r.ran(t, "apply")); n != 0 {
+				t.Errorf("a project that is not managed applied %d step(s) with nobody there to confirm them", n)
+			}
+			if !strings.Contains(got, "needs a real terminal") {
+				t.Errorf("the refusal does not say what the step needs:\n%s", got)
+			}
+		})
 	}
 }
 
-// The plugin pin's write is one of the questions `fugaro update` asks on a
-// managed project today — "Write this to .claude/settings.json? [y/N]" — and it
-// goes the same way as the rest: the gate being underway is the whole of what
-// admits the step, the diff is still printed, and nothing is typed. The stage
-// is called directly, which is the call the loop makes for a step that is not
+// The plugin pin's write is a step `fugaro update` makes on a managed project
+// with nothing asked: "Write this to .claude/settings.json? [y/N]" is the
+// question it used to be, and the gate being underway is the whole of what
+// admits it now, with the diff still printed and nothing typed. The stage is
+// called directly, which is the call the loop makes for a step that is not
 // SelfConfirming, and the stdin is EMPTY: a stage that asked would get no
 // answer and write nothing, so the file being wired at all is the assertion
 // about the question.
 //
-// The control is the same call with no gate: a terminal, the same empty stdin,
-// the same diff, and the y/N — which is what keeps this from being a stage
-// that simply stopped asking. The mutation caught: the wiring's managed branch
-// taken on anything but the project's own marks (gateUnderway answering true
-// for every project).
+// The two worlds a project that is NOT managed has (T7): a person at the
+// terminal answers the write by being there, with nothing typed and nothing
+// read, and a session with nobody at it is left the step, refused without a
+// read. Those are the control that keeps the gate's branch from being a stage
+// that simply stopped asking, and the mutation they catch: the wiring's
+// managed branch taken on anything but the project's own marks (gateUnderway
+// answering true for every project) — the pipe arm would then write the file
+// under the gate's own sentence with nobody there at all.
 func TestUpdateManagedPluginWiringAsksNothing(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	for _, tc := range []struct {
-		name    string
-		managed bool
+		name     string
+		managed  bool
+		terminal bool
 	}{
-		{"managed", true},
-		{"not managed", false},
+		{"managed, a person at the terminal", true, true},
+		{"managed, nobody at the terminal", true, false},
+		{"not managed, a person at the terminal", false, true},
+		{"not managed, nobody at the terminal", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			settings := wiringCheckout(t, settingsWithOthers)
-			withTerminal(t, true)
+			withTerminal(t, tc.terminal)
 			e, out := stageEngine(t, "", &initOptions{})
+			spy := &readSpy{Reader: strings.NewReader("")}
+			e.r.in = bufio.NewReader(spy)
+			e.r.cmd.SetIn(spy)
 			if tc.managed {
 				e.r.gate = &initGate{managed: true}
 			}
 			s := newPluginStage(e)
-			_, err := s.Apply(t.Context(), initflow.Env{Interactive: true})
+			_, err := s.Apply(t.Context(), initflow.Env{Interactive: tc.terminal})
 			got, _ := os.ReadFile(settings)
 			written := string(got) != settingsWithOthers
 			if !strings.Contains(out.String(), "extraKnownMarketplaces") {
 				t.Fatalf("the step printed no diff of what it would write:\n%s", out.String())
 			}
+			if spy.read {
+				t.Errorf("the step read the input: nothing is typed at this write any more (T7):\n%s", out.String())
+			}
+			if strings.Contains(out.String(), "[y/N]") || strings.Contains(out.String(), "confirmed by --yes") {
+				t.Errorf("the step was asked for what neither the terminal nor --yes gives:\n%s", out.String())
+			}
 			if tc.managed {
 				if err != nil {
-					t.Fatalf("a managed project at its own terminal was stopped: %v\n%s", err, out.String())
+					t.Fatalf("a managed project was stopped: %v\n%s", err, out.String())
 				}
 				if !written {
 					t.Errorf("the settings were not wired, so the gate's verdict did not stand in for the y/N:\n%s", out.String())
-				}
-				if strings.Contains(out.String(), "[y/N]") || strings.Contains(out.String(), "confirmed by --yes") {
-					t.Errorf("a managed project's own terminal was asked:\n%s", out.String())
 				}
 				if !strings.Contains(out.String(), initflow.GateOrdinary()) {
 					t.Errorf("the write does not say what decided it:\n%s", out.String())
 				}
 				return
 			}
-			if err == nil || written {
-				t.Fatalf("a project that is not managed wired the settings with nothing typed (err %v):\n%s", err, out.String())
+			if strings.Contains(out.String(), initflow.GateOrdinary()) {
+				t.Errorf("a project that is not managed printed the managed gate's sentence:\n%s", out.String())
 			}
-			if !strings.Contains(out.String(), "Write this to "+settings+"? [y/N]") {
-				t.Errorf("a project that is not managed was not asked:\n%s", out.String())
+			if tc.terminal {
+				if err != nil {
+					t.Fatalf("a person's own terminal was stopped: %v\n%s", err, out.String())
+				}
+				if !written {
+					t.Errorf("the settings were not wired at the person's own terminal:\n%s", out.String())
+				}
+				return
+			}
+			if err == nil || written {
+				t.Fatalf("the settings were wired with nobody at the terminal (err %v):\n%s", err, out.String())
 			}
 		})
 	}

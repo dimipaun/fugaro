@@ -760,16 +760,18 @@ func TestUpgradeStillWorks(t *testing.T) {
 }
 
 // The checkout stage's cloud half is the refresh's step 4, where a billable
-// build is asked for one build at a time. Under fugaro update the loop's
+// build is confirmed for one build at a time. Under fugaro update the loop's
 // steps are stubbed (there is no GCP project in a test), so this drives that
 // very step the way the stage does, at a terminal and without --yes: two
-// stale workflows are two questions, and a question answered with something
-// other than the project's name submits no build at all. One confirmation
-// for several billable builds is one confirmation too few, and the check
-// reads it as the user having approved builds nobody asked about.
+// stale workflows are two confirmations, and a no — the one --ask puts back
+// in a project whose marks answered "managed", which is the only way to
+// answer one now (T7, docs/no-prompt-policy: a person at the terminal is the
+// confirmation otherwise) — submits no build at all. One confirmation for several billable builds is
+// one confirmation too few, and the check reads it as the user having
+// approved builds nobody asked about.
 //
-// Mutation (run, restore): ask once, before the loop over the workflows,
-// and this test fails: two billable builds, one question.
+// Mutation (run, restore): confirm once, before the loop over the workflows,
+// and this test fails: two billable builds, one banner.
 func TestUpdateAsksBeforeEachBillableBuild(t *testing.T) {
 	t.Run("one confirmation per billable build", func(t *testing.T) {
 		useVersion(t, "0.5.1")
@@ -779,30 +781,52 @@ func TestUpdateAsksBeforeEachBillableBuild(t *testing.T) {
 		p := &refreshPlan{workflows: []string{"app", "api"}}
 		putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.4.0"))
 		putWorkflowRecordFrom("api", "0.5.1", managedRef("base", "0.4.0"))
-		out := atTerminal(t, e, initProjectName+"\n"+initProjectName+"\n")
+		// A person at the terminal is the confirmation, with nothing typed:
+		// the spy over the reader says so.
+		fakeTerminal(t)
+		out := &syncBuf{}
+		e.r.w = out
+		spy := &readSpy{Reader: strings.NewReader("")}
+		e.r.in = bufio.NewReader(spy)
+		e.r.cmd.SetIn(spy)
 		if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
 			t.Fatalf("%v\n%s", err, out.String())
 		}
 		if len(fb.specs) != 2 {
 			t.Fatalf("built %+v, want both stale workflows", fb.specs)
 		}
-		if got := strings.Count(out.String(), "Type "+initProjectName+" to confirm"); got != 2 {
-			t.Errorf("two billable builds were asked for %d time(s), want one confirmation each:\n%s", got, out.String())
+		for _, wf := range []string{"app", "api"} {
+			if got := strings.Count(out.String(), "submits a Cloud Build for acme/app/"+wf); got != 1 {
+				t.Errorf("the build of %s was confirmed %d time(s), want one banner for it:\n%s", wf, got, out.String())
+			}
+		}
+		if spy.read {
+			t.Errorf("something was typed at a billable build's confirmation:\n%s", out.String())
 		}
 	})
 
-	// The answer to the FIRST question decides the first build alone: a
-	// wrong name stops the run there, with nothing submitted, which is what
-	// "answering no runs no build" has to mean for a user who said no.
-	t.Run("a wrong name runs no build", func(t *testing.T) {
+	// The answer to the FIRST question decides the first build alone: a no
+	// stops the run there, with nothing submitted, which is what "answering
+	// no runs no build" has to mean for a user who said no.
+	t.Run("a no runs no build", func(t *testing.T) {
 		useVersion(t, "0.5.1")
 		r := newAnchorModeRig(t, refreshYAML, true)
 		fb := useFakeBuilder(t)
 		e, tg := buildTarget(t, r)
+		// --ask is read off the command and not the options (askConfirm), so
+		// the run carries the flag a real one does. It carries the read the
+		// flag answers for as well: a refresh reads the marks into r.refresh,
+		// and non-nil is a project they answered "managed" for
+		// (openRefreshManaged, initRun.gateRestores). Without it --ask is the
+		// no-op it is in every project the marks answer nothing for — there is
+		// no question of the gate's to put back — and no build is asked about.
+		e.r.cmd.Flags().Bool("ask", true, "")
+		e.r.o.ask = true
+		e.r.refresh = &refreshManaged{}
 		p := &refreshPlan{workflows: []string{"app", "api"}}
 		putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.4.0"))
 		putWorkflowRecordFrom("api", "0.5.1", managedRef("base", "0.4.0"))
-		out := atTerminal(t, e, "nope\n")
+		out := atTerminal(t, e, "n\n")
 		err := e.r.refreshBuilds(t.Context(), p, tg)
 		if err == nil || !strings.Contains(err.Error(), "not confirmed") {
 			t.Fatalf("a declined build was not a refusal: %v\n%s", err, out.String())
@@ -813,76 +837,19 @@ func TestUpdateAsksBeforeEachBillableBuild(t *testing.T) {
 	})
 }
 
-// TestUpdateRunsNoBuildWhenTheBuildIsDeclined is that same decline with the
-// stage in front of it: a terminal, no --yes, an answer that is not the
-// project's name, and the build nobody approved is never submitted. Nothing
-// above the refresh may confirm it instead — the run's own confirmation covers
-// the ordinary steps, and a billable build is not one of them.
-//
-// Mutation (run, restore): hand the refresh --yes (ro.yes = u.o.yes, dropped,
-// or the stage's own env.Yes) and this test fails: a build is submitted with
-// nobody asked.
-func TestUpdateRunsNoBuildWhenTheBuildIsDeclined(t *testing.T) {
-	r, root := upgradeRig(t)
-	checkoutFile(t, filepath.Join(root, ".claude", "settings.json"), wiredAt("v0.5.0"))
-	f := testutil.NewClaudePluginFake(t, "[]", "[]")
-	f.On(t, "plugins", userInstall("0.5.1"), argsInstall...)
-	useFakeClaude(t, f)
-	// The base this release pins, already recorded, and two workflows whose
-	// records name an older one: the refresh's step 2 has nothing to pin, so
-	// the step this test is about is step 4's question.
-	r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
-	putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.4.0"))
-	putWorkflowRecordFrom("api", "0.5.1", managedRef("base", "0.4.0"))
-	fb := useFakeBuilder(t)
-	// Steps 2 and 3 are stubbed (the registry and the Cloud Run Admin API are
-	// not what this test is about) and step 3's target is the rig's own
-	// workflows; step 4 is the refresh's, question and all.
-	real := newRefreshSteps
-	newRefreshSteps = func(run *initRun, e *initEngine, p *refreshPlan) refreshSteps {
-		s := real(run, e, p)
-		s.base = func(context.Context) error { return nil }
-		s.checkJob = func(context.Context, *refreshTarget) error { return nil }
-		s.reload = func(context.Context) (*refreshTarget, error) {
-			return &refreshTarget{lc: p.lc, cfg: p.cfg, spec: infra.RepoSpec{Name: p.repo, Slug: p.slug,
-				RegistryPath: "r", BuildServiceAccountEmail: "b@x.iam",
-				Workflows: map[string]infra.WorkflowSpec{"app": {}, "api": {}}}}, nil
-		}
-		return s
-	}
-	t.Cleanup(func() { newRefreshSteps = real })
-
-	e, refreshOut := checkoutEngine(t, &initOptions{})
-	out := atTerminal(t, e, "not the project's name\n")
-	res := stageOutcome(t, e, checkoutStageOf(t, e))
-	if res.Failed == nil || !strings.Contains(res.Failed.Error, "not confirmed") {
-		t.Fatalf("a declined build did not stop the checkout: %+v\n%s%s", res, out, refreshOut)
-	}
-	// The refresh's own writer is the stage's: the refresh's run is given what
-	// the stage's steps print through (refreshOptions.out), which atTerminal
-	// hands a buffer of its own, and the question the step asks is the
-	// refresh's. Without seeing it asked, a run that never reached step 4
-	// would pass this test too.
-	if !strings.Contains(out.String(), "Type aurora to confirm") {
-		t.Fatalf("the stage reached the build without asking for it:\n%s", out)
-	}
-	if len(fb.specs) != 0 || strings.Contains(out.String(), "is done") {
-		t.Errorf("a declined build ran: %+v\n%s", fb.specs, out)
-	}
-}
-
 // TestUpdateCheckoutBuildConfirmationIsNeverDrawnOver: the same build
 // confirmation, with the converge's own reporter drawing the step in flight.
 // The cloud step is fugaro image refresh run as a command of its own
-// (runImageRefresh -> newInitRun), and that run printed and asked where its own
-// command said — a stream that draws nothing — while the spinner redrew the
-// checkout step over it every 100ms (G1). A billable build's confirmation is
-// the one line in this step a person has to be able to read, and the name typed
-// under it.
+// (runImageRefresh -> newInitRun), and that run printed where its own command
+// said — a stream that draws nothing — while the spinner redrew the checkout
+// step over it every 100ms (G1). A billable build's confirmation is the one
+// line in this step a person has to be able to read: it is what the build is
+// about to do, and being there is the whole of the answer (T7,
+// docs/no-prompt-policy), so the banner has to stand as its own line, with
+// nothing drawn over it and nothing typed under it.
 //
 // Mutation (run, restore): drop the stage's writer from the refresh's options
-// (refreshOptions.out), and this test fails on the frame drawn over the banner
-// and on the redraws over the prompt being answered.
+// (refreshOptions.out), and this test fails on the frame drawn over the banner.
 func TestUpdateCheckoutBuildConfirmationIsNeverDrawnOver(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	clearAgentMarkers(t)
@@ -923,13 +890,37 @@ func TestUpdateCheckoutBuildConfirmationIsNeverDrawnOver(t *testing.T) {
 	e.r.w = runWriter{r: e.r, out: out}
 	step := e.r.rep.Step(checkoutStageName)
 	st := checkoutStageOf(t, e)
-	answerAQuestionMidStage(t, e.r, out, "⚠ CONFIRM (project "+initProjectName+", GCP project ", func() error {
-		_, err := st.Apply(context.Background(), initflow.Env{Interactive: true})
-		return err
-	})
+	// The reader the confirmation would be answered on is the stage's own, and
+	// the spy says nothing is read from it: a person at the terminal answers a
+	// billable build by being there.
+	spy := &readSpy{Reader: strings.NewReader("")}
+	e.r.in = bufio.NewReader(spy)
+	e.r.cmd.SetIn(spy)
+	if _, err := st.Apply(context.Background(), initflow.Env{Interactive: true}); err != nil {
+		t.Fatalf("the stage: %v\n%s", err, out.String())
+	}
 	step.Done("")
 	if len(fb.specs) != 1 {
-		t.Errorf("the confirmed build submitted %+v, want the one build that was asked about", fb.specs)
+		t.Fatalf("the confirmed build submitted %+v, want the one build that was confirmed", fb.specs)
+	}
+	shown := out.String()
+	at := strings.Index(shown, "⚠ CONFIRM (project "+initProjectName+", GCP project ")
+	if at < 0 {
+		t.Fatalf("the stage never printed the build's confirmation:\n%q", shown)
+	}
+	if before := shown[:at]; !strings.HasSuffix(before, "\r\x1b[K") && !strings.HasSuffix(before, "\n") {
+		t.Errorf("the spinner drew the confirmation over its own line: %q", before)
+	}
+	rest := shown[at:]
+	nl := strings.Index(rest, "\n")
+	if nl < 0 {
+		t.Fatalf("the confirmation's banner never ended, so it is not a line a person can read:\n%q", rest)
+	}
+	if strings.Contains(rest[:nl], "\r") {
+		t.Errorf("the spinner redrew over the confirmation's own line: %q", rest[:nl])
+	}
+	if spy.read {
+		t.Errorf("something was typed at the build's confirmation:\n%s", shown)
 	}
 }
 

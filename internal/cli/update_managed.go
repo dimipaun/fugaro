@@ -321,6 +321,18 @@ func readUpdateGate(e *initEngine, r *initRun) *initGate {
 // the gate refused.
 func (r *initRun) gateUnderway() bool { return r.gate.underway() }
 
+// gateRestores is whether --ask has a confirmation to put back in this run: the
+// marks were read and they answered "managed", at whichever of the two doors
+// made that read — `update`'s own gate (r.gate, gateUnderway) or the read
+// `fugaro image refresh` makes for itself (r.refresh: openRefreshManaged answers
+// non-nil exactly where the marks said managed, and that command's askDecide is
+// given this same fact). It is the flag's own rule and not a permission of its
+// own: --ask restores the question a managed project's gate replaces, and in a
+// project whose marks did not answer "managed" there is no such question, so the
+// flag moves nothing and says so (initflow.AskDecision's AskUnmanaged, and the
+// line gateRun prints) — which is why initRun.confirmNow asks only here.
+func (r *initRun) gateRestores() bool { return r.gateUnderway() || r.refresh != nil }
+
 // gateStandsIn is whether the gate stands in for the confirmations it does NOT
 // judge document by document — the run's one confirmation (init_review.go's
 // runCovers and the ordinary steps it covers), the plugin wiring's y/N

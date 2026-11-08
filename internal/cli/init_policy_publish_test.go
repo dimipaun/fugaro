@@ -2010,23 +2010,29 @@ func TestConfirmEmptyAllowListRefusesAnAgentSessionBeforeAnyPrompt(t *testing.T)
 	}
 }
 
-// TestProjectPolicyPublishConfirmsAnEmptyAllowList is #1674's red step: a
-// publish from a config that lists no repository writes an allow-list that
-// admits nothing, and from that moment every run of the project stops before it
-// starts (doctor's allow-list-empty). The diff shows only `+ allow_repos: []`,
-// which reads as harmless, so the consequence is said before the write and a
-// person has to type the project's name; --yes is no stand-in, and a session
-// with no terminal is refused, so an empty allow-list is not written by a
-// script or an agent on the operator's behalf.
-func TestProjectPolicyPublishConfirmsAnEmptyAllowList(t *testing.T) {
+// TestProjectPolicyPublishWarnsBeforeAnEmptyAllowList is #1674 under the
+// no-prompt policy (T7): a publish from a config that lists no repository
+// writes an allow-list that admits nothing, and from that moment every run of
+// the project stops before it starts (doctor's allow-list-empty). The diff
+// shows only `+ allow_repos: []`, which reads as harmless, so the consequence
+// is said before the write — the ⚠ CONFIRM banner — and nothing is typed under
+// it: the person at the terminal is the whole of the answer, and a session
+// without one is refused with the same sentence, so a script or a cron entry
+// cannot write the node on the operator's behalf. A coding agent's session is
+// refused too, before the node is even built.
+func TestProjectPolicyPublishWarnsBeforeAnEmptyAllowList(t *testing.T) {
 	f := newProjectFixture(t, "")
 	setConfigWithNoRepos(t, f)
 
+	// With no terminal — and no --ask this door has — nobody can have read the
+	// consequence, so the publish is refused: the guard the typed name used to
+	// be, and nothing is written.
+	noTerminal(t)
 	out, _, err := execute(t, "project", "policy", "publish")
 	if err == nil {
 		t.Fatalf("a publish that admits no repository went through with no terminal:\n%s", out)
 	}
-	for _, want := range []string{"every run stops before it starts", "fugaro project repos add provider/owner/name"} {
+	for _, want := range []string{"needs a real terminal", "every run stops before it starts", "fugaro project repos add provider/owner/name"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
@@ -2034,25 +2040,44 @@ func TestProjectPolicyPublishConfirmsAnEmptyAllowList(t *testing.T) {
 	if f.db.Value(projectpolicy.PathShared()) != nil {
 		t.Fatal("the refused publish wrote the node")
 	}
-	// --yes is the delete path's flag, not a stand-in for the typed name.
-	if _, _, err := execute(t, "project", "policy", "publish", "--yes"); err == nil {
-		t.Fatal("--yes confirmed an empty allow-list")
-	}
-	if f.db.Value(projectpolicy.PathShared()) != nil {
-		t.Fatal("--yes wrote the node")
-	}
 
-	// At a terminal the person reads the consequence and types the project's
-	// name, and the publish lands.
-	typed(t)
-	out, _, err = executeStdin(t, "aurora\n", "project", "policy", "publish")
-	if err != nil {
-		t.Fatalf("the confirmed publish was refused: %v\n%s", err, out)
+	// A person at the terminal answers it with nothing typed: the warning is
+	// printed and the publish lands.
+	fakeTerminal(t)
+	rd := &readSpy{Reader: strings.NewReader("")}
+	cmd := NewRootCmd()
+	var outBuf, errOut bytes.Buffer
+	cmd.SetIn(rd)
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs(NormalizeArgs([]string{"project", "policy", "publish"}))
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("the publish was refused at a terminal: %v\n%s%s", err, outBuf.String(), errOut.String())
 	}
-	if !strings.Contains(out, "every run stops before it starts") {
-		t.Errorf("the confirmation does not name the consequence:\n%s", out)
+	for _, want := range []string{"⚠ CONFIRM (project aurora)", "every run stops before it starts", "fugaro project repos add provider/owner/name"} {
+		if !strings.Contains(outBuf.String(), want) {
+			t.Errorf("the publish does not say %q:\n%s", want, outBuf.String())
+		}
+	}
+	if rd.read {
+		t.Errorf("the publish read stdin, and nothing is typed at a confirmation:\n%s", outBuf.String())
 	}
 	if f.db.Value(projectpolicy.PathShared()) == nil {
-		t.Fatal("the confirmed publish wrote no node")
+		t.Fatal("the publish wrote no node")
+	}
+
+	// The control: a coding agent's session writes none of it (the door's own
+	// guard refuses it before the node is built, and where the read of the
+	// project's marks cannot be made at all it fails closed: either way the
+	// error comes back and no node is written).
+	f2 := newProjectFixture(t, "")
+	setConfigWithNoRepos(t, f2)
+	t.Setenv(agentMarkers[0], "1")
+	out2, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("an agent session's publish went through:\n%s", out2)
+	}
+	if f2.db.Value(projectpolicy.PathShared()) != nil {
+		t.Fatal("an agent session wrote the node")
 	}
 }

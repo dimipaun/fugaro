@@ -21,8 +21,7 @@ import (
 //
 // The question list itself is setup.go's `setupQuestions`, and
 // TestEveryWizardQuestionHasAFlag is the contract on it: every question has a
-// flag, so a scripted run never needs a terminal for anything but the typed
-// confirmations.
+// flag, so a scripted run never needs a terminal to answer one.
 
 // wizardRun is the wizard on the harness init_inputs_test.go already has: a
 // first run (no project config anywhere), a working directory outside any
@@ -84,11 +83,12 @@ func optionsFor(flag string) *initOptions {
 // contract in one place: a question the wizard asks is a question a scripted
 // run can answer, and the flag that answers it is on `fugaro setup`.
 //
-// It is checked against the wizard rather than trusted. Every row's label is a
-// prompt the run actually prints, in the table's order, when nothing else
-// answers it; it disappears when the row's own flag answers the same question;
-// and its flag is one `fugaro setup` declares and shows. A question added
-// without a row — or a row for a question nobody asks any more — fails here.
+// It is checked against the wizard rather than trusted. Every row's question
+// (`what`, the name the run prints above its value entry) is printed in the
+// table's order when nothing else answers it; it disappears when the row's own
+// flag answers the same question; and its flag is one `fugaro setup` declares
+// and shows. A question added without a row — or a row for a question nobody
+// asks any more — fails here.
 //
 // The last column is the one --non-interactive prints, and it is read off the
 // product too: a run with no terminal names every question it cannot answer,
@@ -119,16 +119,16 @@ func TestEveryWizardQuestionHasAFlag(t *testing.T) {
 		}
 	}
 
-	// Asked: the wizard prints the table's labels, and in its order.
+	// Asked: the wizard prints the table's questions, and in its order.
 	r, out := wizardRun(t, stdinFor(""), nil)
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	at := 0
 	for _, q := range setupQuestions {
-		i := strings.Index(out.String()[at:], q.label)
+		i := strings.Index(out.String()[at:], q.what)
 		if i < 0 {
-			t.Errorf("%s: the wizard did not ask %q, in the order the table lists it:\n%s", q.flag, q.label, out)
+			t.Errorf("%s: the wizard did not ask %q, in the order the table lists it:\n%s", q.flag, q.what, out)
 			continue
 		}
 		at += i
@@ -141,8 +141,8 @@ func TestEveryWizardQuestionHasAFlag(t *testing.T) {
 			if err := r.gatherInputs(t.Context()); err != nil {
 				t.Fatalf("%v\n%s", err, out)
 			}
-			if strings.Contains(out.String(), q.label) {
-				t.Errorf("%s answered the question, and the wizard asked %q anyway:\n%s", q.flag, q.label, out)
+			if strings.Contains(out.String(), q.what) {
+				t.Errorf("%s answered the question, and the wizard asked %q anyway:\n%s", q.flag, q.what, out)
 			}
 		})
 	}
@@ -210,8 +210,8 @@ func TestSetupAsksNoCreateOrAdoptQuestion(t *testing.T) {
 // creation for a first run of `setup` and for nothing else — not `update`,
 // which creates nothing, not --config-only or --print-vars, which touch no
 // project, and not a run with a project config. A scripted first run is
-// creating too (its inputs are flags); what it cannot do is type the creation's
-// confirmation, which TestSetupCreatesOnlyWithTheTypedConfirmation pins.
+// creating too (its inputs are flags); what it cannot do is put a person at the
+// terminal, which TestSetupCreatesOnlyForAPersonAtTheTerminal pins.
 func TestFirstRunImpliesCreationOnlyWhereItCanAct(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -299,12 +299,15 @@ func TestCreationFlagsNeedACreation(t *testing.T) {
 	}
 }
 
-// TestSetupCreatesOnlyWithTheTypedConfirmation: the creation is not its own
-// confirmation. A first run's project is created only by the ID typed at a real
-// terminal, and --yes, --json, a pipe and --non-interactive each leave it for
-// you (D12: creating the project is `setup`'s, and `--yes` never covers it).
-// This is the row W0.1's matrix gains for the door that creates.
-func TestSetupCreatesOnlyWithTheTypedConfirmation(t *testing.T) {
+// TestSetupCreatesOnlyForAPersonAtTheTerminal: the creation is not its own
+// confirmation, and no flag takes a person's place. A first run's project is
+// created only where a person is at the terminal, with nothing typed for it
+// (T7, docs/no-prompt-policy); --yes is the one way a person there leaves the
+// step instead, because the creation is initflow.Typed and --yes never covers a
+// Typed step, and --json, a pipe and --non-interactive each leave it for you
+// (D12: creating the project is `setup`'s). This is the row W0.1's matrix gains
+// for the door that creates.
+func TestSetupCreatesOnlyForAPersonAtTheTerminal(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		terminal bool
@@ -312,12 +315,12 @@ func TestSetupCreatesOnlyWithTheTypedConfirmation(t *testing.T) {
 		args     []string
 		created  bool
 	}{
-		{"the ID typed at a terminal", true, newProj + "\n", nil, true},
+		{"a person at the terminal", true, newProj + "\n", nil, true},
 		{"--yes does not stand in for it", true, "yes\n", []string{"--yes"}, false},
-		{"--yes at a terminal, the ID typed", true, newProj + "\n", []string{"--yes"}, true},
-		{"a pipe cannot type it", false, newProj + "\n", nil, false},
-		{"--json cannot type it", true, newProj + "\n", []string{"--json"}, false},
-		{"--non-interactive cannot type it", true, newProj + "\n", []string{"--non-interactive", "--yes"}, false},
+		{"--yes at a terminal leaves it for a rerun", true, newProj + "\n", []string{"--yes"}, false},
+		{"a pipe cannot confirm it", false, newProj + "\n", nil, false},
+		{"--json cannot confirm it", true, newProj + "\n", []string{"--json"}, false},
+		{"--non-interactive cannot confirm it", true, newProj + "\n", []string{"--non-interactive", "--yes"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newProjectRig(t)
@@ -391,7 +394,7 @@ func TestSetupRefusesAnIDThatHoldsAnInstallation(t *testing.T) {
 					t.Errorf("the refusal lacks %q: %v", want, err)
 				}
 			}
-			if strings.Contains(out.String(), "Fugaro project name") {
+			if strings.Contains(out.String(), questionFor("--name").what) {
 				t.Errorf("the run asked for a name before refusing:\n%s", out)
 			}
 		})
@@ -406,7 +409,7 @@ func TestSetupRefusesAnIDThatHoldsAnInstallation(t *testing.T) {
 		if r.o.name != initProjectName || r.o.createProject {
 			t.Errorf("name %q, create %v: want the installation's own name and no creation", r.o.name, r.o.createProject)
 		}
-		if strings.Contains(out.String(), "Fugaro project name") {
+		if strings.Contains(out.String(), questionFor("--name").what) {
 			t.Errorf("the run asked for a name, and the installation has one:\n%s", out)
 		}
 	})
@@ -423,8 +426,8 @@ func TestSetupOutsideACheckoutSkipsTheRepositoryQuestion(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	for _, q := range setupQuestions {
-		if !strings.Contains(out.String(), q.label) {
-			t.Errorf("the wizard did not ask %q outside a checkout:\n%s", q.label, out)
+		if !strings.Contains(out.String(), q.what) {
+			t.Errorf("the wizard did not ask %q outside a checkout:\n%s", q.what, out)
 		}
 	}
 	for _, repo := range []string{"onboard", "repository", "GitHub App"} {

@@ -179,15 +179,15 @@ func strs(v any) []string {
 	return out
 }
 
-// Each of the three applies, and the database step, has its own plan and its
-// own question: --ask puts them back one step at a time, and answering n of
-// them yes gets exactly n steps. Nothing is typed for one that was not asked
-// (T7).
+// Each of the three applies, the database and its location has its own plan
+// and its own banner: a person at the terminal reads five separate
+// confirmations and every step goes on, with nothing typed (T7). Where nobody
+// can confirm it, the first step is left and nothing after it happens.
 func TestInitFirebaseThreeAppliesConfirmedSeparately(t *testing.T) {
 	r := newFBRig(t)
 	r.historyImage()
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, strings.Repeat("y\n", 5), "setup", "--firebase-project", fpID, "--budget-mode", "observe", "--ask")
+	out, _, err := executeStdin(t, "", "setup", "--firebase-project", fpID, "--budget-mode", "observe")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -206,23 +206,20 @@ func TestInitFirebaseThreeAppliesConfirmedSeparately(t *testing.T) {
 		t.Errorf("rules deployed %d times", r.db.RulePuts())
 	}
 
-	// Each confirmation is its own: with only two answers the second apply is
-	// the last thing that happens, and the database is never touched.
+	// A run nobody can confirm stops at its first step: the second apply and
+	// the database are never reached.
 	r2 := newFBRig(t)
 	r2.historyImage()
-	fakeTerminal(t)
-	_, _, err = executeStdin(t, strings.Repeat("y\n", 2), "setup", "--firebase-project", fpID, "--ask")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "not confirmed") {
+	noTerminal(t)
+	_, _, err = executeStdin(t, "", "setup", "--firebase-project", fpID)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "needs a real terminal") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
-	if got := r2.applies(t); !slices.Equal(got, []string{"installation", "firebase"}) {
+	if got := r2.applies(t); len(got) != 0 {
 		t.Errorf("applies = %v", got)
 	}
 	if r2.db.RulePuts() != 0 || r2.db.Value("fugaro") != nil {
 		t.Errorf("the database was written without its confirmation: rules %d, fugaro %v", r2.db.RulePuts(), r2.db.Value("fugaro"))
-	}
-	if _, err := os.Stat(r2.fbRoot()); err != nil {
-		t.Errorf("no firebase workdir: %v", err)
 	}
 }
 
@@ -1036,20 +1033,35 @@ func TestIdentityPlatformInitializedWhenMissing(t *testing.T) {
 	}
 }
 
+// The Identity Platform step is part of the database step, behind its one
+// confirmation, and the confirmation is a person at the terminal, with
+// nothing typed (T7): the confirmation lists the step and it runs. Where
+// nobody can confirm it, initializeAuth is never called.
 func TestIdentityPlatformStepNotRunWithoutConfirmation(t *testing.T) {
 	r := newFBRig(t)
 	r.idt.UninitializeIdentityPlatform()
-	fakeTerminal(t) // nothing is typed
-	// The installation and Firebase applies are confirmed; the database step is not.
-	out, _, err := executeStdin(t, initProjectName+"\n"+initProjectName+"\n", "setup", "--firebase-project", fpID)
-	if err == nil {
-		t.Fatalf("not confirmed, yet init succeeded:\n%s", out)
-	}
-	if n := r.idt.InitializeAuthCalls(); n != 0 {
-		t.Errorf("initializeAuth calls = %d before the confirmation", n)
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "", "setup", "--firebase-project", fpID)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
 	}
 	if !strings.Contains(out, "ensure Identity Platform is initialized (no sign-in providers)") {
 		t.Errorf("the confirmation does not list the step:\n%s", out)
+	}
+	if n := r.idt.InitializeAuthCalls(); n != 1 {
+		t.Errorf("initializeAuth calls = %d at a person's terminal, want 1", n)
+	}
+
+	// Nobody can confirm it: the step is left and nothing is written.
+	r2 := newFBRig(t)
+	r2.idt.UninitializeIdentityPlatform()
+	noTerminal(t)
+	_, _, err = executeStdin(t, "", "setup", "--firebase-project", fpID)
+	if err == nil || !strings.Contains(err.Error(), "needs a real terminal") {
+		t.Fatalf("err = %v", err)
+	}
+	if n := r2.idt.InitializeAuthCalls(); n != 0 {
+		t.Errorf("initializeAuth calls = %d before the confirmation", n)
 	}
 }
 
@@ -1614,20 +1626,22 @@ func TestUpdateWithoutSharedBudgetDoesNotTouchFirebase(t *testing.T) {
 	}
 }
 
-// TestUpdateRulesDeclinedRefusesPolicyWrite: the deploy is behind the
-// confirmation the database step of `--firebase-project` takes, and declining it
-// stops the run where it stands. It must not go on to migrate the policy node:
-// the gate the migration holds (requirePolicyRules) is the marker the refused
-// deploy would have written, so a run that carried on would write a policy under
-// the very rules it just declined to deploy. A person at a terminal who does not
-// type the project's name is what a decline is — no other answer confirms this
-// step for them — and the rules and the node are read back exactly as they were.
+// TestUpdateRulesUnconfirmedRefusesPolicyWrite: the deploy is behind the
+// confirmation the database step of `--firebase-project` takes, and a session
+// where nobody can answer it stops the run where it stands. It must not go on to
+// migrate the policy node: the gate the migration holds (requirePolicyRules) is
+// the marker the never-made deploy would have written, so a run that carried on
+// would write a policy under rules that are not deployed. Nothing is typed at a
+// confirmation any more (T7, docs/no-prompt-policy): a person at a terminal
+// confirms this step by being there, so the session that leaves it — and stops
+// the run with it — is one with no terminal at all. The rules and the node are
+// read back exactly as they were.
 //
 // The first run converges the installation, so the second one's first step with
 // something to do is the rules deploy: on a fixture that has never run, the
-// installation stage's own confirmation comes first, and the answer typed there
-// would be the one this test is about.
-func TestUpdateRulesDeclinedRefusesPolicyWrite(t *testing.T) {
+// installation stage's own confirmation comes first, and the answer to it would
+// be the one this test is about.
+func TestUpdateRulesUnconfirmedRefusesPolicyWrite(t *testing.T) {
 	_, db := updateBudgetRig(t)
 	if out, _, err := executeStdin(t, "", "update", "--yes"); err != nil {
 		t.Fatalf("the converging run: %v\n%s", err, out)
@@ -1644,17 +1658,17 @@ func TestUpdateRulesDeclinedRefusesPolicyWrite(t *testing.T) {
 	db.SetRules(stale)
 
 	old := stdinIsTerminal
-	stdinIsTerminal = func(io.Reader) bool { return true }
+	stdinIsTerminal = func(io.Reader) bool { return false }
 	t.Cleanup(func() { stdinIsTerminal = old })
 
-	out, errOut, err := executeStdin(t, "\n\n\n\n\n\n\n\n", "update")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err == nil {
-		t.Fatalf("a declined rules deploy exited 0:\n%s%s", out, errOut)
+		t.Fatalf("a rules deploy nobody could confirm exited 0:\n%s%s", out, errOut)
 	}
-	if text := out + errOut + ErrorText(err); !strings.Contains(text, "not confirmed") {
-		t.Errorf("the refusal is not the declined confirmation: %s", text)
+	if text := out + errOut + ErrorText(err); !strings.Contains(text, "needs a real terminal") {
+		t.Errorf("the refusal is not the step's own unconfirmed confirmation: %s", text)
 	}
-	// And it is the rules step's own decline: the run reaches this stage's
+	// And it is the rules step's own: the run reaches this stage's
 	// confirmation and stops there, not at a step of a stage before it.
 	if !strings.Contains(out, "stopped at "+initflow.Rules) {
 		t.Errorf("the run did not stop at the rules stage's own confirmation:\n%s", out)
@@ -1669,7 +1683,7 @@ func TestUpdateRulesDeclinedRefusesPolicyWrite(t *testing.T) {
 		t.Errorf("the rules generation marker is %q, want the stale %q the deploy would have moved", got, want)
 	}
 	if got := nodeVersionOn(t, db); got != 3 {
-		t.Errorf("the published policy moved to version %d after the rules deploy was declined: the migration's own gate is the marker that deploy did not write", got)
+		t.Errorf("the published policy moved to version %d after the rules deploy was left unconfirmed: the migration's own gate is the marker that deploy did not write", got)
 	}
 }
 

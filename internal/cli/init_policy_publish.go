@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -822,18 +823,28 @@ func policyEmptyAllowListWarning() string {
 // confirmEmptyAllowList is the confirmation every publish that would write an
 // allow-list admitting nothing takes before its first write: the warning below
 // is what a person reads, and what answers for the write is the run's own
-// answer to it (askConfirm) — nothing where --ask is not passed, the question
-// where it is. Nothing is typed under it (T7, docs/no-prompt-policy), and a
-// session with no terminal — a script's, or a coding agent's — is still
-// refused, so an empty allow-list is never written on the operator's behalf by
-// something that cannot have read the consequence (#1674). The same wording is
-// both the note and the refusal, so the two cannot drift.
+// answer to it (askConfirm) — the person at the terminal where --ask is not
+// passed, the question where it is. Nothing is typed under it (T7,
+// docs/no-prompt-policy), and a session with no terminal — a script's, or a
+// coding agent's — is still refused, so an empty allow-list is never written on
+// the operator's behalf by something that cannot have read the consequence
+// (#1674). The same wording is both the note and the refusal, so the two cannot
+// drift.
 func confirmEmptyAllowList(cmd *cobra.Command, lc *localcfg.Config, agent string) error {
 	why := policyEmptyAllowListWarning()
 	// A coding agent's session is refused before anything else: a terminal it
 	// can give itself (a pty wrapper) is not a person reading the consequence.
 	if agent != "" {
 		return userErr("%s", why)
+	}
+	// The person at the terminal is what answers this step, so a session
+	// without one is refused with the same sentence — unless the command has
+	// --ask to put the question back, which askConfirm below owns, refusal and
+	// all. Without this, a script or a cron entry publishing a config that
+	// lists no repository would write the node unasked, and every run of the
+	// project would stop from that moment (#1674).
+	if !stdinIsTerminal(cmd.InOrStdin()) && !boolFlag(cmd, "ask") {
+		return userErr("%s: %s", initflow.NeedsTerminal("the confirmation of this step"), why)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "⚠ CONFIRM (project %s): %s\n", safetext.Field(lc.Name), why)
 	ok, err := askConfirm(cmd, "write an allow-list that admits no repository?")

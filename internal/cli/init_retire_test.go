@@ -540,13 +540,12 @@ func TestInitRepoRetireConfirmationNamesEveryKeptSecret(t *testing.T) {
 //
 // The refusal's words are pinned per case (review round 4). The retirement's
 // confirmation is not the ordinary one and cannot be answered the ordinary
-// way: --yes covers ask() wherever it appears, but askTyped never shows a
-// prompt to anyone but a real terminal, so the generic notConfirmed would
-// tell a --yes run that "the project's name was not typed" -- which did not
-// happen -- and would send a piped run to --yes, the one flag design §4.2
-// forbids for a retirement. So the message must name the real terminal that
-// is missing, and never offer --yes.
-func TestInitRepoRetireTypedConfirmationsAreNotCoveredByAnythingElse(t *testing.T) {
+// way: nothing is typed at a confirmation any more (T7), so what answers for
+// one is the person at the terminal, and --yes is the flag design §4.2
+// forbids for a retirement. The generic notConfirmed would send such a run to
+// --yes anyway, the one flag that confirms none of this, so the message has
+// to name the real terminal that is missing, and never offer --yes.
+func TestInitRepoRetireConfirmationsAreNotCoveredByAnythingElse(t *testing.T) {
 	for name, tc := range map[string]struct {
 		args    []string
 		agent   string
@@ -557,7 +556,7 @@ func TestInitRepoRetireTypedConfirmationsAreNotCoveredByAnythingElse(t *testing.
 		"--yes": {
 			args: []string{"--yes"},
 			want: []string{
-				"the typed confirmation of a retirement needs a real terminal",
+				"the confirmation of a retirement needs a real terminal",
 				"(--yes never confirms a retirement)",
 				"nothing was removed from Terraform's state and nothing was deleted",
 			},
@@ -588,7 +587,7 @@ func TestInitRepoRetireTypedConfirmationsAreNotCoveredByAnythingElse(t *testing.
 		"a pipe, not a terminal": {
 			notTTY: true,
 			want: []string{
-				"the typed confirmation of a retirement needs a real terminal",
+				"the confirmation of a retirement needs a real terminal",
 				"nothing was removed from Terraform's state and nothing was deleted",
 			},
 			notWant: []string{"was not typed", "--yes"},
@@ -700,93 +699,60 @@ func TestInitRepoRetireShowsThePlanBeforeTheSecondConfirmation(t *testing.T) {
 	}
 }
 
-// I1: a declined second confirmation says what has already happened, not what
-// was predicted. The state removal runs before the question, so the message
-// must name the addresses that left the state, by address, and the command
-// that finishes the work -- "nothing was removed" would be false by then. The
-// question is the one --ask puts back: nothing is read at a retirement's
-// confirmation otherwise (T7).
-func TestInitRepoRetireDeclinedSecondConfirmationNamesWhatLeftTheState(t *testing.T) {
+// The retirement's two confirmations at the owner's own terminal, with
+// nothing typed and nobody asked: what answers for them is the person at the
+// terminal, which is T7's whole rule for a step that used to read a value (a
+// [y/N] under --ask is the one sanctioned exemption, and `update --repo` is
+// the repo engine's own door, which reads no mark at all — so there is nothing
+// for the flag to restore there and the confirmations are the ones this run
+// always gives).
+//
+// The run is the whole retirement: the state removal, the plan that could not
+// run before, the apply, the API delete — and the two banners, both confirmed
+// by the terminal alone.
+func TestInitRepoRetireAtTheTerminalAsksNothingAndRuns(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true})
-	out, errOut, err := executeStdin(t, "y\nn\n", "update", "--repo", "--retire", "--no-build", "--ask")
-	if ExitCode(err) != ExitUserError {
-		t.Fatalf("exit %d, err %v\n%s%s; want the decline to stop the run", ExitCode(err), err, out, errOut)
+	out, errOut, err := executeStdin(t, "", "update", "--repo", "--retire", "--no-build")
+	if err != nil {
+		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
 	text := out + errOut
-	if !strings.Contains(text, "removed 2 addresses from Terraform's state; nothing was destroyed") {
-		t.Errorf("the state removal is not reported before the prompt:\n%s", text)
-	}
 	if n := strings.Count(text, "⚠ CONFIRM"); n != 2 {
 		t.Errorf("%d confirmations, want the first and the second:\n%s", n, text)
 	}
-	msg := err.Error()
-	for _, want := range []string{
-		"not confirmed", "the plan was not applied and no job was deleted",
-		"2 addresses had already left Terraform's state", retireKeptAddr, retireJobAddr, retireNextCommand,
-	} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("the decline does not say %q in %q", want, msg)
-		}
+	// Nothing was typed and nothing was asked: a "[y/N]" would be a prompt
+	// nobody passed --ask for, and the name is the value T7 took out.
+	if n := strings.Count(text, "[y/N]: "); n != 0 {
+		t.Errorf("%d questions were asked at a run that passed no --ask:\n%s", n, text)
 	}
-	if applies := r.applies(t); len(applies) != 0 {
-		t.Errorf("a declined confirmation applied: %v", applies)
+	if strings.Contains(text, "Type "+initProjectName+" to confirm: ") || strings.Contains(text, "was not typed") {
+		t.Errorf("the retirement asks for a value at a terminal:\n%s", text)
 	}
-	if deletes := r.run.JobDeletes(); len(deletes) != 0 {
-		t.Errorf("a declined confirmation deleted %v", deletes)
+	if n := strings.Count(text, "\n  confirmed"); n != 2 {
+		t.Errorf("%d confirmations were given, want both:\n%s", n, text)
 	}
-	if !r.run.HasJob(retireJobName) {
-		t.Error("the job is gone although the delete was declined")
+	if !strings.Contains(text, "removed 2 addresses from Terraform's state; nothing was destroyed") {
+		t.Errorf("the state removal did not happen:\n%s", text)
 	}
-}
-
-// The no-change (resume) path owes the same second confirmation: the
-// plan changes nothing because an earlier run already removed the addresses
-// and applied, but the API job delete is still in front of the user, and no
-// plan shows it (design §4.2). Declining stops the run there, with nothing
-// deleted I-C.
-func TestInitRepoRetireResumeNoChangeAsksBeforeTheDeleteAndDecliningStopsIt(t *testing.T) {
-	r := newRetireRig(t, retireOpts{protection: true, noJobInState: true, planClean: true})
-	out, errOut, err := executeStdin(t, "y\nn\n", "update", "--repo", "--retire", "--no-build", "--ask")
-	if ExitCode(err) != ExitUserError {
-		t.Fatalf("exit %d, err %v\n%s%s; want the declined confirmation to stop the run", ExitCode(err), err, out, errOut)
+	if applies := r.applies(t); len(applies) != 1 {
+		t.Errorf("applies = %v, want the one the retirement owes", applies)
 	}
-	text := out + errOut
-	if !strings.Contains(text, "No changes: ") {
-		t.Errorf("the clean plan is not reported:\n%s", text)
+	if deletes := r.run.JobDeletes(); len(deletes) != 1 || deletes[0] != retireJobName {
+		t.Errorf("JobDeletes = %v, want the orphan the labels named", deletes)
 	}
-	if n := strings.Count(text, "⚠ CONFIRM"); n != 2 {
-		t.Errorf("%d confirmations, want two: the resume owes the delete's own:\n%s", n, text)
-	}
-	// Both questions are the route --yes never covers: askTyped is what
-	// retireConfirm uses precisely because this step is not one --yes may
-	// cover, and --ask is the only flag that asks it -- a run that could
-	// reach the delete through --yes would delete a job nobody answered for.
-	if n := strings.Count(text, "[y/N]: "); n != 2 || strings.Contains(text, "confirmed by --yes") {
-		t.Errorf("%d asked questions, and --yes said to have confirmed one:\n%s", n, text)
-	}
-	if deletes := r.run.JobDeletes(); len(deletes) != 0 {
-		t.Errorf("a declined confirmation still deleted %v", deletes)
-	}
-	if !r.run.HasJob(retireJobName) {
-		t.Error("the job is gone although the delete was declined")
-	}
-	msg := err.Error()
-	for _, want := range []string{"not confirmed", "nothing was applied and no job was deleted", "had already left Terraform's state", retireNextCommand} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("the decline does not say %q in %q", want, msg)
-		}
+	if !strings.Contains(text, "deleted the orphaned Cloud Run job "+retireJobName) {
+		t.Errorf("the API delete is not reported:\n%s", text)
 	}
 }
 
 // The same resume, confirmed: the delete runs and the apply does not -- a
 // clean plan is not applied again, and the confirmation's own banner says so
-// rather than naming an apply that is not coming.
+// rather than naming an apply that is not coming. The confirmation is the
+// terminal's own here too (T7): the resume's second one is the delete's, which
+// no plan shows, and it is given with nothing typed.
 func TestInitRepoRetireResumeNoChangeDeletesAfterTheConfirmation(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true, noJobInState: true, planClean: true})
-	// The third answer is the local config's own question: this run never
-	// applied, so that write is not covered by an apply's, and --ask is what
-	// asks it.
-	out, errOut, err := executeStdin(t, "y\ny\ny\n", "update", "--repo", "--retire", "--no-build", "--ask")
+	out, errOut, err := executeStdin(t, "", "update", "--repo", "--retire", "--no-build")
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -2083,10 +2049,11 @@ func normaliseRetireTranscript(s string) string {
 	return s
 }
 
-// The whole retirement as one transcript: the summary, both typed
-// confirmations, the state removal, the plan's own counts, the apply and the
-// API delete, with no Terraform text anywhere in it (Review Focus 5, design
-// §3.2). The fixture is the origin's own shape -- acme/sandbox losing the
+// The whole retirement as one transcript: the summary, both confirmations
+// (nothing is typed for them: the person at the rig's terminal is the
+// confirmation, T7), the state removal, the plan's own counts, the apply and
+// the API delete, with no Terraform text anywhere in it (Review Focus 5,
+// design §3.2). The fixture is the origin's own shape -- acme/sandbox losing the
 // named account bmb -- and every identifier in it is the fake's.
 func TestInitRepoRetireTranscriptGolden(t *testing.T) {
 	// The rig chdirs into the checkout, so the golden's path is taken first.
@@ -2446,7 +2413,7 @@ func TestUpdateRecordsTheRetirementsItMade(t *testing.T) {
 	r := newManagedRetireRig(t, retireOpts{protection: true, keptAsNote: true, member: true})
 	out, errOut, err := executeStdin(t, "", "update")
 	text := out + errOut
-	if err != nil && !strings.Contains(text, firstBuildHold) {
+	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, text)
 	}
 	if deletes := r.run.JobDeletes(); len(deletes) != 1 {
@@ -2516,7 +2483,7 @@ func TestUpdateRecordsTheRunsInFlightItSaw(t *testing.T) {
 	}})
 	out, errOut, err := executeStdin(t, "", "update")
 	text := out + errOut
-	if err != nil && !strings.Contains(text, firstBuildHold) {
+	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, text)
 	}
 	up := updateRecordFor(t, initProjectName)
@@ -2542,7 +2509,7 @@ func TestTheUpdateRecordIsTheLastRunsAndNotAMerge(t *testing.T) {
 	noProjectLayerBucket(t)
 	out, errOut, err := executeStdin(t, "", "update")
 	text := out + errOut
-	if err != nil && !strings.Contains(text, firstBuildHold) {
+	if err != nil {
 		t.Fatalf("the first update: exit %d, err %v\n%s", ExitCode(err), err, text)
 	}
 	first := updateRecordFor(t, initProjectName)
@@ -2572,7 +2539,7 @@ func TestTheUpdateRecordIsTheLastRunsAndNotAMerge(t *testing.T) {
 	fetched(t, ".")
 	out, errOut, err = executeStdin(t, "", "update")
 	text = out + errOut
-	if err != nil && !strings.Contains(text, firstBuildHold) {
+	if err != nil {
 		t.Fatalf("the second update: exit %d, err %v\n%s", ExitCode(err), err, text)
 	}
 	last := updateRecordFor(t, initProjectName)
@@ -2691,7 +2658,10 @@ func TestAnUpdateThatStoppedAfterTheReadKeepsTheRecordsRows(t *testing.T) {
 		},
 		{
 			name: "the confirmation was not given",
-			args: []string{"update", "--repo", "--no-build", "--allow-delete", retireSvcAddr},
+			// A run with no terminal cannot confirm the apply at all (T7: a
+			// person at one is the whole answer, with nothing typed), so it
+			// stops there.
+			args: []string{"update", "--repo", "--no-build", "--allow-delete", retireSvcAddr, "--non-interactive"},
 		},
 		{
 			name: "the apply failed",
@@ -2736,7 +2706,7 @@ func TestAnUpdateWithNothingToRetireRecordsItWhenItsPlanIsThrough(t *testing.T) 
 	previous := recordPreviousUpdate(t)
 	out, errOut, err := executeStdin(t, "aurora\n", "update", "--repo", "--no-build")
 	text := out + errOut
-	if err != nil && !strings.Contains(text, firstBuildHold) {
+	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, text)
 	}
 	if got := r.applies(t); len(got) != 0 {
@@ -2865,7 +2835,7 @@ func TestUpdateRecordInAnUnwritableStateDirectoryIsReported(t *testing.T) {
 	}
 	out, errOut, err := executeStdin(t, "", "update")
 	text := out + errOut
-	if err != nil && !strings.Contains(text, firstBuildHold) {
+	if err != nil {
 		t.Fatalf("the update did not get past the retirement: exit %d, err %v\n%s", ExitCode(err), err, text)
 	}
 	if !strings.Contains(text, "was not recorded") {

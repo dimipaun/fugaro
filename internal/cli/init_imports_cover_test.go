@@ -38,21 +38,24 @@ func rootImports(t *testing.T, dir string) []infra.Import {
 
 // The installation root: in a marked project the run confirmation covers a
 // plan whose import is exactly the one discovery wrote (the marked runs
-// bucket), and not a plan that also imports something discovery never
-// listed (a stale imports.tf.json, a hand edit): that apply asks its own
-// typed name and says why.
+// bucket), and not a plan that also imports something discovery never listed
+// (a stale imports.tf.json, a hand edit): that step says it is not covered,
+// and a person at the terminal is what applies it, with nothing typed under
+// its banner (T7). Where nobody can confirm it, nothing is applied.
 func TestInstallationImportsCoveredOnlyAsDiscovered(t *testing.T) {
 	const runs = "module.installation.google_storage_bucket.runs"
 	runsID := initProject + "/" + initRunsBucket
 	const stray = "module.installation.google_service_account.scheduler"
 	strayID := "projects/" + initProject + "/serviceAccounts/fugaro-scheduler@" + initProject + ".iam.gserviceaccount.com"
+	strayChanges := []planChange{importing(change(runs, "no-op"), runsID), importing(change(stray, "no-op"), strayID)}
+	wantStray := "not covered by the run confirmation: the plan is outside what the review announced (" + stray + " (imports " + strayID + ", which this run's discovery did not find))"
 
 	t.Run("discovery's import", func(t *testing.T) {
 		r := newInitRig(t)
 		r.markedRuns(t, initProjectName, initProject)
 		r.setPlan(t, importing(change(runs, "no-op"), runsID))
 		fakeTerminal(t)
-		out, _, err := executeStdin(t, names(1), "setup")
+		out, _, err := executeStdin(t, "", "setup")
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
@@ -63,25 +66,39 @@ func TestInstallationImportsCoveredOnlyAsDiscovered(t *testing.T) {
 			t.Fatalf("%d run prompt(s), %d per-step, %d applies\n%s", run, step, len(r.ran(t, "apply")), out)
 		}
 	})
-	for name, tc := range map[string]struct {
-		stdin string
-		apply int
-	}{"its own answer": {names(3), 1}, "only the review's": {names(1), 0}} {
-		t.Run("an import discovery did not write/"+name, func(t *testing.T) {
-			r := newInitRig(t)
-			r.markedRuns(t, initProjectName, initProject)
-			r.setPlan(t, importing(change(runs, "no-op"), runsID), importing(change(stray, "no-op"), strayID))
-			fakeTerminal(t)
-			out, _, err := executeStdin(t, tc.stdin, "setup")
-			if got := len(r.ran(t, "apply")); got != tc.apply {
-				t.Fatalf("%d applies, want %d (err %v)\n%s", got, tc.apply, err, out)
-			}
-			want := "not covered by the run confirmation: the plan is outside what the review announced (" + stray + " (imports " + strayID + ", which this run's discovery did not find))"
-			if run, _ := prompts(out); run != 1 || !strings.Contains(out, want) || !strings.Contains(out, "⚠ CONFIRM") {
-				t.Fatalf("want %q in\n%s", want, out)
-			}
-		})
-	}
+
+	t.Run("an import discovery did not write", func(t *testing.T) {
+		r := newInitRig(t)
+		r.markedRuns(t, initProjectName, initProject)
+		r.setPlan(t, strayChanges...)
+		fakeTerminal(t)
+		out, _, err := executeStdin(t, "", "setup")
+		if err != nil {
+			t.Fatalf("a person at the terminal is the answer: %v\n%s", err, out)
+		}
+		if got := len(r.ran(t, "apply")); got != 1 {
+			t.Fatalf("%d applies, want 1\n%s", got, out)
+		}
+		if run, step := prompts(out); run != 1 || step != 1 || !strings.Contains(out, wantStray) || !strings.Contains(out, "⚠ CONFIRM") {
+			t.Fatalf("%d run prompt(s), %d per-step: want %q in\n%s", run, step, wantStray, out)
+		}
+	})
+
+	// The same plan where nobody can confirm it: the step is left for the
+	// user, and the installation is not applied.
+	t.Run("an import discovery did not write, no terminal", func(t *testing.T) {
+		r := newInitRig(t)
+		r.markedRuns(t, initProjectName, initProject)
+		r.setPlan(t, strayChanges...)
+		noTerminal(t)
+		out, _, err := executeStdin(t, "", "setup")
+		if err == nil || !strings.Contains(err.Error(), "terminal") {
+			t.Fatalf("err = %v\n%s", err, out)
+		}
+		if got := len(r.ran(t, "apply")); got != 0 {
+			t.Fatalf("%d applies with no terminal\n%s", got, out)
+		}
+	})
 }
 
 // repoPlan runs the repository root's discover, plan and confirmation
@@ -134,7 +151,9 @@ func repoPlan(t *testing.T, stdin string, changes func(spec infra.RepoSpec) []pl
 
 // The repository root: the run confirmation covers a plan whose import is
 // exactly the one discovery wrote (the marked registry), and not a plan that
-// also imports something discovery never listed.
+// also imports something discovery never listed: that step says it is not
+// covered, and a person at the terminal is what applies it, with nothing
+// typed under its banner (T7).
 func TestRepositoryImportsCoveredOnlyAsDiscovered(t *testing.T) {
 	const registry = "module.repo.google_artifact_registry_repository.images"
 	const stray = "module.repo.google_service_account.build"
@@ -148,46 +167,50 @@ func TestRepositoryImportsCoveredOnlyAsDiscovered(t *testing.T) {
 	}
 
 	t.Run("discovery's import", func(t *testing.T) {
-		out, err, ri, root := repoPlan(t, names(1), func(spec infra.RepoSpec) []planChange { return []planChange{registryChange(spec)} })
+		out, err, ri, root := repoPlan(t, "", func(spec infra.RepoSpec) []planChange { return []planChange{registryChange(spec)} })
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
 		if got := rootImports(t, root); len(got) != 1 || got[0].To != registry {
 			t.Fatalf("discovery wrote %v", got)
 		}
-		if run, step := prompts(out); run != 1 || step != 0 || strings.Contains(out, "not covered") || len(ri.ran(t, "apply")) != 1 {
-			t.Fatalf("%d run prompt(s), %d per-step, %d applies\n%s", run, step, len(ri.ran(t, "apply")), out)
+		if _, step := prompts(out); step != 0 || strings.Contains(out, "not covered") ||
+			!strings.Contains(out, "covered by the run confirmation") || len(ri.ran(t, "apply")) != 1 {
+			t.Fatalf("%d per-step prompt(s), %d applies\n%s", step, len(ri.ran(t, "apply")), out)
 		}
 	})
-	for name, tc := range map[string]struct {
-		stdin string
-		apply int
-	}{"its own answer": {names(2), 1}, "only the review's": {names(1), 0}} {
-		t.Run("an import discovery did not write/"+name, func(t *testing.T) {
-			var id string
-			out, err, ri, _ := repoPlan(t, tc.stdin, func(spec infra.RepoSpec) []planChange {
-				id = strayID(spec)
-				return []planChange{registryChange(spec), importing(planChange{"address": stray, "type": "google_service_account",
-					"change": map[string]any{"actions": []string{"no-op"}, "before": map[string]any{}, "after": map[string]any{}}}, id)}
-			})
-			if got := len(ri.ran(t, "apply")); got != tc.apply || (err != nil) != (tc.apply == 0) {
-				t.Fatalf("%d applies, want %d (err %v)\n%s", got, tc.apply, err, out)
-			}
-			want := "not covered by the run confirmation: the plan is outside what the review announced (" + stray + " (imports " + id + ", which this run's discovery did not find))"
-			if run, _ := prompts(out); run != 1 || !strings.Contains(out, want) || !strings.Contains(out, "⚠ CONFIRM") {
-				t.Fatalf("want %q in\n%s", want, out)
-			}
+
+	t.Run("an import discovery did not write", func(t *testing.T) {
+		var id string
+		out, err, ri, _ := repoPlan(t, "", func(spec infra.RepoSpec) []planChange {
+			id = strayID(spec)
+			return []planChange{registryChange(spec), importing(planChange{"address": stray, "type": "google_service_account",
+				"change": map[string]any{"actions": []string{"no-op"}, "before": map[string]any{}, "after": map[string]any{}}}, id)}
 		})
-	}
+		if err != nil {
+			t.Fatalf("a person at the terminal is the answer: %v\n%s", err, out)
+		}
+		if got := len(ri.ran(t, "apply")); got != 1 {
+			t.Fatalf("%d applies, want 1\n%s", got, out)
+		}
+		want := "not covered by the run confirmation: the plan is outside what the review announced (" + stray + " (imports " + id + ", which this run's discovery did not find))"
+		if _, step := prompts(out); step != 1 || !strings.Contains(out, want) || !strings.Contains(out, "⚠ CONFIRM") {
+			t.Fatalf("%d per-step prompt(s): want %q in\n%s", step, want, out)
+		}
+	})
 }
 
 // The Firebase root, in the installation's own project (verified as Fugaro's
 // with it): the run confirmation covers a plan whose import is exactly the
 // one discovery wrote (the existing default database), and not a plan that
-// also imports something discovery never listed.
+// also imports something discovery never listed: that step says it is not
+// covered, and a person at the terminal is what applies it, with nothing
+// typed under its banner (T7). Where nobody can confirm it, nothing is
+// applied.
 func TestFirebaseImportsCoveredOnlyAsDiscovered(t *testing.T) {
 	db := infra.Import{To: "module.firebase.google_firebase_database_instance.this", ID: "projects/" + initProject + "/locations/us-central1/instances/" + initProject + "-default-rtdb"}
 	stray := infra.Import{To: "module.firebase.google_service_account.signer", ID: "projects/" + initProject + "/serviceAccounts/fugaro-token-signer@" + initProject + ".iam.gserviceaccount.com"}
+	strayWant := "not covered by the run confirmation: the plan is outside what the review announced (" + stray.To + " (imports " + stray.ID + ", which this run's discovery did not find))"
 	run := func(t *testing.T, stdin string, imports ...infra.Import) (string, error, *fbRig) {
 		t.Helper()
 		r := newFBRigFor(t, initProject)
@@ -198,7 +221,7 @@ func TestFirebaseImportsCoveredOnlyAsDiscovered(t *testing.T) {
 	}
 
 	t.Run("discovery's import", func(t *testing.T) {
-		out, err, r := run(t, names(1)+infra.FirestoreLocation+"\n", db)
+		out, err, r := run(t, "", db)
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
@@ -209,19 +232,34 @@ func TestFirebaseImportsCoveredOnlyAsDiscovered(t *testing.T) {
 			t.Fatalf("%d run prompt(s), %d per-step, applies %v\n%s", runP, step, r.applies(t), out)
 		}
 	})
-	for name, tc := range map[string]struct {
-		stdin   string
-		applied bool
-	}{"its own answer": {names(2) + infra.FirestoreLocation + "\n", true}, "only the review's": {names(1), false}} {
-		t.Run("an import discovery did not write/"+name, func(t *testing.T) {
-			out, err, r := run(t, tc.stdin, db, stray)
-			if got := slices.Contains(r.applies(t), "firebase"); got != tc.applied {
-				t.Fatalf("firebase applied %v, want %v (err %v)\n%s", got, tc.applied, err, out)
-			}
-			want := "not covered by the run confirmation: the plan is outside what the review announced (" + stray.To + " (imports " + stray.ID + ", which this run's discovery did not find))"
-			if runP, _ := prompts(out); runP != 1 || !strings.Contains(out, want) || !strings.Contains(out, "⚠ CONFIRM") {
-				t.Fatalf("want %q in\n%s", want, out)
-			}
-		})
-	}
+
+	t.Run("an import discovery did not write", func(t *testing.T) {
+		out, err, r := run(t, "", db, stray)
+		if err != nil {
+			t.Fatalf("a person at the terminal is the answer: %v\n%s", err, out)
+		}
+		if !slices.Contains(r.applies(t), "firebase") {
+			t.Fatalf("firebase was left (err %v)\n%s", err, out)
+		}
+		if runP, _ := prompts(out); runP != 1 || !strings.Contains(out, strayWant) || !strings.Contains(out, "⚠ CONFIRM") {
+			t.Fatalf("%d run prompt(s): want %q in\n%s", runP, strayWant, out)
+		}
+	})
+
+	// The same plan where nobody can confirm it: the step is left for the
+	// user, and the Firebase root is never applied.
+	t.Run("an import discovery did not write, no terminal", func(t *testing.T) {
+		r := newFBRigFor(t, initProject)
+		r.markedRuns(t, initProjectName, initProject)
+		r.fbPlan(t, []infra.Import{db, stray}, fbCreates, nil)
+		r.historyImage()
+		noTerminal(t)
+		out, _, err := executeStdin(t, "", "setup", "--firebase-project", r.fp, "--budget-mode", "observe")
+		if err == nil || !strings.Contains(err.Error(), "terminal") {
+			t.Fatalf("err = %v\n%s", err, out)
+		}
+		if slices.Contains(r.applies(t), "firebase") {
+			t.Errorf("the Firebase root was applied with no terminal:\n%s", out)
+		}
+	})
 }

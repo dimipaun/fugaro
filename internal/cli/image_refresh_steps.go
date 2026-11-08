@@ -419,11 +419,11 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 		}
 		if !reachable {
 			notes()
-			return builtSoFar(userErr("the build of %s/%s needs a terminal where the project's name can be typed (pass --yes to confirm builds without one, from CI or a script; a coding agent's session never confirms one), so it and the builds after it were not submitted", t.spec.Name, wf), built)
+			return builtSoFar(userErr("the build of %s/%s needs a terminal of its own, where the person running it is the confirmation (nothing is typed; pass --yes to confirm builds without one, from CI or a script; a coding agent's session never confirms one), so it and the builds after it were not submitted", t.spec.Name, wf), built)
 		}
 		if !ok {
 			notes()
-			return builtSoFar(userErr("the build of %s/%s was not confirmed (the project's name was not typed), so it and the builds after it were not submitted", t.spec.Name, wf), built)
+			return builtSoFar(userErr("the build of %s/%s was not confirmed (the question was answered no), so it and the builds after it were not submitted", t.spec.Name, wf), built)
 		}
 		id, err := r.submitAndWait(ctx, b, t.lc, t.cfg, t.spec, wf, t.lc.BaseImage(t.cfg.Workflows[wf].BaseKind()), gitID)
 		if p.managed != nil && (id != "" || err == nil) {

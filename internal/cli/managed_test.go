@@ -609,25 +609,24 @@ func managedDecision(mode func(bool, string, error) bool, rd managedRead, r *ini
 // were one predicate while a confirmation was the step's name typed at a
 // terminal, and since T7 they are not, which is why both are written out.
 //
-// --ask is the one arm that reads, and what it reads is a y/N and never the
-// step's name: where nobody can answer it, it refuses before reading (so the
-// arm is false there), and it refuses --yes outright, so a run given both
-// confirms no step at all.
+// Every row this property runs is a project the oracle says is NOT managed, and
+// --ask moves nothing in one of those: the flag restores the question a managed
+// project's gate would have replaced, and there is no such question here
+// (initflow.AskDecision's own rule, and the line its help prints for the same
+// project). What is left is confirmNow's last arm — a real terminal, with no
+// --json and no --non-interactive — and --yes, and the ask column of the table
+// changes neither, which is what this function says by not reading it.
 //
-// Every other arm ends at confirmNow's last one, canType(): a real terminal,
-// with no --json and no --non-interactive. That is narrower than the rule for a
-// YesOrTyped step by the --json arm alone (initflow.CanConfirm asks only
-// whether a person may type, and under --json a name could still be typed) —
-// and a run that reads no name at all has nothing to do with the flag, so
-// --json at a terminal leaves the step. A Typed step — creating the project,
-// linking the billing account, the Firestore location in setup — is --yes's in
-// neither door, and its column already says so.
+// That arm is narrower than the rule for a YesOrTyped step by the --json arm
+// alone (initflow.CanConfirm asks only whether a person may type, and under
+// --json a name could still be typed) — and a run that reads no name at all has
+// nothing to do with the flag, so --json at a terminal leaves the step. A Typed
+// step — creating the project, linking the billing account, the Firestore
+// location in setup — is --yes's in neither door, and its column already says
+// so.
 func runConfirms(row confirmRow, class initflow.ConfirmClass, marker string) bool {
 	if marker != "" {
 		return false
-	}
-	if row.ask {
-		return !row.yes && row.terminal && !row.json && !row.nonInteractive
 	}
 	if class == initflow.Typed {
 		return row.typRight
@@ -638,10 +637,10 @@ func runConfirms(row confirmRow, class initflow.ConfirmClass, marker string) boo
 // managedViolations runs the decision over the whole product — every read,
 // every agent environment state, every row of the table, both classes, and both
 // lines a terminal could carry (the step's name, which nothing reads any more,
-// and the y and the n --ask's own question is answered with) — and returns
-// every combination in which a project the oracle says is NOT managed does
-// other than runConfirms says (and, in a coding agent's session, anything but
-// refuse).
+// and the y and the n, which nothing reads at all in a project that is not
+// managed) — and returns every combination in which a project the oracle says
+// is NOT managed does other than runConfirms says (and, in a coding agent's
+// session, anything but refuse).
 func managedViolations(t *testing.T, mode func(bool, string, error) bool, reads []managedRead) (bad []string, n int) {
 	t.Helper()
 	old := canConfirmTyped
@@ -664,7 +663,9 @@ func managedViolations(t *testing.T, mode func(bool, string, error) bool, reads 
 						// is the name that used to be typed, kept here so that a
 						// confirmation which quietly started reading the step's
 						// name again is caught, and the --ask rows carry the two
-						// answers that flag's own y/N has.
+						// answers that flag's own y/N has — a step that read one
+						// of them here would answer no to the "n" and be caught,
+						// since nothing in this project reads either.
 						feed := "not-the-project"
 						if right {
 							feed = initProjectName
@@ -676,11 +677,6 @@ func managedViolations(t *testing.T, mode func(bool, string, error) bool, reads 
 							}
 						}
 						want := runConfirms(row, class.class, marker)
-						if row.ask {
-							// --ask put the question back, and right is which of
-							// the two answers it was given.
-							want = want && right
-						}
 						r, spy := confirmRig(t, row, feed)
 						got, err := managedDecision(mode, rd, r, class.class)
 						where := fmt.Sprintf("%s, %s, %s, stdin %q, %s", class.name, row, env.name, feed, rd.state)

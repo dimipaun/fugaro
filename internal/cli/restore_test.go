@@ -725,10 +725,10 @@ func TestRestoreConfirmWantsTheNameTyped(t *testing.T) {
 // see that, which is why this test does not use one.
 func TestRestoreCreatingPathRemarksTheProjectAndRebuildsTheDeployer(t *testing.T) {
 	r, lc := newRestoreRig(t)
-	// The restore's own confirmation is the first line; the rest is what the
-	// creating path asks for and never covers with a flag: the project's ID,
-	// the billing account, and the installation's own review.
-	in := strings.NewReader(initProjectName + "\n" + createStdin)
+	// The restore's own confirmation is the only line there is: the creating
+	// path reads nothing (T7 — its project ID and billing account are flags
+	// here, and its review is the person at the terminal).
+	in := strings.NewReader(initProjectName + "\n")
 	restoreTestTerminal(t, in)
 	cmd, out := restoreTestCmdIn(in)
 	rr := &restoreRun{cmd: cmd, o: restoreOptions{billingAccount: billingAcc, displayName: "Fugaro Restored"},
@@ -1358,7 +1358,9 @@ func TestRestoreEndsInTheSharedManagedApply(t *testing.T) {
 		restoreManagedOld(r)
 		calls := recordRestoreApply(t, r)
 		checkout, root := restoreCheckout(t)
-		out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+		// The restore's own confirmation, then the yes the checkout's line is
+		// written with: the creating path in between reads nothing (T7).
+		out, err := restoreStepsWith(t, r, initProjectName+"\n"+"y\n", root)
 		if err != nil {
 			t.Fatalf("the restore: %v\n%s", err, out)
 		}
@@ -1393,7 +1395,7 @@ func TestRestoreEndsInTheSharedManagedApply(t *testing.T) {
 		_, root := restoreCheckout(t)
 		before := mustRead(t, r.cfg)
 		t.Setenv(agentMarkers[0], "1")
-		out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+		out, err := restoreStepsWith(t, r, initProjectName+"\n"+"y\n", root)
 		if err == nil || !strings.HasPrefix(err.Error(), "nothing was restored") {
 			t.Fatalf("want the agent refusal, got %v", err)
 		}
@@ -1482,10 +1484,10 @@ func TestRestoreNeverAdoptsAnExistingProject(t *testing.T) {
 }
 
 // TestRestoreAFailedCreationPutsTheConfigBack is MEDIUM 2: a creation that
-// does not end in a managed project (here the creating path's typed project
-// ID is declined) puts the local config back byte for byte, leaves the
-// checkout alone, never reaches the apply, says what state it left — and a
-// retry of the same command then works.
+// does not end in a managed project (nothing is typed at the creating path any
+// more, T7, so here its own creation is refused by the API) puts the local
+// config back byte for byte, leaves the checkout alone, never reaches the
+// apply, says what state it left — and a retry of the same command then works.
 func TestRestoreAFailedCreationPutsTheConfigBack(t *testing.T) {
 	r, _ := newRestoreRig(t)
 	restoreManagedOld(r)
@@ -1493,10 +1495,10 @@ func TestRestoreAFailedCreationPutsTheConfigBack(t *testing.T) {
 	checkout, root := restoreCheckout(t)
 	before, yaml := mustRead(t, r.cfg), mustRead(t, filepath.Join(checkout, "fugaro.yaml"))
 
-	declined := initProjectName + "\n" + "not-the-id\n" + billingAcc + "\n" + initProjectName + "\n"
-	out, err := restoreStepsWith(t, r, declined, root)
+	r.crm.FailCreates(403, "PERMISSION_DENIED", "Constraint constraints/gcp.restrictProjectCreation violated")
+	out, err := restoreStepsWith(t, r, initProjectName+"\n", root)
 	if err == nil {
-		t.Fatalf("a declined creation ended in success:\n%s", out)
+		t.Fatalf("a refused creation ended in success:\n%s", out)
 	}
 	if !strings.Contains(err.Error(), "is back as it was") || !strings.Contains(err.Error(), "retried") {
 		t.Errorf("the failure does not say the config was put back and the restore can be retried: %v", err)
@@ -1511,8 +1513,9 @@ func TestRestoreAFailedCreationPutsTheConfigBack(t *testing.T) {
 		t.Fatalf("a failed creation reached the apply %d time(s)", len(*calls))
 	}
 
-	// The retry: the same command, the same ID, typed right this time.
-	out, err = restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+	// The retry: the same command, the same ID, with the refusal lifted.
+	r.crm.FailCreates(0, "", "")
+	out, err = restoreStepsWith(t, r, initProjectName+"\n"+"y\n", root)
 	if err != nil {
 		t.Fatalf("the retry after a failed creation: %v\n%s", err, out)
 	}
@@ -2006,7 +2009,7 @@ func TestRestoreAFailedAnchorSaysWhatWasLeft(t *testing.T) {
 	restoreManagedOld(r)
 	calls := recordRestoreApply(t, r)
 	checkout, root := restoreCheckout(t)
-	out, err := restoreStepsDuring(t, r, initProjectName+"\n"+createStdin+"y\n", root, func() {
+	out, err := restoreStepsDuring(t, r, initProjectName+"\n"+"y\n", root, func() {
 		// The checkout's directory goes read-only once the operator has
 		// confirmed: the line's write fails, after the project is made.
 		if err := os.Chmod(checkout, 0o500); err != nil {
