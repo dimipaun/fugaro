@@ -108,7 +108,7 @@
     },
     "debt": {
       "type": "boolean",
-      "description": "True marks a task filed from a triage deferral (task.Spec.Debt, docs/post-review-triage), which is what `fugaro runs ls --debt` lists. Absent — and so false — for every task that is not one, which is every task written before this field, so such a spec is byte-identical to the previous release's. Unlike `follow_up_of` it is not gated at launch: a runner older than the field refuses the spec that carries it the same way, since task.Parse decodes with DisallowUnknownFields, and only the CLI writes it."
+      "description": "True marks a task filed from a triage deferral (task.Spec.Debt, docs/post-review-triage), which is what `fugaro runs ls --debt` lists. Absent — and so false — for every task that is not one, which is every task written before this field, so such a spec is byte-identical to the previous release's. Like `follow_up_of` it needs a runner that knows it (task.Parse decodes with DisallowUnknownFields), which is why the launch that writes it is gated the same way (plan T-TR10)."
     },
     "overrides": {
       "type": "object",
