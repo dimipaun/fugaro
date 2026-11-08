@@ -95,17 +95,21 @@ silently ignores.
 **D893(c)** is the owner's answer to how the read-only installation token reaches the job: the job
 **fetches it from the credentials service, by name**, and nothing is handed in. That makes the
 credentials service — which **ships dormant** — part of the design's own chain of custody. Two halves
-must both hold before the chain works, and only one of them is reachable from `fugaro update`:
+must both hold before the chain works, and only one of them is an operator's own step; the other was
+code the service did not have when this was written, and it has since landed (§6's CSR11 is the flip it
+unblocked):
 
 1. the service **enabled for the installation** (`fugaro update --provision-credentials`, the App key
    in the bundle, plus `fugaro creds set github-app-key`) — the owner's own terminal, and expressible
    in `fugaro update` terms;
 2. the service **admitting the review job's own account**, which is a **project-scoped** job and which
-   the service refuses today (**Global Constraint 6**; **C3.9**, Slice 3, *unscheduled*, is the task
-   that lifts it, and the routing design **#1514** splits it into **C3.9a–C3.9g**) — **no `fugaro
-   update` can supply this half**, because it is code in the service, not
-   a deployment step. The same work owes the **review class on `/v1/messages`** that **O1** routes the
-   reviewer's model calls through, admitted for the review run's account alone.
+   the service refused while this was written (**Global Constraint 6**; **C3.9**, Slice 3, was the task
+   that lifted it, and the routing design **#1514** splits it into **C3.9a–C3.9g**) — **no `fugaro
+   update` could supply this half while it was missing**, because it was code in the service rather than
+   a deployment step. **It is in the tree now**: the service reads `FUGARO_REVIEW_JOB_ACCOUNTS`
+   (**CSRW1**, PR #1932) and the installation module renders it (**CSRW2**, PR #1934), which the same
+   `fugaro update` applies. The work carries the **review class on `/v1/messages`** that **O1** routes
+   the reviewer's model calls through, admitted for the review run's account alone.
 
 So **CSR7 cannot run, CSR2 cannot run, and the coordinator's `ship` → merge path cannot be built** until
 E7 is met. **And the `ship` path carried the same observation, not CSR4b alone — and that half is
@@ -238,12 +242,16 @@ E1, CSR1, **CSR7**, and **E7** — see the blocking note below.
   verdict and does not call `Comment`.
 - **Blocked on E7, and the refusal is this task's to write.** The launch **refuses before the job
   starts** when the credentials service is not enabled for the installation, and when the service
-  would not admit the review job's own account (a project-scoped job; **Global Constraint 6**, C3.9
-  unscheduled — §1), naming **which half** is missing rather than reporting one "not configured". The
+  would not admit the review job's own account (a project-scoped job; **Global Constraint 6**, C3.9 —
+  then unscheduled, §1), naming **which half** is missing rather than reporting one "not configured". The
   refusal is a sentence the owner can act on: half one is `fugaro update --provision-credentials` plus
   `fugaro creds set github-app-key`; half two is not reachable from any `fugaro update` and the
-  refusal says so. **Until E7 is met, this task cannot launch a review job at all** — it is written,
-  gated and shipped, and the launch is what fails.
+  refusal says so — **CSR11's flip of 2026-11-08 rewrote that half, because the admission is the
+  BINARY's**: what supplies it is upgrading Fugaro and running `fugaro update` with the newer binary,
+  and the sentence now names both rather than sending an operator after a command that does not exist.
+  **Until E7 was met, this task could not launch a review job at all** — it was written, gated and
+  shipped, and the launch was what failed; **it launches now**, and what is still unrun is the owner's
+  live check rather than the code.
 - **Tests:** `TestReviewLaunchesOnTheNamedAccount` (the task names the account, the launch targets
   that account's **review-only job entry** and never the shared one), `TestReviewRefusesAnAccountTheRepoMayNotUse` (F4's rule, reused),
   `TestReviewRefusesAnExhaustedAccount` (D882: refused with the mark's reset time, not retried),
@@ -251,9 +259,10 @@ E1, CSR1, **CSR7**, and **E7** — see the blocking note below.
   fake sees no `Comment`), `TestReviewRefusesWhileTheCodingRunIsGoing`,
   `TestReviewShowPrintsTheArtifactAndItsMarkdown`, and
   `TestRecipesSkewRefusesReviewJobOnAnOldImage` (E6), plus two for E7's two halves:
-  `TestReviewRefusesWhereTheCredentialsServiceIsOff` and
-  `TestReviewRefusesAJobTheCredentialsServiceWillNotAdmit` (both hermetic — a fake service and a fake
-  installation, no live call).
+  `TestReviewStillRefusesWhenTheCredentialsServiceIsOff` and
+  `TestReviewStillRefusesWhenTheConstantIsOff` (both hermetic — a fake service and a fake
+  installation, no live call; the names are CSR11's, which left the first refusal standing and moved the
+  second to the pre-flip binary, where the test seam puts it back).
 - **Red step:** `TestReviewLaunchesOnTheNamedAccount` fails on an unknown subcommand: the command
   does not exist. **SEC flag:** this is the task that decides what the job may do; CSR1's set, this
   task's no-comment path and E7's refusal are reviewed together.
@@ -598,7 +607,8 @@ for**. **Findings:** F13, **F24**. **Depends on:** CSR3. **Unblocked:** the answ
   launcher names a reviewer's account, in the release's own words and with no other step. **E7 is the
   one thing the release cannot deliver**: the notes say the cloud reviewer additionally needs the
   credentials service enabled for the installation, and that the service's own admission of a
-  project-scoped job is a separate, unscheduled change — a sentence, not an operator step, because
+  project-scoped job was, when this was written, a separate and unscheduled change — a sentence, not an
+  operator step, because
   there is no step the owner can run for it.
 - **Commit:** `review: the version gates, the validation notes and the docs`.
 
@@ -697,9 +707,12 @@ on `/v1/messages`.**
   service a precondition of the whole design, and half of that precondition — the service admitting a
   caller whose account belongs to a project-scoped job, **Global Constraint 6** — is code in
   `internal/credsvc`, scheduled as **C3.9** in the credentials service's own Slice 3 and
-  **unscheduled** (the routing design **#1514** splits it into **C3.9a–C3.9g**). It is **not** in
-  CSR1–CSR7 and cannot be: it is that work stream's task, and no
-  `fugaro update` can supply it. CSR1 names the read-only set the service must serve, **O1** adds the
+  **unscheduled** when this was written (the routing design **#1514** splits it into
+  **C3.9a–C3.9g**). It is **not** in
+  CSR1–CSR7 and cannot be: it is that work stream's task. **Its admission half has since landed** —
+  the service reads `FUGARO_REVIEW_JOB_ACCOUNTS` (**CSRW1**, PR #1932) and the installation module
+  renders it (**CSRW2**, PR #1934), which the same `fugaro update` applies — and **CSR11** is the flip
+  it unblocked (2026-11-08). CSR1 names the read-only set the service must serve, **O1** adds the
   **review class on `/v1/messages`** the same work owes, CSR2 and CSR6 report
   when the precondition is unmet, and CSR7 waits on it; none of them builds it.
 - **Posting the review as a pull request comment.** CSR2 removes the comment from the review job's
@@ -744,7 +757,9 @@ a key it ignores and runs the opposite of what the owner asked. **The gate is C3
 number is "0.16.0 or later" rather than a date:** the whole slice needs the credentials service to
 admit the review identity, serve the read-only set, admit the review class on `/v1/messages` and
 answer the sign and verify calls — **C3.9a–C3.9g** of that service's Slice 3, another work stream's
-and unscheduled (**E7**) — so a release cut before it ships a command that cannot run.
+and unscheduled when this was written (**E7**) — so a release cut before it ships a command that
+cannot run. **The admission half has landed since** (CSRW1/CSRW2, §6) and the gate a release waits on
+is no longer a task but the owner's live check.
 
 **CSR7 is what makes that release larger than the first draft claimed, and it is not optional.** The
 `### For operators` section therefore says two things in the release's own words and asks for nothing
@@ -767,8 +782,11 @@ cutting.** CSR8–CSR16 are what makes the command reachable (`fugaro review` wa
 nowhere), the container placeable, the reviewer's calls reachable at all and the verdict verified; the
 release that deploys the variant is also
 the release `reviewJobSince` must name, and **Open item 3's answer of 2026-11-05 settles it as 0.20.0
-"Quokka"** — the 0.19.0 release in flight does not carry this work, so that release's own change moves
-`reviewJobSince` to `"0.20.0"` and writes the `### For operators` sentence (§6.5) for it.
+"Quokka"** — the 0.19.0 release in flight does not carry this work. **The constant itself waited for
+CSR11's flip**: it named `"0.19.0"` while `reviewJobAdmitted` was `false` and this gate was never
+reached, and the commit that made it decide anything (2026-11-08) is the one that moved it to
+`"0.20.0"` — 0.19.0's image holds the variant and has no model path for a container that carries no
+token (§6.5).
 
 ## 6. Follow-up after CSR1–CSR7: what still stands between this plan and a review that runs
 
@@ -791,11 +809,11 @@ while documenting the others is exactly the kind of thing a plan loses by not wr
 
 | # | the gap | where it is | the owner |
 | --- | --- | --- | --- |
-| 1 | a review launch is refused unconditionally: the constant E7's second half is `false` | `internal/cli/review.go:41` | **CSR11** (the flip) — and the refusal is the reason the flip has a gate at all |
-| 2 | `fugaro review` is built and **registered nowhere**, so no released CLI answers to it: `newReviewCmd` is not in the list `newCoreRoot` adds | `internal/cli/root.go:189`, `internal/cli/review.go:93` | **CSR9 — CLOSED: merged as PR #1762.** `newReviewCmd()` is in the list `newCoreRoot` adds (`internal/cli/root.go:198`), so the command answers and its launch refusal is a sentence a person reads rather than a name nobody can type; what CSR11 inherits from it is that refusal alone |
+| 1 | a review launch is refused unconditionally: the constant E7's second half is `false` | `internal/cli/review.go:58` | **CSR11 — CLOSED: flipped 2026-11-08.** The constant is `true` and the switch CSR12 added is deleted in the same commit; the flip was **released from its gate by the owner's ruling of 2026-11-07**, because the reason it was held — the service admitting no review caller — is gone (CSRW1, PR #1932, the service reads `FUGARO_REVIEW_JOB_ACCOUNTS`; CSRW2, PR #1934, the installation module renders it) and `fugaro update` deploys the service on every installation (DON1), so the launch is served with no operator step between the flip and it. **The OWNER-RUN live checks below are the owner's and are still unrun**: the flip is not a claim that they passed |
+| 2 | `fugaro review` is built and **registered nowhere**, so no released CLI answers to it: `newReviewCmd` is not in the list `newCoreRoot` adds | `internal/cli/root.go:189`, `internal/cli/review.go:81` | **CSR9 — CLOSED: merged as PR #1762.** `newReviewCmd()` is in the list `newCoreRoot` adds (`internal/cli/root.go:198`), so the command answers and its launch refusal is a sentence a person reads rather than a name nobody can type; what CSR11 inherits from it is that refusal alone |
 | 3 | the runner cannot place the job the launcher picks: the review variant's name is never a candidate, so a review container halts at admission with the client's `cannotPlaceJob` | `internal/runner/projectjob.go:178`, `internal/runner/project.go:1114` | **CSR8 — CLOSED: merged as PR #1761.** The variant is a candidate and the class is keyed on the run's own mode, not on the job name; what CSR13 inherits from it is a **fact to read**, `r.runClass()` (`internal/runner/projectjob.go:82`) and `jobTriple.Class` (`:50`), and never a mark to wait for |
-| 4 | the launcher reads `review.json` and never reads `review.json.sig`; `runner.VerifyReviewArtifact` exists and **nothing calls it**, because no implementation of `runner.SignatureVerifier` is in the tree | `internal/cli/review.go:547`, `internal/runner/reviewartifact.go:675`, `:223` | **CSR10 — CLOSED: merged as PR #1764.** The launcher's reader is a verifying one and `ServiceVerifier` implements `runner.SignatureVerifier`; what CSR15 inherits from it is the seam and the fail-closed refusal in `internal/cli/reviewverify.go` |
-| 5 | the owner-run live checks have not been run, and **cannot** be while gap 1 holds: the C3.9 check's step 3 launches `fugaro review --pr N`, and Check 125's steps 6 and 7 confirm the fence on the variant | `docs/c39-review-identity/live-check.md`, [spec.md](spec.md) §8 | **the owner** — CSR11 is the task whose gate it is, and Open item 1's answer of 2026-11-05 is **CSR12**, the switch the check's step 3 is reached with |
+| 4 | the launcher reads `review.json` and never reads `review.json.sig`; `runner.VerifyReviewArtifact` exists and **nothing calls it**, because no implementation of `runner.SignatureVerifier` is in the tree | `internal/cli/review.go:522`, `internal/runner/reviewartifact.go:675`, `:223` | **CSR10 — CLOSED: merged as PR #1764.** The launcher's reader is a verifying one and `ServiceVerifier` implements `runner.SignatureVerifier`; what CSR15 inherits from it is the seam and the fail-closed refusal in `internal/cli/reviewverify.go` |
+| 5 | the owner-run live checks have not been run, and could not be while gap 1 held: the C3.9 check's step 3 launches `fugaro review --pr N`, and Check 125's steps 6 and 7 confirm the fence on the variant | `docs/c39-review-identity/live-check.md`, [spec.md](spec.md) §8 | **the owner**, and **the check is runnable now**: gap 1 closed on 2026-11-08, so step 3 is reached with the plain launch it names — the switch CSR12 added for it (Open item 1's answer of 2026-11-05) is deleted, and the step no longer sets anything |
 | 6 | the credentials service **ships dormant**: the opt-in, the App key and the verifier identity are the owner's own terminal (C3.9g1) | `internal/credsvc/auth.go:335` | **the owner** for the opt-in and the App key — no task here; it is the release's one conditional operator sentence (§6.5) — and **CSR14** for the verifier identity, which is a service account the installation creates rather than a value a person types (Open item 5, answered 2026-11-05) |
 | 7 | *(found while writing this section)* the review variant holds no model credential (O1) and the service has a review class for its calls, but **the runner has no model path that reaches it**: `GatewayOn` is false unless `agent.auth` is one of its three, the service is reached only from the cascade arm, and that arm is refused in bootstrap unless the **operator publishes the coding cascade switch** — the two things [spec.md](spec.md) §2 says a review job does not need | `internal/runner/routing.go:158`, `:60`, `internal/credsvc/cascade.go:105` | **CSR13** — Open item 4, answered 2026-11-05 with the fourth runner task |
 
@@ -808,7 +826,8 @@ them takes a file another one holds in the same level (§6.4).
 **The owner answered all five of the Open items §6 was written with, on 2026-11-05, and this section is
 followed through on all five.** Each answer is recorded **in its own Open item**, with the date and the one line of why, and
 the rest of §6 is what changed for it: item 1's environment switch is now **CSR12** (a task with the
-switch's constraints and its security review) and CSR11 removes it in the same change as the flip; item
+switch's constraints and its security review) and CSR11 removes it in the same change as the flip —
+**done on 2026-11-08, when the owner's ruling of 2026-11-07 lifted the flip's gate**; item
 2's verdict policy is now part of **CSR10**'s reader, which refuses an artifact whose verdict is not `fix
 first`; item 3's release is **0.20.0 "Quokka"**, and §5, §6.4 and §6.5 name it; item 4's fourth runner
 task is **CSR13**, whose class decides the review run's model path rather than `agent.auth`; and item 5's
@@ -871,7 +890,7 @@ still decides is whether a placed review run reaches its first call** (§1), and
   growing a fourth: it reports the **variant's own account** (`team-a-review` for the account `team-a`),
   which is the account the variant's job name was computed from. Both of its outside callers are correct
   as they stand and neither file changes:
-  - the launcher's `reviewJobFor` (`internal/cli/review.go:286`) passes the **coding** job's name and
+  - the launcher's `reviewJobFor` (`internal/cli/review.go:261`) passes the **coding** job's name and
     keeps getting the coding axis, which is what it maps to the variant with (`projectJobReviewFor`,
     `internal/cli/project_job.go:351`) — and **a review job's own name never round-trips through it**;
   - watch's `JobRef` (`internal/cli/project_job.go:233`, a `--json` field) resolves the run's own job from
@@ -917,7 +936,7 @@ still decides is whether a placed review run reaches its first call** (§1), and
 **Decisions:** D880, D888, **D893 (c)**. **Findings:** **F22**, **E4** (the generated reference and the
 plugin pin). **Depends on:** CSR2 (merged — the command, its refusal and `review show` are written).
 **Nothing here launches anything**, and the launch stays refused exactly as it is: the constant is
-CSR11's, and the reason is `checkReviewJobAdmitted` (`internal/cli/review.go:255`), which this task makes
+CSR11's, and the reason is `checkReviewJobAdmitted` (`internal/cli/review.go:238`), which this task makes
 reachable rather than true.
 
 - **Files:** `internal/cli/root.go`, `internal/cli/root_test.go`, `website/content/cli-reference.md`
@@ -941,9 +960,10 @@ reachable rather than true.
   `GOFLAGS=-p=2 go test ./internal/cli/ -run 'Docs|Root|Review' -count=1`.
 - **Tests:** `TestReviewIsRegisteredInTheCoreRoot` (the name resolves in the core tree, with its
   subcommand and both visible flags — the red step), the **existing**
-  `TestReviewRefusesAJobTheCredentialsServiceWillNotAdmit` (`internal/cli/review_test.go:309`, merged with
-  CSR2 and **not edited here**: the refusal sentence is what a person gets, unchanged — this task
-  registers a command, it does not admit one), `TestCliReferenceNamesTheReviewCommand` (the regenerated
+  `TestReviewStillRefusesWhenTheConstantIsOff` (`internal/cli/review_test.go:396`, CSR2's test under the
+  name CSR11's flip gave it — merged with CSR2 and **not edited here**: the refusal sentence is what a
+  person gets, unchanged — this task registers a command, it does not admit one),
+  `TestCliReferenceNamesTheReviewCommand` (the regenerated
   page carries the section and every visible flag — the existing "names every command and flag" check, now
   with a command it did not have),
   and the plugin suite's own resolution of `fugaro review` against the CLI tree
@@ -1009,7 +1029,7 @@ is untouched by anything here.
   (`internal/runner/reviewartifact.go:223`) — a `ServiceVerifier` beside `ServiceSigner`, posting the
   digest, the signature, the run and the repository to the verify route and reading the one refusal bit
   back — and the launcher's reader turned into a **verifying** reader: `reviewFindings`
-  (`internal/cli/review.go:504`) reads `review.json.sig` (`runner.ReviewSignName`,
+  (`internal/cli/review.go:479`) reads `review.json.sig` (`runner.ReviewSignName`,
   `internal/runner/reviewartifact.go:69`) from the same prefix it reads the artifact from, verifies the
   **bytes it read** (the digest is over `review.json`'s exact bytes, so the review's prose never travels
   to the service and nothing is re-encoded), and **fails closed**: no sidecar, no service, a reachable
@@ -1021,7 +1041,7 @@ is untouched by anything here.
   refusal in **Depends on** above. Two things the verify call needs and this section had not said:
   - **the account the call names** (`VerifyRequest.Account`, which selects **which key** the service
     recomputes under, `internal/credsvc/verdict.go:406`) has **one source: the account of the review job
-    the launcher itself resolved**. That is the axis account `reviewJobFor` (`internal/cli/review.go:286`)
+    the launcher itself resolved**. That is the axis account `reviewJobFor` (`internal/cli/review.go:261`)
     reads back out of `runner.ProjectJobOfPolicy` (`internal/runner/projectjob.go:297`) and hands to
     `projectJobReviewFor` (`internal/cli/project_job.go:351`) — the name the deployer built the variant's
     job from and the one the service keys its own `ReviewJobAccount.Account` and the sign route on
@@ -1031,7 +1051,7 @@ is untouched by anything here.
     whose **absence is the default** — the field may never spell `default` itself
     (`internal/task/task.go:1094`) — so the fix-round launcher reads the review run's task with
     `ReadTask` (`internal/runstore/runstore.go:1283`, which validates what it reads), maps "" through the
-    rule the launch already prints with (`reviewAccount`, `internal/cli/review.go:210`), and puts
+    rule the launch already prints with (`reviewAccount`, `internal/cli/review.go:198`), and puts
     `config.DefaultClaudeAccount` on the wire: `readVerifyRequest` refuses an empty account as a bad
     **call**, not as a `valid:false` about an artifact.
     **`oauth_account` in the run's record is deliberately not that source**
@@ -1144,18 +1164,101 @@ below, and **E7's first half** — the service enabled for the installation.
 owner's check and for nothing else, so the commit that makes the constant `true` is the commit that
 deletes it — a switch that outlives the gate it was built for is a hole with no reason left to be open.
 
-- **Files:** `internal/cli/review.go`, `internal/cli/review_test.go`. **2 files.**
-- **Interfaces:** `reviewJobAdmitted` (`internal/cli/review.go:41`) becomes `true`, with its comment
-  rewritten to say **what made it true** — C3.9's merge, the live check's number and date, and the release
-  the variant deploys in — rather than deleted: the next reader's question is why a constant that was
-  `false` for a reason is now `true`, and the answer is not in the code. `checkReviewJobAdmitted`
-  (`:217`) keeps its sentence for the one case that remains: an installation whose service is **not**
-  enabled is refused by `checkReviewService`, and the command says which half is missing, exactly as CSR2
-  wrote it. The test seam (`review_test.go` sets the constant to reach the launch) stays, because the
-  other refusals still need covering. **The switch comes out in this commit**: CSR12's variable and the
-  one read of it are deleted here, so the launcher's admission decision has exactly one input again — the
-  constant — and no environment can skip the refusal this task is the last one to need. `internal/cli` and
-  `plugin/skills` never named the variable in the first place (CSR12's own rule), so nothing else moves.
+**DONE 2026-11-08 — the constant is `true` and CSR12's switch is deleted, in the one commit this task
+was.** The gate this section put in front of the flip was **the live checks below, and it was lifted
+without them** by the owner's ruling of **2026-11-07**: the reason the flip was held at all is that **the
+credentials service admitted no review caller**, and that reason is gone — **CSRW1 (PR #1932)** makes the
+service read `FUGARO_REVIEW_JOB_ACCOUNTS`, **CSRW2 (PR #1934)** makes the installation module render it,
+and `fugaro update` deploys the credentials service on every installation (**DON1**) — so nothing an
+operator runs stands between the flip and a launch the service serves. **What the ruling did not do is
+run the checks**: the OWNER-RUN block below is still a person's and still unrun, and **this flip is not a
+claim that it passed** — a wrong flip spends on a job the service answers 401, and the only observation of
+that is still the check's step 3.
+
+- **Files:** `internal/cli/review.go`, `internal/cli/review_test.go`, `internal/cli/validate.go`,
+  `internal/cli/validate_test.go`, `internal/cli/root.go`, `internal/cli/root_test.go`,
+  `internal/cli/recipes_skew.go`, `internal/cli/recipes_skew_test.go`, `internal/cli/run.go`,
+  `docs/release.md`, `docs/recipes.md`, `docs/rigor-modes/reconciliation.md`,
+  `plugin/skills/working/SKILL.md`, `docs/c39-review-identity/live-check.md`,
+  `docs/cloud-senior-review/implementation-plan.md`.
+  **15 files** (the plan's two named files plus the refusal the flip leaves behind: `validate.go`'s
+  precondition note, which said a fugaro update could not supply the admission half, and the two
+  documents that told a reader to set the switch; plus the two gates and their release bullet, below,
+  and the three places the installation half below made false: `run.go`'s refusal, `docs/recipes.md`'s
+  review paragraph and the working skill's sentence about a service that does not admit the caller).
+- **The gate the flip made load-bearing, and the value it moved with it.** `reviewJobSince`
+  (`internal/cli/recipes_skew.go:420`) named `"0.19.0"` — the release that deploys the review-only
+  variant — and no launch ever reached it while `reviewJobAdmitted` was `false`; the flip is what makes
+  the value decide anything, and a `"0.19.0"` value then admits an image that **cannot serve the
+  launch**: the variant is there and the review run's own model path (CSR13, PR #1777, first tagged in
+  0.20.0) is not, so the review starts, bills for the container and dies inside the job on the runner's
+  missing-token refusal — the one failure a launch refusal exists to keep in front of the spend. So the
+  commit that admits the class moves the value to `"0.20.0"`, taking **CSR6's own file** and nothing else
+  (§2's rule, §6.4's note): the constant and its comment, `TestRecipesSkewRefusesReviewJobOnAnOldImage`
+  (whose `0.19.0` row is a refused one now and whose admitted row is `"0.20.0"`, derived image and clone
+  alike), two new tests — `TestReviewJobSinceHasAReleaseBullet`, the reader this constant never had,
+  since `docs/release.md:225`'s checklist bullet is what holds it to a release and every sibling
+  `…Since` constant has that test and this one did not, and `TestReviewJobSinceCitationsPointAtItsOwnLine`,
+  because the citation checks resolve a line against its file and never against its subject, which is
+  how this constant's own citations here went stale in the change that moved it — the same file's
+  `run.go` comment, and the bullet itself.
+- **The installation's half of the same gate, and the second constant.** A review launch is served by
+  **two releases**, and the flip's review found the other one unguarded: `reviewJobSince` judges the job
+  image (0.20.0, whose runner can serve a launch), and nothing judged the **credentials service**, which
+  admits the review job's own caller only from `reviewAdmissionSince = "0.21.0"` on — the release that
+  carries CSRW1 (PR #1932) and CSRW2 (PR #1934). A 0.20.x installation after `brew upgrade` and before
+  `fugaro update` was therefore admitted by every gate and died inside the job on the service's 401,
+  which is the failure the other gate's own rationale says a launch refusal exists to prevent. So
+  `checkReviewAdmission` (`internal/cli/recipes_skew.go`, beside `checkCloneReviewJobImage`) judges the
+  installation and is called from `run.go`'s `mode: review` block after the image gates — the block a
+  review launch reaches, since `spec.Mode` is what makes one and only `fugaro review` writes it
+  (`internal/cli/review.go:153`; `run`'s `--pr` path is a different launch, which is why the refusal
+  names it as the way to review meanwhile rather than as a spelling of the same gate). **The judge is the
+  installation's own record of that service**, and that is not a proxy by choice: the launcher can ask the
+  service nothing (D143, `reviewJobAdmitted`'s comment), while every `fugaro update` writes the
+  installation root's `terraform.tfvars.json` with the service's image in it — `pinCredentialsImage`,
+  whether that run deploys the service or carries it forward — so the record names the release the run's
+  account actually comes from (`installationServiceRelease`); a record naming no image, or one whose
+  reference carries no release, only warns (`installationServiceUnknown`). **That record and not
+  `base_images.base`, which is what the gate was first written on** (the fourth review round's finding
+  2): `imagesStage.kinds` names `base` only for `--base`, for a checkout's workflows or for a catalog
+  build, and for nothing else, and `record` never re-pins a custom `--base-image` ref — so the ordinary
+  update, run from a directory that is not a repository, moves the service and leaves the base pin
+  exactly where the last in-checkout update put it, and a gate on the pin refuses every review on an
+  installation that same update has already converged, with `fugaro update` as a remedy that changes
+  nothing. That is the loop CLAUDE.md's HARD RULE forbids, and
+  `TestUpdateOutsideACheckoutConvergesTheReviewAdmissionGate` is the run that holds it shut: an
+  installation whose service record predates the class, with an older base pin to match, is refused
+  before one ordinary update and admitted after it, with the pin asserted unmoved. The refusal names
+  `fugaro update` as the whole upgrade, and it names the one way to review before that update has run — `fugaro run --pr N --recipe review-only`,
+  which launches the repository's ordinary coding job, whose container carries its own account (only
+  `fugaro review` sets `spec.Mode`, so this spelling never enters the `mode: review` block). It is **not**
+  `reviewJobSince`'s `fugaro image refresh`, which moves no credentials service, and that is why this is a
+  second constant rather than that value raised. Tests:
+  `TestRecipesSkewRefusesAReviewServiceOlderThanTheClass` (0.20.x refused, 0.21.0 admitted, an unreadable
+  or absent service record warned about), `TestRecipesSkewAdmitsACurrentServiceBesideAnOlderBasePin` (the
+  older pin beside a current service, admitted),
+  `TestReviewRefusesAnInstallationWhoseServicePredatesTheClass` (the command's own refusal, on the
+  fixture whose service record is the older release — the installation between the upgrade and the update
+  the gate exists for), `TestReviewAdmissionSinceHasAReleaseBullet` for the checklist bullet, and the
+  review fixtures moved to `reviewAdmissionSince` (`newReviewFixtureAt` writes the installation's service
+  record under the test's own state home). `docs/recipes.md`'s review paragraph,
+  `plugin/skills/working/SKILL.md`'s sentence about a service that does not admit the caller, and the
+  rigor-modes census row that counts the file's `…Since` constants (29, not 28) follow the same commit.
+- **Interfaces:** `reviewJobAdmitted` (`internal/cli/review.go:58`) is `true`, with its comment rewritten
+  to say **what made it true** — C3.9's merge, CSRW1's and CSRW2's, the owner's ruling of 2026-11-07 and
+  the release the variant deploys in — rather than deleted: the next reader's question is why a constant
+  that was `false` for a reason is now `true`, and the answer is not in the code. `checkReviewJobAdmitted`
+  (`:238`) keeps its sentence, and the current tree reaches it for no installation at all: it is the
+  refusal a binary built **before** this flip prints, and the note that sentence's installation half
+  belongs to is `checkReviewService` (`:288`), which refuses an installation whose service is **not**
+  enabled exactly as CSR2 wrote it. The test seam (`review_test.go`'s `unadmitReviewJob` puts the constant
+  back to `false` for one test) stays, because that refusal is the only way to reach the sentence and the
+  other refusals still need covering. **The switch came out in this commit**: CSR12's variable and the one
+  read of it are deleted here, so the launcher's admission decision has exactly one input again — the
+  constant — and no environment can skip the refusal this task was the last one to need. `internal/cli` and
+  `plugin/skills` never named the variable in the first place (CSR12's own rule), so nothing else moved;
+  the live check's step 3 now reads the plain `fugaro review --pr <N>` it always named.
 - **How `fugaro doctor` reports E7's two halves, and why it does not report this constant.** The two
   facts are **CSR6's**, and this task references them rather than adding a third: **is the credentials
   service enabled for this installation**, and **does it admit the review job's own account**. The
@@ -1165,7 +1268,7 @@ deletes it — a switch that outlives the gate it was built for is a hole with n
   same two facts it reports today, and the honest consequence is stated in its own words: **a green
   `doctor` is the two halves, and the release notes are where the constant's state is written** — a
   binary older than the flip keeps refusing whatever the installation says.
-- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestReviewAdmitted|TestReviewStillRefuses|TestReviewReadsNoAdmissionSwitch' -count=1`.
+- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestReviewLaunchIsAdmitted|TestReviewStillRefuses|TestReviewReadsNoAdmissionSwitch|TestTheRemovedAdmissionSwitch' -count=1`.
 - **Tests:** `TestReviewLaunchIsAdmittedWhenTheConstantIsFlipped` (the release's own state: the launch
   proceeds and the two halves are still checked first — the constant removes one refusal, not the others),
   `TestReviewStillRefusesWhenTheCredentialsServiceIsOff` (E7's first half, unchanged by the flip), and
@@ -1210,8 +1313,9 @@ deletes it — a switch that outlives the gate it was built for is a hole with n
      reader refuses every brief;
   2. **C3.9's live check, in full**: `docs/c39-review-identity/live-check.md`'s eleven steps, whose step 3
      is `fugaro review --pr <N>` — the launch this section exists to make possible, and the one step that
-     cannot be reached while the constant is `false`. **The switch of CSR12 is how it is reached** (Open
-     item 1's answer of 2026-11-05); **step 8 of that file is written to the verifier service account by
+     could not be reached while the constant was `false`. **It is reached with the plain launch now that
+     the flip has landed** (the run of 2026-11-08; while the flip was held, CSR12's switch was how Open
+     item 1's answer of 2026-11-05 reached it, and that switch is deleted); **step 8 of that file is written to the verifier service account by
      CSR12**, the task that touches the file — the hand-made `POST /v1/review/verify` of that step carries
      an ID token **the owner mints by impersonating that account**
      (`gcloud auth print-identity-token --impersonate-service-account=<the account>`, the impersonation
@@ -1221,7 +1325,11 @@ deletes it — a switch that outlives the gate it was built for is a hole with n
      (`unshare -rn`, and the private `/proc` form) — step 7 is the re-confirmation U7's caveat 4 asks for
      **because the variant is a different execution environment from the coding job the probe ran in**;
   4. **then the flip lands as this task's commit**, quoting in the pull request the check's number and the
-     date, which is what the constant's comment is rewritten with.
+     date, which is what the constant's comment is rewritten with. **On 2026-11-08 the owner ruled the
+     gate lifted and it landed without them** (the DONE line above): the comment records that ruling
+     rather than a check's number, and the checks are owed **after** the flip rather than before it —
+     which is why step 2's launch reads as the plain one, and why the flip's pull request says in as many
+     words that they are unrun.
   **An agent never runs any of the four**: not the opt-in, not the live check, not the fence probe, and
   not the flip on the strength of a claim that the others passed. The credentials service's own rule is
   explicit that `fugaro update --provision-credentials` and `fugaro creds set` are refused inside an agent
@@ -1229,6 +1337,12 @@ deletes it — a switch that outlives the gate it was built for is a hole with n
 - **Commit:** `review: admit a review launch, after the live check the flip names, and take the check's switch back out`.
 
 ### CSR12. The live-check switch: a launch that starts, and admits nothing (SEC)
+
+**REMOVED 2026-11-08 — the variable, its one read and its warning line are gone from the tree**, deleted
+by CSR11's flip in the same commit that made the constant `true`, which is what this section's own last
+paragraph asked for. **What follows is the record of the task that added it**, test names included: those
+tests were deleted with the switch, and the assertions that outlive it are CSR11's own
+(`TestReviewReadsNoAdmissionSwitch` above all, which is the one that fails if the read comes back).
 
 **Decisions:** **the owner's answer of 2026-11-05 to Open item 1** — the **environment switch**, and
 explicitly **not** that item's recommendation — together with **D893 (c)** and Global Constraint 6 / C3.9.
@@ -1239,7 +1353,7 @@ later commit must remove is a change with its own red step, its own tests and it
 **purpose**, **CSR8** (merged, PR #1761) and **CSR9** — the check it exists for types the command, and
 the run it starts has
 to be placeable. **What it is, said so that no reader can take it for more:** the refusal it skips
-(`checkReviewJobAdmitted`, `internal/cli/review.go:255`) is a **convenience — failing early** — and
+(`checkReviewJobAdmitted`, `internal/cli/review.go:238`) is a **convenience — failing early** — and
 **not the security boundary**. The boundary is the credentials service, which still answers **401** to a
 review caller it does not admit (Global Constraint 6, C3.9). **The switch lets a launch start; it makes
 the service admit nothing.**
@@ -1404,7 +1518,7 @@ constant launches a run whose reviewer this task is what gives a model to reach.
     `internal/agent` is not touched by this task at all**, and no fourth auth name is invented:
     `GatewayOn` (`internal/runner/routing.go:158`) already answers true for `cascade`, so the predicate
     keeps its two inputs and the readers that share it — `validate`'s prices read
-    (`internal/cli/validate.go:1238`) — keep answering for a coding run, which is the only question a
+    (`internal/cli/validate.go:1251`) — keep answering for a coding run, which is the only question a
     repository's configuration can be asked: whether a run is the independent review job is the **task's
     mode** (`internal/cli/run.go:3411`, the launcher's own decision — the same fact `r.runClass()` reads)
     and never a file's own claim.
@@ -2026,7 +2140,7 @@ MERGED AND CLOSED (each a task that landed; none of them is a level's work any m
   CSR8  (the runner places the variant)      **MERGED, #1761** — CSR13 reads the class it landed
   CSR9  (the command is registered)          **MERGED, #1762** — CSR11 inherits its launch refusal
   CSR10 (the launcher verifies the verdict)  **MERGED, #1764** — CSR15 fills the seam it left
-  CSR12 (the live-check switch)              **MERGED, #1771** — CSR11 deletes it in the flip's commit
+  CSR12 (the live-check switch)              **MERGED, #1771** — deleted by CSR11's flip, 2026-11-08
 
 LEVEL 1 (no dependency between them, disjoint files)
   CSR13 (the review run's model path — the OAuth review, and the refusal when the budget is off)
@@ -2036,8 +2150,9 @@ LEVEL 2
 LEVEL 3
   CSR16 (the launcher reads the head through the read mint) after CSR15 — the SAME file, so ordered
 
-then, and not a level:  [the live checks: C3.9's eleven steps, Check 125's 6 and 7]  (a person's)
-then:                   CSR11 (the flip, and the switch's removal)
+then, and not a level:  [the live checks: C3.9's eleven steps, Check 125's 6 and 7]  (a person's, unrun)
+DONE 2026-11-08:        CSR11 (the flip, and the switch's removal) — the owner's ruling of 2026-11-07
+                        lifted the live-check gate, so the checks are owed AFTER the flip, not before
 
 OUTSIDE ALL OF IT, and NOT in 0.20.0:  CSR17 (the service serves a provider key) -> CSR18 (the runner
                                        reaches a provider's endpoint)   -- §6.7
@@ -2075,7 +2190,9 @@ OUTSIDE ALL OF IT, and NOT in 0.20.0:  CSR17 (the service serves a provider key)
   merged code already keys on — **Open item 6**, the budget mode, was the last thing that held it and it
   is answered (the refusal, 2026-11-05/06). **Level 2: CSR15** — after CSR14, because the account is
   CSR14's. **Level 3: CSR16** — after CSR15, because the two hold one file. **Then CSR11** — after the
-  four, and after the live checks, which are a person's and which no level holds.
+  four, and after the live checks, which are a person's and which no level holds; **it landed on
+  2026-11-08 without them**, on the owner's ruling of 2026-11-07 that lifted that gate (the DONE line of
+  the drawing above), so what the path below calls the checks are owed **after** the flip now.
 - **Critical path.** `the longest of (CSR13, CSR14) → CSR15 → the owner's live checks → CSR11`: **three
   tasks deep and one person's afternoon**, with **five of §6's nine tasks still to be built and four
   merged** (CSR8, CSR9, CSR10, CSR12). **CSR16 is a fourth task and it is deliberately not on that path**:
@@ -2104,7 +2221,7 @@ CSR18 are not in this table at all**, because no 0.20.0 level holds them and the
 | `plugin/skills/working/SKILL.md` (+ `routing/SKILL.md` if it names the flow) | **CSR9 — merged**, its level 1 | — | — | — | — | the sentence and the registration are one commit |
 | `internal/runner/reviewartifact.go`, `internal/runner/reviewartifact_test.go` | **CSR10 — merged (#1764)**, its level 1 | — | — | — | — | the verifier's implementation |
 | `internal/cli/run_test.go` | **CSR10 — merged (#1764)**, its level 1 | — | — | — | — | the `TestFixBrief*` fixtures gain the sidecar a fail-closed reader needs |
-| `internal/cli/review.go`, `internal/cli/review_test.go` | **CSR10 — merged (#1764)**, its level 1, and **CSR12 — merged (#1771)**, its level 2 | — | — | — | **CSR11** | the verifying reader and the live-check switch have run; what is left is the flip that removes the switch — **three writers, one per level, and two of them already ran** |
+| `internal/cli/review.go`, `internal/cli/review_test.go` | **CSR10 — merged (#1764)**, its level 1, and **CSR12 — merged (#1771)**, its level 2 | — | — | — | **CSR11 — DONE 2026-11-08**, its level | the verifying reader and the live-check switch have run, and so has the flip that removed the switch — **three writers, one per level, and all three have run** |
 | `internal/cli/reviewverify.go` | **CSR10 — merged (#1764)**, its level 1 | — | **CSR15** | **CSR16** | — | the seam and the fail-closed stub (PR #1764), then the impersonation that fills it, then the head read that stops reading with the machine's own App credential — **three writers, one per level** |
 | `internal/cli/reviewverify_test.go` (new in CSR15) | — | — | **CSR15** | **CSR16** | — | the impersonation's own tests, then the head read's |
 | `internal/runner/gateway.go`, `internal/runner/gateway_test.go`, `internal/runner/routing.go`, `internal/runner/routing_internal_test.go`, `internal/runner/agentenv.go`, `internal/runner/agentenv_test.go` | — | **CSR13** | — | — | — | the class accessor and its five readers — **level 1, and disjoint from CSR8's merged files** |
@@ -2118,9 +2235,9 @@ CSR18 are not in this table at all**, because no 0.20.0 level holds them and the
 
 **`internal/cli/review.go` is the one file three tasks wanted, and that is why their order was a rule rather
 than a preference:** the verifying reader (CSR10) wrote it in level 1, the live-check switch (CSR12)
-added and read one variable in level 2, and the flip (CSR11) sets the constant and **deletes the switch**
-in the level after — **and two of the three have merged**, so what is left of the row is CSR11's own
-commit. Serialising three writers of one file is what the levels buy, and it is also why CSR12 existed
+added and read one variable in level 2, and the flip (CSR11) set the constant and **deleted the switch**
+in the level after — **and all three have run**, the flip on 2026-11-08, so the row is closed and no
+level ever held two writers of it. Serialising three writers of one file is what the levels buy, and it is also why CSR12 existed
 as its own task rather than as a paragraph of CSR11: a switch that has to be removed by a later commit is
 a change with its own red step, its own tests and its own review, and the reviewer of the flip is the
 reader who has to see the removal in the same diff. **`internal/cli/reviewverify.go` is the same shape at
@@ -2134,12 +2251,14 @@ one writer per level is what keeps the two reviews apart.
 **Two files this section does not take, deliberately.** `internal/cli/recipes_skew.go` and
 `internal/cli/validate.go` remain **CSR6's** (§2), and no task here books them: CSR8–CSR16 add **no
 `fugaro.yaml`, task, recipe or wire key**, so the `…Since` rule (E6) gives them nothing to gate. The one
-constant whose *value* this section's release moves — `reviewJobSince`
-(`internal/cli/recipes_skew.go:379`, today `"0.19.0"`) — is **not** moved by CSR8–CSR16: it is the release
-slot's consequence, and **Open item 3's answer of 2026-11-05 is 0.20.0 "Quokka"**, so the release's own
-change moves it to `"0.20.0"` and takes that file alone under §2's rule. **§6.7's CSR17 and CSR18 are not
-in this table and not in these levels**: their own release books their files, and the only 0.20.0 file they
-could have touched — `internal/credsvc`'s class — is nobody's in 0.20.0.
+constant whose *value* the release slot decides — `reviewJobSince`
+(`internal/cli/recipes_skew.go:420`, `"0.20.0"` since CSR11's flip of 2026-11-08) — is **not** moved by
+CSR8–CSR16: it is the release slot's consequence, and **Open item 3's answer of 2026-11-05 is 0.20.0
+"Quokka"**, so the value names that release — and **CSR11's flip of 2026-11-08 is the change that moved
+it**, taking that file alone under §2's rule: 0.20.0's own change had nothing to move while every launch
+was refused, since this gate was never reached. **§6.7's CSR17 and CSR18 are not in this table and not in
+these levels**: their own release books their files, and the only 0.20.0 file they could have touched —
+`internal/credsvc`'s class — is nobody's in 0.20.0.
 
 ### 6.5 The release, the HARD RULE and the operator step
 
@@ -2147,9 +2266,10 @@ could have touched — `internal/credsvc`'s class — is nobody's in 0.20.0.
   upgrade: the command's registration, the reference rows, the plugin's skill text, the runner's placement
   and the launcher's verifier all ride the **image refresh** `update` already asks about (CSR6's), and none
   of them is a second command, a deletion or a manual repair. The plugin pins move through
-  `scripts/bump-plugin-version.sh` with the release, not by hand and not per task. **CSR12's switch adds
-  nothing to `update` either**: it is an environment variable read only in the live check's own session,
-  it is off by default, it is never written to a config file, and CSR11 takes it out. **Nor does CSR14's
+  `scripts/bump-plugin-version.sh` with the release, not by hand and not per task. **CSR12's switch added
+  nothing to `update` either**: it was an environment variable read only in the live check's own session,
+  it was off by default, it was never written to a config file, and **CSR11 took it out on 2026-11-08**.
+  **Nor does CSR14's
   verifier account**: it is a resource the same apply creates beside the credentials service, and the same
   `fugaro update` writes its address into the local config — so the account is **created and
   named by one command**, and the owner's list, written or empty, stays the owner's (the keep rule,
@@ -2220,10 +2340,16 @@ could have touched — `internal/credsvc`'s class — is nobody's in 0.20.0.
   scope, and the account is CSR14's — but the next reader who checks one against the other should find the
   difference named here rather than discover it.
 - **Release actions, for the 0.20.0 "Quokka" release Open item 3 answered:** the release's own
-  `fugaro update`, that one conditional operator sentence, and **`reviewJobSince` moved to `"0.20.0"` in
-  the release's own change** (the file is CSR6's, and the release takes it as §6.4 says). **CSR11's flip
-  is not a release action**: it is a commit that lands after the owner's live check, in whichever release
-  carries it, and it is the commit that takes CSR12's switch out.
+  `fugaro update`, that one conditional operator sentence, and the file §6.4 says the slot decides. That
+  file's constant names **`"0.20.0"`** and **CSR11's change of 2026-11-08 is what moved it, not 0.20.0's
+  own change**: while `reviewJobAdmitted` was `false` the gate was never reached, and 0.19.0's image
+  holds the variant with no model path to serve a launch on it (§6.4), so the flip took CSR6's file as
+  §2's rule allows. **CSR11's flip
+  is not a release action**: it is a commit that lands in whichever release carries it — **it landed on
+  2026-11-08**, on the owner's ruling of 2026-11-07 that lifted its live-check gate, and 0.21.0 is the
+  release that carries it — and it is the commit that took CSR12's switch out. **The owner's live checks
+  are the one thing the flip left behind rather than in front of it**: they are still unrun, and the
+  release notes say the launch is admitted rather than that the check passed.
 - **The verifier identity is the release's one deployment-shaped fact, and Open item 5 answered it on
   2026-11-05.** `credentials_service.verifier_accounts` is a **bare-address list rendered into the
   service's own environment** (`deploy/terraform/gcp/modules/installation/credentials.tf:482`, from the
@@ -2286,12 +2412,14 @@ recommendation). **Why, in one line:** the 0.19.0 release in flight carries none
 release that carries the flip has to carry the tasks that make the flip work — the placement, the
 registration, the verifier and the switch's own removal. Two consequences, settled together as the item
 said: the release note's `### For operators` sentence is written for that release (§6.5), and
-**`reviewJobSince` moves to `"0.20.0"`** in that release's own change — `docs/release.md:165`'s bullet
-verifies it against the tag
-actually cut, `internal/cli/recipes_skew.go:379` holds it today as `"0.19.0"`, and a wrong value refuses
-too late (a launch names a variant the installation has not deployed) or too early (an installation that
-holds one stays blocked). The release's own change takes that file alone, under §2's rule and §6.4's
-note.
+**`reviewJobSince` is `"0.20.0"`** — `docs/release.md:225`'s bullet verifies it against the release
+whose runner can serve the launch, `internal/cli/recipes_skew.go:420` holds it, and a wrong value refuses
+too late (a launch names a variant the installation has not deployed, or a runner that cannot serve one)
+or too early (an installation that holds both stays blocked). **The move waited for CSR11's flip**:
+0.20.0's own change did not take it, because while `reviewJobAdmitted` was `false` this gate was never
+reached, and 0.19.0's image holds the variant with no model path to serve a launch on it — a value that
+admits it starts the review, bills for it and kills it inside the job. **CSR11's change of 2026-11-08
+moved it**, taking that file alone, under §2's rule and §6.4's note.
 
 **4. *(found while writing this section)* The review run's model path. — ANSWERED 2026-11-05: a FOURTH
 RUNNER TASK, `CSR13`, and not reading 1.** O1 says the reviewer's model

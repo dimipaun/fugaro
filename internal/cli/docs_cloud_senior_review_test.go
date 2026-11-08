@@ -148,9 +148,12 @@ func TestDocsCloudSeniorReviewIsWritten(t *testing.T) {
 		"**D893(c) is a precondition of the whole design, not a channel**",
 		"**Check 125**",
 		"the read-only token comes from the credentials service, by name",
-		// The gate the design cannot pass from inside itself.
+		// The gate the design cannot pass from inside itself, and the half of
+		// it that another work stream landed: the row used to say no update
+		// could supply it, which CSR11's flip and the wiring behind it
+		// (CSRW1/CSRW2) made false, so the pin moved with the sentence.
 		"requires it to be enabled for the installation",
-		"**No `fugaro update` can supply that half**",
+		"**`fugaro update` is what supplies that half**",
 	} {
 		if !strings.Contains(readme, want) {
 			t.Errorf("%s lacks %q", csrReadme, want)
