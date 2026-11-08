@@ -76,7 +76,7 @@ This matters here, in three ways:
   `artifactregistry`, `cloudbuild`, `cloudscheduler`, `logging`, `monitoring`, `iam`,
   `cloudresourcemanager`, `cloudasset` and (conditionally) `aiplatform`/`billingbudgets` —
   **`cloudbilling.googleapis.com` is not in that list**. Fugaro's own live checklist has the
-  operator enable it by hand today, on the **ADC quota project** (`docs/gcp-live-checklist.md:2668`)
+  operator enable it by hand today, on the **ADC quota project** (`docs/gcp-live-checklist.md:1339`)
   — the arrangement the next bullet says a launch path may not rely on.
 - **Which quota project the client names depends on the credential, and getting that wrong is the one
   way this design grows a grant.** The repo's own Cloud Billing client is the counter-example to
@@ -85,7 +85,7 @@ This matters here, in three ways:
   *"including their own quota project, which the Cloud Billing API needs and which is never the project
   being set up"* — and `ErrNoQuotaProject` (`:168-174`) exists for the case where they name none, when
   Google bills the call to its own project. That is exactly the hand-enabled arrangement
-  `docs/gcp-live-checklist.md:2668` records and `internal/infra/firebase.go:498-503` reports as an
+  `docs/gcp-live-checklist.md:1339` records and `internal/infra/firebase.go:498-503` reports as an
   error, so **a launch path must not inherit that choice** — but the choice is not one setting for
   everyone. `option.WithQuotaProject(p)` makes the client send `X-Goog-User-Project: p` on **every**
   request, service-account credentials included: the header goes out whenever a quota project resolved
@@ -600,7 +600,7 @@ The repository, by path and symbol:
 | `internal/localcfg/localcfg.go:1148-1150,1337-1339,1598,1629-1630,1826,1829,2361-2365` | `build.machine_type`/`build.region`, the charset rules, the default, the region fallback |
 | `internal/backend/gcp/prices.go:9-27`; `internal/backend/batch/prices.go:47-79,326-329` | The repo's pinned-price-table precedent, dates included |
 | `docs/plans/2026-09-27-m4-gcp-backend.md:3838` | The repo's own earlier recipe for a catalog read with a bearer token |
-| `docs/gcp-live-checklist.md:2668` | The operator's today's-by-hand `cloudbilling.googleapis.com` enablement on the ADC quota project |
+| `docs/gcp-live-checklist.md:1339,2668` | The operator's today's-by-hand `cloudbilling.googleapis.com` enablement on the ADC quota project |
 
 Not a source but the evidence the two verified sections rest on: **the owner's probe of 2026-11-08**
 (§8) — the API read directly, with the owner's own credential, and its answers recorded there.
