@@ -1176,8 +1176,7 @@ func (r *run) admissionCheck(ctx context.Context) error {
 				slug, repo, strings.Join(jobProviderKinds, ", "))
 		}
 	}
-	envKind := r.d.ProviderKind
-	if envKind != "" && envKind != kind {
+	if envKind := r.d.ProviderKind; envKind != "" && envKind != kind {
 		// The flag (or FUGARO_GIT_PROVIDER) is an environment value a launcher
 		// can set, so it may only tighten the admission and never change which
 		// repository this run is for (12a item 2). Naming another kind is a

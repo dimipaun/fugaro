@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
+	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
 )
 
 var ctx = context.Background()
@@ -240,6 +241,54 @@ func proxiedForwarder(t *testing.T, h http.HandlerFunc) (*httptest.Server, *[]st
 	}))
 	t.Cleanup(srv.Close)
 	return srv, &paths
+}
+
+// TestProxiedClientKeepsTheDefaultTimeout: a proxied adapter's client bounds
+// one request the way every other adapter's does. httpjson applies its
+// DefaultTimeout only while Client.HTTP is nil, and proxiedClient returns a
+// client whatever it is handed -- so with no client of the caller's the bound
+// has to be set here, or a service that accepts the connection and never
+// answers holds the run to its job deadline. A caller that brings its own
+// client keeps its own timeout.
+func TestProxiedClientKeepsTheDefaultTimeout(t *testing.T) {
+	if got := proxiedClient("http://127.0.0.1:1"+forwardPath, nil).Timeout; got != httpjson.DefaultTimeout {
+		t.Errorf("a proxied client built with no caller's client has timeout %v, want %v", got, httpjson.DefaultTimeout)
+	}
+	own := &http.Client{Timeout: 5 * time.Second}
+	if got := proxiedClient("http://127.0.0.1:1"+forwardPath, own).Timeout; got != own.Timeout {
+		t.Errorf("the caller's own timeout was replaced: %v, want %v", got, own.Timeout)
+	}
+}
+
+// TestProxiedTransportKeepsTheEscapedPath: the service is asked for the path
+// the adapter built, escapes and all. An adapter escapes a segment on its own
+// (bitbucket's contentsURL, where a branch named "release/1.0" is one segment
+// and not a path into another directory), and a transport that rebuilt the URL
+// from the decoded path alone would hand the service the decoded spelling --
+// some other path, classified as some other path (G13). The forwarder is a
+// stand-in for the loopback one; what is asked of it here is the request line.
+func TestProxiedTransportKeepsTheEscapedPath(t *testing.T) {
+	srv, paths := proxiedForwarder(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{}`))
+	})
+	c := proxiedClient(srv.URL+forwardPath, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		bitbucket.DefaultBaseURL+"/repositories/acme/web/src/release%2F1.0/fugaro.yaml", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatalf("the request did not reach the forwarder: %v", err)
+	}
+	resp.Body.Close()
+	if len(*paths) != 1 {
+		t.Fatalf("the forwarder was asked for %d paths, want 1", len(*paths))
+	}
+	if want := forwardPath + "2.0/repositories/acme/web/src/release%2F1.0/fugaro.yaml"; (*paths)[0] != want {
+		t.Errorf("the request reached the forwarder as %q, want %q", (*paths)[0], want)
+	}
 }
 
 // TestProxiedBitbucketReadsNoToken: a proxied Bitbucket run's job holds no

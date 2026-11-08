@@ -1528,13 +1528,13 @@ func (r *run) branchClaim() string {
 //
 // The refusal is the branch claim (fb). The credentials service admits a push
 // only for the branch the run's identity names (G6), so a run that pushes --
-// a first run or a follow-up; a review run and an artifact run push nothing
-// and are not judged -- cannot do its work with an identity that names no
-// branch. Only a launcher older than fugaro branchClaimSince mints one of
-// those: the claim is the launcher's to write (B1.1), and an identity without
-// it is one that predates the claim. The run stops here, before the clone,
-// rather than at its first push, where the service's refusal names nothing the
-// operator can act on.
+// a first run or a follow-up; a review run, an artifact run and a challenger
+// arm push nothing and are not judged -- cannot do its work with an identity
+// that names no branch. Only a launcher older than fugaro branchClaimSince
+// mints one of those: the claim is the launcher's to write (B1.1), and an
+// identity without it is one that predates the claim. The run stops here,
+// before the clone, rather than at its first push, where the service's refusal
+// names nothing the operator can act on.
 //
 // The forwarder holds no credential (G5): it attaches the job's Google ID
 // token, the run's own identity and the job's name to every request it makes,
@@ -1553,7 +1553,12 @@ func (r *run) startProxiedGit(ctx context.Context) error {
 		// where the reason is known, instead of at the first git command.
 		return fmt.Errorf("this run's Bitbucket access goes through the installation's credentials service, and this job names no service (%s is not set): the run stops before anything is cloned", providers.EnvCredentialsServiceURL)
 	}
-	if !r.review && !r.artifact && r.branchClaim() == "" {
+	// A challenger arm is exempt for the same reason the two run kinds above
+	// are: it publishes nothing, so no push of it needs a branch claim. Left
+	// unexempt it would be refused here, before openProvider, and told to
+	// upgrade a launcher -- when what is true of it is that a Bitbucket
+	// repository is never a challenger at all (A2.1, mintGitAuth).
+	if !r.review && !r.artifact && !r.shadow && r.branchClaim() == "" {
 		return fmt.Errorf("this run's Bitbucket access goes through the installation's credentials service (the published policy admits %s with proxy: true), and that service admits a push only for the branch the run's identity names (fb): this identity names none, so the launcher that started this run is older than fugaro %s. Upgrade Fugaro on the machine that launches this repository's runs (brew upgrade dimipaun/tap/fugaro), run 'fugaro update' to bring the installation and the job images to it, and launch it again — the run stops before anything is cloned, and nothing was pushed or changed",
 			r.spec.Repo, branchClaimSince)
 	}

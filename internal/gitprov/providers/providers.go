@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
+	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
 )
 
 // Environment variables the runner reads its provider credentials from.
@@ -198,7 +199,13 @@ func proxiedClient(forwarder string, hc *http.Client) *http.Client {
 	if hc != nil && hc.Transport != nil {
 		base = hc.Transport
 	}
-	c := &http.Client{Transport: forwardTransport{forwarder: forwarder, base: base}}
+	// The timeout is set here rather than left to httpjson: that package
+	// applies its DefaultTimeout only while Client.HTTP is nil, and this
+	// function returns a client whatever it was given, so a proxied adapter
+	// built with no client of the caller's would otherwise be the one adapter
+	// in the tree with no bound on a request at all -- a service that accepts
+	// the connection and never answers would hold the run to its job deadline.
+	c := &http.Client{Timeout: httpjson.DefaultTimeout, Transport: forwardTransport{forwarder: forwarder, base: base}}
 	if hc != nil {
 		// The caller's own client, less its transport: its timeout and its
 		// redirect policy are its own, and this is the one field a proxied
@@ -231,7 +238,13 @@ func (t forwardTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// One slash, not two: the service reads what follows the route's prefix,
 	// and what it must read is the path the adapter built ("2.0/...").
 	u.Path = strings.TrimSuffix(f.Path, "/") + req.URL.Path
-	u.RawPath = ""
+	// The escaped form goes with the decoded one: an adapter escapes a
+	// segment on its own (bitbucket's contentsURL, where a branch named
+	// "release/1.0" is one segment and not a path into another directory),
+	// and rebuilding the URL from Path alone would send the service the
+	// decoded spelling -- a path the adapter did not build, classified as
+	// some other path. The two readings of a path are one reading (G13).
+	u.RawPath = strings.TrimSuffix(f.EscapedPath(), "/") + req.URL.EscapedPath()
 	out := req.Clone(req.Context())
 	out.URL = &u
 	out.Host = ""

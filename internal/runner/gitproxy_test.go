@@ -310,7 +310,11 @@ func TestProxiedRefusesIdentityWithoutBranch(t *testing.T) {
 // TestProxiedReviewRunNeedsNoBranch: a review run pushes nothing and opens
 // nothing, so its identity names no branch and none is required of it (B1.4
 // admits it with no fb, and refuses every push of it). The same is true of an
-// artifact run, whose deliverable goes to the runs bucket.
+// artifact run, whose deliverable goes to the runs bucket, and of a challenger
+// arm, which publishes nothing at all (D554) — the arm is refused further down
+// this same path, where openProvider asks its provider for a read-only token
+// and Bitbucket has none to mint (A2.1), so the fb refusal must not be what
+// speaks first for it.
 func TestProxiedReviewRunNeedsNoBranch(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -318,6 +322,7 @@ func TestProxiedReviewRunNeedsNoBranch(t *testing.T) {
 	}{
 		{"review", func(r *run) { r.review = true }},
 		{"artifact", func(r *run) { r.artifact = true }},
+		{"a challenger arm", func(r *run) { r.shadow = true }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := proxiedRun(t, gitRunIdentity(t), tc.edit)
