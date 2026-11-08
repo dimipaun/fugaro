@@ -222,6 +222,49 @@ func TestDecideUnscoredFindingBlocksEveryMode(t *testing.T) {
 	}
 }
 
+// TestDecideStopBlockingNamesTheLevelThatLeftTheCatastrophicFinding is the
+// stop's one exception read across the run's levels rather than across the one
+// round Decide is given (item 1's "every remaining finding that is not
+// catastrophic"): the round readiness reads is the highest enabled level's, so
+// an enabled level under it that left a finding no mode's stop row takes is a
+// draft whose reason names that level. The count's own reason would point a
+// reader at the deciding round, which holds nothing blocking, which is why this
+// case exists at all.
+func TestDecideStopBlockingNamesTheLevelThatLeftTheCatastrophicFinding(t *testing.T) {
+	pass := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}
+	// Startup at its stop accepts this round whole; the run is a draft because
+	// of what the level under it left, and the reason has to say so.
+	last := &runstore.ReviewSummary{Round: 1, Verdict: "changes", Findings: 1}
+	accepted := rigor.Score{Likelihood: 3, Impact: 3, FixCost: 1, Class: rigor.Correctness}
+	for _, tc := range []struct {
+		name     string
+		blocking []runstore.ReviewSummary
+		reason   string
+	}{
+		{"one level", []runstore.ReviewSummary{{Round: 1, Verdict: "changes", Findings: 3, Tier: runstore.TierSenior, Head: "0123456789abcdef0123456789abcdef01234567"}},
+			"review level 2 left a finding the stop does not accept in round 1 on 0123456, so the pull request is a draft"},
+		{"two levels", []runstore.ReviewSummary{
+			{Round: 2, Verdict: "changes", Findings: 1, Tier: runstore.TierSenior, Head: "0123456789abcdef0123456789abcdef01234567"},
+			{Round: 3, Verdict: "changes", Findings: 2, Tier: runstore.TierAdversarial},
+		}, "review level 2 left a finding the stop does not accept in round 2 on 0123456 and review level 3 left a finding the stop does not accept in round 3, so the pull request is a draft"},
+	} {
+		pol := findingsPolicyOf(optedIn, rigor.Startup, 1, []rigor.Score{accepted}, runstore.StopRoundsSpent)
+		pol.StopBlocking = tc.blocking
+		ready, reason, class := Decide([]verify.Record{pass}, "abc", last, pol, nil)
+		if ready || reason != tc.reason {
+			t.Errorf("%s: Decide = %v %q, want a draft %q", tc.name, ready, reason, tc.reason)
+		}
+		if class != failure.ReviewNotConverged {
+			t.Errorf("%s: class = %q, want %q", tc.name, class, failure.ReviewNotConverged)
+		}
+	}
+	// Without it, the same round and policy are the acceptance itself.
+	pol := findingsPolicyOf(optedIn, rigor.Startup, 1, []rigor.Score{accepted}, runstore.StopRoundsSpent)
+	if ready, _, _ := Decide([]verify.Record{pass}, "abc", last, pol, nil); !ready {
+		t.Error("startup did not accept the round it stopped on, so the case above proves nothing")
+	}
+}
+
 // TestDecideToleratesOnlyWhatTheRunCanFile is D9: a mode may not tolerate a
 // finding it cannot file, so tolerance is taken only for a repository that
 // opted in and a mode whose rigor.Files row files what it tolerates. Every
