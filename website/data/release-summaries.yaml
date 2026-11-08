@@ -1,6 +1,8 @@
 # website/data/release-summaries.yaml -- the end-user summary of every release.
 #
-# One entry per file in docs/releases/, keyed by the release's tag, and the changelog page
+# One entry per RELEASED file in docs/releases/ -- one at or below the CLI stream's current
+# version in docs/release-streams.yaml, so the notes of a release not yet cut are not held to a
+# line here -- keyed by the release's tag, and the changelog page
 # renders it under the release's heading with the release file's own Highlights collapsed
 # below it (the owner's brief of 2026-10-19: the summary under each release is a product
 # feature a reader understands, and the operator detail of docs/releases/vX.Y.Z.md is one
@@ -16,7 +18,7 @@
 #
 # Read by website/src/content.ts (loadReleaseSummaries), rendered by
 # website/src/components/Changelog.astro, and pinned by website/test/changelog-page.mjs:
-# every release file has an entry here, none is empty, and the page renders it.
+# every released file has an entry here, none is empty, and the page renders it.
 #
 # A new release adds its line here in the same commit as its docs/releases/vX.Y.Z.md: the
 # summary is written for readers who use Fugaro, from what that file says the release does.

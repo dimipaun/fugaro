@@ -2,7 +2,8 @@
 
 **Status: design answered by the owner 2026-11-04, ruled on again 2026-11-05, and its decisions
 D1430–D1449 answered 2026-11-07 with all tasks approved 2026-11-07 (owner: "All tasks approved.
-Jobmax"); plan only; nothing implemented.**
+Jobmax").** **Plan only when this was written; part of Part I has landed since, named with its
+commits in [README.md](README.md)'s status line.**
 
 Read against `origin/main` at `b41709ea` on 2026-11-04, and **refreshed against that tree** the same
 day: line numbers are that commit's, and §4 lists what `main` has overtaken since the design was

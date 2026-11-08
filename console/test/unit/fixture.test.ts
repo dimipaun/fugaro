@@ -20,13 +20,25 @@
 //     and compared byte for byte, so a hand-edited fixture -- even one whose
 //     digest was recomputed -- fails, and the file cannot drift from the
 //     documents it claims to be made of.
+//   - **the e2e stub answers the two argvs the managed screens' reads are, and
+//     refuses every other one.** `test/fixtures/bin/fugaro` is a fixture of this
+//     directory (`test/fixtures/bin`, which the directory test below names), and
+//     the managed-project screens' plan's CM12 puts its two new arms -- the
+//     `managed status --json` and `project policy show --json` documents the
+//     Project tab's later sections are drawn from -- under test here: the
+//     property that makes the console's hermetic suite a fence rather than a
+//     stub is that a read nobody asked for is refused by name, and the mutation
+//     that proves it (an arm answering an argv it was not given) lands in this
+//     file. `test/unit/cli-stub.test.ts` holds the same stub's older arms.
 //
 // The fake clock below is the whole reason this file can be fast: `Timers` is an
 // argument (`src/main/spawn.ts`), so a replay's schedule is observed instead of
 // waited for, and the *recorded* delays are asserted directly.
 
-import { readdirSync, readFileSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawnSync } from 'node:child_process'
 
 import { describe, expect, it } from 'vitest'
 
@@ -614,5 +626,182 @@ describe('the committed synthetic fixture', () => {
     // while the gap was open would fail on the owner's own recordings' arrival —
     // an agent-written test that has to be deleted before the plan's follow-up
     // work can land.
+  })
+})
+
+// The stub itself, run the way a spec runs it: `test/support/cliStub.ts`
+// installs `test/fixtures/bin/fugaro` into a scratch directory beside the
+// documents a spec seeds, and `test/e2e/managed.spec.ts` is the spec the two
+// arms below are for. Here the same file is installed by hand, because what is
+// under test is the arm and not the screen: the arms' argv is the console's
+// spawn row (`src/main/spawn.ts`), and a row that changed without the arm
+// changing with it would draw a refusal in a spec that is about something else.
+const STUB = join(__dirname, '..', 'fixtures', 'bin', 'fugaro')
+
+/** Ran is what one stub invocation answered. */
+interface Ran {
+  readonly status: number | null
+  readonly stdout: string
+  readonly stderr: string
+}
+
+/** install copies the stub into a scratch directory of this test's own. */
+function install(): string {
+  const directory = mkdtempSync(join(tmpdir(), 'fugaro-managed-stub-unit-'))
+  copyFileSync(STUB, join(directory, 'fugaro'))
+  return directory
+}
+
+/** run invokes the installed stub with these arguments.
+ *
+ * `sh` and not the file itself: the shebang is the fixture's, and a checkout
+ * that lost the executable bit must not turn this test red for a reason that is
+ * not the arm's answer. */
+function run(directory: string, args: readonly string[]): Ran {
+  const result = spawnSync('sh', [join(directory, 'fugaro'), ...args], { encoding: 'utf8' })
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr }
+}
+
+// MANAGED_DOCUMENT and POLICY_DOCUMENT are the two documents the arms answer
+// with. They are the specs' own rather than committed (`test/e2e/managed.spec.ts`
+// writes them from these same shapes), so they are deliberately the smallest
+// thing the arms can print: what is under test here is *which* file an argv is
+// answered from, and the screens' own decoders are held to the real documents in
+// the specs that draw them.
+const MANAGED_DOCUMENT = '{"managed":true,"retirements":{"version":1,"retire":[]}}'
+const POLICY_DOCUMENT = '{"project":"e2e","policy":{"version":1}}'
+
+/** seed writes the files an answering read needs -- the seeded project every
+ * read is guarded by, and the two documents -- and answers the directory. */
+function seed(): string {
+  const directory = install()
+  writeFileSync(join(directory, 'project.txt'), 'e2e\n')
+  writeFileSync(join(directory, 'managed-status.json'), `${MANAGED_DOCUMENT}\n`)
+  writeFileSync(join(directory, 'policy-show.json'), `${POLICY_DOCUMENT}\n`)
+  return directory
+}
+
+describe('the e2e stub’s arms for the managed screens’ two reads', () => {
+  it('answers `managed status --json` with the document seeded beside it, and logs the read', () => {
+    const directory = seed()
+    const answered = run(directory, ['managed', 'status', '--json', '--project', 'e2e'])
+    expect(answered.status).toBe(0)
+    expect(answered.stdout).toBe(`${MANAGED_DOCUMENT}\n`)
+    // The line a spec waits on: the managed-state and retirements sections are
+    // drawn from this one document, and a spec that has to know the read has
+    // answered has nothing on screen to wait for until it has (the document is
+    // what draws, and a slow one draws nothing at all).
+    expect(readFileSync(join(directory, 'reads.log'), 'utf8')).toBe('managed status\n')
+  })
+
+  it('answers `project policy show --json` with its own document, and logs the read', () => {
+    const directory = seed()
+    const answered = run(directory, ['project', 'policy', 'show', '--json', '--project', 'e2e'])
+    expect(answered.status).toBe(0)
+    expect(answered.stdout).toBe(`${POLICY_DOCUMENT}\n`)
+    expect(readFileSync(join(directory, 'reads.log'), 'utf8')).toBe('policy show\n')
+  })
+
+  it('takes the installation’s own two flags, and refuses a word neither arm carries', () => {
+    const directory = seed()
+    // `--config` is on both spawn rows and is a value like `--project`; the arm
+    // holds it rather than reading it, because neither read's answer depends on
+    // it. A value-less `--config` is refused by the arm, and a value-less
+    // `--project` by the guard every arm shares -- both by name, so a spec that
+    // sees either reads the argv it sent rather than `sh`'s.
+    const configured = run(directory, [
+      'managed',
+      'status',
+      '--json',
+      '--config',
+      '/tmp/console.yaml',
+      '--project',
+      'e2e',
+    ])
+    expect(configured.status).toBe(0)
+    expect(configured.stdout).toBe(`${MANAGED_DOCUMENT}\n`)
+    const valueless = run(directory, ['managed', 'status', '--json', '--project', 'e2e', '--config'])
+    expect(valueless.status).toBe(2)
+    expect(valueless.stderr).toContain("'managed status --json' was given '--config' with no value")
+  })
+
+  it('sleeps the seconds `managed-status-delay.txt` holds before it prints', () => {
+    const directory = seed()
+    writeFileSync(join(directory, 'managed-status-delay.txt'), '1\n')
+    const started = Date.now()
+    const answered = run(directory, ['managed', 'status', '--json', '--project', 'e2e'])
+    const elapsed = Date.now() - started
+    expect(answered.status).toBe(0)
+    expect(answered.stdout).toBe(`${MANAGED_DOCUMENT}\n`)
+    // `sleep 1` never returns early, so the lower bound is the half of this
+    // that is not a race; the upper one is generous on purpose, because what is
+    // under test is that the file is read at all -- `test/e2e/managed.spec.ts`
+    // is the spec that depends on it, for "the four siblings are drawn while
+    // the managed read is still out".
+    expect(elapsed).toBeGreaterThanOrEqual(1_000)
+    expect(elapsed).toBeLessThan(30_000)
+  })
+
+  it('refuses an argv the arm was not given, naming the two answers it holds', () => {
+    const directory = seed()
+    // A verb of either family that is not on the console's surface: the
+    // allow-list sentence, which names **both** new answers -- the property a
+    // spec's failure message is read for.
+    for (const args of [
+      ['managed', 'list', '--json', '--project', 'e2e'],
+      ['managed', 'status', '--project', 'e2e'],
+      ['project', 'show', '--json', '--project', 'e2e'],
+      ['project', 'policy', 'publish', '--json', '--project', 'e2e'],
+      ['project', 'policy', 'show', '--project', 'e2e'],
+    ]) {
+      const refused = run(directory, args)
+      expect(refused.status, args.join(' ')).toBe(2)
+      expect(refused.stderr, args.join(' ')).toContain("'managed status --json'")
+      expect(refused.stderr, args.join(' ')).toContain("'project policy show --json'")
+      expect(refused.stderr, args.join(' ')).toContain('and was asked for')
+    }
+    // A word inside the row's own argv: refused by the arm, which names the
+    // argv it holds rather than the whole list. `--all` and `--delete` are the
+    // two a reader would reach for -- the family's own verbs carry them -- so
+    // they are the two pinned here.
+    const extra = run(directory, ['managed', 'status', '--json', '--all', '--project', 'e2e'])
+    expect(extra.status).toBe(2)
+    expect(extra.stderr).toContain("'managed status --json' was asked for '--all'")
+    const deletion = run(directory, [
+      'project',
+      'policy',
+      'show',
+      '--json',
+      '--delete',
+      '--project',
+      'e2e',
+    ])
+    expect(deletion.status).toBe(2)
+    expect(deletion.stderr).toContain("'project policy show --json' was asked for '--delete'")
+  })
+
+  it('refuses a read that names no project, or another one, whichever read it is', () => {
+    const directory = seed()
+    for (const args of [
+      ['managed', 'status', '--json'],
+      ['managed', 'status', '--json', '--project', 'other'],
+      ['project', 'policy', 'show', '--json'],
+      ['project', 'policy', 'show', '--json', '--project', 'other'],
+    ]) {
+      const refused = run(directory, args)
+      expect(refused.status, args.join(' ')).toBe(2)
+      expect(refused.stderr, args.join(' ')).toContain('was asked without --project e2e')
+    }
+  })
+
+  it('refuses a read whose document was never seeded rather than inventing one', () => {
+    const directory = install()
+    writeFileSync(join(directory, 'project.txt'), 'e2e\n')
+    const managed = run(directory, ['managed', 'status', '--json', '--project', 'e2e'])
+    expect(managed.status).toBe(2)
+    expect(managed.stderr).toContain('no managed status document is seeded beside this stub')
+    const policy = run(directory, ['project', 'policy', 'show', '--json', '--project', 'e2e'])
+    expect(policy.status).toBe(2)
+    expect(policy.stderr).toContain('no policy document is seeded beside this stub')
   })
 })
