@@ -177,9 +177,10 @@ type Starter struct {
 // action built on a state somebody else has since changed — is an error, and
 // what it leaves behind is exactly what was committed: an intent for a launch
 // that did not happen is the record recovery re-issues. A launch and a retry
-// record their attempt before anything starts, and a re-issue is checked
-// against the state in hand before it starts, so nothing here starts a run the
-// state does not carry.
+// record their attempt before anything starts and start the spec the state then
+// holds, and a re-issue is checked against the state in hand before it starts,
+// so nothing here starts a run the state does not carry — neither a run id the
+// state never recorded nor a spec it does not hold.
 func (d Starter) Start(ctx context.Context, s State, a Action, now time.Time) (State, error) {
 	switch a.Kind {
 	case ActionLaunch, ActionRetry:
@@ -197,7 +198,10 @@ func (d Starter) Start(ctx context.Context, s State, a Action, now time.Time) (S
 }
 
 // begin is the intent-first start of a new attempt: mint the run id, commit
-// the intent that records it, and start it only once the write has landed.
+// the intent that records it, and start it only once the write has landed. What
+// it starts is the spec of the item that write left, not the one the action
+// named: the state is the record of what a person approved, and an action is a
+// proposal built from an earlier read of it.
 func (d Starter) begin(ctx context.Context, s State, a Action, now time.Time) (State, error) {
 	if d.Mint == nil || d.Commit == nil || d.Launcher == nil {
 		return s, errors.New("orchestrator: the starter carries no launcher, no commit or no mint, and a start it cannot record is one it must not make")
@@ -225,7 +229,11 @@ func (d Starter) begin(ctx context.Context, s State, a Action, now time.Time) (S
 	if err := d.Commit(ctx, next); err != nil {
 		return s, err
 	}
-	return next, d.start(ctx, a.Spec, runID)
+	w, ok := next.Item(a.ItemID)
+	if !ok {
+		return next, fmt.Errorf("%w: the attempt of %q was committed for no item the state carries, and a start whose spec cannot be read is one it must not make", ErrInvalid, safetext.OneLine(a.ItemID))
+	}
+	return next, d.start(ctx, SpecOf(w), runID)
 }
 
 // start asks the launcher for one run id and refuses an answer that is not the

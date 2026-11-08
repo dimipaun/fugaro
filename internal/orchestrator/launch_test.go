@@ -108,16 +108,20 @@ func onlyAction(t *testing.T, got []orchestrator.Action) orchestrator.Action {
 }
 
 // o6Launcher records what it was asked to start and starts nothing: a run id
-// in started is one the daemon believes is going.
+// in started is one the daemon believes is going, and specs is what each of
+// those starts was handed. The spec is recorded because it is what the run is
+// built from, and a launcher that ignores it would let a forged one through.
 type o6Launcher struct {
 	asked   []string
+	specs   []orchestrator.Spec
 	started []string
 	refuse  error
 	wrongID string
 }
 
-func (l *o6Launcher) Launch(_ context.Context, _ orchestrator.Spec, runID string) (string, error) {
+func (l *o6Launcher) Launch(_ context.Context, spec orchestrator.Spec, runID string) (string, error) {
 	l.asked = append(l.asked, runID)
+	l.specs = append(l.specs, spec)
 	if l.wrongID != "" {
 		return l.wrongID, nil
 	}
@@ -282,6 +286,25 @@ func TestSpawnNeverLeavesTheApprovedItem(t *testing.T) {
 	}
 	if len(forged.s.Intents) != 1 || forged.s.Intents[0].RunID != "20261107-120000-aaaa" || forged.s.Intents[0].Outcome != "" {
 		t.Errorf("the refused launch left %+v, and what it committed is the attempt recovery re-issues", forged.s.Intents)
+	}
+
+	// An action is a proposal, and what a start is handed is the spec the state
+	// carries rather than the one the action names: a stale plan, or a field
+	// somebody assembled by hand, may not start a run on a brief, a repo or a
+	// recipe the person never approved. The digest the action commits is the
+	// item's either way, so this read is the one thing that catches it.
+	fresh := newO6Starter(t, s, now, "20261107-120000-bbbb")
+	doctored := got[0]
+	doctored.Spec.Brief = "A brief nobody approved."
+	doctored.Spec.Repo = "elsewhere/other"
+	if err := fresh.run(doctored); err != nil {
+		t.Fatalf("the launch was refused: %v", err)
+	}
+	if len(fresh.l.specs) != 1 {
+		t.Fatalf("the launcher was handed %d spec(s) for one start", len(fresh.l.specs))
+	}
+	if want := orchestrator.SpecOf(first); fresh.l.specs[0] != want {
+		t.Errorf("the launcher started %+v, and the item the attempt was committed for is %+v", fresh.l.specs[0], want)
 	}
 }
 
@@ -558,6 +581,13 @@ func TestOneAutomaticRetryUnderTheSameApproval(t *testing.T) {
 	}
 	if !slices.Equal(o.l.started, []string{first, retry}) {
 		t.Fatalf("the launcher started %v: a retry is its own run", o.l.started)
+	}
+	// Both starts were handed the item's own spec: a retry is the same work
+	// under the same approval, so the brief the first attempt ran is the brief
+	// the second one runs.
+	approvedSpec := orchestrator.SpecOf(o6Item("wi-1", orchestrator.PhaseQueued, approvedAt))
+	if len(o.l.specs) != 2 || o.l.specs[0] != approvedSpec || o.l.specs[1] != approvedSpec {
+		t.Errorf("the launcher was handed %+v, and the item's spec is %+v", o.l.specs, approvedSpec)
 	}
 	// Committing the retry's intent spends the approval in the same write.
 	w, _ := o.s.Item("wi-1")
