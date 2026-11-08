@@ -74,8 +74,8 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 		// It carries no class of its own: the run is waiting, not stopped for a
 		// cause the vocabulary holds — a person is what comes next, and the
 		// design's §3 has no row for it, which is what unclassified says. A
-		// halt on the same decisions is left to the halt's own family instead
-		// (haltClass), because a halt is a stop the runner made.
+		// halt on the same decisions reads its class off the halt's own reason
+		// instead (haltClass), where no family holds it either.
 		return false, ownerWaitingReason(pendingOwner(owner)), failure.Unclassified
 	case last == nil:
 		return false, "no review verdict", failure.ReviewUnread

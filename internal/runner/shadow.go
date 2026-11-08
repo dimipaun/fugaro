@@ -166,10 +166,12 @@ var errNoReadOnlyToken = errors.New("no read-only installation token")
 // provider this repository runs on — before any stage could start, which is
 // that class's own case (design §3). The coder pin the run's model policy
 // will not serve is the same cause read from the other side: bootstrap's
-// checkBudget branch sends it here because it is the arm's, and the pins both
-// arms share keep the fallback's class for the same reason (runner.go). And
-// the design's §4.2 counts a challenger arm among the runs that must carry a
-// class rather than none, which is why this is not left unclassified.
+// checkBudget branch sends the pin only this arm carries here, and the pin
+// both arms share is refused by the fallback's own carrier with the same class
+// (endClass, runner.go) — one cause, one remedy, whether the run carries an
+// arm or not. And the design's §4.2 counts a challenger arm among the runs
+// that must carry a class rather than none, which is why this is not left
+// unclassified.
 func (r *run) refuseArm(reason string) error {
 	reason = r.redact(reason)
 	r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, failure.ConfigInvalid, reason)
