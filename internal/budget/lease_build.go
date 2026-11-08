@@ -96,6 +96,12 @@ type BuildLease struct {
 // reserved less released.
 func (l BuildLease) Outstanding() Micros { return l.Reserved - l.Released }
 
+// Day is the UTC day the lease's money is counted in: the day it was taken.
+// A build that crosses midnight is settled into the day it reserved from, not
+// into the day it ended on, because that is the counter the reservation is in
+// (the predicate lets a release name today or yesterday for the same reason).
+func (l BuildLease) Day() int64 { return Day(time.UnixMilli(l.StartedAt)) }
+
 // Unsettled is what the lease holds and has not spent: reserved less released
 // less settled. A settle or a release may take at most this.
 func (l BuildLease) Unsettled() Micros { return l.Reserved - l.Released - l.Settled }

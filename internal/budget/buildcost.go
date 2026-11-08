@@ -41,15 +41,10 @@ const (
 	MaxBuildSeconds = 3600
 
 	// BuildBillingServiceID is Cloud Build's serviceId in the public Cloud
-	// Billing catalog, pinned because Pinning it is one request less per
-	// command (read 2026-11-08, billing-price-spike.md §1.5).
+	// Billing catalog, pinned because the estimator wants one service's rows
+	// and nothing else, and the id is what makes one request enough (read
+	// 2026-11-08, billing-price-spike.md §1.5).
 	BuildBillingServiceID = "8B5D-EF7D-EB12"
-
-	// DefaultBuildMachineType is the machine a build is submitted with when
-	// fugaro.yaml's build.machine_type is not set
-	// (internal/localcfg/localcfg.go). It is the local config's default, named
-	// here so the estimator and a caller agree on it.
-	DefaultBuildMachineType = "E2_HIGHCPU_8"
 )
 
 // BuildMachine is one Cloud Build machine type's shape: the family whose SKUs
