@@ -122,8 +122,8 @@ Read together, that table says who can do what today:
 ## 2. The role model
 
 **viewer ⊂ operator ⊂ admin.** The rank order is not new: `internal/access` already encodes it
-as a closed set (`RoleViewer`, `RoleOperator`, `RoleAdmin`, `internal/access/access.go:60`), with
-`Rank` (`:99`) and `AtLeast` (`:112`) over it, and `ParseRole` (`:82`) refusing every other spelling.
+as a closed set (`RoleViewer`, `RoleOperator`, `RoleAdmin`, `internal/access/access.go:66`), with
+`Rank` (`:105`) and `AtLeast` (`:118`) over it, and `ParseRole` (`:88`) refusing every other spelling.
 `internal/mobileauth` re-exports the type (`mobileauth.go:80`). This
 document proposes nothing about that type; it fixes what each rank would *hold*, which is the part no
 code states today.
