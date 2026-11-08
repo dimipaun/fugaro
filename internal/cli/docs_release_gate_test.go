@@ -32,11 +32,18 @@ var releaseGateDocs = []struct {
 	wants   []string
 }{
 	{
-		// The console's half is the record: the release shipped, and before
-		// the sign-off the gate names.
+		// The console's half is the record: the release shipped ahead of both
+		// conditions the procedure states -- the sign-off, and the Terms it
+		// says must be published first -- and says so of each.
 		"docs/releases/" + consoleDirName + "/README.md",
 		"`0.113.0`",
-		[]string{"shipped before counsel's sign-off", "2026-10-27", "exception"},
+		[]string{
+			"shipped before counsel's sign-off",
+			"2026-10-27",
+			"that wait was not kept either",
+			"the terms are still not in force",
+			"exception",
+		},
 	},
 	{
 		// The app's half is the gate itself: nothing has shipped under the
