@@ -18,13 +18,13 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
-// The first run of a new project config grants the launcher and operator roles
-// to the person running it. Without that, the installation is applied with no
-// launcher and no operator at all: nobody holds the launcher or token-minter
-// role, and the first fugaro run fails with "not allowed to sign as the token
-// signer" (live Check 27). Only a NEW project config gets the default: an
-// existing config, one a new machine wrote from an installation, and any run that names
-// --launcher or --operator are never changed by it.
+// The first run of a new project config grants the operator and admin roles to
+// the person running it. Without that, the installation is applied with no
+// operator and no admin at all: nobody holds the launcher or token-minter role,
+// and the first fugaro run fails with "not allowed to sign as the token signer"
+// (live Check 27). Only a NEW project config gets the default: an existing
+// config, one a new machine wrote from an installation, and any run that names
+// --operator or --admin are never changed by it.
 
 // errServiceAccount says the credentials are a service account's, which is
 // not a person to grant the roles to by default.
@@ -90,9 +90,9 @@ func userEmail(ctx context.Context, hc *http.Client, url string) (string, error)
 	return email, nil
 }
 
-// defaultMembers makes a new project config's launchers and operators the
+// defaultMembers makes a new project config's operators and admins the
 // authenticated user, before the first plan, and says so. It does nothing for
-// an existing config, when --launcher or --operator was given, or when the
+// an existing config, when --operator or --admin was given, or when the
 // installation already exists (a new machine's run copies its own). Without a user
 // (a service account, no credentials) it is a needs-you naming the flags.
 func (e *initEngine) defaultMembers(ctx context.Context) error {
@@ -108,8 +108,8 @@ func (e *initEngine) defaultMembers(ctx context.Context) error {
 		}
 		me := "user:<your-email>"
 		return &initflow.NeedsYouError{Left: initflow.Left{Stage: initflow.Installation, Kind: initflow.LeftCommand,
-			Text:     why + ": without a launcher and an operator nobody can run anything; name who holds those roles, then rerun",
-			Commands: []string{selfCommand() + " " + e.r.o.doorName() + " --launcher " + me + " --operator " + me}}}
+			Text:     why + ": without an operator and an admin nobody can run anything; name who holds those roles, then rerun",
+			Commands: []string{selfCommand() + " " + e.r.o.doorName() + " --operator " + me + " --admin " + me}}}
 	}
 	member := "user:" + email
 	o.operators, o.admins = []string{member}, []string{member}

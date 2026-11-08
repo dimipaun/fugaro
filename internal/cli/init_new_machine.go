@@ -105,14 +105,14 @@ func (e *initEngine) newMachineGuard(stage string) error {
 // do not, that a plan from here must not be applied, and the roles.
 func newMachineNotes(outs infra.InstallationOutputs, door string) []string {
 	lines := []string{
-		"the local config was copied from the installation's outputs: launchers, operators, registry cleanup (on, or dry-run when the outputs say a dry run), log isolation and the budget backend's history account; they do not carry the alert email, the scheduler region, whether cleanup is dry-run or off, or the Firebase project,",
+		"the local config was copied from the installation's outputs: operators, admins, registry cleanup (on, or dry-run when the outputs say a dry run), log isolation and the budget backend's history account; they do not carry the alert email, the scheduler region, whether cleanup is dry-run or off, or the Firebase project,",
 		"so a plan from this machine can differ from what the owner applied and look noisy: do not apply an installation plan from here; ask an owner to run fugaro update, passing --alert-email, --scheduler-region, --registry-cleanup and --firebase-project as they did",
 	}
 	return append(lines, roleNotes(outs, door)...)
 }
 
 // roleNotes names the roles a new member may lack and the one-line command
-// an owner runs to grant them (--launcher and --operator replace the lists,
+// an owner runs to grant them (--operator and --admin replace the lists,
 // so the command carries the current members).
 func roleNotes(outs infra.InstallationOutputs, door string) []string {
 	cmd := func(flag, you string, have []string) string {
@@ -129,8 +129,8 @@ func roleNotes(outs infra.InstallationOutputs, door string) []string {
 		return strings.Join(m, ", ")
 	}
 	return []string{
-		fmt.Sprintf("to launch and watch runs you need the launcher role, held by: %s; if you are not listed, ask an owner to run: %s", list(outs.Launchers), cmd("--launcher", "user:<your-email>", outs.Launchers)),
-		fmt.Sprintf("to onboard repositories you need the operator role, held by: %s; if you are not listed, ask an owner to run: %s", list(outs.Operators), cmd("--operator", "user:<your-email>", outs.Operators)),
+		fmt.Sprintf("to launch and watch runs you need the operator role, held by: %s; if you are not listed, ask an owner to run: %s", list(outs.Launchers), cmd("--operator", "user:<your-email>", outs.Launchers)),
+		fmt.Sprintf("to onboard repositories you need the admin role, held by: %s; if you are not listed, ask an owner to run: %s", list(outs.Operators), cmd("--admin", "user:<your-email>", outs.Operators)),
 	}
 }
 

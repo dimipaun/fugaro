@@ -33,17 +33,17 @@ func doctorRunsBucketIAM(ctx context.Context, lc *localcfg.Config, c *crm.Servic
 	if err != nil {
 		return unchecked(err)
 	}
-	launchers, operators := lc.Terraform.Operators, lc.Terraform.Admins
+	operators, admins := lc.Terraform.Operators, lc.Terraform.Admins
 	p, err := svc.Buckets.GetIamPolicy(bucket).OptionsRequestedPolicyVersion(3).Context(ctx).Do()
 	switch {
 	case err == nil:
-		fs := infra.RunsBucketFindings(p, bucket, lc.GCPProject, launchers, operators)
-		if len(launchers) > 0 && c != nil {
+		fs := infra.RunsBucketFindings(p, bucket, lc.GCPProject, operators, admins)
+		if len(operators) > 0 && c != nil {
 			req := &crm.GetIamPolicyRequest{Options: &crm.GetPolicyOptions{RequestedPolicyVersion: 3}}
 			pp, perr := c.Projects.GetIamPolicy(lc.GCPProject, req).Context(ctx).Do()
 			switch {
 			case perr == nil:
-				fs = append(fs, infra.ProjectStorageWriters(pp, launchers, operators)...)
+				fs = append(fs, infra.ProjectStorageWriters(pp, operators, admins)...)
 			default:
 				// A launcher's project-level role (roles/editor, say) bypasses
 				// the bucket's own policy entirely: failing to read it must
@@ -59,7 +59,7 @@ func doctorRunsBucketIAM(ctx context.Context, lc *localcfg.Config, c *crm.Servic
 		if terr != nil {
 			return unchecked(terr)
 		}
-		return []doctorCheck{selfCheck(bucket, len(r.Permissions) > 0, lc.User, launchers, operators), tokenGrantUnchecked(bucket)}
+		return []doctorCheck{selfCheck(bucket, len(r.Permissions) > 0, lc.User, operators, admins), tokenGrantUnchecked(bucket)}
 	default:
 		return unchecked(err)
 	}
@@ -69,16 +69,16 @@ func doctorRunsBucketIAM(ctx context.Context, lc *localcfg.Config, c *crm.Servic
 // user) and says what its unconditioned write access means. Which list
 // places it is read off the same two predicates every other command that
 // asks "is this identity an operator of the installation" reads (roles.go).
-func selfCheck(bucket string, held bool, user string, launchers, operators []string) doctorCheck {
+func selfCheck(bucket string, held bool, user string, operators, admins []string) doctorCheck {
 	if !held {
 		return doctorCheck{ID: "runs-bucket-iam", OK: true}
 	}
 	m := meMember(user)
 	const text = "your credentials can write anywhere in gs://%s: this installation predates the 0.7.0 bucket hardening"
 	switch {
-	case operatorMember(m, operators):
+	case adminMember(m, admins):
 		return doctorCheck{ID: "runs-bucket-iam", OK: true}
-	case launcherMember(m, launchers):
+	case operatorMember(m, operators):
 		return doctorCheck{ID: "runs-bucket-iam", Severity: "warning", Problem: fmt.Sprintf(text, bucket),
 			Fix: "ask an operator to run fugaro setup (0.7.0 or later)"}
 	default:

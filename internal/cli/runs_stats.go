@@ -236,7 +236,7 @@ func runRunsStats(cmd *cobra.Command, o *userStatsOptions) error {
 	// person named "unknown" -- including when the identity it did resolve is
 	// nothing but invisible characters (userstats.CallerKey).
 	you := userstats.CallerKey(me)
-	operator := operatorOf(env.lc, me)
+	operator := adminOf(env.lc, me)
 	view := userStatsViewOwn
 	if operator || o.allUsers {
 		view = userStatsViewAll

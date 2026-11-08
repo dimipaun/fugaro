@@ -382,7 +382,7 @@ func (s *Server) serveAuthorizeConsent(w http.ResponseWriter, r *http.Request) {
 // ASCII lower case, and the fold is this endpoint's own: it is not the rule the
 // project's own lists are read by, and nothing here claims the CLI agrees with
 // it. `internal/cli/roles.go` places and compares a member exactly
-// (`operatorMember` and `launcherMember` are a `slices.Contains` over the text),
+// (`adminMember` and `operatorMember` are a `slices.Contains` over the text),
 // `internal/cli/user.go`'s `userMember` writes the member it was handed without
 // folding it, and the one comparison over these members that folds at all is the
 // local self-removal guard's `strings.EqualFold` — a Unicode fold, which is what

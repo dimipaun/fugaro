@@ -10,6 +10,7 @@ import (
 	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // update_access.go is the roles step of the converge (RS3, D1581): the one
@@ -43,16 +44,24 @@ import (
 // `serviceAccount:` — stays a LEGACY IAM-ONLY member (F25): the CLI cannot match
 // a caller's groups, so the node cannot rank it, and the member keeps the IAM
 // grant it had by being carried into every derived list.
+//
+// The one thing the derive cannot do by itself is take a change: a list named on
+// the command line would be applied once and reverted by the next converge, so
+// the run's own --operator/--admin lands in the node too (foldFlagLists), which
+// is the same write `fugaro user`'s own door makes (user.go).
 
 // syncAccess is the run's roles step, called once by the converge before its
 // first stage so that every spec this run builds carries the lists the node
 // says.
 //
-// It is best-effort in exactly two states, and both are said out loud rather
-// than passed over: an installation with no budget backend has nowhere to keep
-// a node (the rolls stay the local config's), and a database this installation
+// It is best-effort in exactly three states, and all of them are said out loud
+// rather than passed over: an installation with no budget backend has nowhere to
+// keep a node (the roles stay the local config's), a database this installation
 // never adopted is not a database this run writes (the gate the rules stage and
-// the policy stage hold, budgetDBUnadopted). Everything else is the run's own
+// the policy stage hold, budgetDBUnadopted), and a migration whose write the
+// caller's own IAM refuses (only the implicit admins hold the database write,
+// F22/D1592) leaves the node absent for a project Owner's next update rather
+// than stopping the one command the user runs. Everything else is the run's own
 // error: a node that cannot be read is not a node that grants nothing.
 func (e *initEngine) syncAccess(ctx context.Context) error {
 	lc := e.lc
@@ -61,7 +70,7 @@ func (e *initEngine) syncAccess(ctx context.Context) error {
 		// two lists stay the file's, which is the state every installation
 		// before this release is in. It is not silent — the run's result says
 		// so once (accessNoBackend) — because an operator who reads the grants
-		// with `fugaro user ls` and finds them the config's must know why.
+		// with `fugaro user ls` and finds the config's must know why.
 		e.r.warn(accessNoBackend)
 		return nil
 	}
@@ -80,10 +89,28 @@ func (e *initEngine) syncAccess(ctx context.Context) error {
 	if err != nil {
 		return remote(err)
 	}
-	if node.Found {
-		return e.deriveAccess(node)
+	if !node.Found {
+		if node, err = e.migrateAccess(ctx, db, node); err != nil {
+			return err
+		}
+		if !node.Found {
+			// Nothing was written: the lists hold no grant at all (a node of no
+			// grants IS no node, WriteIfMatch, and the cloud grants such an
+			// installation has are the legacy members'), or the write was
+			// refused with the reason already printed (accessNeedsAdmin). Either
+			// way there is nothing to derive from and the two lists stay the
+			// file's for this run, which is the state the installation was in
+			// before the step ran.
+			return nil
+		}
 	}
-	return e.migrateAccess(ctx, db, node)
+	if e.r.o.operatorsChanged || e.r.o.adminsChanged {
+		if node, err = e.foldFlagLists(ctx, db, node); err != nil {
+			return err
+		}
+	}
+	e.deriveAccess(node)
+	return nil
 }
 
 // accessNoBackend is the warning an installation without a budget backend gets:
@@ -91,8 +118,22 @@ func (e *initEngine) syncAccess(ctx context.Context) error {
 // the roles in.
 const accessNoBackend = "this installation has no Firebase budget backend, so it has no grants node: the operators and admins stay the local config's lists"
 
+// accessNeedsAdmin is the migration's own warning: the node is an IAM-protected
+// node (config/admin carries `.write: false`, so only a caller holding the
+// database write reaches it at all), and the account running this update is not
+// one of the installation's implicit admins.
+const accessNeedsAdmin = "this run could not write the grants node, which needs roles/firebasedatabase.admin — held by the project's owners, editors and budget admins: the operators and admins stay this machine's lists, and a project Owner runs fugaro update once to migrate them into the node"
+
+// accessFlagsNeedAdmin is the refusal a run's own --operator/--admin gets when
+// it cannot be landed: unlike the migration, this one is not a step the run may
+// carry on without. An operator who named a list asked for a change to a role,
+// and a change that cannot be written may not look applied.
+const accessFlagsNeedAdmin = "the grants node cannot be written with your credentials: writing it needs roles/firebasedatabase.admin, which the project's owners, editors and budget admins hold. A project Owner runs fugaro update on this installation, or adds you to terraform.budget_admins (fugaro update --budget-admin)"
+
 // migrateAccess writes the grants node for an installation that has none, from
-// the lists the INSTALLATION carries.
+// the lists the INSTALLATION carries, and returns the node as it now is. A node
+// that is not Found and holds no grants means nothing was written: the lists
+// hold no grant to hold, or the write was refused with the reason printed.
 //
 // The lists are read from the installation root's outputs (r.installationOutputs)
 // and not from the local config, and the difference is the whole point: the
@@ -107,16 +148,25 @@ const accessNoBackend = "this installation has no Firebase budget backend, so it
 // migrate: the run's own lists are the flags the operator typed, which the
 // installation stage applies and the config records, and the node is written by
 // the next converge, when the outputs hold them.
-func (e *initEngine) migrateAccess(ctx context.Context, db *rtdb.Client, node accesslib.Node) error {
+func (e *initEngine) migrateAccess(ctx context.Context, db *rtdb.Client, node accesslib.Node) (accesslib.Node, error) {
 	if e.firstRun() {
-		return e.seedAccess(ctx, db, node, e.spec.Launchers, e.spec.Operators)
+		return e.seedAccess(ctx, db, node, e.runList(accesslib.RoleOperator), e.runList(accesslib.RoleAdmin))
 	}
-	outs, err := e.r.installationOutputs(ctx, e.lc, e.bin, e.spec.StateBucket)
+	// The state bucket the outputs live in is the one this run applies to (the
+	// flag, the config's, else the default), resolved the way every other
+	// reader of those outputs resolves it rather than spelled again here: a run
+	// given --state-bucket must read the outputs of the installation it is
+	// about to apply, not of the one the file remembers.
+	spec, err := infra.Installation(e.lc, infra.InstallOptions{StateBucket: e.r.o.stateBucket})
 	if err != nil {
-		return err
+		return accesslib.Node{}, initErr(err)
+	}
+	outs, err := e.r.installationOutputs(ctx, e.lc, e.bin, spec.StateBucket)
+	if err != nil {
+		return accesslib.Node{}, err
 	}
 	if err := userFresh(e.lc, outs); err != nil {
-		return userErr("%v", err)
+		return accesslib.Node{}, userErr("%v", err)
 	}
 	return e.seedAccess(ctx, db, node, outs.Launchers, outs.Operators)
 }
@@ -124,13 +174,15 @@ func (e *initEngine) migrateAccess(ctx context.Context, db *rtdb.Client, node ac
 // seedAccess turns two IAM member lists into grants and writes them, printing
 // the roster it wrote so the migration is a thing the operator can see rather
 // than a silent rewrite of who may do what.
-func (e *initEngine) seedAccess(ctx context.Context, db *rtdb.Client, node accesslib.Node, operators, admins []string) error {
+func (e *initEngine) seedAccess(ctx context.Context, db *rtdb.Client, node accesslib.Node, operators, admins []string) (accesslib.Node, error) {
 	grants, err := migrationGrants(operators, admins)
 	if err != nil {
-		return userErr("%v", err)
+		return accesslib.Node{}, userErr("%v", err)
 	}
 	if len(grants) == 0 {
-		return nil // nothing to hold: an empty grants list is not a node (WriteIfMatch)
+		// Nothing to hold: an empty grants list is not a node (WriteIfMatch),
+		// and the installation's own forms are legacy members the lists carry.
+		return accesslib.Node{}, nil
 	}
 	err = accesslib.WriteIfMatch(ctx, db, grants, node.ETag)
 	switch {
@@ -141,25 +193,26 @@ func (e *initEngine) seedAccess(ctx context.Context, db *rtdb.Client, node acces
 		// list it read before that; re-read, and derive from what is there.
 		again, rerr := accesslib.Read(ctx, db)
 		if rerr != nil {
-			return remote(rerr)
+			return accesslib.Node{}, remote(rerr)
 		}
 		if !again.Found {
-			return userErr("the grants node was written and removed by another run while this one migrated it: run %s again", selfCommand()+" update")
+			return accesslib.Node{}, userErr("the grants node was written and removed by another run while this one migrated it: run %s again", selfCommand()+" update")
 		}
 		e.r.warn(accessNodeMoved)
-		return e.deriveAccess(again)
+		return again, nil
+	case errors.Is(err, rtdb.ErrPermission):
+		e.r.warn(accessNeedsAdmin)
+		return accesslib.Node{}, nil
 	case err != nil:
-		return remote(err)
+		return accesslib.Node{}, remote(err)
 	}
 	e.r.noteAccess(accessMigrated(grants))
-	// The migration is what retires the version-1 keys: the file this run
-	// writes at the end of its apply is version 2's shape (ConfigVersion), and
-	// a version-1 document is folded into it at parse. Nothing rewrites the
-	// file here — the write that lands the node is Terraform's apply, and the
-	// config follows it (/ the same run's own write) — so a run that stops
-	// between the two leaves the keys where they are and the node holding the
-	// roles, which is the state the next converge reads.
-	return e.deriveAccess(accesslib.Node{Found: true, Grants: grants, ETag: node.ETag})
+	// The ETag is the one this run read before writing, so the first writer
+	// after this point is answered by a re-read (foldFlagLists). It is left as
+	// it is rather than read back for the sake of one round trip: the node's
+	// content below is exactly what was written, and the ETag of a write this
+	// process made is a value nothing here judges with.
+	return accesslib.Node{Found: true, Grants: grants, ETag: node.ETag}, nil
 }
 
 // accessNodeMoved is what a run says when another writer got to the node first.
@@ -173,7 +226,7 @@ func accessMigrated(grants []accesslib.Grant) string {
 		lines = append(lines, fmt.Sprintf("%s (%s)", g.User, g.Role))
 	}
 	slices.Sort(lines)
-	return fmt.Sprintf("migrated the installation's member lists into the grants node: %s; the local config's terraform.launchers and terraform.operators are now derived from it",
+	return fmt.Sprintf("migrated the installation's member lists into the grants node: %s; the local config's terraform.operators and terraform.admins are now derived from it",
 		strings.Join(lines, ", "))
 }
 
@@ -185,6 +238,76 @@ func (r *initRun) noteAccess(msg string) {
 	fmt.Fprintf(r.w, "%s%s\n", r.o.programPrefix(), msg)
 }
 
+// foldFlagLists lands this run's own --operator/--admin in the node.
+//
+// It is what keeps the two flags a door: the derive that follows reads the node,
+// so a list changed only on the command line would be applied once and reverted
+// by the next converge — a grant that disappears a run later is worse than one
+// that is refused. Naming a list is therefore a change to the role, written
+// where the roles live.
+//
+// The write is conditional on the ETag the node was read with (F23) and a
+// mismatch re-reads and folds again, because two operators naming lists at once
+// must not each land the other's picture; two rounds are enough for any single
+// writer's contention and a third is refused rather than retried forever. Only
+// the `user:` members become grants — a `group:`, `domain:` or
+// `serviceAccount:` member named on a flag is a legacy IAM-only member and
+// stays in the list the derive builds (F25).
+func (e *initEngine) foldFlagLists(ctx context.Context, db *rtdb.Client, node accesslib.Node) (accesslib.Node, error) {
+	for range 3 {
+		grants := node.Grants
+		var err error
+		if e.r.o.operatorsChanged {
+			if grants, err = foldProjectGrants(grants, accesslib.RoleOperator, e.r.o.operators, "the --operator list"); err != nil {
+				return accesslib.Node{}, userErr("%v", err)
+			}
+		}
+		if e.r.o.adminsChanged {
+			if grants, err = foldProjectGrants(grants, accesslib.RoleAdmin, e.r.o.admins, "the --admin list"); err != nil {
+				return accesslib.Node{}, userErr("%v", err)
+			}
+		}
+		if sameGrants(grants, node.Grants) {
+			return node, nil
+		}
+		err = accesslib.WriteIfMatch(ctx, db, grants, node.ETag)
+		switch {
+		case err == nil:
+			return accesslib.Node{Found: true, Grants: grants, ETag: node.ETag}, nil
+		case errors.Is(err, rtdb.ErrPrecondition):
+			again, rerr := accesslib.Read(ctx, db)
+			if rerr != nil {
+				return accesslib.Node{}, remote(rerr)
+			}
+			node = again
+		case errors.Is(err, rtdb.ErrPermission):
+			return accesslib.Node{}, userErr("%s", accessFlagsNeedAdmin)
+		default:
+			return accesslib.Node{}, remote(err)
+		}
+	}
+	return accesslib.Node{}, userErr("the grants node was written by another run every time this one tried to land its --operator/--admin list: run %s again", selfCommand()+" update")
+}
+
+// foldProjectGrants is the node's grants with the project-scope grants of ONE
+// role replaced by the members a list names, and nothing else touched: every
+// other grant — the other role's, every non-project scope — keeps its place, so
+// a run that names one list cannot drop a scoped pair another run made.
+func foldProjectGrants(grants []accesslib.Grant, role accesslib.Role, members []string, what string) ([]accesslib.Grant, error) {
+	out := make([]accesslib.Grant, 0, len(grants)+len(members))
+	for _, g := range grants {
+		if g.Scope.Kind == accesslib.ScopeProject && g.Role == role {
+			continue
+		}
+		out = append(out, g)
+	}
+	added, err := projectGrants(members, role, what)
+	if err != nil {
+		return nil, err
+	}
+	return highestProject(append(out, added...)), nil
+}
+
 // migrationGrants is the grants a pair of IAM member lists becomes: every
 // `user:` member of the first is an operator at project scope, every `user:`
 // member of the second an admin at project scope.
@@ -193,48 +316,84 @@ func (r *initRun) noteAccess(msg string) {
 // serviceAccount: are IAM members a grant cannot hold, because the CLI cannot
 // read a caller's groups — and deriveAccess carries each one forward into the
 // list it came from, so the cloud grant it has is not touched by the migration.
-// Deduplicated: a person on both lists is one admin grant, which is the role
-// the node expresses (the roles rank, and admin outranks operator).
 func migrationGrants(operators, admins []string) ([]accesslib.Grant, error) {
-	byUser := map[string]accesslib.Role{}
-	order := []string{}
-	add := func(list, member string, role accesslib.Role) error {
-		user, err := accesslib.Member(strings.TrimPrefix(member, "user:"))
+	o, err := projectGrants(operators, accesslib.RoleOperator, "the installation's launcher list")
+	if err != nil {
+		return nil, err
+	}
+	a, err := projectGrants(admins, accesslib.RoleAdmin, "the installation's operator list")
+	if err != nil {
+		return nil, err
+	}
+	return highestProject(append(o, a...)), nil
+}
+
+// projectGrants is one list of IAM members as project-scope grants: every
+// `user:` member becomes one, the rest are left out, and a `user:` member that
+// is not one address is refused naming the list it came from rather than
+// dropped — a node written from part of a roster would grant less than the
+// installation does, which is a revocation nobody asked for. Both callers pass
+// a list they did not write themselves (Terraform's outputs, or a command line),
+// so neither has been through localcfg's own member rule.
+func projectGrants(members []string, role accesslib.Role, what string) ([]accesslib.Grant, error) {
+	out := make([]accesslib.Grant, 0, len(members))
+	for _, m := range members {
+		if !isUserMember(m) {
+			continue
+		}
+		user, err := accesslib.Member(strings.TrimPrefix(m, "user:"))
 		if err != nil {
-			return fmt.Errorf("%s holds %q, which is not a user IAM member: %w", list, member, err)
+			return nil, fmt.Errorf("%s holds %q, which is not a user IAM member: %w", what, m, err)
 		}
-		if prev, ok := byUser[user]; ok {
-			if role.Rank() > prev.Rank() {
-				byUser[user] = role
-			}
-			return nil
-		}
-		byUser[user] = role
-		order = append(order, user)
-		return nil
+		out = append(out, accesslib.Grant{User: user, Role: role, Scope: accesslib.Scope{Kind: accesslib.ScopeProject}})
 	}
-	for _, m := range operators {
-		if !isUserMember(m) {
+	return out, nil
+}
+
+// highestProject collapses the project-scope grants to one per person, the
+// highest role, and lists them after the other grants in the order every list
+// of them is kept in. A person named on both lists is one grant, which is the
+// role the node expresses (the roles rank, and an admin grant subsumes an
+// operator one); the order is not a meaning but the plan is, and a roster that
+// comes back in another order is a diff the operator reads for nothing.
+func highestProject(grants []accesslib.Grant) []accesslib.Grant {
+	byUser := map[string]accesslib.Role{}
+	out := make([]accesslib.Grant, 0, len(grants))
+	for _, g := range grants {
+		if g.Scope.Kind != accesslib.ScopeProject {
+			out = append(out, g)
 			continue
 		}
-		if err := add("the installation's launcher list", m, accesslib.RoleOperator); err != nil {
-			return nil, err
-		}
-	}
-	for _, m := range admins {
-		if !isUserMember(m) {
+		if prev, ok := byUser[g.User]; ok && prev.Rank() >= g.Role.Rank() {
 			continue
 		}
-		if err := add("the installation's operator list", m, accesslib.RoleAdmin); err != nil {
-			return nil, err
-		}
+		byUser[g.User] = g.Role
 	}
-	slices.Sort(order)
-	grants := make([]accesslib.Grant, 0, len(order))
-	for _, user := range order {
-		grants = append(grants, accesslib.Grant{User: user, Role: byUser[user], Scope: accesslib.Scope{Kind: accesslib.ScopeProject}})
+	users := make([]string, 0, len(byUser))
+	for u := range byUser {
+		users = append(users, u)
 	}
-	return grants, nil
+	slices.Sort(users)
+	for _, u := range users {
+		out = append(out, accesslib.Grant{User: u, Role: byUser[u], Scope: accesslib.Scope{Kind: accesslib.ScopeProject}})
+	}
+	return out
+}
+
+// sameGrants reports whether two grant lists are the same set, order aside: it
+// is what keeps a run that names the members the node already holds from
+// writing it again, which is the common case for a flag repeated across runs.
+func sameGrants(a, b []accesslib.Grant) bool {
+	return slices.Equal(grantKeys(a), grantKeys(b))
+}
+
+func grantKeys(grants []accesslib.Grant) []string {
+	out := make([]string, 0, len(grants))
+	for _, g := range grants {
+		out = append(out, g.User+"\x00"+string(g.Role)+"\x00"+g.Scope.String())
+	}
+	slices.Sort(out)
+	return out
 }
 
 // deriveAccess reads the two IAM lists off the node and hands them to the run.
@@ -244,15 +403,26 @@ func migrationGrants(operators, admins []string) ([]accesslib.Grant, error) {
 // the spec's lists). So the file ends the run holding what the node says —
 // D1585's "the local lists become derived" — and a file that says otherwise
 // (a hand edit, a machine that has not converged) is corrected rather than
-// obeyed.
+// obeyed. It is taken from the node as it stands at this point in the run,
+// after the migration and after the run's own flags landed, and never from a
+// list read earlier: a member revoked between two runs is gone from the apply
+// for exactly that reason (F29a).
 //
 // The legacy members are the ones carried forward: a `group:` or `domain:`
 // member is in no grant and would otherwise fall out of the installation on the
 // first apply after the migration, which is a revocation nobody asked for
-// (F25). They are read off the lists this run started with and kept in the list
-// they came from.
-func (e *initEngine) deriveAccess(node accesslib.Node) error {
-	operators, admins := legacyMembers(e.spec.Launchers), legacyMembers(e.spec.Operators)
+// (F25). They are read off the list THIS RUN would apply — the flag that names
+// it, else the local config's — and kept in the list they came from.
+//
+// A machine's list that names a `user:` member the node does not is the one
+// case worth a sentence (accessDropped): the derive is what makes the file
+// follow the installation, so a member written into the file by hand — the one
+// door RS3 leaves writing those keys, `fugaro user add`, which RS5 moves onto
+// the node — would otherwise lose the role in this run's plan with nothing said.
+func (e *initEngine) deriveAccess(node accesslib.Node) {
+	ranOperators, ranAdmins := e.runList(accesslib.RoleOperator), e.runList(accesslib.RoleAdmin)
+	operators := legacyMembers(ranOperators)
+	admins := legacyMembers(ranAdmins)
 	for _, g := range node.Grants {
 		if g.Scope.Kind != accesslib.ScopeProject || !g.Role.Valid() {
 			continue
@@ -269,7 +439,55 @@ func (e *initEngine) deriveAccess(node accesslib.Node) error {
 	e.spec.Operators = sortedMembers(admins)
 	e.lc.Terraform.Operators = slices.Clone(e.spec.Launchers)
 	e.lc.Terraform.Admins = slices.Clone(e.spec.Operators)
-	return nil
+	for _, l := range []struct {
+		role string
+		ran  []string
+		now  []string
+	}{
+		{"operator", ranOperators, e.spec.Launchers},
+		{"admin", ranAdmins, e.spec.Operators},
+	} {
+		if gone := droppedUsers(l.ran, l.now); len(gone) > 0 {
+			e.r.warn(fmt.Sprintf(accessDropped, safetext.FieldListLine(gone), l.role))
+		}
+	}
+}
+
+// accessDropped is the warning a converge prints when a machine's own list
+// named a person the grants node does not: this run applies the node, so that
+// person loses the role. The door named is the whole-list one, which writes the
+// node (foldFlagLists), and it is named rather than left to be found because
+// the other door on those keys — fugaro user add and rm — writes this machine's
+// file alone, and a change written there is exactly what this sentence is about.
+const accessDropped = "this machine's list holds %s as %s, which the installation's grants node does not: the node is what an installation's roles are, so this run applies its members and those lose the role. A change to a role is written to the node by naming the whole list (fugaro update --operator, --admin)"
+
+// droppedUsers is the `user:` members of ran that now does not hold.
+func droppedUsers(ran, now []string) []string {
+	var gone []string
+	for _, m := range ran {
+		if isUserMember(m) && !slices.Contains(now, m) {
+			gone = append(gone, m)
+		}
+	}
+	return sortedMembers(gone)
+}
+
+// runList is one of the installation's two IAM lists as THIS run has it: the
+// flag that names it, else the local config's — which a first run's default, and
+// a new machine's copy of the installation's outputs, have already written. It
+// is the list installOptions hands the installation's own apply (init.go), read
+// here rather than spelled again so the two cannot choose differently.
+func (e *initEngine) runList(role accesslib.Role) []string {
+	if role == accesslib.RoleAdmin {
+		if e.r.o.adminsChanged {
+			return e.r.o.admins
+		}
+		return e.lc.Terraform.Admins
+	}
+	if e.r.o.operatorsChanged {
+		return e.r.o.operators
+	}
+	return e.lc.Terraform.Operators
 }
 
 // isUserMember reports whether an IAM member names a person the CLI can rank:

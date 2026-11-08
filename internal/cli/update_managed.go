@@ -231,7 +231,7 @@ func (e *initEngine) managedStage(name string) bool {
 //
 // Such a run is refused the gate and keeps today's coding-agent refusal, whole
 // and unmoved, and the reason is the same one §3.2 gives for the flags
-// themselves. --launcher, --operator and --budget-admin are the members the
+// themselves. --operator, --admin and --budget-admin are the members the
 // run's own review lists (accessLists reads them from this run's options into
 // the cover's Listed), so a gate asked with one of them would be judging a
 // plan against the list that argument just wrote: a plan granting that member

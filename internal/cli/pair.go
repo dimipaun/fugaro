@@ -799,7 +799,7 @@ func pairTimeoutRefusal(timeout time.Duration) string {
 // --role, and no device is admin until the roles design places an admin.
 func pairInheritedRole(lc *localcfg.Config, me string) (mobileauth.Role, bool) {
 	member := meMember(me)
-	if operatorMember(member, lc.Terraform.Admins) || launcherMember(member, lc.Terraform.Operators) {
+	if adminMember(member, lc.Terraform.Admins) || operatorMember(member, lc.Terraform.Operators) {
 		return mobileauth.RoleOperator, true
 	}
 	return mobileauth.RoleNone, false

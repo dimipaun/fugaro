@@ -44,9 +44,9 @@ confirmation. --plan-only never takes --yes: what the plan needs made first
 the run stops and says so. A plan that would delete or replace anything is
 refused unless --allow-delete names the address.
 
-A new project config grants the launcher and operator roles to you, the
+A new project config grants the operator and admin roles to you, the
 authenticated user (user:<your email> from the Application Default
-Credentials), so that fugaro run works; --launcher or --operator replaces that,
+Credentials), so that fugaro run works; --operator or --admin replaces that,
 an existing config is never changed by it, and with a service
 account's credentials it stops and names the two flags.
 
