@@ -58,10 +58,9 @@ const CI_FILE = '.github/workflows/ci.yml'
  * would take whichever came first.
  *
  * Since the owner's ruling of 2026-11-07 every workflow that ran on push is dispatched by
- * hand, so `ci.yml` names no branch at all; the links then carry `HEAD`, git's own name for
- * the repository's default branch, which GitHub resolves when a reader clicks (W1.7's
- * answer, `docs.astro`). No branch name is typed here, and a workflow that names one again
- * moves every link back with it.
+ * hand, so `ci.yml` names no branch at all; the links then carry `main`, the repository's
+ * default branch, which is the branch the site's other repository links name. A workflow
+ * that names one again moves every link back with it.
  */
 function baseBranch(): string {
   const lines = readFileSync(path.join(REPO_ROOT, CI_FILE), 'utf8').split('\n')
@@ -93,7 +92,7 @@ function baseBranch(): string {
       }
     }
   }
-  return branch === '' ? 'HEAD' : branch
+  return branch === '' ? 'main' : branch
 }
 
 const branch = baseBranch()

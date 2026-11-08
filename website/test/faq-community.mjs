@@ -159,13 +159,12 @@ function readCITriggers(file) {
 const ciTriggers = (file = path.join(REPO, CI_FILE)) => readCITriggers(file)
 
 /**
- * The branch the site's links carry: the one `ci.yml`'s `push:` trigger names, or `HEAD`
+ * The branch the site's links carry: the one `ci.yml`'s `push:` trigger names, or `main`
  * when it names none. Since the owner's ruling of 2026-11-07 every workflow that ran on
- * push is dispatched by hand, and `HEAD` is git's own name for the repository's default
- * branch, which GitHub resolves when a reader clicks — so the site writes down no branch
- * name of its own (W1.7, `docs.astro`).
+ * push is dispatched by hand, so the workflow names no branch — and `main`, the repository's
+ * default branch, is the branch the site's other repository links name.
  */
-const linkedBranch = (ci = ciTriggers()) => ci.branches[0] ?? 'HEAD'
+const linkedBranch = (ci = ciTriggers()) => ci.branches[0] ?? 'main'
 
 // ---- reading a built page --------------------------------------------------------------
 
@@ -230,7 +229,7 @@ function element(html, id) {
  * An attribute of a fragment of markup, which is how the page's own facts are read. An
  * attribute the page writes with no value reads as the empty string — `data-push-branches`
  * is one while `ci.yml`'s `push:` trigger names no branch — because that is the fact it
- * carries: the workflow names no branch, and the site's links carry `HEAD` instead.
+ * carries: the workflow names no branch, and the site's links carry the default branch.
  */
 function attribute(markup, name) {
   const m = new RegExp(`${name}(?:="([^"]*)")?(?=[\\s/>])`).exec(markup)
@@ -533,7 +532,7 @@ test("the community page links the repository's own community files, and each on
 
   for (const [, kind, branch, file] of links) {
     assert.equal(kind, 'blob', `the community page links ${file} as a ${kind}: every one of these is a file a reader opens`)
-    assert.equal(branch, linkedBranch(ci), `the community page links ${file} at branch ${branch}, and the site links at ${linkedBranch(ci)} — the branch ${CI_FILE} pushes to, or HEAD when it names none`)
+    assert.equal(branch, linkedBranch(ci), `the community page links ${file} at branch ${branch}, and the site links at ${linkedBranch(ci)} — the branch ${CI_FILE} pushes to, or the default branch when it names none`)
     assert.ok(existsSync(path.join(REPO, file)), `the community page links ${file}, which this repository does not have`)
   }
 
@@ -960,7 +959,7 @@ test('the FAQ follows ci.yml when the branch it pushes to changes', async (t) =>
   // The FAQ reads its branch from the workflow file rather than typing it, and this is the
   // case that holds the two together: give the workflow a push trigger naming another branch
   // in a copy and every source link has to point at that branch instead. A page that carried
-  // `HEAD` as a string — which is what it links while ci.yml names no branch at all, since
+  // `main` as a string — which is what it links while ci.yml names no branch at all, since
   // the owner's ruling of 2026-11-07 — would keep pointing at it, which is the drift the
   // reader exists to prevent.
   const built = buildWith(

@@ -19,9 +19,8 @@
  *     the branch the links point at is the one `ci.yml` pushes to — so a link cannot point
  *     at a branch the project has stopped building on. Since the owner's ruling of 2026-11-07
  *     the workflow is dispatched by hand and its `on:` block names no branch; the links then
- *     carry `HEAD`, git's own name for the repository's default branch, rather than a branch
- *     name typed here that could move without this page noticing (the same answer
- *     `docs.astro` gives, W1.7).
+ *     carry `main`, the repository's default branch, which is the branch the site's other
+ *     repository links already name (`security.astro`, the Subscription Terms).
  *   - **The issue templates.** The directory is read, so a template that is added or removed
  *     changes this page with it, and each entry's name and description come from the template
  *     file itself.
@@ -112,13 +111,12 @@ const ci = readTriggers(CI_FILE)
 /**
  * The branch the page's links point at: the branch CI builds on, which is the branch its
  * `push:` trigger names. `ci.yml` names none today — every workflow that ran on push is
- * dispatched by hand (the owner's ruling of 2026-11-07) — and the page then links `HEAD`,
- * git's own name for the repository's default branch, which GitHub resolves when a reader
- * clicks. The page therefore carries no copy of a branch name that could move without it
- * noticing, and a workflow that names a branch again moves every link back with it.
+ * dispatched by hand (the owner's ruling of 2026-11-07) — and the page then links `main`,
+ * the repository's default branch, which is what the site's other repository links name.
+ * A workflow that names a branch again moves every link back with it.
  */
 function baseBranch(): string {
-  return ci.branches[0] ?? 'HEAD'
+  return ci.branches[0] ?? 'main'
 }
 
 const branch = baseBranch()
