@@ -443,9 +443,10 @@ func sealDevNote(spec *task.Spec, clone bool) string {
 // reads when a job asks it for the token — and this gate reads it through the
 // launch's own memoized read, beside the allow-list's. What it asks of the node
 // is what internal/infra's resolveBitbucketProxied asks of it for a repository
-// root: the installation has opted in (its credentials_service block, which is
-// what puts the address on the repository's job) and the node admits this
-// repository with proxy: true. The operator's local project_secrets entry is
+// root: this installation carries the service (its credentials_service block —
+// the address `fugaro update` writes wherever it deploys one, and the one fact
+// that puts it on a repository's job) and the node admits this repository with
+// proxy: true. The operator's local project_secrets entry is
 // deliberately not a second input: an entry that disagrees with the node is
 // refused by `fugaro update --repo`, and answering the same question twice on
 // the launch path is what G15 forbids.
@@ -458,8 +459,9 @@ func sealDevNote(spec *task.Spec, clone bool) string {
 // to keep a run out of.
 //
 // A launch that is not proxied is judged by every gate it always was and
-// nothing about it changes (G9): no service opt-in, no node, no block, or a
-// repository the block does not admit all answer "not proxied" here. The run's
+// nothing about it changes (G9): an installation that carries no service, no
+// node, no block, or a repository the block does not admit all answer "not
+// proxied" here. The run's
 // own bootstrap decides the same fact from the same documents and refuses an
 // identity it cannot work with (startProxiedGit), so a launch whose image this
 // gate could not judge — one built from a base with no release tag — fails
@@ -480,8 +482,9 @@ func (e *cloudEnv) proxyGate(ctx context.Context, slug string, spec *task.Spec, 
 }
 
 // proxiedRepo is whether the run this launch starts is a proxied one: the
-// installation has opted in to the credentials service, the repository is a
-// Bitbucket one, and the published node admits it with proxy: true. The kind is
+// installation's local config carries the credentials service, the repository
+// is a Bitbucket one, and the published node admits it with proxy: true. The
+// kind is
 // derived from the pair the run itself trusts (the slug it is stored under and
 // the repository the task names), never from the local config's own provider,
 // as launchPolicyGates does for the allow-list.
