@@ -438,6 +438,16 @@ func (s *Server) auditedCall(w http.ResponseWriter, r *http.Request, id json.Raw
 // own logger, so a store that stopped taking entries is visible rather than
 // quietly missing from a view an operator trusts. The line is the one that
 // fails closed, and it is the caller's to report.
+// auditEntryGrace bounds the record write this door owes after the caller's own
+// request has ended (auditCall). It is a grace and not the request's own bound,
+// which is why it is a value of its own rather than the context's: the write is
+// made on the caller's values without its cancellation, and a caller that is
+// gone must not be the reason a later read of the record finds a hole in it —
+// nor the reason this door holds a finished request open for ever. It is the
+// order ee/coordinator/sweep.go's finalWriteGrace is of, because it is the same
+// shape: bookkeeping about work the caller will never see the answer to.
+const auditEntryGrace = 30 * time.Second
+
 func (s *Server) auditCall(ctx context.Context, auth authorized, tool, outcome, reason string) error {
 	ev := AuditEvent{Identity: auth.identity, Tool: tool, Scopes: auth.scopes, Outcome: outcome, Reason: reason}
 	a := s.audit
@@ -456,7 +466,18 @@ func (s *Server) auditCall(ctx context.Context, auth authorized, tool, outcome, 
 		Outcome:  outcome,
 		Reason:   reason,
 	}
-	if err := s.store.AppendAudit(ctx, auth.identity, entry); err != nil {
+	// The entry is owed to the record after the caller's own request has ended:
+	// a client that disconnects as the tool answers cancels the request's
+	// context, which is the moment this write runs, and a write that stopped
+	// there would leave an operator's next read a hole the record does not
+	// mention. So it runs on the caller's values without its cancellation and
+	// under a bound of its own. The line above stays on the caller's context:
+	// it is this door's own copy of the event, it is written to a sink the
+	// caller cannot cancel, and it is the one whose failure the caller is told
+	// about (auditedCall).
+	actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), auditEntryGrace)
+	defer cancel()
+	if err := s.store.AppendAudit(actx, auth.identity, entry); err != nil {
 		s.logComplaint("the MCP endpoint could not write an audit record entry", err)
 	}
 	return nil

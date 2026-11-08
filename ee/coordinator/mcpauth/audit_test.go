@@ -127,6 +127,47 @@ func TestTheLoggingLineIsTheDurableCopy(t *testing.T) {
 	}
 }
 
+// TestACallWhoseCallerLeftStillLeavesItsEntry is the disconnect this door
+// cannot see coming: an HTTP request's context is cancelled the moment the
+// client closes the connection, so a client that walks away as the tool answers
+// hands the record write a context that is already cancelled. The call happened
+// and the line says so (the amendment of 2026-11-04), so what the door owes the
+// record is the entry too — a record that skipped it reads as a whole history of
+// that person with a hole in it, which is the one answer an operator acts on
+// wrongly, and the caller that left is not the person who pays for it. The line
+// stays on the caller's context, so this holds both halves: a cancelled caller
+// is not the reason a line goes missing either.
+func TestACallWhoseCallerLeftStillLeavesItsEntry(t *testing.T) {
+	var audit bytes.Buffer
+	ts := newResourceServer(t, auditTo(t, &audit))
+	auth := authorized{identity: testIdentity, clientID: "client-1", familyID: "family-1", scopes: []string{ScopeTasksRead}}
+
+	// Cancelled and not merely expired: nothing about this call can be written
+	// on this context.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := ts.auditCall(ctx, auth, "get_task_status", OutcomeOK, ""); err != nil {
+		t.Fatalf("a call whose caller had left is answered %v; want the line written and the entry still owed", err)
+	}
+	if lines := auditLines(t, &audit); len(lines) != 1 {
+		t.Errorf("the audit log holds %d lines for a call whose caller left; want the line, which is the durable copy", len(lines))
+	}
+	rec, err := ts.store.Store.GetAudit(context.Background(), testIdentity)
+	if err != nil {
+		t.Fatalf("reading the record of a call whose caller left: %v", err)
+	}
+	if len(rec.Entries) != 1 {
+		t.Fatalf("the record holds %d entries after a call whose caller left; want the entry, because the call happened and the record is where an operator reads what happened", len(rec.Entries))
+	}
+	if rec.Entries[0].Tool != "get_task_status" || rec.Entries[0].FamilyID != auth.familyID {
+		t.Errorf("the entry is %+v; want the call that was made and the family it came from", rec.Entries[0])
+	}
+	if rec.Incomplete {
+		t.Error("the record says it is short after every entry it was given was written: a record that cried wolf would send an operator to the log for nothing")
+	}
+}
+
 // TestAnActThisDoorCannotAuditIsNotAnswered is credsvc's D143 held at this door:
 // a call whose audit line could not be written is not answered with the tool's
 // answer, and the fault is not silent. The handler below is one a level filter

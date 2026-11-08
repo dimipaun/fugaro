@@ -129,7 +129,8 @@ type AuditRecord struct {
 	// field is reading this tool wrong.
 	Entries []AuditEntry `json:"entries"`
 	// Incomplete is true when this record is known to be short: a call the door
-	// audited and could not place here (AppendAudit's own bound). It is the one
+	// audited and could not place here — the retry's own bound reached, or a
+	// store that would not read the record or take the write (AppendAudit). It is the one
 	// difference between a record that lost an entry and a record of a person
 	// who has called this many times, which is why it is answered beside the
 	// entries rather than inside them — a reader that has to tell the two apart
@@ -181,11 +182,29 @@ func auditKey(identity string) (string, error) {
 // (auditCall answers the call anyway, which the amendment of 2026-11-04
 // decides), so the one thing this method owes the reader who comes next is that
 // the record does not go on looking whole: the loss is marked beside it.
+//
+// **Every way out of here is that loss, and the mark is the defer's rather than
+// one return's.** The entry is placed by the write at the end of a round and by
+// nothing else, so a round whose read answered a fault, a record that would not
+// encode and a store that would not take the write lose the entry exactly as
+// the exhausted retry does — and those are the paths a reader of this method
+// would not think to look for one, which is the case the bounded retry first
+// walked into (the fourth call of a client running four tools at once). The
+// marker is one object per identity, so a report made twice is one marker.
 func (r records) AppendAudit(ctx context.Context, identity string, entry AuditEntry) error {
 	key, err := auditKey(identity)
 	if err != nil {
+		// The identity names no record this store could hold, so there is no
+		// key to mark: what went wrong is the caller's argument and not a lost
+		// entry (the tools check it before they get here for the same reason).
 		return err
 	}
+	placed := false
+	defer func() {
+		if !placed {
+			r.markAuditGap(ctx, key)
+		}
+	}()
 	for attempt := 0; attempt < auditAttempts; attempt++ {
 		rec, gen, err := r.readAudit(ctx, key)
 		if err != nil {
@@ -207,6 +226,7 @@ func (r records) AppendAudit(ctx context.Context, identity string, entry AuditEn
 				}
 				return err
 			}
+			placed = true
 			return nil
 		}
 		if _, err := r.objs.replace(ctx, key, data, gen); err != nil {
@@ -215,9 +235,9 @@ func (r records) AppendAudit(ctx context.Context, identity string, entry AuditEn
 			}
 			return err
 		}
+		placed = true
 		return nil
 	}
-	r.markAuditGap(ctx, key)
 	return fmt.Errorf("mcpauth: the audit record changed under every write of it: %w", ErrConflict)
 }
 

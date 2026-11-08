@@ -310,6 +310,111 @@ func TestARecordThatCouldNotTakeAnEntrySaysSo(t *testing.T) {
 	}
 }
 
+// faultyAuditObjects is one store's view of a bucket that answers one operation
+// on the record's own key with a fault that is not a lost race: the entry
+// cannot be placed, errChanged is not what came back, so the retry does not
+// apply and AppendAudit returns the fault. The marker beside the record is a
+// different key and is answered as usual, which is what lets the test read
+// whether the loss was reported.
+type faultyAuditObjects struct {
+	objects
+	at      string
+	onRead  error
+	onWrite error
+}
+
+func (o faultyAuditObjects) read(ctx context.Context, key string) ([]byte, int64, error) {
+	if o.onRead != nil && key == o.at {
+		return nil, 0, o.onRead
+	}
+	return o.objects.read(ctx, key)
+}
+
+func (o faultyAuditObjects) create(ctx context.Context, key string, data []byte) (int64, error) {
+	if o.onWrite != nil && key == o.at {
+		return 0, o.onWrite
+	}
+	return o.objects.create(ctx, key, data)
+}
+
+func (o faultyAuditObjects) replace(ctx context.Context, key string, data []byte, gen int64) (int64, error) {
+	if o.onWrite != nil && key == o.at {
+		return 0, o.onWrite
+	}
+	return o.objects.replace(ctx, key, data, gen)
+}
+
+// TestAnEntryLostToAStoreFaultIsMarked is the round above read from the paths
+// that are not the retry's: a store that would not read the record, one that
+// would not create it and one that would not replace it all lose the entry the
+// same way the exhausted bound does, and the reader cannot tell them apart from
+// a person who has called that many times — which is the whole reason the mark
+// exists (the fourth call of a client running four tools at once was the first
+// case of it). What the door does with the fault is auditCall's: it is logged
+// and the call is answered.
+func TestAnEntryLostToAStoreFaultIsMarked(t *testing.T) {
+	ctx := context.Background()
+	errDown := errors.New("the installation's bucket is not answering")
+	for _, tc := range []struct {
+		what string
+		// seeded is whether the record already exists, which is what makes the
+		// write a replace rather than a create.
+		seeded bool
+		// faultRead is which half of the read-modify-write the store faults on.
+		faultRead bool
+	}{
+		{what: "the record cannot be read", faultRead: true},
+		{what: "the record cannot be created"},
+		{what: "the record cannot be replaced", seeded: true},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			b := newFakeBucket(t)
+			key, err := auditKey(testIdentity)
+			if err != nil {
+				t.Fatalf("the key of %s's record: %v", testIdentity, err)
+			}
+			if tc.seeded {
+				if err := newBucketStore(b).AppendAudit(ctx, testIdentity, AuditEntry{Tool: "list_tasks", Outcome: OutcomeOK}); err != nil {
+					t.Fatalf("seeding the record: %v", err)
+				}
+			}
+			faulty := faultyAuditObjects{objects: bucketObjects{b: b}, at: key}
+			if tc.faultRead {
+				faulty.onRead = errDown
+			} else {
+				faulty.onWrite = errDown
+			}
+
+			err = newRecords(faulty).AppendAudit(ctx, testIdentity, AuditEntry{Tool: "get_task_status", Outcome: OutcomeOK})
+			if err == nil {
+				t.Fatal("an entry a store would not take was answered as written: the door's own complaint (auditCall) is the only report of it")
+			}
+			if !errors.Is(err, errDown) {
+				t.Fatalf("the fault is answered %v; want the store's own error, which this layer does not swallow", err)
+			}
+
+			// The mark is what the reader who comes next has, and it is read off
+			// the bucket: for the row where the record itself could not be read,
+			// GetAudit is under the same fault.
+			if _, _, err := (bucketObjects{b: b}).read(ctx, key+auditGapSuffix); err != nil {
+				t.Fatalf("nothing marks the record an entry was lost from (%v): a record that reads as a whole history of that person while missing one of their calls is the answer an operator acts on wrongly", err)
+			}
+			// And the record the tool answers says so, wherever the store lets
+			// it be read at all.
+			if tc.faultRead {
+				return
+			}
+			rec, err := newBucketStore(b).GetAudit(ctx, testIdentity)
+			if err != nil {
+				t.Fatalf("reading the record after the loss: %v", err)
+			}
+			if !rec.Incomplete {
+				t.Error("a record an entry was lost from reads as a whole history of that person")
+			}
+		})
+	}
+}
+
 // TestOperatorSeesTheRecordAndALauncherDoesNot is D933's split held at the
 // tool: an operator reads one person's record, a launcher is refused, and the
 // refusal is itself recorded — a call that reached a tool is an event whatever
