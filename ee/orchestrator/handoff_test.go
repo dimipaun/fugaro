@@ -84,6 +84,39 @@ func TestHandoffNeedsOwnerOrAdmin(t *testing.T) {
 	}
 }
 
+// TestHandoffNamesAnAgentAndWhoAskedForIt is Transfer's other two refusals, the
+// ones that are not about the role at all: a request that names no agent, or
+// nobody who asked for it, is refused even for an admin. Neither is a move — a
+// handoff of no agent moves nothing, and one recorded against an empty member
+// is one nobody could be held to — so both answer the refusal and nothing else,
+// and neither is reached through the role check's ranks.
+func TestHandoffNamesAnAgentAndWhoAskedForIt(t *testing.T) {
+	moved := orchestrator.Owner{Member: handoffTaker}
+	for _, tc := range []struct {
+		name string
+		h    orchestrator.Handoff
+	}{
+		{"no agent", orchestrator.Handoff{To: moved, By: handoffAdmin, Role: access.RoleAdmin}},
+		{"an agent with no id", orchestrator.Handoff{
+			Agent: orchestrator.Agent{Owner: orchestrator.Owner{Member: handoffHolder}},
+			To:    moved, By: handoffAdmin, Role: access.RoleAdmin,
+		}},
+		{"nobody who asked for it", orchestrator.Handoff{
+			Agent: heldAgent(), To: moved, Role: access.RoleAdmin,
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := eeorch.Transfer(tc.h)
+			if !errors.Is(err, eeorch.ErrHandoffRefused) {
+				t.Fatalf("Transfer answered a request with %s with %v, want a refusal: a handoff names the agent it moves and the person who asked for it", tc.name, err)
+			}
+			if got != (orchestrator.Agent{}) {
+				t.Errorf("a refused handoff answered the agent %+v, want nothing", got)
+			}
+		})
+	}
+}
+
 // TestAgentOwnedByTheProjectHasNoPersonIdentity is the spec's other half: an
 // agent can belong to the project rather than to a person, and then nobody's
 // identity is behind it. The zero Owner is the project's, so an agent built
