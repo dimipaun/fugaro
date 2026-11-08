@@ -19,14 +19,17 @@ import (
 // Each test drives its script against fake tools on PATH -- a fake `claude`
 // and a fake upstream for Check 90, fake `gcloud`, `fugaro` and `curl` for
 // Check 91, fake `gcloud`, `git`, `curl` and `fugaro` for Check 190, fake
-// `gcloud` and `fugaro` for Checks 111 and 146, and a fake `gcloud` that
+// `gcloud` and `fugaro` for Checks 111, 146 and 401, and a fake `gcloud` that
 // evaluates the conditions of Check 340's own IAM bindings for Check 340 --
 // or, for Check 145, against a fake Bitbucket Cloud on a loopback port, so no
 // network, no cloud project and no credential is touched here, and no live
 // step of any of them is run by an agent. Check 130's fake is a fake `curl`
 // alone, answering the three anonymous GETs the check makes about a
 // repository; its fake `gcloud` and `fugaro` log any call and fail, so the
-// test can say the check never reaches a cloud tool.
+// test can say the check never reaches a cloud tool. Check 401's fake `curl`
+// serves the grants node from the case's own directory and its fake `fugaro`
+// update PRETENDS to be the migration, so a case says what the converge did by
+// writing files.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -39,6 +42,7 @@ var liveCheckScripts = []struct {
 	{"check146.sh", "check146_test.sh"},
 	{"check190.sh", "check190_test.sh"},
 	{"check340.sh", "check340_test.sh"},
+	{"check401.sh", "check401_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
