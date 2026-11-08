@@ -783,6 +783,17 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
         '`LAUNCH_IDS.form`, the id this file gives the form: the button\'s `aria-controls` and the form\'s own `id` are the one string, so the control and the thing it opens are related in the DOM rather than merely adjacent',
     },
   },
+  // The policy notes (managed screens CM7) draw two documents -- the published
+  // policy node and `doctor`'s six policy checks -- and their strings reach the
+  // window through `putText`/`putReading` on the two doors every screen uses:
+  // `textCell` for a document's string, `valueCell` for a member whose absence
+  // is a reading with no number. What is left is the class list of the `make`
+  // helper, and every word this file writes through `literal` is written at the
+  // call site -- each member's title and each block's state word is a string
+  // literal in the branch that picks it, never a parameter.
+  'policynotes.ts': {
+    "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
+  },
 })
 
 const STRING_LITERAL = /^(?:'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*")$/
@@ -1185,6 +1196,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
       'live.ts',
       'managed.ts',
       'nocheckout.ts',
+      'policynotes.ts',
       'projects.ts',
       'reading.ts',
       'run.ts',
@@ -1524,6 +1536,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'screens/live.ts',
       'screens/managed.ts',
       'screens/nocheckout.ts',
+      'screens/policynotes.ts',
       'screens/projects.ts',
       'screens/reading.ts',
       'screens/run.ts',
