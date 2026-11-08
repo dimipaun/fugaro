@@ -1575,6 +1575,31 @@ func stopFractionSources(cfg *config.Config) (fromRepo, fromLayer bool) {
 	return cfg.RepoStopFractionSet, cfg.Layer.SetsDefault("agent.review_stop_fraction")
 }
 
+// stopFractionImageWarnings warns, once, that a configuration which writes the
+// key — the repository's file (RepoStopFractionSet) or the project layer it
+// resolved over (SetsDefault) — needs every job image on stopFractionSince. It
+// is validate's half of checkStopFractionImage, and a warning rather than a
+// Problem for rigorImageWarnings' reason: the file is valid, and what has to
+// move is the installation (the base image, or a workflow's derived one), which
+// is why both ways to move an image are named. It says which of the two files
+// wrote the key, the same distinction stopFractionSubject draws for the gates,
+// because the layer's key reaches every repository of the project and only its
+// operator can remove it.
+func stopFractionImageWarnings(c *config.Config) []config.Problem {
+	fromRepo, fromLayer := stopFractionSources(c)
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject := "this file's agent.review_stop_fraction"
+	switch {
+	case fromRepo && fromLayer:
+		subject = "this file's agent.review_stop_fraction and the project layer's defaults.agent.review_stop_fraction"
+	case fromLayer:
+		subject = "the project layer's defaults.agent.review_stop_fraction"
+	}
+	return []config.Problem{{Path: "agent.review_stop_fraction", Message: subject + " needs fugaro " + stopFractionSince + " or later in the job image that runs it, and in the CLI of everyone who reads this file: an older runner decodes the file strictly and refuses the run at bootstrap. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"}}
+}
+
 // refuseStopFractionSkew refuses fugaro update --repo, before any cloud
 // effect, when the configuration the checkout resolves writes
 // agent.review_stop_fraction and the installation's base image predates

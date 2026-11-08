@@ -2007,6 +2007,7 @@ func newValidateCmd() *cobra.Command {
 				warnings = append(warnings, rigorImageWarnings(cfg)...)
 				warnings = append(warnings, gitAuthorImageWarnings(cfg)...)
 				warnings = append(warnings, jobsImageWarnings(cfg)...)
+				warnings = append(warnings, stopFractionImageWarnings(cfg)...)
 				editionOf, note := governanceEditions(cmd.Context(), lc, cfg, offline)
 				gw, gn := governanceImageWarnings(cfg, editionOf, note)
 				warnings, notes = append(warnings, gw...), append(notes, gn...)

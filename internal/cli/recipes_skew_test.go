@@ -2010,3 +2010,49 @@ func TestUpdateRepoRefusesStopFractionOnAnOlderBaseImage(t *testing.T) {
 		t.Errorf("--print-vars wrote to stdout: %q", out.String())
 	}
 }
+
+// TestValidateWarnsThatStopFractionNeedsEveryJobImage: the file is valid — the
+// skew is the installation's, not the file's — so fugaro validate warns rather
+// than refusing, the shape rigorImageWarnings and gitAuthorImageWarnings have,
+// and names both ways to move an image (the installation's base, and a
+// workflow's own). The key written 0 counts: it is the line an older runner
+// refuses, whatever it says.
+func TestValidateWarnsThatStopFractionNeedsEveryJobImage(t *testing.T) {
+	for _, lines := range []string{"  review_stop_fraction: 0.5\n", "  review_stop_fraction: 0\n"} {
+		doc := validateStopFraction(t, lines)
+		if !has(doc.Warnings, "agent.review_stop_fraction", "needs fugaro "+stopFractionSince) {
+			t.Errorf("%q: warnings = %+v, want the stop fraction warning", lines, doc.Warnings)
+		}
+		for _, want := range []string{"fugaro update --base base", "fugaro image refresh"} {
+			if !has(doc.Warnings, "agent.review_stop_fraction", want) {
+				t.Errorf("%q: the warning does not name %q: %+v", lines, want, doc.Warnings)
+			}
+		}
+		if has(doc.Problems, "agent.review_stop_fraction", "") {
+			t.Errorf("%q: the key was refused, and the file is valid: %+v", lines, doc.Problems)
+		}
+	}
+	if doc := validateStopFraction(t, ""); has(doc.Warnings, "agent.review_stop_fraction", "") {
+		t.Errorf("a file that writes no key was warned about: %+v", doc.Warnings)
+	}
+}
+
+// validateStopFraction runs fugaro validate --json on a repository file whose
+// agent block carries the key, in a directory that is no checkout and has no
+// project config: the file's own key is all this judges.
+func validateStopFraction(t *testing.T, lines string) validateOutput {
+	t.Helper()
+	isolateProjects(t, t.TempDir())
+	dir := t.TempDir()
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: api-key\n" + lines +
+		"workflows:\n  app: { commands: { build: go build ./..., test: go test ./... } }\n"})
+	out, _, err := execute(t, "validate", "--json", filepath.Join(dir, "fugaro.yaml"))
+	var doc validateOutput
+	if jerr := json.Unmarshal([]byte(out), &doc); jerr != nil {
+		t.Fatalf("output %q: %v", out, jerr)
+	}
+	if err != nil {
+		t.Fatalf("err = %v, want a valid file: %+v", err, doc.Problems)
+	}
+	return doc
+}
