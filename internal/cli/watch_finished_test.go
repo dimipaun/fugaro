@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // writeFinishedResult writes a terminal result.json with a PR and an
@@ -69,7 +71,7 @@ func TestWatchJSONAndPlainShowFinishedAndReady(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plain, run) || !strings.Contains(plain, "Ready for your review") || !strings.Contains(plain, "https://github.com/acme/app/pull/42") {
+	if !strings.Contains(plain, task.ShortRun(run)) || !strings.Contains(plain, "Ready for your review") || !strings.Contains(plain, "https://github.com/acme/app/pull/42") {
 		t.Fatalf("plain output missing the finished run or the review section:\n%s", plain)
 	}
 }
@@ -98,7 +100,7 @@ func TestWatchAllFlagShowsOldSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(all, run) {
+	if !strings.Contains(all, task.ShortRun(run)) {
 		t.Fatalf("--all must show the old success:\n%s", all)
 	}
 
@@ -106,7 +108,7 @@ func TestWatchAllFlagShowsOldSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(kept, run) {
+	if !strings.Contains(kept, task.ShortRun(run)) {
 		t.Fatalf("--keep 24h must show a 10h-old run:\n%s", kept)
 	}
 
@@ -136,10 +138,10 @@ func TestWatchDefaultWindowIsThreeMinutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plain, fresh) {
+	if !strings.Contains(plain, task.ShortRun(fresh)) {
 		t.Fatalf("a run finished a minute ago must be listed:\n%s", plain)
 	}
-	if strings.Contains(plain, stale) {
+	if strings.Contains(plain, task.ShortRun(stale)) {
 		t.Fatalf("a run finished four minutes ago must have left the list:\n%s", plain)
 	}
 }
@@ -163,7 +165,7 @@ func TestWatchPlainReadySurvivesKeepFilter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(plain, "FINISHED") && strings.Contains(plain[:strings.Index(plain, "Ready for your review")], run) {
+	if strings.Contains(plain, "FINISHED") && strings.Contains(plain[:strings.Index(plain, "Ready for your review")], task.ShortRun(run)) {
 		t.Fatalf("the 10h-old row should have aged out of the regular finished table:\n%s", plain)
 	}
 	if !strings.Contains(plain, "Ready for your review (1)") || !strings.Contains(plain, "https://github.com/acme/app/pull/7") {

@@ -61,13 +61,14 @@ func mergedPRs(merged, unknown []string) MergeCheck {
 // runFact is one run of the join tests: a task of the plan, launched at
 // launched (the run id's own clock), with a status and a pull request.
 //
-// The test's own label is the run id's suffix and, by its number, the pull
-// request the run carries — r2 is pull/2 — so no two runs of one test share a
-// pull request and a test says which of them is merged by naming its URL.
+// The test's own label is the run id's short form — the four characters every
+// screen shows it by (task.ShortRun) — and, by its number, the pull request the
+// run carries — r002 is pull/2 — so no two runs of one test share a pull
+// request and a test says which of them is merged by naming its URL.
 func runFact(label, launched, task, status string) RunFact {
 	n, err := strconv.Atoi(strings.TrimPrefix(label, "r"))
 	if err != nil || n <= 0 {
-		panic("runFact's label is r<N>, got " + label)
+		panic("runFact's label is r<NNN>, got " + label)
 	}
 	return RunFact{
 		RunID: "20260101-" + launched + "-" + label, Repo: "acme/widget",
@@ -103,9 +104,9 @@ func nodeOf(t *testing.T, got StatePlan, id string) StateNode {
 // is running with its stage, a finished run whose pull request gh says is
 // merged is done, and a task no run claims is what the graph says it is.
 func TestStateFromRuns(t *testing.T) {
-	live := runFact("r1", "100000", "the-plan/A", statusRunning)
+	live := runFact("r001", "100000", "the-plan/A", statusRunning)
 	live.Stage = "implement"
-	done := runFact("r2", "110000", "the-plan/B", statusSucceeded)
+	done := runFact("r002", "110000", "the-plan/B", statusSucceeded)
 	done.Outcome = outcomeReady
 	got := statePlan(t, joinDoc(), []RunFact{live, done},
 		StateOptions{All: true, Merge: mergedPRs([]string{done.PRURL}, nil)})
@@ -128,7 +129,7 @@ func TestStateFromRuns(t *testing.T) {
 // and it stays blocked while that dependency's pull request is open — a run
 // that finished is not a task that is done.
 func TestBlockedUntilNeedsDone(t *testing.T) {
-	open := runFact("r1", "100000", "the-plan/A", statusSucceeded)
+	open := runFact("r001", "100000", "the-plan/A", statusSucceeded)
 	open.Outcome = outcomeReady
 	got := statePlan(t, joinDoc(), []RunFact{open}, StateOptions{All: true, Merge: mergedPRs(nil, nil)})
 
@@ -156,9 +157,9 @@ func TestBlockedUntilNeedsDone(t *testing.T) {
 // mark saying which half is unknown. A run that is not ready is not done
 // either way.
 func TestDoneNeedsMergeOrMarksUnknown(t *testing.T) {
-	ready := runFact("r1", "100000", "the-plan/A", statusSucceeded)
+	ready := runFact("r001", "100000", "the-plan/A", statusSucceeded)
 	ready.Outcome = outcomeReady
-	draft := runFact("r2", "110000", "the-plan/B", statusSucceeded)
+	draft := runFact("r002", "110000", "the-plan/B", statusSucceeded)
 	draft.Outcome = "draft"
 
 	// No answer at all: the ready one is done with the mark, the draft is not.
@@ -177,7 +178,7 @@ func TestDoneNeedsMergeOrMarksUnknown(t *testing.T) {
 		t.Errorf("A = %+v, B = %+v", a, b)
 	}
 	// A review run's outcome counts the same as a ready one.
-	reviewed := runFact("r3", "120000", "the-plan/C", statusSucceeded)
+	reviewed := runFact("r003", "120000", "the-plan/C", statusSucceeded)
 	reviewed.Outcome = outcomeReviewed
 	got = statePlan(t, joinDoc(), []RunFact{reviewed}, StateOptions{All: true, Merge: mergedPRs(nil, []string{reviewed.PRURL})})
 	if c := nodeOf(t, got, "C"); c.State != StateDone || c.Mark != MergeUnknown {
@@ -216,7 +217,7 @@ func TestPlanIDFromPath(t *testing.T) {
 // join to the checkout's own repository: a prompt-injected launch elsewhere
 // could otherwise claim any task and paint it running or done (C3).
 func TestJoinIgnoresOtherRepo(t *testing.T) {
-	foreign := runFact("r1", "100000", "the-plan/A", statusRunning)
+	foreign := runFact("r001", "100000", "the-plan/A", statusRunning)
 	foreign.Repo = "other/repo"
 	foreign.Stage = "implement"
 	got := statePlan(t, joinDoc(), []RunFact{foreign}, StateOptions{All: true, Merge: mergedPRs(nil, nil)})
@@ -224,7 +225,7 @@ func TestJoinIgnoresOtherRepo(t *testing.T) {
 		t.Errorf("A = %+v, want ready and unjoined: the run is another repository's", n)
 	}
 	// An unknown checkout matches nothing: the join fails closed.
-	got = statePlan(t, joinDoc(), []RunFact{runFact("r1", "100000", "the-plan/A", statusRunning)}, StateOptions{Repo: "-", All: true})
+	got = statePlan(t, joinDoc(), []RunFact{runFact("r001", "100000", "the-plan/A", statusRunning)}, StateOptions{Repo: "-", All: true})
 	if n := nodeOf(t, got, "A"); n.State != StateReady || n.Run != "" {
 		t.Errorf("A = %+v, want unjoined when no repository is known", n)
 	}
@@ -233,25 +234,25 @@ func TestJoinIgnoresOtherRepo(t *testing.T) {
 // TestLatestRunWins: of several runs on one task the latest launched decides,
 // and a cancelled latest with another run behind it is not the task's end.
 func TestLatestRunWins(t *testing.T) {
-	first := runFact("r1", "100000", "the-plan/A", statusCancelled)
-	second := runFact("r2", "110000", "the-plan/A", statusRunning)
+	first := runFact("r001", "100000", "the-plan/A", statusCancelled)
+	second := runFact("r002", "110000", "the-plan/A", statusRunning)
 	second.Stage = "review"
 	got := statePlan(t, joinDoc(), []RunFact{second, first}, StateOptions{All: true, Merge: mergedPRs(nil, nil)})
 	a := nodeOf(t, got, "A")
-	if a.State != StateRunning || a.Stage != "review" || a.Run != "r2" {
+	if a.State != StateRunning || a.Stage != "review" || a.Run != "r002" {
 		t.Errorf("A = %+v, want the latest run's state and its id's own suffix", a)
 	}
 
 	// The latest cancelled and nothing else: cancelled.
-	got = statePlan(t, joinDoc(), []RunFact{runFact("r1", "100000", "the-plan/A", statusCancelled)}, StateOptions{All: true})
+	got = statePlan(t, joinDoc(), []RunFact{runFact("r001", "100000", "the-plan/A", statusCancelled)}, StateOptions{All: true})
 	if a := nodeOf(t, got, "A"); a.State != StateCancelled {
 		t.Errorf("A = %+v, want cancelled", a)
 	}
 	// The latest cancelled with a merged run behind it: done, because the
 	// cancelled run is not the only one and the merge is a confirmed fact.
-	mergedRun := runFact("r1", "100000", "the-plan/A", statusSucceeded)
+	mergedRun := runFact("r001", "100000", "the-plan/A", statusSucceeded)
 	mergedRun.Outcome = outcomeReady
-	got = statePlan(t, joinDoc(), []RunFact{mergedRun, runFact("r2", "110000", "the-plan/A", statusCancelled)},
+	got = statePlan(t, joinDoc(), []RunFact{mergedRun, runFact("r002", "110000", "the-plan/A", statusCancelled)},
 		StateOptions{All: true, Merge: mergedPRs([]string{mergedRun.PRURL}, nil)})
 	if a := nodeOf(t, got, "A"); a.State != StateDone {
 		t.Errorf("A = %+v, want done: an earlier run's pull request is merged", a)
@@ -260,10 +261,10 @@ func TestLatestRunWins(t *testing.T) {
 	// settled nothing, so the task is not-started — never cancelled, which is
 	// the answer only for a task whose one run was dropped. No merge answers
 	// here, so this is the case that holds the "only run" rule on its own.
-	failed := runFact("r1", "100000", "the-plan/A", string(runstore.StatusFailed))
-	got = statePlan(t, joinDoc(), []RunFact{failed, runFact("r2", "110000", "the-plan/A", statusCancelled)},
+	failed := runFact("r001", "100000", "the-plan/A", string(runstore.StatusFailed))
+	got = statePlan(t, joinDoc(), []RunFact{failed, runFact("r002", "110000", "the-plan/A", statusCancelled)},
 		StateOptions{All: true, Merge: mergedPRs(nil, nil)})
-	if a := nodeOf(t, got, "A"); a.State != StateNotStarted || a.Run != "r2" {
+	if a := nodeOf(t, got, "A"); a.State != StateNotStarted || a.Run != "r002" {
 		t.Errorf("A = %+v, want not-started on the latest run: a cancel after a failed run is not the task's end", a)
 	}
 }
@@ -271,7 +272,7 @@ func TestLatestRunWins(t *testing.T) {
 // TestFollowUpJoinsByPR: a follow-up inherits a plan task only when it was
 // given one; otherwise it is joined through the pull request it follows.
 func TestFollowUpJoinsByPR(t *testing.T) {
-	first := runFact("r1", "100000", "the-plan/A", statusSucceeded)
+	first := runFact("r001", "100000", "the-plan/A", statusSucceeded)
 	first.Outcome = outcomeReady
 	follow := RunFact{RunID: "20260101-110000-bbbb", Repo: "acme/widget", Status: statusRunning, Stage: "fix", PR: first.PR}
 	got := statePlan(t, joinDoc(), []RunFact{first, follow}, StateOptions{All: true, Merge: mergedPRs(nil, nil)})
@@ -282,11 +283,32 @@ func TestFollowUpJoinsByPR(t *testing.T) {
 	// A follow-up on an unknown PR joins nothing.
 	stranger := RunFact{RunID: "20260101-120000-cccc", Repo: "acme/widget", Status: statusRunning, PR: 77}
 	got = statePlan(t, joinDoc(), []RunFact{first, stranger}, StateOptions{All: true, Merge: mergedPRs(nil, []string{first.PRURL})})
-	if a := nodeOf(t, got, "A"); a.Run != "r1" || a.State != StateDone {
+	if a := nodeOf(t, got, "A"); a.Run != "r001" || a.State != StateDone {
 		t.Errorf("A = %+v, want the run it was joined from and done", a)
 	}
 	if n := nodeOf(t, got, "B"); n.Run != "" {
 		t.Errorf("B = %+v, want unjoined", n)
+	}
+}
+
+// TestRunSuffixIsShortRun pins what a plan screen names a run by: the last four
+// characters of its run ID (task.ShortRun), the one rule every surface shows
+// (F2, D1706) — never the full ID, which the document does not carry, and never
+// the whole tail after the ID's last dash, which a run fact read from a record
+// that did not parse (internal/runstore checks a run ID's shape where it reads
+// one) can make longer than four characters.
+func TestRunSuffixIsShortRun(t *testing.T) {
+	live := runFact("r001", "100000", "the-plan/A", statusRunning)
+	got := statePlan(t, joinDoc(), []RunFact{live}, StateOptions{All: true, Merge: mergedPRs(nil, nil)})
+	if a := nodeOf(t, got, "A"); a.Run != "r001" {
+		t.Errorf("A = %+v, want the run ID's four characters", a)
+	}
+	// An ID that is not a launch stamp: the four characters, not the tail.
+	odd := runFact("r002", "110000", "the-plan/B", statusSucceeded)
+	odd.RunID = "20261108-115248-3bb2c"
+	got = statePlan(t, joinDoc(), []RunFact{odd}, StateOptions{All: true, Merge: mergedPRs(nil, nil)})
+	if b := nodeOf(t, got, "B"); b.Run != "bb2c" {
+		t.Errorf("B = %+v, want the run ID's last four characters, not the tail after its last dash", b)
 	}
 }
 
@@ -295,7 +317,7 @@ func TestFollowUpJoinsByPR(t *testing.T) {
 // a wrong one is dropped rather than honoured.
 func TestRunWithUnknownPlanTaskIgnored(t *testing.T) {
 	for _, claim := range []string{"another-plan/A", "the-plan/Z", "the-plan/", "A", ""} {
-		r := runFact("r1", "100000", claim, statusRunning)
+		r := runFact("r001", "100000", claim, statusRunning)
 		r.Stage = "implement"
 		got := statePlan(t, joinDoc(), []RunFact{r}, StateOptions{All: true})
 		if n := nodeOf(t, got, "A"); n.State != StateReady || n.Run != "" {
@@ -313,7 +335,7 @@ func TestRunWithUnknownPlanTaskIgnored(t *testing.T) {
 // TestStateRunningNodeShowsRecordPR: a node's pr_number is the PR the run has
 // recorded, whether the run is running or finished (F9).
 func TestStateRunningNodeShowsRecordPR(t *testing.T) {
-	live := runFact("r1", "100000", "the-plan/A", statusRunning)
+	live := runFact("r001", "100000", "the-plan/A", statusRunning)
 	live.Stage, live.RecordPR = "implement", 41
 	live.PR, live.PRURL = 0, ""
 	got := statePlan(t, joinDoc(), []RunFact{live}, StateOptions{All: true, Merge: mergedPRs(nil, nil)})
@@ -321,7 +343,7 @@ func TestStateRunningNodeShowsRecordPR(t *testing.T) {
 		t.Errorf("A = %+v, want running with its record's PR number", a)
 	}
 	// A finished run carries it the same way.
-	done := runFact("r2", "100000", "the-plan/A", statusSucceeded)
+	done := runFact("r002", "100000", "the-plan/A", statusSucceeded)
 	done.RecordPR = 42
 	done.Outcome = outcomeReady
 	got = statePlan(t, joinDoc(), []RunFact{done}, StateOptions{All: true, Merge: mergedPRs([]string{done.PRURL}, nil)})
@@ -339,9 +361,9 @@ func TestOpenWorkByDefault(t *testing.T) {
 	doc.Nodes[0].Version = strPtr("0.112")
 	doc.Nodes[1].Version = strPtr("0.112")
 	doc.Nodes[2].Version = strPtr("0.113")
-	mergedRun := runFact("r1", "100000", "the-plan/A", statusSucceeded)
+	mergedRun := runFact("r001", "100000", "the-plan/A", statusSucceeded)
 	mergedRun.Outcome = outcomeReady
-	cancelled := runFact("r2", "110000", "the-plan/B", statusCancelled)
+	cancelled := runFact("r002", "110000", "the-plan/B", statusCancelled)
 
 	open := statePlan(t, doc, []RunFact{mergedRun, cancelled}, StateOptions{Merge: mergedPRs([]string{mergedRun.PRURL}, nil)})
 	if len(open.Nodes) != 1 || open.Nodes[0].ID != "C" {
@@ -371,9 +393,9 @@ func TestAllShowsClosed(t *testing.T) {
 	for i := range doc.Nodes {
 		doc.Nodes[i].Version = strPtr("0.112")
 	}
-	mergedRun := runFact("r1", "100000", "the-plan/A", statusSucceeded)
+	mergedRun := runFact("r001", "100000", "the-plan/A", statusSucceeded)
 	mergedRun.Outcome = outcomeReady
-	cancelled := runFact("r2", "110000", "the-plan/B", statusCancelled)
+	cancelled := runFact("r002", "110000", "the-plan/B", statusCancelled)
 
 	all := statePlan(t, doc, []RunFact{mergedRun, cancelled}, StateOptions{All: true, Merge: mergedPRs([]string{mergedRun.PRURL}, nil)})
 	if len(all.Nodes) != 3 {
@@ -422,7 +444,7 @@ func TestStateNodeCarriesNeeds(t *testing.T) {
 		{Task: "C", Needs: "A", Reason: "C reads what A writes"},
 		{Task: "B", Needs: "A", Reason: "B reads what A writes"},
 	}
-	merged := runFact("r1", "100000", "the-plan/A", statusSucceeded)
+	merged := runFact("r001", "100000", "the-plan/A", statusSucceeded)
 	merged.Outcome = outcomeReady
 	merge := mergedPRs([]string{merged.PRURL}, nil)
 
@@ -560,13 +582,13 @@ func TestStateRefusesWhatTheReadRefuses(t *testing.T) {
 // left out; a follow-up that follows a joined run is kept.
 func TestPlanIDScopesTheJoinedRuns(t *testing.T) {
 	plans := []PlanRef{{ID: "the-plan", Doc: joinDoc()}}
-	joined := runFact("r1", "100000", "the-plan/A", statusRunning)
-	foreign := runFact("r2", "100000", "the-plan/A", statusRunning)
+	joined := runFact("r001", "100000", "the-plan/A", statusRunning)
+	foreign := runFact("r002", "100000", "the-plan/A", statusRunning)
 	foreign.Repo = "other/repo"
 	follow := RunFact{RunID: "20260101-110000-bbbb", Repo: "acme/widget", Status: statusRunning, PR: joined.PR}
 	stranger := RunFact{RunID: "20260101-120000-cccc", Repo: "acme/widget", Status: statusRunning, PR: 77}
-	other := runFact("r3", "100000", "another-plan/A", statusRunning)
-	unknown := runFact("r4", "100000", "the-plan/Z", statusRunning)
+	other := runFact("r003", "100000", "another-plan/A", statusRunning)
+	unknown := runFact("r004", "100000", "the-plan/Z", statusRunning)
 	runs := []RunFact{joined, foreign, follow, stranger, other, unknown}
 
 	got := JoinedRuns(plans, runs, "acme/widget")
