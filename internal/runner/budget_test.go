@@ -40,6 +40,44 @@ func TestBudget(t *testing.T) {
 	}
 }
 
+// TestReviewBudgetSpent is BF1's threshold: the share of the total budget the
+// review and fix rounds may spend, read off the clock the run's own Budget
+// holds. The default is the config's 80%, a Budget nobody filled in reads the
+// same way, and a share past the run's finalize reserve is the reserve: a run
+// with a threshold that never arrives is a run whose rounds are ended by the
+// reserve exactly as they were before this key existed.
+func TestReviewBudgetSpent(t *testing.T) {
+	start := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	now := start
+	b := func(pct int) Budget {
+		return Budget{Start: start, Total: 10 * time.Minute, Reserve: time.Minute, Stage: 5 * time.Minute,
+			ReviewPct: pct, Now: func() time.Time { return now }}
+	}
+	for _, tc := range []struct {
+		name  string
+		pct   int
+		spent time.Duration
+		want  bool
+	}{
+		{"unset reads as the default", 0, 7*time.Minute + 59*time.Second, false},
+		{"unset reads as the default at 80%", 0, 8 * time.Minute, true},
+		{"a written share is the one read", 50, 5 * time.Minute, true},
+		{"a written share below the threshold is not spent", 50, 4*time.Minute + 59*time.Second, false},
+		{"100% falls back to the reserve's deadline", 100, 8*time.Minute + 59*time.Second, false},
+		{"100% is spent at the reserve's deadline", 100, 9 * time.Minute, true},
+		{"a share the ceiling refuses reads as the default", 400, 8 * time.Minute, true},
+		{"the reserve ends the rounds whatever the share says", 0, 9 * time.Minute, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now = start.Add(tc.spent)
+			if got := b(tc.pct).ReviewBudgetSpent(); got != tc.want {
+				t.Errorf("ReviewBudgetSpent() at %s with review_budget_pct %d = %v, want %v",
+					tc.spent, tc.pct, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestWatchCancel(t *testing.T) {
 	var flag atomic.Bool
 	ctx, stop := WatchCancel(context.Background(), func(context.Context) (bool, error) { return flag.Load(), nil }, 10*time.Millisecond, nil)
