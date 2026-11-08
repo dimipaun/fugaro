@@ -319,8 +319,15 @@ type LayerAgent struct {
 	Levels ReviewLevels `yaml:"levels"`
 	// AdversarialRounds is the project's review level 3 round count; a
 	// repository's own value replaces it.
-	AdversarialRounds int    `yaml:"adversarial_rounds"`
-	Recipe            string `yaml:"recipe"`
+	AdversarialRounds int `yaml:"adversarial_rounds"`
+	// ReviewStopFraction is the project's share of the run's time budget after
+	// which the review loop starts no further round (config.Agent.
+	// ReviewStopFraction, the owner's ruling of 2026-11-08); a repository's own
+	// value replaces it. The project layer is where a share that suits every
+	// repository of a project belongs, since it is the layer that knows the
+	// workflows' timeouts.
+	ReviewStopFraction float64 `yaml:"review_stop_fraction"`
+	Recipe             string  `yaml:"recipe"`
 	// Crafts sets each craft's model and access for every repository of the
 	// project (docs/model-crafts/spec.md §3). Only a craft's model may be set
 	// here: an access names a credential or a pool, and this layer file is
@@ -783,6 +790,12 @@ func validateLayer(l *ProjectLayer, a LayerAnchor) []Problem {
 	}
 	if ag.AdversarialRounds != 0 && (ag.AdversarialRounds < 1 || ag.AdversarialRounds > 10) {
 		add("defaults.agent.adversarial_rounds", "must be between 1 and 10")
+	}
+	// A layer has no "unset" for this key: it is a scalar that replaces whole
+	// (resolve.go), so a project layer's number is the base a repository's
+	// replaces, and there is no third state to admit beside 0 and the range.
+	if ag.ReviewStopFraction != 0 && (ag.ReviewStopFraction < 0 || ag.ReviewStopFraction > 1) {
+		add("defaults.agent.review_stop_fraction", "must be greater than 0 and at most 1")
 	}
 	ps = append(ps, levelProblems("defaults.agent.levels", &ag.Levels)...)
 	if ag.Recipe != "" && !recipe.NameRE.MatchString(ag.Recipe) {

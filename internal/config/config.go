@@ -459,6 +459,17 @@ type Agent struct {
 	// and FirstLineRounds: a written number replaces the mode's, up or down,
 	// inside the recipe's own bound of 10.
 	AdversarialRounds int `yaml:"adversarial_rounds"`
+	// ReviewStopFraction is the share of the run's total time budget after
+	// which the review loop starts no further review or fix round and goes to
+	// finalize (the owner's ruling of 2026-11-08): greater than 0 and at most
+	// 1, unset (0) meaning DefaultReviewStopFraction. It is the stop rule's
+	// time half — the other is the mode's rounds — and it is a fraction rather
+	// than a duration because the budget it is a share of is the workflow's
+	// own timeouts.total, which a project or a repository sets per workflow
+	// (docs/in-job-review/reconciliation.md finding 20). A value of 1 stops
+	// the loop only when the whole budget is spent, which is what a repository
+	// that wants the old behaviour writes.
+	ReviewStopFraction float64 `yaml:"review_stop_fraction"`
 	// Recipe names the task loop that follows implement
 	// (docs/design/recipes.md): a recipe in .fugaro/recipes/, the project's,
 	// or the catalog's. "" is default. fugaro run --recipe wins over it.
@@ -502,6 +513,16 @@ const (
 
 // MaxFirstLineRounds is the most first-line review rounds a run may have.
 const MaxFirstLineRounds = 3
+
+// DefaultReviewStopFraction is the share of its time budget a run spends before
+// it starts no further review or fix round, for a repository that configures
+// none (config.Agent.ReviewStopFraction): four fifths, so the last fifth — the
+// finalize reserve included — is what writes the record, opens the pull request
+// and pushes it. It is a constant here and not in internal/rigor because it is
+// a property of the run's budget rather than of a mode: every mode stops
+// starting rounds at the same point, and only what each mode does with what is
+// left differs (rigor.BlocksAtStop).
+const DefaultReviewStopFraction = 0.8
 
 // FirstLineOn reports whether the run has a first-line review: on, or auto
 // with a coder a provider serves and a reviewer none does (an Anthropic

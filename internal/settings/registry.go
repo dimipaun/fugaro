@@ -216,6 +216,10 @@ var yamlMeta = map[string]Row{
 	"agent.adversarial_rounds": {
 		Default: unset("the run's rigor mode decides (rigor.AdversarialDefault)"),
 	},
+	"agent.review_stop_fraction": {
+		Default: unset("0.8 (config.DefaultReviewStopFraction)"),
+	},
+
 	"agent.recipe":      {Owner: "models", Default: unset("the built-in recipe"), Doc: "docs/recipes.md"},
 	"agent.oauth_token": {Default: unset("the job's own credential")},
 	"agent.compression": {Default: unset("inherit")},
@@ -506,6 +510,7 @@ var layerRows = []Row{
 	layerRow("defaults.agent.levels.l3.none", "the run's rigor mode and the recipe decide", "settings set", docLayer),
 	layerRow("defaults.agent.levels.l3.focus", "none", "settings set", docLayer),
 	layerRow("defaults.agent.adversarial_rounds", "the run's rigor mode decides (rigor.AdversarialDefault)", "settings set", docLayer),
+	layerRow("defaults.agent.review_stop_fraction", "0.8 (config.DefaultReviewStopFraction)", "settings set", docLayer),
 	layerRow("defaults.agent.recipe", "the built-in recipe", "models", docModels),
 	layerRow("defaults.rigor.default", "the built-in mode (pro)", "rigor", docRigor),
 	layerRow("defaults.rigor.areas.*.name", "none", "rigor", docRigor),

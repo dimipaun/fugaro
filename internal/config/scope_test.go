@@ -152,7 +152,11 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		"agent.levels.l3.none":     InProject | InRepo,
 		"agent.levels.l3.focus":    InProject | InRepo,
 		"agent.adversarial_rounds": InProject | InRepo,
-		"agent.recipe":             InProject | InRepo | InOverride,
+		// The stop rule's time half (the owner's ruling of 2026-11-08): a share
+		// of the run's budget, so it sits where the workflow's timeouts do and
+		// the project layer — the layer that knows them — may set it.
+		"agent.review_stop_fraction": InProject | InRepo,
+		"agent.recipe":               InProject | InRepo | InOverride,
 		// Named oauth tokens plan Task 6 (docs/design/named-oauth-tokens.md §3
 		// T2): added after agent.recipe, in config.Scopes already; the design
 		// doc's own §5 table (which this golden map otherwise mirrors) gains

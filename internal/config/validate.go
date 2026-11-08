@@ -148,6 +148,15 @@ func Validate(c *Config) []Problem {
 	if c.Agent.AdversarialRounds < 0 || c.Agent.AdversarialRounds > 10 {
 		add("agent.adversarial_rounds", "must be between 1 and 10, or 0 (unset: the mode's default supplies it)")
 	}
+	// The stop fraction: 0 is unset and takes config.DefaultReviewStopFraction,
+	// and 1 is admitted — it means the loop stops only when the whole budget is
+	// gone, which is the behaviour of every release before the ruling. Anything
+	// above 1, and anything negative or not a number, is refused rather than
+	// read as "off": a fraction the budget cannot satisfy is a mistake, and the
+	// key's whole point is to leave the run time to finalize.
+	if f := c.Agent.ReviewStopFraction; math.IsNaN(f) || f < 0 || f > 1 {
+		add("agent.review_stop_fraction", "must be greater than 0 and at most 1, or 0 (unset: %g supplies it)", DefaultReviewStopFraction)
+	}
 	ps = append(ps, levelProblems("agent.levels", &c.Agent.Levels)...)
 	if c.Agent.Recipe != "" && !recipe.NameRE.MatchString(c.Agent.Recipe) {
 		add("agent.recipe", "must be a recipe name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")

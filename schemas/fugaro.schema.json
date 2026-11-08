@@ -103,6 +103,7 @@
           }
         },
         "adversarial_rounds": { "type": "integer", "minimum": 0, "maximum": 10, "description": "Review level 3's round count (L1.3, D726), the level's one round knob. Unset or 0 takes the resolved rigor mode's own senior row (poc and hotfix 1, startup 2, pro 3, critical 5; rigor.AdversarialDefault); a written number replaces it, up or down, within the recipe's bound of 10. Needs fugaro 0.16.0." },
+        "review_stop_fraction": { "type": "number", "exclusiveMinimum": 0, "maximum": 1, "description": "The share of the run's total time budget (workflows.<name>.timeouts.total) after which the review loop starts no further review or fix round and goes to finalize; the owner's ruling of 2026-11-08. Greater than 0 and at most 1; absent or 0 is 0.8 (config.DefaultReviewStopFraction), and 1 stops the loop only when the whole budget is spent. What a stopped run does with the findings it has left is the rigor mode's own stop row (rigor.BlocksAtStop)." },
         "recipe": { "type": "string", "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?)?$", "description": "The recipe (task loop) runs use unless fugaro run --recipe names one: .fugaro/recipes/<name>.yaml, the project's fugaro/recipes/<name>.yaml, or the catalog (default, solo, standard, premium, review-only, pick, test-and-fix, lint-fix, run-digest). Fugaro before 0.5.0 refuses this key." },
         "oauth_token": {
           "type": "string",
