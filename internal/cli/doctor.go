@@ -531,6 +531,10 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		if c := doctorReviewsCheck(co.Root, budgetNow()); c != nil {
 			o.Checks = append(o.Checks, *c)
 		}
+		// The security list in force for this checkout (D1513): offline, and
+		// about this checkout's own defaults, so it sits with the reviews line
+		// rather than with the installation's checks.
+		o.Checks = append(o.Checks, doctorSecurityChecks(ctx, co.Root)...)
 		if fyCheck != nil {
 			o.Checks = append(o.Checks, *fyCheck)
 			o.FugaroYAML = fy
