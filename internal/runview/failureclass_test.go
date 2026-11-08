@@ -80,6 +80,19 @@ func TestLegacyClassFromReasonTable(t *testing.T) {
 			}
 		})
 	}
+	// The one ending whose reason does not describe it. finalize writes a
+	// cancelled run the reason the run had already failed for, with the class
+	// of the ending (design §4.2: a run cancelled after a tests failure is
+	// cancelled / cancelled), so a cancelled record read through the table
+	// above would be counted under a cause the run never reported — here the
+	// review verdict it never gave. The status decides this one, and the table
+	// is never asked.
+	//
+	// Mutation (delete the cancelled branch from ClassOf): this case reads
+	// review_unread, and every other test in this package stays green.
+	if got := ClassOf(&runstore.Record{Status: runstore.StatusCancelled, Reason: "no review verdict"}); got != failure.Cancelled {
+		t.Errorf("a cancelled record reads %q, want %q: its reason is the failure it was about to report, and reading it counts a cancelled run under a cause that never ended it", got, failure.Cancelled)
+	}
 }
 
 // TestLegacyUnmatchedReasonIsUnclassified: a reason the table does not know is
