@@ -420,7 +420,13 @@ describe('the review inbox’s drawing', () => {
       'fixture-owner/fixture-repo',
     ])
     expect(texts(section, 'live-review-age')).toEqual(['6,400 s', '6,400 s'])
-    expect(texts(section, 'live-review-run-id')).toEqual([
+    // **The drawn ids are the endings, and these two are extended.** The inbox
+    // is one list drawn as one, so the collision rule sees both rows and grows
+    // each ending until it tells them apart -- these two share their last four
+    // characters (`live.ts`'s `runEndings`). The whole ids travel on the cells
+    // as `data-run-id`, which is what the row's door opens a run with.
+    expect(texts(section, 'live-review-run-id')).toEqual(['0-aa02', '1-aa02'])
+    expect(all(section, 'live-review-run-id').map((cell) => cell.getAttribute('data-run-id'))).toEqual([
       '20261015-101500-aa02',
       '20261015-101501-aa02',
     ])
