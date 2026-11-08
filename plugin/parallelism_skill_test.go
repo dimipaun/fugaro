@@ -85,8 +85,12 @@ func TestParallelismSkillGraphExampleIsReadable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the graph example in %s is not a document this build reads: %v", parallelismSkillPath, err)
 	}
-	if doc.SchemaVersion != plan.SchemaVersion {
-		t.Errorf("the example is schema version %d and this build reads %d", doc.SchemaVersion, plan.SchemaVersion)
+	// The example is checked as *readable*, not as the newest version the build
+	// writes: the skill's text is written once and a later schema that only
+	// adds fields does not invalidate it, so a skill at schema 2 is a document
+	// this build reads rather than one it refuses (CD5 moves it to 3).
+	if doc.SchemaVersion < plan.FirstSchemaVersion || doc.SchemaVersion > plan.SchemaVersion {
+		t.Errorf("the example is schema version %d and this build reads %d through %d", doc.SchemaVersion, plan.FirstSchemaVersion, plan.SchemaVersion)
 	}
 	if doc.Plan == "" {
 		t.Error("the example names no plan")

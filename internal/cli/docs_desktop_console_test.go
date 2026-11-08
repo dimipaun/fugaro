@@ -377,6 +377,11 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}),
 		reflect.TypeOf(plan.Footprint{}),
+		// The decoupling pass's own record (schema 3): one broken edge and one
+		// change request, and the `was` object under the first.
+		reflect.TypeOf(plan.Decoupling{}),
+		reflect.TypeOf(plan.BrokenEdge{}),
+		reflect.TypeOf(plan.ContractChange{}),
 		// The read's own document (V2.2.3): every key of what `plan graph
 		// --json` prints, so a computed field the contract does not name fails
 		// here too, not only the artifact's own.
@@ -652,6 +657,9 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(configListCheckout{}),
 		reflect.TypeOf(plan.Document{}), reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}), reflect.TypeOf(plan.Footprint{}),
+		// The decoupling pass's own record (schema 3), as in the test above.
+		reflect.TypeOf(plan.Decoupling{}), reflect.TypeOf(plan.BrokenEdge{}),
+		reflect.TypeOf(plan.ContractChange{}),
 		// The read's own document (V2.2.3): the artifact's shape plus what is
 		// computed where the graph is read.
 		reflect.TypeOf(plan.Graph{}), reflect.TypeOf(plan.NodeState{}),
