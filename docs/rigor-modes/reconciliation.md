@@ -95,6 +95,30 @@ Two things the ruling does not change: the spec stays verbatim (its own commit,
 repository, which is the owner's to name and is recorded as the open value rather
 than as a recommendation this folder takes.
 
+### 1.4 The stop ruling of 2026-11-08: a run merges as-is at its stop
+
+The owner ruled that in Startup — and in POC, which blocks nothing but the
+catastrophic — speed to market means the run **finalizes ready at the stop**
+rather than leaving a draft: "merge as-is, follow up the rest". The stop is
+whichever comes first: the mode's review rounds are spent, or the loop is about
+to start another review or fix round past `agent.review_stop_fraction` (0.8) of
+the run's total time budget. It is the mode's *second* rule and it is data beside
+its floor, not a condition in the runner: `internal/rigor/table.go`'s `stop` rows
+(`threshold.Stop`, `BlocksAtStop`, `AcceptsAtStop`, and `SplitAtStop`'s accepted
+half), whose zero value is the draft every mode left before it.
+
+| The ruling's part | Where it lands |
+| --- | --- |
+| Which modes accept at their stop | `stopCatastrophic` for POC and Startup — every finding the severity override does not cover, which is `Blocks` read over the mode's own row — `stopSecurity` for Hotfix, its own gate applied at the second moment, and the zero `stopDraft` for Pro, Critical and every name the table does not hold |
+| What the stop is | `runner.Budget.PastStop` for the time half, and the rounds each enabled level's loop spends (`runner.firstLine`, `seniorLoop`, `adversarialLoop`, counted across the levels so level 3 buys no extra time); past either, the loop starts no new review or fix round and goes to finalize |
+| What it files, and where it is recorded | exactly as a tolerated finding is filed (D30): the pull request body's section and the run record. The record gains `record.Accepted` (`runstore.NewAccepted`) beside `Tolerated`, with the round and the half of the rule that ended the run — a new field on version 1, the format rule every wire shape here follows |
+| The reason | `runner.Decide`: `review round N left K findings, accepted at <mode> (rounds spent \| time threshold)`. A catastrophic finding, failing tests or a pending owner decision (OD1) keeps the draft, with the reason stated |
+| Asking for review level 3 | changes no mode's rigor: every enabled level is read through the same findings policy (`levelTolerated`, `heldBackLevel`), so a level whose last round is wholly tolerated counts as shipped and a level that left a blocking finding is the reason, whichever level it is |
+
+The key is a repository and project layer row (`agent.review_stop_fraction`,
+[project-layer.md](../project-layer.md) §5), so an installation or a repository
+can move the threshold; nothing else about the ruling needs an operator step.
+
 ## 2. Corrections to the premises this task was given
 
 Five things stated in the brief, or plainly implied by it, are not what the tree
@@ -227,6 +251,11 @@ verdict. Every mode below Critical still has to *reach* a `ship` — by fixing w
 the mode says must be fixed and recording what it tolerates — or the run ends as
 today's failed draft. Where the tolerated findings go instead is the whole of D7
 and D9.
+
+The stop ruling (§1.4) is the one thing that has moved since, and it moves this
+premise in one place: a mode's own row can now accept the round the run *stopped*
+at, which is a second condition on readiness rather than a mode disagreeing with
+the verdict it read. `docs/recipes.md`'s sentence is amended in the same commit.
 
 **F5 — The failed-draft path is the backlog's natural trigger.** Class: **Exists**.
 The run that ends with findings already ends with `StatusFailed`, `OutcomeDraft`
