@@ -743,11 +743,9 @@ func TestCredentialsServiceRefusalsNeverCarryAValue(t *testing.T) {
 // outside the loop. Which of the names is which is pinned by the tests around
 // this one, not by this comparison.
 //
-// One of the four is read here and NOT set by the module yet
-// (internal/infra/tf's CredentialsServiceEnvAwaitingTheModule, which is also
-// what the cover's allow-list answers with): the entry is admitted first and
-// the module that renders it lands second, and the tripwire below fails the
-// moment credentials.tf sets it, so it cannot be left on that list.
+// All four are rendered conditionally — the module sets each of them only on an
+// installation where it applies — and the reason they belong here rather than
+// in credentialsServiceEnvNames is pinned by the tests around this one.
 //
 // internal/infra/tf's credentialsServiceEnv is the third side of this, and it
 // is held to the module by that package's own test (the cover's allow-list

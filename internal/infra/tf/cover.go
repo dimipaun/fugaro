@@ -930,19 +930,19 @@ var credentialsServiceEnv = []string{
 // in the same binary — deploy/terraform is embedded — so the order is the
 // cover's and not a release's).
 //
-// FUGARO_REVIEW_JOB_ACCOUNTS is the live case, and it is why the service reads
-// the name as an OPTIONAL value (internal/cli's credentialsServiceConfig): an
-// installation whose module does not render it starts the same service it
-// always did and refuses every caller of the review class (C3.9a), rather than
-// refusing to bind a port.
+// It is empty, and that is the state it exists for: its one entry,
+// FUGARO_REVIEW_JOB_ACCOUNTS, left it in the same change that made
+// installation/credentials.tf render it. The service still reads that name as
+// an OPTIONAL value (internal/cli's credentialsServiceConfig), because an
+// installation that deploys no review variant renders no entry at all.
 //
 // It is a list with a tripwire and not a carve-out. Two tests hold it: the
 // golden test below fails on a name that is both here and on the plan, and
 // internal/cli's TestCredentialsServiceEnvIsTheDeploymentsOwn fails on one that
-// is here and in the module's own source — so the entry cannot be left behind
+// is here and in the module's own source — so an entry cannot be left behind
 // once the module renders it.
 func CredentialsServiceEnvAwaitingTheModule() []string {
-	return []string{"FUGARO_REVIEW_JOB_ACCOUNTS"}
+	return nil
 }
 
 // APITargets are the two services the Firebase web key may call, sorted;
