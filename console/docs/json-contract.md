@@ -2741,14 +2741,26 @@ the Coordinator tab's, because its `all` scope is the coordinator's stored view
 `graph.NodeKey` and the `--source` value parsed by `graph.ParseScope`
 (`ee/graph/key.go`). Cited by symbol, not by line, for §6.11's reason.
 
-**`fugaro graph --json` has landed; the stream and the console's own read have
-not.** CG1 (the document, the key and the scope pattern) and CG3 (`graph
---json`, the coordinator scope) are on `main`, so the command, its `--source`
-set and every field below are what the released CLI writes; CG7 (`graph --watch
---json`) and the console's own read of this document (CG9a, CG9b) are the tasks
-that follow, in that order. The fields are read off `ee/graph/document.go`'s
-struct tags and the rules off the plan's H1 to H5, so a task that finds the code
-disagreeing with this section has found a defect in one of the two.
+**`fugaro graph --json`, its stream and the console's one-shot read have
+landed; the console's live half has not.** CG1 (the document, the key and the
+scope pattern), CG3 (`graph --json`, the coordinator scope), CG7 (`graph
+--watch --json`, the stream) and CG9a (the console's own read of this document —
+the `graph.read` spawn row, its operation and bridge method, and the decoder
+`decodeGraphDocument`) are on `main`, so the command, its `--source` set, every
+field below and every rule of the stream — a whole document per change, the
+one-second floor, the keep-alive, a `stream_id` with a rising `seq`, a scope that
+is down as a state — are what the released CLI writes. The one exit is a
+**refusal**, which is a read this CLI may not make (below); a listen the server
+*withdrew* is not one of them — that scope goes `down` and the child stays alive
+with its last graph and its clock, which is the rule §10.6 gives `watch` for the
+same event and the rule the graph plan's CG7 pins for this scope, so a withdrawn
+feed is a state a screen ages rather than a child it waits to exit. The
+console's subscription to that stream, and the
+drawing of what it carries (CG9b, CG11), are the tasks that follow: the read the
+console makes today is the one-shot one. The fields are read off
+`ee/graph/document.go`'s struct tags and the rules off the plan's H1 to H5, so a
+task that finds the code disagreeing with this section has found a defect in one
+of the two.
 
 **The section is numbered §6.22, and that is not a typo.** §6.21 is already
 claimed for another command's document: `docs/console-managed-screens/implementation-plan.md`
