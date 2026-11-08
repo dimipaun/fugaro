@@ -220,6 +220,11 @@ the security-pattern floor, the matcher and the union merge`.
   naming both numbers.
 - **Reviewer tier:** standard. **Owner-run:** no. **Depends on:** nothing.
   **Commit:** `docs(security-classification): the folder's pin, and the census moves to 102`.
+- **Note added 2026-11-08:** the move landed as **111 → 112** (the row's value when the task started,
+  plus one) and the three census re-check test files named above needed **no edit** — each re-derives
+  the count from the row. The **101 → 102** figures in this block, in §1 and in
+  [reconciliation.md](reconciliation.md)'s D1519 are the plan's own reading of 2026-11-07 and are left
+  as what was read then.
 
 ### SC3. `fugaro security paths [--check PATH…] [--json]` (D1512). **size M**
 
