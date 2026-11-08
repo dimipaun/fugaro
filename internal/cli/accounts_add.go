@@ -237,7 +237,7 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 			return userErr("refusing to write %s in a coding agent's session (%s is set): %s; run this yourself at your own terminal: %s; nothing was written",
 				sel.Path, marker, what, command)
 		}
-		if err := announceSettingsWrite(cmd, what); err != nil {
+		if err := announceSettingsWrite(cmd, m.Managed, what); err != nil {
 			return err
 		}
 	}

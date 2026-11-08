@@ -253,9 +253,9 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 		// about: the sentence is printed here, in the same words and through the
 		// same door (announceSettingsWrite), which is where a question --ask
 		// would put back would be asked — this command registers no --ask, so
-		// none is.
+		// none is, and no gate answer is passed with the sentence.
 		if err := run.ask(func() error {
-			return announceSettingsWrite(cmd, what)
+			return announceSettingsWrite(cmd, false, what)
 		}); err != nil {
 			return err
 		}

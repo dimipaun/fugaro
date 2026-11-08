@@ -4,12 +4,14 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/settings"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -286,34 +288,84 @@ func TestSettingsSetBacksUpAndWritesAtomically(t *testing.T) {
 	}
 }
 
-// TestSettingsSetAskDeclinedWritesNothing: --ask is the one question a
-// settings write still asks (D1544), and a "no" is an answer rather than a
-// shrug: announceSettingsWrite's refusal is the whole of that answer, and it is
-// what stops the write at the point where every caller of the helper had
-// already said what it was about to change. Nothing is written and nothing is
-// left behind — not the edit, and not a backup of a document that did not
-// change.
-func TestSettingsSetAskDeclinedWritesNothing(t *testing.T) {
-	_, localPath := settingsWriteHome(t)
-	before := readFileString(t, localPath)
-	typed(t)
-	out, _, err := executeStdin(t, "n\n", "settings", "set", "commit_name", "person-1", "--layer", "local", "--ask")
-	if err == nil {
-		t.Fatalf("a declined --ask wrote the change instead of stopping:\n%s", out)
+// TestSettingsSetAskInAProjectThatIsNotManagedIsANoOp: rule 3 of the flag —
+// the no-op — in a write's own terms, and the same assertion update's tests
+// make: the flagged run IS the plain run with the flag's one line taken out of
+// the middle, and nothing else moved. The flag says why it does nothing here
+// (initflow.AskUnmanaged) and then changes nothing at all: no question is
+// asked, nothing is refused, and the write lands with the flag exactly as it
+// lands without it. Any other answer would be this one command's --ask
+// deciding a step in a project the flag says it leaves alone — and, where
+// nobody can answer, refusing it with a sentence about a managed project that
+// is not this one.
+func TestSettingsSetAskInAProjectThatIsNotManagedIsANoOp(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		terminal bool
+	}{
+		{"no terminal", false},
+		{"a terminal", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, localPath := settingsWriteHome(t)
+			before := readFileString(t, localPath)
+			terminal(t, tc.terminal)
+
+			plain, _, err := executeStdin(t, "", "settings", "set", "commit_name", "person-1", "--layer", "local")
+			if err != nil {
+				t.Fatalf("the run without the flag failed: %v\n%s", err, plain)
+			}
+			written := readFileString(t, localPath)
+			settingsRunAgain(t, localPath, before)
+
+			flagged, _, err := executeStdin(t, "", "settings", "set", "commit_name", "person-1", "--layer", "local", "--ask")
+			if err != nil {
+				t.Fatalf("--ask failed in a project that is not managed: %v\n%s", err, flagged)
+			}
+			if !strings.Contains(flagged, initflow.AskUnmanaged()) {
+				t.Errorf("--ask did not say what the marks answered:\n%s", flagged)
+			}
+			if strings.Contains(flagged, initflow.AskRestored()) || strings.Contains(flagged, initflow.AskRefusal(initflow.Conditions{})) {
+				t.Errorf("--ask answered as if the project were managed:\n%s", flagged)
+			}
+			assertNoPrompt(t, flagged)
+			if got := readFileString(t, localPath); got != written {
+				t.Errorf("--ask wrote a different document than the run without it:\n%s", got)
+			}
+			if stripped := strings.Replace(flagged, initflow.AskUnmanaged()+"\n", "", 1); withoutSettingsRunOwn(stripped) != withoutSettingsRunOwn(plain) {
+				t.Errorf("--ask changed the run in a project that is not managed (the flag's line stripped from the middle).\nwithout: %s\nwith:    %s", plain, flagged)
+			}
+		})
 	}
-	if want := "not confirmed; nothing was written"; !strings.Contains(err.Error(), want) {
-		t.Errorf("a declined --ask was refused with %q, want %q", err, want)
+}
+
+// settingsRunAgain puts the fixture back the way a run found it — the bytes it
+// read, and no backup of the write that followed — so one fixture can carry the
+// two runs this test compares.
+func settingsRunAgain(t *testing.T, path, text string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if after := readFileString(t, localPath); after != before {
-		t.Errorf("a declined --ask rewrote the config:\n%s", after)
-	}
-	backups, err := filepath.Glob(localPath + ".bak-*")
+	backups, err := filepath.Glob(path + ".bak-*")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(backups) != 0 {
-		t.Errorf("a declined --ask left %d backups beside the config, want none", len(backups))
+	for _, b := range backups {
+		if err := os.Remove(b); err != nil {
+			t.Fatal(err)
+		}
 	}
+}
+
+// settingsRunOwnRE is the one thing two runs over one fixture never agree on:
+// the second the backup of the write before them was named after.
+var settingsRunOwnRE = regexp.MustCompile(`\.bak-\d{8}T\d{6}Z(-\d+)?`)
+
+// withoutSettingsRunOwn is s with that taken out, so the two runs' outputs can
+// be compared for equality.
+func withoutSettingsRunOwn(s string) string {
+	return settingsRunOwnRE.ReplaceAllString(s, ".bak-<the run's own>")
 }
 
 // TestSettingsSetKeepsTheRestOfTheFile: the edit splices bytes, so a comment

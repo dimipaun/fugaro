@@ -558,11 +558,13 @@ func accountsClear(cmd *cobra.Command, o accountsClearOptions, name string) erro
 	// The ask wrapper is the frame's here and not a prompt's: the sentence below
 	// is what a person reads about this write, and the question that may follow
 	// it is the one --ask puts back (announceSettingsWrite). It stays wrapped
-	// because a line in flight drawn over either swallows it (G1).
+	// because a line in flight drawn over either swallows it (G1). This command
+	// registers no --ask, so no gate answer is passed with it: there is no flag
+	// for a managed project's verdict to stand in for.
 	what := fmt.Sprintf("clear the %s mark of Claude account %s, putting it back in the cascade's rotation",
 		stateText(accountStateOf(prev)), pluginwire.Printable(name))
 	if err := run.ask(func() error {
-		return announceSettingsWrite(cmd, what)
+		return announceSettingsWrite(cmd, false, what)
 	}); err != nil {
 		return err
 	}

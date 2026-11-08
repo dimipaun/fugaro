@@ -176,7 +176,7 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 		// command waits on stdin, and a question a session can answer is not a
 		// fence.
 		fmt.Fprintf(out, "%s\n%s\n", e.TypedWhy, e.What)
-	} else if err := announceSettingsWrite(cmd, e.What); err != nil {
+	} else if err := announceSettingsWrite(cmd, e.Managed.Managed, e.What); err != nil {
 		return err
 	}
 
@@ -249,13 +249,14 @@ func settingsEditConditions(cmd *cobra.Command, e settingsEdit) initflow.Conditi
 }
 
 // announceSettingsWrite says what one settings write does and asks whether to
-// make it — a question only --ask ever raises (D1540, D1544). Without the flag
-// it prints the sentence, writes nothing of its own and returns nil: the run
-// proceeds, which is the policy's answer to a step that used to ask, and the
-// fence, the compare-and-swap and the backup are what bound it. With the flag
-// the sentence is followed by the one question the flag is for, asked by the one
-// sanctioned reader (askConfirm), which refuses where nobody can answer it
-// instead of letting a silent proceed stand in.
+// make it — a question only --ask in a project the marks answered managed ever
+// raises (D1540, D1544). Without the flag it prints the sentence, writes
+// nothing of its own and returns nil: the run proceeds, which is the policy's
+// answer to a step that used to ask, and the fence, the compare-and-swap and
+// the backup are what bound it. With the flag the sentence is followed by the
+// one question the flag is for, asked by the one sanctioned reader
+// (askConfirm), which refuses where nobody can answer it instead of letting a
+// silent proceed stand in.
 //
 // It is the one place a settings write says its sentence and asks, so the
 // callers that write outside applySettingsEdit — `accounts add` and `secrets rm`
@@ -263,8 +264,22 @@ func settingsEditConditions(cmd *cobra.Command, e settingsEdit) initflow.Conditi
 // the same words as the helper does. A "no" is an answer and not an error: every
 // caller here answers it the same way, because every one of them leaves the same
 // thing behind, a document byte-identical to the one it read.
-func announceSettingsWrite(cmd *cobra.Command, what string) error {
+//
+// managed is the gate's own answer for this write (initflow.Managed.Managed,
+// the same value askDecide decides the flag's line and refusal under), and it
+// is what makes the question the flag's question. In a project the marks did
+// not answer "managed" for there is nothing for --ask to restore — that is the
+// line initflow.AskUnmanaged prints — so the flag asks nothing here, and a
+// question would be the one path where it changed a step in a project it says
+// it leaves alone: a y/N at the owner's terminal, and, where nobody can answer,
+// a refusal naming a managed project that is not this one. A command that
+// registers no --ask passes false, which is the same answer askConfirm gives
+// the flag it does not have.
+func announceSettingsWrite(cmd *cobra.Command, managed bool, what string) error {
 	fmt.Fprintln(cmd.OutOrStdout(), what)
+	if !managed {
+		return nil
+	}
 	ok, err := askConfirm(cmd, "make this change?")
 	if err != nil {
 		return err

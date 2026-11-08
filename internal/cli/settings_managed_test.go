@@ -682,6 +682,42 @@ func TestSettingsSetManagedAskWithoutATerminalReadsTheMarks(t *testing.T) {
 	}
 }
 
+// The other half of the same run: where a terminal CAN answer, the flag's
+// question is the whole of what it restores, and a "no" is an answer rather
+// than a shrug. announceSettingsWrite's refusal is the whole of that answer,
+// and it is what stops the write at the point where the sentence naming the
+// change has already been read. Nothing is written and nothing is left behind —
+// not the edit, and not a backup of a document that did not change.
+//
+// The mutation caught: announceSettingsWrite's `if !ok`, whose false branch
+// written anyway left the whole suite green.
+func TestSettingsSetManagedAskDeclinedWritesNothing(t *testing.T) {
+	r := newSettingsManagedRig(t, settingsMarksManaged)
+	r.managedRunsBucket(t)
+	path := settingsManagedLayerFile(t, minimalAnchored)
+	before := readFileString(t, path)
+	noAgentSession(t)
+	typed(t)
+
+	out, _, err := executeStdin(t, "n\n", "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--ask")
+	if err == nil {
+		t.Fatalf("a declined --ask wrote the change instead of stopping:\n%s", out)
+	}
+	if want := "not confirmed; nothing was written"; !strings.Contains(err.Error(), want) {
+		t.Errorf("a declined --ask was refused with %q, want %q", err, want)
+	}
+	if after := readFileString(t, path); after != before {
+		t.Errorf("a declined --ask rewrote the layer:\n%s", after)
+	}
+	backups, err := filepath.Glob(path + ".bak-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 0 {
+		t.Errorf("a declined --ask left %d backups beside the layer, want none", len(backups))
+	}
+}
+
 // A run that asks nothing pays nothing: --yes answers the edit itself, and a
 // run with no terminal is refused before the file is touched, so neither has a
 // question for the gate to answer and neither pays for the read. That is what
