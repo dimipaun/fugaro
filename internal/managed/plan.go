@@ -87,6 +87,23 @@ type Spec struct {
 	// whole of it: the resource is judged whatever its address is on this list
 	// (D72/D74).
 	AllowDelete []tf.DeleteEntry
+	// Upgrade is the replaces this program's own installation upgrade makes of
+	// grants an earlier release wrote, by address, computed out of THIS plan by
+	// the caller's own matcher and never from a session's arguments
+	// (infra.LauncherGrantUpgrade, the one caller): a launcher's condition is
+	// ForceNew, so every installation not re-applied since that condition last
+	// changed plans one replace per launcher who is not an operator, and a gate
+	// that did not know them would refuse the upgrade `fugaro update` is the
+	// whole of (CLAUDE.md).
+	//
+	// The caller's matcher is a reading of this plan and not an approval of an
+	// address: it compares both sides of the change — the condition and its
+	// title, the role, the member and the bucket — before naming it, so the
+	// list holds changes this program itself wrote (the owner's entries above
+	// are the other shape, and are bound to the object they approved). Each
+	// one's create half is judged beside it, as the create it is
+	// (Spec.notCovered), and its removal half is the caller's reading.
+	Upgrade []string
 	// Imports are the import blocks the root's discovery wrote: an import is
 	// admitted only when its address and ID are exactly one of them
 	// (tf.Cover.NotCovered's own rule), so a stale imports.tf.json or a hand
@@ -224,8 +241,8 @@ func countChanges(p *tf.Plan) Changes {
 // flag-only finding, which no entry of the real list produces.
 var costFindings = tf.ManagedCosts
 
-// guard is tf.GuardEntries with no advice of its own; a variable only so a test
-// can make it refuse in words the real guard never writes.
+// guard is tf.GuardEntriesWithAddresses with no advice of its own; a variable
+// only so a test can make it refuse in words the real guard never writes.
 //
 // No advice, because the guard's own (tf.AllowDeleteAdvice) names the flag a
 // managed apply refuses, and the sentence a managed refusal ends with is the
@@ -237,7 +254,13 @@ var costFindings = tf.ManagedCosts
 // Entries rather than addresses, because the list this half of the gate reads
 // is the owner's own (D72/D74): under Task 6.3 an entry approves an address for
 // one object, and the address alone is no longer an approval (tf.GuardEntries).
-var guard = func(p *tf.Plan, entries []tf.DeleteEntry) error { return tf.GuardEntries(p, entries, "") }
+//
+// Spec.Upgrade's addresses are read beside them, and only there: those are
+// replaces the caller matched out of this plan rather than an approval of
+// anything at an address (Spec.Upgrade).
+var guard = func(p *tf.Plan, entries []tf.DeleteEntry, upgrade []string) error {
+	return tf.GuardEntriesWithAddresses(p, entries, upgrade, "")
+}
 
 // Refusal is one refusal of one address: the gate that made it, the address it
 // is about, and the rule's own words for why — the actions the guard would
@@ -272,7 +295,7 @@ func Gate(ctx context.Context, planPath string, spec Spec) (Verdict, error) {
 		return Verdict{}, err
 	}
 	v := Verdict{Changes: countChanges(plan)}
-	guardErr := guard(plan, spec.AllowDelete)
+	guardErr := guard(plan, spec.AllowDelete, spec.Upgrade)
 	if guardErr != nil {
 		v.Refusals = append(v.Refusals, refusals(guardGate, guardLines(guardErr.Error()))...)
 		v.Listable = tf.ListableEntries(plan, spec.AllowDelete)
@@ -330,10 +353,16 @@ func (s Spec) notCovered(p *tf.Plan) []string {
 	if s.Cover == nil {
 		return []string{"no cover: a managed plan is admitted by the managed cover of " + s.what() + ", or by nothing"}
 	}
+	// The upgrade's own replaces are asked as the creates they make
+	// (tf.WithoutRemovals): the cover refuses a change carrying a delete as one
+	// fact and reads nothing inside it, and what has to be judged about such a
+	// change is the half that grants access — the other half is the caller's
+	// own reading (Spec.Upgrade). A plan with no upgrade is asked as it is.
+	judged := tf.WithoutRemovals(p, s.Upgrade)
 	if d, ok := s.Cover.(tf.Deletable); ok {
-		return d.WithDeleteEntries(s.AllowDelete).NotCovered(p, s.Imports)
+		return d.WithDeleteEntries(s.AllowDelete).NotCovered(judged, s.Imports)
 	}
-	return append(s.Cover.NotCovered(p, s.Imports), s.unjudgedDeletes(p)...)
+	return append(s.Cover.NotCovered(judged, s.Imports), s.unjudgedDeletes(p)...)
 }
 
 // unjudgedDeletes lists every delete or replace of an address the owner's list

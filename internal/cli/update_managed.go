@@ -421,7 +421,19 @@ func (r *initRun) gateNamesAnIAMCall(bucket string) string {
 // So an installation whose upgrade deletes something is the owner's to run,
 // with the flag they have always passed and the confirmations they have always
 // been asked.
-func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey, cover managedmode.Cover) (bool, error) {
+//
+// upgrade is the one thing the gate is told and the owner's list is not: the
+// replaces this binary's own upgrade makes of a grant an earlier release wrote,
+// as infra.LauncherGrantUpgrade matched them out of this plan
+// (managed.Spec.Upgrade). A launcher's condition is ForceNew, so every
+// installation that has not been re-applied since it last changed plans one
+// replace per launcher who is not an operator, and a gate that refused it would
+// make `fugaro update` two steps — the flag the refusal names, on the owner's
+// own terminal — which is the one thing CLAUDE.md's rule about that command
+// forbids. It is the installation root's own and no other step's: the
+// runs_launcher grants live in that module, and every other call site passes
+// nil.
+func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey, cover managedmode.Cover, upgrade []string) (bool, error) {
 	g := r.gate
 	if g == nil || !g.managed {
 		return false, nil
@@ -445,7 +457,7 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	}
 	verdict, err := managedmode.Gate(ctx, infra.PlanFile, managedmode.Spec{
 		Project: r.projectName, GCPProject: r.gcpProject,
-		Cover: cover, Imports: imports, TF: t,
+		Cover: cover, Imports: imports, TF: t, Upgrade: upgrade,
 	})
 	if err != nil {
 		// A plan terraform cannot read is never admitted (managed.Gate's own
