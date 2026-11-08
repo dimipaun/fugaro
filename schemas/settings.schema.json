@@ -344,6 +344,9 @@
         "agent.review_rounds": {
           "default": "unset = the run's rigor mode decides (rigor.DefaultRounds)"
         },
+        "agent.review_stop_fraction": {
+          "default": "unset = 0.8 (config.DefaultReviewStopFraction)"
+        },
         "backend": {
           "default": "unset = cloud-run"
         },
@@ -765,6 +768,9 @@
         },
         "layer.defaults.agent.review_rounds": {
           "default": "unset = the run's rigor mode decides (rigor.DefaultRounds)"
+        },
+        "layer.defaults.agent.review_stop_fraction": {
+          "default": "unset = 0.8 (config.DefaultReviewStopFraction)"
         },
         "layer.defaults.git.pr.checkpoints": {
           "default": "unset = inherit"
