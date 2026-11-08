@@ -286,6 +286,16 @@ func (e *initEngine) converge(ctx context.Context) error {
 	if err := e.gateRun(ctx); err != nil {
 		return err
 	}
+	// The roles step, once for the whole run and before the first stage plans
+	// (update_access.go, RS3): the installation's member lists and the grants
+	// node are reconciled here, and the spec every stage below builds carries
+	// the lists the node says. It is before the loop rather than a stage of its
+	// own because it changes what the run's OWN applies carry — the
+	// installation stage is the first of them, and a step that ran beside it
+	// would leave that apply on the lists the file remembered.
+	if err := e.syncAccess(ctx); err != nil {
+		return err
+	}
 	res, err := initflow.Run(ctx, stages, e.options())
 	if err == nil && res != nil && e.r.o.planOnly && res.Failed == nil {
 		e.planOnlyReview(ctx, res.Stages)

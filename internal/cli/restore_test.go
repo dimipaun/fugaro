@@ -413,7 +413,7 @@ func TestRestoreMovesTheConfigByNameAndNeverGuesses(t *testing.T) {
 			RunsBucket: initRunsBucket, Bucket: "gs://" + initRunsBucket,
 			Registry: "gcr.io/" + initProject, RegistryHost: "us-east5-docker.pkg.dev/" + initProject, LogView: initLogView,
 			Build:       localcfg.Build{ServiceAccount: "fugaro-build@" + initProject + ".iam.gserviceaccount.com", MachineType: "E2_HIGHCPU_8"},
-			Terraform:   localcfg.Terraform{StateBucket: initStateBucket, Launchers: []string{"user:test@example.com"}, Operators: []string{"user:test@example.com"}},
+			Terraform:   localcfg.Terraform{StateBucket: initStateBucket, Operators: []string{"user:test@example.com"}, Admins: []string{"user:test@example.com"}},
 			Budget:      &localcfg.Budget{Mode: "enforce", PerRunUSD: 5},
 			MaxParallel: 4,
 		}
