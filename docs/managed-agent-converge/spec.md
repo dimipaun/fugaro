@@ -71,7 +71,7 @@ These are refused in a coding agent's session in a managed project exactly as th
 - **Anything that writes the managed label itself** — including `gcloud projects update … --update-labels fugaro_managed=true` and every other path to a project-label write.
 - **Billing.** `fugaro setup --create-project --billing-account`, the `--link-billing` step, and any write to a billing budget or a billing account. The recorded monthly amount is a fact the marker carries, not something the agent may set or change.
 - **Deleting the project**, and destroying the installation. `fugaro update --forget` and any address that removes the installation's own objects stay owner-run, and the retired project-retirement flow keeps its own refusals — this design adds none and lifts none.
-- **IAM widening**: `--launcher`, `--operator`, `--budget-admin`, and `fugaro allow-delete` (the command that writes the owner's delete list — a session that could write that list could approve its own deletes).
+- **IAM widening**: `--operator`, `--admin`, `--budget-admin`, and `fugaro allow-delete` (the command that writes the owner's delete list — a session that could write that list could approve its own deletes).
 - **`fugaro restore`**, which refuses an agent session today and keeps it.
 - **`fugaro setup` itself**, including `--create-project --managed`: creating a project, linking billing and recording the budget amount are the owner's decisions at their own terminal (D900's answer for the rigor question is the same shape). The agent's door is `update`.
 

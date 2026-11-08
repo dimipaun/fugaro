@@ -1633,22 +1633,22 @@ Expect the four addresses under `module.firebase.`.
 
 **Restore.** Nothing to restore beyond `git checkout -- .claude/settings.json` if you do not want the pin.
 
-## Check 32: the runs bucket's launcher grants (installation fugaro, sandbox repository only, run by you; RUN 2026-10-14: PASSED, see the result below)
+## Check 32: the runs bucket's operator grants (installation fugaro, sandbox repository only, run by you; RUN 2026-10-14: PASSED, see the result below)
 
-**Run on 2026-10-14 with fugaro 0.7.0 (result and corrections at the end of this section).** The 0.7.0 bucket hardening ([design/bucket-iam.md](design/bucket-iam.md)) gives launchers who are not operators `roles/storage.objectViewer` on the runs bucket and `roles/storage.objectUser` under `resource.name.startsWith("projects/_/buckets/<bucket>/objects/runs/")`. Items V1 to V5 and V8 of the design are unverified against real GCS.
+**Run on 2026-10-14 with fugaro 0.7.0 (result and corrections at the end of this section).** The 0.7.0 bucket hardening ([design/bucket-iam.md](design/bucket-iam.md)) gives operators who are not admins `roles/storage.objectViewer` on the runs bucket and `roles/storage.objectUser` under `resource.name.startsWith("projects/_/buckets/<bucket>/objects/runs/")`. Items V1 to V5 and V8 of the design are unverified against real GCS.
 
-**Run it on the `fugaro` installation (GCP project `fugaro-dev`), where the sandbox repository `edgeappinc/fugarosandbox` now lives and where you are the only launcher and operator, NEVER on `belong` (EdgeWeb's and EdgeServer's installation, whose launchers the apply would change).** The apply in step 2 changes the runs bucket's policy for everyone in that installation: in `fugaro` that is only you and the test identity. Touch only the sandbox repository's `runs/` objects and `fugaro-live-*` objects. Never EdgeWeb's or EdgeServer's. In this check `<p>` is `fugaro-dev` (the runs bucket is `gs://fugaro-runs-fugaro-dev`).
+**Run it on the `fugaro` installation (GCP project `fugaro-dev`), where the sandbox repository `edgeappinc/fugarosandbox` now lives and where you are the only operator and admin, NEVER on `belong` (EdgeWeb's and EdgeServer's installation, whose operators the apply would change).** The apply in step 2 changes the runs bucket's policy for everyone in that installation: in `fugaro` that is only you and the test identity. Touch only the sandbox repository's `runs/` objects and `fugaro-live-*` objects. Never EdgeWeb's or EdgeServer's. In this check `<p>` is `fugaro-dev` (the runs bucket is `gs://fugaro-runs-fugaro-dev`).
 
 1. Record `fugaro version`, the date, and `gcloud storage buckets get-iam-policy gs://fugaro-runs-<p> --format=json` (the count of bindings with a `condition`: V3).
-2. **⚠ CONFIRM** in your own terminal, add a second identity you control (a test Google account, or a service account you can impersonate) as a launcher only: `fugaro update --launcher user:<you> --launcher user:<test identity> --operator user:<you>` (every member needs its `user:`, `group:`, `serviceAccount:` or `domain:` prefix: a bare address fails Terraform's variable validation before anything is applied). Read the plan and the `bucket access (0.7.0)` banner, then type the name. Record the apply's output, and step 1's command again (V3: one new conditional binding, whatever the number of launchers).
+2. **⚠ CONFIRM** in your own terminal, add a second identity you control (a test Google account, or a service account you can impersonate) as an operator only: `fugaro update --operator user:<you> --operator user:<test identity> --admin user:<you>` (every member needs its `user:`, `group:`, `serviceAccount:` or `domain:` prefix: a bare address fails Terraform's variable validation before anything is applied). Read the plan and the `bucket access (0.7.0)` banner, then type the name. Record the apply's output, and step 1's command again (V3: one new conditional binding, whatever the number of operators).
 3. As the test identity (`gcloud auth application-default login` with it, or `--impersonate-service-account`):
    - `gcloud storage cp` a file to `gs://fugaro-runs-<p>/runs/<sandbox slug>/fugaro-live-iam/x`, overwrite it, then remove it. All succeed (V1).
    - The same to `fugaro/fugaro-live-iam`, `builds/<sandbox slug>/fugaro-live-iam`, `cache/<sandbox slug>/fugaro-live-iam` and `locks/<sandbox slug>/fugaro-live-iam`. Each gets 403 (V1).
    - `gcloud storage ls gs://fugaro-runs-<p>/runs/` and `gcloud storage cat gs://fugaro-runs-<p>/fugaro/project.json` succeed (V1, list and get).
    - `fugaro run` a trivial task on the sandbox, then `fugaro cancel` it. Both work (V2: the claim's create-if-absent, its generation-matched release, the cancel marker, the token object).
-   - `fugaro recipes publish` of a throwaway recipe named `fugaro-live-iam` is refused with "needs the operator role" and exit 1 (V8). Nothing is written.
+   - `fugaro recipes publish` of a throwaway recipe named `fugaro-live-iam` is refused with "needs the admin role" and exit 1 (V8). Nothing is written.
    - `fugaro doctor`: `runs-bucket-iam` is ok ("writes only runs/") (V4).
-4. As yourself (operator): `fugaro doctor` shows `runs-bucket-iam` ok. `gcloud storage buckets get-iam-policy` shows the launcher binding exactly as `gcp.LauncherBucketCondition` spells it.
+4. As yourself (admin): `fugaro doctor` shows `runs-bucket-iam` ok. `gcloud storage buckets get-iam-policy` shows the operators' binding exactly as `gcp.LauncherBucketCondition` spells it.
 5. **Propagation (V5).** Before step 2, as the test identity with the old grant, start a loop writing `fugaro/fugaro-live-iam` every 10 s. Record how long writes keep succeeding after the apply.
 
 **FACT lines to record:**
@@ -1659,7 +1659,7 @@ Expect the four addresses under `module.firebase.`.
 - the refusal text of step 3;
 - doctor's lines.
 
-**Restore.** Remove the test identity: `fugaro update --launcher user:<you> --operator user:<you>`, and read the plan (it deletes the test member's four installation resources, and the same member's job-level launcher grants on every onboarded repository's jobs and named-account variants; pass `--allow-delete` for each address the refusal prints, and re-run for the repository stage). Then `gcloud storage rm` every `fugaro-live-iam` object.
+**Restore.** Remove the test identity: `fugaro update --operator user:<you> --admin user:<you>`, and read the plan (it deletes the test member's four installation resources, and the same member's job-level launcher grants on every onboarded repository's jobs and named-account variants; pass `--allow-delete` for each address the refusal prints, and re-run for the repository stage). Then `gcloud storage rm` every `fugaro-live-iam` object.
 
 ### Result of the 2026-10-14 run (fugaro 0.7.0; installation `fugaro`, project `fugaro-dev`; test identity a second Google account with no roles in the project)
 
@@ -1676,7 +1676,7 @@ Expect the four addresses under `module.firebase.`.
 
 **Corrections this run found (apply them when you run this again):**
 
-1. Members need their prefix: `--launcher user:<address>`, not `--launcher <address>`.
+1. Members need their prefix: `--operator user:<address>`, not `--operator <address>`.
 2. **The `fugaro` CLI ignores `CLOUDSDK_CONFIG`**: it finds its application-default credentials in `~/.config/gcloud/application_default_credentials.json` (or `GOOGLE_APPLICATION_CREDENTIALS`). A separate gcloud config directory switches `gcloud` commands to the test identity but **not** `fugaro`: a `fugaro run` or `fugaro recipes publish` run that way silently uses your own identity and tests nothing. Use `GOOGLE_APPLICATION_CREDENTIALS=<test identity's application_default_credentials.json>` (a bad path fails with `open ...: no such file or directory`, which proves the variable is honored).
 3. A launcher added by `fugaro setup` also gets per-job launcher grants on every onboarded repository's jobs and named-account variants: the restore needs `--allow-delete` for those addresses as well.
 4. A full launch as a non-operator launcher needs the `--firebase-project` stage's Firebase and token-minter grants (see V2).
