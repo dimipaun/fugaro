@@ -860,7 +860,7 @@ func TestReviewScreenPrintsOnlySafeText(t *testing.T) {
 	if strings.Contains(out, "\x1b") {
 		t.Fatalf("an escape sequence reached the screen:\n%q", out)
 	}
-	for _, want := range []string{"WARNING: launchers lists domain:example.com", "base image other: ", "OUTSIDE this project's registry", "billing account:", "image source: ghcr.io/ev"} {
+	for _, want := range []string{"WARNING: operators lists domain:example.com", "base image other: ", "OUTSIDE this project's registry", "billing account:", "image source: ghcr.io/ev"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("lacks %q:\n%s", want, out)
 		}

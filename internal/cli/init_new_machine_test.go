@@ -108,10 +108,10 @@ func TestAdoptModeNamesMissingRole(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"launcher role, held by: group:eng@example.com",
-		"ask an owner to run: fugaro setup --launcher group:eng@example.com --launcher user:<your-email>",
-		"operator role, held by: nobody",
-		"ask an owner to run: fugaro setup --operator user:<your-email>",
+		"operator role, held by: group:eng@example.com",
+		"ask an owner to run: fugaro setup --operator group:eng@example.com --operator user:<your-email>",
+		"admin role, held by: nobody",
+		"ask an owner to run: fugaro setup --admin user:<your-email>",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("the output lacks %q:\n%s", want, out.String())
