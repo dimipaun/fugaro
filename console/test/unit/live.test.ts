@@ -651,27 +651,32 @@ describe('the row model', () => {
     ])
   })
 
-  it('orders a repository’s rows by start time, and then by id', () => {
-    // `watch`'s own order (`internal/watch/build.go`'s `sortRuns`: `StartedAt`,
-    // then the run id), which is what the live tab follows (D1704). **The frame
-    // carries no start stamp** -- `JSONRun` has `age_seconds` and no
-    // `started_at` -- so the age is the start time read backwards: every row of
-    // one document is aged against the same `now`, so the earliest start is the
-    // largest age. Rows that began in the same second are told apart by their
-    // ids, which is the tie `sortRuns` keeps.
+  it('draws a repository’s rows in watch’s order, which is the frame’s own', () => {
+    // **The order is the document's.** `watch` orders each repository's rows
+    // itself (`sortRuns` in `internal/watch/build.go`, applied before `json.go`
+    // emits them: `StartedAt`, then the run id) and the live tab follows it
+    // (D1704), so the console draws the rows in the order they arrived rather
+    // than sorting them a second time. A second sort here can only diverge:
+    // **`JSONRun` carries no start stamp**, and the `age_seconds` standing in
+    // for it is not the start read backwards. The CLI leaves the age null for a
+    // record with no `StartedAt` -- which `sortRuns` orders **first**, as the
+    // smallest start, and which an age cannot place at all -- and it clamps a
+    // start in the future to zero, which `sortRuns` still orders by the real
+    // stamp while no age can tell it from a run that began this second.
     const frame = theLastFrame()
     const base = theRun(frame, OAUTH_RUN)
     const runs = [
-      { ...base, run: '20261015-121500-aa03', ageSeconds: measured(100) },
+      { ...base, run: '20261015-121000-aa01', ageSeconds: unavailable('the record carries no started_at') },
       { ...base, run: '20261015-121200-aa02', ageSeconds: measured(300) },
-      { ...base, run: '20261015-121000-aa01', ageSeconds: measured(100) },
+      { ...base, run: '20261015-121500-aa03', ageSeconds: measured(100) },
     ]
     const model = buildLiveModel({ ...frame, runs }, new BurnHistory())
     expect(model.repos[0]?.runs.map((row) => row.run)).toEqual([
-      '20261015-121200-aa02',
       '20261015-121000-aa01',
+      '20261015-121200-aa02',
       '20261015-121500-aa03',
     ])
+    expect(texts(renderLive(factory, model, 'light'), 'live-run-id')).toEqual(['aa01', 'aa02', 'aa03'])
   })
 
   it('draws the BY cell, in watch’s own short form', () => {
