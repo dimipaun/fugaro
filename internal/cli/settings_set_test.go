@@ -286,6 +286,36 @@ func TestSettingsSetBacksUpAndWritesAtomically(t *testing.T) {
 	}
 }
 
+// TestSettingsSetAskDeclinedWritesNothing: --ask is the one question a
+// settings write still asks (D1544), and a "no" is an answer rather than a
+// shrug: announceSettingsWrite's refusal is the whole of that answer, and it is
+// what stops the write at the point where every caller of the helper had
+// already said what it was about to change. Nothing is written and nothing is
+// left behind — not the edit, and not a backup of a document that did not
+// change.
+func TestSettingsSetAskDeclinedWritesNothing(t *testing.T) {
+	_, localPath := settingsWriteHome(t)
+	before := readFileString(t, localPath)
+	typed(t)
+	out, _, err := executeStdin(t, "n\n", "settings", "set", "commit_name", "person-1", "--layer", "local", "--ask")
+	if err == nil {
+		t.Fatalf("a declined --ask wrote the change instead of stopping:\n%s", out)
+	}
+	if want := "not confirmed; nothing was written"; !strings.Contains(err.Error(), want) {
+		t.Errorf("a declined --ask was refused with %q, want %q", err, want)
+	}
+	if after := readFileString(t, localPath); after != before {
+		t.Errorf("a declined --ask rewrote the config:\n%s", after)
+	}
+	backups, err := filepath.Glob(localPath + ".bak-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 0 {
+		t.Errorf("a declined --ask left %d backups beside the config, want none", len(backups))
+	}
+}
+
 // TestSettingsSetKeepsTheRestOfTheFile: the edit splices bytes, so a comment
 // and every line the write does not have to touch survive it (D847).
 func TestSettingsSetKeepsTheRestOfTheFile(t *testing.T) {
