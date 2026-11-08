@@ -201,11 +201,14 @@ var (
 	//     how the schemes which put a credential in a quoted parameter write it
 	//     — `Token token="…"`, the OAuth 1.0 header, a Digest `response="…"` —
 	//     and its opening quote is the one that follows an `=`, which is what
-	//     tells it from the quote that ends a plain value in a record. The list
-	//     has no end this rule can trust, since the commas and the quotes are
-	//     both its own, and stopping at the first closing quote would leave the
-	//     parameters after it in place. A record carrying one is mangled the way
-	//     the container below is.
+	//     tells it from the quote that ends a plain value in a record. The
+	//     quote may be single (`token='…'`, a shell spelling) and the `=` may
+	//     carry the whitespace an auth-param allows on either side of it
+	//     (`token = "…"`), since both are the same parameter written another
+	//     way. The list has no end this rule can trust, since the commas and
+	//     the quotes are both its own, and stopping at the first closing quote
+	//     would leave the parameters after it in place. A record carrying one
+	//     is mangled the way the container below is.
 	//   - a bracketed value with no quote in it ends at its own bracket. That
 	//     covers a list a log printed (`authorization: [1, 2]`) and, since
 	//     the marker is bracketed too, the rule's own replacement, which is
@@ -222,7 +225,7 @@ var (
 	// quote — a quoted value is the form above, already redacted — and a
 	// leading backslash counts only when what follows it is not a quote, or
 	// this rule would eat the line from the escaped form's `\"[REDACTED]\"`.
-	authHeader = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api[_-]?key|private[_-]?token)"?\s*:\s*)(?:\[[^"\r\n]*?\]|[\[{][^\r\n]*|(?:bearer|basic)[ \t]+\\+"(?:\\.|[^"\\\r\n])*\\+"|(?:bearer|basic)[ \t]+\\+"[^\r\n]*|(?:bearer|basic)[ \t]+"(?:\\.|[^"\\\r\n])*"?|(?:bearer|basic)[ \t]+'(?:\\.|[^'\\\r\n])*'?|'(?:\\.|[^'\\\r\n])*'?|(?:[^\s"'\\\r\n\[{]|\\[^\s"\r\n])[^"'\r\n]*=\\?"[^\r\n]*|(?:[^\s"'\\\r\n\[{]|\\[^\s"\r\n])[^"'\r\n]*)`)
+	authHeader = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api[_-]?key|private[_-]?token)"?\s*:\s*)(?:\[[^"\r\n]*?\]|[\[{][^\r\n]*|(?:bearer|basic)[ \t]+\\+"(?:\\.|[^"\\\r\n])*\\+"|(?:bearer|basic)[ \t]+\\+"[^\r\n]*|(?:bearer|basic)[ \t]+"(?:\\.|[^"\\\r\n])*"?|(?:bearer|basic)[ \t]+'(?:\\.|[^'\\\r\n])*'?|'(?:\\.|[^'\\\r\n])*'?|(?:[^\s"'\\\r\n\[{]|\\[^\s"\r\n])[^"'\r\n]*[ \t]*=[ \t]*(?:\\?"|')[^\r\n]*|(?:[^\s"'\\\r\n\[{]|\\[^\s"\r\n])[^"'\r\n]*)`)
 
 	// authScheme is the same credential where no header name introduces it:
 	// a curl line or an error body prints `Bearer <token>` on its own. The
