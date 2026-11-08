@@ -155,10 +155,10 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
       reason:
         '`rigorModeWord(rigor.mode)`, which answers one of the console\'s five mode words or `null`; `null` is the branch that hands the document\'s own value to `putText` (the `label` class, the `runs[].rigor.mode` field), so only the console\'s word reaches the sink',
     },
-    ending: {
+    drawn: {
       within: 'putRunId',
       reason:
-        'the ending `displayRuns` answered for one row (`shared/shortid.ts`): the shortest suffix of the run id that tells it apart from the other rows drawn in the same list, and never shorter than four characters. The id itself has already been through `sanitizeText` in the `runId` class in this same function -- a refusal, and a marker the recorder wrote, take the `putText` branch that draws no ending at all -- so the characters drawn are a cut of a string the console would draw whole, and the whole id travels on the cell as `data-run-id`',
+        'the ending `displayRuns` answered for one row (`shared/shortid.ts`): the shortest suffix of the run id that tells it apart from the other rows drawn in the same list, never shorter than four characters, and -- in its cross-repository form -- that suffix with the repository in front of it. It is drawn only when it is a tail of the id **this cell would draw**, and the row\'s own four characters (`shortRun` of the sanitized id) otherwise. The id itself has already been through `sanitizeText` in the `runId` class in this same function -- a refusal, and a marker the recorder wrote, take the `putText` branch that draws no ending at all -- and `runEndings` puts the id and the repository through their own classes *before* `displayRuns` cuts and prefixes them, so either answer is a cut of a string the console would draw whole; the whole id travels on the cell as `data-run-id`',
     },
   },
   'spend.ts': {

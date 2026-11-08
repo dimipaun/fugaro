@@ -59,6 +59,7 @@ import { rigorModeWord } from '../../shared/rigor'
 import type { RigorView } from '../../shared/rigor'
 import { isMarkerText, sanitizeText } from '../../shared/sanitize'
 import { displayRuns, shortRun } from '../../shared/shortid'
+import type { RunRef } from '../../shared/shortid'
 import type { BurnView, FinishedView, KillView, LiveDocument, RunView, TotalsView } from '../../shared/schema'
 import { putReading, putText } from '../app'
 import type { ElementLike } from '../app'
@@ -1458,10 +1459,12 @@ function putActor(element: ScreenElement, raw: string, field: string): void {
  * **One sanitizer answer decides both writes.** The ID goes through the `runId`
  * class -- the class `schema.ts` declares for `runs[].run` and `ready[].run`,
  * whose grammar is the CLI's own run-ID shape -- and the ending is drawn only
- * from an ID that class accepted, so the characters on screen are a cut of a
- * string this console would draw whole. A refusal draws the console's `n/a` with
- * its reason and writes **no attribute at all**: a cell whose ID could not be
- * drawn is not a door to whatever the mark happens to be.
+ * from an ID that class accepted: `runEndings` cuts it from the **sanitized** id
+ * (`drawnRef`), and this function draws the sanitized id's own tail when the
+ * ending it was handed is not part of it, so the characters on screen are always
+ * a cut of a string this console would draw whole. A refusal draws the console's
+ * `n/a` with its reason and writes **no attribute at all**: a cell whose ID could
+ * not be drawn is not a door to whatever the mark happens to be.
  *
  * A marker the recorder wrote (`[redacted]`) is drawn whole rather than cut to
  * its last four characters: the ID is not the CLI's own shape, the class keeps
@@ -1474,12 +1477,46 @@ function putRunId(element: ScreenElement, raw: string, ending: string, field: st
     return
   }
   element.setAttribute('data-run-id', id.text)
-  literal(element, ending)
+  // **The characters drawn are the id's own tail.** `runEndings` sanitizes
+  // before `displayRuns` cuts, so that is true of every ending it answers --
+  // and of the cross-repository form, whose tail is the ending and whose head is
+  // a sanitized repository (`drawnRef`). The check keeps it true at the one
+  // place the characters reach the screen: a caller that handed over a cut of
+  // anything else draws the row's plain four characters instead of a string that
+  // is not part of the id this cell opens.
+  const tail = ending.slice(ending.lastIndexOf('/') + 1)
+  const drawn = id.text.endsWith(tail) ? ending : shortRun(id.text)
+  literal(element, drawn)
+}
+
+/**
+ * drawnRef is one row's run as the collision rule reads it: **the strings the
+ * console would draw, not the ones that arrived**.
+ *
+ * The rule cuts a suffix and prefixes a repository, so a value handed over raw
+ * puts its own characters on screen unchecked -- an ending cut from a run id
+ * carrying a bidi override is a string no reader asked for *and* not a suffix of
+ * the id the cell opens (`putRunId`), and a prefix cut from a repository carries
+ * exactly the characters the class that draws a repository exists to strip. So
+ * both go through `sanitizeText` first: the `runId` class for the id, and for
+ * the repository the class the screens draw one in
+ * (`row.repo.includes('/') ? 'repository' : 'slug'`, the rule `repoBlock` and
+ * `reviewRow` use).
+ *
+ * A refusal is handed over as the **empty string**: a row the console cannot
+ * draw a value for draws `n/a` and carries no door, so it takes no part in the
+ * collision rule rather than voting with characters it never shows.
+ */
+function drawnRef(row: { readonly slug: string; readonly run: string }, field: string): RunRef {
+  const id = sanitizeText(row.run, 'runId', field)
+  const repo = sanitizeText(row.slug, row.slug.includes('/') ? 'repository' : 'slug', 'repo')
+  return { slug: repo.ok ? repo.text : '', runId: id.ok ? id.text : '' }
 }
 
 /**
  * runEndings is the ending to draw for each row of **one table**, in the order
- * given.
+ * given. `field` names the run id's own key for the sanitizer's refusal
+ * sentence, and it is the key `putRunId` is given for the same row.
  *
  * The list is the group and the group is what is drawn together
  * (`shared/shortid.ts`'s `displayRuns`, spec part 3, F15): an ending grows only
@@ -1489,12 +1526,17 @@ function putRunId(element: ScreenElement, raw: string, ending: string, field: st
  * for the case no suffix can separate -- the same ID under two repositories.
  *
  * The caller walks the answer by position, because `displayRuns`'s answer is
- * aligned with the refs it was given; the run's own `shortRun` is the fallback a
- * row the rule answered nothing for is drawn with, which is what that row shows
- * drawn alone.
+ * aligned with the refs it was given: one ending per row, never none. The
+ * `?? shortRun(row.run)` a caller writes for the case the types allow is
+ * therefore a row that shows its plain four characters, and `putRunId` draws the
+ * sanitized id's own tail when that cut is not part of it -- so the fallback
+ * cannot put a character on screen that the rule's answer would not have.
  */
-function runEndings(rows: readonly { readonly slug: string; readonly run: string }[]): readonly string[] {
-  return displayRuns(rows.map((row) => ({ slug: row.slug, runId: row.run })))
+function runEndings(
+  rows: readonly { readonly slug: string; readonly run: string }[],
+  field: string,
+): readonly string[] {
+  return displayRuns(rows.map((row) => drawnRef(row, field)))
 }
 
 /**
@@ -1732,7 +1774,7 @@ function runTable(factory: ScreenFactory, rows: readonly LiveRunRow[]): ScreenEl
   const table = make(factory, 'table', 'live-table')
   table.append(runTableHead(factory))
   const body = cell(table, factory, 'tbody')
-  const endings = runEndings(rows)
+  const endings = runEndings(rows, 'runs[].run')
   rows.forEach((row, at) => {
     body.append(runRow(factory, row, endings[at] ?? shortRun(row.run)))
   })
@@ -2393,7 +2435,10 @@ function reviewSection(factory: LiveFactory, model: LiveModel): ScreenElement {
   const list = cell(element, factory, 'ol', 'live-review-list')
   // The endings are computed over the whole inbox: it is one list, drawn as one,
   // and its rows come from different repositories (`runEndings`).
-  const endings = runEndings(model.review.map((row) => ({ slug: row.repo, run: row.run })))
+  const endings = runEndings(
+    model.review.map((row) => ({ slug: row.repo, run: row.run })),
+    'ready[].run',
+  )
   model.review.forEach((row, at) => {
     list.append(reviewRow(factory, row, endings[at] ?? shortRun(row.run)))
   })
