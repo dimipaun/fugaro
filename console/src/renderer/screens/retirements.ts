@@ -29,19 +29,18 @@
 //      same command's: `managed status --json` is where the console asks about
 //      the last update.
 //
-// **What that settlement costs today, reported rather than worked around.** The
-// `managed status --json` document this build's CLI prints (CM2,
-// `internal/cli/managed_status.go`) carries the project, the marks, the version
-// and the audit trail, and **no retirement member**: contract section 6.21 does
-// not list one. So an installation whose CLI is this build's answers the
-// section's read with a document that has no `retirements` key, and the section
-// draws its refusal -- the honest answer, and never "no update recorded yet",
-// which is a claim about a machine that has run an update and would be false.
-// The member is a Go change (the document struct, its contract section and the
-// docs tests that pin both), it is outside this task's one file group, and this
-// module is written to read it the moment it lands: `retirements` holding
-// `localcfg.UpdateProject` plus the record's `version`, or `null` for a project
-// this machine has recorded no update for.
+// **What the read answers with, and what this section refuses.** The document
+// carries `retirements` — CM1's `UpdateProject` (the record's `version`, the
+// `at` it settled at, `retire[]`, `runs_in_flight`) or `null` for a project this
+// machine has recorded no update for — and `retirements_state`, the CLI's own
+// sentence for a record it could not read. All three answers are read apart from
+// one another, because they are three facts: an entry is drawn, `null` with no
+// state is "no update recorded yet", and a state is this section's refusal, the
+// sentence the read itself wrote. A document that carries no `retirements` key
+// at all — an installation whose CLI is older than this member — is refused too,
+// with the section's own sentence, and never drawn as "no update recorded yet":
+// that is a claim about a machine that has run an update, and a read which never
+// asked cannot make it.
 //
 // **The two empty states are two sentences** (CM1, D1484). A record whose
 // `retire` is `[]` is "the last update retired nothing": a run happened, and it
@@ -382,6 +381,16 @@ export function buildRetirementsModel(inputs: RetirementsInputs): RetirementsMod
       because: refusal(inputs.because, `no document arrived for \`${RETIREMENTS_SOURCE_LINE}\``),
       record: null,
     }
+  }
+  // The read's own sentence for a record it could not read (`retirements_state`,
+  // contract section 6.21). It is read BEFORE the entry, and that order is the
+  // rule: the two members are exclusive — a state is written only where there is
+  // no entry to show — and a state passed over would leave `retirements: null`
+  // to be drawn as "no update recorded yet", which is a claim about the machine
+  // that a read which refused the file cannot make.
+  const unread = named(document['retirements_state'])
+  if (unread !== null) {
+    return { state: 'unavailable', because: drawnRefusal(unread), record: null }
   }
   const raw = document['retirements']
   if (raw === undefined) {

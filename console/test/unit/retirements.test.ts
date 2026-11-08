@@ -290,6 +290,16 @@ const EMPTY = { ...MANAGED, retirements: { ...RECORD, retire: [], runs_in_flight
  * holds no entry for this project, so the member is null. */
 const NO_RECORD = { ...MANAGED, retirements: null }
 
+/** UNREAD_STATE is the CLI's own sentence for a record that is there and could
+ * not be read (`retirements_state`, contract section 6.21): the file is state a
+ * newer build may have written in a shape this one would misread. It is not the
+ * section's sentence but the read's. */
+const UNREAD_STATE =
+  'could not read the last update’s record at /home/operator/.config/fugaro/state/update.json: update record is from another version of fugaro'
+
+/** UNREAD is that read's document: no entry, and the sentence saying why. */
+const UNREAD = { ...MANAGED, retirements: null, retirements_state: UNREAD_STATE }
+
 // ---------------------------------------------------------------------------
 
 describe('buildRetirementsModel', () => {
@@ -439,6 +449,43 @@ describe('buildRetirementsModel', () => {
       expect(refused.record, String(raw)).toBeNull()
       expect(drawn(renderRetirements(factory, refused))).toContain(RETIREMENTS_SOURCE_LINE)
     }
+  })
+
+  it('draws the read’s own sentence for a record it could not read', () => {
+    // `retirements_state` is the CLI's answer for a record that is there and
+    // could not be read -- corrupt, over its bound, not a regular file, or of a
+    // version this build does not write. It is a THIRD answer, and the one it
+    // must never be drawn as is "no update recorded yet": that is a claim about
+    // the machine, and this read refused the file rather than learning anything
+    // about it. The sentence is the read's, so it is drawn as it stands.
+    const model = buildRetirementsModel({ raw: UNREAD })
+    expect(model.state).toBe('unavailable')
+    expect(model.record).toBeNull()
+    const root = renderRetirements(factory, model)
+    expect(model.because).toBe(UNREAD_STATE)
+    expect(drawn(root)).toContain(UNREAD_STATE)
+    expect(drawn(root)).not.toContain(RETIREMENTS_NO_RECORD_SENTENCE)
+    expect(drawn(root)).not.toContain(RETIREMENTS_NONE_SENTENCE)
+    expect(all(root, RETIREMENTS_RECORD_CLASS)).toHaveLength(0)
+    expect(all(root, RETIREMENTS_ROW_CLASS)).toHaveLength(0)
+    // Every state of the panel names the read it is about, this one included.
+    expect(drawn(root)).toContain(RETIREMENTS_SOURCE_LINE)
+
+    // The two members are exclusive on the wire -- a state is written only
+    // where there is no entry to show -- and a document carrying both is read
+    // as the state: an entry drawn beside "could not read the record" would be
+    // a row from a document the read refused.
+    expect(buildRetirementsModel({ raw: { ...UNREAD, retirements: RECORD } }).state).toBe('unavailable')
+
+    // The sentence is a document's, so it goes through the refusal door: a
+    // token a child echoed is redacted, and a sentence the sanitizer refuses
+    // whole is the console's own rather than a blank section.
+    const token = githubToken()
+    const echoed = buildRetirementsModel({ raw: { ...UNREAD, retirements_state: `could not read the record: ${token} is not accepted` } })
+    expect(drawn(renderRetirements(factory, echoed))).not.toContain(token)
+    expect(drawn(renderRetirements(factory, echoed))).toContain(TOKEN_PLACEHOLDER)
+    const tooLong = buildRetirementsModel({ raw: { ...UNREAD, retirements_state: 'x'.repeat(MAX_TEXT_INPUT_LENGTH + 1) } })
+    expect(drawn(renderRetirements(factory, tooLong))).toContain(REFUSAL_UNREADABLE)
   })
 
   it('names the secret rather than drawing a value for it', () => {
