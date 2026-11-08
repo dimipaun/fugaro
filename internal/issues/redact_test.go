@@ -137,6 +137,13 @@ func TestScrubNames(t *testing.T) {
 		}
 	})
 
+	t.Run("a name inside another one goes with it", func(t *testing.T) {
+		got := Scrub("acme-widgets failed", []string{"acme", "acme-widgets"})
+		if got != scrubMarker+" failed" {
+			t.Errorf("Scrub = %q, want the whole name gone", got)
+		}
+	})
+
 	t.Run("a name too short to replace is left alone", func(t *testing.T) {
 		if got := Scrub("a b c", []string{"", "a"}); got != "a b c" {
 			t.Errorf("Scrub = %q, want the text unchanged", got)

@@ -2,6 +2,7 @@ package issues
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/redact"
@@ -40,16 +41,23 @@ const scrubMin = 3
 // because the same name is written `acme-widgets` in a path and `Acme-Widgets`
 // in a sentence.
 //
+// The longest name goes first, because one name is often the beginning of
+// another — an organisation and the repositories under it — and the short one
+// first would leave the rest of the long one standing beside the marker.
+//
 // It is not a boundary: a name the caller does not list survives, and one
 // that is also an ordinary word takes that word with it. Both are the
 // caller's to weigh, because only the caller knows what the project is
 // called.
 func Scrub(text string, names []string) string {
+	longest := make([]string, 0, len(names))
 	for _, name := range names {
-		name = strings.TrimSpace(name)
-		if len(name) < scrubMin {
-			continue
+		if name = strings.TrimSpace(name); len(name) >= scrubMin {
+			longest = append(longest, name)
 		}
+	}
+	sort.Slice(longest, func(i, j int) bool { return len(longest[i]) > len(longest[j]) })
+	for _, name := range longest {
 		text = regexp.MustCompile(`(?i)`+regexp.QuoteMeta(name)).ReplaceAllLiteralString(text, scrubMarker)
 	}
 	return text

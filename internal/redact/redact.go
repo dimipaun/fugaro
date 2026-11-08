@@ -254,10 +254,10 @@ var (
 	// connString is the userinfo of a connection string, where the password is
 	// a credential whatever its value: `postgres://app:<password>@host/db` in
 	// a message, a config or an error body. Only the password goes — the
-	// scheme, the user and the host are the diagnosis, and the host is
-	// usually public. The user may be absent (`redis://:<password>@host` is
-	// how a Redis URL with no user is written) and the host has to follow,
-	// which is what keeps a URL that merely carries a port
+	// scheme, the user and the host are the diagnosis, and the user names a
+	// role rather than a credential. The user may be absent — a Redis URL with
+	// no user is written `redis://:<password>@host` — and the host has to
+	// follow, which is what keeps a URL that merely carries a port
 	// (`https://host:8080/x`) out of it.
 	connString = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*://[^\s:/@?#]*):([^\s:/@?#]+)@`)
 
@@ -274,9 +274,14 @@ var (
 	// name is written `DB_PASSWORD`, `PGPASSWORD`, `AWS_SECRET_ACCESS_KEY` or
 	// `MyPassword`, while a lower-case word that merely ends in one of these
 	// words — `bypass`, `compass`, `surpass` — is English, and redacting the
-	// value after it would eat the sentence instead. The value needs four
-	// bytes, the floor the exact pass uses and for its reason: a shorter one
-	// is not a credential, and replacing it mangles the text around it.
+	// value after it would eat the sentence instead. Two spellings are
+	// therefore not claimed, and both are a sentence read the same way: a
+	// name run together in lower case (`dbpassword=…`), and a value with
+	// neither a sign nor a dash before it (`PASSWORD hunter2`), which
+	// passwordFlag below reads only where a flag's dashes introduce it. The
+	// value needs four bytes, the floor the exact pass uses and for its
+	// reason: a shorter one is not a credential, and replacing it mangles the
+	// text around it.
 	passwordValue = regexp.MustCompile(`(?i)(^|(?-i:[^a-z]))(pass(?:word|phrase|wd)?s?|pwd|secret(?:[_-]?(?:access[_-])?key)?)(\\*"?)(\s*[:=]\s*)((?:\\+)?")?([^\s"',;&\\]{4,})`)
 
 	// passwordFlag is the same credential on a command line, where the value
