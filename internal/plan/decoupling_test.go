@@ -409,3 +409,43 @@ func TestGraphV3CycleStillRefused(t *testing.T) {
 		"edges": [{"task": "b", "needs": "a", "reason": "b builds on a"}, {"task": "a", "needs": "b", "reason": "a builds on b"}]}`
 	refused(t, cyclic, "the graph has a cycle", "a -> b -> a")
 }
+
+// TestTheReadCarriesTheDecouplingRecord: `fugaro plan graph` prints the read,
+// and the read states the artifact's fields one by one rather than embedding
+// the document — so a field the read does not copy is a field the command
+// validates and then drops. The decoupling record and the change requests are
+// carried through for that reason: §6.9's table names both keys, and a console
+// given neither would draw a decoupled plan as an ordinary one, with the broken
+// edges and the tasks raised against a merged contract invisible (D1811,
+// D1814). A v2 graph prints neither key: both are schema-3 fields and both are
+// omitempty, so an older artifact's read is byte-for-byte what it was.
+func TestTheReadCarriesTheDecouplingRecord(t *testing.T) {
+	g, err := Analyze("graph.json", parseDoc(t, v3Graph), nil)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	body, err := json.Marshal(g)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	for _, want := range []string{`"decoupling"`, `"contract_changes"`, `"contract":"C1"`, `"raised_by":"B"`, `"affects":["B"]`} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("the read prints no %s: %s", want, body)
+		}
+	}
+
+	const v2 = `{"schema_version": 2, "plan": "p.md", "nodes": [{"id": "A", "title": "the base", "footprint": {"prediction": true, "paths": ["internal/base/**"]}}], "edges": []}`
+	old, err := Analyze("graph.json", parseDoc(t, v2), nil)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	oldBody, err := json.Marshal(old)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	for _, key := range []string{"decoupling", "contract_changes"} {
+		if strings.Contains(string(oldBody), key) {
+			t.Errorf("a v2 graph's read carries %s: %s", key, oldBody)
+		}
+	}
+}
