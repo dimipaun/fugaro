@@ -1086,6 +1086,64 @@ func TestInstallationAtThePreviousVersionConvergesInOneUpdateCredentials(t *test
 	}
 }
 
+// TestUpdateOutsideACheckoutConvergesTheReviewAdmissionGate is the convergence
+// test CLAUDE.md's HARD RULE requires for checkReviewAdmission, and the fourth
+// review round's finding 2: the gate refuses a review launch while the
+// installation's own record of its credentials service predates
+// reviewAdmissionSince, so the one documented command has to move THAT record —
+// and it has to do it here, in the case the gate was first written wrong about.
+//
+// The installation is the one between `brew upgrade` and `fugaro update`: an
+// older service image in the tfvars, and a base image older than this release
+// too. The base image is the trap. `fugaro update` re-pins it only in a run
+// that handles that kind at all — imagesStage.kinds names `base` for --base, a
+// checkout's workflows, or a catalog build, and for nothing else — so the
+// common update, run from a directory that is not a repository, leaves it
+// exactly where it was. A gate read off base_images.base therefore refuses
+// every review on an installation this same update has already converged, and
+// its remedy ("Run fugaro update") changes nothing: the owner is sent round a
+// loop with no exit. The service image is the record every update moves, and
+// this test is both halves: refused before the update, admitted after it, with
+// the base pin asserted to be unmoved, which is what makes the second half
+// evidence about the judge rather than about the rig.
+func TestUpdateOutsideACheckoutConvergesTheReviewAdmissionGate(t *testing.T) {
+	r := credentialsRigAt(t, reviewAdmissionSince)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	credentialsOutputs(t, r)
+	seedCredentialsService(t, r, oldCredentialsRef("0.20.3"))
+	// The base pin the last in-checkout update left, at a release this one
+	// postdates: r.Chdir(t.TempDir()) in the rig puts this run outside any
+	// checkout, so the images stage names no base kind and the pin stays.
+	staleBase := r.pinnedBase(config.BaseKind, "0.20.3")
+	r.appendConfig(t, "base_images: {base: "+staleBase+"}\n")
+
+	if rel, _, ok := installationServiceRelease(localConfigOf(t, r)); !ok || rel != "0.20.3" {
+		t.Fatalf("the seeded installation records service release %q (ok %v), want 0.20.3: this test's first half is only about a service that predates the class", rel, ok)
+	}
+	if _, err := checkReviewAdmissionWarn(localConfigOf(t, r)); err == nil {
+		t.Fatal("a review launch from an installation whose service predates the class was admitted before the update")
+	}
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("one ordinary update of an installation whose service predates the class failed: %v\n%s", err, s)
+	}
+
+	rel, image, ok := installationServiceRelease(localConfigOf(t, r))
+	if !ok || rel != reviewAdmissionSince {
+		t.Errorf("the installation records service release %q (ok %v, image %s) after one ordinary update, want %s: the update has to move the record the admission gate judges, or the refusal's own remedy leaves the launch refused\n%s", rel, ok, image, reviewAdmissionSince, s)
+	} else if want := r.credentialsRefAt(reviewAdmissionSince); image != want {
+		t.Errorf("the installation records the service image %s after one ordinary update, want %s", image, want)
+	}
+	if warn, err := checkReviewAdmissionWarn(localConfigOf(t, r)); err != nil {
+		t.Errorf("a review launch is still refused after one ordinary update: %v (warning %q): `fugaro update` is the whole upgrade, and a gate whose remedy does not clear it is an operator step nobody was told to run", err, warn)
+	}
+	if got := localConfigOf(t, r).BaseImages[config.BaseKind]; got != staleBase {
+		t.Errorf("base_images.base = %s after the update, want the pin it started from (%s): the gate must not be read off a record an update outside a checkout never writes", got, staleBase)
+	}
+}
+
 // The re-pin fails, and the opt-in survives it (the review's finding 1). The
 // resolve reaches cosign and the registry, so it fails for reasons that have
 // nothing to do with the installation: no cosign on PATH, a wrong-identity
