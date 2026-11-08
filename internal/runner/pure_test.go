@@ -68,7 +68,7 @@ func TestDecide(t *testing.T) {
 			&runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: 1}, blocked, false, "review round 2 still has 1 finding"},
 	}
 	for _, tc := range cases {
-		ready, reason := Decide(tc.records, "abc", tc.last, tc.pol)
+		ready, reason, _ := Decide(tc.records, "abc", tc.last, tc.pol)
 		if ready != tc.ready || reason != tc.reason {
 			t.Errorf("%s: Decide = %v %q, want %v %q", tc.name, ready, reason, tc.ready, tc.reason)
 		}
@@ -129,7 +129,7 @@ func TestReportConsistentWithDecide(t *testing.T) {
 	}
 
 	// Decide should report tests failing (uses clean record)
-	ready, reason := Decide(rec.Verify, rec.HeadSHA, ship, FindingsPolicy{})
+	ready, reason, _ := Decide(rec.Verify, rec.HeadSHA, ship, FindingsPolicy{})
 	if ready || reason != "tests failing on the final commit" {
 		t.Errorf("Decide = %v %q, want false %q", ready, reason, "tests failing on the final commit")
 	}

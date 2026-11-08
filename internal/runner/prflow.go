@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -919,4 +920,24 @@ func (r *run) applyReady(ctx context.Context, n int) string {
 	}
 	r.d.Log.Warn("requesting reviewers and labels failed; the PR stays ready", "pr", n, "err", r.redact(err.Error()))
 	return "reviewers and labels could not be applied (" + inlineText(r.redact(err.Error())) + "); the pull request is ready, so request reviewers by hand"
+}
+
+// providerRefusal is err as an ending whose cause the run can name: the forge
+// refused or failed a call the run needed — the pull request it could not
+// create or settle, the ready flip that came back an error (design §3's
+// git_provider_error). finalize is where that call's outcome becomes the run's,
+// but the ending itself is written by Run's deferred fallback, so the class
+// travels on the error (endClass, runner.go) rather than being re-derived where
+// the error is read back.
+//
+// It does not change what a caller sees: the error still says what the forge
+// said, errors.Is still answers for the sentinels finalize switches on
+// (gitprov.ErrPRNotOpen), and only the class the ending is written with is
+// added. applyReady's failure is not one of these: it is a note on a ready pull
+// request and never ends the run.
+func providerRefusal(err error) error {
+	if err == nil {
+		return nil
+	}
+	return endClass{failure.GitProviderError, err}
 }

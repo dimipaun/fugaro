@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -120,7 +121,7 @@ func TestDecideByMode(t *testing.T) {
 		if tc.verdict != "" {
 			last = &runstore.ReviewSummary{Round: tc.round, Verdict: tc.verdict, Findings: len(tc.findings)}
 		}
-		ready, reason := Decide(tc.records, "abc", last, findingsPolicyOf(optedIn, tc.mode, tc.round, tc.findings))
+		ready, reason, _ := Decide(tc.records, "abc", last, findingsPolicyOf(optedIn, tc.mode, tc.round, tc.findings))
 		if ready != tc.ready || reason != tc.reason {
 			t.Errorf("%s: Decide = %v %q, want %v %q", tc.name, ready, reason, tc.ready, tc.reason)
 		}
@@ -135,7 +136,7 @@ func TestDecideUnscoredFindingBlocksEveryMode(t *testing.T) {
 	pass := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}
 	last := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: 2}
 	for _, mode := range rigor.Modes {
-		ready, reason := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(optedIn, mode, 2, []rigor.Score{unscored, small}))
+		ready, reason, _ := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(optedIn, mode, 2, []rigor.Score{unscored, small}))
 		if ready || reason != "review round 2 still has 2 findings" {
 			t.Errorf("%s: an unscored finding was tolerated: Decide = %v %q", mode, ready, reason)
 		}
@@ -164,7 +165,7 @@ func TestDecideToleratesOnlyWhatTheRunCanFile(t *testing.T) {
 		{"a repository that configured critical", optedIn, rigor.Critical, false},
 		{"a repository that configured nothing", rigor.Config{}, rigor.Pro, false},
 	} {
-		ready, reason := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(tc.cfg, tc.mode, 2, []rigor.Score{tiny}))
+		ready, reason, _ := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(tc.cfg, tc.mode, 2, []rigor.Score{tiny}))
 		if ready != tc.tolerated {
 			t.Errorf("%s: Decide = %v %q, want tolerated %v", tc.name, ready, reason, tc.tolerated)
 			continue
@@ -192,7 +193,7 @@ func TestDecideBlocksAPolicyItCannotPlace(t *testing.T) {
 		{"a split from another round", findingsPolicyOf(optedIn, rigor.Startup, 1, []rigor.Score{tiny})},
 		{"a split from fewer findings than the record counts", findingsPolicyOf(optedIn, rigor.Startup, 2, nil)},
 	} {
-		ready, reason := Decide([]verify.Record{pass}, "abc", last, tc.pol)
+		ready, reason, _ := Decide([]verify.Record{pass}, "abc", last, tc.pol)
 		if ready || reason != "review round 2 still has 1 finding" {
 			t.Errorf("%s: Decide = %v %q, want false with the count's own reason", tc.name, ready, reason)
 		}
@@ -360,7 +361,8 @@ func raisedRun(t *testing.T, tc raisedCase) *run {
 func decideOf(t *testing.T, r *run) (bool, string) {
 	t.Helper()
 	pass := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}
-	return Decide([]verify.Record{pass}, "abc", seniorReview(r.rec.Reviews), r.findingsPolicy())
+	ready, reason, _ := Decide([]verify.Record{pass}, "abc", seniorReview(r.rec.Reviews), r.findingsPolicy())
+	return ready, reason
 }
 
 // TestRaisedModeByAreaKeepsDraft: an area rule raises the run's mode at D22's
@@ -491,5 +493,61 @@ func TestUnconfiguredRepoDecideUnchanged(t *testing.T) {
 	ready, reason := decideOf(t, r)
 	if ready || reason != "review round 2 still has 1 finding" {
 		t.Errorf("an unconfigured repository = %v %q, want false with the count's own reason", ready, reason)
+	}
+}
+
+// TestDecideRefusalsCarryTheirClass: every refusal Decide returns carries the
+// class of the cause it is about, chosen here because this is the site that
+// knows which refusal the run carries (design §4.2, §4.4). The four are the
+// design's §3 rows: no verified test on the final commit, a failing one, a
+// round nobody could read and a round whose findings the run's mode did not
+// tolerate. A run Decide makes ready carries none — `""` is the class of a
+// success, and writeEnd states the same rule for the record.
+//
+// The class is not the reason: the reason is the runner's sentence for a
+// person, and the class is the closed value the record keeps and the report
+// counts runs by, so the two are asserted apart and both are (FC5 reads the
+// reason of a record that predates the field, which is why the sentences
+// themselves do not move here).
+func TestDecideRefusalsCarryTheirClass(t *testing.T) {
+	pass := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}
+	fail := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true}
+	dirty := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", Passed: true}
+	ship := &runstore.ReviewSummary{Round: 1, Verdict: "ship"}
+	noVerdict := &runstore.ReviewSummary{Round: 2, Verdict: "none"}
+	changes := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: 3}
+	// A round the mode tolerates is ready, not a refusal: it is the one row
+	// below that asserts a class of its own.
+	tolerated := findingsPolicyOf(optedIn, rigor.Startup, 2, []rigor.Score{tiny})
+	cases := []struct {
+		name    string
+		records []verify.Record
+		last    *runstore.ReviewSummary
+		pol     FindingsPolicy
+		ready   bool
+		class   failure.Class
+	}{
+		{"no verified test on the final commit", []verify.Record{dirty}, ship, FindingsPolicy{}, false, failure.UnverifiedFinalCommit},
+		{"no test record at all", nil, ship, FindingsPolicy{}, false, failure.UnverifiedFinalCommit},
+		{"tests failing on the final commit", []verify.Record{fail}, ship, FindingsPolicy{}, false, failure.TestsFailed},
+		{"no review verdict", []verify.Record{pass}, nil, FindingsPolicy{}, false, failure.ReviewUnread},
+		{"a round that returned no verdict", []verify.Record{pass}, noVerdict, FindingsPolicy{}, false, failure.ReviewUnread},
+		{"a round still asking for changes", []verify.Record{pass}, changes, FindingsPolicy{}, false, failure.ReviewNotConverged},
+		{"a level held back", []verify.Record{pass}, ship,
+			FindingsPolicy{HeldBack: &runstore.ReviewSummary{Round: 1, Verdict: "changes"}}, false, failure.ReviewNotConverged},
+		{"ready", []verify.Record{pass}, ship, FindingsPolicy{}, true, ""},
+		{"a tolerated round is ready", []verify.Record{pass},
+			&runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: 1}, tolerated, true, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ready, reason, class := Decide(tc.records, "abc", tc.last, tc.pol)
+			if ready != tc.ready {
+				t.Fatalf("Decide = %v %q, want %v: %s", ready, reason, tc.ready, reason)
+			}
+			if class != tc.class {
+				t.Errorf("Decide's class is %q, want %q: the class is the cause's family and the report counts runs by it, so a refusal that reaches the record as unclassified is a cause nothing names", class, tc.class)
+			}
+		})
 	}
 }

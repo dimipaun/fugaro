@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -200,6 +202,45 @@ func haltReasonText(h runstore.Halt) string {
 		return "the run passed the cost its tier expected of it"
 	}
 	return string(h.Reason)
+}
+
+// haltClass is which family a report groups a halt by, read from the halt's
+// own closed reason. It does not replace the reason and is not a copy of it:
+// the status says halted, the halt says which cap, and the class says which
+// family of cause that cap is. The governance arm reads the one slice the
+// checkpoint schema and the digest are pinned to, so a tripwire added there is
+// classed without a second list to keep in step.
+//
+// Two of the reasons carry "budget" in their name and are not in the budget
+// family, which is the design's §3 rows and not a reading of this switch:
+// halted_budget is the dollar and token caps, whose remedy is "once the cap is
+// raised", while budget_unavailable and budget_token_expired are the budget
+// database or the credential refusing — halted_credential's own definition,
+// "no credential became usable, or the budget database refused", kind infra,
+// its remedy an account that answers again (for the expired token, a relaunch
+// after the wait), never a cap raised.
+//
+// It sits beside haltReasonText because the two are one fact read twice: the
+// reason is the halt in the runner's words a person reads, the class is the
+// same reason in the vocabulary a record keeps. The reader that classes a
+// record predating the field keeps its own copy of this mapping
+// (internal/runview, FC5), and the two are held together by the walk over the
+// closed set (haltclasses_internal_test.go).
+func haltClass(reason runstore.HaltReason) failure.Class {
+	switch reason {
+	case runstore.HaltKillSwitch:
+		return failure.HaltedKillSwitch
+	case runstore.HaltRunCap, runstore.HaltRepoDailyCap, runstore.HaltGlobalDailyCap,
+		runstore.HaltNoCap, runstore.HaltTokenCap:
+		return failure.HaltedBudget
+	case runstore.HaltNoCredential, runstore.HaltCredsRulesDenied,
+		runstore.HaltBudgetUnavailable, runstore.HaltBudgetTokenExpired:
+		return failure.HaltedCredential
+	}
+	if slices.Contains(runstore.GovernanceHaltReasons(), reason) {
+		return failure.HaltedGovernance
+	}
+	return failure.Unclassified
 }
 
 // governanceHalt stops the run at a governance tripwire (T6.1, D329, G7): it
