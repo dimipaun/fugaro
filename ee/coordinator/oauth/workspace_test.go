@@ -110,12 +110,15 @@ func newTestMember(t *testing.T, host string, pin Pin, opts ...ExchangeOption) *
 	}
 }
 
-// assertionFor mints an assertion the way the workspace's signer does, with the
-// window and the identity every test shares unless it says otherwise.
-func assertionFor(t *testing.T, key *rsa.PrivateKey, project, audience string, edit func(*assertion)) string {
-	t.Helper()
+// testAssertion is the assertion a workspace mints for a person: the window and
+// the identity every test starts from, so a test that edits one claim edits
+// exactly one thing. It is separate from assertionFor because a test that must
+// hold a rule about the ENCODING rather than about a claim needs the same claims
+// under a header of its own, and building them here rather than decoding them out
+// of a minted token keeps them the values an honest signer writes.
+func testAssertion(project, audience string) assertion {
 	now := time.Now().UTC()
-	a := assertion{
+	return assertion{
 		Issuer:        WorkspaceIssuer(project),
 		Audience:      audience,
 		Subject:       project,
@@ -126,6 +129,13 @@ func assertionFor(t *testing.T, key *rsa.PrivateKey, project, audience string, e
 		EmailVerified: true,
 		Provider:      "google.com",
 	}
+}
+
+// assertionFor mints an assertion the way the workspace's signer does, with the
+// window and the identity every test shares unless it says otherwise.
+func assertionFor(t *testing.T, key *rsa.PrivateKey, project, audience string, edit func(*assertion)) string {
+	t.Helper()
+	a := testAssertion(project, audience)
 	if edit != nil {
 		edit(&a)
 	}

@@ -31,7 +31,16 @@ func mustErr(_ Session, err error) error { return err }
 // were edited after signing.
 func signClaims(t *testing.T, key *rsa.PrivateKey, claims map[string]any) string {
 	t.Helper()
-	head, err := json.Marshal(map[string]string{"alg": assertionAlg, "typ": assertionTyp})
+	return signToken(t, key, map[string]string{"alg": assertionAlg, "typ": assertionTyp}, claims)
+}
+
+// signToken signs claims under an arbitrary header with key. It exists so that a
+// test about a header rule can present a token whose signature VERIFIES: a token
+// built by swapping the header over the bytes of an honest token is refused by
+// the signature check, so it never reaches the rule the test means to hold.
+func signToken(t *testing.T, key *rsa.PrivateKey, header map[string]string, claims map[string]any) string {
+	t.Helper()
+	head, err := json.Marshal(header)
 	if err != nil {
 		t.Fatalf("encoding a test header: %v", err)
 	}
@@ -98,18 +107,21 @@ func TestAssertionRefusesAClaimThisMemberDoesNotRead(t *testing.T) {
 // exchange verifies, so a token whose header says `none` — or an HMAC family
 // whose "key" would be the value this member publishes — is refused before any
 // key is used.
+//
+// Each hostile token is SIGNED with the key this member pins, under a header
+// that names the other algorithm, so its signature verifies and the algorithm
+// guard is the only rule left that can refuse it. That is what makes this test
+// hold the guard: a token built by putting a new header over the bytes of an
+// honest one — which is what this test used to do — is refused by the signature
+// check instead, several lines below the guard, and deleting the guard would
+// leave the package green.
 func TestAssertionRefusesAnotherAlgorithm(t *testing.T) {
 	key := testKey(t)
 	member := newTestMember(t, testMemberA, testPin(t, testWorkspace, testProject, &key.PublicKey))
-	honest := assertionFor(t, key, testProject, member.url, nil)
+	claims := testAssertion(testProject, member.url).claims()
 
-	parts := strings.Split(honest, ".")
 	for _, alg := range []string{"none", "HS256", "RS512"} {
-		head, err := json.Marshal(map[string]string{"alg": alg, "typ": assertionTyp})
-		if err != nil {
-			t.Fatalf("encoding a header: %v", err)
-		}
-		raw := base64.RawURLEncoding.EncodeToString(head) + "." + parts[1] + "." + parts[2]
+		raw := signToken(t, key, map[string]string{"alg": alg, "typ": assertionTyp}, claims)
 		refuse(t, mustErr(member.ex.Admit(context.Background(), raw)), "an assertion signed with "+alg)
 	}
 }
