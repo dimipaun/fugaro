@@ -139,6 +139,16 @@ func gitMetadataFake(t *testing.T, token string) *httptest.Server {
 // up (as gateway_service_internal_test.go's svcSession says of its own).
 func gitRunIdentity(t *testing.T) *token.Session {
 	t.Helper()
+	return gitRunIdentityFor(t, "")
+}
+
+// gitRunIdentityFor is gitRunIdentity with the branch the identity may push
+// (fb, G6): "" for a run that pushes nothing -- every identity this file's own
+// tests use -- and the branch of the run for the ones that do, which is what
+// the credentials service admits a push for (B1.7's proxied tests are the
+// first that need one).
+func gitRunIdentityFor(t *testing.T, branch string) *token.Session {
+	t.Helper()
 	iam := gcpfake.NewIAMCredentials(t)
 	iam.AddSigner(svcSignerEmail)
 	itk := gcpfake.NewIdentityToolkit(t, iam, svcAPIKey, svcProject)
@@ -150,6 +160,7 @@ func gitRunIdentity(t *testing.T) *token.Session {
 	now := time.Now()
 	custom, err := token.MintAt(context.Background(), signer, token.Claims{
 		Slug: svcSlug, Run: svcRunID, FX: token.ExpiryFX(now, 3*time.Hour), FP: svcProject, RB: "owner@example.invalid",
+		Branch: branch,
 	}, now)
 	if err != nil {
 		t.Fatal(err)
