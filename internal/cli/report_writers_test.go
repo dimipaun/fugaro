@@ -593,6 +593,37 @@ func TestRestoreWritesALog(t *testing.T) {
 	}
 }
 
+// TestRestoreKeepsNoTerraformTailInItsLog: the restore's log is the run's own
+// stage lines and never a provider's output (F6, D1352). The creating child
+// fails on terraform, whose error carries the command's own stderr tail
+// (tf.ExitError, through the creating run's stage error), and this command has
+// no redaction source: the project step's line names the failure and not the
+// tail, while the screen keeps the tail — terraform streamed it to the child's
+// stderr, and this run's error prints it again.
+func TestRestoreKeepsNoTerraformTailInItsLog(t *testing.T) {
+	const tail = "Error: creating a bucket: googleapi: Error 403: the provider refused the new installation"
+	r, _ := newRestoreRig(t)
+	restoreManagedOld(r)
+	recordRestoreApply(t, r)
+	_, root := restoreCheckout(t)
+	r.script["apply"] = map[string]any{"exit": 1, "stderr": tail}
+	r.save(t)
+	out, err := restoreStepsWith(t, r, initProjectName+"\n"+createStdin+"y\n", root)
+	if err == nil {
+		t.Fatalf("the restore finished though the creating run's apply failed:\n%s", out)
+	}
+	if !strings.Contains(out, tail) {
+		t.Errorf("terraform's own tail never reached the screen:\n%s", out)
+	}
+	_, log := onlyLog(t, "restore")
+	if strings.Contains(log, tail) {
+		t.Errorf("terraform's own stderr tail is in the run's log:\n%s", log)
+	}
+	if !strings.Contains(log, "terraform apply exited 1") {
+		t.Errorf("the log's line does not name the failure the step ended with:\n%s", log)
+	}
+}
+
 // ------------------------------------------------------------ budget writes
 
 func TestBudgetSetDefaultIsShort(t *testing.T) {

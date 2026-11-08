@@ -371,7 +371,14 @@ func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (
 	// the child is a run of its own and prints its steps to this same terminal.
 	step := rep.Step("project")
 	fail := func(err error) error {
-		step.Failed(err, nil)
+		// The child's failure carries terraform's own stderr tail — its stage
+		// error wraps the tf.ExitError the child's terraform left — and this
+		// run's log has no redaction source, so what it holds is the run's
+		// stage lines and never a provider's output (F6, D1352). The line the
+		// step ends on names the same failure without the tail, and the screen
+		// keeps the tail: the child printed it, and the error this command
+		// returns prints it again (withoutTerraformTail).
+		step.Failed(withoutTerraformTail(err), nil)
 		return err
 	}
 	var made initCreation

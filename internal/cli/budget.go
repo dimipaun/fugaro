@@ -1290,12 +1290,20 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 	if err != nil {
 		return err
 	}
-	// This run's account and its log (D1352), opened where the run's own work
-	// starts and not at the command's door: parsePlan's refusals — one scope
-	// named, and the flags that go with it — are read off the command line
-	// alone (reporterOpener), and a refused set files no log, not even an
-	// empty one, which would be one of the fifty this name keeps (CL3's
-	// pruneLogs).
+	// The database is opened first, and the run's account follows it. Every
+	// refusal above and inside it is answered from the command line, the
+	// environment or this installation's config and reaches no API:
+	// parsePlan's scope, the credential leak refuseHTTP2Debug refuses and the
+	// project selectProject refuses. A run any of them turns away is a run
+	// that never began, so it files no log, not even an empty one, which would
+	// be one of the fifty this name keeps (CL3's pruneLogs).
+	lc, db, err := openBudget(ctx, o.cloud)
+	if err != nil {
+		return err
+	}
+	// This run's account and its log (D1352): one line per unit of work with
+	// the reporter's closing line last, and nothing of the run is printed
+	// before it.
 	rep, sink := reporterFor(cmd, "budget-set", nil)
 	if sink != nil {
 		defer func() { _ = sink.Close() }()
@@ -1303,10 +1311,6 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 	// The run's closing line, on every way out of it: a step's own line is the
 	// account and the summary is what says how the run ended (G3).
 	defer rep.Summary()
-	lc, db, err := openBudget(ctx, o.cloud)
-	if err != nil {
-		return err
-	}
 	if err := requireOwnBudgetDB(ctx, lc, db, "nothing was set"); err != nil {
 		return err
 	}
@@ -1453,20 +1457,23 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 	if utf8.RuneCountInString(o.reason) > maxKillReason {
 		return userErr("--reason is %d characters; keep it to %d", utf8.RuneCountInString(o.reason), maxKillReason)
 	}
-	// This run's account and its log (D1352), opened where the run's own work
-	// starts and not at the command's door: the scope and the reason are read
-	// off the command line alone (reporterOpener), and a refused kill files no
-	// log, not even an empty one, which would be one of the fifty this name
-	// keeps (CL3's pruneLogs).
+	// The database is opened first, and the run's account follows it: the
+	// scope, the reason, the credential leak refuseHTTP2Debug refuses and the
+	// project selectProject refuses are all answered from the command line,
+	// the environment or this installation's config, reaching no API, so a
+	// refused kill or resume files no log — not even an empty one, which would
+	// be one of the fifty this name keeps (CL3's pruneLogs).
+	lc, db, err := openBudget(ctx, o.cloud)
+	if err != nil {
+		return err
+	}
+	// This run's account and its log (D1352), under the name a person typed:
+	// one line per unit of work with the reporter's closing line last.
 	rep, sink := reporterFor(cmd, budgetKillLogName(kill), nil)
 	if sink != nil {
 		defer func() { _ = sink.Close() }()
 	}
 	defer rep.Summary()
-	lc, db, err := openBudget(ctx, o.cloud)
-	if err != nil {
-		return err
-	}
 	declined := "nothing was resumed"
 	if kill {
 		declined = "nothing was killed"

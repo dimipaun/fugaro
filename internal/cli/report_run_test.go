@@ -402,6 +402,41 @@ func TestARefusedCommandKeepsNoLog(t *testing.T) {
 			_, _, err := execute(t, "config", "publish", filepath.Join(t.TempDir(), "no-such-layer.yaml"))
 			return err
 		}},
+		// The same writers again, with a command line that gets all the way
+		// through: what refuses these is the credential leak and the project
+		// selection that openBudget and openCloud make — the environment and
+		// the installation's own config, answered before any call reaches the
+		// cloud — so those two sit above the opener as well, and a run they
+		// refuse files no log. These are the cases an opener at the door
+		// answers wrongly: a leak is refused after the command line has been
+		// read, so the run gets far enough in to file its empty file.
+		{"a budget set whose GODEBUG leaks credentials", func(t *testing.T) error {
+			newBudgetFixture(t, "")
+			t.Setenv("GODEBUG", "http2debug=1")
+			_, _, err := execute(t, "budget", "set", "--global", "--daily", "60", "--yes")
+			return err
+		}},
+		{"a budget kill whose GODEBUG leaks credentials", func(t *testing.T) error {
+			newBudgetFixture(t, "")
+			t.Setenv("GODEBUG", "http2debug=1")
+			_, _, err := execute(t, "budget", "kill", "--all", "--yes")
+			return err
+		}},
+		{"a budget resume whose GODEBUG leaks credentials", func(t *testing.T) error {
+			newBudgetFixture(t, "")
+			t.Setenv("GODEBUG", "http2debug=1")
+			_, _, err := execute(t, "budget", "resume", "--all", "--yes")
+			return err
+		}},
+		{"a publish whose GODEBUG leaks credentials", func(t *testing.T) error {
+			f := newCloudFixture(t)
+			isolateCache(t)
+			publishedLayer(t, f, testProjectLayer)
+			noAgentSession(t)
+			t.Setenv("GODEBUG", "http2debug=1")
+			_, _, err := execute(t, "config", "publish")
+			return err
+		}},
 		{"a managed apply whose GODEBUG leaks credentials", func(t *testing.T) error {
 			t.Setenv("GODEBUG", "http2debug=1")
 			_, _, err := execute(t, "managed", "apply", "root")

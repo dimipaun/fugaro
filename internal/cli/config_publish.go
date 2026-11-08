@@ -73,25 +73,28 @@ func newConfigPublishCmd() *cobra.Command {
 					return userErr("nothing was published: %v", err)
 				}
 			}
-			// This run's account and its log (D1352): one line per unit of work
-			// with the reporter's closing line last, and the full output of a
-			// run that printed one kept beside it. It is opened where the
-			// publish's own work starts and not at the command's door: the
-			// layer file given on the command line is read above, and a file
-			// that is not there is refused without reaching the cloud
-			// (reporterOpener), so a refused publish files no log, not even an
-			// empty one, which would be one of the fifty this name keeps (CL3's
+			// The cloud is opened first, and the run's account follows it. The
+			// layer file given on the command line is read above, and openCloud
+			// makes this command's other two refusals — the credential leak
+			// refuseHTTP2Debug refuses and the project selectProject refuses —
+			// which are answered from the environment and this installation's
+			// config and reach no API. A run any of them turns away is a run
+			// that never began, so it files no log, not even an empty one,
+			// which would be one of the fifty this name keeps (CL3's
 			// pruneLogs).
-			rep, sink := reporterFor(cmd, "config-publish", nil)
-			if sink != nil {
-				defer func() { _ = sink.Close() }()
-			}
-			defer rep.Summary()
 			env, err := openCloud(ctx, open)
 			if err != nil {
 				return err
 			}
 			defer env.Close()
+			// This run's account and its log (D1352): one line per unit of work
+			// with the reporter's closing line last, and the full output of a
+			// run that printed one kept beside it.
+			rep, sink := reporterFor(cmd, "config-publish", nil)
+			if sink != nil {
+				defer func() { _ = sink.Close() }()
+			}
+			defer rep.Summary()
 			var gate *managedGate
 			if marker != "" {
 				gate = configPublishGate(ctx, env, marker)
