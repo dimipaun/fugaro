@@ -469,10 +469,20 @@ func removedKeysFolded(r *layerRemoval) string {
 // not read, so the executable-key gate counts every executable key of the layer
 // that replaces it as changed (L7) and refuses without --executable-changes —
 // which `fugaro update`, the command that brought the reader here, has not got.
+//
+// The file to publish is named rather than left to the door's default, because
+// one of the two states that reach this sentence is the seed's, where this
+// machine has no local layer file at all (init_layer_stage.go's `case
+// !p.exists`): `fugaro config publish` on its defaulted path refuses there with
+// "there is no local layer file …: run fugaro update, which seeds it" — the
+// command that has just sent the reader here — so a refusal naming that command
+// alone sends them round the loop twice. FILE is the argument that same door
+// takes for a layer kept somewhere else, and a layer written without the
+// removed keys is exactly that.
 func objectRefusalFolded(r *layerRemoval) string {
-	return fmt.Sprintf("the published project layer holds %s and this run does not take %s out of it: %s; it is not a file to edit by hand — publish a layer without %s over the object with %s, and run %s again",
+	return fmt.Sprintf("the published project layer holds %s and this run does not take %s out of it: %s; it is not a file to edit by hand — write a layer without %s and publish it over the object with %s, then run %s again",
 		pluginwire.Printable(r.text()), r.pronoun(), r.why(), r.pronoun(),
-		selfCommand()+" config publish --executable-changes", selfCommand()+" update")
+		selfCommand()+" config publish --executable-changes FILE", selfCommand()+" update")
 }
 
 // layerMigrateWhat is the fourth thing this stage asks before it writes: the

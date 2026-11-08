@@ -303,6 +303,12 @@ func TestUpdateStopsWhenAPublishWouldLeaveAFlowStyledObject(t *testing.T) {
 // repository of the project resolves against, so the run stops with a non-zero
 // error rather than skipping the stage: a skip would report an installation
 // converged that no repository of it can use.
+//
+// The remedy it names has to be one the reader can carry out from the state they
+// are in, which is why the file to publish is asserted and not only the command:
+// the seed state has no local layer file, so `fugaro config publish` on its
+// defaulted path refuses with the command that sent the reader here, and a
+// refusal that named that command alone would send them round the loop.
 func TestUpdateRefusesAPublishedLayerTheRemovalCannotLeaveValid(t *testing.T) {
 	const onlyRemovedKeysFlow = `version: 1
 project: aurora
@@ -326,7 +332,7 @@ default_profile: svc
 				t.Fatalf("fugaro update reported a project layer converged that every reader refuses: %v\n%s%s", err, out, errOut)
 			}
 			all := out + errOut + err.Error()
-			for _, want := range []string{"profiles.svc.image.apt", "default_profile", "config publish --executable-changes"} {
+			for _, want := range []string{"profiles.svc.image.apt", "default_profile", "config publish --executable-changes FILE"} {
 				if !strings.Contains(all, want) {
 					t.Errorf("the refusal does not say %q:\n%s", want, all)
 				}
