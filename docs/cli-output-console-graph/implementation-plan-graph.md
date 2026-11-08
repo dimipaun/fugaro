@@ -1,6 +1,6 @@
 # Implementation plan: the console dependency graph (part B)
 
-**Status: plan only; nothing is implemented; no task is approved.** Each task needs the owner's explicit go, by name; answering a decision approved none. This plan builds spec section 2 ([spec.md](spec.md)) as amended by [reconciliation.md](reconciliation.md); the reconciliation wins. It shares **no task** with [implementation-plan-output.md](implementation-plan-output.md) (D1350); the few **files** both plans touch are sequenced by the cross-plan table in [README.md](README.md). **The orchestrator slice (B4) and the endpoint slice (B5) are written but deferred**: B4 waits on `docs/stateless-orchestrator/` (whose tasks O0, O1, O2, O3 and O6 are written on `main`, all merged, O0, O1 and O3 on 2026-11-07 and O2 and O6 on 2026-11-08, and nothing else is), and B5 is built only if a measurement asks for it and the owner says so.
+**Status: plan only; nothing is implemented; no task is approved.** Each task needs the owner's explicit go, by name; answering a decision approved none. This plan builds spec section 2 ([spec.md](spec.md)) as amended by [reconciliation.md](reconciliation.md); the reconciliation wins. It shares **no task** with [implementation-plan-output.md](implementation-plan-output.md) (D1350); the few **files** both plans touch are sequenced by the cross-plan table in [README.md](README.md). **The orchestrator slice (B4) and the endpoint slice (B5) are written but deferred**: B4 waits on `docs/stateless-orchestrator/` (whose tasks O0, O1, O2, O3, O4 and O6 are written on `main`, all merged, O0, O1, O3 and O4 on 2026-11-07 and O2 and O6 on 2026-11-08, and nothing else is), and B5 is built only if a measurement asks for it and the owner says so.
 
 **The owner's answers that shaped it (2026-11-06, all the recommendation):** D1356 keep the plan scope and add `fugaro graph --json` with a coordinator scope that needs no checkout, source-qualified task keys, dedupe only within one namespace, orchestrator scopes when built; D1357 the CLI reads the `orchestrator/` RTDB subtree directly plus the coordinator view; D1358 local orchestrators are found through the daemon's RTDB node and its local cache file, no PID registry and no HTTP endpoint in the first slice; D1359 the trust rules apply if the endpoint is built later; D1360 `graph --watch --json` prints whole snapshots with `stream_id`, a rising `seq` within one child, `source_state` and a periodic keep-alive; D1361 `fugaro graph` and `fugaro orchestrator ls`; D1362 `fugaro graph` lives in `ee/` through `RegisterCommand`, the daemon and `orchestrator ls` stay core.
 
@@ -150,7 +150,7 @@
 
 ### CG4. `fugaro orchestrator ls --json` (deferred, B4)
 
-**Decisions:** D1361, D1358. **Depends on:** **the stateless-orchestrator plan's state schema and reader (O0, merged on `main` on 2026-11-07, and O2 in `docs/stateless-orchestrator/implementation-plan.md`, not built) and its `fugaro orchestrator` group (O-tasks that register it)**. **Reviewer:** standard. **Not schedulable until those land.**
+**Decisions:** D1361, D1358. **Depends on:** **the stateless-orchestrator plan's state schema and reader (O0, merged on `main` on 2026-11-07, and O2 on 2026-11-08, both in `docs/stateless-orchestrator/implementation-plan.md`) and its `fugaro orchestrator` group (O-tasks that register it)**. **Reviewer:** standard. **Not schedulable until the `fugaro orchestrator` group lands.**
 
 - **Files (max 4):** `internal/cli/orchestrator_ls.go` (new), `internal/cli/orchestrator_ls_test.go` (new), the cache reader in `internal/orchestrator/` (that plan's package), `console/docs/json-contract.md` **not here** (a later CG8 amendment).
 - **Interfaces:** lists the orchestrators whose RTDB node exists (central and local, with `kind`, `project`, `lease_holder`, `updated_at`) and the local daemon's cache file(s) under `$XDG_CACHE_HOME/fugaro/orchestrator/<id>.json` (found through `localcfg.UserDir(..., DirCache)`), with the cache's freshness stamp; no PID registry, no port (D1358).
@@ -172,7 +172,7 @@
 
 ### CG6. A rules test: `orchestrator/` is unreadable and unwritable by every run and token identity (deferred, B4, SEC)
 
-**Findings:** T2. **Depends on:** the stateless plan's rules task for `orchestrator/` (not built). **Reviewer: `opus + mandatory independent review`.**
+**Findings:** T2. **Depends on:** the stateless plan's rules task for `orchestrator/` (**O2**, merged on `main` on 2026-11-08, #1945, `5053cbce`). **Reviewer: `opus + mandatory independent review`.**
 
 - **Files (max 2):** `internal/budget/rules/orchestrator_test.go` (new, modelled on `coordinator_test.go`), `internal/budget/rules/emulator_orchestrator_test.go` (**created by the stateless plan's O2**; this task adds cases to it, tag `firebase`).
 - **Tests:** `TestOrchestratorNodeIsDeniedToRunAndTokenIdentities`, `TestNoClientWriteUnderOrchestrator`.

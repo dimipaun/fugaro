@@ -322,10 +322,10 @@ func TestDocsStatelessOrchestratorCacheAnswerIsFollowedThrough(t *testing.T) {
 // The merge is also fenced to a run that is **over** and a pull request that is
 // **ready**, and the four outcomes are decided by a fixed order, so a run still
 // in flight is never merged and a finished, stalled one is not restarted by
-// accident; the local-only key is pinned to the four files that make it local
+// accident; the local-only key is pinned to the six files that make it local
 // (the shared block's field, its registry row, its schema entry and the
-// project-path refusal), and the built-task status names O2 and O6 beside O0,
-// O1 and O3.
+// project-path refusal, with their tests), and the built-task status names O2,
+// O4 and O6 beside O0, O1 and O3.
 func TestDocsStatelessOrchestratorLongRunTriageIsFollowedThrough(t *testing.T) {
 	plan := soRead(t, soPlan)
 	rec := soRead(t, soReconciled)
@@ -399,7 +399,17 @@ func TestDocsStatelessOrchestratorLongRunTriageIsFollowedThrough(t *testing.T) {
 	}
 	// An input nobody could read is the recommend-only outcome, never a cancel,
 	// and the merge is gated on the whole diff, not only on the finding set.
-	for _, want := range []string{"the **recommend-only** outcome", "an input nobody read is not evidence that the run is bad", "**the whole changed-path set is `Routine`**"} {
+	for _, want := range []string{
+		"the **recommend-only** outcome",
+		"an input nobody read is not evidence that the run is bad",
+		"**the whole changed-path set is `Routine`**",
+		// The order is what makes that a guarantee and not a promise: the
+		// fail-closed outcome is tried before the two that act, so a run whose
+		// record would otherwise be restarted — cancelled — is only recommended
+		// on while any input is unreadable.
+		"escalate, then recommend-only, then merge-as-is, then restart",
+		"Chosen when **every input was read**",
+	} {
 		if !strings.Contains(rec, want) {
 			t.Errorf("%s: the triage's fail-closed reading lost %q", soReconciled, want)
 		}
@@ -420,6 +430,9 @@ func TestDocsStatelessOrchestratorLongRunTriageIsFollowedThrough(t *testing.T) {
 	}
 	for _, want := range []string{
 		"**The four are tried in one fixed order and the first that matches wins",
+		"`Escalate`, then `RecommendOnly`, then `MergeAsIs`, then",
+		"escalate, then recommend-only, then merge-as-is, then restart",
+		"tried before `MergeAsIs` and",
 		"**`MergeAsIs` also requires the run to be over and its pull request ready**",
 		"TestTriageNeverMergesAnInFlightRun",
 		"TestTriageNeverMergesADraftPullRequest",
@@ -439,10 +452,19 @@ func TestDocsStatelessOrchestratorLongRunTriageIsFollowedThrough(t *testing.T) {
 			t.Errorf("%s: BF2's follow-through %q is gone", soPlan, want)
 		}
 	}
-	// The status is what rots first: O2 and O6 are built on main beside O0, O1 and
-	// O3, so the three documents that state it name their commits.
-	for _, f := range []struct{ name, text string }{{soPlan, plan}, {soReconciled, rec}, {soReadme, readme}} {
-		for _, want := range []string{"5053cbce", "6145e445", "five"} {
+	// The status is what rots first: six tasks are built on main — O0, O1, O2, O3,
+	// O4 and O6 — so each document states its own count-bearing sentence, and all
+	// six commits are named in all three. A bare "five" would pin nothing: the
+	// plan says "five" of its own critical path two hundred lines further down.
+	for _, f := range []struct{ name, text, count string }{
+		{soPlan, plan, "**Status (2026-11-08): six tasks of this plan are built, all merged on `main`.**"},
+		{soReconciled, rec, "**Status (2026-11-08): six of the plan's tasks are built, all merged on `main`.**"},
+		{soReadme, readme, "**Status (2026-11-08): six tasks of the [implementation plan](implementation-plan.md) are built, all merged on `main`.**"},
+	} {
+		if !strings.Contains(f.text, f.count) {
+			t.Errorf("%s: the built-task status lost %q", f.name, f.count)
+		}
+		for _, want := range []string{"36abeffc", "405dae8b", "5053cbce", "70ec7800", "8e534f5d", "6145e445", "#1825"} {
 			if !strings.Contains(f.text, want) {
 				t.Errorf("%s: the built-task status lost %q", f.name, want)
 			}

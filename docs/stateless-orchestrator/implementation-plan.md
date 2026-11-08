@@ -1,11 +1,11 @@
 # The stateless orchestrator: the implementation plan
 
-**Status (2026-11-08): five tasks of this plan are built, all merged on `main`.** **Task O0, the state schema, the typed patch and the validator, is merged on `main`** on
+**Status (2026-11-08): six tasks of this plan are built, all merged on `main`.** **Task O0, the state schema, the typed patch and the validator, is merged on `main`** on
 2026-11-07 — pull request #1823, commit `36abeffc` — whose eleven files `internal/orchestrator/state.go`, `patch.go`, `validate.go`, `summary.go`, their tests,
 `testdata/state-a.json` and the two `schemas/` documents are on `main`. **Task O1, the deterministic security-sensitive classifier, is merged too** — pull request
 #1822, commit `405dae8b`, merged 2026-11-07 — and the owner approved it as part of the 0.22.0 scope: its four files — `internal/orchestrator/sensitivity/classify.go`,
 `classify_test.go`, `export_test.go` and `testdata/paths.txt` — carry the interface, the allowlist, the eight tests, the red step and the commit message the O1
-section below states. **O2, the `orchestrator/` subtree, its rules and the `fugaro update` convergence, and O6, the dependency-driven launcher, are merged too** (#1945, `5053cbce`; #1950, `6145e445`, both 2026-11-08), as is **O3, the compare-and-swap state store, the daemon lease and the audit log** (#1954, `70ec7800`).
+section below states. **O2, the `orchestrator/` subtree, its rules and the `fugaro update` convergence, O3, the compare-and-swap state store, the daemon lease and the audit log, O4, the guardrail policy fields, and O6, the dependency-driven launcher, are merged too** (#1945, `5053cbce`; #1954, `70ec7800`; #1950, `6145e445` — 2026-11-08 — and #1825, `8e534f5d`, 2026-11-07).
 **Every other task, file and step below is plan only, and no other task is approved**: this line records what `main` holds and nothing more.
 
 **BF2 (2026-11-08) adds one task to this plan: O14, the long-run triage rule, with the decisions D1244-D1247 in the reconciliation.** It is **design
@@ -62,7 +62,7 @@ Findings are cited as F#, decisions as D#, open tensions as T# (reconciliation s
 | D1241 | The person's own credential writes the `orchestrator/` node, the CLI and the daemon both; O0's validator is the whole shape check; the rules refuse **every identity they evaluate** — a run-scoped job token and a minter-minted custom token alike — and no write-own guarantee is claimed. O2's gate is lifted | O2, O3, O5 |
 | D1242 | The terminal Typed confirmation stands, and a paired-device channel comes later; the later channel may reshape O0's `Approval`, so no task or test is gated on it | O0, O5 |
 | D1243 | The session-start print reads a local cache the daemon writes (atomic, with a freshness stamp the print shows); `state --brief --offline` never reaches the network | O5, O8, O10 |
-| **D1244-D1247 (BF2, 2026-11-08, all the recommendation)** | The **long-run triage rule**: deterministic code, no model call; a run past the local key `orchestrator.triage_after` (**default `2h`**, refused when it is not under the run's budget) is triaged from the run's record, the pull request's state **and its CI state** (**a read O14 adds**) and **BF1's open-findings file** — the four outcomes are tried in one fixed order (**escalate, then merge-as-is, then restart, then recommend-only**): **merge as-is plus a follow-up task** on a **finished** run with a **ready** (not draft) pull request, commits, green CI, **a changed-path set wholly inside the routine allowlist** and no critical finding and none high in a security path (automatic **only** then), **restart as smaller sub-tasks** on no commits, no progress while still in flight, or a finding looping across rounds, **escalate** (cancel plus a `waiting_on: person` decision) on a finding **read as** critical or a security-path one at high, and **recommend only** (nothing merged, cancelled or restarted) when an input cannot be read — no CI answer, an absent or unattributable findings file, an unknown severity, a truncated path set, an unreadable record; every triage is appended to the audit log (O3) under `<run>:triage`, and **`fugaro runs watch` prints the same triage read-only** | O14, G12 |
+| **D1244-D1247 (BF2, 2026-11-08, all the recommendation)** | The **long-run triage rule**: deterministic code, no model call; a run past the local key `orchestrator.triage_after` (**default `2h`**, refused when it is not under the run's budget) is triaged from the run's record, the pull request's state **and its CI state** (**a read O14 adds**) and **BF1's open-findings file** — the four outcomes are tried in one fixed order (**escalate, then recommend-only, then merge-as-is, then restart**, the fail-closed one before the two that act): **merge as-is plus a follow-up task** on a **finished** run with a **ready** (not draft) pull request, commits, green CI, **a changed-path set wholly inside the routine allowlist** and no critical finding and none high in a security path (automatic **only** then), **restart as smaller sub-tasks** on no commits, no progress while still in flight, or a finding looping across rounds, **escalate** (cancel plus a `waiting_on: person` decision) on a finding **read as** critical or a security-path one at high, and **recommend only** (nothing merged, cancelled or restarted) when an input cannot be read — no CI answer, an absent or unattributable findings file, an unknown severity, a truncated path set, an unreadable record; every triage is appended to the audit log (O3) under `<run>:triage`, and **`fugaro runs watch` prints the same triage read-only** | O14, G12 |
 | **Retry rule (2026-11-04, not the recommendation)** | **One approval covers the first attempt and at most one automatic retry of the same approved spec; a refusal (a failed `Precheck`, the kill switch, a spend cap, a validation refusal) is never retried; a second failure needs a person's new approval; the retry counts toward every cap** | O0, O6, G4 |
 | Q2 (**the owner's answer, 2026-11-04 — a different answer from the one this PR first recorded, which is superseded**) | **`fugaro setup` installs the unit** as one of its listed steps (real terminal only, refused under a coding agent's marker, and in a managed project no extra confirmation: the plan line names the unit and its path), **upgrades move to `fugaro orchestrator install`**, and **`fugaro update` never touches the unit** — **amended 2026-11-05 by T7: `update` never *installs* a unit, and it does re-render and reload one already installed**; the HARD RULE carve-out it left is **T7**, now ruled | O8, O9, G11 |
 | **T7 (2026-11-05, not the recommendation; amends Q2)** | **`fugaro update` re-renders the daemon's unit when the rendered template changed, so the HARD RULE is literally true**: it only ever re-renders and reloads a unit that is **already installed** (never installs one, never creates one for a project that did not choose it), behind the same plan-and-confirm rules as every other `update` step (a managed project's gate stays, a terminal asks for the step's class); `fugaro setup` still installs the first one (Q2); `fugaro orchestrator install` stays the explicit command but no release's `### For operators` ever needs it; the daemon's self-restart and its start-up `Migrate` stay | O8, O9, G11 |
@@ -102,11 +102,11 @@ adjacent code), `.claude/rules/terraform.md` (O2 edits `internal/infra/firebased
   checks the binary the unit names each tick, exits cleanly when its version **differs** from the one running (not only when it is newer: whoever can write that path already owns the login unit, so a downgrade escalates nothing), and launchd (`KeepAlive`) or systemd (`Restart=always`)
   starts the new one (O8); the state node's `schema_version` migration runs in the daemon's start-up for the same reason.
 - **The long-run triage is code, and it fails closed (BF2, G12).** No model call decides an outcome. The four outcomes are tried in one fixed order — escalate, then
-  merge-as-is, then restart, then recommend-only. The merge needs **positive evidence**, and only for a **finished** run (the record's status terminal) whose pull request is
+  recommend-only, then merge-as-is, then restart: the fail-closed outcome is tried before the two that act, so an input nobody read is a print and never a cancel. The merge needs **positive evidence**, and only for a **finished** run (the record's status terminal) whose pull request is
   **ready, not a draft** — commits, a green CI **read from the provider** (a read this task adds; a failed read is `CIUnknown`, no merge), **a diff wholly inside the routine
   allowlist** (O1's `Classify` over every changed path, so one Sensitive path is no merge), no critical finding, and none high in a security path, the path being decided by
   O1's `Classify` over the finding's own file and never by a word it uses about itself. Everything else is read against the run and never in its favour: an absent or unreadable
-  findings file, a severity the triage does not know, an unreadable record, a truncated path set and no CI answer all take the **recommend-only** outcome — nothing merged, cancelled or restarted, and the input it could not read printed. A run the triage cancels is cancelled through the `fugaro cancel` path (the runner sees the marker and finalizes a draft PR), never killed, and the triage never re-launches the same spec: what made no progress becomes smaller work items waiting for a person's approval (D1226).
+  findings file, a severity the triage does not know, an unreadable record, a truncated path set and no CI answer all take the **recommend-only** outcome, tried before the two that act — nothing merged, cancelled or restarted, and the input it could not read printed. A run the triage cancels is cancelled through the `fugaro cancel` path (the runner sees the marker and finalizes a draft PR), never killed, and the triage never re-launches the same spec: what made no progress becomes smaller work items waiting for a person's approval (D1226).
 - **`ee/` boundary**: nothing outside `ee/` imports `ee/`; `go test ./internal/eeboundary/ -count=1` after any `ee/` or registration change; the
   core builds and tests with `ee/` deleted; `TestCoreNeverImportsEE` is the standing guard, and no core task here imports `ee/`.
 - **A field never changes meaning**: every new wire shape (state, patch, `--json` output, policy keys) is additive with a `schema_version` and a
@@ -601,8 +601,8 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
 
 - **Files (25):** `internal/orchestrator/triage.go` (new: the rule), `internal/orchestrator/triage_test.go` (new), `internal/orchestrator/export_triage_test.go`
   (new; O0 owns `export_test.go`), `internal/orchestrator/tick.go` (edit: one more step of the same tick), `internal/localcfg/localcfg.go` (edit: reads the
-  `orchestrator.triage_after` key and refuses a value that is not under the run's budget), `internal/localcfg/triage_test.go` (new), and the four files the key itself
-  lives in, without which the local-only claim is not established: `internal/policy/merge.go` (edit: `Orchestrator.TriageAfter`, `KeyOrchestratorTriageAfter`,
+  `orchestrator.triage_after` key and refuses a value that is not under the run's budget), `internal/localcfg/triage_test.go` (new), and the six files the key itself
+  lives in and is pinned by, without which the local-only claim is not established: `internal/policy/merge.go` (edit: `Orchestrator.TriageAfter`, `KeyOrchestratorTriageAfter`,
   `WithDefaults`, `SetsNothing` and the shape rule in `ValidOrchestrator`), `internal/policy/orchestrator_merge_test.go` (edit: the key's own validation),
   `internal/settings/registry.go` (edit: the row, built with `locLocal` so `Layers` is `[local]` alone — no `shared` stand-in, no project layer) and
   `schemas/settings.schema.json` (edit: the key's `$defs.keyDefaults` entry, which `TestSettingsSchema` pins to `settings.Rows()` and which fails the build without
@@ -618,10 +618,12 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   CI green, red or pending), the findings read from BF1's finalize artifact, the threshold and `Now`; `TriageOutcome` is one of `MergeAsIs`, `Restart`,
   `Escalate` or `RecommendOnly`, with its reasons and whether it is **taken without a person**: `MergeAsIs` (lands work) and `Restart` (cancels the run) are,
   `Escalate` cancels and asks, and `RecommendOnly` **acts on nothing** — it merges nothing, cancels nothing and restarts nothing, and its print names the
-  input it could not read. **The four are tried in one fixed order and the first that matches wins — `Escalate`, then `MergeAsIs`, then `Restart`, then
-  `RecommendOnly`** — so the one overlap that would otherwise be decided by accident is decided by rule: a run whose head is pushed, green and routine but which
+  input it could not read. **The four are tried in one fixed order and the first that matches wins — `Escalate`, then `RecommendOnly`, then `MergeAsIs`, then
+  `Restart`** — so the two overlaps that would otherwise be decided by accident are decided by rule: a run whose head is pushed, green and routine but which
   stopped moving is **merged**, not restarted, because `Restart`'s no-progress signal is read only while the run is still in flight and a finished run has no
-  progress left to make. The rule is pure code — no agent
+  progress left to make; and a run that would otherwise be **restarted** — no commits, no movement, a finding looping — is only **recommended on** while any
+  input is unreadable, because `Restart` cancels and an input nobody read is not evidence that the run is bad (`Escalate` stays first: it acts on a finding the
+  triage **did** read). The rule is pure code — no agent
   package and no model call — and it makes **one provider read the tick did not make before**: the pull request's CI state, through
   `gitprov.Provider.CI(ctx, number) (CIState, error)` (`CIGreen`, `CIRed`, `CIPending`, `CIUnknown`), which is why that read is in this task's file list
   (nothing in the tree reads a pull request's checks today: `gitprov.PRInfo` carries no checks field, and neither `fugaro watch` nor `runs ls` reads
@@ -632,8 +634,8 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   path outside the routine allowlist (a workflow under `.github/`, `internal/creds`, `CLAUDE.md`, a prompt, Terraform, a tree nobody classified) is no
   merge however green the CI is: the run can write the CI configuration that judges it. A severity the triage does not know, an
   absent or unreadable findings file (or one it cannot attribute to the runner's finalize), an unreadable record, a truncated path set, and a CI read that
-  fails or answers neither green nor red nor pending (`CIUnknown`) all read as **unreadable inputs**, which is `RecommendOnly` — never a cancel, so a
-  triage that cannot see does not kill the run it cannot judge (D1245, D1247). A finding **read as** critical, or a high one in a security path, is
+  fails or answers neither green nor red nor pending (`CIUnknown`) all read as **unreadable inputs**, which is `RecommendOnly`, tried before `MergeAsIs` and
+  `Restart` — never a cancel, so a triage that cannot see does not kill the run it cannot judge (D1245, D1247). A finding **read as** critical, or a high one in a security path, is
   `Escalate`. The tick (O7) triages every run past the threshold and acts through three seams it carries, implemented in
   `internal/cli/orchestrator_triage.go`: a `CIChecker` over `gitprov.Provider.CI`, a `Merger` over a new `gitprov.Provider.Merge` (the fake, GitHub and
   Bitbucket), and a `Canceller` over the `fugaro cancel` path (the marker plus the backend's `Cancel`, so the runner finalizes a draft PR). A `Restart` files the smaller scopes as work items
@@ -658,7 +660,8 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   `TestTriageThresholdMustBeUnderTheRunBudget`, `TestTriageIsWrittenToTheAuditLog`, `TestTriageAppendsOnceAcrossTicks`,
   `TestTriageReadsCIThroughTheProvider` (the CI answer is the provider's and the rule never invents one), `TestTriageFailsClosedWithoutACIAnswer`
   (the read errors), `TestTriageNeverMergesWhileCIIsPending`, `TestTriageRecommendsOnlyWhenAnInputCannotBeRead` (each unreadable input, one at a time,
-  produces `RecommendOnly` and no action), `TestTriageNeverCancelsOnAnUnreadableFindingsFile` (the absent file BF1 has not written yet), `TestTriageBlocksTheMergeOnASensitiveChangedPath` (a `.github/workflows/` or `internal/creds` diff with a clean findings file and green CI is never merged),
+  produces `RecommendOnly` and no action), `TestTriageNeverCancelsOnAnUnreadableFindingsFile` (the absent file BF1 has not written yet, on a run whose record alone
+  would be a restart: the fail-closed outcome is tried before the two that act, so an unreadable input is never a cancel), `TestTriageBlocksTheMergeOnASensitiveChangedPath` (a `.github/workflows/` or `internal/creds` diff with a clean findings file and green CI is never merged),
   `TestTriageNeverMergesATruncatedPathSet` (200 paths and `Truncated: true`), `TestTriageReadsTheFindingsFileFromTheRunsArtifactNotTheCheckout` (a findings
   file inside the checkout is not evidence), `TestTriageRefusesAnUnknownSeverityWithoutCancelling`, `TestTriageNeverMergesAnInFlightRun` (the record's status is
   `running`: no merge, however green the CI), `TestTriageNeverMergesADraftPullRequest` (`PRInfo.Draft` true), `TestTriagePrefersEscalateOverEveryOtherOutcome`
@@ -805,8 +808,9 @@ generated `website/content/cli-reference.md`
 (O5 at 2, O8 at 3, O9 at 4, O11 at 5, O13 at 6) — so **no level gained a second writer**. Its own files (`triage.go`, its tests and export, the
 `gitprov` `Merge` and its test, `orchestrator_triage.go` with its test, `runs.go`, `runs_watch.go` with its test) have one writer each. It adds no file
 to O9's unit work, so **the edges above O9, the level table below level 7 and O9's level are unchanged**; the critical path grows only by the generated
-reference, which is why the rule is stated as ready at level 3 and the plan carries it at level 7. **The key's four files are why the list is 25 and not
-19**: without `internal/policy/merge.go`, `internal/settings/registry.go`, `schemas/settings.schema.json` and the project-path refusal, the local-only
+reference, which is why the rule is stated as ready at level 3 and the plan carries it at level 7. **The key's six files are why the list is 25 and not
+19** — `internal/policy/merge.go`, `internal/settings/registry.go`, `schemas/settings.schema.json` and the project-path refusal in
+`internal/projectpolicy/policy.go`, with their two tests: without them the local-only
 claim has nothing that makes it true — the field would be a member of the shared block, its default would be missing from `$defs.keyDefaults` (which
 `TestSettingsSchema` fails on) and a published policy could set the person's own threshold.
 
