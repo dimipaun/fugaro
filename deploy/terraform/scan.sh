@@ -5,8 +5,8 @@
 #
 # Trivy is the one on PATH when there is one: a run's job image bakes it, and
 # a Cloud Run job has no Docker daemon to run the image route with. Everywhere
-# else -- CI, a developer's machine -- it is the Trivy image images/scan.sh
-# pins, through plain docker. The two routes are one command line: the same
+# else -- CI, or a machine with no trivy of its own -- it is the Trivy image
+# images/scan.sh pins, through plain docker. The two routes are one command line: the same
 # flags, the same .trivyignore, the same cache, so a finding one reports the
 # other reports too.
 set -eu

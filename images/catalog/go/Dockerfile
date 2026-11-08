@@ -42,8 +42,8 @@ RUN --mount=type=secret,id=git-credentials,uid=1000,required=false \
  && git -C /work/repo reset --quiet --hard "$commit"
 
 # This repository's own tools, from its mise.toml (Go, Terraform, tflint,
-# Trivy): the base image installs no toolchain of its own. The download cache survives local
-# rebuilds, and nothing may be left missing.
+# Trivy): the base image installs no toolchain of its own. The download cache
+# survives local rebuilds, and nothing may be left missing.
 RUN --mount=type=cache,id=fugaro-mise,target=/home/fugaro/.cache/mise,uid=1000,gid=1000 mise install \
  && missing="$(mise ls --current --missing)" \
  && if [ -n "$missing" ]; then printf 'mise left these tools missing:\n%s\n' "$missing" >&2; exit 1; fi
