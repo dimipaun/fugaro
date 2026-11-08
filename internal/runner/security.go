@@ -18,10 +18,13 @@ import (
 // post-implement seam this runs at, it is still nil, so an escalation built on
 // the record would classify an empty list and never fire (F5).
 //
-// It is called at the two seams D1507 names, and it never fails the run: a diff
-// that cannot be read, a resolution the forced level is refused by, and a plan
-// that would not hold it are each a warning, and the levels stay where they
-// are — roundRigor's own rule for the mode (F9).
+// It is called at the two seams D1507 names — the post-implement window, which
+// a run that skips implement reaches without a stage of its own (a check gate
+// that fixed the tree, a digest step: runner.go) and the post-fix seam beside
+// roundRigor — and it never fails the run: a diff that cannot be read, a
+// resolution the forced level is refused by, and a plan that would not hold it
+// are each a warning, and the levels stay where they are — roundRigor's own
+// rule for the mode (F9).
 //
 // The forced level is raise-only (D1517): a layer that wrote level 3's own
 // off-switch does not defeat the escalation, which clears it and says so

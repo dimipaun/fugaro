@@ -2708,6 +2708,20 @@ func (r *run) agentLoop(ctx context.Context) {
 		}
 		sessionID = req.SessionID
 	}
+	if skipImplement {
+		// D1507's first seam, for the two paths that reach the review loop
+		// with no implement stage: a first run whose check gate fixed the tree
+		// itself, whose autofix commit is the run's own work, and a digest
+		// run, whose step's own commit is. Both are a diff the list in force
+		// has to classify before the loop below walks the plan — the seam
+		// inside the implement branch above is the only other one, and a run
+		// that skipped it would be reviewed at level 2 alone, with nothing in
+		// its record to say the list had matched (security.go).
+		r.escalateSecurity(ctx, runstore.SecurityAtImplement)
+		if r.pr.gone {
+			return // a person closed the PR: nothing more to spend on it
+		}
+	}
 	// The prompt as it is before the input each review round adds to it
 	// (reviewPromptWithInput): the diff under review is built per round,
 	// never once here, because a fix between two rounds changes the branch.
