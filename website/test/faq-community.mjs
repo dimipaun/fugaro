@@ -144,7 +144,7 @@ function readCITriggers(file) {
     }
   }
   assert.ok(
-    branches.length === 1,
+    branches.length <= 1,
     `${CI_FILE}'s push trigger names ${branches.length} branches (${branches.join(', ')}): the community page links one branch and describes one, so a second one is a decision this page has to be given rather than guessed at`,
   )
 
@@ -157,6 +157,15 @@ function readCITriggers(file) {
 }
 
 const ciTriggers = (file = path.join(REPO, CI_FILE)) => readCITriggers(file)
+
+/**
+ * The branch the site's links carry: the one `ci.yml`'s `push:` trigger names, or `HEAD`
+ * when it names none. Since the owner's ruling of 2026-11-07 every workflow that ran on
+ * push is dispatched by hand, and `HEAD` is git's own name for the repository's default
+ * branch, which GitHub resolves when a reader clicks — so the site writes down no branch
+ * name of its own (W1.7, `docs.astro`).
+ */
+const linkedBranch = (ci = ciTriggers()) => ci.branches[0] ?? 'HEAD'
 
 // ---- reading a built page --------------------------------------------------------------
 
@@ -217,11 +226,16 @@ function element(html, id) {
   return m[0]
 }
 
-/** An attribute of a fragment of markup, which is how the page's own facts are read. */
+/**
+ * An attribute of a fragment of markup, which is how the page's own facts are read. An
+ * attribute the page writes with no value reads as the empty string — `data-push-branches`
+ * is one while `ci.yml`'s `push:` trigger names no branch — because that is the fact it
+ * carries: the workflow names no branch, and the site's links carry `HEAD` instead.
+ */
 function attribute(markup, name) {
-  const m = new RegExp(`${name}="([^"]*)"`).exec(markup)
+  const m = new RegExp(`${name}(?:="([^"]*)")?(?=[\\s/>])`).exec(markup)
   assert.ok(m, `${markup.slice(0, 120)} carries no ${name} attribute`)
-  return m[1]
+  return m[1] ?? ''
 }
 
 /** A literal string, as a regular expression that matches it and nothing else. */
@@ -470,6 +484,9 @@ test("the CI description is rendered from ci.yml's on: block", () => {
   for (const branch of ci.branches) {
     assert.ok(triggers.includes(branch), `the CI description does not name the branch ${JSON.stringify(branch)} that ${CI_FILE} pushes to`)
   }
+  // A workflow whose only trigger is the hand dispatch says so in one sentence and not in
+  // the doubled preposition a trigger list that carries its own "on" per entry would give.
+  assert.ok(!/\bon on\b/.test(triggers), `the CI description reads ${JSON.stringify(triggers)}, with the preposition doubled`)
   assert.equal(/\bon demand\b/.test(triggers), ci.dispatch, `${CI_FILE}'s workflow_dispatch is ${ci.dispatch} and the page's sentence says otherwise: ${JSON.stringify(triggers)}`)
 
   const pullRequests = pageText(element(page, 'ci-pull-requests'))
@@ -516,7 +533,7 @@ test("the community page links the repository's own community files, and each on
 
   for (const [, kind, branch, file] of links) {
     assert.equal(kind, 'blob', `the community page links ${file} as a ${kind}: every one of these is a file a reader opens`)
-    assert.equal(branch, ci.branches[0], `the community page links ${file} at branch ${branch}, and ${CI_FILE} pushes to ${ci.branches[0]}`)
+    assert.equal(branch, linkedBranch(ci), `the community page links ${file} at branch ${branch}, and the site links at ${linkedBranch(ci)} — the branch ${CI_FILE} pushes to, or HEAD when it names none`)
     assert.ok(existsSync(path.join(REPO, file)), `the community page links ${file}, which this repository does not have`)
   }
 
@@ -770,7 +787,7 @@ test('the licence is named, and it is the identifier LICENSE carries', () => {
  *  what you may do with the code") is the one that stopped being true the day anything outside
  *  `LICENSE` governed part of the repository (R2). */
 function licenceElements(html) {
-  const branch = ciTriggers().branches[0]
+  const branch = linkedBranch()
   const cards = [...html.matchAll(/<li\b[^>]*>[\s\S]*?<\/li>/g)]
     .map(([li]) => li)
     .filter((li) => li.includes(`/blob/${branch}/LICENSE"`))
@@ -807,7 +824,7 @@ function editLicenceElement(html, what, edit) {
  */
 function licenceSplitFailures(html) {
   const out = []
-  const branch = ciTriggers().branches[0]
+  const branch = linkedBranch()
   const links = (markup, file) => markup.includes(`/blob/${branch}/${file}"`)
   const elements = licenceElements(html)
 
@@ -933,7 +950,7 @@ test('the FAQ names a source for every answer, and every source exists', () => {
     for (const [, branch, source] of sources) {
       // The branch is read from ci.yml by the page, and it is the branch CI pushes to: a
       // source link at a branch the project stopped building on is a link into nothing.
-      assert.equal(branch, ci.branches[0], `the FAQ's "${id}" links ${source} at branch ${branch}, and ${CI_FILE} pushes to ${ci.branches[0]}`)
+      assert.equal(branch, linkedBranch(ci), `the FAQ's "${id}" links ${source} at branch ${branch}, and the site links at ${linkedBranch(ci)}`)
       assert.ok(existsSync(path.join(REPO, source)), `the FAQ's "${id}" names ${source} as its source, and this repository does not have that file`)
     }
   }
@@ -941,18 +958,23 @@ test('the FAQ names a source for every answer, and every source exists', () => {
 
 test('the FAQ follows ci.yml when the branch it pushes to changes', async (t) => {
   // The FAQ reads its branch from the workflow file rather than typing it, and this is the
-  // case that holds the two together: move the push trigger to another branch in a copy and
-  // every source link has to point at that branch instead. A page that carried `main` as a
-  // string would keep pointing at it, which is the drift the reader exists to prevent.
+  // case that holds the two together: give the workflow a push trigger naming another branch
+  // in a copy and every source link has to point at that branch instead. A page that carried
+  // `HEAD` as a string — which is what it links while ci.yml names no branch at all, since
+  // the owner's ruling of 2026-11-07 — would keep pointing at it, which is the drift the
+  // reader exists to prevent.
   const built = buildWith(
     t,
-    (copy) => rewrite(path.join(copy.root, CI_FILE), (text) => text.replace(/^(\s+branches:\s*\[)main(\])/m, '$1trunk$2')),
+    (copy) =>
+      rewrite(path.join(copy.root, CI_FILE), (text) =>
+        text.replace(/^on:\n/m, 'on:\n  push:\n    branches: [trunk]\n'),
+      ),
     'faq',
   )
 
-  assert.equal(built.status, 0, `the build failed with another branch in ci.yml's push trigger:\n${built.output}`)
+  assert.equal(built.status, 0, `the build failed with a push trigger naming another branch in ci.yml:\n${built.output}`)
   const ci = ciTriggers(path.join(built.copy.root, CI_FILE))
-  assert.equal(ci.branches[0], 'trunk', 'the fixture did not move the push trigger, so the case below would prove nothing')
+  assert.equal(ci.branches[0], 'trunk', 'the fixture did not give the push trigger a branch, so the case below would prove nothing')
 
   const links = [...built.page.matchAll(/href="[^"]*\/blob\/([^/"]+)\//g)].map((m) => m[1])
   assert.ok(links.length > 0, 'the FAQ renders no source link at all, so this case would prove nothing')
@@ -1130,7 +1152,7 @@ test('the Why GCP page renders the rows its file names, in order, each citing a 
     )
     for (const [at, item] of items.entries()) {
       const row = wanted[at]
-      assert.match(item.html, new RegExp(`Source: <a href="${escaped(`${repository}/blob/${ci.branches[0]}/${row.source}`)}"`), `the page's "${row.id}" does not link ${row.source} at ${ci.branches[0]}, the branch ${CI_FILE} pushes to: a source link at another branch is a link into nothing (W1.10)`)
+      assert.match(item.html, new RegExp(`Source: <a href="${escaped(`${repository}/blob/${linkedBranch(ci)}/${row.source}`)}"`), `the page's "${row.id}" does not link ${row.source} at ${linkedBranch(ci)}: a source link at another branch is a link into nothing (W1.10)`)
       assert.ok(existsSync(path.join(REPO, row.source)), `website/data/why-gcp.yaml's "${row.id}" names ${row.source} as the file that proves it, and this repository does not have that file`)
       assert.match(item.html, new RegExp(`<time datetime="${escaped(row.date)}"`), `the page's "${row.id}" does not carry ${row.date} as its date: a claim about another cloud is one whose age a reader has to be able to judge (ZF58)`)
     }
@@ -1140,7 +1162,7 @@ test('the Why GCP page renders the rows its file names, in order, each citing a 
   // source: the sentence's text is pinned by `wording.mjs` (D249), so what is held here is that
   // it is a row of the file rather than a sentence written into the template.
   assert.match(page, new RegExp(`>${escaped(rows.framing.text)}<`), `the built page does not render website/data/why-gcp.yaml's framing sentence ${JSON.stringify(rows.framing.text)}: the page renders the file's rows and writes none of them`)
-  assert.match(page, new RegExp(`href="${escaped(`${repository}/blob/${ci.branches[0]}/${rows.framing.source}`)}"`), `the framing sentence does not carry its source (${rows.framing.source}) as a link`)
+  assert.match(page, new RegExp(`href="${escaped(`${repository}/blob/${linkedBranch(ci)}/${rows.framing.source}`)}"`), `the framing sentence does not carry its source (${rows.framing.source}) as a link`)
 })
 
 test('the Why GCP reader refuses a row the file cannot support, naming it', (t) => {

@@ -325,6 +325,12 @@ const faq = loadFaq()
  * rather than the fact about the workflow. `website/test/faq-community.mjs` builds the page
  * against a copy of `ci.yml` whose push trigger names another branch and requires the links
  * to follow it, which is what holds this reader and that file together.
+ *
+ * Since the owner's ruling of 2026-11-07 every workflow that ran on push is dispatched by
+ * hand, so `ci.yml` names no branch at all. The answers then link `HEAD`, git's own name for
+ * the repository's default branch, resolved by GitHub when a reader clicks — no second copy
+ * of a branch name that could move without this page noticing (the same answer `docs.astro`
+ * gives, W1.7) — and a workflow that names a branch again moves every link back with it.
  */
 function baseBranch(): string {
   const file = '.github/workflows/ci.yml'
@@ -357,10 +363,7 @@ function baseBranch(): string {
       }
     }
   }
-  if (branch === '') {
-    throw new Error(`${file}'s \`push:\` trigger names no \`branches: [...]\`, and the site links the repository's files at the branch its CI builds on (W1.10).`)
-  }
-  return branch
+  return branch === '' ? 'HEAD' : branch
 }
 
 const branch = baseBranch()

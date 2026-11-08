@@ -17,7 +17,11 @@
  *
  *   - **The repository and its branch.** `website/data/site.yaml` names the repository, and
  *     the branch the links point at is the one `ci.yml` pushes to — so a link cannot point
- *     at a branch the project has stopped building on.
+ *     at a branch the project has stopped building on. Since the owner's ruling of 2026-11-07
+ *     the workflow is dispatched by hand and its `on:` block names no branch; the links then
+ *     carry `HEAD`, git's own name for the repository's default branch, rather than a branch
+ *     name typed here that could move without this page noticing (the same answer
+ *     `docs.astro` gives, W1.7).
  *   - **The issue templates.** The directory is read, so a template that is added or removed
  *     changes this page with it, and each entry's name and description come from the template
  *     file itself.
@@ -105,12 +109,16 @@ function readTriggers(file: string): Triggers {
 
 const ci = readTriggers(CI_FILE)
 
-/** The branch the page's links point at: the branch CI builds on. */
+/**
+ * The branch the page's links point at: the branch CI builds on, which is the branch its
+ * `push:` trigger names. `ci.yml` names none today — every workflow that ran on push is
+ * dispatched by hand (the owner's ruling of 2026-11-07) — and the page then links `HEAD`,
+ * git's own name for the repository's default branch, which GitHub resolves when a reader
+ * clicks. The page therefore carries no copy of a branch name that could move without it
+ * noticing, and a workflow that names a branch again moves every link back with it.
+ */
 function baseBranch(): string {
-  if (ci.branches.length === 0) {
-    throw new Error(`${CI_FILE}'s push trigger names no branch, and every link this page renders points at the branch the project builds on (W1.10 step 4).`)
-  }
-  return ci.branches[0]
+  return ci.branches[0] ?? 'HEAD'
 }
 
 const branch = baseBranch()
@@ -210,12 +218,15 @@ function listOf(parts: string[]): string {
   return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
 }
 
+// Each entry carries its own preposition, so a workflow whose only trigger is the hand
+// dispatch reads "CI runs on demand." rather than "CI runs on on demand." — and one that
+// pushes to a branch as well still reads "CI runs on every push to main and on demand."
 const triggers: string[] = []
-if (ci.branches.length > 0) triggers.push(`every push to ${ci.branches.join(', ')}`)
+if (ci.branches.length > 0) triggers.push(`on every push to ${ci.branches.join(', ')}`)
 if (ci.dispatch) triggers.push('on demand')
 if (ci.pullRequest) triggers.push('on pull requests')
 
-const triggersSentence = `CI runs on ${listOf(triggers)}.`
+const triggersSentence = `CI runs ${listOf(triggers)}.`
 
 // The pull-request sentence flips with the trigger, and it is the one sentence on this page
 // that answers `CONTRIBUTING.md`'s stale paragraph directly (finding 11, F46): a repository
