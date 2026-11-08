@@ -44,8 +44,9 @@ const (
 type CraftPool struct {
 	// Strategy is the pool's strategy; "" is a pool that names none, which is
 	// failover (config.Pool.StrategyOrDefault, D1632). It is kept as the layer
-	// wrote it rather than normalized, so a reader that has to print one asks
-	// its own documents' default for it.
+	// wrote it rather than normalized — the emptiness is a fact about the layer
+	// — and the one value a merge renders is the strategy in force
+	// (poolStrategyText).
 	Strategy string
 	// Members is the pool's members, in the order it tries them.
 	Members []string
@@ -223,6 +224,11 @@ func (e *Effective) defineCraftPools(pools map[string]CraftPool, src string) {
 // judged on its own key, so a layer that narrows the list keeps the project's
 // strategy and one that pins the order keeps the project's members. A value
 // equal to the running one moves nothing and is not recorded (Merge).
+//
+// Both entries name a layer and carry the value in force, an empty effective
+// value being reserved for the refusals that have none at all (craftSource,
+// poolStrategyText): a reader of the record tells the two apart by that field
+// and nothing else.
 func (e *Effective) tightenCraftPool(name string, p CraftPool, src string) {
 	cur, defined := e.Craft.Pools[name]
 	if !defined {
@@ -236,7 +242,8 @@ func (e *Effective) tightenCraftPool(name string, p CraftPool, src string) {
 			out.Members, e.Sources[CraftPoolMembersKey(name)] = dedupe(p.Members), src
 		} else {
 			e.Ignored = append(e.Ignored, Ignored{CraftPoolMembersKey(name),
-				strings.Join(p.Members, ","), strings.Join(cur.Members, ","), e.Sources[CraftPoolMembersKey(name)]})
+				strings.Join(p.Members, ","), strings.Join(cur.Members, ","),
+				e.craftSource(CraftPoolMembersKey(name))})
 		}
 	}
 	if p.Strategy != "" {
@@ -245,7 +252,7 @@ func (e *Effective) tightenCraftPool(name string, p CraftPool, src string) {
 			out.Strategy, e.Sources[CraftPoolStrategyKey(name)] = p.Strategy, src
 		case rank < running:
 			e.Ignored = append(e.Ignored, Ignored{CraftPoolStrategyKey(name),
-				p.Strategy, out.Strategy, e.Sources[CraftPoolStrategyKey(name)]})
+				p.Strategy, poolStrategyText(out.Strategy), e.craftSource(CraftPoolStrategyKey(name))})
 		}
 	}
 	e.Craft.Pools[name] = out
@@ -310,6 +317,25 @@ func narrows(have, want []string) bool {
 		i += j + 1
 	}
 	return true
+}
+
+// poolStrategyText is a pool's strategy as an Effective.Ignored entry renders
+// it: the strategy in force, which is failover where the layer named none
+// (D1632, config.Pool.StrategyOrDefault) — the reading poolStrategyRank's
+// failover case already starts from.
+//
+// CraftPool.Strategy keeps the layer's own spelling, but a dropped value is
+// read by documents this package does not own — the run's warning, the PR
+// body, `fugaro validate`, the console — and an empty effective value would
+// ask each of them to know a default of their own: worse, it is how a reader
+// that prints one tells a value that lost to another value from a name the
+// project makes available nowhere at all (craftSource), which is the one thing
+// the entry's effective field answers.
+func poolStrategyText(s string) string {
+	if s == "" {
+		return PoolStrategyFailover
+	}
+	return s
 }
 
 // poolStrategyRank is how tight a written strategy is: failover — and the

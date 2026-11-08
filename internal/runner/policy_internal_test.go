@@ -255,6 +255,13 @@ func TestPolicyKeyPathCraft(t *testing.T) {
 // layer names (schemas/result.schema.json, schemas_test's enum table). A merge
 // that answered "" here would write a record the repository's own validator
 // refuses.
+//
+// A pool's two keys answer differently: their effective value is the one in
+// force, so a strategy the project's pool leaves unnamed is recorded as the
+// failover it is (poolStrategyText) — the reader of a record tells a looser
+// value from a name nothing makes available by that field alone, and a
+// strategy that lost to the default would otherwise read as a credential the
+// project does not define.
 func TestPolicyRecordCraftIgnoredNamesALayer(t *testing.T) {
 	project := policy.Layer{Craft: policy.CraftLayer{
 		Credentials: []string{"openrouter-main"},
@@ -263,7 +270,10 @@ func TestPolicyRecordCraftIgnoredNamesALayer(t *testing.T) {
 	}}
 	file := policy.Layer{Craft: policy.CraftLayer{
 		Credentials: []string{"repo-key"},
-		Pools:       map[string]policy.CraftPool{"repo-pool": {Members: []string{"openrouter-main"}}},
+		Pools: map[string]policy.CraftPool{
+			"repo-pool": {Members: []string{"openrouter-main"}},
+			"claude":    {Strategy: policy.PoolStrategyRoundRobin},
+		},
 		Access: map[string]string{config.CraftCoder: "repo-key",
 			config.CraftSeniorReview: "repo-pool"},
 	}}
@@ -276,6 +286,18 @@ func TestPolicyRecordCraftIgnoredNamesALayer(t *testing.T) {
 		if !slices.Contains(layers, ig.Source) {
 			t.Errorf("ignored %s: source %q is not one of %v, so result.json would fail its own schema", ig.Key, ig.Source, layers)
 		}
+	}
+	// The strategy the project's pool never named, refused: the entry names the
+	// layer that answers for it and carries failover, the value the run would
+	// use.
+	strategy := slices.IndexFunc(rec.Ignored, func(ig runstore.PolicyIgnored) bool {
+		return ig.Key == policy.CraftPoolStrategyKey("claude")
+	})
+	if strategy < 0 {
+		t.Fatalf("the refused strategy was not recorded: %+v", rec.Ignored)
+	}
+	if ig := rec.Ignored[strategy]; ig.Source != policy.SourceCeiling || ig.Effective != policy.PoolStrategyFailover {
+		t.Errorf("ignored %s = %+v, want the project's own failover", ig.Key, ig)
 	}
 }
 

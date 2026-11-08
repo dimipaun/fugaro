@@ -138,6 +138,17 @@ func TestRepoCannotReorderOrChangeStrategy(t *testing.T) {
 		t.Fatalf("ignored = %+v, want %+v", e.Ignored, want)
 	}
 
+	// A pool the project names no strategy for is failover (D1632), and the
+	// entry the record carries renders that value rather than the emptiness
+	// the layer wrote: an effective value of "" is how a reader tells a refusal
+	// with no counterpart at all from a value that lost to one in force.
+	unnamed := craftLayer(nil, map[string]CraftPool{"claude": pool("", "c1", "c2")}, nil)
+	e = repo(unnamed, craftLayer(nil, map[string]CraftPool{"claude": pool(PoolStrategyRoundRobin)}, nil))
+	want = []Ignored{{CraftPoolStrategyKey("claude"), PoolStrategyRoundRobin, PoolStrategyFailover, SourceCeiling}}
+	if !reflect.DeepEqual(e.Ignored, want) {
+		t.Fatalf("ignored = %+v, want %+v", e.Ignored, want)
+	}
+
 	// The other direction is the repository's to take: a pool the project
 	// round-robins may be pinned to an order.
 	rr := craftLayer(nil, map[string]CraftPool{"claude": pool(PoolStrategyRoundRobin, "c1", "c2")}, nil)
