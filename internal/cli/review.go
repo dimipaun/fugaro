@@ -45,7 +45,10 @@ import (
 //
 // It stays a constant because the launcher can ask the service nothing: there
 // is no admin route to its configuration (D143), and the admission decision is
-// not visible without a call that mints a credential.
+// not visible without a call that mints a credential. What the launcher can
+// still judge is the installation the service was deployed with, and that is
+// what checkReviewAdmission does — the class is compiled in here since 0.21.0,
+// and a launch is refused while the installation's own release predates it.
 //
 // A binary older than this release keeps refusing whatever the installation in
 // front of it admits, because the fact is compiled in; the refusal below says
@@ -201,9 +204,10 @@ func reviewAccount(spec *task.Spec) string {
 
 // checkReviewLaunch is every refusal a review makes before anything of it is
 // written, in the order the operator would act on them: the credentials service
-// the job fetches its credentials from (E7's two halves, the first of which is
-// the release's own precondition, D893 (c)), the named account's own state
-// (D882), and the pull request's coding run (spec §5).
+// the job fetches its credentials from (E7's first half, D893 (c)), the class
+// that service admits (E7's second half — the binary's here, the installation's
+// in checkReviewAdmission), the named account's own state (D882), and the pull
+// request's coding run (spec §5).
 //
 // The pull request is the command's own --pr, which is checked positive before
 // anything else happens, and not spec.ReviewPRs[0]: the task's own list is the

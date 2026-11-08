@@ -51,9 +51,10 @@ func reviewCLI(t *testing.T, args ...string) (string, string, error) {
 // newReviewFixture is the installation a review is launched against: the
 // project whose standard profile serves acme-personal and the default account,
 // with both accounts' review-only variants deployed beside their coding jobs,
-// the base image at the release whose runner can serve a review launch
-// (reviewJobSince, which every review launch is gated on), and the credentials
-// service opted in.
+// the base image at the release whose runner can serve a review launch and
+// whose credentials service admits it (reviewAdmissionSince, which is the
+// later of the two releases a review launch's two halves are gated on), and
+// the credentials service opted in.
 //
 // E7's two halves hold in it — the service is published, and the launcher's
 // constant admits the class since 0.21.0 — so a launch from it reaches the
@@ -61,7 +62,7 @@ func reviewCLI(t *testing.T, args ...string) (string, string, error) {
 func newReviewFixture(t *testing.T) *projectJobFixture {
 	t.Helper()
 	f := newProjectJobServingFixture(t)
-	setBaseImage(t, reviewJobSince)
+	setBaseImage(t, reviewAdmissionSince)
 	f.appendConfig(t, "credentials_service: { url: "+credentialsServiceFixtureURL+" }\n")
 	for _, account := range []string{"acme-personal", ""} {
 		job := credsvc.ReviewJobName("standard", "github", infra.ReviewVariantAccount(account))
@@ -300,16 +301,38 @@ func TestReviewShowPrintsTheArtifactAndItsMarkdown(t *testing.T) {
 // without one has nothing for the job to fetch anything from. The refusal names
 // both commands that fix it, in order: the first is a fugaro update, which is
 // the whole upgrade. E7's second half holds here (reviewJobAdmitted is true
-// since 0.21.0), which is what makes this the missing half alone.
+// since 0.21.0, and the fixture's installation is at that release), which is
+// what makes this the missing half alone.
 func TestReviewStillRefusesWhenTheCredentialsServiceIsOff(t *testing.T) {
 	f := newProjectJobServingFixture(t)
-	setBaseImage(t, reviewJobSince)
+	setBaseImage(t, reviewAdmissionSince)
 	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
 
 	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-personal"},
 		"credentials_service is not published in this project's config",
 		"fugaro update --firebase-project",
 		"fugaro creds set github-app-key")
+}
+
+// TestReviewRefusesAnInstallationWhoseServicePredatesTheClass is the gate the
+// flip of reviewJobAdmitted made load-bearing, read from the command: the
+// review-only variant is deployed and its job image can serve a launch
+// (reviewJobSince admits it), while the installation the credentials service
+// was deployed with is a release older than the class — so the launch would
+// start, bill and die on the service's 401. The fixture is the admitted one
+// with its base image moved back to the release the job gate admits, which is
+// exactly the installation between `brew upgrade` and `fugaro update` the gate
+// exists for; the same fixture at reviewAdmissionSince launches, which
+// TestReviewLaunchIsAdmittedWhenTheConstantIsFlipped pins.
+func TestReviewRefusesAnInstallationWhoseServicePredatesTheClass(t *testing.T) {
+	f := newReviewFixture(t)
+	setBaseImage(t, reviewJobSince)
+	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
+
+	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-personal"},
+		"only from fugaro "+reviewAdmissionSince+" on",
+		"Run fugaro update",
+		"fugaro run --pr N --recipe "+reviewOnlyRecipe)
 }
 
 // TestReviewLaunchIsAdmittedWhenTheConstantIsFlipped is the release's own

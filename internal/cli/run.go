@@ -1048,6 +1048,16 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			} else if err := checkReviewJobImage(ctx, env, slug, spec, kind, warn); err != nil {
 				return launchResult{}, err
 			}
+			// The installation's half of the same gate, and the half no job
+			// image can show: the review job mounts no credential, so its
+			// account comes from the credentials service, and only a service
+			// from reviewAdmissionSince on admits the review job's own
+			// caller. Judged on the installation rather than on the job,
+			// because the job's image and the service's release are pinned by
+			// different things (checkReviewAdmission).
+			if err := checkReviewAdmission(env.lc, warn); err != nil {
+				return launchResult{}, err
+			}
 		}
 		// The author, last of the fields this launch decides: the key that
 		// opted the repository in is judged first and refuses an image that

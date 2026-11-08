@@ -417,6 +417,28 @@ const noneModelKnows = "a level's model named none as the level's own switch"
 // digestSince's and reviewLevelsSince's bullets record.
 const reviewJobSince = "0.20.0"
 
+// reviewAdmissionSince is the first fugaro release whose credentials service
+// admits the review job's own caller, which is E7's second half and the half
+// an INSTALLATION carries rather than a binary: reviewJobAdmitted says this
+// launcher has the class compiled in, and this says which release's service
+// answers it. The service reads its review class out of
+// FUGARO_REVIEW_JOB_ACCOUNTS (CSRW1, PR #1932) and the installation module
+// renders that variable (CSRW2, PR #1934), so an installation whose service
+// predates this release refuses the review job's account — the launch starts,
+// pays for the container and dies on the service's answer, which is the one
+// failure a launch refusal exists to keep in front of the spend.
+//
+// The judge is the installation's recorded base image, and that is not a
+// proxy by choice: `fugaro update` pins base_images.base at the release it
+// runs and resolves and pins the credentials service's image in the same run,
+// so a base image below this release is an installation whose service is below
+// it too, while nothing of the deployed service itself can be read from here
+// (no admin route to its configuration, D143, and its admission decision is
+// invisible without a call that mints a credential — reviewJobAdmitted's
+// comment). docs/release.md's ("Before you tag") list verifies the number
+// against the release whose service admits the class.
+const reviewAdmissionSince = "0.21.0"
+
 // gitSecretIDSince is the first fugaro release whose runner reads
 // CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
 // check job's own rebuild names the secret ID Readiness resolved, so a
@@ -1551,6 +1573,47 @@ func checkReviewJobImage(ctx context.Context, env *cloudEnv, slug string, spec *
 // workflow: see checkCloneImageSince.
 func checkCloneReviewJobImage(lc *localcfg.Config, spec *task.Spec, warn io.Writer) error {
 	return checkCloneImageSince(lc, spec, reviewJobSince, "a review launch", reviewJobKnows, reviewJobAlt, warn)
+}
+
+// checkReviewAdmission is the review launch's other half, and the half no job
+// image can show: a review container mounts no credential of its own, so its
+// account comes from the installation's credentials service, and the service
+// admits the review job's own caller only where its own release carries the
+// class (reviewAdmissionSince). The two halves of a review launch are then
+// judged from two different places — the job's build record for the variant,
+// the installation for the service — and this is the one the flip of
+// reviewJobAdmitted made load-bearing: while the constant was false no launch
+// reached the service, and a launch that reaches one too old for the class
+// starts, bills and dies on its 401.
+//
+// The installation's base image is the judge because the launcher cannot ask
+// the service anything (D143, reviewJobAdmitted's comment) while `fugaro
+// update` pins that image at the release it runs and resolves and pins the
+// service's image in the same run, so a base image below reviewAdmissionSince
+// is an installation whose service is below it too. An installation whose base
+// image is unset or carries no release (a development build, a hand-pushed
+// image) is warned about and admitted, releaseOf's own rule.
+func checkReviewAdmission(lc *localcfg.Config, warn io.Writer) error {
+	if lc == nil {
+		return nil
+	}
+	ref := lc.BaseImage(config.BaseKind)
+	unjudged := func(why string) error {
+		fmt.Fprintf(warn, "warning: %s, so the release the installation's credentials service was deployed from is not known; whether that service admits the review job's own caller is not checked\n", why)
+		return nil
+	}
+	if ref == "" {
+		return unjudged("this installation records no base image (base_images.base)")
+	}
+	rel, ok := releaseOf(ref)
+	if !ok {
+		return unjudged("the base image of this installation is " + pluginwire.Printable(ref) + ", which is not a release base image")
+	}
+	if !imagePredates(rel, reviewAdmissionSince) {
+		return nil
+	}
+	return userErr("a review runs on the review-only job, which mounts no credential of its own: its account comes from the installation's credentials service, and a service admits the review job's own caller only from fugaro %s on, the release whose service reads the review class out of FUGARO_REVIEW_JOB_ACCOUNTS. This installation is at %s (its base image is %s, pinned by the same fugaro update that deployed the service), so the run would fetch its account from a service that refuses it and die inside the job it had already paid for. Run fugaro update: that is the whole upgrade, and the command that deploys the service's review class beside the review-only job variant. Until then, review a pull request in the run's own job with fugaro run --pr N --recipe %s",
+		reviewAdmissionSince, rel, pluginwire.Printable(ref), reviewOnlyRecipe)
 }
 
 // refuseClonesNotShipped refuses, before any cloud effect, deploying or
