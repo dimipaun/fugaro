@@ -13,6 +13,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -446,40 +447,68 @@ func TestRecipesSkewRefusesReviewJobOnAnOldImage(t *testing.T) {
 	}
 }
 
+// writeInstallationServiceImage writes the installation root's tfvars as
+// `fugaro update` leaves them: the block whose credentials_service.image names
+// the release that pinned it. rel is the release the reference carries, and ""
+// writes the reference an operator hand-wrote instead — a digest with no
+// release in it, which the gate reads as "not known".
+func writeInstallationServiceImage(t *testing.T, state, project, rel string) {
+	t.Helper()
+	dir, err := infra.InstallationWorkdir(func(string) string { return state }, project)
+	if err != nil {
+		t.Fatalf("the installation workdir of %s: %v", project, err)
+	}
+	path := infra.WorkdirVarsPath(dir, "installation")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	image := "us-east5-docker.pkg.dev/" + project + "/" + infra.GhcrRegistry + "/dimipaun/fugaro-credentials"
+	if rel != "" {
+		image += ":" + rel
+	}
+	image += "@sha256:" + strings.Repeat("ab", 32)
+	b, err := json.Marshal(map[string]any{"credentials_service": map[string]any{"image": image}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestRecipesSkewRefusesAReviewServiceOlderThanTheClass is the installation's
 // half of a review launch, and the half no job image shows: the image says the
 // review-only variant is deployed and can serve a launch, while the account the
 // job fetches comes from the installation's credentials service — a second
-// release, judged from the base image `fugaro update` pins in the same run it
-// deploys the service in. A launch that reached a service older than the
-// admission release starts, bills and dies on its answer, which is the failure
-// the flip of reviewJobAdmitted made reachable: the gate that admits the job
-// image names 0.20.0, and 0.20.0's service does not know the class.
+// release, judged from the installation's own record of the image that service
+// was deployed from (the tfvars `fugaro update` pins on every installation). A
+// launch that reached a service older than the admission release starts, bills
+// and dies on its answer, which is the failure the flip of reviewJobAdmitted
+// made reachable: the gate that admits the job image names 0.20.0, and 0.20.0's
+// service does not know the class.
 func TestRecipesSkewRefusesAReviewServiceOlderThanTheClass(t *testing.T) {
 	f := newCloudFixture(t)
 	env := fileEnv(t, f)
 	lc := *env.lc
-	check := func(base string) (string, error) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	check := func(rel string) (string, error) {
 		var warn bytes.Buffer
-		lc.BaseImages = map[string]string{"base": base}
+		writeInstallationServiceImage(t, state, lc.GCPProject, rel)
 		err := checkReviewAdmission(&lc, &warn)
 		return warn.String(), err
 	}
-	for _, refused := range []struct{ base, rel string }{
-		{"ghcr.io/dimipaun/fugaro-base:0.15.0", "0.15.0"},
-		{"ghcr.io/dimipaun/fugaro-base:0.20.0", "0.20.0"},
-		{"ghcr.io/dimipaun/fugaro-base:0.20.3", "0.20.3"},
-	} {
-		warn, err := check(refused.base)
+	for _, rel := range []string{"0.15.0", "0.20.0", "0.20.3"} {
+		warn, err := check(rel)
 		if err == nil || ExitCode(err) != ExitUserError ||
 			!strings.Contains(err.Error(), "only from fugaro "+reviewAdmissionSince+" on") {
-			t.Fatalf("%s: warn = %q, err = %v", refused.base, warn, err)
+			t.Fatalf("service at %s: warn = %q, err = %v", rel, warn, err)
 		}
-		if !strings.Contains(err.Error(), "at "+refused.rel) {
-			t.Errorf("%s: the refusal does not name the installation's own release: %v", refused.base, err)
+		if !strings.Contains(err.Error(), "installation's service is "+rel) {
+			t.Errorf("service at %s: the refusal does not name the release the installation's own service records: %v", rel, err)
 		}
 		if !strings.Contains(err.Error(), "fugaro update") || !strings.Contains(err.Error(), "refused rather than started") {
-			t.Errorf("%s: the refusal names neither the update that is the whole upgrade nor the fact that it refuses: %v", refused.base, err)
+			t.Errorf("service at %s: the refusal names neither the update that is the whole upgrade nor the fact that it refuses: %v", rel, err)
 		}
 		// The way out the refusal NAMES has to work, and this one does: the
 		// table-driven `fugaro run --pr N --recipe <review-only>` spelling
@@ -490,33 +519,80 @@ func TestRecipesSkewRefusesAReviewServiceOlderThanTheClass(t *testing.T) {
 		// about. Withholding it would leave the reader with no move but the
 		// update, and the review is reviewable today.
 		if !strings.Contains(err.Error(), "review the pull request in the run's own job with fugaro run --pr N --recipe "+reviewOnlyRecipe) {
-			t.Errorf("%s: the refusal names no way to review before the update: %v", refused.base, err)
+			t.Errorf("service at %s: the refusal names no way to review before the update: %v", rel, err)
 		}
 		if warn != "" {
-			t.Errorf("%s: warning %q, want none", refused.base, warn)
+			t.Errorf("service at %s: warning %q, want none", rel, warn)
 		}
 	}
-	for _, base := range []string{"ghcr.io/dimipaun/fugaro-base:" + reviewAdmissionSince, "ghcr.io/dimipaun/fugaro-base:0.21.1"} {
-		if warn, err := check(base); err != nil {
-			t.Fatalf("%s: warn = %q, err = %v", base, warn, err)
+	for _, rel := range []string{reviewAdmissionSince, "0.21.1"} {
+		if warn, err := check(rel); err != nil {
+			t.Fatalf("service at %s: warn = %q, err = %v", rel, warn, err)
 		}
 	}
-	// An installation whose own release cannot be read — a base image that is
-	// not a release, or none at all — is warned about and admitted, releaseOf's
-	// own rule: what the service's release is cannot then be shown, and the
-	// alternative is refusing a launch over a pin that is not this gate's
-	// subject.
-	for _, base := range []string{"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c", ""} {
-		warn, err := check(base)
-		if err != nil {
-			t.Fatalf("%q: %v", base, err)
-		}
-		if !strings.Contains(warn, "whether that service admits the review job's own caller is not checked") {
-			t.Errorf("%q: warning %q, want the not-checked note", base, warn)
-		}
+	// An installation whose service image cannot be read as a release — an
+	// operator's own digest, or no tfvars at all — is warned about and
+	// admitted: its release cannot then be shown, and the alternative is
+	// refusing a launch over a file this machine may simply not hold.
+	warn, err := check("")
+	if err != nil {
+		t.Fatalf("a service image with no release: %v", err)
+	}
+	if !strings.Contains(warn, "whether that service admits the review job's own caller is not checked") {
+		t.Errorf("a service image with no release: warning %q, want the not-checked note", warn)
+	}
+	t.Setenv("XDG_STATE_HOME", t.TempDir()) // a machine that holds no workdir for this project
+	warn, err = checkReviewAdmissionWarn(&lc)
+	if err != nil {
+		t.Fatalf("no installation workdir: %v", err)
+	}
+	if !strings.Contains(warn, "whether that service admits the review job's own caller is not checked") {
+		t.Errorf("no installation workdir: warning %q, want the not-checked note", warn)
 	}
 	if err := checkReviewAdmission(nil, &bytes.Buffer{}); err != nil {
 		t.Fatalf("no local config: %v", err)
+	}
+}
+
+// checkReviewAdmissionWarn is checkReviewAdmission with only its warning
+// collected, for the arms a test does not want to write a tfvars for.
+func checkReviewAdmissionWarn(lc *localcfg.Config) (string, error) {
+	var warn bytes.Buffer
+	err := checkReviewAdmission(lc, &warn)
+	return warn.String(), err
+}
+
+// TestRecipesSkewAdmitsACurrentServiceBesideAnOlderBasePin is the judge's own
+// regression (the round after this gate landed): `base_images.base` moves only
+// in an update that handles that kind at all — imagesStage.kinds names `base`
+// for --base, for a checkout's workflows, or for a catalog build, and nothing
+// else — while the credentials service is pinned on every installation. So an
+// update run outside a checkout (the common case: `fugaro update` from a
+// directory that is not a repository) moves the service and leaves the base pin
+// where the last in-checkout update put it, and a gate judging that pin would
+// refuse every review on an installation the update had already converged, with
+// a remedy that changes nothing. The judge is the service's own record, so the
+// older pin beside a current service is admitted.
+func TestRecipesSkewAdmitsACurrentServiceBesideAnOlderBasePin(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	lc := *env.lc
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.20.3@sha256:" + strings.Repeat("ab", 32)}
+	writeInstallationServiceImage(t, state, lc.GCPProject, reviewAdmissionSince)
+	warn, err := checkReviewAdmissionWarn(&lc)
+	if err != nil {
+		t.Fatalf("a current service beside an older base pin: %v", err)
+	}
+	if warn != "" {
+		t.Errorf("warning %q, want none: the base pin is not this gate's subject", warn)
+	}
+	// And the same installation one release behind IS refused, so the arm above
+	// is the judge reading the service and not the gate having gone quiet.
+	writeInstallationServiceImage(t, state, lc.GCPProject, "0.20.3")
+	if _, err := checkReviewAdmissionWarn(&lc); err == nil {
+		t.Fatal("a 0.20.3 service beside the same older base pin was admitted")
 	}
 }
 

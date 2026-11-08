@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -428,15 +430,22 @@ const reviewJobSince = "0.20.0"
 // pays for the container and dies on the service's answer, which is the one
 // failure a launch refusal exists to keep in front of the spend.
 //
-// The judge is the installation's recorded base image, and that is not a
-// proxy by choice: `fugaro update` pins base_images.base at the release it
-// runs and resolves and pins the credentials service's image in the same run,
-// so a base image below this release is an installation whose service is below
-// it too, while nothing of the deployed service itself can be read from here
-// (no admin route to its configuration, D143, and its admission decision is
-// invisible without a call that mints a credential — reviewJobAdmitted's
-// comment). docs/release.md's ("Before you tag") list verifies the number
-// against the release whose service admits the class.
+// The judge is the installation's own record of that service: the installation
+// root's terraform.tfvars.json, whose credentials_service.image is the image
+// `fugaro update` pinned (installationServiceRelease). It is the one record of
+// it there is — the launcher can ask the service nothing (no admin route to its
+// configuration, D143, and its admission decision is invisible without a call
+// that mints a credential, reviewJobAdmitted's comment), and localcfg's
+// CredentialsService holds the service's URL and no version. It is also a
+// record every update writes: the pin is resolved and applied on every
+// installation, whether the service is being deployed or one already deployed
+// is moved onto this release's image (init_stages.go's pinCredentialsImage),
+// where `base_images.base` moves only in an update that handles that base kind
+// at all — outside a checkout with no --base and no catalog build,
+// imagesStage.kinds names none, and a gate on the base image would then refuse
+// an installation an update has already converged. docs/release.md's ("Before
+// you tag") list verifies the number against the release whose service admits
+// the class.
 const reviewAdmissionSince = "0.21.0"
 
 // gitSecretIDSince is the first fugaro release whose runner reads
@@ -1586,34 +1595,78 @@ func checkCloneReviewJobImage(lc *localcfg.Config, spec *task.Spec, warn io.Writ
 // reached the service, and a launch that reaches one too old for the class
 // starts, bills and dies on its 401.
 //
-// The installation's base image is the judge because the launcher cannot ask
-// the service anything (D143, reviewJobAdmitted's comment) while `fugaro
-// update` pins that image at the release it runs and resolves and pins the
-// service's image in the same run, so a base image below reviewAdmissionSince
-// is an installation whose service is below it too. An installation whose base
-// image is unset or carries no release (a development build, a hand-pushed
-// image) is warned about and admitted, releaseOf's own rule.
+// The judge is the installation's own record of its service rather than any
+// image of the job's: installationServiceRelease, whose comment says why that
+// record and no other one — the launcher cannot ask the service anything (D143,
+// reviewJobAdmitted's comment), the local config carries the service's URL and
+// no release, and the installation's tfvars are what `fugaro update` writes on
+// every installation, whatever kind of images that run happened to handle. An
+// installation that states no release for its service — no workdir for this
+// project, no tfvars, no credentials_service block, or a reference an operator
+// wrote by hand — is warned about and admitted: what cannot be read is not a
+// refusal, the rule every gate here takes for an image it cannot judge.
+//
+// This gate is reached by `fugaro review` and not by every spelling of a
+// review: `fugaro run --pr N --recipe review-only` builds the same task with no
+// mode on it (reviewSpec writes none, and only runReviewLaunch sets one), so it
+// enters no `mode: review` block and launches the repository's ordinary coding
+// job, whose container carries an account of its own and asks the service for
+// no review class. That spelling is the refusal's way out, and it needs no gate
+// of this one's.
 func checkReviewAdmission(lc *localcfg.Config, warn io.Writer) error {
 	if lc == nil {
 		return nil
 	}
-	ref := lc.BaseImage(config.BaseKind)
-	unjudged := func(why string) error {
-		fmt.Fprintf(warn, "warning: %s, so the release the installation's credentials service was deployed from is not known; whether that service admits the review job's own caller is not checked\n", why)
-		return nil
-	}
-	if ref == "" {
-		return unjudged("this installation records no base image (base_images.base)")
-	}
-	rel, ok := releaseOf(ref)
+	rel, image, ok := installationServiceRelease(lc)
 	if !ok {
-		return unjudged("the base image of this installation is " + pluginwire.Printable(ref) + ", which is not a release base image")
+		fmt.Fprintf(warn, "warning: %s, so the release the installation's credentials service was deployed from is not known; whether that service admits the review job's own caller is not checked\n", installationServiceUnknown)
+		return nil
 	}
 	if !imagePredates(rel, reviewAdmissionSince) {
 		return nil
 	}
-	return userErr("a review runs on the review-only job, which mounts no credential of its own: its account comes from the installation's credentials service, and a service admits the review job's own caller only from fugaro %s on, the release whose service reads the review class out of FUGARO_REVIEW_JOB_ACCOUNTS. This installation is at %s (its base image is %s, pinned by the same fugaro update that deployed the service), so the run would fetch its account from a service that refuses it and die inside the job it had already paid for. Run fugaro update: that is the whole upgrade, and the command that deploys the service's review class beside the review-only job variant. This launch is refused rather than started until that update has run; until then, review the pull request in the run's own job with fugaro run --pr N --recipe %s, which starts the repository's ordinary coding job — that container carries its own account, so its review asks the service for no class at all",
-		reviewAdmissionSince, rel, pluginwire.Printable(ref), reviewOnlyRecipe)
+	return userErr("a review runs on the review-only job, which mounts no credential of its own: its account comes from the installation's credentials service, and a service admits the review job's own caller only from fugaro %s on, the release whose service reads the review class out of FUGARO_REVIEW_JOB_ACCOUNTS. This installation's service is %s — image %s, the pin this installation's own fugaro update wrote — so the run would fetch its account from a service that refuses it and die inside the job it had already paid for. Run fugaro update: that is the whole upgrade, and the command that resolves this release's service image and applies it, beside the review-only job variant. This launch is refused rather than started until that update has run; until then, review the pull request in the run's own job with fugaro run --pr N --recipe %s, which starts the repository's ordinary coding job — that container carries its own account, so its review asks the service for no class at all",
+		reviewAdmissionSince, rel, pluginwire.Printable(image), reviewOnlyRecipe)
+}
+
+// installationServiceUnknown is what the warning above names when the
+// installation states nothing this gate can read as a release: it is one
+// sentence per outcome, and this one is shared by every reason, because the
+// reason is a fact about a file on this machine rather than something the
+// reader can act on differently.
+const installationServiceUnknown = "this installation's terraform.tfvars.json names no credentials service image, or names one whose reference carries no release version"
+
+// installationServiceRelease is the release the installation's credentials
+// service image names, read from the installation root's terraform.tfvars.json,
+// with the image itself for the refusal to print. ok is false when the
+// installation states no release there, which is "not known" rather than "old":
+// no workdir for this project on this machine, no tfvars in it, no
+// credentials_service block, no image, or a reference an operator wrote by hand
+// (a digest with no release in it, or one resolved from another registry).
+//
+// It is the update's DESIRED state and not the applied one: the document is
+// written as the stage plans, and the apply that carries it out comes after, so
+// a run whose apply the owner declined or which failed at the apply leaves the
+// pin ahead of the deployed service and this gate admits a launch the service
+// still refuses. That is the direction it can be wrong in, and the other one is
+// worse: refusing an installation whose record this machine does not hold — a
+// second machine, a config copied to someone else's — is a refusal on a launch
+// that works, with a remedy the reader cannot carry out.
+func installationServiceRelease(lc *localcfg.Config) (rel, image string, ok bool) {
+	dir, err := infra.InstallationWorkdir(os.Getenv, lc.GCPProject)
+	if err != nil {
+		return "", "", false
+	}
+	vars, err := infra.ReadWorkdirVars(dir, "installation")
+	if err != nil {
+		return "", "", false
+	}
+	image, ok, err = infra.CredentialsServiceImageOf(vars)
+	if err != nil || !ok {
+		return "", "", false
+	}
+	rel = infra.CredentialsServiceImageRelease(image)
+	return rel, image, rel != ""
 }
 
 // refuseClonesNotShipped refuses, before any cloud effect, deploying or

@@ -51,28 +51,34 @@ func reviewCLI(t *testing.T, args ...string) (string, string, error) {
 // newReviewFixture is the installation a review is launched against: the
 // project whose standard profile serves acme-personal and the default account,
 // with both accounts' review-only variants deployed beside their coding jobs,
-// the base image at the release whose runner can serve a review launch and
-// whose credentials service admits it (reviewAdmissionSince, which is the
-// later of the two releases a review launch's two halves are gated on), and
-// the credentials service opted in.
+// the base image at the release whose runner can serve a review launch
+// (reviewJobSince's gate), the credentials service opted in, and the
+// installation's own tfvars naming that service at the release that admits the
+// review job's own caller (reviewAdmissionSince, the later of the two releases
+// a review launch's two halves are gated on).
 //
 // E7's two halves hold in it — the service is published, and the launcher's
 // constant admits the class since 0.21.0 — so a launch from it reaches the
-// review job unless a test says otherwise.
+// review job unless a test says otherwise. It also has a state home of its own
+// (isolateState), because the installation's tfvars live under it.
 func newReviewFixture(t *testing.T) *projectJobFixture {
 	t.Helper()
 	return newReviewFixtureAt(t, reviewAdmissionSince)
 }
 
-// newReviewFixtureAt is the same installation at another release, which is the
-// one thing a test of either gate moves: setBaseImage rewrites the pin the
-// fixture was built with, so a test has to set it here, while the config still
-// names the tag newProjectJobServingFixture wrote.
-func newReviewFixtureAt(t *testing.T, base string) *projectJobFixture {
+// newReviewFixtureAt is the same installation with the one record
+// checkReviewAdmission judges moved: service is the release the installation's
+// own tfvars name for its credentials service image. The base image stays where
+// the admitted fixture put it, because the two are pinned by different runs and
+// only this one is the gate's subject — an installation between `brew upgrade`
+// and `fugaro update` has the older service with everything else current.
+func newReviewFixtureAt(t *testing.T, service string) *projectJobFixture {
 	t.Helper()
 	f := newProjectJobServingFixture(t)
-	setBaseImage(t, base)
+	setBaseImage(t, reviewAdmissionSince)
 	f.appendConfig(t, "credentials_service: { url: "+credentialsServiceFixtureURL+" }\n")
+	isolateState(t)
+	writeInstallationServiceImage(t, os.Getenv("XDG_STATE_HOME"), initProject, service)
 	for _, account := range []string{"acme-personal", ""} {
 		job := credsvc.ReviewJobName("standard", "github", infra.ReviewVariantAccount(account))
 		f.run.AddProjectJob(job, "standard", "github", infra.ReviewVariantAccount(account), "2", "4Gi")
@@ -326,12 +332,12 @@ func TestReviewStillRefusesWhenTheCredentialsServiceIsOff(t *testing.T) {
 // TestReviewRefusesAnInstallationWhoseServicePredatesTheClass is the gate the
 // flip of reviewJobAdmitted made load-bearing, read from the command: the
 // review-only variant is deployed and its job image can serve a launch
-// (reviewJobSince admits it), while the installation the credentials service
-// was deployed with is a release older than the class — so the launch would
-// start, bill and die on the service's 401. The fixture is the admitted one
-// with its base image moved back to the release the job gate admits, which is
-// exactly the installation between `brew upgrade` and `fugaro update` the gate
-// exists for; the same fixture at reviewAdmissionSince launches, which
+// (reviewJobSince admits it), while the installation's own tfvars name a
+// credentials service image from a release older than the class — so the launch
+// would start, bill and die on the service's 401. The fixture is the admitted
+// one with its service record moved back to a release the job gate admits,
+// which is exactly the installation between `brew upgrade` and `fugaro update`
+// the gate exists for; the same fixture at reviewAdmissionSince launches, which
 // TestReviewLaunchIsAdmittedWhenTheConstantIsFlipped pins.
 func TestReviewRefusesAnInstallationWhoseServicePredatesTheClass(t *testing.T) {
 	f := newReviewFixtureAt(t, reviewJobSince)

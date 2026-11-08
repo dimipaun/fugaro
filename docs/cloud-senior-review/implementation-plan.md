@@ -1187,7 +1187,7 @@ that is still the check's step 3.
   and the three places the installation half below made false: `run.go`'s refusal, `docs/recipes.md`'s
   review paragraph and the working skill's sentence about a service that does not admit the caller).
 - **The gate the flip made load-bearing, and the value it moved with it.** `reviewJobSince`
-  (`internal/cli/recipes_skew.go:418`) named `"0.19.0"` — the release that deploys the review-only
+  (`internal/cli/recipes_skew.go:420`) named `"0.19.0"` — the release that deploys the review-only
   variant — and no launch ever reached it while `reviewJobAdmitted` was `false`; the flip is what makes
   the value decide anything, and a `"0.19.0"` value then admits an image that **cannot serve the
   launch**: the variant is there and the review run's own model path (CSR13, PR #1777, first tagged in
@@ -2240,7 +2240,7 @@ one writer per level is what keeps the two reviews apart.
 `internal/cli/validate.go` remain **CSR6's** (§2), and no task here books them: CSR8–CSR16 add **no
 `fugaro.yaml`, task, recipe or wire key**, so the `…Since` rule (E6) gives them nothing to gate. The one
 constant whose *value* the release slot decides — `reviewJobSince`
-(`internal/cli/recipes_skew.go:418`, `"0.20.0"` since CSR11's flip of 2026-11-08) — is **not** moved by
+(`internal/cli/recipes_skew.go:420`, `"0.20.0"` since CSR11's flip of 2026-11-08) — is **not** moved by
 CSR8–CSR16: it is the release slot's consequence, and **Open item 3's answer of 2026-11-05 is 0.20.0
 "Quokka"**, so the value names that release — and **CSR11's flip of 2026-11-08 is the change that moved
 it**, taking that file alone under §2's rule: 0.20.0's own change had nothing to move while every launch
@@ -2401,7 +2401,7 @@ release that carries the flip has to carry the tasks that make the flip work —
 registration, the verifier and the switch's own removal. Two consequences, settled together as the item
 said: the release note's `### For operators` sentence is written for that release (§6.5), and
 **`reviewJobSince` is `"0.20.0"`** — `docs/release.md:225`'s bullet verifies it against the release
-whose runner can serve the launch, `internal/cli/recipes_skew.go:418` holds it, and a wrong value refuses
+whose runner can serve the launch, `internal/cli/recipes_skew.go:420` holds it, and a wrong value refuses
 too late (a launch names a variant the installation has not deployed, or a runner that cannot serve one)
 or too early (an installation that holds both stays blocked). **The move waited for CSR11's flip**:
 0.20.0's own change did not take it, because while `reviewJobAdmitted` was `false` this gate was never
