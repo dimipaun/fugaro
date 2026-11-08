@@ -101,8 +101,8 @@ func startForward(t *testing.T, r *run) {
 // environment.
 //
 // Mutation (run, restored): hand auth.Token to gitops.CredentialVars in
-// credentialVars' proxied arm -- the token is in the environment and this
-// test fails on it.
+// credentialVars' proxied arm -- the planted token is in the git environment
+// and this test fails on it.
 func TestProxiedBitbucketAgentEnvHasNoToken(t *testing.T) {
 	r := proxiedRun(t, pushIdentity(t), nil)
 	startForward(t, r)
@@ -116,6 +116,12 @@ func TestProxiedBitbucketAgentEnvHasNoToken(t *testing.T) {
 	if r.auth.Token != "" {
 		t.Errorf("the proxied provider handed the run the token %q: the job holds none (G1)", r.auth.Token)
 	}
+	// A token the run's auth somehow carries reaches the helper all the same:
+	// the helper's token is empty because this run has none to give it, not
+	// because the auth it was handed happened to be. (The plant is what an
+	// older path, or the mount the flip has not dropped yet, could leave
+	// behind -- and the flip is what removes the last of them.)
+	r.auth = gitprov.GitAuth{Username: "x-token-auth", Token: proxyToken}
 	vars, err := r.authVars()
 	if err != nil {
 		t.Fatal(err)
