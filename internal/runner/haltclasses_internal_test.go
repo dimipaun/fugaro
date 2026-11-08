@@ -21,7 +21,7 @@ import (
 // budget one are the design's row itself, not a reading of it:
 // halted_credential is "no credential became usable, or the budget database
 // refused", and it names budget_unavailable and budget_token_expired
-// (`docs/design/failure-classes.md:167`). F17 corrects only that row's line
+// (`docs/design/failure-classes.md:170`). F17 corrects only that row's line
 // citation — the four names span `runstore.go:54`–`71`, so the row's `:55–71`
 // starts one line late — and does not move the reason out of the family.
 //

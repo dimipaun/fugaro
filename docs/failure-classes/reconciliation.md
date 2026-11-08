@@ -1,7 +1,7 @@
 # Reconciliation: the failure-classes design against the code on `main`
 
 **Status (2026-11-07): D1450–D1469 are answered 2026-11-07 and all tasks are approved 2026-11-07
-(owner: "All tasks approved. Jobmax"); of them, FC1–FC3 are built on `main` and FC4–FC9 are not
+(owner: "All tasks approved. Jobmax"); of them, FC1–FC4 are built on `main` and FC5–FC9 are not
 started.**
 This file reads
 [spec.md](spec.md) — a verbatim copy of `docs/design/failure-classes.md` — against the tree of `main`
@@ -29,7 +29,7 @@ of them on 2026-11-07 as this file recommended. The design's status line as **th
 carries it is the dated one — *"a design; nothing is built; no decision below is answered."* — and the
 design on `main` has moved past it: the copy's sentence speaks for the design's own decisions, which
 the design's own status now says stay the owner's, and the line records what has shipped —
-*"a design, and its FC1–FC3 have shipped; the rest of §10 is not built."*
+*"a design, and its FC1–FC4 have shipped; the rest of §10 is not built."*
 
 ---
 
@@ -445,7 +445,7 @@ be held to it) or **Open** (the design leaves it to the owner).
   `plugin/skills_lint_test.go` fails any reference file over `maxReferenceLines` 300 (`:37`) or
   `maxReferenceBytes` 16384 (`:39`, compared at `:348`) — **nine bytes of room**, against a sentence
   that costs far more than nine. The design's §10 puts its one sentence there
-  (`docs/design/failure-classes.md:749`, `spec.md:744`; the design marks it conditional on **O1**'s
+  (`docs/design/failure-classes.md:752`, `spec.md:744`; the design marks it conditional on **O1**'s
   answer), so the sentence is written by **trimming the file as much as
   it adds**: the prose it replaces leaves, or the sentence is shorter than what it displaces, and
   `go test ./plugin/` — which FC8's own gate already runs — is what says so. The precedent is the
@@ -526,8 +526,8 @@ stats` and every command the design's §6.3 does not name.
 every row — put to him through `AskUserQuestion`, every option the recommended one, and he took all
 of them — and every task in [implementation-plan.md](implementation-plan.md) was approved the same day
 (owner: "All tasks approved. Jobmax"), so no gate the plan names is still open — **FC1's, FC2's and
-FC3's included, and they are the three tasks of the nine that are built and merged; FC4–FC9 are not
-started.**
+FC3's included, and FC4's (FC2 merged) with them — and FC1–FC4 are the four tasks of the nine that
+are built and merged; FC5–FC9 are not started.**
 Each row states the question, what this reconciliation recommends and why, the alternative, and what
 the alternative costs. **No row re-asks one of the design's §8 D1–D9 or §9 O1–O6**; where a question
 here touches one of them, the row says so and leaves that question to the design's own numbering.
