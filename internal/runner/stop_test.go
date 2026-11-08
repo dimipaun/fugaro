@@ -355,3 +355,162 @@ func TestStopFilesTheCheapRoundsAcceptance(t *testing.T) {
 		t.Errorf("the run's report files the stop's findings under the tolerance heading, which says a review let them go:\n%s", got)
 	}
 }
+
+// TestStopAtAnOuterLoopsTopReadsTheCheapRoundsRound is the same reading
+// (TestStopReadsTheRoundTheRunStoppedAtAndNotTheLevelItNeverReached) at the
+// other place the time half is asked. There the stop fired inside the cheap
+// loop, which is the one loop that hands its round on; here the clock crosses
+// one stage later — during the fix a `changes` round bought — so the stop is
+// asked at the top of the level above, the level that never started a round.
+// The half that ends the run is the same half either way, so a stop at an
+// outer loop's top has to leave the run reading the same round the cheaper
+// stop would have: the level-1 round that ran and is all the run has.
+//
+// The pair is one run with level 2 on and the same run with it off, and the
+// ruling's own sentence is that asking for a level must not change the mode's
+// rigor (the owner's ruling of 2026-11-08): read off the level above, the
+// level-2 run finalizes a draft on findings no field had kept while the
+// level-2-off run — whose round the cheap loop records because it decides
+// there — is ready.
+func TestStopAtAnOuterLoopsTopReadsTheCheapRoundsRound(t *testing.T) {
+	// 0.2 of the fixture's 5m is 60s and every stage advances the harness's
+	// clock by 25: the cheap round runs (50s) and the fix it asked for takes
+	// the run to 75s, so the stop is asked at the top of level 2's loop — the
+	// level the plan would run next and which starts no round. The level-2-off
+	// run asks it where the cheap loop's own stop sites are instead.
+	cfg := func() string {
+		return modeCfg(t, "startup", 1, "  first_line_review: on\n  review_stop_fraction: 0.2\n")
+	}
+	// The same finding as the pair above: above Startup's floor, so the run is
+	// a draft at every other moment and the stop's acceptance is the only
+	// thing that makes it ready.
+	blocking := reviewScored("changes", map[string]any{
+		"summary": "unbounded retry loop in the fetch path", "likelihood": 3, "impact": 3, "fix_cost": 2, "class": "correctness",
+	})
+	spec := func(l2Off bool) *task.Spec {
+		s := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature"}
+		if l2Off {
+			s.ReviewLevels = &config.ReviewLevels{L2: &config.LevelSetting{Off: true}}
+		}
+		return s
+	}
+	for _, off := range []bool{true, false} {
+		name := "level 1 is the only level, and the cheap loop asks the stop itself"
+		// With no level above it the cheap loop's own stop sites see the clock
+		// cross, and the round it was given is the plan's last either way, so
+		// the half that ends the run is the rounds half.
+		at := runstore.StopRoundsSpent
+		if !off {
+			name = "level 2 is enabled and never started, and the stop reads the same round"
+			at = runstore.StopTimeThreshold
+		}
+		t.Run(name, func(t *testing.T) {
+			clk := newClock()
+			h := newHarness(t, cfg(), spec(off))
+			h.deps.Now = clk.Now
+			rec, err := h.run(t,
+				afterStep(clk, implement("feature")),
+				afterStep(clk, blocking), // review_first: changes, so a fix is bought
+				afterStep(clk, fixStep),  // the fix, and the clock crosses during it
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// One round ran, and no round of the level above it did: the level
+			// with no round is what the stop has to read past.
+			if got := stageNames(rec); !eq(got, "implement", "review_first", "fix") {
+				t.Fatalf("stages = %v, want the cheap round and its fix and no outer round", got)
+			}
+			if rec.Outcome != runstore.OutcomeReady {
+				t.Fatalf("outcome = %s (reason %q), want ready: the stop accepts this round's finding", rec.Outcome, rec.Reason)
+			}
+			if want := "review round 1 left 1 finding, accepted at startup (" + at + ")"; rec.Reason != want {
+				t.Errorf("reason = %q, want %q", rec.Reason, want)
+			}
+			if ac := rec.Accepted; ac == nil || ac.Round != 1 || ac.At != at || ac.Total != 1 || len(ac.Findings) != 1 {
+				t.Fatalf("the record's accepted block = %+v, want the cheap loop's round and the half that ended the run", ac)
+			}
+		})
+	}
+}
+
+// TestStopInABouncedCheapLoopFilesTheDecidingRoundsAcceptance is the pull
+// request's own reader of the round the policy was built from. After a bounce
+// the record's last rounds are the cheap loop's, while the round readiness read
+// — and the split the accepted block is written from — is the outer round's
+// behind them; the levels number their rounds from 1 of their own, so the two
+// can carry the same number while being different rounds. reviewsPart builds
+// its line from the record alone, so a line keyed on the record's last entry
+// asks toleratedPart about a split the round it prints was never judged by:
+// with the counts differing the acceptance is dropped from the body entirely,
+// and where the counts coincide it is filed as the cheap round's.
+//
+// The record and the report are the two readers that were right, and both are
+// asserted here beside the body, so the three agree on which round the run
+// accepted.
+func TestStopInABouncedCheapLoopFilesTheDecidingRoundsAcceptance(t *testing.T) {
+	// 0.4 of the fixture's 5m is 120s and every stage advances the clock by 25:
+	// level 2's round runs at 75s and its fix takes the run to 100s, still
+	// under the threshold, so the bounce's cheap round runs — and the stop is
+	// asked after it, at 125s. The round the run therefore ends on is the
+	// bounced cheap one, and the round readiness read is level 2's round 1.
+	cfg := modeCfg(t, "startup", 2, "  first_line_review: on\n  recipe: standard-bounce\n  review_stop_fraction: 0.4\n")
+	finding := map[string]any{
+		"summary": "unbounded retry loop in the fetch path", "likelihood": 3, "impact": 3, "fix_cost": 2, "class": "correctness",
+	}
+	clk := newClock()
+	h := newHarnessFiles(t, cfg, nil, bounceFiles)
+	h.deps.Now = clk.Now
+	rec, err := h.run(t,
+		afterStep(clk, implement("feature")),
+		afterStep(clk, review("ship", 0)),                         // review_first: ships, so level 2 reviews the head
+		afterStep(clk, reviewScored("changes", finding)),          // review: level 2's round 1, the deciding round
+		afterStep(clk, fixStep),                                   // the fix it asked for
+		afterStep(clk, reviewScored("changes", finding, finding)), // review_first, the bounce: the stop is asked after it
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review_first", "review", "fix", "review_first") {
+		t.Fatalf("stages = %v, want the bounced cheap round to be the round the stop ended on", got)
+	}
+	// The round the stop read is level 2's — the cheap round is the one the
+	// stop was asked after, not the one it read.
+	if ac := rec.Accepted; ac == nil || ac.Round != 1 || ac.At != runstore.StopTimeThreshold || ac.Total != 1 {
+		t.Fatalf("the record's accepted block = %+v, want level 2's round and the half that ended the run", ac)
+	}
+	if rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("outcome = %s (reason %q), want ready", rec.Outcome, rec.Reason)
+	}
+	pr := onlyPR(t, h.provider)
+	if pr.Draft {
+		t.Errorf("the pull request is a draft: %+v", pr)
+	}
+	// The line is level 2's round and carries the acceptance; the cheap round,
+	// which left two findings, is the round the stop was asked after and not
+	// the round the policy was built from.
+	if want := "senior review round 1: 1 finding, accepted at startup (time threshold) (medium)"; !strings.Contains(pr.Body, want) {
+		t.Errorf("the status section does not file the stop's round as accepted:\n%s", pr.Body)
+	}
+	if bad := "2 findings, accepted at"; strings.Contains(pr.Body, bad) {
+		t.Errorf("the status section files the acceptance on the round the stop was asked after, which the policy was not built from:\n%s", pr.Body)
+	}
+	raw, err := h.bucket.ReadAll(context.Background(), h.store.Prefix()+"report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The report's own readers of the same record: the round it names is level
+	// 2's one finding, the accepted row is the same finding, and the bounced
+	// cheap round stands beside both under its own count.
+	got := string(raw)
+	for _, want := range []string{
+		"senior round 1: changes (1 finding)",
+		"first round 1: changes (2 findings)",
+		"#### Accepted at the stop",
+		"| medium | 3 | 3 | 2 | correctness | startup | `unbounded retry loop in the fetch path` |",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the run's report lacks %q:\n%s", want, got)
+		}
+	}
+}

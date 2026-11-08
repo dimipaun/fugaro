@@ -61,3 +61,41 @@ func TestCatalogSchemaAcceptsTheNewKeys(t *testing.T) {
 		})
 	}
 }
+
+// TestStopFractionSchemaAgreesOnZero pins the stop fraction's one disputed
+// value (the owner's ruling of 2026-11-08, item 5): agent.review_stop_fraction
+// is 0 as well as the (0, 1] range, because a file writing 0 asks for the
+// default the release before this one already has — the runner reads it as
+// absent (config.DefaultReviewStopFraction) and the key's own gate refuses the
+// key whatever it says, for the same reason. A schema that refused 0 while the
+// decoder admitted it would be the red check nobody can reproduce the doctrine
+// above names, on the one value a repository writing the key out in full is
+// most likely to write.
+func TestStopFractionSchemaAgreesOnZero(t *testing.T) {
+	sch := compileABSchema(t, "fugaro.schema.json")
+	const head = minimalRepo + "git: { provider: github }\nagent:\n  auth: api-key\n"
+	const tail = "workflows:\n  app:\n    commands: { build: make, test: make test }\n"
+	for _, tc := range []struct {
+		name string
+		body string
+		ok   bool
+	}{
+		{"nothing set", "", true},
+		{"zero, the default", "  review_stop_fraction: 0\n", true},
+		{"a part of the budget", "  review_stop_fraction: 0.5\n", true},
+		{"the whole budget", "  review_stop_fraction: 1\n", true},
+		{"more than the whole budget", "  review_stop_fraction: 1.5\n", false},
+		{"a negative share", "  review_stop_fraction: -0.1\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			text := head + tc.body + tail
+			_, ps := Parse([]byte(text))
+			if got := len(ps) == 0; got != tc.ok {
+				t.Fatalf("the decoder accepted = %v, want %v (problems: %v)", got, tc.ok, ps)
+			}
+			if got := abSchemaAccepts(t, sch, text); got != tc.ok {
+				t.Errorf("fugaro.schema.json accepted = %v, want %v: the schema and the decoder disagree", got, tc.ok)
+			}
+		})
+	}
+}
