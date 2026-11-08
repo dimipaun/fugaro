@@ -2317,7 +2317,7 @@ var chk50Citations = []chkCitation{
 	// Step 4: why the two compared runs carry a task that COMMITS — a run with
 	// nothing ahead of its base is failed with this message, so a no-change run
 	// is not the run step 5's number is read from.
-	{"internal/runner/runner.go", "r.failClass(failure.NoCommits, \"the agent made no commits\")"},
+	{"internal/runner/runner.go", "r.failWithClass(failure.NoCommits, \"the agent made no commits\")"},
 	// Step 7's two by-design refusals: `--remove-routing` beside a config that
 	// writes the switch, and a republish from a config that names no Claude
 	// switch while the published node routes Claude. Either one fails the arm
