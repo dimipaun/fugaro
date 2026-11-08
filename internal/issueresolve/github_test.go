@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -300,12 +301,14 @@ func TestFetchRefusesRedirect(t *testing.T) {
 	}
 }
 
-// TestFetchBoundsTheBody pins the size bound: a response past it is refused
-// without being turned into a verdict, and a large but real-sized response
+// TestFetchBoundsTheBody pins both halves of the size bound: a response
+// past it is refused rather than turned into a verdict, a body far past it
+// is refused without being read whole, and a large but real-sized response
 // (a long discussion on an issue) still decodes.
 //
-// Mutation: reading the body with io.ReadAll alone (no bound) accepts the
-// oversize response and this test's first case fails.
+// Mutation, each caught by one case below: dropping the length check
+// accepts the oversize response, and reading with io.ReadAll instead of the
+// limited reader buffers the whole body before refusing it.
 func TestFetchBoundsTheBody(t *testing.T) {
 	oversize := issueBody(t, map[string]any{"body": strings.Repeat("x", maxBody)})
 	srv, _ := issueServer(t, http.StatusOK, oversize)
@@ -314,10 +317,57 @@ func TestFetchBoundsTheBody(t *testing.T) {
 		t.Fatalf("Fetch = %v, %v, want ErrTransport for a body past the %d byte bound", got, err, maxBody)
 	}
 
+	// The bound has to stop the read, not only refuse the verdict: a
+	// responder that sends far more than the bound must never have that
+	// much of its body in this process's memory. The body counts what the
+	// reader actually took from it, which a response alone cannot show.
+	body := &countingBody{remaining: 4 * maxBody}
+	r := NewReader(bodyClient{body: body}, "https://api.github.com")
+	got, err = r.Fetch(context.Background(), 42)
+	if !errors.Is(err, ErrTransport) {
+		t.Fatalf("Fetch = %v, %v, want ErrTransport", got, err)
+	}
+	if body.read > maxBody+1 {
+		t.Errorf("the reader took %d bytes of a body past the %d byte bound, want at most %d: the body must not be buffered whole",
+			body.read, maxBody, maxBody+1)
+	}
+
 	large := issueBody(t, map[string]any{"body": strings.Repeat("x", maxBody/2)})
 	srv, _ = issueServer(t, http.StatusOK, large)
 	got, err = fetch(t, srv, 42)
 	wantState(t, got, err, Open{})
+}
+
+// countingBody is a response body of remaining bytes that counts what is
+// read from it, standing for a responder that will keep talking as long as
+// anyone listens.
+type countingBody struct {
+	remaining int
+	read      int
+}
+
+func (b *countingBody) Read(p []byte) (int, error) {
+	if b.remaining == 0 {
+		return 0, io.EOF
+	}
+	n := min(len(p), b.remaining)
+	b.remaining -= n
+	b.read += n
+	return n, nil
+}
+
+func (b *countingBody) Close() error { return nil }
+
+// bodyClient answers every request with that body and no error.
+type bodyClient struct{ body io.ReadCloser }
+
+func (c bodyClient) Do(req *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       c.body,
+		Request:    req,
+	}, nil
 }
 
 // TestFetchRateLimited pins the two exhaustion answers, which the resolver

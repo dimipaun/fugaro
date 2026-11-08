@@ -95,13 +95,21 @@ func TestCursorCorruptFileIsEmpty(t *testing.T) {
 		t.Errorf("Order after Mark = %v, want the unasked 2 first", got)
 	}
 
+	// The symlink points at a real cursor file that has #2 marked, not at
+	// nothing: a dangling one would fail on its own and so prove nothing
+	// about the Lstat - following it would mean reading, and trusting, a
+	// file this package did not write.
+	target := filepath.Join(dir, "elsewhere.json")
+	if err := os.WriteFile(target, []byte(`{"checked":{"2":"2026-11-08T18:00:00Z"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(filepath.Join(dir, "elsewhere"), path); err != nil {
+	if err := os.Symlink(target, path); err != nil {
 		t.Fatal(err)
 	}
 	if got := LoadCursor(env).Order([]int{4, 2}); got[0] != 2 {
-		t.Errorf("Order with a symlinked cursor = %v: a symlink must not be followed", got)
+		t.Errorf("Order with a symlinked cursor = %v, want the unasked 2 first: a symlink must not be followed", got)
 	}
 }
