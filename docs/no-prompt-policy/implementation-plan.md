@@ -168,12 +168,20 @@ and T8 waits on the spike only.
 - **Files:** none in the tree — the finding is written back into this folder (the T5 paragraph of
   [reconciliation.md](reconciliation.md) §5 and its §6 UNVERIFIED item), and it is what T8's mechanism is read
   from — unless a live probe is needed, which is one owner-run script under `scripts/live-checks/` (below).
+  **The probe the spike was gated on needed no such script:** the owner ran it as two `curl` commands at their
+  own terminal on 2026-11-08 and it is recorded with its answers in
+  [billing-price-spike.md](billing-price-spike.md) §8, so this task adds no file either way.
 - Answers, before any grant is written: whether a Cloud Billing price read needs an IAM grant in
   `deploy/terraform/gcp/modules/installation/iam.tf` at all (list prices need the Cloud Billing API enabled, not
   a project role; contract prices need a billing-account role a project module cannot grant; the CLI runs on the
-  person's own credentials), and, if a grant is needed, its shape.
+  person's own credentials), and, if a grant is needed, its shape. **Answered 2026-11-08: no grant is needed.**
+  The owner's own OAuth login — no billing role, no API key — read the public catalog (`GET /v1/services`, 200) and
+  Cloud Build's SKUs (`200`, 370 in one page), so the lookup needs **no `iam.tf` grant and no new `grantRules`
+  row**: the only installation change is the `cloudbilling.googleapis.com` entry in `apis.tf`, on the project the
+  budget backend lives on, which is also the quota project the user path names.
 - **Tests:** none (a spike). **Depends on:** none. **Reviewer:** opus + mandatory independent review at level 3
-  if the spike proposes a grant in `iam.tf`; that review is the pre-apply control T5 waits on. If the decision
+  if the spike proposes a grant in `iam.tf`; that review is the pre-apply control T5 waits on — **it is not
+  triggered, because the spike proposes none**. If the decision
   needs a live probe, that probe is one owner-run script under `scripts/live-checks/` with its fake-gcloud test
   (the conventions above); the finding still lands in this folder.
 - **Commit:** `docs: the Billing read's mechanism, decided before any grant (T8S)`.
@@ -182,8 +190,8 @@ and T8 waits on the spike only.
 - **Files:** `internal/budget/buildcost.go` (new), `internal/budget/buildcost_test.go` (new),
   `internal/budget/lease_build.go` (new), `internal/cli/image_cost.go` (new), `internal/cli/doctor_build_budget.go` (new; the observe-mode warning, D1548), the Firebase rules under
   `deploy/terraform/gcp/modules/firebase` and `internal/budget/rules` (the build lease path) with their emulator
-  tests, `deploy/terraform/gcp/modules/installation/iam.tf` (only if the spike finds a grant is needed), golden plans, **and the rules path the catalog check job's lease uses (T10 consumes it, so it is written here)**.
-- **T8S first** decides the Billing mechanism (list prices need the API enabled, not a project role; contract prices need a billing-account role a project module cannot grant; the CLI runs on the person's credentials): the grant in `iam.tf` is **UNVERIFIED** until then. **The price is queried from Cloud Billing at run time** (D1550); **a missing or unknown price refuses**,
+  tests, golden plans, **and the rules path the catalog check job's lease uses (T10 consumes it, so it is written here)**. **Not** `deploy/terraform/gcp/modules/installation/iam.tf`: the spike found no grant is needed (2026-11-08), so this task writes no IAM grant.
+- **T8S first** decides the Billing mechanism (list prices need the API enabled, not a project role; contract prices need a billing-account role a project module cannot grant; the CLI runs on the person's credentials): **decided 2026-11-08 — no grant in `iam.tf`**, the API enabled on the installation project being the only installation change, and the lookup reading the catalog on the caller's own OAuth credentials, no API key. **The price is queried from Cloud Billing at run time** (D1550); **a missing or unknown price refuses**,
   and so does a machine type absent from the build config; local config can supply neither. The lease: a node under its **own key** (`buildleases/<slug>/<id>`, never `runs/`, so no record reader mistakes it for a run), with **its own writer scoping** for the CLI and the catalog check service account (the rules today admit only a run token with `fs`/`fr` claims matching `$slug/$run`), counted against the per-run cap, settled
   on completion, **reclaimed if the CLI dies mid-build**; the rules change carries a **generation bump** and an
   `update` migration (HARD RULE) with a test that an installation at the previous generation converges. The
@@ -192,8 +200,10 @@ and T8 waits on the spike only.
 - **Tests:** `TestBuildCostIsAnUpperBound`, `TestUnknownBillingPriceRefuses`, `TestOverCapErrorNamesEstimateCapSpentAndTheCommand`,
   `TestObserveModeRecordsAndProceeds`, the rules' emulator test `TestBuildLeasePath`,
   `TestPreviousRulesGenerationConvergesOnUpdate`, `TestAnAbandonedBuildLeaseIsReclaimed`, `TestBuildLeaseWriterCannotTouchAnotherRunsReservedOrCaps` (emulator), `TestDoctorWarnsObserveWithUnattendedBuilds`.
-- **Depends on:** T1; **T8S** (the Billing spike). The grant's shape, if the spike finds one is needed, still
-  takes the level-3 security review before `iam.tf` is written (T5 of the reconciliation). **Reviewer:** opus +
+- **Depends on:** T1; **T8S** (the Billing spike), **answered 2026-11-08**: no `iam.tf` grant, so the level-3
+  security review that a grant's shape would have taken before `iam.tf` was written (T5 of the reconciliation)
+  is not triggered — the mechanism is the API's entry in `apis.tf` plus a read on the caller's own credentials.
+  **Reviewer:** opus +
   mandatory independent review (IAM, rules, money). **Commit:** `budget: an image build leases its estimated cost (T8)`.
 
 ### T9 — the gate becomes audit-only (D1545, D1549, D1551)

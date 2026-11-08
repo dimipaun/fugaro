@@ -11,7 +11,8 @@ says "managed resources never need confirmation" (the managed gate has refusals 
 confirmations), and it says agents may run every command (raising a cap is the one command where that
 defeats the cap). The owner has answered every question below that needed an answer; two answers are
 **not the recommendation** and opened tensions (§5); D1550 is a third (tension T5). The owner ruled the
-tensions on 2026-11-07 — T1, T2, T3, T4 and T6 — and held T5 until the T8 spike (task T8S) reports.
+tensions on 2026-11-07 — T1, T2, T3, T4 and T6 — and held T5 until the T8 spike (task T8S) reports — which
+it now has, with its two live facts verified by the owner's probe of 2026-11-08 (§6).
 
 ## 1. Headline: spec concept → what the repo has
 
@@ -305,7 +306,11 @@ failure mode on every build; **a missing or unknown price refuses** (never defau
 client-side only (F19). **OPEN, held 2026-11-07:** the D1550 answer (the rate is queried from Cloud Billing at
 run time) is held until the T8 spike (task T8S) reports, and T8 waits on the spike only. The spike decides the
 mechanism before any grant is written; the grant's shape, if there is one, still takes the level-3 security
-review (T2's pre-apply control).
+review (T2's pre-apply control). **The spike has now reported, and its two live facts were verified by the
+owner's probe on 2026-11-08 (§6): there is no grant** — the one installation change is the
+`cloudbilling.googleapis.com` entry in `apis.tf`, and the lookup reads the public catalog on the caller's own
+OAuth credentials, no key — so the level-3 review a grant would have taken is not triggered, and T8 waits on
+nothing further.
 
 **T6 (D1554 against D1548).** An absent mode is observe, and in observe a lease does not bite: on a default
 installation the nightly catalog check job (D1554's lease) and every other build is **unbounded**; only
@@ -322,7 +327,8 @@ even after T16, and once T10 removes the build count nothing bounds how many bui
 `maxReserveMicros`, seeded at $5, bounds one build's lease, and the kill switches). The owner has not ruled on
 that case; it is named in T10 and in the open items below, and `doctor` reports it.
 
-**Open items:** T5 above, until the T8S spike reports; the capless case of T6 — after T10, a managed
+**Open items:** T5 above — the spike it waited on has reported in full (2026-11-08, §6 below), so what is left
+there is the owner's ruling and not a probe; the capless case of T6 — after T10, a managed
 installation with no `config/caps/global` stays in observe, where the lease does not bite, so an aggregate bound
 for it (or caps seeded from its policy) is the owner's call, and T16's `doctor` line names the missing caps;
 whether `doctor`'s observe warning (D1548) is a warning or an error; the meta repo's own design (out of this
@@ -354,7 +360,12 @@ plan). Every decision D1540–D1555 is answered (2026-11-07).
   installation project **only on the user path** (where the person already holds `serviceusage.serviceUsageConsumer`)
   and passes none for a service account, which then sends no header at all. A row for the catalog check account was
   considered and rejected: that principal kind is the one `cover.go`'s `grantRules` accepts nothing for, so the grant
-  would reach the owner as a question from `fugaro update`. Two facts the
-  spike could not verify without a credential remain, and are its one gate before T8 starts: whether an OAuth
-  caller with no billing role reads public prices (one `curl`), and the Cloud Build machine-minute SKUs and their
-  machine-type→SKU→region mapping (two `curl`s).
+  would reach the owner as a question from `fugaro update`. **Both facts the
+  spike could not verify without a credential were answered by the owner's own probe on 2026-11-08**
+  ([billing-price-spike.md](billing-price-spike.md) §8): their OAuth login, no billing role and no API key, read
+  the public service list (`GET /v1/services`, 200) and Cloud Build's 370 SKUs (`200`, one page, no
+  `nextPageToken`), so the "no grant" conclusion above stands as measured rather than as read off the
+  documentation, and **T8 writes no `iam.tf` edit**. The SKU shape that probe recorded — `description` prose
+  naming the family, the resource, the unit and the region, `serviceRegions`, and
+  `pricingInfo[0].pricingExpression.usageUnit` (`min` for machine time, `GiBy` for network) — is what T8's
+  parser is written against, and an unknown or unmapped SKU still **refuses**.
