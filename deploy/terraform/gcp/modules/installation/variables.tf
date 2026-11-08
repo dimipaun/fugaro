@@ -436,7 +436,7 @@ variable "project_secrets" {
 }
 
 variable "credentials_service" {
-  description = "The credentials service (D146, D147): the installation's own Cloud Run service that alone holds the model credentials. OFF by default (null) — with it off this module creates nothing, every job keeps its model-secret accessors and no run reaches a service. image is the released service image, pinned BY DIGEST and never by tag (C1.20's init stage fills the verified digest, as it fills history.image; the validation below refuses a tag, because the account this service runs as reads every credential in the bundle and an operator may push a tag to the installation's own registry); bundle_secret is the Secret Manager ID of the one bundle container the service reads — the project-wide container of the logical name \"creds-bundle\" (internal/backend/gcp's ProjectSecretID, CredsBundleSecretID once the loader of C1.11 declares it), which C1.20's stage fills from that one function so the container created here and the name the loader reads cannot drift. It is created here and written only by the owner-run fugaro creds set (C1.25). firebase_project, rtdb_url and job_accounts are the rest of what the process is configured with (C1.14's serve, whose whole environment is this module's env blocks): the Firebase project a run's identity is verified against and the database it reads, and the installation's per-repository jobs as {provider, repo, workflow} triples, from which the service derives the job service accounts it binds a run to. url is the service's OWN URL — the audience its callers' Google ID tokens are minted for — and it is optional because Cloud Run assigns it: no expression in this file can read google_cloud_run_v2_service.credentials[0].uri from inside that resource (a self-referential block), so the first apply creates the revision with credentials.tf's unassigned placeholder (an .invalid host no ID token is ever minted for: the revision starts, is healthy and admits nobody) until the apply that carries the URL the output reads back (C1.20's stage fills it, the same way history.deploy_job and its rtdb_url are filled on a later apply). Both unset states are the fail-closed direction: a service that guessed its own audience would accept a token minted for another service, and one that refused to start would fail the very apply that produced the URL it needs. verifier_accounts are the identities that may ask the verify route whether a verdict's signature is this service's (C3.9g1, D1068), each a bare address the Google ID token's email claim carries; it is optional, its environment entry is always rendered, and the three states are the whole of the rule: unset means the installation's own verifier account — the one this module creates, and the default an installation gets without naming anything — an explicit [] means nobody (the owner's clear), and a written list is rendered exactly as it is, with the account never added to it. The process reads the entry as an optional value, so a service whose list is empty starts with an empty verifier list rather than refusing to bind a port."
+  description = "The credentials service (D146, D147): the installation's own Cloud Run service that alone holds the model credentials. OFF by default (null) — with it off this module creates nothing, every job keeps its model-secret accessors and no run reaches a service. image is the released service image, pinned BY DIGEST and never by tag (C1.20's init stage fills the verified digest, as it fills history.image; the validation below refuses a tag, because the account this service runs as reads every credential in the bundle and an operator may push a tag to the installation's own registry); bundle_secret is the Secret Manager ID of the one bundle container the service reads — the project-wide container of the logical name \"creds-bundle\" (internal/backend/gcp's ProjectSecretID, CredsBundleSecretID once the loader of C1.11 declares it), which C1.20's stage fills from that one function so the container created here and the name the loader reads cannot drift. It is created here and written only by the owner-run fugaro creds set (C1.25). firebase_project, rtdb_url and job_accounts are the rest of what the process is configured with (C1.14's serve, whose whole environment is this module's env blocks): the Firebase project a run's identity is verified against and the database it reads, and the installation's per-repository jobs as {provider, repo, workflow} triples, from which the service derives the job service accounts it binds a run to, and review_job_accounts, the review-only variants of the installation's project jobs as {profile, provider, account} triples (the same axis, one row per variant, carrying the Claude account the variant's calls are served by) — empty for an installation that deploys no variant, whose service admits no review caller. url is the service's OWN URL — the audience its callers' Google ID tokens are minted for — and it is optional because Cloud Run assigns it: no expression in this file can read google_cloud_run_v2_service.credentials[0].uri from inside that resource (a self-referential block), so the first apply creates the revision with credentials.tf's unassigned placeholder (an .invalid host no ID token is ever minted for: the revision starts, is healthy and admits nobody) until the apply that carries the URL the output reads back (C1.20's stage fills it, the same way history.deploy_job and its rtdb_url are filled on a later apply). Both unset states are the fail-closed direction: a service that guessed its own audience would accept a token minted for another service, and one that refused to start would fail the very apply that produced the URL it needs. verifier_accounts are the identities that may ask the verify route whether a verdict's signature is this service's (C3.9g1, D1068), each a bare address the Google ID token's email claim carries; it is optional, its environment entry is always rendered, and the three states are the whole of the rule: unset means the installation's own verifier account — the one this module creates, and the default an installation gets without naming anything — an explicit [] means nobody (the owner's clear), and a written list is rendered exactly as it is, with the account never added to it. The process reads the entry as an optional value, so a service whose list is empty starts with an empty verifier list rather than refusing to bind a port."
   type = object({
     account_id       = string
     service          = string
@@ -449,6 +449,11 @@ variable "credentials_service" {
       repo     = string
       workflow = string
     }))
+    review_job_accounts = optional(list(object({
+      profile  = string
+      provider = string
+      account  = string
+    })), [])
     verifier_accounts = optional(list(string))
     url               = optional(string)
   })
@@ -486,6 +491,13 @@ variable "credentials_service" {
   # service refuses a table that binds no run to a repository (an empty one is
   # a service an operator would read as healthy while every run halted), so a
   # plan that carries one is refused here instead of at the revision.
+  #
+  # review_job_accounts is held to the same rule for the reason the revision
+  # refuses a row it cannot serve a call by (credsvc's AuthConfig: a review job
+  # account that names no Claude account is a pairing that could only refuse):
+  # every row needs all three fields. The list itself may be EMPTY, which is an
+  # installation that deploys no review variant and a service that admits no
+  # review caller — the fail-closed state, and not the empty coding table above.
   validation {
     condition = var.credentials_service == null ? true : (
       can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.credentials_service.firebase_project)) &&
@@ -494,9 +506,12 @@ variable "credentials_service" {
       alltrue([for j in var.credentials_service.job_accounts :
         j.provider != "" && j.repo != "" && j.workflow != ""
       ]) &&
+      alltrue([for r in var.credentials_service.review_job_accounts :
+        r.profile != "" && r.provider != "" && r.account != ""
+      ]) &&
       (try(var.credentials_service.url, null) == null || can(regex("^https://[a-z0-9.-]+$", var.credentials_service.url)))
     )
-    error_message = "credentials_service needs the Firebase project a run's identity is verified against (the shape of a project ID), the installation's realtime database URL (https://<database>.firebasedatabase.app or .firebaseio.com, without a path — the same rule history.rtdb_url is held to), at least one job as {provider, repo, workflow} with all three set (the service binds a run to a repository through them, and an empty table refuses every caller), and, once it is known, its own URL in the same https://<host> form."
+    error_message = "credentials_service needs the Firebase project a run's identity is verified against (the shape of a project ID), the installation's realtime database URL (https://<database>.firebasedatabase.app or .firebaseio.com, without a path — the same rule history.rtdb_url is held to), at least one job as {provider, repo, workflow} with all three set (the service binds a run to a repository through them, and an empty table refuses every caller), every review job as {profile, provider, account} with all three set (the service derives the review job's account from them and serves a review call by the account the row names), and, once it is known, its own URL in the same https://<host> form."
   }
 }
 

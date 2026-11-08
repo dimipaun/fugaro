@@ -1,14 +1,20 @@
 # Failure classes: a closed vocabulary on the run record, and a failures report
 
-**Status: a design, and its FC1 and FC2 have shipped; the rest of §10 is not built.** This document
+**Status: a design, and its FC1–FC4 have shipped; the rest of §10 is not built.** This document
 recommends, and names the alternative and what it costs, for every question it takes up; the owner
 rules, and the design's own decisions — §8 D1–D9 and §9 O1–O6 — stay his. The plan's decisions,
 D1450–D1469, are answered 2026-11-07, each as recommended. **FC1** — the vocabulary, the record's
-field and the schema's enum — and **FC2** — the one writer of a terminal status (§4.1) — are on
-`main`: `internal/failure`, the `failure.Classes()` slice §3 names, `Record.FailureClass`, and
-`recordEnd`, which is what every statement §1 counted writes its ending through now. **FC3–FC8 are
-not started.** What is written here was read against `main` on 2026-11-05, and the line citations are
-taken from that tree.
+field and the schema's enum — **FC2** — the one writer of a terminal status (§4.1) — **FC3** —
+the classes the runner knows from its own state, passed at the site that already knows why the run
+is stopping (§4.2) — and **FC4** — the classifier over the agent's own message, which reads the
+text the stage already folded and copies no byte of it (§4.3) — are on `main`: `internal/failure`,
+the `failure.Classes()` slice §3 names, `Record.FailureClass`, `recordEnd`, which is what every
+statement §1 counted writes its ending through now, `haltClass` over the closed halt reasons, the
+class `Decide`, `finalize`, `shadowFinalize` and the configuration refusals return beside the
+reason they already did, and `stageFailureClass`, which names the cause inside a stage's own error
+result.
+**FC5–FC8 are not started.** What is written here was read against `main` on 2026-11-05, and the
+line citations are taken from that tree.
 
 Related: [v1.md](v1.md) §4.5 (failure paths), §4.6 (the run record) and §4.8 (`runs ls`),
 [artifact-runs.md](artifact-runs.md) (the report a run writes with the digest), the digest's own
@@ -569,7 +575,7 @@ that is already long; no reader of it is a contract.
 
 ## 10. Tasks
 
-**Status: a plan, approved to build on 2026-11-07; FC1 and FC2 are built and FC3–FC8 are not
+**Status: a plan, approved to build on 2026-11-07; FC1–FC4 are built and FC5–FC8 are not
 started.** Each task is written to fit one run's $5 cap: it names at most twelve files, one command,
 one commit message and one red step. The convention is the one the active plans use
 (`docs/bitbucket-credentials/implementation-plan.md` is the most recent): **Files**,

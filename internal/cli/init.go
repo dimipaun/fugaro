@@ -2619,7 +2619,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// what the gate refused rather than the guard's advice, which is what
 		// a managed project's refusal is about. Everything the guard's own
 		// path prints or records stays where it was, on the path that runs it.
-		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.notCovered))
+		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons))
 		if err != nil {
 			return outs, false, err
 		}
@@ -4532,7 +4532,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	// does not admit this plan (D1016, update_managed.go). A repository root
 	// is one of Fugaro's own too, so it is judged by the same cover and the
 	// same guard the installation's roots are.
-	gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.notCovered))
+	gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons))
 	if err != nil {
 		return infra.RepoSpec{}, nil, err
 	}

@@ -99,6 +99,28 @@ planted second copy fails. The id, the audit trail and the choices behind them:
   with `Path=/` and an expiry in the past, and with nothing else in the browser touched. No
   deletion, and no cookie read at all, runs before consent was ever given. `test/consent.mjs`
   runs the shipped file against a cookie jar holding those cookies and reads what is left.
+- **The third control, and the panel it opens** (the owner's request of 2026-11-08): beside
+  **Accept All Cookies** and **Decline**, **Cookie Settings** is the same native
+  `<button type="button">` in the pair's own box and its own grid, wearing the quiet fill so it
+  is never the one the layout nudges a visitor towards — and it decides nothing by itself, so it
+  is not one of the pair (`site.js` wires the pair from `[data-consent]`, and this control
+  carries no decision of its own). It opens a panel in the banner's own flow: no modal, no focus
+  trap, focus into the panel on open and back to the control on close, and Escape is the bar's
+  own refusal because the panel is part of the bar rather than a dialog over it.
+- **One switch per question the bar asks**: **Analytics** on every page, and **Marketing** only
+  where the bar carries the campaign configuration — the four campaign pages. The privacy page
+  carries the campaign decision's key so its refusal can take that answer back, and asks the
+  question nowhere, so its panel draws Analytics alone: a yes to the three vendors is given on a
+  campaign page and never on a page that does not carry them, which is what the privacy
+  statement says and what the bar's own `choose` holds to. Each switch is a native
+  `<input type="checkbox" role="switch">` with its own `<label>` and one sentence naming what it
+  loads and saying nothing loads until it is on; the panel's markup carries no script and names
+  no fetched host. No box is ticked in the markup — the panel is drawn with nothing ticked and
+  set from what the browser holds each time it opens, so a missing decision reads as off, which
+  is what the gate means by it. **Save my choices** writes exactly what the switches say,
+  through the same two keys the pair writes and the same `keep` — so a withdrawal made there is
+  the withdrawal the pair makes, cookie deletion included, and a browser that refuses the write
+  keeps the banner with the status line. **Back** puts the panel away and decides nothing.
 - **The deployed policy is widened by exactly what Google documents** for Google Analytics 4
   without any Ads features
   ([tag-platform/security/guides/csp](https://developers.google.com/tag-platform/security/guides/csp),
@@ -1310,7 +1332,7 @@ added or removed without this sentence moving fails there:
     The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
     definition does not describe, and this gate says nothing about how much a page's first
     section should say.
-  - **Words per page:** 1495 words. Every word a reader sees inside `main` — command blocks
+  - **Words per page:** 1564 words. Every word a reader sees inside `main` — command blocks
     and code spans included, since the ceiling is a claim about the page rather than about
     its prose — counted by `budget.mjs`'s own reader, which reads a page the way
     `test/lib/html.mjs`'s `textOf` does (a script or style body is not text, an image's
@@ -1331,8 +1353,8 @@ added or removed without this sentence moving fails there:
     **The number is no longer D188's own, and it is derived rather than picked.** The
     privacy statement is the page the App Store and Play listings link as a privacy policy,
     so it carries the software as well as the site and is the one page that is not the
-    site's pitch; the number is that page's own count on the gates' own build — **1196
-    words** — plus 25 %, rounded up, which is **1495**. The count moved nine times since
+    site's pitch; the number is that page's own count on the gates' own build — **1251
+    words** — plus 25 %, rounded up, which is **1564**. The count moved ten times since
     G2.3: the campaign section took the page 988 → 1030, the owner's ruling of 2026-10-29 on
     the banner's wording — one question, worded for everything the site may load, with the
     refusal's reach stated in the consent card — took it 1030 → 1144, G2.4's sentence
@@ -1346,7 +1368,10 @@ added or removed without this sentence moving fails there:
     carries its function name, which is what the console's scrubber sends, took it
     1171 → 1175, and the owner's ruling of 2026-11-02 that crash symbolication has to work,
     whose event now carries the console's own version as its release and the build's debug
-    images beside its frames, took it 1175 → 1196.
+    images beside its frames, took it 1175 → 1196, and the consent card's paragraph on the
+    banner's Cookie Settings panel (the owner's request of 2026-11-08), which says the
+    switches answer one question each and are set from what the browser holds, took it
+    1196 → 1251.
     `budget.mjs`'s
     `wordsCeilingFailures` holds the derivation to the built page the way the same file
     holds the byte budgets to theirs, so a sentence added there re-derives this line in the

@@ -9,6 +9,75 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 )
 
+// TestMemberListsReadOnePersonEntries: the two lists a member's own admission
+// is read from hold entries of every kind — a `domain:` an operator wrote by
+// hand, the `group:` and `serviceAccount:` an apply would accept, the
+// `allUsers` that means everybody — and only `user:<address>` names one person.
+// The others are INERT and not a refusal: the person beside such an entry is
+// still admitted, which is the whole reason the reader does not refuse a list it
+// does not fully understand. An entry under `user:` that is not one address —
+// whitespace inside it, a wildcard, no `@`, nothing at all — is inert the same
+// way, and the two lists are one answer rather than two.
+func TestMemberListsReadOnePersonEntries(t *testing.T) {
+	lists := MemberListsOf(
+		[]string{
+			"user:person-1@example.com",
+			"domain:example.com",
+			"Domain:example.com",
+			"group:eng@example.com",
+			"serviceAccount:bot@proj-1234.iam.gserviceaccount.com",
+			"allUsers",
+			"allAuthenticatedUsers",
+		},
+		[]string{
+			"serviceAccount:other@proj-1234.iam.gserviceaccount.com",
+			"User:person-3@example.com",
+			" user:person-4@example.com",
+			"user:person-4@example.com ",
+			"user:*@example.com",
+			"user:person-5@example.com*",
+			"user:",
+			"user:person-6",
+			"user:Person Seven <person-7@example.com>",
+			"user:person-2@example.com",
+		},
+	)
+	want := []string{"person-1@example.com", "person-2@example.com"}
+	if got := lists.Addresses(); !slices.Equal(got, want) {
+		t.Errorf("the two lists name %v, and the only entries that are one person are %v: an entry of another kind names no one, and an entry that is not one address admits nobody", got, want)
+	}
+}
+
+// TestMemberListsHandsBackTheSpellingTheOperatorWrote: the addresses come back
+// as the list wrote them, sorted and without an exact repeat, and the answer is
+// a copy — a caller cannot write through it to the lists it was read from. The
+// folding is the comparison's own (ee/coordinator/oauth's admission, with
+// mobileauth's one rule), so it is deliberately not done here: the reader that
+// decided which entries name a person would otherwise be deciding what an
+// address is, which is the rule its reader owns.
+func TestMemberListsHandsBackTheSpellingTheOperatorWrote(t *testing.T) {
+	lists := MemberListsOf(
+		[]string{"user:person-1@EXAMPLE.com", "user:person-1@EXAMPLE.com"},
+		[]string{"user:person-1@example.com"},
+	)
+	want := []string{"person-1@EXAMPLE.com", "person-1@example.com"}
+	if got := lists.Addresses(); !slices.Equal(got, want) {
+		t.Fatalf("the lists name %v, and the two spellings are two entries: %v", got, want)
+	}
+	got := lists.Addresses()
+	got[0] = "stranger@example.com"
+	if after := lists.Addresses(); !slices.Equal(after, want) {
+		t.Errorf("writing through the answer changed the lists: %v", after)
+	}
+
+	// A member with no lists at all names nobody, which is the empty answer and
+	// not an error: it is a member nothing admits, and the admission that reads
+	// it refuses every person rather than failing open.
+	if got := MemberListsOf(nil, nil).Addresses(); len(got) != 0 {
+		t.Errorf("a member with no lists names %v", got)
+	}
+}
+
 // TestPolicyMemberListsCoverTheirStructs: the hand-written member-name lists
 // the node's readers hand checkMemberNames — budgetMembers, priceMembers,
 // priceTierMembers, routingMembers and routingClaudeMembers — are the only

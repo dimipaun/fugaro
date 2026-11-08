@@ -249,9 +249,9 @@ func TestRunReviewLevelsFlagWritesTaskField(t *testing.T) {
 // runner's bootstrap is where a near miss would otherwise be found after the
 // launch was paid for (config.ParseReviewLevelsYAML). An unknown key, `none:
 // true` beside another key, a document with nothing in it, a file that is not
-// there, and - beside --task-file - (one stdin, two readers) are each refused
-// with a message naming what is wrong, and each leaves the runs bucket empty
-// and starts no execution.
+// there, and - beside --task-file - or --owner-ruled - (one stdin, two
+// readers, the ruling included) are each refused with a message naming what is
+// wrong, and each leaves the runs bucket empty and starts no execution.
 func TestRunReviewLevelsFlagRefusesHostileDocuments(t *testing.T) {
 	f := newCloudFixture(t)
 	writeBuildRecord(t, f, appSlug, "web", release0160)
@@ -283,6 +283,15 @@ func TestRunReviewLevelsFlagRefusesHostileDocuments(t *testing.T) {
 		// both-read-stdin refusal is never reached.
 		{"- beside --task-file -", "20261007-100000-ac02", "do the thing", "both read stdin",
 			[]string{"--review-levels", "-", "--task-file", "-"}},
+		// The ruling reads stdin as well, and its own guard is the one that has
+		// to fire: with the task, and with the levels document, whose reader
+		// runs first and leaves the ruling a stream it must not read a second
+		// time. Both name --owner-ruled, which is what tells this refusal from
+		// the levels document's.
+		{"--owner-ruled - beside --task-file -", "20261007-100000-ac03", "do the thing", "--owner-ruled - and another flag both read stdin",
+			[]string{"--owner-ruled", "-", "--task-file", "-"}},
+		{"--owner-ruled - beside --review-levels -", "20261007-100000-ac04", "l2:\n  model: deepseek/deepseek-v4-pro\n", "--owner-ruled - and another flag both read stdin",
+			[]string{"--review-levels", "-", "--owner-ruled", "-", "do the thing"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

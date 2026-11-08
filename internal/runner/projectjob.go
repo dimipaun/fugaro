@@ -103,6 +103,92 @@ func (r *run) projectJob() (jobTriple, bool) {
 	return r.job, r.job.Profile != ""
 }
 
+// clampTotalToJob bounds this run's clock by the shared job it is in: the
+// job's Cloud Run task timeout is its profile's timeout_class plus
+// backend.TaskTimeoutSlack (internal/infra's ProjectJobs, and the same sum
+// internal/cli's launchProjectJobFor reads), while the run's own clock is the
+// workflow's timeouts.total, and nothing on the launch path compares the two.
+// A repository whose workflow is left at the default is therefore launched with
+// a three-hour budget onto a job Cloud Run kills at ninety-two minutes when the
+// profile's class is ninety, and the container dies before finalize: no result
+// and no ready pull request, where the ninety-minute default it replaced fitted
+// that class. The job's own class is what the run may spend, so the resolved
+// workflow is held to it before anything reads a timeout from it — the budget
+// (r.budget), the record's reserve and the lock's expiry (lockcache.go) all
+// derive from this one place, and the per-repository path needs no clamp at all
+// because internal/infra derives that job's timeout from this same workflow.
+//
+// It shortens only, and only where the job's class is really the run's bound:
+// a run whose task carries a `--total-timeout` override is launched with that
+// total as the *execution's own* task timeout (backend.LaunchSpec.Timeout,
+// which internal/cli sets to the override, and internal/backend/gcp puts on the
+// execution's overrides), and an execution's timeout wins over its job's — so
+// there the platform holds the run to its own total and nothing is clamped. A
+// class at or above the total changes nothing either, so a run that already
+// fits keeps its budget and an installation whose profile was sized for the new
+// default behaves exactly as before.
+//
+// Every timeout that has to fit inside the total is cut with it, and by
+// config.Validate's own rules, so the workflow the run goes on to use is one a
+// repository could have written: the stage to the total, the verify cap to the
+// total, the render cap to what the reserve leaves, and the reserve itself only
+// when it no longer fits (a class at or below the reserve would otherwise leave
+// the run exhausted before its first stage, ending it with nothing pushed).
+// A cap left above the total is worse than a shorter one: a gate step bounded
+// by a verify longer than the job outlives the job, and the run is killed in it
+// — no finalize, no result — which is the outcome this clamp exists to prevent.
+func (r *run) clampTotalToJob(ctx context.Context, wf *config.Workflow) error {
+	job, project := r.projectJob()
+	if !project {
+		return nil
+	}
+	if r.spec.Overrides.TotalTimeout != "" {
+		return nil
+	}
+	p, found, err := r.projectPolicy(ctx)
+	if err != nil {
+		return err
+	}
+	if !found || p == nil {
+		// Unreachable: a project job's identity is only adopted by matching
+		// the published policy's own names (jobIdentity), and
+		// checkProjectJobAccount halts a run here without one.
+		return nil
+	}
+	pr, err := p.ProfileFor(job.Profile)
+	if err != nil {
+		return nil
+	}
+	class, err := config.ParseDuration(pr.TimeoutClass)
+	if err != nil || class <= 0 {
+		// validTimeoutClass holds every published profile to a positive
+		// duration and to the platform's own ceiling; an unreadable one is a
+		// policy this run has no bound to apply from, not a reason to stop it
+		// where the checks above let it through.
+		return nil
+	}
+	if wf.Timeouts.Total.Duration <= class {
+		return nil
+	}
+	r.d.Log.Warn("the run's timeouts.total is longer than the shared job it runs on; the run is bounded by the job's timeout_class",
+		"total", wf.Timeouts.Total.Duration, "timeout_class", class,
+		"job_profile", job.Profile, "job", gcp.ProjectJobName(job.Profile, job.Provider, job.Account))
+	wf.Timeouts.Total.Duration = class
+	if res := wf.Timeouts.FinalizeReserve.Duration; res >= class {
+		wf.Timeouts.FinalizeReserve.Duration = class / 5
+	}
+	if st := wf.Timeouts.Stage.Duration; st > class {
+		wf.Timeouts.Stage.Duration = class
+	}
+	if v, tot := wf.Timeouts.Verify.Duration, wf.Timeouts.Total.Duration; v > tot {
+		wf.Timeouts.Verify.Duration = tot
+	}
+	if rd, room := wf.Timeouts.Render.Duration, wf.Timeouts.Total.Duration-wf.Timeouts.FinalizeReserve.Duration; rd > room {
+		wf.Timeouts.Render.Duration = room
+	}
+	return nil
+}
+
 // jobIdentity computes and matches this run's job identity, and is the run's
 // whole identity decision (plan task 3.3 step 1). It is called once, from
 // admissionCheck, which is the one place that runs for a run with a Cloud Run

@@ -33,7 +33,11 @@
 # clause would have carried — so a call that did not answer (a 5xx gcloud did
 # not retry, an expired session, a killed request, a denial of another kind)
 # stops the run rather than being recorded as a criterion that held, which would
-# name a form R12 must not write on a reading nobody took. A
+# name a form R12 must not write on a reading nobody took. Every failure a row
+# quotes is gcloud's WHOLE output with its impersonation WARNING dropped: that
+# warning is the first line of every call made as the account, and quoting the
+# first line alone is what this check's first run did, which is how a refused
+# `reports/` listing was recorded with no reason in the row to read. A
 # removal the bucket refuses, and a removal that has not TAKEN EFFECT yet between
 # the two forms, stop it the same way: both forms speak for the same throwaway
 # account, so the full-path form granted while the relative binding is still in
@@ -59,8 +63,11 @@
 #             test pins. The bucket is read back with YOUR own identity first, so
 #             a mistyped bucket is a stop rather than a reading.
 # Creates:    one throwaway service account in the project
-#             (`fugaro-chk340-<hex>`, absent before the run and refused if it is
-#             already there), the two conditioned bucket bindings of R12 for it —
+#             (`fugaro-chk340-<hex>`, absent before the run — read from a
+#             `service-accounts list` filter, because IAM answers a describe of an
+#             account that is not there with PERMISSION_DENIED rather than
+#             NOT_FOUND — and refused if the list answers its email), the two
+#             conditioned bucket bindings of R12 for it —
 #             `roles/storage.objectViewer` with the `runs/` clause and
 #             `roles/storage.objectUser` with the `reports/` clause — the
 #             `roles/iam.serviceAccountTokenCreator` grant the impersonation
@@ -81,8 +88,11 @@
 #             made an account — the bucket policy and the account too, and says
 #             what it found: the policy read is what the PASS row's own sentence
 #             rests on, so it is not skipped when an earlier step already removed
-#             the bindings. Anything that did not go, and anything it could not
-#             read back at all, is a FAILed row, not a silent pass. The scratch
+#             the bindings, and the account's presence is read from a
+#             `service-accounts list` filter, so a delete the bucket refused is
+#             not an error beside a list that answers no email. Anything that did
+#             not go, and anything it could not read back at all, is a FAILed
+#             row, not a silent pass. The scratch
 #             directory is removed with the run.
 # Output:     progress on stderr, ONE block on stdout headed CHECK 340 RESULT,
 #             and one line above it naming the `<list prefix>` R12 must use, to
@@ -291,7 +301,7 @@ restore_run() {
       if out=$(gcloud storage ls --recursive --project="$P" "gs://$B/$prefix" 2>&1); then
         bad="$bad $prefix"
       elif ! printf '%s' "$out" | grep -qiE 'matched no objects|not found|404'; then
-        unknown="$unknown $prefix (the listing could not be read back: $(first_line "$out"))"
+        unknown="$unknown $prefix (the listing could not be read back: $(gcloud_said "$out"))"
       fi
     done
   fi
@@ -321,7 +331,7 @@ restore_run() {
         bad="$bad the run's own bucket bindings"
       fi
     else
-      unknown="$unknown the bucket policy (it could not be read to check for them: $(first_line "$out"))"
+      unknown="$unknown the bucket policy (it could not be read to check for them: $(gcloud_said "$out"))"
     fi
   fi
   # 3. Your impersonation grant, then the account itself.
@@ -331,26 +341,35 @@ restore_run() {
   fi
   if [ "$ACCOUNT_MADE" = yes ]; then
     gcloud iam service-accounts delete "$SA_EMAIL" --project="$P" --quiet >&2 || true
-    # NOT_FOUND is the delete having worked; anything else is this run not being
-    # able to tell, and not-telling is recorded as a FAIL, never as gone.
-    if out=$(gcloud iam service-accounts describe "$SA_EMAIL" --project="$P" 2>&1); then
-      bad="$bad the service account $SA_EMAIL"
-    elif ! printf '%s' "$out" | grep -qiE 'not found|404'; then
-      unknown="$unknown the service account $SA_EMAIL (it could not be read back to check: $(first_line "$out"))"
-    fi
+    # Presence is read from the account LIST, never from the delete's exit status
+    # and never from a describe: IAM answers both a delete and a describe of a
+    # missing service account with PERMISSION_DENIED, so a denied delete is not
+    # by itself an error — the account may be exactly where it should be, gone —
+    # and a denied describe says nothing either way. The list is a different
+    # permission and answers plainly: the email is the account being there, and
+    # nothing at all is the account being gone.
+    account_presence
+    case "$ACCOUNT_STATE" in
+    present)
+      bad="$bad the service account $SA_EMAIL is still present (the account list answers its email; delete it and its bindings by hand with: gcloud iam service-accounts delete $SA_EMAIL --project=$P --quiet)"
+      ;;
+    unknown)
+      unknown="$unknown the service account $SA_EMAIL (its presence could not be read back: the account list did not answer: $(gcloud_said "$ACCOUNT_SAID"))"
+      ;;
+    esac
   fi
   if [ -n "$bad" ] || [ -n "$unknown" ]; then
     fact restore FAIL "this check's Restore could not confirm that it deleted everything.${bad:+ Still there:$bad.}${unknown:+ Not readable, so not confirmed:$unknown.} Do this by hand before running any other check on this bucket: the four seeded prefixes are under the slug $SLUG, and the account is $SA_EMAIL, holding a conditioned objectViewer on runs/ and a conditioned objectUser on reports/. Whatever is not named here was deleted"
     return 0
   fi
-  # The PASS row says only what was READ: an account this run made is described
-  # and its policy read above (a read that failed is a FAILed row, not this one),
+  # The PASS row says only what was READ: an account this run made is listed and
+  # its policy read above (a read that failed is a FAILed row, not this one),
   # while a run that never got as far as an account has no binding and no policy
   # clause of its own to read back, and saying otherwise is the claim this row
   # exists to stop being a claim.
   local read_back
   if [ "$ACCOUNT_MADE" = yes ]; then
-    read_back=", and all four prefixes, the bucket policy and the account were read back: the policy no longer names the account"
+    read_back=", and all four prefixes, the bucket policy and the account were read back: the policy no longer names the account, and the account is gone (confirmed by list)"
   else
     read_back=", and all four prefixes were read back (this run never made an account, so it left no binding and no policy clause of its own behind)"
   fi
@@ -385,18 +404,75 @@ guard_bucket_reachable() {
   if ! out=$(gcloud storage ls --project="$P" "gs://$B/" 2>&1); then
     # The FAIL is recorded before the stop: this guard RAN and decided, and the
     # block's "not reached" row is reserved for a step that was never measured.
-    fact bucket-reachable FAIL "gs://$B/ is not listable by your own identity, so this check has nothing to measure: every reading below would be a refusal about a bucket that is not there rather than about the listing attribute (gcloud's own line: $(first_line "$out")). Check the bucket name, and that you are signed in as an operator of $P"
-    stop "gs://$B/ is not listable by your own identity, so this check has nothing to measure (gcloud's own line is above it). Check the bucket name, and that you are signed in as an operator of $P"
+    fact bucket-reachable FAIL "gs://$B/ is not listable by your own identity, so this check has nothing to measure: every reading below would be a refusal about a bucket that is not there rather than about the listing attribute (gcloud's own words: $(gcloud_said "$out")). Check the bucket name, and that you are signed in as an operator of $P"
+    stop "gs://$B/ is not listable by your own identity, so this check has nothing to measure (gcloud's own words: $(gcloud_said "$out")). Check the bucket name, and that you are signed in as an operator of $P"
   fi
   fact bucket-reachable PASS "gs://$B/ is there and listable by your own identity, so every reading below is about the throwaway account and not about a bucket that cannot be reached ($(printf '%s' "$out" | grep -c . || true) entries at the root)"
 }
 
-guard_account_absent() {
-  if gcloud iam service-accounts describe "$SA_EMAIL" --project="$P" >/dev/null 2>&1; then
-    fact account FAIL "the name this run drew, $SA_EMAIL, is already taken in $P: Check 340 never adopts an account it did not create, so it stops rather than reading an account whose grants are somebody else's. Delete that account and its bindings, or run the check again, which picks a fresh name"
-    stop "$SA_EMAIL already exists in $P. Check 340 never adopts an account it did not create: delete it and its bindings, or run the check again, which picks a fresh name"
+# account_presence: whether the throwaway account is there, decided by the LIST
+# and never by a describe. IAM answers a describe — and a delete — of a service
+# account that is NOT there with PERMISSION_DENIED, "denied on resource (or it
+# may not exist)", even to a project owner, so neither answer means "absent" or
+# "present": on this check's first run (2026-11-07) the Restore's describe was
+# denied because the account it had just deleted was gone, and the run reported
+# it could not confirm the deletion of an account that was not there. The list is
+# a different permission and its answer is unambiguous — the email it prints
+# means present, no output at all means gone — so it is the one call presence is
+# read from. A list that does not ANSWER is neither, and the caller has to say so
+# rather than pick one; ACCOUNT_STATE carries that and ACCOUNT_SAID its words —
+# and ACCOUNT_SAID is the call's STDERR, which is never an answer: see below.
+ACCOUNT_STATE=""
+ACCOUNT_SAID=""
+account_presence() {
+  local out status=0 err="$SCRATCH/account-list-error"
+  ACCOUNT_STATE=""
+  ACCOUNT_SAID=""
+  out=$(gcloud iam service-accounts list --project="$P" \
+    --filter="email=$SA_EMAIL" --format="value(email)" 2>"$err") || status=$?
+  ACCOUNT_SAID=$(cat "$err" 2>/dev/null || true)
+  if [ "$status" -ne 0 ]; then
+    ACCOUNT_STATE=unknown
+    return 0
   fi
-  fact account PASS "the throwaway account $SA_EMAIL is absent from $P, so the one this run makes is its own"
+  # The ANSWER is stdout, and only a line that IS the email means present. stderr
+  # is read separately, into ACCOUNT_SAID, and never as an answer: gcloud writes
+  # its own messages there — the impersonation warning of a configured
+  # `auth/impersonate_service_account`, a config or update notice — and a list
+  # whose stderr was merged in would read one of those lines as the email. That
+  # reports a free name as taken (the guard stops and the check never runs) and a
+  # deleted account as still there (the Restore's row says it failed to delete
+  # what it deleted), which are the two wrong answers this function exists to
+  # prevent. A listing filtered on this email can only answer this email, so
+  # stdout without it is the account being gone.
+  # A here-string rather than a pipe: `grep -q` exits at the first match, and a
+  # printer still writing would then die of SIGPIPE — which `pipefail` would turn
+  # into a failed test and read as the account being gone.
+  if grep -qixF -- "$SA_EMAIL" <<<"$out"; then
+    ACCOUNT_STATE=present
+  else
+    ACCOUNT_STATE=gone
+  fi
+}
+
+guard_account_absent() {
+  account_presence
+  case "$ACCOUNT_STATE" in
+  present)
+    fact account FAIL "the name this run drew, $SA_EMAIL, is already taken in $P (the account list answers its email): Check 340 never adopts an account it did not create, so it stops rather than reading an account whose grants are somebody else's. Delete that account and its bindings, or run the check again, which picks a fresh name"
+    stop "$SA_EMAIL already exists in $P. Check 340 never adopts an account it did not create: delete it and its bindings, or run the check again, which picks a fresh name"
+    ;;
+  unknown)
+    # A list that did not answer is a could-not-tell about the NAME, and the run
+    # stops before it creates anything: adopting a name whose holder nobody could
+    # read is exactly what this guard exists to prevent.
+    fact account FAIL "whether the name this run drew is free could not be decided: the account list of $P did not answer, so neither the account this run would make nor the grants it would carry can be read as its own (gcloud said: $(gcloud_said "$ACCOUNT_SAID")). Nothing was created"
+    stop "the account list of $P did not answer, so whether $SA_EMAIL is free could not be told: nothing was created, and this is a could-not-tell rather than a reading about that name"
+    ;;
+  *)
+    fact account PASS "the throwaway account $SA_EMAIL is absent from $P (the account list answers no email for it), so the one this run makes is its own"
+    ;;
+  esac
 }
 
 # ------------------------------------------------------------- the definitions
@@ -437,7 +513,7 @@ condition_json() {
 # and a `list` names no object — which is why a `&&` shape fails every request
 # this check makes.
 grant_bindings() {
-  local lruns=$1 lreports=$2
+  local lruns=$1 lreports=$2 out
   condition_json "$COND_RUNS" "$(clause_read runs) || $(clause_list "$lruns")" "fugaro-chk340-runs"
   condition_json "$COND_REPORTS" "$(clause_read reports) || $(clause_list "$lreports")" "fugaro-chk340-reports"
   say "granting roles/storage.objectViewer on runs/ and roles/storage.objectUser on reports/, each with its own listing clause"
@@ -449,17 +525,21 @@ grant_bindings() {
   # A grant that is REFUSED is a could-not-tell and never a verdict: the run has
   # measured nothing about the attribute, and every reading below it would be a
   # refusal for a reason that is not the listing clause. It stops here, by name,
-  # and the Restore still runs from the exit trap.
-  if ! gcloud storage buckets add-iam-policy-binding "gs://$B" --project="$P" \
+  # and the Restore still runs from the exit trap. Each call's own output is
+  # captured rather than streamed, so the `aborted` row carries gcloud's whole
+  # message and not a pointer to a line the paste-back of the block leaves behind.
+  if ! out=$(gcloud storage buckets add-iam-policy-binding "gs://$B" --project="$P" \
     --member="serviceAccount:$SA_EMAIL" --role=roles/storage.objectViewer \
-    --condition-from-file="$COND_RUNS" >&2; then
-    stop "the bucket refused the roles/storage.objectViewer binding on the runs/ prefix (gcloud's own words are the line above), so nothing below it was measured: the account has no grant to read with, and a refusal recorded under it would say nothing about the listing attribute"
+    --condition-from-file="$COND_RUNS" 2>&1); then
+    stop "the bucket refused the roles/storage.objectViewer binding on the runs/ prefix (gcloud said: $(gcloud_said "$out")), so nothing below it was measured: the account has no grant to read with, and a refusal recorded under it would say nothing about the listing attribute"
   fi
-  if ! gcloud storage buckets add-iam-policy-binding "gs://$B" --project="$P" \
+  printf '%s\n' "$out" >&2
+  if ! out=$(gcloud storage buckets add-iam-policy-binding "gs://$B" --project="$P" \
     --member="serviceAccount:$SA_EMAIL" --role=roles/storage.objectUser \
-    --condition-from-file="$COND_REPORTS" >&2; then
-    stop "the bucket refused the roles/storage.objectUser binding on the reports/ prefix (gcloud's own words are the line above), so nothing below it was measured: the account has no grant to read with, and a refusal recorded under it would say nothing about the listing attribute"
+    --condition-from-file="$COND_REPORTS" 2>&1); then
+    stop "the bucket refused the roles/storage.objectUser binding on the reports/ prefix (gcloud said: $(gcloud_said "$out")), so nothing below it was measured: the account has no grant to read with, and a refusal recorded under it would say nothing about the listing attribute"
   fi
+  printf '%s\n' "$out" >&2
 }
 
 # remove_bindings: both of them, and whichever condition they carry. A REFUSED
@@ -471,12 +551,13 @@ grant_bindings() {
 # removal that has taken effect — wait_for_removal, below, is what holds the next
 # form back until it has.
 remove_bindings() {
-  local role
+  local role out
   for role in roles/storage.objectViewer roles/storage.objectUser; do
-    if ! gcloud storage buckets remove-iam-policy-binding "gs://$B" --project="$P" \
-      --member="serviceAccount:$SA_EMAIL" --role="$role" --all >&2; then
-      stop "the bucket refused to remove the $role binding this form granted (gcloud's own words are the line above), so the next form would list through THIS form's clause and the answer would name the wrong form. The Restore below tries again and reads the bucket policy back"
+    if ! out=$(gcloud storage buckets remove-iam-policy-binding "gs://$B" --project="$P" \
+      --member="serviceAccount:$SA_EMAIL" --role="$role" --all 2>&1); then
+      stop "the bucket refused to remove the $role binding this form granted (gcloud said: $(gcloud_said "$out")), so the next form would list through THIS form's clause and the answer would name the wrong form. The Restore below tries again and reads the bucket policy back"
     fi
+    printf '%s\n' "$out" >&2
   done
   BINDINGS_GRANTED=no
 }
@@ -581,13 +662,38 @@ wait_for_removal() {
       if [ "$still_lists" = yes ]; then
         stop "the bindings the form just tried are still in effect ${PROPAGATION_SECONDS}s after the bucket accepted their removal: the bucket still lists runs/$SLUG/ to the throwaway account, so the next form would list and read through the EARLIER clause and this check would answer the wrong form. Nothing was measured under the next form; wait for the removal to propagate and run the check again"
       fi
-      stop "the removal of the bindings the form just tried could not be CONFIRMED in ${PROPAGATION_SECONDS}s: the account's listing of runs/$SLUG/ kept failing without naming storage.objects.list, the permission the removed clause carried (gcloud last said: $(first_line "$last")) — that is a call that did not answer, not a binding that is gone, and nothing this check reads can tell the two apart. Nothing was measured under the next form; check that gcloud can reach the project and run the check again"
+      stop "the removal of the bindings the form just tried could not be CONFIRMED in ${PROPAGATION_SECONDS}s: the account's listing of runs/$SLUG/ kept failing without naming storage.objects.list, the permission the removed clause carried (gcloud last said: $(gcloud_said "$last")) — that is a call that did not answer, not a binding that is gone, and nothing this check reads can tell the two apart. Nothing was measured under the next form; check that gcloud can reach the project and run the check again"
     fi
     sleep "$POLL_SECONDS"
   done
 }
 
-first_line() { printf '%s\n' "$1" | grep -m1 . | cut -c1-300 || true; }
+# gcloud_said OUTPUT: what a failed call's own words are, as the ONE line a FACT
+# row can carry. Every call this check makes as the throwaway account opens with
+# gcloud's impersonation WARNING, and a warning is never the reason a call
+# failed: quoting the first line WITHOUT dropping it is what this check's first
+# run (2026-11-07) did, and it is why the real error behind a refused `reports/`
+# listing was nowhere in the row and the failure could not be read. Every other
+# line is kept — a gcloud failure runs past its first line often enough that the
+# reason is usually not in the first one — joined with `; ` so the block keeps its
+# one-line-per-fact shape, and the whole is bounded, because one long message
+# must not swallow the block it is quoted into.
+GCLOUD_SAID_CHARS=600
+gcloud_said() {
+  local said
+  said=$(printf '%s\n' "$1" | awk '
+    /^[[:space:]]*WARNING:/ { next }
+    /^[[:space:]]*$/ { next }
+    { if (out != "") out = out "; "; out = out $0 }
+    END { print out }')
+  if [ "${#said}" -gt "$GCLOUD_SAID_CHARS" ]; then
+    said="${said:0:$GCLOUD_SAID_CHARS} … (cut at ${GCLOUD_SAID_CHARS} characters)"
+  fi
+  # A call that printed nothing but its own warnings still has to be quotable: an
+  # empty quote beside `gcloud said:` is a row that recorded no reason at all.
+  [ -n "$said" ] || said="(gcloud printed nothing but its own warnings)"
+  printf '%s' "$said"
+}
 
 # missing_permission REFUSAL — the storage permissions gcloud's own refusal
 # names, when it names any. It is here because a refusal that names something
@@ -599,15 +705,71 @@ missing_permission() {
   printf '%s' "$1" | grep -oE 'storage\.[a-zA-Z.]+' | sort -u | tr '\n' ' ' || true
 }
 
-must_list() { # must_list KEY URL WANT
-  local key=$1 url=$2 want=$3 named extra=""
+# policy_names_binding MEMBER ROLE: whether the bucket policy names a binding for
+# MEMBER under ROLE, read out of gcloud's own YAML for the policy — one binding
+# per line beginning `- `, its `members` and its `role` under it, and a binding
+# that carries a condition putting `condition:` first. The member and the role
+# have to be in the SAME block: a mention of the account somewhere in the policy
+# is not the binding this asks about.
+policy_names_binding() { # member role
+  awk -v member="$1" -v role="$2" '
+    /^- / { if (m && r) found = 1; m = 0; r = 0; next }
+    { if (index($0, member)) m = 1
+      if ($0 ~ ("^[[:space:]]*role:[[:space:]]*" role "[[:space:]]*$")) r = 1 }
+    END { if (m && r) found = 1; exit (found ? 0 : 1) }
+  '
+}
+
+# reports_binding_state: whether R12's reports binding for the throwaway account
+# is in the bucket policy AT THIS MOMENT, read back with YOUR OWN identity. It is
+# what tells two very different failures apart: a listing clause that does not
+# match the request (the grant is there and this form's string is the wrong one)
+# and a binding that never landed (nothing about the clause was measured at all).
+# A policy that cannot be read is neither, and is recorded as neither.
+REPORTS_BINDING=""
+REPORTS_BINDING_SAID=""
+reports_binding_state() {
+  local out status=0 err="$SCRATCH/policy-read-error"
+  REPORTS_BINDING=""
+  REPORTS_BINDING_SAID=""
+  out=$(gcloud storage buckets get-iam-policy "gs://$B" --project="$P" 2>"$err") || status=$?
+  REPORTS_BINDING_SAID=$(cat "$err" 2>/dev/null || true)
+  if [ "$status" -ne 0 ]; then
+    REPORTS_BINDING=unknown
+    return 0
+  fi
+  # The policy is read out of stdout alone: stderr is gcloud's own messages, and
+  # a line of them merged into the YAML would be parsed as if it were part of the
+  # policy — the same reason account_presence keeps them apart. REPORTS_BINDING_SAID
+  # carries them, so a refusal is still quoted in full when the read fails.
+  if printf '%s\n' "$out" | policy_names_binding "serviceAccount:$SA_EMAIL" roles/storage.objectUser; then
+    REPORTS_BINDING=present
+  else
+    REPORTS_BINDING=absent
+  fi
+}
+
+# must_list KEY URL WANT [POLICY_ROLE]: the listing half of the grant. The third
+# argument, given only for the `reports/` criterion, is the role whose binding the
+# row has to say was or was not in the bucket policy at that moment — see
+# reports_binding_state.
+must_list() { # must_list KEY URL WANT [POLICY_ROLE]
+  local key=$1 url=$2 want=$3 policy_role=${4:-} named extra="" policy=""
   if ! poll_list "$url"; then
     named=$(missing_permission "$LAST_ERROR")
     case "$named" in
     "" | *storage.objects.list*) ;;
     *) extra=" — NOTE: the refusal names ${named}and not storage.objects.list, so this listing was refused for a reason other than the clause this check settles: read it before taking it as 'this form does not work'" ;;
     esac
-    fact "$key" FAIL "the account could not list $url: the prefix is not covered by this form's listing clause, or the grant had not taken effect within ${PROPAGATION_SECONDS}s (gcloud said: $(first_line "$LAST_ERROR"))${extra}"
+    if [ -n "$policy_role" ]; then
+      reports_binding_state
+      case "$REPORTS_BINDING" in
+      present) policy=" — the bucket policy was read back with your own identity at that moment and it DOES name the reports binding ($policy_role for $SA_EMAIL), so this failure is the listing clause not matching the request and NOT a binding that never landed" ;;
+      absent) policy=" — the bucket policy was read back with your own identity at that moment and it does NOT name the reports binding ($policy_role for $SA_EMAIL): the grant was accepted and never landed, so this failure says nothing about the listing clause, and no form can be read from it" ;;
+      unknown) policy=" — the bucket policy could not be read back with your own identity, so whether the reports binding was there at that moment is not known (gcloud said: $(gcloud_said "$REPORTS_BINDING_SAID"))" ;;
+      esac
+    fi
+    fact "$key" FAIL "the account could not list $url: the prefix is not covered by this form's listing clause, or the grant had not taken effect within ${PROPAGATION_SECONDS}s (gcloud said: $(gcloud_said "$LAST_ERROR"))${extra}${policy}"
     return 1
   fi
   case "$LIST_OUT" in
@@ -616,7 +778,7 @@ must_list() { # must_list KEY URL WANT
     return 0
     ;;
   *)
-    fact "$key" FAIL "the account listed $url but the listing does not name $want (it answered: $(first_line "$LIST_OUT"))"
+    fact "$key" FAIL "the account listed $url but the listing does not name $want (it answered: $(gcloud_said "$LIST_OUT"))"
     return 1
     ;;
   esac
@@ -634,7 +796,7 @@ must_read() {
   "" | *storage.objects.get*) ;;
   *) extra=" — NOTE: the refusal names ${named}and not storage.objects.get, so this read was refused for a reason other than the clause this check settles: read it before taking it as 'this form does not work'" ;;
   esac
-  fact "$key" FAIL "the account could not read $url within ${PROPAGATION_SECONDS}s, which its resource.name clause has to cover: the reports job reads the records it summarises, and a listing half that cannot read an object is half a grant (gcloud said: $(first_line "$LAST_ERROR"))${extra}"
+  fact "$key" FAIL "the account could not read $url within ${PROPAGATION_SECONDS}s, which its resource.name clause has to cover: the reports job reads the records it summarises, and a listing half that cannot read an object is half a grant (gcloud said: $(gcloud_said "$LAST_ERROR"))${extra}"
   return 1
 }
 
@@ -658,15 +820,15 @@ must_refuse() {
   local key=$1 what=$2 perm=$3 out named
   shift 3
   if out=$("$@" 2>&1); then
-    fact "$key" FAIL "$what was ALLOWED to the account under this form, which is wider than R12's two prefixes: a grant that opens it is not the grant the reports job is written against (what came back: $(first_line "$out"))"
+    fact "$key" FAIL "$what was ALLOWED to the account under this form, which is wider than R12's two prefixes: a grant that opens it is not the grant the reports job is written against (what came back: $(gcloud_said "$out"))"
     return 1
   fi
   named=$(missing_permission "$out")
   case "$named" in
   *"$perm"*) ;;
-  *) stop "$what could not be read as a refusal: the call failed without naming $perm, the permission the clause this criterion is about would have carried, so it is a call that did not answer — an expired session, a 5xx gcloud did not retry, a killed request or a denial naming another permission all read like this, and none of them is a reading about this form's clause (gcloud said: $(first_line "$out")). The form is neither PASSing nor failing here: nothing was measured under it, so run the check again" ;;
+  *) stop "$what could not be read as a refusal: the call failed without naming $perm, the permission the clause this criterion is about would have carried, so it is a call that did not answer — an expired session, a 5xx gcloud did not retry, a killed request or a denial naming another permission all read like this, and none of them is a reading about this form's clause (gcloud said: $(gcloud_said "$out")). The form is neither PASSing nor failing here: nothing was measured under it, so run the check again" ;;
   esac
-  fact "$key" PASS "$what is refused to the account under this form, and refused for the reason the criterion is about — the denial names $perm (gcloud: $(first_line "$out"))"
+  fact "$key" PASS "$what is refused to the account under this form, and refused for the reason the criterion is about — the denial names $perm (gcloud: $(gcloud_said "$out"))"
   return 0
 }
 
@@ -733,7 +895,9 @@ try_form() {
   # and the four refusals come after, so a "refused" reading cannot be a grant
   # that has not arrived yet.
   if ! must_list "$how-lists-runs" "gs://$B/runs/$SLUG/" "runs/$SLUG/"; then ok=no; else held=yes; fi
-  if ! must_list "$how-lists-reports" "gs://$B/reports/" "reports/$SLUG/"; then ok=no; else held=yes; fi
+  # The reports criterion is the one row whose failure has two readings that look
+  # alike, so it carries the role its own binding would have: see must_list.
+  if ! must_list "$how-lists-reports" "gs://$B/reports/" "reports/$SLUG/" roles/storage.objectUser; then ok=no; else held=yes; fi
   if ! must_read "$how-reads-runs" "gs://$B/$RUN_OBJ"; then ok=no; else held=yes; fi
   if [ "$held" = yes ]; then
     # The root listing is the one the two prefixes must NOT reach: a listing of
@@ -830,6 +994,7 @@ step_verdict() {
 print_plan() {
   say "dry run: NOTHING below was run. A real run would run, in this order:"
   say "  [network, reads] gcloud storage ls --project=$P gs://$B/ — the bucket, with YOUR identity (a bucket that cannot be reached is a stop)"
+  say "  [network, reads] gcloud iam service-accounts list --project=$P --filter=email=<the account this run drew> --format=value(email) — the account guard, and again in the Restore: presence is read from THIS and never from a describe, which IAM answers with PERMISSION_DENIED for an account that is not there"
   say "  [network, writes] gcloud iam service-accounts create ${SA_ID%????}XXXX --project=$P --display-name='Check 340 throwaway (safe to delete)' — the suffix is drawn per run"
   say "  [network, writes] gcloud iam service-accounts add-iam-policy-binding $SA_EMAIL --project=$P --member=user:<you> --role=roles/iam.serviceAccountTokenCreator"
   say "  [local, writes] the four seeded files in \$SCRATCH"
@@ -839,6 +1004,7 @@ print_plan() {
   say "      gcloud storage buckets add-iam-policy-binding gs://$B --project=$P --member=serviceAccount:$SA_EMAIL --role=roles/storage.objectUser --condition-from-file=<the reports/ condition>"
   say "    the first carrying $(clause_read runs) || $(clause_list "runs/") and the second $(clause_read reports) || $(clause_list "reports/") under the relative form, and the same two with projects/_/buckets/$B/objects/runs/ and .../objects/reports/ under the full one"
   say "  [network, reads, as the account] gcloud storage ls --recursive --impersonate-service-account=$SA_EMAIL --project=$P gs://$B/runs/$SLUG/ and gs://$B/reports/ (must list, and the listing must name the seeded object; retried for up to ${PROPAGATION_SECONDS}s for the grant to take effect); gcloud storage cat of the seeded runs/ object (must read, and retried the same way); then, only if one of those three held, the four refusals: ls gs://$B/, cat the seeded tokens/ object, ls gs://$B/tokens/ and ls gs://$B/cache/ (each has to be REFUSED, and refused by a denial naming storage.objects.list or storage.objects.get as the clause it is about would carry; a call that did not answer stops the run instead of counting as one of them)"
+  say "  [network, reads, with YOUR identity] whenever the reports/ listing fails: gcloud storage buckets get-iam-policy gs://$B --project=$P, to say whether the reports binding ($SA_EMAIL under roles/storage.objectUser) was in the bucket policy at that moment — a clause that does not match the request and a binding that never landed are two different failures and the row has to say which one it is"
   say "  [network, writes] gcloud storage buckets remove-iam-policy-binding ... --all for both roles, between the two forms and again in the Restore"
   say "  [network, reads, as the account] between the two forms only: ls --impersonate-service-account=$SA_EMAIL --project=$P gs://$B/runs/$SLUG/, retried until the account is REFUSED it by a denial naming storage.objects.list, the permission the removed clause carried (the removal has taken effect, so the next form cannot read through the earlier clause), or for up to ${PROPAGATION_SECONDS}s — a failure that names no permission, or another one, is a call that did not answer and is retried like a listing that still succeeds, and a wait that never sees the denial is a stop rather than a verdict"
   say "and its Restore (also from the exit trap) would run:"
@@ -846,7 +1012,7 @@ print_plan() {
   say "  [network, deletes] gcloud storage buckets remove-iam-policy-binding gs://$B --member=serviceAccount:$SA_EMAIL --role=roles/storage.objectViewer --all, and the same for roles/storage.objectUser"
   say "  [network, deletes] gcloud iam service-accounts remove-iam-policy-binding $SA_EMAIL --project=$P --member=user:<you> --role=roles/iam.serviceAccountTokenCreator --all"
   say "  [network, deletes] gcloud iam service-accounts delete $SA_EMAIL --project=$P --quiet"
-  say "  [network, reads] the four lists, and — whenever this run made an account — the bucket policy and the account describe, that read it all back as gone (only an empty listing and a NOT_FOUND count as gone; any other error is a FAILed Restore row, not a silent pass)"
+  say "  [network, reads] the four lists, and — whenever this run made an account — the bucket policy and the account list, that read it all back as gone (only an empty listing and the list answering no email count as gone; any other error is a FAILed Restore row, not a silent pass)"
   say "Nothing was created, granted, written or deleted: this dry run made no gcloud call at all."
 }
 

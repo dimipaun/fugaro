@@ -1,8 +1,6 @@
 package runner
 
 import (
-	"slices"
-
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
@@ -50,36 +48,4 @@ func reportCopy(rec *runstore.Record, status runstore.Status, outcome runstore.O
 	c := *rec
 	writeEnd(&c, status, outcome, class, reason)
 	return c
-}
-
-// haltClass is which family a report groups a halt by, read from the halt's
-// own closed reason. It does not replace the reason and is not a copy of it:
-// the status says halted, the halt says which cap, and the class says which
-// family of cause that cap is. The governance arm reads the one slice the
-// checkpoint schema and the digest are pinned to, so a tripwire added there is
-// classed without a second list to keep in step.
-//
-// Two of the reasons carry "budget" in their name and are not in the budget
-// family, which is the design's §3 rows and not a reading of this switch:
-// halted_budget is the dollar and token caps, whose remedy is "once the cap is
-// raised", while budget_unavailable and budget_token_expired are the budget
-// database or the credential refusing — halted_credential's own definition,
-// "no credential became usable, or the budget database refused", kind infra,
-// its remedy an account that answers again (for the expired token, a relaunch
-// after the wait), never a cap raised.
-func haltClass(reason runstore.HaltReason) failure.Class {
-	switch reason {
-	case runstore.HaltKillSwitch:
-		return failure.HaltedKillSwitch
-	case runstore.HaltRunCap, runstore.HaltRepoDailyCap, runstore.HaltGlobalDailyCap,
-		runstore.HaltNoCap, runstore.HaltTokenCap:
-		return failure.HaltedBudget
-	case runstore.HaltNoCredential, runstore.HaltCredsRulesDenied,
-		runstore.HaltBudgetUnavailable, runstore.HaltBudgetTokenExpired:
-		return failure.HaltedCredential
-	}
-	if slices.Contains(runstore.GovernanceHaltReasons(), reason) {
-		return failure.HaltedGovernance
-	}
-	return failure.Unclassified
 }

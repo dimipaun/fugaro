@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -13,9 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
@@ -108,6 +111,27 @@ func audits(t *testing.T, r *initRig) []managedmode.AuditRecord {
 	return got
 }
 
+// leftFor is one stage's left-for-you as it was printed, "" when it printed
+// none: the "left for you (<stage>, <kind>): <text>" line and the indented
+// command lines under it, joined by newlines. The shape is internal/initflow's
+// (loop.left and Loop.finish), so a test that reads it here is reading what
+// the person does.
+func leftFor(got, stage string, kind initflow.LeftKind) string {
+	lines := strings.Split(got, "\n")
+	head := "left for you (" + stage + ", " + string(kind) + "): "
+	for i, line := range lines {
+		if !strings.HasPrefix(line, head) {
+			continue
+		}
+		block := []string{line}
+		for j := i + 1; j < len(lines) && strings.HasPrefix(lines[j], "    "); j++ {
+			block = append(block, strings.TrimSpace(lines[j]))
+		}
+		return strings.Join(block, "\n")
+	}
+	return ""
+}
+
 // M1's red step. A managed project, a coding agent's session, and a plan that
 // removes an address the owner's list does not name: today the run is refused
 // before the stage is reached — the session reads the coding agent's own
@@ -118,6 +142,14 @@ func audits(t *testing.T, r *initRig) []managedmode.AuditRecord {
 // what the session reads, the guard's own managed advice is not (a session
 // that read that one would be told to hand the step over rather than what
 // about the plan was refused), and nothing was applied.
+//
+// And the left-for-you is the owner's own command rather than the plan
+// refusal's (gateDeleteLeft, spec §4.3's "For the owner"): this plan removes an
+// object --allow-delete admits, so the refusal leaves the command the owner has
+// always run, with the address the gate refused, and neither "a person files an
+// issue" nor a prompt — the first sends them to work that does not close the
+// loop the refusal opened, and the second asks for a typing no refusal reaches
+// past.
 func TestUpdateManagedStageRefusesARemoval(t *testing.T) {
 	const a = "user:a@example.com"
 	address := `module.installation.google_storage_bucket_iam_member.state["` + a + `"]`
@@ -153,6 +185,448 @@ func TestUpdateManagedStageRefusesARemoval(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(recs[0].Rules, "\n"), address) {
 		t.Errorf("the record does not name the rule that refused, so an owner cannot audit it: %+v", recs[0])
+	}
+
+	left := leftFor(got, initflow.Installation, initflow.LeftCommand)
+	if left == "" {
+		t.Fatalf("a removal the owner's own --allow-delete admits left them no command:\n%s", got)
+	}
+	want := "fugaro update --allow-delete '" + address + "'"
+	if !strings.Contains(left, want) {
+		t.Errorf("the left-for-you is not the owner's own command (%q):\n%s", want, left)
+	}
+	for _, never := range []string{"a person files an issue", "type the project's name"} {
+		if strings.Contains(left, never) {
+			t.Errorf("the removal's left-for-you says %q, which is not what a removal the owner can approve leaves them:\n%s", never, left)
+		}
+	}
+	// This fixture's before view names no object of its own (an IAM member's
+	// view is role, member and bucket), and the identity is printed with that
+	// said rather than with a cut or an invented one.
+	if !strings.Contains(left, "does not identify") {
+		t.Errorf("the left-for-you does not say what the plan's before view identifies:\n%s", left)
+	}
+}
+
+// uploadsBucket is the ordinary managed bucket the tests about a removal the
+// owner's own flag admits remove: an ordinary bucket and not one of the three
+// the cover's delete rule refuses by name. That matters to what the tests can
+// claim — the by-name rule is the GATE's, and a run that passes --allow-delete
+// shapes the installation, so the gate stands down for it and the step keeps
+// its own guard, which compares the address and nothing else (tf.Guard) — so a
+// fixture under that rule would witness nothing about either.
+const uploadsBucket = "module.installation.google_storage_bucket.uploads"
+
+// uploadsBucketRemoval is the plan that removes it, with the before view the
+// module writes — which is what identifies the object (tf.RemoveIdentityText).
+func uploadsBucketRemoval() planChange {
+	return planChange{"address": uploadsBucket, "type": "google_storage_bucket",
+		"change": map[string]any{"actions": []string{"delete"}, "after": nil,
+			"before": map[string]any{"id": "fugaro-uploads-" + initProject, "name": "fugaro-uploads-" + initProject,
+				"project": initProject, "time_created": "2026-01-02T03:04:05.678Z"}}}
+}
+
+// The identity half of the same sentence: a removal whose before view DOES
+// identify the object prints that identity (spec §4.3: "where the refusal is a
+// delete the owner did not approve, it prints the identity the plan's before
+// view carries ... byte for byte"), which is what tells the owner which object
+// they are approving.
+//
+// The fixture is the ordinary managed bucket above and not one of the three
+// the cover's delete rule refuses by name, for the reason said there.
+func TestUpdateManagedRemovalLeavesTheIdentityThePlanCarries(t *testing.T) {
+	ch := uploadsBucketRemoval()
+	if !identifies(t, ch) {
+		t.Fatalf("the fixture's before view identifies nothing (%q): this test would then be about a sentence that says so", identityOf(t, ch))
+	}
+	r := updateManagedRig(t)
+	updating(t, r)
+	r.setPlan(t, ch)
+
+	got, err := updateRun(t, r, "update", "--yes")
+	if err == nil {
+		t.Fatalf("the run applied a plan that removes a bucket:\n%s", got)
+	}
+	if n := len(r.ran(t, "apply")); n != 0 {
+		t.Errorf("%d terraform apply(s) ran: the gate refused the plan", n)
+	}
+	left := leftFor(got, initflow.Installation, initflow.LeftCommand)
+	if left == "" {
+		t.Fatalf("the refused removal left the owner no command:\n%s", got)
+	}
+	if want := "fugaro update --allow-delete " + uploadsBucket; !strings.Contains(left, want) {
+		t.Errorf("the left-for-you does not carry the owner's command (%q):\n%s", want, left)
+	}
+	if want := identityOf(t, ch); !strings.Contains(left, want) {
+		t.Errorf("the left-for-you does not print the identity the plan's before view carries (%q):\n%s", want, left)
+	}
+}
+
+// The boundary of the shape above: a removal no list clears is nobody's, and
+// the left-for-you must not offer a command that cannot help. The guard refuses
+// an object the plan moves from another address whatever --allow-delete says
+// (tf.Listable leaves it out for exactly that reason), so a refusal whose only
+// removal is one of those keeps the plan refusal's text and no command — the
+// same rule that keeps the stage's prompt off a refused step, and the reason
+// gateDeleteLeft asks the plan's own addresses rather than the error's words.
+func TestUpdateManagedRemovalNoFlagAdmitsLeavesNoCommand(t *testing.T) {
+	const moved = "module.installation.google_storage_bucket.old_uploads"
+	ch := planChange{"address": uploadsBucket, "type": "google_storage_bucket",
+		"previous_address": moved,
+		"change": map[string]any{"actions": []string{"delete"}, "after": nil,
+			"before": map[string]any{"id": "fugaro-uploads-" + initProject, "name": "fugaro-uploads-" + initProject,
+				"project": initProject, "time_created": "2026-01-02T03:04:05.678Z"}}}
+	r := updateManagedRig(t)
+	updating(t, r)
+	r.setPlan(t, ch)
+
+	got, err := updateRun(t, r, "update", "--yes")
+	if err == nil {
+		t.Fatalf("the run applied a plan that removes a moved object:\n%s", got)
+	}
+	if n := len(r.ran(t, "apply")); n != 0 {
+		t.Errorf("%d terraform apply(s) ran: the gate refused the plan", n)
+	}
+	if left := leftFor(got, initflow.Installation, initflow.LeftCommand); left != "" {
+		t.Errorf("a removal no flag admits left the owner a command (%q): the guard refuses a moved object whatever --allow-delete says, so the command could not help:\n%s", left, got)
+	}
+	refused := leftFor(got, initflow.Installation, initflow.LeftRefused)
+	if refused == "" {
+		t.Fatalf("the refused step left nothing at all:\n%s", got)
+	}
+	if !strings.Contains(refused, "a person files an issue") {
+		t.Errorf("the refusal is not the plan's own:\n%s", refused)
+	}
+	if strings.Contains(got, "--allow-delete") {
+		t.Errorf("the run offers --allow-delete for a removal it does not reach:\n%s", got)
+	}
+}
+
+// outsiderReplace is one change that is a removal and a creation at once, at an
+// address the flag clears, whose create half grants the whole world. It is the
+// plan the addresses cannot tell from a removal: the cover refuses a change
+// carrying a delete as ONE fact ("actions delete, create") and never looks
+// inside it (tf.Cover.NotCovered), so this plan's create half is the one part
+// of it no rule of the gate judged when the gate refused the plan — and the
+// flag, which stands the gate down for the run that passes it, would apply that
+// grant with nothing left to read it.
+func outsiderReplace() planChange {
+	const member = "allUsers"
+	return planChange{
+		"address": `module.installation.google_storage_bucket_iam_member.runs_reader["` + member + `"]`,
+		"type":    "google_storage_bucket_iam_member",
+		"change": map[string]any{
+			"actions": []string{"delete", "create"},
+			"before": map[string]any{"role": "roles/storage.objectViewer", "member": member,
+				"bucket": "fugaro-runs-" + initProject},
+			"after": map[string]any{"role": "roles/storage.objectAdmin", "member": member,
+				"bucket": "fugaro-runs-" + initProject, "condition": []any{}},
+		},
+	}
+}
+
+// The other boundary, and the one a plan carrying two kinds of refusal reaches:
+// the command gateDeleteLeft offers is the delete rule's own way past the delete
+// rule, and --allow-delete shapes the installation, so the run that passes it
+// stands the WHOLE gate down (initRun.gateUnderway) and nothing reads the plan
+// again. That is right while the delete rule is the only thing that refused, and
+// it is how a plan the cover or the cost list refused as well would be applied
+// with no rule left to read it — an outsider's grant, a GPU the cost list
+// blocks — with the owner told the removal was theirs alone.
+//
+// The four plans are that one shape from four sides: a bucket this installation
+// removes (the guard's refusal, which --allow-delete does reach) beside a change
+// no list reaches at all, one address that is both — the job below replaced,
+// where the guard refuses the removal and the cost list the GPU its create half
+// states, so the address is on the list the flag clears and the flag would still
+// apply what the cost list blocked — and a replace whose CREATE half no rule
+// read, which the flag would apply as it stands (a grant to allUsers). The
+// left-for-you has to be the plan refusal's, with no command, and nothing may be
+// applied. The mutation this is for is a gateDeleteLeft that asks what the
+// plan's addresses are and never which rule refused, and one that treats a
+// replace as the pure removal its address looks like: every arm hands the owner
+// a command that applies the other refusal.
+func TestUpdateManagedMixedRefusalsLeaveTheRemovalNoCommand(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// plan is the whole plan — the removal and the change no delete list
+		// reaches, or the one change that is both — and names is the fact the
+		// refusal has to be about: a mixed plan that was refused, or applied, for
+		// any other reason would leave these assertions green.
+		plan  []planChange
+		names string
+	}{
+		{"a grant the cover refuses beside the removal",
+			[]planChange{uploadsBucketRemoval(), grantChange("runs_outsider", "user:a@example.com", "roles/storage.objectViewer", "create")}, "user:a@example.com"},
+		{"a job the cost list blocks beside the removal", []planChange{uploadsBucketRemoval(), gpuJobPlan()}, "nvidia-l4"},
+		{"a replace the cost list blocks at the removal's own address", []planChange{gpuJobReplace()}, "nvidia-l4"},
+		{"a replace whose create half grants the world", []planChange{outsiderReplace()}, "allUsers"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := updateManagedRig(t)
+			updating(t, r)
+			r.setPlan(t, tc.plan...)
+
+			got, err := updateRun(t, r, "update", "--yes")
+			if err == nil {
+				t.Fatalf("the run applied a plan a managed project refuses:\n%s", got)
+			}
+			if n := len(r.ran(t, "apply")); n != 0 {
+				t.Errorf("%d terraform apply(s) ran: the gate refused the plan and nothing may be applied", n)
+			}
+			if !strings.Contains(got, tc.names) {
+				t.Errorf("the refusal does not name %s, so it is not this arm's refusal:\n%s", tc.names, got)
+			}
+			if left := leftFor(got, initflow.Installation, initflow.LeftCommand); left != "" {
+				t.Errorf("a plan the delete rule did not refuse alone left the owner the removal's command (%q): --allow-delete stands the whole gate down, so a run that passed it would apply %s with no rule left to read it:\n%s", left, tc.names, got)
+			}
+			refused := leftFor(got, initflow.Installation, initflow.LeftRefused)
+			if refused == "" {
+				t.Fatalf("the refused step left nothing at all:\n%s", got)
+			}
+			if !strings.Contains(refused, "a person files an issue") {
+				t.Errorf("the refusal is not the plan's own:\n%s", refused)
+			}
+			if strings.Contains(got, "--allow-delete") {
+				t.Errorf("the run offers --allow-delete for a plan another rule refused as well:\n%s", got)
+			}
+		})
+	}
+}
+
+// The other side of the create-half question, so that it is not read as "a
+// replace is never the owner's": a replace whose create half the cover admits
+// is a removal --allow-delete clears like any other, and the command stays. The
+// mutation this is for is the check answering too much — refusing the command
+// for every change carrying a create, which is what asking the cover about the
+// whole change rather than about what it creates would do (the cover refuses
+// that change for its delete half, which is the half the flag clears).
+func TestUpdateManagedCoveredReplaceLeavesTheCommand(t *testing.T) {
+	ch := coveredJobReplace()
+	r := updateManagedRig(t)
+	updating(t, r)
+	r.setPlan(t, ch)
+
+	got, err := updateRun(t, r, "update", "--yes")
+	if err == nil {
+		t.Fatalf("the run applied a plan that replaces a job:\n%s", got)
+	}
+	if n := len(r.ran(t, "apply")); n != 0 {
+		t.Errorf("%d terraform apply(s) ran: the gate refused the plan", n)
+	}
+	left := leftFor(got, initflow.Installation, initflow.LeftCommand)
+	if left == "" {
+		t.Fatalf("a replace whose create half the cover admits left the owner no command:\n%s", got)
+	}
+	if want := "fugaro update --allow-delete " + ch["address"].(string); !strings.Contains(left, want) {
+		t.Errorf("the left-for-you does not carry the owner's command (%q):\n%s", want, left)
+	}
+}
+
+// The third question gateDeleteLeft asks, and the one neither the addresses nor
+// the verdict can answer: a plan whose removals are ALL on the list the flag
+// clears can still be a plan the owner's own run refuses, because the run that
+// passes --allow-delete asks the step's own guard (initRun.guard) and that guard
+// refuses a project job whatever any list says (infra.RefuseProjectJobDeletes:
+// the job's deletion protection would make the apply remove its launchers'
+// grants and then fail). A plan that replaces the job and removes its launcher
+// grant is exactly that shape — both addresses are removals tf.Listable names,
+// so the verdict is removals-only and the flag is offered for both — and the
+// second run below is the witness that the command could not help: the owner
+// runs it with both flags and their own run refuses it and applies nothing.
+//
+// The job's create half is the one the cover admits (coveredJobReplace), so
+// nothing but the project-job rule stands between this plan and the command:
+// the create half is judged and passes, which is what keeps this the pin on
+// that rule rather than on the create-half question beside it.
+//
+// Mutation (run, restore): drop infra.RefuseProjectJobDeletes from
+// gateDeleteLeft — the left-for-you offers "fugaro update --allow-delete
+// <grant> --allow-delete <job>".
+func TestUpdateManagedProjectJobRemovalLeavesNoCommand(t *testing.T) {
+	mod := `module.project["` + gcp.ProjectJobName("standard", "github", "") + `"]`
+	grant := mod + `.google_cloud_run_v2_job_iam_member.launcher["user:launcher@example.com"]`
+	job := mod + ".google_cloud_run_v2_job.this"
+	removal := func(address, typ string, actions ...string) planChange {
+		return planChange{"address": address, "type": typ, "mode": "managed",
+			"change": map[string]any{"actions": actions, "before": map[string]any{}, "after": map[string]any{}}}
+	}
+	jobReplace := coveredJobReplace()
+	jobReplace["address"] = job
+	jobAndGrant := func() []planChange {
+		return []planChange{removal(grant, "google_cloud_run_v2_job_iam_member", "delete"), jobReplace}
+	}
+	r := updateManagedRig(t)
+	updating(t, r)
+	r.setPlan(t, jobAndGrant()...)
+
+	got, err := updateRun(t, r, "update", "--yes")
+	if err == nil {
+		t.Fatalf("the run applied a plan that replaces a project job:\n%s", got)
+	}
+	if n := len(r.ran(t, "apply")); n != 0 {
+		t.Errorf("%d terraform apply(s) ran: the gate refused the plan and nothing may be applied", n)
+	}
+	if left := leftFor(got, initflow.Installation, initflow.LeftCommand); left != "" {
+		t.Errorf("a plan the owner's own run refuses left them a command (%q): the flag clears both removals and the run that passes it still refuses the project job:\n%s", left, got)
+	}
+	refused := leftFor(got, initflow.Installation, initflow.LeftRefused)
+	if refused == "" {
+		t.Fatalf("the refused step left nothing at all:\n%s", got)
+	}
+	if !strings.Contains(refused, "a person files an issue") {
+		t.Errorf("the refusal is not the plan's own:\n%s", refused)
+	}
+	if strings.Contains(got, "--allow-delete") {
+		t.Errorf("the run offers --allow-delete for a plan its own guard refuses:\n%s", got)
+	}
+
+	// And what the offered command would have done, which is the whole reason
+	// the questions come before it: the owner's own run with both flags
+	// refuses the same plan, with the project-job sentence, and applies nothing.
+	r2 := updateManagedRig(t)
+	updating(t, r2)
+	r2.setPlan(t, jobAndGrant()...)
+	got2, err2 := updateRun(t, r2, "update", "--yes", "--allow-delete", grant, "--allow-delete", job)
+	if err2 == nil || !strings.Contains(got2, "retiring a project job is not supported yet") {
+		t.Errorf("the owner's own run with the flags the refusal would have offered did not refuse the project job (err %v):\n%s", err2, got2)
+	}
+	if n := len(r2.ran(t, "apply")); n != 0 {
+		t.Errorf("%d terraform apply(s) ran in the run that passed the flag", n)
+	}
+}
+
+// admittingCover is the cover the direct gateRefused tests hand the gate: a
+// step's cover that refuses no plan. Those tests are about the questions the
+// plan, the verdict and the step's own guard answer, and a cover that refused
+// the document would answer the refusal for a question that is not theirs —
+// the create half of a replace has its arm in
+// TestUpdateManagedMixedRefusalsLeaveTheRemovalNoCommand.
+func admittingCover() managedmode.Cover {
+	return stepCover{notCovered: func(*tf.Plan, []tf.ImportKey) []string { return nil }}
+}
+
+// The pair's other half, asked of a document the gate's own verdict would carry
+// a second refusal for: tf.Guard is the step's own guard too (initRun.guard runs
+// it beside the project-job rule), so a plan it refuses is not one the owner's
+// run would apply either, and the command must not be offered for it however
+// the verdict's lines read. The document below carries the removal the flag
+// admits beside a change no list clears (tf.Listable leaves a change with no
+// actions out for exactly that reason), and the verdict names only the removal —
+// the state the gate itself would not produce, which is what makes this the
+// second belt and not the first: what is pinned is that gateDeleteLeft answers
+// about the plan it is handed rather than about the sentence it was given.
+//
+// Mutation (run, restore): drop tf.Guard from gateDeleteLeft — the refusal
+// carries the removal's command.
+func TestGateDeleteLeftAsksTheGuardAboutTheWholePlan(t *testing.T) {
+	const removal = "module.installation.google_storage_bucket.uploads"
+	doc := []byte(`{"resource_changes":[` +
+		`{"address":"` + removal + `","type":"google_storage_bucket","change":{"actions":["delete"],` +
+		`"before":{"id":"b","name":"b","project":"p"}}},` +
+		`{"address":"module.installation.google_cloud_run_v2_job.runner","type":"google_cloud_run_v2_job",` +
+		`"change":{"actions":[]}}]}`)
+	verdict := managedmode.Verdict{Refusals: []managedmode.Refusal{
+		{Gate: "guard", Address: removal, Why: "delete"},
+		{Gate: "cover", Address: removal, Why: "actions delete"},
+	}}
+	got := (&initRun{o: &initOptions{door: updateDoor.name}}).gateRefused(
+		fmt.Errorf("%w: %s", managedmode.ErrNotConverged, managedmode.NotConverged), doc, verdict, admittingCover(), nil)
+	if got.Refusal != initflow.GateRefusedPlan {
+		t.Errorf("gateRefused().Refusal = %v, want the plan refusal: the plan carries a change the guard the owner's run asks refuses", got.Refusal)
+	}
+	if len(got.Owner.Commands) != 0 || got.Owner.Text != "" {
+		t.Errorf("a plan the guard refuses whole left the owner a command: %+v", got.Owner)
+	}
+}
+
+// And the sentinel half of the same decision, which the end-to-end tests cannot
+// reach: a document the gate never judged is a failure of the RUN, so even a
+// plan full of deletes must not be answered with the owner's command when the
+// error says the gate reached no verdict. gateRefused is where the two
+// questions meet, and this is the pin on their order. The verdict is the
+// end-to-end tests' own in every arm that carries one — the guard's refusal
+// alone, which the command is offered for, and the same removal beside a
+// refusal no list reaches, which it is not.
+func TestGateRefusedAsksTheDeleteQuestionOnlyOfARefusal(t *testing.T) {
+	doc := []byte(`{"resource_changes":[{"address":"module.installation.google_storage_bucket.uploads",` +
+		`"type":"google_storage_bucket","change":{"actions":["delete"],"before":{"id":"b","name":"b","project":"p"}}}]}`)
+	// "guard" and "cover" are internal/managed's own words for the two halves of
+	// the gate (its guardGate and coverGate); the constants are that package's,
+	// which is why the strings are literals here, as they are in the record the
+	// owner reads.
+	removal := managedmode.Refusal{Gate: "guard", Address: "module.installation.google_storage_bucket.uploads", Why: "delete"}
+	for _, tc := range []struct {
+		name    string
+		err     error
+		verdict managedmode.Verdict
+		want    initflow.GateRefusal
+	}{
+		{"a plan the delete rule alone refused", fmt.Errorf("%w: %s", managedmode.ErrNotConverged, managedmode.NotConverged),
+			managedmode.Verdict{Refusals: []managedmode.Refusal{removal}}, initflow.GateRefusedDelete},
+		{"a plan the cover refused beside the removal", fmt.Errorf("%w: %s", managedmode.ErrNotConverged, managedmode.NotConverged),
+			managedmode.Verdict{Refusals: []managedmode.Refusal{removal, {Gate: "cover", Address: "module.installation.google_storage_bucket_iam_member.runs_outsider[\"user:a@example.com\"]", Why: "a member the review did not list"}}}, initflow.GateRefusedPlan},
+		{"a plan the cost list refused beside the removal", fmt.Errorf("%w: %s", managedmode.ErrNotConverged, managedmode.NotConverged),
+			managedmode.Verdict{Refusals: []managedmode.Refusal{removal, {Gate: "cost", Why: "nvidia-l4"}}}, initflow.GateRefusedPlan},
+		// The removal's own address, refused by the cost list as well: a replace
+		// is one change, and the flag would clear the address and apply the
+		// create half the cost list blocked.
+		{"a plan the cost list refused at the removal's own address", fmt.Errorf("%w: %s", managedmode.ErrNotConverged, managedmode.NotConverged),
+			managedmode.Verdict{Refusals: []managedmode.Refusal{removal, {Gate: "cover", Address: removal.Address, Why: "actions delete, create"}, {Gate: "cost", Address: removal.Address, Why: "nvidia-l4"}}}, initflow.GateRefusedPlan},
+		{"a mark that could not be read again", errors.New("the creation fact of p could not be read a second time, immediately before the write"),
+			managedmode.Verdict{Refusals: []managedmode.Refusal{removal}}, initflow.GateRefusedUnread},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := (&initRun{o: &initOptions{door: updateDoor.name}}).gateRefused(tc.err, doc, tc.verdict, admittingCover(), nil)
+			if got.Refusal != tc.want {
+				t.Errorf("gateRefused(%v).Refusal = %v, want %v", tc.err, got.Refusal, tc.want)
+			}
+			switch tc.want {
+			case initflow.GateRefusedDelete:
+				if len(got.Owner.Commands) == 0 {
+					t.Error("a refused removal carries no command")
+				}
+			default:
+				if len(got.Owner.Commands) != 0 || got.Owner.Text != "" {
+					t.Errorf("a step the gate reached no verdict on carries the removal's command: %+v", got.Owner)
+				}
+			}
+		})
+	}
+}
+
+// gateRefusalOf's two answers are two opposite sentences — the plan refusal
+// says the plan is outside Fugaro's own tables and a person files an issue, the
+// unjudged one says the run failed and nothing is missing from any table — and
+// the tests above read only what the two SHARE ("Nothing here is yours to type
+// or to run"). So a classifier that collapsed to either answer would leave the
+// whole update family green, and this is the pin on the decision itself: the
+// sentence a refusal prints is internal/initflow's (its own table test drives
+// both doors), and what each error value means is this command's.
+func TestGateRefusalOfTellsAPlanRefusalFromAnUnjudgedStep(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want initflow.GateRefusal
+	}{
+		{"the gate refused the document",
+			fmt.Errorf("%w: %s", managedmode.ErrNotConverged, managedmode.NotConverged),
+			initflow.GateRefusedPlan},
+		{"the refusal and the record's own failure beside it",
+			fmt.Errorf("%w: %w", fmt.Errorf("%w: x", managedmode.ErrNotConverged), errors.New("the record could not be written")),
+			initflow.GateRefusedPlan},
+		{"the creation fact could not be read a second time",
+			errors.New("the creation fact of p could not be read a second time, immediately before the write"),
+			initflow.GateRefusedUnread},
+		{"the document nobody could produce",
+			errors.New("reading the saved plan: exit status 1"),
+			initflow.GateRefusedUnread},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := gateRefusalOf(tc.err); got != tc.want {
+				t.Errorf("gateRefusalOf(%v) = %v, want %v: the two answers are opposite promises, so one of them is being made about the other's refusal", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -455,6 +929,56 @@ func TestUpdateRevokedMidRunKeepsTheConfirmations(t *testing.T) {
 	}
 }
 
+// gpuJobPlan is what the cost list refuses and the cover reads nothing of: a
+// job the cover admits — one container, an image of this run's own registry, no
+// command, which is the workflow jobs' own shape — with a GPU, which is the
+// cost list's (managedCostGPU).
+func gpuJobPlan() planChange { return jobPlan("nvidia-l4") }
+
+// jobPlan is the job both fixtures are: one container, an image of this run's
+// own registry, no command, and the accelerator the caller names — none when it
+// names none, which is the shape the cover admits and the cost list fires
+// nothing for.
+func jobPlan(accelerator string) planChange {
+	inner := map[string]any{"containers": []any{map[string]any{"image": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-runner:0.2.0"}}}
+	if accelerator != "" {
+		inner["node_selector"] = []any{map[string]any{"accelerator": accelerator}}
+	}
+	return planChange{
+		"address": "module.installation.google_cloud_run_v2_job.runner",
+		"type":    "google_cloud_run_v2_job",
+		// mode is not decoration: managedCostBills is asked only of a managed
+		// change (tf.ManagedCosts skips every other mode), so a change without
+		// it is a plan the cost list reads as nothing to check and admits.
+		"mode": "managed",
+		"change": map[string]any{"actions": []string{"create"}, "before": map[string]any{}, "after": map[string]any{
+			"template": []any{map[string]any{"template": []any{inner}}},
+		}},
+	}
+}
+
+// gpuJobReplace is the same job as one change that is a removal and a creation
+// at once: the address the guard refuses for its delete half (--allow-delete
+// clears it, tf.Listable) and the cost list refuses for the GPU its create half
+// states. It is the one shape the addresses alone cannot tell apart from a
+// removal the flag admits, and the reason gateDeleteLeft asks the verdict which
+// rule wrote the line as well.
+func gpuJobReplace() planChange {
+	ch := gpuJobPlan()
+	ch["change"].(map[string]any)["actions"] = []string{"delete", "create"}
+	return ch
+}
+
+// coveredJobReplace is the same replace without the accelerator: a removal the
+// flag clears whose create half the cover admits and the cost list fires
+// nothing for. It is the shape in which the flag IS offered for a replace,
+// because what the same change creates is judged like any other create.
+func coveredJobReplace() planChange {
+	ch := jobPlan("")
+	ch["change"].(map[string]any)["actions"] = []string{"delete", "create"}
+	return ch
+}
+
 // The gate's refusals are refusals in the owner's own terminal too, and the two
 // a person's run can reach are the two halves of what it judges: a plan the
 // cover refuses (a grant to somebody the review did not list) and a plan the
@@ -471,24 +995,7 @@ func TestUpdateRevokedMidRunKeepsTheConfirmations(t *testing.T) {
 // is outside the cover, so the ordinary path would ask its own typed name on
 // the way down and stop there anyway.
 func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
-	const job = "module.installation.google_cloud_run_v2_job.runner"
-	// A job the cover admits — one container, an image of this run's own
-	// registry, no command, which is the workflow jobs' own shape — and a GPU,
-	// which is the cost list's (managedCostGPU) and nothing the cover reads.
-	costPlan := planChange{
-		"address": job,
-		"type":    "google_cloud_run_v2_job",
-		// mode is not decoration: managedCostBills is asked only of a managed
-		// change (tf.ManagedCosts skips every other mode), so a change without
-		// it is a plan the cost list reads as nothing to check and admits.
-		"mode": "managed",
-		"change": map[string]any{"actions": []string{"create"}, "before": map[string]any{}, "after": map[string]any{
-			"template": []any{map[string]any{"template": []any{map[string]any{
-				"containers":    []any{map[string]any{"image": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-runner:0.2.0"}},
-				"node_selector": []any{map[string]any{"accelerator": "nvidia-l4"}},
-			}}}},
-		}},
-	}
+	costPlan := gpuJobPlan()
 	outsiderGrant := grantChange("runs_outsider", "user:a@example.com", "roles/storage.objectViewer", "create")
 
 	for _, tc := range []struct {
@@ -529,6 +1036,54 @@ func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 			// only the former claims a verdict for a document.
 			if strings.Contains(got, initflow.GateProceeded()) {
 				t.Errorf("the step took the gate's verdict after the gate had refused it:\n%s", got)
+			}
+
+			// And the step's left-for-you is the refusal's own, never the
+			// stage's prompt (CV1): the stage's Left asks this reader to type
+			// the project's name at a prompt the gate never reaches, in a run
+			// that has already stopped in the gate's sentence, so the person
+			// the gate is there to protect is sent to the one act it makes
+			// impossible — every new repository of the project blocked behind
+			// a confirmation nobody can give.
+			lines := strings.Split(got, "\n")
+			refused := ""
+			for i, line := range lines {
+				if !strings.HasPrefix(line, "left for you (") || !strings.Contains(line, ", "+string(initflow.LeftRefused)+"): ") {
+					continue
+				}
+				refused = line
+				if i+1 < len(lines) && strings.HasPrefix(lines[i+1], "    ") {
+					t.Errorf("the refused step lists the command %q: no command gets a refused plan written", strings.TrimSpace(lines[i+1]))
+				}
+			}
+			if refused == "" {
+				t.Fatalf("a step the gate refused left the user no refusal to read:\n%s", got)
+			}
+			if !strings.Contains(refused, managedmode.NotConverged) {
+				t.Errorf("the refusal does not quote the gate's own sentence:\n%s", refused)
+			}
+			if !strings.Contains(refused, "Nothing here is yours to type") {
+				t.Errorf("the refusal does not say there is nothing to type:\n%s", refused)
+			}
+			// And it is the PLAN refusal and not the unjudged one: both texts
+			// share the sentence above, so a classifier that collapsed to the
+			// other answer would leave this test green while the owner was told
+			// the run had failed rather than that a shape is missing from
+			// Fugaro's own tables (and the other way round: the unjudged text
+			// says nothing about an issue, which is the promise this arm makes).
+			if !strings.Contains(refused, "a person files an issue with the sentence above") {
+				t.Errorf("the refusal is not the plan's own, which is what a cover or a cost refusal leaves:\n%s", refused)
+			}
+			if strings.Contains(refused, "did not judge this step") {
+				t.Errorf("a plan the cover judged is left as a step the gate reached no verdict on:\n%s", refused)
+			}
+			for _, bad := range []string{"type the project's name", "fugaro update"} {
+				if strings.Contains(refused, bad) {
+					t.Errorf("the refused step tells the person at the terminal to %q, which cannot help them:\n%s", bad, refused)
+				}
+			}
+			if strings.Contains(got, "left for you ("+initflow.Installation+", prompt)") {
+				t.Errorf("the refused installation step printed the stage's own prompt:\n%s", got)
 			}
 		})
 	}
@@ -1108,6 +1663,17 @@ func TestUpdateManagedPolicyStageRefusesTheTypedLoosening(t *testing.T) {
 	if strings.Contains(line, initflow.AgentRefusal("CLAUDECODE")) {
 		t.Errorf("the policy step reads the session's own refusal rather than what about the node the gate would not admit: %s", line)
 	}
+	// And what it leaves the owner is the command they run themselves (spec
+	// §4.3): this refusal is about the step's CLASS and not about the plan, so
+	// the step is theirs — at their own terminal, where the publish proceeds on
+	// the note (the ruling of 2026-11-06). A commandless refusal here would
+	// send an owner reading an agent's report to file a Fugaro issue for a
+	// publish that is theirs to make, and would lose the one command the HARD
+	// RULE says must work.
+	want := "left for you (" + initflow.Policy + ", " + string(initflow.LeftCommand) + "): " + selfCommand() + " update"
+	if !strings.Contains(got, want) {
+		t.Errorf("the class refusal does not leave the owner the command they run themselves (%q):\n%s", want, got)
+	}
 	if got := ceilingOn(t, db); got != 3 {
 		t.Errorf("the published ceiling is %v, want the 3 it had: the refused step wrote the local config's 5", got)
 	}
@@ -1249,6 +1815,9 @@ func TestUpdateManagedPolicyStageRefusesAnEmptyNode(t *testing.T) {
 	if ge.Reason != gateUnreadable {
 		t.Errorf("the refusal reads %q, want %q", ge.Reason, gateUnreadable)
 	}
+	if ge.Refusal != initflow.GateRefusedUnread {
+		t.Errorf("the refusal is classified %v, want %v: there was no document for a cover to refuse, so the left-for-you must not blame one", ge.Refusal, initflow.GateRefusedUnread)
+	}
 	if run.gate.g.judged != nil {
 		t.Errorf("the gate judged a document that does not exist: %+v", *run.gate.g.judged)
 	}
@@ -1372,6 +1941,17 @@ func TestUpdateManagedWorkspaceStageRefusesTheTypedWidening(t *testing.T) {
 	}
 	if strings.Contains(line, initflow.AgentRefusal("CLAUDECODE")) {
 		t.Errorf("the workspace step reads the session's own refusal rather than what about the node the gate would not admit: %s", line)
+	}
+	// What stands beside that sentence: a Typed step is the owner's own (D1026
+	// refuses the plan gate's answer for it, and the record's rule for a
+	// widening is the class), so the refusal keeps the stage's own command — the
+	// one thing an agent's report to its owner can act on. The Kind is the
+	// assertion, not the text: the plan refusal's text carries the gate's
+	// sentence too, so a stage that left this field unset would read as the
+	// right answer in the line above and hand the owner "a person files an
+	// issue" instead.
+	if left := leftFor(got, initflow.Workspace, initflow.LeftCommand); !strings.Contains(left, selfCommand()+" update") {
+		t.Errorf("the class refusal did not keep the workspace stage's own command (%q): the step is the owner's to run themselves, and a refusal that sends them to an issue about it leaves the loop it opened unclosed:\n%s", left, got)
 	}
 	if got := wsMembers(t, db, initProjectName); !slices.Equal(got, []string{"member-b"}) {
 		t.Errorf("the published members are %v, want [%s]: the refused step wrote the local table", got, "member-b")
