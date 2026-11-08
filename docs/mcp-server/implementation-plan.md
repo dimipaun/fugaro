@@ -166,8 +166,8 @@ public invoker binding (`deploy/terraform/gcp/modules/installation/coordinator.t
 built, M7 is built apart from the reading of the installation's published state its lists come from,
 which no task below carries, M10 is built apart from the store's own bucket and its one grant, which
 are M4's store half below and are not started, **M8 is built apart from the wiring that would serve
-its four read tools**, which is the wiring task M5b gates and no task below carries, **and M4's store
-half and M9 are not started**. **What each built task
+its four read tools**, which is the wiring task M5b gates and no task below carries, **and M9 is not
+started**. **What each built task
 still owes is named in its own section below**
 ([reconciliation.md](reconciliation.md) §4a, "What has happened since").
 
