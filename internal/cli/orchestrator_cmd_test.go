@@ -224,7 +224,7 @@ func TestStateBriefFitsOneScreen(t *testing.T) {
 			Key: "f" + orchNum(i), Value: "a value the loop learned",
 		}})
 	}
-	seedOrchestratorState(t, f, ops...)
+	s := seedOrchestratorState(t, f, ops...)
 
 	out, _, err := runOrchestrator(t, "", "orchestrator", "state", "--brief")
 	if err != nil {
@@ -248,6 +248,31 @@ func TestStateBriefFitsOneScreen(t *testing.T) {
 		if strings.HasSuffix(line, ": ") {
 			t.Errorf("the brief carries a line that reads as a prompt nobody can answer: %q\n%s", line, out)
 		}
+	}
+
+	// --json is that same summary as the versioned document, with the revision
+	// a patch built from this read carries and the state's own schema version.
+	doc, _, err := runOrchestrator(t, "", "orchestrator", "state", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, doc)
+	}
+	orchestratorDocMatchesSchema(t, doc)
+	var stateDoc struct {
+		Kind          string `json:"kind"`
+		Source        string `json:"source"`
+		Rev           int64  `json:"rev"`
+		SchemaVersion int    `json:"schema_version"`
+		Brief         string `json:"brief"`
+	}
+	if err := json.Unmarshal([]byte(doc), &stateDoc); err != nil {
+		t.Fatal(err)
+	}
+	if stateDoc.Kind != "state" || stateDoc.Source != "node" || stateDoc.Rev != s.Rev ||
+		stateDoc.SchemaVersion != orchestrator.SchemaVersion {
+		t.Errorf("the document says %+v, and it read rev %d of the live node", stateDoc, s.Rev)
+	}
+	if !strings.Contains(stateDoc.Brief, "<<<fugaro-state>>>") {
+		t.Errorf("the document's brief is not the fenced summary:\n%s", doc)
 	}
 
 	// A state past the summary's cap: the state model's own size target is what
