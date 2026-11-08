@@ -11293,9 +11293,15 @@ launcher of an allow-listed repository hold the token's value (F7), which is why
    as before, **while the revoked value is refused**. That second half is what makes the first one a
    reading — with the old value still accepted, a job still mounting it (or a pinned version) pushes
    exactly the same way — so the script does not launch that run until it has seen the refusal: after
-   storing the new version it asks `GET /2.0/user` with the old value every 15 seconds, tells you to
-   revoke it, and goes on the moment Bitbucket answers 401 or 403 (up to 600 seconds,
-   `CHECK180_ROTATION_SECONDS`). If the old value is still accepted when the wait runs out, the run
+   storing the new version it **re-reads the first repository** with the old value every 15 seconds,
+   tells you to revoke it, and goes on the moment Bitbucket refuses that read with 401 or 403 (up to
+   600 seconds, `CHECK180_ROTATION_SECONDS`). That request is the repository read, not
+   `GET /2.0/user` — the endpoint step 5 records as open (U7): a token with `repository:write` and
+   `pullrequest:write` alone can be refused there from the start, and such a standing 403 would read
+   as a revocation that never happened, launching the post-rotation run while the old value is still
+   live and reading the row as PASS. The repository read carries no such doubt: it is the request the
+   same run already required to answer 200 with that same value, so a refusal of it is a change the
+   check watched happen. If the old value is still accepted when the wait runs out, the run
    is **not** launched and the rotation's row reads **UNVERIFIED** with the store's own result
    (`x` versions before, `y` after) — revoke the old token and run the check again with the same
    arguments. The secret's version list is what the script reads back here: it finds the container by

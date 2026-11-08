@@ -431,7 +431,13 @@ TOKEN2 = os.environ.get("FAKE180_TOKEN2", "")
 APILOG = os.environ.get("FAKE180_API_LOG", "")
 MODE = os.environ.get("FAKE180_API_MODE", "ok")
 UUID = "{9f1d0c2a-0000-0000-0000-000000000001}"
-USERS = {}
+# Where the rotation's revocation is read: the read of the FIRST of the two
+# --repo pairs, the request step_inputs requires to answer 200 with the token
+# before anything else is a reading. The check re-reads exactly this path to see
+# the OLD value refused, so its reads — and no other repository's — are counted
+# here. The harness derives the path from the --repo it hands the check.
+REVOKE_PATH = "/2.0/repositories/" + os.environ.get("FAKE180_REVOKE_REPO", "sandbox/one")
+READS = {}
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -491,20 +497,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         if path == "/2.0/user":
-            # The rotation's probe of the OLD value. The register's step 8 has
-            # the owner revoke the old token before the run after the rotation,
-            # and this fake stands in for that state. The probe carries the value
-            # step_identity asked with, so the two calls are told apart by
-            # counting: the first is step_identity's, with a live token, and a
-            # later one is the rotation's, REFUSED as a revoked value would be.
-            # In mode `old-token-live` every call is accepted, which is the owner
-            # who has not revoked — the check then waits out its cap and the row
-            # reads UNVERIFIED.
-            if MODE != "old-token-live":
-                USERS["n"] = USERS.get("n", 0) + 1
-                if USERS["n"] > 1:
-                    self.refuse(401, "invalid_token")
-                    return
+            # U2's identity read, and U7's open question: whether Bitbucket
+            # answers this endpoint at all for a project access token. Mode
+            # `user-forbidden` is the answer "no" — the token is scoped to
+            # repository:write and pullrequest:write and is refused here from the
+            # start — and the rotation must not mistake that standing refusal for
+            # a revocation, which is why it polls the repository read instead.
+            # In this mode the old value stays live everywhere else, so a check
+            # that read a /user refusal as the revocation would launch the
+            # post-rotation run and call the rotation PASS; this fake is the case
+            # that tells the two readings apart.
+            if MODE == "user-forbidden":
+                self.refuse(403, "forbidden")
+                return
             if MODE == "no-identity":
                 self.reply(200, {"uuid": UUID, "display_name": "", "nickname": ""})
             else:
@@ -518,6 +523,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if parts[1] == "probe" and MODE == "probe-refused":
                     self.refuse(403, "forbidden")
                     return
+                # The rotation's revocation, on the request the check waits on.
+                # The register's step 8 has the owner revoke the OLD token before
+                # the run after the rotation, and this fake stands in for that
+                # state: the first read of this path is step_inputs', with a live
+                # token, and a later one is the rotation's poll, REFUSED as a
+                # revoked value is. In modes `old-token-live` (the owner has not
+                # revoked) and `user-forbidden` (which is about /2.0/user, not
+                # about this read) every read is accepted: the check waits out its
+                # cap, the rotation's row reads UNVERIFIED and no run is launched
+                # after it.
+                if path == REVOKE_PATH and MODE not in ("old-token-live", "user-forbidden"):
+                    READS["n"] = READS.get("n", 0) + 1
+                    if READS["n"] > 1:
+                        self.refuse(401, "invalid_token")
+                        return
                 self.reply(200, {"full_name": "%s/%s" % (parts[0], parts[1]),
                                  "project": {"key": "SANDBOX"}, "is_private": True})
                 return
@@ -566,6 +586,7 @@ start_fake() { # start_fake DIR — the fakes go in DIR/bin, which is put on PAT
   : >"$1/fake.log"
   FAKE180_API_MODE=${RUN180_API_MODE:-ok} FAKE180_TOKEN="$TOKEN_SENTINEL" \
     FAKE180_TOKEN2="$TOKEN2_SENTINEL" FAKE180_API_LOG="$1/fake.log" \
+    FAKE180_REVOKE_REPO="${RUN180_NAME_A:-sandbox/one}" \
     python3 "$1/bin/fake.py" >"$1/fake.out" 2>"$1/fake.err" &
   local pid=$!
   pids+=("$pid")
@@ -1079,6 +1100,28 @@ test_rotation() {
   launched=$(grep -c '^run --repo' "$work/rotation-live/fugaro.log" 2>/dev/null || true)
   [ "${launched:-0}" -eq 2 ] \
     || fail "a rotation whose old value is still accepted: the check launched ${launched:-0} run(s), want the two of the two repositories and none after the rotation — a run whose push could not settle the criterion must not be billed"
+
+  # /2.0/user refused from the start, which is U7's open question answered "no"
+  # for a token scoped to repository:write and pullrequest:write. That standing
+  # refusal is NOT a revocation: the old value is still live on the repository
+  # read the rotation waits on, so the row has to read UNVERIFIED and no run may
+  # be launched after it. A rotation that probed /2.0/user would read this 403 as
+  # the revocation, launch the run and call the criterion PASS while the old
+  # value was still live — the reading this case exists to catch.
+  RUN180_API_MODE=user-forbidden
+  RUN180_ARGS=(--new-token-file "$work/rotation-forbidden/token2")
+  run180 rotation-forbidden
+  expect_status "$status" 3 "a rotation whose /2.0/user is refused"
+  expect_contains "$out" "FACT rotation: UNVERIFIED" "a rotation whose /2.0/user is refused: the fact"
+  expect_contains "$out" "still ACCEPTED by Bitbucket" "a rotation whose /2.0/user is refused: the reading"
+  # Which request the wait read, and what it saw: the repository step_inputs had
+  # required to answer 200 with this same value, still answering 200 — not the
+  # /2.0/user refusal, which says nothing about this value.
+  expect_contains "$out" "GET /2.0/repositories/sandbox/one with it answered 200" "a rotation whose /2.0/user is refused: the request it read instead"
+  expect_last_line "$out" "CHECK 180 RESULT: INCOMPLETE (exit 3)" "a rotation whose /2.0/user is refused: the block's last line"
+  launched=$(grep -c '^run --repo' "$work/rotation-forbidden/fugaro.log" 2>/dev/null || true)
+  [ "${launched:-0}" -eq 2 ] \
+    || fail "a rotation whose /2.0/user is refused: the check launched ${launched:-0} run(s), want the two of the two repositories and none after the rotation — a /2.0/user refusal is not a revocation, and a run whose push could not settle the criterion must not be billed"
 
   # The container is found by filter, never composed: a listing that names
   # several (or none) stops rather than picking one.

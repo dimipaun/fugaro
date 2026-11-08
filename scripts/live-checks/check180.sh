@@ -39,8 +39,11 @@
 #             Without it the rotation's own row reads UNVERIFIED and names what
 #             to pass, and the block's last line says INCOMPLETE. With it, the
 #             new value is stored as a new version of the same secret and the
-#             check then WAITS for the OLD value to be refused by Bitbucket —
-#             revoke it in the workspace's settings when the run asks you to,
+#             check then WAITS for the OLD value to be refused by Bitbucket on
+#             the FIRST repository's own read — the request this run already saw
+#             answer 200 with that value, where GET /2.0/user is the endpoint U7
+#             is open on — revoke it in the workspace's settings when the run
+#             asks you to,
 #             and it goes on by itself (up to 600s; CHECK180_ROTATION_SECONDS).
 #             Nothing is launched until that refusal is read: with the old value
 #             still accepted, a run that pushed would prove nothing about the
@@ -1174,27 +1177,40 @@ step_rotation() {
   # pushed proves NOTHING about the new version — a job still mounting the old
   # value, or a pinned version, pushes exactly the same way. The register's step
   # 8 has the owner revoke the old token before the run after the rotation, and
-  # this is where the check waits for it: GET /2.0/user with the OLD value — the
-  # config step_inputs wrote from ${TOKEN_FILE} — until Bitbucket refuses it, up
-  # to a cap. Nothing is launched until it is refused, and a value that never is
-  # leaves the row UNVERIFIED rather than claiming a reading it does not have.
+  # this is where the check waits for it: GET /2.0/repositories/${REPO_A} with
+  # the OLD value — the config step_inputs wrote from ${TOKEN_FILE}, and the very
+  # request step_inputs required to answer 200 with that value before anything
+  # here counted as a reading — until Bitbucket refuses it, up to a cap. Nothing
+  # is launched until it is refused, and a value that never is leaves the row
+  # UNVERIFIED rather than claiming a reading it does not have.
+  #
+  # Why not GET /2.0/user, which is what this probed before: whether that
+  # endpoint answers at all for a project access token is exactly what U7 is open
+  # on, and step_identity marks U2 UNVERIFIED when its answer is not a 200. A
+  # token scoped to repository:write and pullrequest:write can be refused there
+  # from the start, and a 403 that was never a revocation would end this wait on
+  # the first poll: the run launched after it would be a run read as PASS while
+  # the old value was still live, which is the one thing this wait exists to
+  # prevent. The repository read carries no such doubt — this run watched that
+  # exact request answer 200 with this same value, so a refusal of it is a change
+  # of state the check saw happen rather than an endpoint's habit.
   local old_status=000 code="" waited=0
   say "the new version is stored. Revoke the OLD token in the sandbox workspace's settings now (the register's step 8): this check goes on as soon as Bitbucket refuses the old value, and waits up to ${ROTATION_WAIT_SECONDS}s for it"
   while :; do
-    old_status=$(request "$SCRATCH/old-token.json" GET "/user" --config "$CURL_CONF")
+    old_status=$(request "$SCRATCH/old-token.json" GET "/repositories/${REPO_A}" --config "$CURL_CONF")
     case "$old_status" in
     401 | 403) break ;;
     esac
     if [ "$waited" -ge "$ROTATION_WAIT_SECONDS" ]; then
       code=$(field_of error "$(reader error "$SCRATCH/old-token.json" 2>/dev/null || true)")
-      fact rotation UNVERIFIED "the new version IS stored (${before_n:-?} version(s) before, ${after_n:-?} after; ${enabled:-?} enabled, highest number ${latest:-?}), but the OLD value is still ACCEPTED by Bitbucket after ${waited}s (GET /2.0/user with it answered ${old_status}${code:+, ${code#error=}}), so the run after the rotation was NOT launched and F3 is NOT measured by this run. With the old value live, a run that pushed would prove nothing about the new version: a job still mounting the old value, or a pinned version, pushes exactly the same way — which is why the register's step 8 revokes the old token BEFORE that run. Revoke it in the sandbox workspace's settings (the project access token you replaced) and run this check again with the same arguments: storing the same new value again only adds a version, and one more run is all this criterion needs. Nothing was changed by this step beyond that version, and no run was billed to it"
+      fact rotation UNVERIFIED "the new version IS stored (${before_n:-?} version(s) before, ${after_n:-?} after; ${enabled:-?} enabled, highest number ${latest:-?}), but the OLD value is still ACCEPTED by Bitbucket after ${waited}s (GET /2.0/repositories/${REPO_A} with it answered ${old_status}${code:+, ${code#error=}}), so the run after the rotation was NOT launched and F3 is NOT measured by this run. With the old value live, a run that pushed would prove nothing about the new version: a job still mounting the old value, or a pinned version, pushes exactly the same way — which is why the register's step 8 revokes the old token BEFORE that run. Revoke it in the sandbox workspace's settings (the project access token you replaced) and run this check again with the same arguments: storing the same new value again only adds a version, and one more run is all this criterion needs. Nothing was changed by this step beyond that version, and no run was billed to it"
       return 0
     fi
     sleep "$ROTATION_POLL_SECONDS"
     waited=$((waited + ROTATION_POLL_SECONDS))
   done
 
-  say "the rotation's new version is stored and Bitbucket REFUSES the old value (GET /2.0/user: ${old_status}); launching one more run in ${REPO_A} so the next run's own reading is the last word"
+  say "the rotation's new version is stored and Bitbucket REFUSES the old value (GET /2.0/repositories/${REPO_A}: ${old_status}); launching one more run in ${REPO_A} so the next run's own reading is the last word"
   local task="$SCRATCH/task-rotation.md"
   cat >"$task" <<TASK_EOF
 Add a second line to the repository's README.md, saying that Fugaro's Check 180 ran once more after the
@@ -1219,11 +1235,11 @@ TASK_EOF
   status=$(field_of status "$row")
   poll=$(field_of poll "$row")
   if [ "$pushed" = yes ] && [ -n "$pr" ] && [ "$pr" != 0 ]; then
-    fact rotation PASS "the new token is a new ENABLED version of the project-wide container (${before_n:-?} version(s) before, ${after_n:-?} after; ${enabled:-?} enabled, highest number ${latest:-?}), Bitbucket REFUSES the old value (GET /2.0/user with it answered ${old_status} BEFORE the launch, so the run below cannot have used it), and a run launched AFTER the store pushed its branch and opened pull request #${pr} (status=${status:-unread}, terminal=$(field_of terminal "$row"), run ${run_id}): the next run uses the new version, which is what F3's order is written for — the old value is revoked before that run, which is what makes its push a reading of the new version rather than of a live credential of either kind"
+    fact rotation PASS "the new token is a new ENABLED version of the project-wide container (${before_n:-?} version(s) before, ${after_n:-?} after; ${enabled:-?} enabled, highest number ${latest:-?}), Bitbucket REFUSES the old value (GET /2.0/repositories/${REPO_A} with it answered ${old_status} BEFORE the launch, so the run below cannot have used it), and a run launched AFTER the store pushed its branch and opened pull request #${pr} (status=${status:-unread}, terminal=$(field_of terminal "$row"), run ${run_id}): the next run uses the new version, which is what F3's order is written for — the old value is revoked before that run, which is what makes its push a reading of the new version rather than of a live credential of either kind"
   elif [ "$poll" != terminal ]; then
-    fact rotation FAIL "the new version was stored (${before_n:-?} version(s) before, ${after_n:-?} after) and Bitbucket refuses the old value (GET /2.0/user: ${old_status}), but the run launched after it never reached a final status within ${RUN_SECONDS}s (poll=${poll:-nolisting}, run_id=${run_id:-none}, the last row read: status=${status:-unread}, pushed=${pushed:-unread}, pr=${pr:-unread}; fugaro run exited ${run_rc}): $(last_line "$SCRATCH/rotation.log"). The rotation is not settled by the secret's versions alone — the reading is that the NEXT RUN uses the new value, and a run still going at the cap has not been read"
+    fact rotation FAIL "the new version was stored (${before_n:-?} version(s) before, ${after_n:-?} after) and Bitbucket refuses the old value (GET /2.0/repositories/${REPO_A}: ${old_status}), but the run launched after it never reached a final status within ${RUN_SECONDS}s (poll=${poll:-nolisting}, run_id=${run_id:-none}, the last row read: status=${status:-unread}, pushed=${pushed:-unread}, pr=${pr:-unread}; fugaro run exited ${run_rc}): $(last_line "$SCRATCH/rotation.log"). The rotation is not settled by the secret's versions alone — the reading is that the NEXT RUN uses the new value, and a run still going at the cap has not been read"
   else
-    fact rotation FAIL "the new version was stored (${before_n:-?} version(s) before, ${after_n:-?} after) and Bitbucket refuses the old value (GET /2.0/user: ${old_status}), but the run after it did not push and open a pull request (pushed=${pushed:-unread}, pr=${pr:-unread}, status=${status:-unread}, fugaro run exited ${run_rc}): $(last_line "$SCRATCH/rotation.log"). The rotation is not settled by the secret's versions alone — the reading is that the NEXT RUN uses the new value"
+    fact rotation FAIL "the new version was stored (${before_n:-?} version(s) before, ${after_n:-?} after) and Bitbucket refuses the old value (GET /2.0/repositories/${REPO_A}: ${old_status}), but the run after it did not push and open a pull request (pushed=${pushed:-unread}, pr=${pr:-unread}, status=${status:-unread}, fugaro run exited ${run_rc}): $(last_line "$SCRATCH/rotation.log"). The rotation is not settled by the secret's versions alone — the reading is that the NEXT RUN uses the new value"
   fi
 }
 
@@ -1422,7 +1438,7 @@ What the run will do, in this order:
   8. the probe repository, for U3;
   9. TestLiveBitbucket in ${SOURCE} with the token in that one command's environment;
  10. with --new-token-file: the new version of the same secret, its version list, then a WAIT for you
-     to revoke the OLD token in the workspace's settings — the check asks GET /2.0/user with the old
+     to revoke the OLD token in the workspace's settings — the check re-reads ${REPO_A} with the old
      value every ${ROTATION_POLL_SECONDS}s until Bitbucket refuses it (up to ${ROTATION_WAIT_SECONDS}s,
      then the rotation's row reads UNVERIFIED and no run is launched) — and one more run;
  11. a scratch home seeded with 'fugaro update --gcp-project ... --config-only --yes', then
