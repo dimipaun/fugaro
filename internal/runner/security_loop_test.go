@@ -84,6 +84,43 @@ func TestRunEscalationRunsTheAdversarialStepThroughTheImplementSeam(t *testing.T
 	}
 }
 
+// TestRunEscalationKeepsAPOCRunFromStoppingOnTheCheapLoop: at POC the cheap
+// loop is the level that decides readiness (TestLevelsPOCL1Decides), and a fix
+// inside it can turn level 3 on (the fix seam above). From that round on the
+// loop is no longer the decider — level 3 is — so a cheap round whose findings
+// are all the owner's is handed to the level that decides instead of stopping
+// the run (OD1, owner.go). Readiness is the same question: a loop that still
+// thought it decided would stop here and the escalation's adversarial step,
+// which is the whole of what it bought, would never run.
+func TestRunEscalationKeepsAPOCRunFromStoppingOnTheCheapLoop(t *testing.T) {
+	cfg := modeCfg(t, "poc", 2, "  first_line_rounds: 2\n  first_line_review: on\n  recipe: security\n")
+	h := newHarnessFiles(t, cfg, nil, securityLoopFiles)
+	rec, err := h.run(t,
+		implement("feature"), // nothing on the list: the implement seam escalates nothing
+		review("changes", 1), // review_first round 1: asks for changes
+		fixOnAListedPath,     // the fix adds a path on the list: the fix seam turns level 3 on
+		reviewScored("changes", ownerFinding("LICENSE.md", "the licence text needs counsel's clearance")), // review_first round 2
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review_first", "fix", "review_first", "adversarial") {
+		t.Fatalf("stages = %v, want the escalation's adversarial step after the cheap round", got)
+	}
+	if rec.Security == nil {
+		t.Fatal("the fix added a path on the list and the run recorded no escalation")
+	}
+	if rec.Security.At != runstore.SecurityAtFix || rec.Security.Pattern != "credentials" {
+		t.Errorf("the record's escalation = %+v, want the credentials row at the fix seam", rec.Security)
+	}
+	if rec.Halt != nil {
+		t.Fatalf("the run halted on %q: the cheap loop stopped deciding the moment the escalation turned level 3 on", rec.Halt.Reason)
+	}
+	if rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("outcome = %s (reason %q), want ready: the adversarial round is the one that shipped", rec.Outcome, rec.Reason)
+	}
+}
+
 // TestRunEscalationRunsTheAdversarialStepThroughTheFixSeam: the second seam is
 // inside the loop that is already walking the plan, so the step the escalation
 // adds has to reach that loop. A loop that captured the plan once would run the

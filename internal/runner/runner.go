@@ -3243,8 +3243,14 @@ func (r *run) fix(ctx context.Context, v Verdict, sys, sessionID string) (string
 // senior round the mode's findings policy is read off (outcome.go,
 // findingsPolicy).
 func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sessionID string) (string, bool) {
-	decides := !levelOn(r.levels, policy.LevelL2) && !levelOn(r.levels, policy.LevelL3)
 	for round := 1; round <= rounds; round++ {
+		// Read per round, not once before the loop: the fix at the end of a
+		// round can turn level 3 on (the escalation's fix seam, security.go),
+		// and from that round on an outer level exists and the cheap loop is
+		// no longer the one that decides readiness — a round whose findings
+		// are all the owner's is handed to it rather than stopping the run
+		// here, and the adversarial step the escalation bought is reached.
+		decides := !levelOn(r.levels, policy.LevelL2) && !levelOn(r.levels, policy.LevelL3)
 		head := r.reviewedHead(ctx)
 		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
 		res, ok, err := r.stage(ctx, "review_first", req, stageOpts{Skippable: true})
