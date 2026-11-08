@@ -20,9 +20,12 @@ for the owner.
 
 **Numbers.** The subscriptions work holds **D430–D459**
 ([README.md](../subscriptions/README.md) §"The numbers this work holds"), of which D430–D448 are
-written; this design's eleven questions take **D449–D459**, the reserved half, verified free when this
-document was written (no `D449`–`D459` appeared anywhere under `docs/` or in `internal/`). Its checks
-are **Checks 170–179**,
+written; this design's eleven questions take **D449–D459**, the reserved half — free when this
+document claimed it (no `D449`–`D459` appeared anywhere under `docs/` or in `internal/`), and
+written by §12, which is why this commit moves the half from reserved to written in the work's own
+two registries ([README.md](../subscriptions/README.md) §"The numbers this work holds",
+[reconciliation.md](../subscriptions/reconciliation.md) §"Numbers this work holds"). Its checks are
+**Checks 170–179**,
 which the plan already names for this slice and S3.6 registers; this document names them (§10) and
 does not register them, because a check number is claimed by its section in
 [docs/gcp-live-checklist.md](../gcp-live-checklist.md).
@@ -502,8 +505,12 @@ The plan's release actions put this here: the service's deploy (S3.7) and the ke
 release note carries them. **No agent performs any step, and no agent holds or reaches a signing
 key** (R5 as amended by D440).
 
-**Before any step:** the entity exists and the Terms name it as Licensor (S8.1, D441), and S3.5's
-Terraform is written.
+**What waits for the entity:** the deploy and the checks that run against it (steps 3 and 4), which
+is the step S8.1 gates — the service issues keys as the Licensor, so the entity exists and the Terms
+name it as Licensor before it is deployed (D441) — and S3.5's Terraform, which the deploy applies.
+**What does not:** the key ring's own steps, and what follows from them (1, 2 and 5). S3.8's note in
+the plan says so in as many words — "This step does not need the entity: the key belongs to the
+project the owner operates" — and that is why S2.10 mints by hand from S3.8 until the service exists.
 
 1. **Create the project and the keys (S3.8).** Create the dedicated project, apply the key-ring part
    of `ee/keyservice/terraform`, create the **production** and **staging** signing keys in it, and
