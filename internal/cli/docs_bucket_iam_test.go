@@ -47,9 +47,23 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 		"on `runs/` only",
 		"launchers write only `runs/` since 0.7.0",
 		"write only `runs/`, so a launcher's publish",
+		// The shared issue store added the third clause (D1727), so the pair is
+		// stale the same way runs/ alone is: each of these states the launcher's
+		// write reach as `runs/` and `tokens/` as current fact, which this
+		// release's condition makes false. The sentence that replaces each one
+		// spells three prefixes, so a doc that keeps the pair — or a live check
+		// whose FACT tells the operator to expect it — fails here rather than
+		// being read as a pass. The historical statements (release.md's 0.9.0
+		// rollout note, bucket-iam.md's record of the two earlier forms) are not
+		// these phrasings, and bucket-iam.md is skipped by the scan below.
+		"write only `runs/` and `tokens/`",
+		"write `runs/` and `tokens/` only",
+		"on `runs/` and `tokens/` since",
+		"`runs/` **or** `tokens/` of this bucket",
+		"`runs/`+`tokens/` condition",
 	}
 	var files []string
-	for _, g := range []string{"../../docs/*.md", "../../docs/design/*.md", "../../README.md", "../../SECURITY.md", "../../plugin/skills/*/SKILL.md", "../../plugin/skills/*/reference/*.md"} {
+	for _, g := range []string{"../../docs/*.md", "../../docs/design/*.md", "../../docs/how-to/*.md", "../../README.md", "../../SECURITY.md", "../../plugin/skills/*/SKILL.md", "../../plugin/skills/*/reference/*.md"} {
 		m, _ := filepath.Glob(g)
 		files = append(files, m...)
 	}
@@ -73,8 +87,9 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 	// error-table row for a refused publish, recipes.md's operator-only
 	// sentence, release.md's 0.7.0 section and v1.md's launcher grant. Each of
 	// those states the launcher's write reach, which the sealed budget token
-	// widened to runs/ and tokens/, so each is pinned with the widened half and
-	// the stale scan above bans the runs/-only phrasing.
+	// widened to `runs/` and `tokens/` and the shared issue store to `issues/`,
+	// so each is pinned with every prefix and the stale scan above bans the
+	// narrower phrasings.
 	required := map[string][]string{
 		// The page that carried this table was docs/gcp-setup.md, which is the
 		// short setup path now; the launcher's grant is written down in the
@@ -87,7 +102,7 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 		},
 		"../../docs/recipes.md": {
 			"It is an operator command: once an operator has applied the 0.7.0 bucket hardening",
-			"launchers read the runs bucket but write only `runs/` and `tokens/`",
+			"launchers read the runs bucket but write only `runs/`, `tokens/` and `issues/`",
 		},
 		"../../docs/release.md": {
 			"## Rolling out the 0.7.0 bucket hardening",
@@ -98,7 +113,7 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 			"plus `objectUser` under the launcher condition",
 		},
 		"../../docs/design/watch-queued.md": {
-			"launchers write only `runs/` and, since 0.9.0, `tokens/`",
+			"launchers write only `runs/` and, since 0.9.0, `tokens/`, where a launch writes its sealed budget token, and since 0.22.0 `issues/`",
 		},
 		"../../docs/design/v1.md": {
 			// The widened half is part of the pin, not only the grant's name: a
