@@ -383,9 +383,12 @@ function memberCell(parent: ScreenElement, factory: ScreenFactory, value: Creden
  * severity, the problem and the fix -- each as the CLI wrote it.
  *
  * The `ok` is drawn twice on purpose and in two shapes: as the `data-ok`
- * attribute, which is the document's own boolean and what CM11's stylesheet
- * colours, and as the word beside it, so a reader who has no stylesheet still
- * knows whether the line is one the CLI reports as a problem. Neither is a
+ * attribute, the document's own boolean, and as the word beside it, so a reader
+ * who has no stylesheet still knows whether the line is one the CLI reports as a
+ * problem. The attribute carries no tone of its own (CM11), because it is not
+ * the state the word is: `false` is `noted` for a check `doctor` reports at
+ * severity `info` and `failing` for any other, so one rule over it would paint a
+ * healthy installation's informational measurement as a failure. Neither is a
  * judgement about the *service*: the severity is drawn verbatim beside them, and
  * `doctor`'s own answer to "does this fail" is the severity and the class it
  * carries in the document.
