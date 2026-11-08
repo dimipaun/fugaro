@@ -5533,6 +5533,135 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     expect(holdsText(policyPanelOf(document), 'trunk')).toBe(true)
   })
 
+  it('holds the body’s own mark when a later read lands while `budget show` is out', async () => {
+    // **The repaint guard** (CM10): the body is repainted by the two later reads
+    // of a panel inside it -- `policy.show` and doctor's -- and a repaint while
+    // the budget's own read is out would clear the section and take down the mark
+    // of a read that is still on its way. That is this console taking a drawing
+    // away to say a drawing is coming, which the guard is there to refuse.
+    //
+    // The visit that shows it is the one served from a view older than
+    // `CACHE_FRESH_MS`: the figures are drawn at once, marked, and read again in
+    // the same frame, so the body holds a model **and** a mark at the same time.
+    const policy = holding()
+    const secondBudget = holding()
+    let budgetReads = 0
+    const { bridge } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => {
+          budgetReads += 1
+          return budgetReads === 1
+            ? { ok: true, data: { document: BUDGET_DOC } }
+            : secondBudget.reply()
+        },
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
+        managedStatus: () => ({ ok: true, data: { document: MANAGED_DOC } }),
+        policyShow: () => policy.reply(),
+        environmentReport: () => ({ ok: true, data: { document: DOCTOR_DOC } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'projects').click()
+    await flush()
+    expect(classed(panelOf(document), 'projects-kill-row').length).toBeGreaterThan(0)
+
+    vi.setSystemTime(Date.now() + CACHE_FRESH_MS)
+    buttonFor(document, 'live').click()
+    await flush()
+    buttonFor(document, 'projects').click()
+    await flush()
+    expect(
+      busyLabels(document),
+      'a later read’s own landing repainted the body under the budget read’s mark',
+    ).toEqual([PROJECTS_BUSY])
+    // The figures the cached view carried are kept under the mark rather than
+    // blanked, which is what makes the mark's disappearance observable.
+    expect(classed(panelOf(document), 'projects-kill-row').length).toBeGreaterThan(0)
+
+    // The policy read lands while the budget's own is out: it draws nothing, and
+    // the mark above the figures stays where it is.
+    policy.release({ ok: true, data: { document: POLICY_DOC } })
+    await flush()
+    expect(
+      busyLabels(document),
+      'a later read repainted the body while the budget’s own read was out',
+    ).toEqual([PROJECTS_BUSY])
+    expect(policyPanelOf(document).getAttribute('data-state')).toBe('unavailable')
+
+    // Nothing is lost by waiting: the budget's own answer draws the body, and the
+    // policy document that landed first is drawn with it.
+    secondBudget.release({ ok: true, data: { document: BUDGET_DOC } })
+    await flush()
+    expect(busyLabels(document)).toEqual([])
+    expect(holdsText(policyPanelOf(document), POLICY_NODE_TITLE)).toBe(true)
+  })
+
+  it('does not read a dropped answer as the current visit’s budget read ending', async () => {
+    // A superseded answer says nothing about the read that superseded it (the
+    // owner's rule of 2026-10-31, point 4), and that includes the body's
+    // in-flight flag: an answer the sequence token has already dropped must not
+    // tell the two later reads that `budget show` is over. The second press here
+    // is the stamp's own Refresh, over a cached view whose refresh read is still
+    // out -- one press, one token, and the answer to the first press arriving
+    // afterwards.
+    const policy = holding()
+    const secondBudget = holding()
+    const thirdBudget = holding()
+    let budgetReads = 0
+    const { bridge } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => {
+          budgetReads += 1
+          if (budgetReads === 1) return { ok: true, data: { document: BUDGET_DOC } }
+          return budgetReads === 2 ? secondBudget.reply() : thirdBudget.reply()
+        },
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
+        managedStatus: () => ({ ok: true, data: { document: MANAGED_DOC } }),
+        policyShow: () => policy.reply(),
+        environmentReport: () => ({ ok: true, data: { document: DOCTOR_DOC } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'projects').click()
+    await flush()
+
+    // The view is stale, so the cached drawing is marked and read again at once;
+    // the stamp's Refresh is the second press, and it supersedes that read.
+    vi.setSystemTime(Date.now() + CACHE_FRESH_MS)
+    buttonFor(document, 'live').click()
+    await flush()
+    buttonFor(document, 'projects').click()
+    await flush()
+    const refresh = classed(panelOf(document), STAMP_REFRESH_CLASS)[0]
+    expect(refresh, 'the cached view drew no refresh control: the case proves nothing').toBeDefined()
+    refresh?.click()
+    await flush()
+    expect(budgetReads).toBe(3)
+    expect(busyLabels(document)).toEqual([PROJECTS_BUSY])
+
+    // The first press's answer lands. It is not this visit's, so it draws nothing
+    // -- and it does not open the guard either: the read the second press made is
+    // the one that is still out.
+    secondBudget.release({ ok: true, data: { document: BUDGET_DOC } })
+    await flush()
+    expect(busyLabels(document)).toEqual([PROJECTS_BUSY])
+    policy.release({ ok: true, data: { document: POLICY_DOC } })
+    await flush()
+    expect(
+      busyLabels(document),
+      'an answer the token had dropped opened the body’s repaint',
+    ).toEqual([PROJECTS_BUSY])
+
+    thirdBudget.release({ ok: true, data: { document: BUDGET_DOC } })
+    await flush()
+    expect(busyLabels(document)).toEqual([])
+    expect(holdsText(policyPanelOf(document), POLICY_NODE_TITLE)).toBe(true)
+  })
+
   it('keeps a later section’s content when a sibling’s read is refused', async () => {
     // The one document two sections are drawn from is refused: both draw the
     // CLI's own sentence, because both are the same read's (D1488) -- and the

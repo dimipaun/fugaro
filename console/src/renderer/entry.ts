@@ -5628,10 +5628,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         setGauge(gaugeFromBudget(answer.data))
       }
       // The token is checked before anything is taken down, so a read from an
-      // earlier visit cannot end the *current* visit's mark.
+      // earlier visit cannot end the *current* visit's mark -- **and it is
+      // checked before the in-flight flag is cleared**, because `budgetOut` is
+      // about *a* budget read and not about *this* answer: a superseded answer
+      // says nothing about the read that superseded it, and clearing the flag
+      // here would open `repaintBody`'s guard under a mark that is still the
+      // current visit's. The clearing sits below the return for that reason, and
+      // with the other reads' (`managedOut`, `settingsOut`).
       const mineNow = projectsRead.settle(readToken)
-      budgetOut = false
       if (!mineNow) return
+      budgetOut = false
       if (stale(mine)) return
       if (!answer.ok) {
         budgetDoc = null
