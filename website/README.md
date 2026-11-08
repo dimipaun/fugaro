@@ -2288,7 +2288,7 @@ deploy to the Firebase project created for the website only (D91, D109) — a ru
 change `.github/workflows/`. `docs/pending-workflows/` now holds three pending workflows,
 `docs/pending-workflows/images.yml` — the images workflow's nightly republish of the
 base image skipped when the published tags already name the build (issue #1745), which is the
-running `.github/workflows/images.yml` plus one step and is copied in on its own —,
+running `.github/workflows/images.yml` plus one step and is copied in on its own —
 `docs/pending-workflows/console-windows.yml` — the console's Windows
 installer pack, which runs at release time only rather than on a pull request, and is copied in
 only after the packer and the unit suite can pass on a Windows runner — and
