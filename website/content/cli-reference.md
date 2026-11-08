@@ -55,6 +55,7 @@ Subcommands:
 - `fugaro review` -- Review a pull request in a job of its own, on a named account
 - `fugaro run` -- Launch a task in the cloud; it always ends with a PR
 - `fugaro runs` -- List and inspect runs
+- `fugaro seats` -- Estimate how many people a subscription's seat rule would count
 - `fugaro secrets` -- Store, list and withdraw a repository's secrets in Secret Manager
 - `fugaro settings` -- Show every setting, what decides it, and its default
 - `fugaro setup` -- Create a fresh GCP project and stand up its installation, or a repository's cloud resources, through Terraform
@@ -4257,6 +4258,77 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
 | `--since` | string | `7d` | no | the window of UTC days ending today (7d, 36h, 90m; a summary is per day, so 0 is refused) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro seats`
+
+Estimate how many people a subscription's seat rule would count
+
+Estimate how many people a subscription's seat rule would count on this
+installation, from the installation's own data alone: the people on this
+machine's launcher and operator lists, plus everyone who requested a run in the
+last 90 days, each counted once.
+
+The estimate is ADVISORY. A seat is a contract pricing rule of the Subscription
+Terms -- anyone who launches jobs, by any means (console, mobile, CLI, an agent)
+-- and nothing in the product can count one: the licence's seat is one person,
+no surface knows who a person is, and every identity a run records is
+self-declared. So this command reads and prints, and that is all: it stores
+nothing, sends nothing, and consults no key, licence or server. It is core MIT
+and reads only core data.
+
+The three sources, and what each one is worth:
+
+  - terraform.launchers and terraform.operators in this machine's own project
+    config: the two lists fugaro setup writes and fugaro update applies. They are
+    the operator's record of who may launch, and members the console or an agent
+    launch records elsewhere are not in them.
+  - The requesters of the runs the last 90 days minted, read from each run's
+    task.json in every repository of the installation's bucket. Every launcher
+    counts, an agent launch is recorded under the configured person, and an agent
+    with no configured identity is invisible here.
+
+What the estimate cannot tell, it lists and does not guess:
+
+  - A group: or domain: member of either list names an unknown number of people.
+    It is listed apart, with the lists that hold it, and counted nowhere: one
+    seat is not a safe reading of a group, and neither is none.
+  - A serviceAccount: member is one identity and no person, so it is listed and
+    not counted: the licence's seat is one person, and this command never decides
+    that a person holds a robot's account.
+  - A run's requester is a value the launching CLI wrote down and nothing
+    verifies, and an agent launch with no configured identity records none: the
+    window counts whoever the records name.
+  - The window is the last 90 days of run IDs, so a person whose runs are all
+    older is invisible unless a list names them. The estimate over the whole
+    installation is therefore a lower bound, never a ceiling.
+
+One identity is one row. The lists and the runs spell an address
+independently -- one is an IAM member a person was written to, the other is
+what the launching CLI typed -- so the comparison folds case, and the row's key
+is the text printed: two texts that print alike are one person, and the
+estimate is the number of rows.
+
+--json prints {project, days, since, until, people[], not_counted[],
+unreadable, notes}; people carry {person, sources[]} and not_counted {member,
+why, sources[]}, sources from launcher, operator and requester, and why is
+unknown_size or account.
+
+Usage: `fugaro seats`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for seats |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
