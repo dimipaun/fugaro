@@ -136,9 +136,14 @@ func (r *initRun) declinedRun() error {
 // when it is: only a plan that is entirely creates and in-place updates of the
 // installation's own resource types, granting only the roles the modules use
 // to people the review listed or to Fugaro's own service accounts, is covered
-// (tf.Cover). Anything else, a plan that could not be read included, asks its
-// own typed confirmation. imports are the import blocks the root's discovery
-// wrote: an import that is not one of them is not covered.
+// (tf.Cover). Anything else — a plan that could not be read included — is not
+// covered, and since T7 the step is left rather than asked for a name: a plan
+// the review did not announce is exactly the plan that may delete, replace or
+// remove an IAM grant, and there is nothing left to type, so the caller
+// refuses with what is left undone, or the person at the terminal proceeds
+// having read the banner (--ask puts the question back). imports are the
+// import blocks the root's discovery wrote: an import that is not one of them
+// is not covered.
 func (r *initRun) notCovered(p *tf.Plan, imports []tf.ImportKey) string {
 	return coverSentence(r.coverReasons(p, imports))
 }
@@ -172,8 +177,9 @@ func coverSentence(items []string) string {
 
 // askOrdinary is ask for an ordinary step: covered by the run's one
 // confirmation when it applies, else the step's own. notCovered, when set, is
-// why this step is not covered (shown), so it asks its own typed
-// confirmation.
+// why this step is not covered (shown), and the step then goes through the
+// run's own confirmation path (ask, and confirmNow behind it), which asks
+// nothing of a person who is there.
 //
 // The owner's own terminal on a managed project types nothing here either, and
 // this is the owner's ruling of 2026-11-06: a step of the converge that loses
@@ -184,7 +190,8 @@ func coverSentence(items []string) string {
 // may delete, replace or remove an IAM grant, and the ruling's exception is
 // about steps that lose nothing — the cover that says which those are is the
 // same one the gate judges the step by (stepCover below). Such a step reads the
-// note below and asks for its own name, as it did before the ruling.
+// note below and then takes the confirmation every other step of the run takes
+// (T7: the name it used to ask for is gone; --ask puts the question back).
 //
 // The marker is refused above either way: a coding agent's session is not this
 // case (PersonAtTheTerminal reads the marker).
@@ -202,7 +209,7 @@ func (r *initRun) askOrdinary(what, notCovered string) (bool, error) {
 			if r.gateStandsIn() {
 				fmt.Fprintf(r.w, "  %s\n", initflow.GateOrdinary())
 			} else {
-				fmt.Fprintln(r.w, "  covered by the run confirmation (the project's name typed at the review)")
+				fmt.Fprintln(r.w, "  covered by the run confirmation (the review's own question, at this run's terminal)")
 			}
 			return true, nil
 		}

@@ -47,7 +47,7 @@ not exist. Recording them here so the next reader does not repeat them.
 | --- | --- |
 | A **Fugaro project** (§2, §4) | Defined: *"one GCP project, plus (from M9) one Firebase project … its repositories; its people lists …; one local config"* (`docs/design/v1.md`). The spec's "one coordinator per Fugaro project, deployed into that project's Firebase/GCP project" is therefore well-formed — and it is the same object the repo calls an **installation** (`docs/design/v1.md`). |
 | **Cloud Run service, scale-to-zero** (§4) | **No Cloud Run *service* exists anywhere.** Every workload is `google_cloud_run_v2_job` (history `modules/installation/history.tf:70`; project jobs `modules/project/job.tf:10`; workflow jobs `modules/workflow/job.tf:4`; repo check `modules/repo/check.tf:16`). The type is not even in the plan allowlist (`internal/infra/tf/cover.go:22`). See **#2**. |
-| **Provisioning: "part of project init's existing Terraform"** (§4) | `fugaro init` applies the **installation** root (`internal/cli/init.go`'s `installRoot`, the function that plans and applies it), behind one interactive confirmation that covers a plan only if every resource type is allowlisted (`internal/infra/tf/cover.go:22 allowedTypes`, `:128 grantRules`) and every grant is in `grantRules`; anything else gets its own typed confirmation (`internal/cli/init_review.go:77 runCovers`, `:127 notCovered`). See **#3**. |
+| **Provisioning: "part of project init's existing Terraform"** (§4) | `fugaro init` applies the **installation** root (`internal/cli/init.go`'s `installRoot`, the function that plans and applies it), behind one interactive confirmation that covers a plan only if every resource type is allowlisted (`internal/infra/tf/cover.go:22 allowedTypes`, `:128 grantRules`) and every grant is in `grantRules`; anything else is not covered, and a person at the terminal proceeds having read the banner (`internal/cli/init_review.go:77 runCovers`, `:146 notCovered`). See **#3**. |
 | **Access: "whoever can reach the project's coordinator is in the project; no extra permission model in v1"** (§4) | The opposite is the standing design: the compute module **refuses** `allUsers`, `allAuthenticatedUsers` and `domain:` members (`deploy/terraform/gcp/modules/compute/variables.tf:122,144`), launchers are per-person IAM members on one job (`modules/project/iam.tf:7`), and `SECURITY.md:40` puts the trust boundary at the repository and the task source, never at network reach. See **#4**. |
 | **Store: Firestore; "Firestore and RTDB are already available"** (§5) | True, both exist — and they are **two different stores with two different jobs**. RTDB is the budget/policy/kill/registry/mailbox store (`internal/budget/model.go:1-2`); Firestore holds `spendDaily` history only (`internal/firestore/client.go` package doc, `internal/budget/rollover.go:48 SpendCollection`). See **#6**. |
 | **"Firestore's real-time listeners drive live updates in the console"** (§5) | Wrong twice: the Firestore client has no listeners (hand-written REST: `Get`, `Patch`, `Delete`, `Query`, `GetDatabase`, `CreateDatabase`), and the console renderer's CSP is `connect-src 'none'` (`console/src/main/protocol.ts:132`) — it never talks to the network at all. See **#7**. |
@@ -128,8 +128,10 @@ Terraform" is ambiguous in a way that matters: the coordinator belongs to the
 **installation** root, beside the history job and the scheduler jobs.
 The gate: `init`'s one confirmation covers a plan only when every resource type is in
 `allowedTypes` and every grant is in `grantRules` (`internal/cli/init_review.go:77
-runCovers`, `:127 notCovered`); anything outside gets its own typed confirmation, and a
-coding agent is refused outright (`:143-144`, `&initflow.AgentError`). A Cloud Run service
+runCovers`, `:146 notCovered`); anything outside is not covered, so the step is the
+person's own to take or to leave, with the banner in front of them — there is no typed
+name to ask for any more (T7) — and a coding agent is refused outright (`:200`,
+`&initflow.AgentError`). A Cloud Run service
 is outside the allowlist, so it would be **uncovered** — which is the mechanism working as
 designed, not a defect. → **Q1**, **Q10**.
 

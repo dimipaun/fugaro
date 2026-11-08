@@ -337,13 +337,13 @@ func (s *projectStage) describe() string {
 		} else {
 			p += " with no parent"
 		}
-		parts = append(parts, p+" (typed confirmation)")
+		parts = append(parts, p+" (its own confirmation; may be permanent)")
 	}
 	if s.create || s.addFirebase {
 		parts = append(parts, "add Firebase (free)")
 	}
 	if s.link {
-		parts = append(parts, "link billing account "+s.o().linkBilling+" (its own typed confirmation; may incur charges)")
+		parts = append(parts, "link billing account "+s.o().linkBilling+" (its own confirmation; may incur charges)")
 	} else if s.create || s.guide {
 		parts = append(parts, "billing is not linked by fugaro setup without --link-billing: "+s.guided())
 	}
@@ -369,39 +369,45 @@ func (s *projectStage) Left() initflow.Left {
 		if s.o().linkBilling != "" {
 			args = append(args, "--link-billing", quoteWord(s.o().linkBilling))
 		}
-		return promptLeft(initflow.Project, "type the ID(s) it asks for", args...)
+		return promptLeft(initflow.Project, "create the project (and link the billing account) from the banner it prints, which asks you nothing", args...)
 	}
 	return s.billingForAdmin()
 }
 
-// canType is whether this run may show a typed confirmation: a terminal on
+// canType is whether this run has a person at its terminal: a terminal on
 // stdin, none of --non-interactive and --json (a run no person watches),
-// and no coding agent's session. --yes is not consulted: it confirms
-// nothing here, and a person at a terminal who also passed it still types.
+// and no coding agent's session. --yes is not consulted: it confirms nothing
+// here, and a person at a terminal who also passed it is still a person there.
 //
 // It is one predicate in one place, asked of the run, because two things ask
-// it: this stage's typed confirmations, and the wizard's billing question
-// (billing_prompt.go, W4.3), whose whole reason to exist is bounded by it —
-// listing the operator's billing accounts is a reversal internal/billing's
-// package doc limits to exactly these four conditions, and two copies of them
-// would be two places to widen by accident.
+// it: this stage's confirmations, and the wizard's question of who may be
+// asked anything (billing_prompt.go, W4.3), whose whole reason to exist is
+// bounded by it — listing the operator's billing accounts is a reversal
+// internal/billing's package doc limits to the flags of that list, and two
+// copies of them would be two places to widen by accident.
 func (r *initRun) canType() bool {
 	o := r.o
 	return !o.nonInteractive && !o.asJSON && agentMarker(os.Getenv, r.stdinTerminal()) == "" && stdinIsTerminal(r.cmd.InOrStdin())
 }
 
-// canType is this stage's typed confirmation, asked of the run it is in.
+// canType is this stage's own reading of whether a person is at the terminal.
 func (s *projectStage) canType() bool { return s.e.r.canType() }
 
 // confirm is this stage's confirmation: the banner naming what the step does
 // to the project, and then the run's own answer to it (confirmNow). Nothing is
-// typed under it (T7, docs/no-prompt-policy): a person at their own terminal
-// reads the banner and the step goes on, --yes stands in where --yes reaches,
-// --ask is the flag that puts the question back, and a session where nobody
-// can answer leaves the step for the user.
+// typed under it and no flag stands in for the person (T7,
+// docs/no-prompt-policy): creating the project, adding Firebase to it and
+// linking a billing account are initflow.Typed in both front doors, so --yes
+// never reaches them (stepConfirmation) and a person at their own terminal
+// reads the banner and the step goes on. A person who passed --yes is the one
+// way a person at a terminal leaves the step instead, and declined is what
+// says so.
 func (s *projectStage) confirm(banner, question string) (bool, error) {
 	r := s.e.r
 	fmt.Fprintf(r.w, "⚠ CONFIRM: %s\n", banner)
+	if r.stepConfirmation(initflow.Typed) == stepLeave {
+		return false, nil
+	}
 	ok, err := r.confirmNow(question)
 	if err != nil {
 		return false, err
@@ -507,9 +513,13 @@ func (s *projectStage) credentialNote() string {
 	return who + "; your credentials name no quota project, so calls may be refused: set one with gcloud auth application-default set-quota-project <a project of yours> (the new project cannot be its own quota project)"
 }
 
+// declined is the refusal of a step of this stage that nobody confirmed:
+// nothing is typed at its confirmation any more (T7, docs/no-prompt-policy),
+// and --yes never stands in for one of these three steps, so the sentence
+// names the flag that did not and the one way out of it.
 func (s *projectStage) declined(what string) error {
 	return &initflow.NeedsYouError{Left: initflow.Left{Stage: initflow.Project, Kind: initflow.LeftPrompt,
-		Text: "not confirmed (" + what + " was not confirmed): rerun " + selfCommand() + " " + s.e.r.o.doorName() + " in your own terminal window, or pass --ask and answer the question, nothing further was done"}}
+		Text: "not confirmed (" + what + " was not confirmed): " + s.e.r.o.doorName() + " asks this step of a person at a real terminal and --yes never stands in for one — rerun " + selfCommand() + " " + s.e.r.o.doorName() + " in your own terminal window without --yes, read the banner, and the step goes on; nothing further was done"}}
 }
 
 func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
@@ -549,7 +559,7 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 			return initflow.Outcome{}, err
 		}
 		if !ok {
-			return initflow.Outcome{}, s.declined("the project's ID")
+			return initflow.Outcome{}, s.declined("the creation of project " + s.id)
 		}
 		spec := infra.CreateSpec{ID: s.id, DisplayName: name, Parent: o.parent, OnOperation: func(op string) {
 			fmt.Fprintf(r.w, "creating project %s (operation %s): if this run stops before it is readable, wait a few minutes and rerun with the same ID\n", s.id, op)
@@ -571,7 +581,7 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 			return initflow.Outcome{}, err
 		}
 		if !ok {
-			return initflow.Outcome{}, s.declined("the project's ID")
+			return initflow.Outcome{}, s.declined("adding Firebase to project " + s.id)
 		}
 	}
 	if s.addFirebase {
@@ -597,7 +607,7 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 			return initflow.Outcome{}, err
 		}
 		if !ok {
-			return initflow.Outcome{}, s.declined("the billing account's ID")
+			return initflow.Outcome{}, s.declined("linking billing account " + acct)
 		}
 		if err := infra.LinkBilling(ctx, s.pc, s.id, acct, !created); err != nil {
 			var pe *infra.ProjectError

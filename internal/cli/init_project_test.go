@@ -246,8 +246,6 @@ func TestYesNeverLinksBilling(t *testing.T) {
 	}{
 		"--yes, piped":                       {false, billingAcc + "\n", []string{"--yes"}},
 		"--yes --non-interactive":            {true, billingAcc + "\n", []string{"--yes", "--non-interactive"}},
-		"terminal, the project ID not typed": {true, "x\n", nil},
-		"terminal, the wrong account typed":  {true, newProj + "\n", nil},
 		"terminal, --yes, account not typed": {true, "", []string{"--yes"}},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -258,22 +256,22 @@ func TestYesNeverLinksBilling(t *testing.T) {
 		})
 	}
 
-	// The creation's confirmation does not stand for billing's.
+	// A person at the terminal, without --yes: nothing is typed at the link
+	// and nothing is read for it (T7), so the account named by the flag is
+	// the one linked — including where the line on stdin is another account.
 	r := newProjectRig(t)
-	_, _, _ = r.run(t, true, newProj+"\n"+newProj+"\n", "--create-project", "--link-billing", billingAcc)
-	if len(r.crm.Creates()) != 1 || len(r.bill.Links()) != 0 {
-		t.Errorf("creates %d, links %v: the project's ID must not confirm billing", len(r.crm.Creates()), r.bill.Links())
-	}
-
-	// Both confirmations typed: the link is made, to the account named.
-	r = newProjectRig(t)
 	r.bill.AddAccount(billingAcc, true)
-	out, _, _ := r.run(t, true, newProj+"\n"+billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
+	out, _, _ := r.run(t, true, billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
 	if l := r.bill.Links(); len(l) != 1 || l[0] != (gcpfake.Link{Project: newProj, Account: billingAcc}) {
-		t.Errorf("links = %v\n%s", l, out)
+		t.Errorf("links = %v, want the flag's own account\n%s", l, out)
 	}
 }
 
+// TestProjectAndBillingInConfirmationText: what each banner says before the
+// step it stands for, on the run that reads it at a person's terminal. The
+// line on stdin is what a person might type out of habit: nothing is read for
+// either step any more (T7, docs/no-prompt-policy), so the banners are the
+// whole of what the reader has and both steps go on.
 func TestProjectAndBillingInConfirmationText(t *testing.T) {
 	r := newProjectRig(t)
 	t.Setenv("GOOGLE_CLOUD_QUOTA_PROJECT", "my-quota-proj")
@@ -283,7 +281,9 @@ func TestProjectAndBillingInConfirmationText(t *testing.T) {
 			t.Errorf("the creation's confirmation lacks %q:\n%s", want, out)
 		}
 	}
-	r.nothingDone(t, "a declined creation")
+	if cs := r.crm.Creates(); len(cs) != 1 || cs[0].ID != newProj {
+		t.Errorf("creates = %+v, want the project the banner named: nothing is typed under it\n%s", cs, out)
+	}
 
 	r = newProjectRig(t)
 	r.existing(false)
@@ -299,7 +299,9 @@ func TestProjectAndBillingInConfirmationText(t *testing.T) {
 	if !strings.Contains(out, "no parent") {
 		t.Errorf("a create without --parent does not say it has none:\n%s", out)
 	}
-	r.nothingDone(t, "a declined creation")
+	if cs := r.crm.Creates(); len(cs) != 1 || cs[0].Parent != "" {
+		t.Errorf("creates = %+v, want one with no parent", cs)
+	}
 }
 
 // A project an earlier run of fugaro setup created and finished (Firebase and
@@ -891,7 +893,9 @@ func TestRelinkNeverHappens(t *testing.T) {
 }
 
 // A project an earlier run created and did not finish is resumed with every
-// change said to be to that project, each behind its own typed confirmation.
+// change said to be to that project, each behind its own banner — and nothing
+// is typed under either of them (T7, docs/no-prompt-policy), so a person at
+// their terminal reads the two and both steps go on.
 func TestResumedProjectBannersSayResuming(t *testing.T) {
 	r := newProjectRig(t)
 	r.crm.AddProject(newProj, 424242)
@@ -904,22 +908,15 @@ func TestResumedProjectBannersSayResuming(t *testing.T) {
 	}
 	r.nothingDone(t, "the plan")
 
-	out, _, _ = r.run(t, true, newProj+"\n"+billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
+	// Nothing on stdin: the two banners are the whole of it, and the resume
+	// runs to both of its changes.
+	out, _, _ = r.run(t, true, "", "--create-project", "--link-billing", billingAcc)
 	if n := strings.Count(out, "⚠ CONFIRM: resuming project"); n != 2 {
 		t.Errorf("%d confirmations say existing, want 2 (Firebase, billing):\n%s", n, out)
 	}
 	if len(r.crm.Creates()) != 0 || len(r.fb.Adds()) != 1 || len(r.bill.Links()) != 1 {
-		t.Errorf("adds %v links %v", r.fb.Adds(), r.bill.Links())
+		t.Errorf("adds %v links %v, want the resume's two changes and no create", r.fb.Adds(), r.bill.Links())
 	}
-
-	// The ID alone is not enough for billing; and nothing typed does nothing.
-	r = newProjectRig(t)
-	r.crm.AddProject(newProj, 424242)
-	r.crm.SetLabels(newProj, map[string]string{infra.CreatedLabelKey: infra.CreatedLabelValue})
-	r.gcs.AddProject(newProj, 424242)
-	r.bill.SetBilling(newProj, false)
-	_, _, _ = r.run(t, true, "", "--create-project", "--link-billing", billingAcc)
-	r.nothingDone(t, "no typed confirmation")
 }
 
 // A create that times out says what to wait for, and a taken ID's text
