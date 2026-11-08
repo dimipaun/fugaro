@@ -1193,7 +1193,10 @@ workflows:
 // Mutation (run, restored): return early from clampTotalToJob without touching
 // the total. The first case fails — at 90 minutes, which is when the job's own
 // class has elapsed, the run is still in its stages and Cloud Run kills it two
-// minutes later, before finalize.
+// minutes later, before finalize. Removing the cuts that follow it fails the
+// case that names each one: the two step caps (a 20m class), and the reserve
+// itself (a class of 5m or less, where the reserve that fitted the total no
+// longer fits the class).
 func TestClampTotalToJobBoundsTheRunByItsJob(t *testing.T) {
 	ctx := context.Background()
 	cfg, problems := config.Parse([]byte(clampConfigYAML))
@@ -1223,6 +1226,11 @@ func TestClampTotalToJobBoundsTheRunByItsJob(t *testing.T) {
 		// total they are caps the job's own clock cuts first, so the step they
 		// bound is killed mid-run instead of ending in finalize.
 		{"a class under the step caps", "20m", gcp.ProjectJobName("standard", "github", "acme-personal"), "", true, 20 * time.Minute},
+		// A class at or under the default reserve: the reserve comes down with
+		// the total, or every second the run has left is finalize's and it ends
+		// with nothing pushed.
+		{"a class at the reserve", "5m", gcp.ProjectJobName("standard", "github", "acme-personal"), "", true, 5 * time.Minute},
+		{"a class under the reserve", "4m", gcp.ProjectJobName("standard", "github", "acme-personal"), "", true, 4 * time.Minute},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := servingPolicy([]string{"acme-personal"}, map[string][]string{
@@ -1271,6 +1279,13 @@ func TestClampTotalToJobBoundsTheRunByItsJob(t *testing.T) {
 			class, err := config.ParseDuration(tc.class)
 			if err != nil {
 				t.Fatal(err)
+			}
+			// The reserve comes down with the total when it no longer fits in
+			// it: a class at or under the workflow's own reserve would leave
+			// the run's every remaining second inside finalize, with no stage
+			// run and nothing pushed.
+			if res := wf.Timeouts.FinalizeReserve.Duration; res >= class {
+				t.Errorf("the finalize reserve is %s of the job's own %s class: the run would reach finalize before its first stage", res, class)
 			}
 			// The property the clamp exists for: at the class's own end the run
 			// has reached finalize, so backend.TaskTimeoutSlack is the margin
