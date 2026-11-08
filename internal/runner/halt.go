@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -198,8 +200,49 @@ func haltReasonText(h runstore.Halt) string {
 		return "the review range covers files this run never changed"
 	case runstore.HaltExpectedExceeded:
 		return "the run passed the cost its tier expected of it"
+	case runstore.HaltOwnerDecision:
+		return "the review left findings only the owner can settle"
 	}
 	return string(h.Reason)
+}
+
+// haltClass is which family a report groups a halt by, read from the halt's
+// own closed reason. It does not replace the reason and is not a copy of it:
+// the status says halted, the halt says which cap, and the class says which
+// family of cause that cap is. The governance arm reads the one slice the
+// checkpoint schema and the digest are pinned to, so a tripwire added there is
+// classed without a second list to keep in step.
+//
+// Two of the reasons carry "budget" in their name and are not in the budget
+// family, which is the design's §3 rows and not a reading of this switch:
+// halted_budget is the dollar and token caps, whose remedy is "once the cap is
+// raised", while budget_unavailable and budget_token_expired are the budget
+// database or the credential refusing — halted_credential's own definition,
+// "no credential became usable, or the budget database refused", kind infra,
+// its remedy an account that answers again (for the expired token, a relaunch
+// after the wait), never a cap raised.
+//
+// It sits beside haltReasonText because the two are one fact read twice: the
+// reason is the halt in the runner's words a person reads, the class is the
+// same reason in the vocabulary a record keeps. The reader that classes a
+// record predating the field keeps its own copy of this mapping
+// (internal/runview, FC5), and the two are held together by the walk over the
+// closed set (haltclasses_internal_test.go).
+func haltClass(reason runstore.HaltReason) failure.Class {
+	switch reason {
+	case runstore.HaltKillSwitch:
+		return failure.HaltedKillSwitch
+	case runstore.HaltRunCap, runstore.HaltRepoDailyCap, runstore.HaltGlobalDailyCap,
+		runstore.HaltNoCap, runstore.HaltTokenCap:
+		return failure.HaltedBudget
+	case runstore.HaltNoCredential, runstore.HaltCredsRulesDenied,
+		runstore.HaltBudgetUnavailable, runstore.HaltBudgetTokenExpired:
+		return failure.HaltedCredential
+	}
+	if slices.Contains(runstore.GovernanceHaltReasons(), reason) {
+		return failure.HaltedGovernance
+	}
+	return failure.Unclassified
 }
 
 // governanceHalt stops the run at a governance tripwire (T6.1, D329, G7): it
@@ -362,6 +405,19 @@ func haltLines(rec *runstore.Record) string {
 		fmt.Fprintf(&b, "To continue: %s once a credential is usable again (`fugaro accounts ls` shows each admitted account's state; the project policy's `credentials` decides whether another tier may be used meanwhile).\n\n", again)
 	case runstore.HaltCredsRulesDenied:
 		fmt.Fprintf(&b, "To continue: an operator re-runs `fugaro update --firebase-project <gcp-project-id>` with this release, which deploys the rules the cascade's fields need, then %s.\n\n", again)
+	case runstore.HaltOwnerDecision:
+		// OD1: there is no limit to raise and nothing to retry. A person
+		// answers the decisions listed below, and the answer is what the next
+		// launcher carries — without it the next review finds the same finding
+		// again and stops in the same place. Below, not above: the report writes
+		// this line and then the Waiting-on-you list (followUpReport), and
+		// nothing above names a decision — the Halted line carries the count
+		// alone (ownerWaitingReason).
+		decisions := "the decisions below"
+		if n := pendingOwner(rec.OwnerDecisions); n > 0 {
+			decisions = Plural(n, "decision") + " below"
+		}
+		fmt.Fprintf(&b, "To continue: the owner answers %s, then %s with `--owner-ruled <text-or-file>` carrying the ruling.\n\n", decisions, again)
 	case runstore.HaltRunCap, runstore.HaltNoCap:
 		if rec.Budget != nil && h.Reason == runstore.HaltNoCap {
 			fmt.Fprintf(&b, "To continue: an admin sets the missing cap with `fugaro budget set`, then %s.\n\n", again)

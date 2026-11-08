@@ -175,13 +175,17 @@ func TestPingsPassThrough(t *testing.T) {
 }
 
 func TestErrorBodyPassThrough(t *testing.T) {
+	fastRetry(t)
 	for _, c := range []struct {
 		status int
 		typ    string
 	}{{429, "rate_limit_error"}, {529, "overloaded_error"}} {
+		// Both are the gateway's one retry (issue #1827, SC2): the upstream
+		// answers the same way twice, and what reaches the agent is the second
+		// attempt's answer -- the same status, body and allowlisted headers.
 		rep := anthropicfake.Error(c.status, c.typ, "slow down")
 		rep.Header = http.Header{"Retry-After": {"3"}, "X-Should-Retry": {"true"}, "Request-Id": {"req_err"}}
-		h := newHarness(t, rep)
+		h := newHarness(t, rep, rep)
 		resp, body := h.post(msg(sonnet, 100))
 		if resp.StatusCode != c.status {
 			t.Errorf("status %d, want %d", resp.StatusCode, c.status)
@@ -191,6 +195,9 @@ func TestErrorBodyPassThrough(t *testing.T) {
 		}
 		if resp.Header.Get("Retry-After") != "3" || resp.Header.Get("X-Should-Retry") != "true" || resp.Header.Get("Request-Id") != "req_err" {
 			t.Errorf("%d: headers %v", c.status, resp.Header)
+		}
+		if n := h.fake.Count(); n != 2 {
+			t.Errorf("%d: the upstream saw %d requests, want 2: the call and its retry", c.status, n)
 		}
 	}
 }
