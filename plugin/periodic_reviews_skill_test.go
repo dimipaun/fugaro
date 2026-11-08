@@ -106,16 +106,18 @@ func TestWorkingSkillNeverSubmitsOnItsOwn(t *testing.T) {
 // reader and `--due` all work on it), with the commit as a separate opt-in
 // step.
 //
-// No task in the plan owns this sentence, and the pin is what stands in for
-// one. R3 asks for the bucket wording the 2026-11-05 rulings (E1, E7, E8)
-// call for, but the writer that would make it true is R10's, and R10's file
-// list is `internal/cli/runs_digest.go`, `internal/cli/runs_digest_test.go`,
-// `docs/recipes.md` and `internal/digest/store.go` -- the plugin skills are
-// not in it, so R10's PR does not touch this file and nothing else schedules
-// the correction either. So the pin holds the shipped wording, and landing
-// R10's default breaks it on purpose: whoever lands R10 updates the skill,
-// the reference and this test together, rather than the skills going on
-// describing a default the command no longer has.
+// The sentence is R3's own, and R3's spec asks for the *bucket* one: the
+// rulings of 2026-11-05 (E1, E7, E8) move a report to the project's runs
+// bucket. The writer that would make that true is R10's, and no task carries
+// the correction with it: R10's file list is
+// `internal/cli/runs_digest.go`, `internal/cli/runs_digest_test.go`,
+// `docs/recipes.md` and `internal/digest/store.go`, the plugin skills are not
+// in it, and R6 -- the plan's other holder of the reference -- adds §7's
+// sentences and nothing here. So this pin is the tripwire instead: it holds
+// the shipped wording, and landing R10's default breaks it on purpose, which
+// is how whoever lands R10 learns that the skill, the reference and this test
+// move with the default rather than going on describing one the command no
+// longer has.
 func TestWorkingSkillCarriesTheDueSignalAndTheReportsPlace(t *testing.T) {
 	files := workingSkillFiles(t)
 	ref, ok := files["skills/working/reference/periodic-reviews.md"]
