@@ -311,11 +311,23 @@ function setAbsentSentence(): string {
 }
 
 /** versionSentence names both versions, which is the whole of the remedy: the
- * record is state a newer fugaro may have written, and an operator who reads
- * the two numbers knows whether to update the console or read the file by
- * hand. */
+ * record is state a newer fugaro may have written in a shape this build would
+ * misread, and an operator who reads the two numbers knows whether to update
+ * the console or read the file by hand.
+ *
+ * **Only a number or a string is quoted back.** The member is a document's, so
+ * a `version` that is an object or an array is not stringified into the
+ * sentence: the sentence would then be a cell sized by the document rather than
+ * by the console, and its content would be a document's string the sanitizer
+ * would have to make a second pass over. What is not a scalar is named as what
+ * it is, and the version this console reads is still the half an operator acts
+ * on. */
 function versionSentence(version: unknown): string {
-  return `the last-update record this read printed is version ${JSON.stringify(version)}, and ${RETIREMENTS_VERSION_WORD} ${String(RETIREMENTS_RECORD_VERSION)}`
+  const found =
+    typeof version === 'number' || typeof version === 'string'
+      ? `version ${JSON.stringify(version)}`
+      : 'not a version this console can name'
+  return `the last-update record this read printed is ${found}, and ${RETIREMENTS_VERSION_WORD} ${String(RETIREMENTS_RECORD_VERSION)}`
 }
 
 /** rowOf reads the keys of one retirement and **only** those: the address, the

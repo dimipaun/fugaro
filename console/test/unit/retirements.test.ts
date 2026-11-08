@@ -395,8 +395,11 @@ describe('buildRetirementsModel', () => {
     // The record is state: a newer fugaro may have written a shape this build
     // would misread, and an older one is not the document its reader knows.
     // Both are refused, and the sentence names the two versions rather than a
-    // row set this build guessed at.
-    for (const version of [0, 2, '1', null]) {
+    // row set this build guessed at. The two compound values are here because
+    // the member is a document's and the sentence is the console's: an object
+    // or an array is named as what it is rather than quoted back, so no
+    // document can size that cell.
+    for (const version of [0, 2, '1', null, { version: 2 }, ['2']]) {
       const model = buildRetirementsModel({
         raw: { ...MANAGED, retirements: { ...RECORD, version } },
       })
@@ -404,6 +407,9 @@ describe('buildRetirementsModel', () => {
       expect(model.record, String(version)).toBeNull()
       const root = renderRetirements(factory, model)
       expect(drawn(root)).toContain(RETIREMENTS_VERSION_WORD)
+      // The refusal names what it read and never the record's rows, and it is
+      // a sentence rather than a transcript of the document.
+      expect((model.because ?? '').length).toBeLessThan(200)
       // The rows are not drawn at all: a version this build does not read is
       // not a set it half-draws.
       expect(all(root, RETIREMENTS_ROW_CLASS)).toHaveLength(0)
