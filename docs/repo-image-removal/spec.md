@@ -1,6 +1,7 @@
 # Removing the per-repository images: the design
 
-**Status: a design, and nothing is built. Every decision in it is answered.** The owner's ruling of
+**Status: a design, and every decision in it is answered; the build it plans is half done, and
+[README.md](README.md)'s status line says which half.** The owner's ruling of
 **2026-11-04** — *"Completely disable repo-level images for now to make things simpler."* — is the
 requirement; the reading of it into this tree is [reconciliation.md](reconciliation.md), which also
 carries the owner's answers of the same day to all nineteen questions the ruling opened — and **where

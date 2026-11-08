@@ -1,19 +1,29 @@
 # Removing the per-repository derived images: the project image catalog is the only image path
 
-**Status: a design, and nothing is built. The owner answered every decision on 2026-11-04.** **Owner
+**Status: the design is answered and the plan is approved; its configuration half is built. The owner
+answered every decision on 2026-11-04 and approved the plan on 2026-11-07.** **Owner
 2026-11-04: moved to 0.19.0 because the live catalog check found #1701/#1703 first** — superseded by the
 note below. **Owner 2026-11-04 (after the 0.18.0 tag): moved again to 0.20.0 (0.19.0 = config
-management first).** The owner
+management first)** — and **that slot slipped: 0.20.0, 0.20.1, 0.20.2 and 0.20.3 all shipped without the
+removal, so where this folder names 0.20.0 (the slot §7 recommends, the tag its live check gates) that is
+the plan's recommendation and not a fact of a released version. The release that carries the removal is
+the owner's to pick.** The owner
 gave the ruling this folder answers on **2026-11-04** — *"Completely disable repo-level images for now
 to make things simpler."* — and this folder reconciles it against the code on `main`, decides every
-ambiguity it opens, and plans the build for **0.20.0**. This is a **design-only** pull request: it
-writes four documents, no code, no schema, no Terraform, no `go.mod`. **All nineteen decisions
+ambiguity it opens, and plans the build. **What is built is the configuration half**: the tombstones
+and the refusals that carry them, the scope and registry rows, the schemas and the fixtures (R2, R3),
+and the migration `fugaro update` performs on a project layer that still holds a removed key, beside the
+state that stops the run and names the door that repairs the object. **R4–R10 are not built.** The
+folder was opened by a **design-only** pull request that wrote four documents, no code, no schema, no
+Terraform and no `go.mod`; the removal's code landed after it. **All nineteen decisions
 D1190–D1208 are answered** — seven of them as recommended, the other twelve as the design's default
 that the owner did not object to, each with the date and the reason it rests on
-([reconciliation.md](reconciliation.md) §4) — so what is still owed is the owner's **approval of the
-plan**, and the one question its residual raises: whether the removal's release may ship the
-per-repository `--retire` as an operator step, or has to fold the retirement into `fugaro update`'s own
-converge. **No task starts before that is picked.**
+([reconciliation.md](reconciliation.md) §4) — and the one question its residual raises is still open:
+whether the removal's release may ship the per-repository `--retire` as an operator step, or has to fold
+the retirement into `fugaro update`'s own converge. The built half answers the same question for the
+layer the removal cannot leave valid in the only way it can without a new decision: `fugaro update`
+stops and says so rather than pretending, and the sentence it stops with names a command the reader can
+carry out from the state they are in.
 
 | File | Role |
 | --- | --- |
@@ -29,7 +39,7 @@ converge. **No task starts before that is picked.**
 Read against the tree, the ruling has three parts, and they are the design's requirements rather than
 its recommendations:
 
-1. **A per-repository derived image is removed in 0.20.0.** Not deprecated, not defaulted off: the
+1. **A per-repository derived image is removed.** Not deprecated, not defaulted off: the
    workflow `image:` block, `dockerfile:`, the `rebuild:` block, the commands that build, refresh and
    check a repository's own image, the per-repository check job and its Scheduler, and the
    per-repository Artifact Registry repository it all writes into, all go.

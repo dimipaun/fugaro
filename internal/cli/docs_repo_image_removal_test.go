@@ -128,7 +128,13 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 	}
 	readme := flattenDoc(readDoc(t, rirReadme))
 	for _, want := range []string{
-		"**Status: a design, and nothing is built. The owner answered every decision on 2026-11-04.**",
+		// The status line, which is a fact about this folder and has to move with
+		// the code: R2, R3 and the layer migration are in, so "nothing is built"
+		// was false, and the plan's 0.20.0 slot slipped -- 0.20.0 through 0.20.3
+		// shipped without the removal -- so the sentences below that name it have
+		// to read as the plan's recommendation rather than as a shipped release.
+		"**Status: the design is answered and the plan is approved; its configuration half is built. The owner answered every decision on 2026-11-04 and approved the plan on 2026-11-07.**",
+		"**that slot slipped: 0.20.0, 0.20.1, 0.20.2 and 0.20.3 all shipped without the removal",
 		// The owner's ruling, verbatim, so the index cannot drift into a
 		// paraphrase of it: every task of the plan answers this sentence.
 		"Completely disable repo-level images for now to make things simpler.",
@@ -148,7 +154,8 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 	}
 	spec := flattenDoc(readDoc(t, rirSpec))
 	for _, want := range []string{
-		"**Status: a design, and nothing is built. Every decision in it is answered.**",
+		// The same fact on the design document itself: the build is half done.
+		"**Status: a design, and every decision in it is answered; the build it plans is half done, and [README.md](README.md)'s status line says which half.**",
 		// Which document wins when the two disagree: the spec is the one a
 		// reader meets first and the reconciliation is the one checked against
 		// the tree.
@@ -168,7 +175,8 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 	// plan reads as eleven independent tasks, which is the one thing it is not.
 	plan := flattenDoc(readDoc(t, rirPlan))
 	for _, want := range []string{
-		"**Status: plan only; nothing is implemented; no task approved.**",
+		// The plan's own status: approved 2026-11-07, its first half landed.
+		"**Status: approved on 2026-11-07, and half built — R2, R3 and the layer migration this work's own follow-up added have landed; R4–R10 have not.**",
 		"**catalog ships → R0 → D1148 (both tasks) → R1 → R2 → R3 → R4 → R5 → R6 → R7 → R8 → R9 → R10.**",
 		"**0.20.0 — two releases after D1148's two tasks",
 		// The ceiling, and the one subject that exceeds it: a reader checking

@@ -1,15 +1,18 @@
 # Implementation plan: removing the per-repository derived images
 
-**Status: plan only; nothing is implemented; no task approved.** Eleven tasks, **R0–R10**, each with its
+**Status: approved on 2026-11-07, and half built — R2, R3 and the layer migration this work's own
+follow-up added have landed; R4–R10 have not.** Eleven tasks, **R0–R10**, each with its
 files, its interface, its **red step**, its named tests and its **SEC** flag. Every task is written
 against the tree of 2026-11-04 (`777b902d`, the merge of `main` this round read) and every citation in
 it was resolved while writing. **The owner answered the decisions in
 [reconciliation.md](reconciliation.md) §4 on 2026-11-04**, so each task's block is settled and none of
-them waits on a question; what is still owed is the owner's **approval of the plan itself**, and the one
-question its residual raises — whether the removal's release may ship the per-repository `--retire` as
-an operator step ([reconciliation.md](reconciliation.md) §5). **No task lands before that is picked**,
-because the answer decides whether the removal release needs the retirement folded into `update`'s own
-converge, and that is a change to a task rather than a detail inside it.
+them waits on a question. The one question its residual raises is still open — whether the removal's
+release may ship the per-repository `--retire`, and the repair of a layer the removal cannot leave
+valid, as an operator step ([reconciliation.md](reconciliation.md) §5) — and the answer decides whether
+the removal release needs the retirement folded into `update`'s own converge, which is a change to a
+task rather than a detail inside it. Until it is picked, a task whose subject is an operator step does
+not land. The plan's own slot, **0.20.0**, is not the release that carries the removal: 0.20.0 through
+0.20.3 all shipped without it ([README.md](README.md) says so in its status line).
 
 ## 1. What this plan does not own
 

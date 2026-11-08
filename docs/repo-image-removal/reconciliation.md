@@ -540,11 +540,16 @@ its `Recommendation` and both costs, so the answer and the price of the other re
   can use. What remains is the layer the removal cannot leave valid, the profile its `default_profile`
   names holding nothing but removed keys: no write of the run is the owner's answer there, so the run
   stops with a non-zero error naming the door that does repair the object — a layer published over it
-  with `fugaro config publish --executable-changes` (`internal/cli/init_layer_stage.go:265`) — rather
-  than skipping the stage. That is an operator step beyond `fugaro update` for a broken layer, and it
-  is the HARD RULE's own boundary: the run says it has not converged instead of pretending, and the
-  reading still open is whether the removal should decide that state itself (choose a `default_profile`
-  for the owner). **Picking between them is a new decision, not one of these nineteen.**
+  with `fugaro config publish --executable-changes FILE`
+  (`internal/cli/init_layer_stage.go:265`) — rather than skipping the stage. **FILE is named because
+  the state that reaches that sentence from the seed is the one where this machine has no local layer
+  file at all: `fugaro config publish` on its own defaulted path refuses there with "run fugaro
+  update, which seeds it" — the command that has just sent the reader here — so a remedy naming that
+  door without a file sends them round the loop.** That is an operator step beyond `fugaro update` for
+  a broken layer, and it is the HARD RULE's own boundary: the run says it has not converged instead of
+  pretending, and the reading still open is whether the removal should decide that state itself (choose
+  a `default_profile` for the owner). **Picking between them is a new decision, not one of these
+  nineteen.**
 - **Unit tests cannot show the deploy path.** The registry, the build account, the job and the run are
   one artefact, and the hermetic fakes are written from the API documentation. That is why the 0.20.0
   tag waits for the owner's live check rather than for a green suite, and why the check is a step of the
