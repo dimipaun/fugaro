@@ -61,8 +61,17 @@ func reviewCLI(t *testing.T, args ...string) (string, string, error) {
 // review job unless a test says otherwise.
 func newReviewFixture(t *testing.T) *projectJobFixture {
 	t.Helper()
+	return newReviewFixtureAt(t, reviewAdmissionSince)
+}
+
+// newReviewFixtureAt is the same installation at another release, which is the
+// one thing a test of either gate moves: setBaseImage rewrites the pin the
+// fixture was built with, so a test has to set it here, while the config still
+// names the tag newProjectJobServingFixture wrote.
+func newReviewFixtureAt(t *testing.T, base string) *projectJobFixture {
+	t.Helper()
 	f := newProjectJobServingFixture(t)
-	setBaseImage(t, reviewAdmissionSince)
+	setBaseImage(t, base)
 	f.appendConfig(t, "credentials_service: { url: "+credentialsServiceFixtureURL+" }\n")
 	for _, account := range []string{"acme-personal", ""} {
 		job := credsvc.ReviewJobName("standard", "github", infra.ReviewVariantAccount(account))
@@ -325,8 +334,7 @@ func TestReviewStillRefusesWhenTheCredentialsServiceIsOff(t *testing.T) {
 // exists for; the same fixture at reviewAdmissionSince launches, which
 // TestReviewLaunchIsAdmittedWhenTheConstantIsFlipped pins.
 func TestReviewRefusesAnInstallationWhoseServicePredatesTheClass(t *testing.T) {
-	f := newReviewFixture(t)
-	setBaseImage(t, reviewJobSince)
+	f := newReviewFixtureAt(t, reviewJobSince)
 	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
 
 	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-personal"},
