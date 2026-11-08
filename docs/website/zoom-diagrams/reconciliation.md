@@ -95,9 +95,9 @@ is recorded with its tier, and the senior review that follows is told nothing of
 
 ### ZF2 — **Wrong** — "cheap coder ↔ cheap reviewer"
 
-The cheap loop's review is a review by **the coder's own model**. `internal/config/config.go:208`
+The cheap loop's review is a review by **the coder's own model**. `internal/config/config.go:236`
 `StageRole` maps `review_first` to `RoleCoder`; only `review` is `RoleReviewer`
-(`config.go:226` `ModelFor`). `docs/recipes.md:39` says the same in words: the `first_line`
+(`config.go:254` `ModelFor`). `docs/recipes.md:39` says the same in words: the `first_line`
 step "is a review by the coder's model in a fresh session". There is no separate cheap reviewer identity to
 draw as a second actor unless the brief means two *rounds*, which it does not.
 
@@ -110,7 +110,7 @@ both: `ReasonNoVerifiedTest` and `"tests failing on the final commit"`. `runner.
 then sets `spec.Draft = !ready`. So a senior pass alone does **not** flip a draft PR to
 ready. The draft/flip pair itself is real and shipped (`internal/runner/prflow.go:200`
 `openDraft`, `:224` `Draft: true`), gated by `git.pr.early_draft`, default **true**
-(`internal/config/defaults.go:69-71`).
+(`internal/config/defaults.go:75-77`).
 
 ### ZF4 — **Wrong** — "deterministic checks first (compile, tests)" as a property of a job
 

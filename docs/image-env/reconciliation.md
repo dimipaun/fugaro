@@ -90,10 +90,10 @@ cannot set an agent environment variable at all: `docs/design/agent-env.md` desi
 its §1 says the allow-list **is** Fugaro's own Go code and never a `fugaro.yaml` field
 (`docs/design/agent-env.md:305-314`), and **nothing of it is built** (its own status line, `:3-4`).
 But a repository's **Dockerfile** is repository-authored text: `image:`/`dockerfile:`
-(`internal/config/config.go:603-604`) make a per-repository job whose image sets whatever names the
+(`internal/config/config.go:631-632`) make a per-repository job whose image sets whatever names the
 repository wrote. That is the fact O1's scope answers, and F5 is what makes it enforceable. **One
 thing the stamp does not claim:** a repository names *which* operator-owned entry it runs
-(`image_name:`, `internal/config/config.go:605-619`, added in 0.17.0), so the stamp proves the image
+(`image_name:`, `internal/config/config.go:633-647`, added in 0.17.0), so the stamp proves the image
 came **from the operator's catalog**, never that the operator chose that entry for that repository —
 the trust a repository already extends by writing `image_name:` today, over entries every one of
 which the operator published.

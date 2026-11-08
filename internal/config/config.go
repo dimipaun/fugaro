@@ -68,10 +68,10 @@ type Config struct {
 	// that writes none, moving the hash of a file that did not change.
 	Rigor *Rigor `yaml:"rigor,omitempty" json:"rigor,omitempty"`
 	// Planning is the repository's planning: block (docs/contract-first-decoupling,
-	// D1813). The json tag is what keeps a block no loader filled out of the
-	// resolved config's hash, as Rigor's is: SHA256 marshals this struct
-	// (resolve.go), and a pointer with no json name would write a null key
-	// into every file that writes none.
+	// D1813). The json tag gives the block its snake_case name on the wire for a
+	// --json consumer, and it is not what keeps the hash still the way Rigor's
+	// is: applyDefaults fills the block (defaults.go), so the pointer is never
+	// nil and every repository's resolved sha256 moves with this release.
 	Planning *Planning `yaml:"planning,omitempty" json:"planning,omitempty"`
 
 	// Layer is the project layer Resolve resolved this config over, nil

@@ -24,23 +24,23 @@ Gone from `fugaro.yaml`, from a workflow:
 
 | Key | What it is today | Declaration |
 | --- | --- | --- |
-| `image.*` (`apt`, `setup`, `tools`, `skip_build_scripts`, `key_files`) | the generated Dockerfile's build instructions | `internal/config/config.go:752` |
-| `dockerfile` | the repository's own Dockerfile, one repository-relative path | `internal/config/config.go:604` |
-| `rebuild.*` (`check`, `max_age`, `lockfiles`, `base`, `paths`) | the daily check's triggers for this repository's image | `internal/config/config.go:714` |
+| `image.*` (`apt`, `setup`, `tools`, `skip_build_scripts`, `key_files`) | the generated Dockerfile's build instructions | `internal/config/config.go:780` |
+| `dockerfile` | the repository's own Dockerfile, one repository-relative path | `internal/config/config.go:632` |
+| `rebuild.*` (`check`, `max_age`, `lockfiles`, `base`, `paths`) | the daily check's triggers for this repository's image | `internal/config/config.go:742` |
 
 Gone from the **project layer file** too: the same `image.*` keys and `rebuild.*`
 (`schemas/project-layer.schema.json:265`, `:338`) — a profile can set them today, so removing them
 from `fugaro.yaml` alone would leave a second door to the same build.
 
 **What is not removed, and why it is named here:** `image_name` and `needs`
-(`internal/config/config.go:619`, `:626`) are the catalog's own selectors and stay; `checkout`
-(`internal/config/config.go:657`) keeps both its values (§2.2), and the `image.node`/`image.jdk`
+(`internal/config/config.go:647`, `:626`) are the catalog's own selectors and stay; `checkout`
+(`internal/config/config.go:685`) keeps both its values (§2.2), and the `image.node`/`image.jdk`
 tombstones stay with them — they are not settings but refusals with a migration sentence
 (`internal/config/image.go:119`, `:122`), which is the mechanism the keys above reuse (C4, D1195).
 
 The eleven scope rows that make the removed keys settable
 (`internal/config/scope.go:108`, `:113`, `:131`, `:135`) go with them, and so do their entries in
-`ExecutableKeys` and `NonExecutableImageKeys` (`internal/config/scope.go:179`, `:189`). **Not every
+`ExecutableKeys` and `NonExecutableImageKeys` (`internal/config/scope.go:184`, `:189`). **Not every
 `image.*` row goes**: `internal/config/scope.go:106` and `:107` are `image.node` and `image.jdk`, the
 two tombstones that stay, so the removal's first scope row is `:108` and its last `:135`. A key that is
 gone from the scope table is a key no settings command may write, which is the second half of the
@@ -275,7 +275,7 @@ They are destroyed by the flow the tree already has and by nothing else:
 
 No compatibility, in the shape the tree already uses for a removed key.
 
-- **`fugaro.yaml` validation** (`internal/config/config.go:1195` decodes strictly, so an unknown field
+- **`fugaro.yaml` validation** (`internal/config/config.go:1223` decodes strictly, so an unknown field
   is already an error) **refuses each removed key by name**, with a message that names the catalog
   command that replaces it — the pattern the `image.node` and `image.jdk` tombstones already set
   (`internal/config/image.go:119`, `:122`). The keys stay decodable as tombstones and their *refusal*

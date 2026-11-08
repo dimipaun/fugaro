@@ -74,16 +74,16 @@ These keys are PR-reviewed and reach a run through the base branch, the "default
 | Setting group (keys) | Cite | Show / json | Set | Reaches cloud | Who | Gap |
 |---|---|---|---|---|---|---|
 | `version`, `project`, `gcp_project`, `profile` | config.go:25-36 | config show / yes | `config init` (new file), `update --anchor` (gcp_project), else hand | merge to base branch | repo | L |
-| `git.provider`, `git.base_branch`, `git.author`, `git.pr.{labels,reviewers,early_draft,checkpoints}` | config.go:340-384 | config show / yes | hand | merge | repo (`provider`, `labels`, `early_draft` and `checkpoints` can also be set in the project layer) | M |
-| `agent.{auth,model,review_rounds,max_budget_usd,instructions,review,first_line_review,first_line_rounds,recipe,oauth_token,compression}` | config.go:397-454 | config show / yes | hand; `--model`, `--review-rounds`, `--recipe` per run (InOverride, scope.go:15) | merge | repo, layer | M |
-| `agent.models.{coder,reviewer,background}` | config.go:481-485 | config show / yes | hand; **`fugaro models use` designed** (models spec §6) | merge | repo, layer | M (designed) |
-| `agent.max_output_tokens.*`, `agent.max_run_tokens` | config.go:412-415 | config show + validate clamp | hand | merge; may only tighten the ceiling (scope.go `whyPolicy`) | repo | L |
-| `budget.{mode,per_run_usd,allowed_models,per_day_usd}` | config.go:164-173 | config show; validate prints clamps (`internal/cli/validate.go:105`) | hand | merge; tighten-only (merge.go:39) | repo | L |
-| `governance.*` (ratios, stage budget/tokens/timeouts, tiers) | config.go:194-284 | config show | hand | tighten-only under the layer's governance (`validate.go:92`) | repo, layer | M |
+| `git.provider`, `git.base_branch`, `git.author`, `git.pr.{labels,reviewers,early_draft,checkpoints}` | config.go:368-412 | config show / yes | hand | merge | repo (`provider`, `labels`, `early_draft` and `checkpoints` can also be set in the project layer) | M |
+| `agent.{auth,model,review_rounds,max_budget_usd,instructions,review,first_line_review,first_line_rounds,recipe,oauth_token,compression}` | config.go:425-482 | config show / yes | hand; `--model`, `--review-rounds`, `--recipe` per run (InOverride, scope.go:15) | merge | repo, layer | M |
+| `agent.models.{coder,reviewer,background}` | config.go:509-513 | config show / yes | hand; **`fugaro models use` designed** (models spec §6) | merge | repo, layer | M (designed) |
+| `agent.max_output_tokens.*`, `agent.max_run_tokens` | config.go:440-443 | config show + validate clamp | hand | merge; may only tighten the ceiling (scope.go `whyPolicy`) | repo | L |
+| `budget.{mode,per_run_usd,allowed_models,per_day_usd}` | config.go:192-212 | config show; validate prints clamps (`internal/cli/validate.go:105`) | hand | merge; tighten-only (merge.go:39) | repo | L |
+| `governance.*` (ratios, stage budget/tokens/timeouts, tiers) | config.go:222-312 | config show | hand | tighten-only under the layer's governance (`validate.go:92`) | repo, layer | M |
 | `ab.{rate,max_pairs_per_day,challengers,judge_model,exchange_rate}` | ab.go:29-50 | config show | hand | the repository may only lower the rate (layer.go:77-85) | repo, layer | L |
-| `rigor.{default,areas}` | config.go:113-123 | config show | hand; **`fugaro rigor set|unset --repo` designed** (#1463) | merge | repo, layer | M (designed) |
-| `followup.{trusted,allow_public}` | config.go:313-320 | config show | hand | merge | repo only (scope.go `whyFollowup`) | M (security-relevant) |
-| `workflows.*` (profile, job_profile, image.*, dockerfile, commands.*, cache, secrets, resources, timeouts, rebuild.*, inputs.*, checkout) | config.go:551-995 | config show `--workflow`; image status | hand; the `fugaro:setup` skill authors it | merge plus image rebuild (`image refresh` or the daily check) | repo, layer profile | L (the setup skill covers authoring) |
+| `rigor.{default,areas}` | config.go:119-129 | config show | hand; **`fugaro rigor set|unset --repo` designed** (#1463) | merge | repo, layer | M (designed) |
+| `followup.{trusted,allow_public}` | config.go:341-348 | config show | hand | merge | repo only (scope.go `whyFollowup`) | M (security-relevant) |
+| `workflows.*` (profile, job_profile, image.*, dockerfile, commands.*, cache, secrets, resources, timeouts, rebuild.*, inputs.*, checkout) | config.go:579-1023 | config show `--workflow`; image status | hand; the `fugaro:setup` skill authors it | merge plus image rebuild (`image refresh` or the daily check) | repo, layer profile | L (the setup skill covers authoring) |
 
 ### 1.2 The project layer: bucket object `fugaro/project-layer.yaml`
 
@@ -336,11 +336,11 @@ Today the defaults are scattered:
 - **`applyDefaults`** (`internal/config/defaults.go:199-264`) uses inline literals:
   - `"main"` (although `DefaultBaseBranch` exists at basebranch.go:6), `max_budget_usd` 25, `cpu` 4, `memory` `8Gi`, `total` 90m, and derived timeouts (`stage` min(40m, total), `verify` min(30m, total), `finalize_reserve` min(5m, total/5), `render` the remainder).
   - Reports globs.
-  - `Rebuild.Defaults` (config.go:686-700): daily, 14d, true, true.
+  - `Rebuild.Defaults` (config.go:714-728): daily, 14d, true, true.
 - **Named constants:**
   - `DefaultReviewRounds` 2, `DefaultFirstLineRounds` 1, `DefaultAgentAuth` "vertex" (defaults.go:40-46)
-  - `DefaultJobProfile` "standard" (config.go:644)
-  - `DefaultInput*` (config.go:984-986)
+  - `DefaultJobProfile` "standard" (config.go:672)
+  - `DefaultInput*` (config.go:1012-1014)
   - `ABDefaultMaxPairsPerDay` 5 (ab.go:59)
   - `rigor.Default` pro (rigor/mode.go:46)
   - `budget.DefaultGrace` 3m (budget/grace.go:10)
@@ -428,5 +428,5 @@ No D-number is taken. The numbers are assigned when a design folder is written.
 - `internal/cli/run.go:2032`: the message names the project layer as the home of `budget.allowed_models`; it is the local project config (localcfg.go:430).
 - `fugaro config layer` requires a git checkout (config_show.go:205-208), so an owner outside a repository cannot read the layer.
 - `fugaro project repos ls` has no `--json`; every other read in this area has one.
-- `applyDefaults` hard-codes `"main"` (defaults.go:201) beside `config.DefaultBaseBranch` (basebranch.go:6). These are two copies of one default.
+- `applyDefaults` hard-codes `"main"` (defaults.go:207) beside `config.DefaultBaseBranch` (basebranch.go:6). These are two copies of one default.
 - `fugaro config show` reports a repository's `budget.per_run_usd` as source `repo` even when the ceiling clamps it; only `validate` says so (validate.go:105-125).

@@ -51,7 +51,7 @@ Today a workflow's job runs an image that Fugaro builds **for that repository an
 repository (`deploy/terraform/gcp/modules/repo/registry.tf:10`) as the repository's own build account
 (`deploy/terraform/gcp/modules/repo/build.tf:5`), from a Dockerfile Fugaro renders out of the
 workflow's `image:` settings or that the repository commits and names with `dockerfile:`
-(`internal/config/config.go:603`, `:604`). One Cloud Run job per repository
+(`internal/config/config.go:631`, `:604`). One Cloud Run job per repository
 (`fugarochk-<slug>`, `internal/backend/gcp/names.go:280`) with one Cloud Scheduler entry
 (`deploy/terraform/gcp/modules/repo/check.tf:116`) looks at every workflow once a day and rebuilds what
 moved.

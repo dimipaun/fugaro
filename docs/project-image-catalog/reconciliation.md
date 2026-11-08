@@ -40,15 +40,15 @@ anywhere. *Consequence:* the catalog is a **new layer above** the derived image,
 the per-workflow image stays, and the catalog is what the default one is built from.
 
 **F2: Missing. `image:` is a build-customisation block with no name.**
-`Workflow.Image` (`internal/config/config.go:603`, `Image Image`) is `type Image struct`
-(`internal/config/config.go:730`) holding `Apt`, `Setup`, `SkipBuildScripts`, `Tools`, `KeyFiles`
+`Workflow.Image` (`internal/config/config.go:631`, `Image Image`) is `type Image struct`
+(`internal/config/config.go:758`) holding `Apt`, `Setup`, `SkipBuildScripts`, `Tools`, `KeyFiles`
 (`:737`, `:738`, `:743`, `:747`, `:760`) and two 0.7.0 tombstones (`Node` `:733`, `JDK` `:736`). It
 carries **no name**, no tags and no default marker, and `IsZero()` (`internal/config/config.go:764`)
 answers only whether the block sets nothing. *Consequence:* the spec's named entries with tags and a
 default are new fields; they cannot be spelled with today's block.
 
 **F3: Conflicts. `dockerfile:` is one repository-relative path, and only the repository's own.**
-`Workflow.Dockerfile string` (`internal/config/config.go:604`) is a single path, refused unless it is
+`Workflow.Dockerfile string` (`internal/config/config.go:632`) is a single path, refused unless it is
 relative and inside the repository (`validateImage`, `internal/config/image.go:109`; its `dockerfile`
 message is at `:156`: "must be a relative path inside the repository"). The spec's `repo-name:path` form — a Dockerfile in a **named**
 repository — does not exist, and neither does a branch or a build context. *Consequence:* the
@@ -81,7 +81,7 @@ with the lock: it is a different object with a different key, and **D1141** sett
 `sharedCheckoutShipped` (`internal/config/image.go:245`) is false, with `SharedCheckoutRefusal`
 (`internal/config/image.go:266`): "no released fugaro builds or refreshes a shared dependency-layer
 image yet…". The kind's three values are `CheckoutBaked`/`CheckoutClone`/`CheckoutShared`
-(`internal/config/config.go:645`, `:646`, `:652`), defaulting to `baked`
+(`internal/config/config.go:673`, `:646`, `:652`), defaulting to `baked`
 (`internal/config/defaults.go:280`). *Consequence:* the catalog is a **baked** story — it says what a
 baked image is built from — and does not lift this refusal (**D1142**).
 
@@ -107,7 +107,7 @@ The service's routes are the model path, the review sign/verify routes and the G
 (`internal/credsvc/server.go:35-48`), and its bundle is one Secret Manager document whose key set is
 **closed** — model credentials, the GitHub App key, the Bitbucket credential, the review-signing key
 (`internal/credsvc/bundle.go:30-52`). Workflow build secrets travel a **different** path today: the
-workflow's `secrets:` (`internal/config/config.go:607`) are declared in `_SECRET_ENVS`
+workflow's `secrets:` (`internal/config/config.go:635`) are declared in `_SECRET_ENVS`
 (`internal/backend/gcp/build.go:185`), added to `availableSecrets`/`secretEnv`, and mounted as
 BuildKit **file** secrets (`docs/design/v1.md` §7.2; `internal/image/render.go:132`), because Cloud
 Build's docker refuses `env=` secret mounts. *Consequence:* the spec's "build secrets come from the

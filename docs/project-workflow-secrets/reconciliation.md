@@ -344,7 +344,7 @@ questions the document already asks. That is deliberate and it is why D1270 is c
 
 **Claim of the design:** that a project workflow secret can never be a reserved name.
 
-**What the code does.** `config.ReservedSecrets` (`internal/config/config.go:863`) is the four
+**What the code does.** `config.ReservedSecrets` (`internal/config/config.go:891`) is the four
 platform-mounted names; `config.Validate` refuses a workflow declaring one, and the provider
 convention names and the two harness OAuth namespaces are refused the same way
 (`internal/config/providers.go` `CheckWorkflowProviderSecrets`, `docs/multi-model.md:43`). The

@@ -566,7 +566,7 @@ case it detects. The plan needs a liveness check (a periodic health probe
 with a timeout, not only a one-time readiness probe at startup) and a
 latency bound on the forwarding path itself. **Memory is a second,
 unaddressed bound**: Cloud Run gives one container one memory limit
-(`workflows.*.resources.memory`, `internal/config/config.go:398`), shared by
+(`workflows.*.resources.memory`, `internal/config/config.go:426`), shared by
 the runner, the agent and, now, the sidecar — nothing in this design yet
 stops Headroom from using enough memory (summarizing a very large tool
 output, say) to OOM-kill the whole container, taking the run down with it
@@ -909,7 +909,7 @@ tunes.
 **The three edits, plus a fourth this design's first draft omitted**
 (`docs/design/recipes.md` §2, restated by every design since: "Config is
 strict-parsed in three places"), concretely, following the shape
-`OAuthToken` just added (`internal/config/config.go:159-168`):
+`OAuthToken` just added (`internal/config/config.go:187-196`):
 
 1. **The Go struct**, `internal/config/config.go`'s `Agent`: `Compression
    string \`yaml:"compression,omitempty"\`` next to `Recipe`/`OAuthToken`.
@@ -986,7 +986,7 @@ runner-bootstrap check described above, which is the only place the right
 answer exists.
 
 **Strict-parser consequences for older binaries.** A pre-feature runner's
-`config.Parse` (`dec.KnownFields(true)`, `config.go:489`) refuses an unknown
+`config.Parse` (`dec.KnownFields(true)`, `config.go:517`) refuses an unknown
 `compression` key outright — the same version-skew shape as
 `agent.recipe` (0.5.0), `gcp_project` (0.4.0) and `agent.oauth_token`
 (0.6.5). A `compressionSince` constant and an image-build-record check
