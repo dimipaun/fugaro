@@ -105,7 +105,9 @@ func TestDecodeKeepsEveryEntry(t *testing.T) {
 
 // TestSchemaAcceptsADecodedVerdict holds schemas/triage.schema.json to the
 // reader: the document Decode accepts is the document the schema accepts, and
-// the refusals both of them make are the same refusals.
+// the refusals both of them make are the same refusals but for the key's shape,
+// which is the caller's to derive and so the schema's to state — the one
+// divergence this test pins rather than hides.
 func TestSchemaAcceptsADecodedVerdict(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "triage.schema.json"))
 	if err != nil {
@@ -161,13 +163,33 @@ func TestSchemaAcceptsADecodedVerdict(t *testing.T) {
 		t.Errorf("the schema refused an empty group: %v", err)
 	}
 
+	// The one member the two do not agree on, pinned rather than left to be
+	// discovered: the key's shape is the derivation's to state (T-TR3) and not
+	// the reader's, so the reader takes a key this pattern refuses. Nothing
+	// turns on it — an entry whose key names no finding of the round is dropped
+	// by the code that applies the verdict, which blocks the finding (D1856) —
+	// so the narrower schema is not a hole, only a shape the reader does not
+	// own.
+	odd := `{"version":1,"findings":[{"index":0,"key":"zz","verdict":"defer","reason":"x"}]}`
+	if _, err := Decode([]byte(odd)); err != nil {
+		t.Errorf("the reader refused a key whose shape it does not derive: %v", err)
+	}
+	inst, err = jsonschema.UnmarshalJSON(strings.NewReader(odd))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err == nil {
+		t.Error("the schema accepted a key outside the shape it states: the divergence this test pins runs the other way")
+	}
+
 	// The bounds the schema states are the reader's own: a third verdict word,
-	// a reason over the limit, no reason, no findings array, and a member the
-	// shape does not know.
+	// a reason over the limit, no reason, an empty key, no findings array, and
+	// a member the shape does not know.
 	for _, tc := range []struct{ name, in string }{
 		{"a third verdict word", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"maybe","reason":"x"}]}`},
 		{"a reason over the limit", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"` + strings.Repeat("x", 201) + `"}]}`},
 		{"no reason", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block"}]}`},
+		{"an empty key", `{"version":1,"findings":[{"index":0,"key":"","verdict":"block","reason":"x"}]}`},
 		{"no findings array", `{"version":1}`},
 		{"another version", `{"version":2,"findings":[]}`},
 		{"an unknown member", `{"version":1,"findings":[],"tolerated":[]}`},
