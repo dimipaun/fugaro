@@ -17,9 +17,10 @@
 //     is parsed** (docs/licensing/licence-key.md, "Raw bytes before claims"), so
 //     a re-spelled claim set fails the signature instead of verifying as the
 //     same claims, and no claim is ever read out of a payload whose signature
-//     did not verify. Every refusal here names the key id and the part that
-//     failed, never a claim: a claim from an unverified payload is text an
-//     attacker chose.
+//     did not verify. Every refusal past the shape check names the key id and the
+//     part that failed, and none of them names a claim: a claim from an
+//     unverified payload is text an attacker chose. The shape check itself names
+//     nothing, because a text that is not three parts has no id to name.
 //   - **There is no network call.** Nothing here asks a server whether a key is
 //     good, which is also why there is no revocation: a key works until it
 //     expires (D308). TestLicencePackageImportsNoNetwork holds the imports.
@@ -160,8 +161,10 @@ var productionKeyring = Keyring{}
 // Verify answers what the compiled-in keyring makes of one key: its claims and
 // the state it is in against now.
 //
-// A refusal is one of the sentinels above, wrapped with the key id and never
-// with a claim. The caller supplies the clock rather than reading one, so what
+// A refusal is one of the sentinels above, wrapped with the key id the text
+// carried -- a text that is not three parts carries none, and splitKey answers
+// bare for it -- and never with a claim. The caller supplies the clock rather
+// than reading one, so what
 // a key reads as at a given instant is a value a test can hold; the check reads
 // the machine's clock in production, which is also the accepted limit that a
 // clock set back extends `expires` (D308).

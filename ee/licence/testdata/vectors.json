@@ -2,17 +2,17 @@
   "note": "The claim sets, states and refusals the Go, console and app verifiers are all read against (subscriptions plan S2.6, design docs/licensing/licence-key.md). Every key here is minted by a throwaway test keypair whose private half was generated in the process that wrote this file and never written down; no build trusts it, and ee/licence/key.go's production keyring holds no id at all until S2.9 publishes the owner's production key. `now` is the clock every vector is read at; `state` and `claims` are what an accepted key answers and `refused` is the part a refused one fails on, named as the three verifiers name it.",
   "now": 1794096000,
   "keyring": {
-    "licence-test-fixture-1": "hWbEmYhKB3EP4zViWUk6p4SaO6Euucw0mXWo6_wQpDM"
+    "licence-test-fixture-1": "L4v7pHYbWl03FcVQoMJM5BL4QykYdmujzgzz5Tm412g"
   },
   "staging": {
     "note": "The sandbox key: minted under the staging id for tests and for a sandbox installation, and in no production keyring, so a production verifier refuses it for the id alone (docs/licensing/licence-key.md, \"Test-mode keys\").",
     "id": "licence-staging-sandbox-1",
-    "public_key": "SWCLuerlJ40zfssEOJNDFjDSvYWYE-llBoiMjYN82FU"
+    "public_key": "a_RHABVzw0S0FWDhdAFghXf6L6afQfGyfmA-QnspMxo"
   },
   "vectors": [
     {
       "name": "a team key inside its term",
-      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbImNvb3JkaW5hdG9yIl0sInNlYXRzIjo1LCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsImlzc3VlZCI6MTc5MTUwNDAwMCwiZXhwaXJlcyI6MTgyMzA0MDAwMH0.nCM1hoYyXDhceINcurZ9ZuicihdQ2Ia-aPNqV9D7Zqiwm4BcqhM1ScKI3cMSlFiiBAe4Nt4ocHtgvpAvD5suDA",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbImNvb3JkaW5hdG9yIl0sInNlYXRzIjo1LCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsImlzc3VlZCI6MTc5MTUwNDAwMCwiZXhwaXJlcyI6MTgyMzA0MDAwMH0.Ct1QC4gj7mjJ5nSFXkpQKTpLqPgh44k7Ec8ZLUTgEOihXvxdA0FI7rGKRuEMUfNev611mGKI3yoPtQHyx9UNAQ",
       "state": "valid",
       "claims": {
         "tier": "team",
@@ -27,7 +27,7 @@
     },
     {
       "name": "a key at the second its term ends",
-      "key": "licence-test-fixture-1.eyJ0aWVyIjoiY29tbXVuaXR5IiwiZmVhdHVyZXMiOltdLCJzZWF0cyI6MSwib3JnYW5pc2F0aW9uIjoiYW4taW5kaXZpZHVhbCIsImlzc3VlZCI6MTc2MjU2MDAwMCwiZXhwaXJlcyI6MTc5NDA5NjAwMH0.XddOsoo7rTcQqpcYIMnMGp4Z1Oy1YUUvo0fVj8Z5N0CRFfmT3PpAGdZOugKWbA42WGCguNlRAnq8-_4HS7MQDA",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoiY29tbXVuaXR5IiwiZmVhdHVyZXMiOltdLCJzZWF0cyI6MSwib3JnYW5pc2F0aW9uIjoiYW4taW5kaXZpZHVhbCIsImlzc3VlZCI6MTc2MjU2MDAwMCwiZXhwaXJlcyI6MTc5NDA5NjAwMH0.CgPsU4gyLxMzZ0Dx-eI6R-ieG1OvQIMbAtwNfwFTHV9AJmO7hZrV4spURdYAyUfS1UY-6ywTo9WZ98m_IZ3PBA",
       "state": "valid",
       "claims": {
         "tier": "community",
@@ -40,7 +40,7 @@
     },
     {
       "name": "a key a second into its grace",
-      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjMsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzYyNDczNjAwLCJleHBpcmVzIjoxNzk0MDk1OTk5fQ.hOt27G5EHBRSGBV8CIUvW19hK3P7wCVEFYoz-8p-LlS9F4a3pq7OSoKmqGOXfxuP6nHhmTycmT1RkZXUX_P9Bw",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjMsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzYyNDczNjAwLCJleHBpcmVzIjoxNzk0MDk1OTk5fQ.Gu9wValJoWUXWdRcgVVRc5zBqQykO43ZABDYEl2d1FG1ZMayDUfX2IzMenE06qhOVl9pqTI1MKu935vpwuWjAw",
       "state": "grace",
       "claims": {
         "tier": "team",
@@ -53,7 +53,7 @@
     },
     {
       "name": "a key at the last second of its grace",
-      "key": "licence-test-fixture-1.eyJ0aWVyIjoiZW50ZXJwcmlzZSIsImZlYXR1cmVzIjpbInNzbyJdLCJzZWF0cyI6NDAsIm9yZ2FuaXNhdGlvbiI6ImFuLW9yZGVyLWZvcm0taWQiLCJpc3N1ZWQiOjE3NTk5NjgwMDAsImV4cGlyZXMiOjE3OTE1MDQwMDB9.2J2ohNDtbfh1ka3sM-mwS02GfNXUF-Y16L7lDZ_uoYvcohKHoBmRU4hbaoxmZJAAZguJtnoUV6PSmJHcBgwpDA",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoiZW50ZXJwcmlzZSIsImZlYXR1cmVzIjpbInNzbyJdLCJzZWF0cyI6NDAsIm9yZ2FuaXNhdGlvbiI6ImFuLW9yZGVyLWZvcm0taWQiLCJpc3N1ZWQiOjE3NTk5NjgwMDAsImV4cGlyZXMiOjE3OTE1MDQwMDB9.2RRV4V6rMiwUZDc2D707rTBnyLdlGdwXBNUq3ihKu4vKvfyuVPWKZdgwzC5505yNTJuasfgypU1AFjcMxuqzDA",
       "state": "grace",
       "claims": {
         "tier": "enterprise",
@@ -68,7 +68,7 @@
     },
     {
       "name": "a key a second past its grace",
-      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjMsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzU5ODgxNjAwLCJleHBpcmVzIjoxNzkxNTAzOTk5fQ.HyI6iI7HwFsvMvpZ95K_Ge9ubcMxb55WsYDAhChwCtsPPeHxS2iU29Z1JE6YJMJSCrmm0RBBm3oa86z-rTTLBA",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjMsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzU5ODgxNjAwLCJleHBpcmVzIjoxNzkxNTAzOTk5fQ.g5QbvHi66_hCerPnLrEMafp57B6tPDw9ZW-e2yFvordtHoN5nMj0Br6ymZY3YVZJEb6rc9ORcvt162DjyMMFAA",
       "state": "expired",
       "claims": {
         "tier": "team",
@@ -81,7 +81,7 @@
     },
     {
       "name": "a key long past its grace",
-      "key": "licence-test-fixture-1.eyJ0aWVyIjoiY29tbXVuaXR5IiwiZmVhdHVyZXMiOltdLCJzZWF0cyI6MSwib3JnYW5pc2F0aW9uIjoiYW4taW5kaXZpZHVhbCIsImlzc3VlZCI6MTc1NDc4NDAwMCwiZXhwaXJlcyI6MTc4NjMyMDAwMH0.LH-soNfU7TbEjGxBk8OV30YJEXPXCpar0yMjz3Mn7UCv5oWEeRoaWor68N0msuoFhHXi7qHUmqWQ9c_nrXsABg",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoiY29tbXVuaXR5IiwiZmVhdHVyZXMiOltdLCJzZWF0cyI6MSwib3JnYW5pc2F0aW9uIjoiYW4taW5kaXZpZHVhbCIsImlzc3VlZCI6MTc1NDc4NDAwMCwiZXhwaXJlcyI6MTc4NjMyMDAwMH0.aN2qG-tX-xpdOskhniZgSnak07_UjE2-aYKd6SPBHLhG0GLIHIuJSeY2bF6Gio_Hdc1Q3AUqHnCGpPFPj3xmCA",
       "state": "expired",
       "claims": {
         "tier": "community",
@@ -93,38 +93,58 @@
       }
     },
     {
+      "name": "a key at the longest term its tier allows",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoiZW50ZXJwcmlzZSIsImZlYXR1cmVzIjpbInNzbyJdLCJzZWF0cyI6NDAsIm9yZ2FuaXNhdGlvbiI6ImFuLW9yZGVyLWZvcm0taWQiLCJpc3N1ZWQiOjE3OTE1MDQwMDAsImV4cGlyZXMiOjE4MjU2MzIwMDB9.az79pKzE6XNsnWxtkyK2sWBlZA3mN-z4WzSrGmfFT6R37F5pxFt-YzPN2IPnxCSaX3eIhthAenXouon9XxpZCg",
+      "state": "valid",
+      "claims": {
+        "tier": "enterprise",
+        "features": [
+          "sso"
+        ],
+        "seats": 40,
+        "organisation": "an-order-form-id",
+        "issued": 1791504000,
+        "expires": 1825632000
+      }
+    },
+    {
+      "name": "a term a second past the tier's maximum",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzkxNTA0MDAwLCJleHBpcmVzIjoxODI1NjMyMDAxfQ.LoleH5zXtpYdzniyY-b7HO5I9lk4Dy2w8SDDhK_5xZZDwAWllkmzMnCQrQjEY7IOcd6YUIFDcTjRqmtSGwIvBg",
+      "refused": "lifetime"
+    },
+    {
       "name": "a term longer than its tier allows",
-      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzUwODk2MDAwLCJleHBpcmVzIjoxODAyNzM2MDAwfQ.5rrB_dktcdpaEmVwkR7Dd3llphkEF5yPRe4bEiYz6Fpkya1kTGtunNWmvkmb83H0fLdThuqrsyBEIx5J3Z03AA",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzUwODk2MDAwLCJleHBpcmVzIjoxODAyNzM2MDAwfQ.AFrW-gUnFlD0rvBWtTIvAfpn4EmqRo2NmSGI4etRzGQnHSdWs2mrzGDDenZlYv6aPd_cHr9r10yrs_a-eEC-CQ",
       "refused": "lifetime"
     },
     {
       "name": "a claim set signed as it is spelled, re-spelled",
-      "key": "licence-test-fixture-1.eyJ0aWVyIjogInRlYW0iLCJmZWF0dXJlcyI6W10sInNlYXRzIjoxLCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsImlzc3VlZCI6MTc5MzIzMjAwMCwiZXhwaXJlcyI6MTgyNDc2ODAwMH0.Oy42DzHPkdOlP0zu4JKyIoF5dRdB8LpDBVh4zL3oaY0frAmgDwrWolXjcBbhkR2KVe7szE8WBQv9rdl-9hVFCQ",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjogInRlYW0iLCJmZWF0dXJlcyI6W10sInNlYXRzIjoxLCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsImlzc3VlZCI6MTc5MzIzMjAwMCwiZXhwaXJlcyI6MTgyNDc2ODAwMH0.DnVaDcZOjPkjg50ebe44wV0YtJYFd2Gd6TlOQ_CnmwfxLSXkJBNK0aLSN4d43V35bfHX27JGiShGi7rYdRdODA",
       "refused": "signature"
     },
     {
       "name": "a key id this build does not hold",
-      "key": "licence-someone-elses-key-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzkzMjMyMDAwLCJleHBpcmVzIjoxODI0NzY4MDAwfQ.Oy42DzHPkdOlP0zu4JKyIoF5dRdB8LpDBVh4zL3oaY0frAmgDwrWolXjcBbhkR2KVe7szE8WBQv9rdl-9hVFCQ",
+      "key": "licence-someone-elses-key-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzkzMjMyMDAwLCJleHBpcmVzIjoxODI0NzY4MDAwfQ.DnVaDcZOjPkjg50ebe44wV0YtJYFd2Gd6TlOQ_CnmwfxLSXkJBNK0aLSN4d43V35bfHX27JGiShGi7rYdRdODA",
       "refused": "unknown-key-id"
     },
     {
       "name": "a staging key",
-      "key": "licence-staging-sandbox-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzkzMjMyMDAwLCJleHBpcmVzIjoxODI0NzY4MDAwfQ.UD5b_bOo2lQ4MjaSGRzj54moazloHa58J9MzLtOscQKQzNoeWqBWbDS7jzyuMRv3N9NY-hGGgwqWC-unqo8KBg",
+      "key": "licence-staging-sandbox-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzkzMjMyMDAwLCJleHBpcmVzIjoxODI0NzY4MDAwfQ.kpYrLcrsdJ1iLAkGuiy8g1sb_hr7SLJMnpWlKk58nRx0fjeV-S2ShBsr1iHiEPs3-GuyMhhPdOEkDmNCeUYdBQ",
       "refused": "unknown-key-id"
     },
     {
       "name": "a payload that is not a claim set",
-      "key": "licence-test-fixture-1.dGhpcyBpcyBub3QgYSBjbGFpbSBzZXQ.HzLS8R9Td48ov_GsvMo3FY8J4hdRAHqrH7vI6MrB-9ElcTW6nLat8JZqih0gdMnXFOEpTkELa9QktKbiP3I4AA",
+      "key": "licence-test-fixture-1.dGhpcyBpcyBub3QgYSBjbGFpbSBzZXQ.hmQfTPkF9qFqb7cLLm3cZLZApK6GAnqd5VahvxBGNApnMjbCf0G0BlUDZzgtCLZ1EbCPl1zqP4Wj5jz7sfZFBA",
       "refused": "claims"
     },
     {
       "name": "a claim set with a field this verifier does not know",
-      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzkzMjMyMDAwLCJleHBpcmVzIjoxODI0NzY4MDAwLCJjb3ZlcnNfdW50aWwiOjE4MjQ3NjgwMDB9.cD-zdlh0OVmhiIZm9UR8bAZeLhFxcYRVV0ELLY7LOld0yCpCM_qKBfXHPa4e3Ac_nd9FhJ2lnEprXF6L4KBuAA",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzkzMjMyMDAwLCJleHBpcmVzIjoxODI0NzY4MDAwLCJjb3ZlcnNfdW50aWwiOjE4MjQ3NjgwMDB9.-Lt0H63xHsVBub4YmOAPRhYWdkohXeNzaAjpXJNABSKSwMfpvUQ_VDesP7FpF8nMKAkPzOw7RlxZJ0gHWt1KBA",
       "refused": "claims"
     },
     {
       "name": "a truncated claim set",
-      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI.dElIn5HUSBlmteWKEut-xPmu_SrNRTGWAXynLyEdkIVor0Yd54-GfC1-DZTL5vGz5kRt1JVscRUeGiDocCtfAQ",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI.6ollnZsFT4uz_uGlo_f2r6Q4sgAgBcoDBetg4N6paXuy5MXQu9zkyytaPTwzOoR9mXrRhilitbropwOeo_B_BQ",
       "refused": "claims"
     },
     {
@@ -142,8 +162,8 @@
     {
       "name": "a renewal arriving while the key it follows is still valid",
       "keys": {
-        "current": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjUsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzY2NDQ4MDAwLCJleHBpcmVzIjoxNzk3OTg0MDAwfQ.anz7F4FJ59IyKalcnsucQMj49ENgj3UiUJtPEbpSNrcOwavgjOTYDUbl7kQ6tmOYiWIJFGN_b62AGo1sWxReAA",
-        "renewal": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjUsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzk0MDA5NjAwLCJleHBpcmVzIjoxODI1NTQ1NjAwfQ.yF7AqGjqmOMgb4EU_hydIHmqoe7YdqHMSTnuapwSUBnZ8ilOazD5kxdUaqJTRVkQp30un1Zd7W7nhw80fA5HAQ"
+        "current": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjUsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzY2NDQ4MDAwLCJleHBpcmVzIjoxNzk3OTg0MDAwfQ.FzzvMo-TYRAZ_Tx2GRDAXtSFPsMCe4Vdfg4bQb2gSFIygIAFSqZAe7NSbd1m29dEP_DeVws-rMwM7JJWmYA1DQ",
+        "renewal": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjUsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzk0MDA5NjAwLCJleHBpcmVzIjoxODI1NTQ1NjAwfQ.YJ1AaaCs1QWr-AvE9k6EScQI-iNQeuj1WkO4iOOEa3qQLHlftJckbl8aAzWRg7KrWAZx1I6TENueFCLASkzEAw"
       },
       "applies": "renewal",
       "state": "valid"
@@ -151,8 +171,8 @@
     {
       "name": "a key whose term has run out beside the key that follows it",
       "keys": {
-        "current": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjUsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzYyMzAwODAwLCJleHBpcmVzIjoxNzkzODM2ODAwfQ.vsActXu-gdRxp_3H08XdLHMVXcLmBWDCytruPiDAIeI8QEk8xAd1MlFOH4Z4YXdhnMPLyhgIBW4v4kstR1v8Bw",
-        "renewal": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjUsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzk0MDA5NjAwLCJleHBpcmVzIjoxODI1NTQ1NjAwfQ.yF7AqGjqmOMgb4EU_hydIHmqoe7YdqHMSTnuapwSUBnZ8ilOazD5kxdUaqJTRVkQp30un1Zd7W7nhw80fA5HAQ"
+        "current": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjUsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzYyMzAwODAwLCJleHBpcmVzIjoxNzkzODM2ODAwfQ.698oLzH-iAI-9P3xaB2KrzgVdOoR85kAEiad-9eHSYYBnlMyXX6KfwgQBprhOY-KfV-n_IwGUye7l9UgMBsbDg",
+        "renewal": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjUsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzk0MDA5NjAwLCJleHBpcmVzIjoxODI1NTQ1NjAwfQ.YJ1AaaCs1QWr-AvE9k6EScQI-iNQeuj1WkO4iOOEa3qQLHlftJckbl8aAzWRg7KrWAZx1I6TENueFCLASkzEAw"
       },
       "applies": "renewal",
       "state": "valid"

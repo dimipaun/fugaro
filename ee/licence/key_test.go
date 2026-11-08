@@ -583,13 +583,19 @@ func TestVectorsRoundTrip(t *testing.T) {
 			t.Errorf("no vector in the file is refused as %s", name)
 		}
 	}
-	// The five states and boundaries the three verifiers must agree on: the
-	// term, the two ends of the grace, a refusal past the tier's term, and a
-	// claim set whose signature is over bytes nobody signed.
+	// The three states, so that a file that lost one of them is not green.
 	for _, want := range []string{string(Valid), string(Grace), string(Expired)} {
 		if !seen[want] {
 			t.Errorf("no vector in the file is %s", want)
 		}
+	}
+	// The boundaries by name rather than by count. They are the seconds the
+	// three verifiers have to agree on exactly (S2.6), and every one of them is
+	// individually deletable: the file would still round-trip green without the
+	// vector at exactly `expires`, or the one at exactly thirty days past it,
+	// because another vector in the file answers the same state.
+	for _, name := range boundaryVectors {
+		file.vectorNamed(t, name)
 	}
 }
 
@@ -672,6 +678,22 @@ type installedCase struct {
 // vectorRefusals names each refusal as the file spells it. The names are what
 // the three verifiers agree on; each answers its own error, which is why the
 // file carries a name rather than this package's sentinel's text.
+// boundaryVectors names the vectors that sit on a second a verifier can get
+// wrong while every other vector in the file still answers the same: the last
+// second of the term, both ends of the grace, the first second past it, the
+// tier's longest term and the second past that. TestVectorsRoundTrip asks for
+// them by name because a count does not hold them -- each one is deletable on
+// its own, and a boundary the three verifiers disagree about is discovered in
+// production rather than here.
+var boundaryVectors = []string{
+	"a key at the second its term ends",
+	"a key a second into its grace",
+	"a key at the last second of its grace",
+	"a key a second past its grace",
+	"a key at the longest term its tier allows",
+	"a term a second past the tier's maximum",
+}
+
 var vectorRefusals = map[string]error{
 	"malformed":      ErrMalformed,
 	"unknown-key-id": ErrUnknownKeyID,
@@ -834,8 +856,21 @@ func generateVectors(t *testing.T) vectorFile {
 		Expired,
 		Claims{Tier: TierCommunity, Features: []string{}, Seats: 1, Organisation: "an-individual", Issued: days(-455), Expires: days(-90)})
 
-	// A term past the tier's maximum, signed properly: the signature verifies
-	// and the key is refused for its length alone.
+	// The tier's longest term, at the length it allows and a second past it: the
+	// pair is the bound read from both sides, and the lengths come from the
+	// verifier's own constants so a key minted at the ceiling stays inside it.
+	longest := int64(year+termLead) / int64(time.Second)
+	accept("a key at the longest term its tier allows",
+		fixture.signClaims(t, Claims{Tier: TierEnterprise, Features: []string{"sso"}, Seats: 40, Organisation: "an-order-form-id", Issued: days(-30), Expires: days(-30) + longest}),
+		Valid,
+		Claims{Tier: TierEnterprise, Features: []string{"sso"}, Seats: 40, Organisation: "an-order-form-id", Issued: days(-30), Expires: days(-30) + longest})
+	refuse("a term a second past the tier's maximum",
+		fixture.signClaims(t, Claims{Tier: TierTeam, Features: []string{}, Seats: 1, Organisation: "example.com", Issued: days(-30), Expires: days(-30) + longest + 1}),
+		"lifetime")
+
+	// A term far past the maximum, signed properly: the signature verifies and
+	// the key is refused for its length alone, which is the gross case beside the
+	// boundary above.
 	refuse("a term longer than its tier allows",
 		fixture.signClaims(t, Claims{Tier: TierTeam, Features: []string{}, Seats: 1, Organisation: "example.com", Issued: days(-500), Expires: days(100)}),
 		"lifetime")
