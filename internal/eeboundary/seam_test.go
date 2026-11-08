@@ -3,8 +3,9 @@ package eeboundary
 // The seam pin (design ee-boundary-moves.md §5.5): every package-level seam the
 // moved code fills is set once, and by `ee/register` alone. The core defines the
 // setters -- cli.SetLaunchDeclarer and cli.RegisterCommand (E1.1),
-// policy.SetGovernance, runner.SetStage, digest.SetSections (E1.2) and
-// cli.SetEditionEE (E1.3) -- and a core caller that called one could set a seam
+// policy.SetGovernance, runner.SetStage, digest.SetSections (E1.2),
+// cli.SetEditionEE (E1.3) and orchestrator.SetHandoff (O17 of the stateless
+// orchestrator plan) -- and a core caller that called one could set a seam
 // to something the tagged build did not intend, or switch enforcement off in a
 // binary that carries it. So no non-test file outside ee/register may call one,
 // and this scan is what holds that.
@@ -50,6 +51,7 @@ var seamSetterNames = []string{
 	"SetGovernance",
 	"SetStage",
 	"SetEditionEE",
+	"SetHandoff",
 }
 
 // eeRegisterDir is the one directory whose non-test files may call a setter.
@@ -164,7 +166,7 @@ func TestOnlyEERegisterSetsTheSeams(t *testing.T) {
 		t.Fatalf("the scan parsed %d non-test Go files: it did not see the module, so an empty result would prove nothing", parsed)
 	}
 	assertNoFindings(t, &report{findings: findings}, seamRule,
-		"Every seam is a package-level value whose default is the core implementation, and ee/register sets it once (design ee-boundary-moves.md §5.5). A core caller that set cli.SetLaunchDeclarer, cli.RegisterCommand, policy.SetGovernance, runner.SetStage, digest.SetSections or cli.SetEditionEE could halve the enforcement a tagged binary registered or switch a seam off. Move the call into ee/register, or reach the seam's value instead of setting it.")
+		"Every seam is a package-level value whose default is the core implementation, and ee/register sets it once (design ee-boundary-moves.md §5.5). A core caller that set cli.SetLaunchDeclarer, cli.RegisterCommand, policy.SetGovernance, runner.SetStage, digest.SetSections, cli.SetEditionEE or orchestrator.SetHandoff could halve the enforcement a tagged binary registered or switch a seam off. Move the call into ee/register, or reach the seam's value instead of setting it.")
 }
 
 func TestSeamSetterScanCatchesPlantedCalls(t *testing.T) {
