@@ -25,7 +25,9 @@ What it holds:
 - a short contract document, `docs/contracts/<name>.md`, saying how the pieces fit together and what each side may rely on;
 - plausible stubs, in the files the contract task names, that behave like the real thing on the paths a consumer uses: take the arguments, return the shape, do nothing else.
 
-Keep it small: one short patch, reviewable in one sitting. A contract that is nearly the task it was meant to unblock is a loss, so a contract has to be far cheaper than the edge it removes. The pass costs two tasks for every edge it breaks.
+A stub file is scaffolding, not one of the contract's own files: the integration task's footprint names the stubs it deletes, while the rule below about a contract's files is about the files both sides build against.
+
+Keep it small: one short patch, reviewable in one sitting. A contract that is nearly the task it was meant to unblock is a loss, so it has to be far cheaper than the edge it removes. A contract costs two tasks — itself and its integration task — and two edges broken through one contract share both.
 
 The contract is reviewed at least as strictly as the task that consumes it. Launch it with `fugaro run --mode <mode>`, where that mode is the highest rigor of the tasks that consume it: `--mode` may raise the mode a run resolves and never lower it, which is exactly the "at least" this needs.
 
@@ -61,9 +63,9 @@ One integration task per contract, named `I-...`, depending on the contract and 
 
 A task that finds the contract wrong or incomplete must not quietly work around it: a deviation nobody records is the contract changing unannounced, and the next task is written against the wrong shape. Raise a change request instead.
 
-- **The change is a node of the plan**, with an id of its own and a `reason`, amending the contract's files. The contract and its changes own those files: no other task's footprint names them, so an edit to one shows up in review as a contract change and not as a task's own detail.
+- **The change is a node of the plan**, with an id of its own, amending the contract's files. The contract and its changes own those files: no other task's footprint names them, so an edit to one shows up in review as a contract change and not as a task's own detail.
 - **Every dependent that has not launched** gets an edge on the change node: it waits for the amendment, not for the contract it replaces.
-- **Every dependent that has launched** is driven by a follow-up run: `fugaro run --pr N` on its pull request, whose instructions name the contract file as it is on `origin/<base>` — a contract file of the merged plan — and ask the run to merge the base and conform to it. The instructions name the contract file; they never paste its text, because instructions are trusted and a contract's text pasted into them would be plan text the runner acts on as its own.
+- **Every dependent that has launched** is driven by a follow-up run: `fugaro run --pr N` on its pull request, launched as the `working` skill's follow-up reference shows, with instructions that name the contract file as it is on `origin/<base>` — a contract file of the merged plan — and ask the run to merge the base and conform to it. The instructions name the contract file; they never paste its text, because instructions are trusted and a contract's text pasted into them would be plan text the runner acts on as its own.
 - **A base branch that changed `.github/workflows/`** is never merged into a branch with a cloud follow-up run: the push is refused and the work in it is lost. Merge that base locally first, or wait for a person. This holds for every follow-up a change request launches.
 - **Tell the user**, once: what the amendment is, and which runs it sends.
 
@@ -80,4 +82,4 @@ Break an edge only when the weighted path shrinks. The graph carries a task coun
 
 The task-count path moves the other way for a single edge: a chain of two reads as three tasks once a contract task sits in front of it, and only large sides on a small contract come out ahead. Where the arithmetic says the pass lengthens the work, keep the edge and say so.
 
-`fugaro plan graph --plan <plan> --json` prints the graph back, validated: the nodes, the edges with their reasons, and the levels and the critical path it computes itself. That is where the numbers come from. The CLI is the graph's reader, and your own reading of the file is not a second opinion: never parse the graph yourself, and a document the command refuses is a plan to fix rather than one to read around.
+`fugaro plan graph --plan <plan> --json` prints the graph back, validated: the nodes, the edges with their reasons, and the levels and the task-count path it computes itself. That is where the levels and the task count come from; the weighted figure is the arithmetic above, which the graph cannot do for you while it carries no sizes. The CLI is the graph's reader, and your own reading of the file is not a second opinion: never parse the graph yourself, and a document the command refuses is a plan to fix rather than one to read around.

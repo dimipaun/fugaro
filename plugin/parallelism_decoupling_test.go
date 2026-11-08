@@ -17,7 +17,6 @@ package plugin_test
 // not a second thing to hold to a genericness rule.
 
 import (
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,9 +24,8 @@ import (
 )
 
 const (
-	parallelismSkill    = "skills/parallelism/SKILL.md"
-	decouplingReference = "skills/parallelism/reference/decoupling.md"
-	decouplingHeading   = "## Break dependencies with a contract first"
+	decouplingReferencePath = "skills/parallelism/reference/decoupling.md"
+	decouplingHeading       = "## Break dependencies with a contract first"
 )
 
 // parallelismSkillFiles returns the parallelism skill's own files, SKILL.md and
@@ -35,19 +33,12 @@ const (
 func parallelismSkillFiles(t *testing.T) map[string]string {
 	t.Helper()
 	files := map[string]string{}
-	err := filepath.WalkDir(filepath.Join("skills", "parallelism"), func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".md") {
-			return err
-		}
+	for _, path := range skillFiles(t, filepath.Join("skills", "parallelism")) {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return err
+			t.Fatal(err)
 		}
 		files[filepath.ToSlash(path)] = string(data)
-		return nil
-	})
-	if err != nil || len(files) == 0 {
-		t.Fatalf("no parallelism skill files: %v", err)
 	}
 	return files
 }
@@ -67,9 +58,9 @@ func decouplingSection(skill string) string {
 // reference file the section points at.
 func decouplingText(t *testing.T) string {
 	t.Helper()
-	skill, ok := parallelismSkillFiles(t)[parallelismSkill]
+	skill, ok := parallelismSkillFiles(t)[parallelismSkillPath]
 	if !ok {
-		t.Fatalf("the parallelism skill has no %s", parallelismSkill)
+		t.Fatalf("the parallelism skill has no %s", parallelismSkillPath)
 	}
 	return decouplingSection(skill) + "\n" + decouplingReferenceText(t)
 }
@@ -77,9 +68,9 @@ func decouplingText(t *testing.T) string {
 // decouplingReferenceText reads the reference the section points at.
 func decouplingReferenceText(t *testing.T) string {
 	t.Helper()
-	ref, ok := parallelismSkillFiles(t)[decouplingReference]
+	ref, ok := parallelismSkillFiles(t)[decouplingReferencePath]
 	if !ok {
-		t.Fatalf("the parallelism skill has no %s: the per-edge test and the change-request flow are longer than SKILL.md's section holds, so they live in the file the section points at", decouplingReference)
+		t.Fatalf("the parallelism skill has no %s: the per-edge test and the change-request flow are longer than SKILL.md's section holds, so they live in the file the section points at", decouplingReferencePath)
 	}
 	return ref
 }
@@ -91,20 +82,20 @@ func decouplingReferenceText(t *testing.T) string {
 // no reference, leaves a planner breaking edges on a hunch or never hearing of
 // the procedure at all.
 func TestParallelismSkillHasDecouplingSection(t *testing.T) {
-	skill, ok := parallelismSkillFiles(t)[parallelismSkill]
+	skill, ok := parallelismSkillFiles(t)[parallelismSkillPath]
 	if !ok {
-		t.Fatalf("the parallelism skill has no %s", parallelismSkill)
+		t.Fatalf("the parallelism skill has no %s", parallelismSkillPath)
 	}
 	section := decouplingSection(skill)
 	if section == "" {
-		t.Fatalf("%s has no %q section", parallelismSkill, decouplingHeading)
+		t.Fatalf("%s has no %q section", parallelismSkillPath, decouplingHeading)
 	}
 	if !strings.Contains(section, "reference/decoupling.md") {
-		t.Errorf("%s's decoupling section does not point at `reference/decoupling.md`: the contract task's contents, the integration task and the change-request flow are there, and a reader who is not sent to the file never finds them", parallelismSkill)
+		t.Errorf("%s's decoupling section does not point at `reference/decoupling.md`: the contract task's contents, the integration task and the change-request flow are there, and a reader who is not sent to the file never finds them", parallelismSkillPath)
 	}
 	const question = "does B need A's interface or A's behaviour?"
 	if !strings.Contains(section, question) {
-		t.Errorf("%s's decoupling section never asks %q: that question is the pass", parallelismSkill, question)
+		t.Errorf("%s's decoupling section never asks %q: that question is the pass", parallelismSkillPath, question)
 	}
 }
 
@@ -137,7 +128,7 @@ func TestFollowupInstructionsNameTheContractFile(t *testing.T) {
 	text := decouplingText(t)
 	for _, want := range []string{
 		"fugaro run --pr",
-		"name the contract file",
+		"name the contract file as it is on `origin/<base>`",
 		"never paste its text",
 	} {
 		if !strings.Contains(text, want) {

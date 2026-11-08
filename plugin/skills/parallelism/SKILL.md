@@ -74,9 +74,9 @@ A plan you write as a file can carry its tasks as a graph the CLI reads. Write i
 
 ## Break dependencies with a contract first
 
-An edge that carries nothing but an order is one the plan did not have to accept. For each edge A to B, ask **does B need A's interface or A's behaviour?** Where it is the interface, write a small contract task that settles it and let both sides run at once; keep the edge where B needs A's real behaviour or data. The contract and the integration task that removes the stubs are ordinary nodes of the graph, named `C-...` and `I-...`, each edge carrying its reason — this is the "contracts first" and "stubs and fakes" pair of job max, taken edge by edge.
+An edge that carries nothing but an order is one the plan did not have to accept. For each edge A to B, ask **does B need A's interface or A's behaviour?** Where it is the interface, write a small contract task that settles it and let both sides run at once; keep the edge where B needs A's real behaviour or data. The contract and the integration task that removes the stubs are ordinary nodes of the graph, named `C-...` and `I-...`, each edge carrying its reason — the "contracts first" and "stubs and fakes" techniques of job max, applied edge by edge.
 
-Break an edge only when the weighted path shrinks, and say what the pass adds: one broken edge costs two more tasks, so the task count alone reads as a loss. `reference/decoupling.md` has the per-edge test, the contract task's contents, the integration task, what to do when a contract turns out wrong, the rigor table and what the plan says afterwards. Read the graph with `fugaro plan graph` — the CLI validates it, and never parse the graph yourself.
+Break an edge only when the weighted path shrinks, and say what the pass adds: a contract costs two more tasks — itself and its integration task — so the task count alone reads as a loss. `reference/decoupling.md` has the per-edge test, the contract task's contents, the integration task, what to do when a contract turns out wrong, the rigor table and what the plan says afterwards. Read the graph with `fugaro plan graph` — the CLI validates it, and never parse the graph yourself.
 
 ## A batch onto one long-lived branch
 
