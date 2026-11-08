@@ -138,7 +138,7 @@ func (p *ProjectRuns) streamLogs(ctx context.Context, call Call) (any, error) {
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("reading the run's own transcript %s: %w", name, err)
+			return nil, fmt.Errorf("reading the run's own transcript %s: %w", name.name, err)
 		}
 		for _, line := range strings.Split(strings.TrimSuffix(string(data), "\n"), "\n") {
 			if line == "" {
