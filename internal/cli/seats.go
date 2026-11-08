@@ -267,7 +267,7 @@ func seatsRequesters(ctx context.Context, env *cloudEnv, slugs []string, since t
 				// The object is there and this build cannot use it: a decode
 				// failure is this run's unreadable task, never the estimate's
 				// failure.
-				errs[i] = perr
+				bad[i] = true
 				return
 			}
 			found[i] = spec.RequestedBy
