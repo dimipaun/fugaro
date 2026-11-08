@@ -2641,11 +2641,12 @@ than a document. The command is the same pair §6.19's paragraph describes, so t
 `--`-terminated value, the two spellings the console passes and the layer's
 provenance are written down there and not twice here.
 
-### 6.21 `fugaro managed status --json` — a managed project's marks and its trail
+### 6.21 `fugaro managed status --json` — a managed project's marks, its trail and its last update
 
 **Command:** `internal/cli/managed_status.go` `newManagedStatusCmd` /
-`managedStatus`, with the document built as `managedStatusDoc` and its trail
-read by `managedStatusTrail`. Cited by symbol, not by line, for §6.11's reason.
+`managedStatus`, with the document built as `managedStatusDoc`, its trail read
+by `managedStatusTrail` and the last update's retirement read by
+`managedStatusRetirementsOf`. Cited by symbol, not by line, for §6.11's reason.
 **It is the read the managed screens are built on**, and it is a command of its
 own rather than two members on doctor's document (the managed-screens plan's
 CM2, D1473): doctor's `--json` is a list of `id`/`ok`/`problem`/`fix` checks
@@ -2684,6 +2685,8 @@ parse of either.
 | `audit_day` | string | never | never | the UTC day `audit_count` counts and `audit` belongs to, spelled as the family spells a date directory (`2006-01-02`). **`""` exactly when no record was found in the window**, or when the trail was not read: a day with nothing in it is no day to name |
 | `audit_count` | int | never | never | how many records are filed under `audit_day`, and `0` in both of the cases above |
 | `audit_state` | string | never | never | the sentence for a read that **did not answer**, and `""` for one that did. Bounded text. It is set only for a managed project: a project that is not managed files no record at all (D1025), so there is no trail to read and no state to report about it |
+| `retirements` | object | never | **yes** | the project's entry in **this machine's record of its last plain update** — the entry below plus the record's `version` — and **null** when this machine has recorded no update for the project. Null is **not** "nothing was retired": that is an entry whose `retire` is `[]`, and the two are different facts about the machine (D1484). It is a local read and it is made whatever `managed` says, because a project that is not managed runs updates too |
+| `retirements_state` | string | never | never | the sentence for a record that **could not be read** — JSON this build cannot parse, a byte count over its bound, a file that is not a regular file, or a version this build does not write — and `""` for one that was. Bounded text. It is `audit_state`'s rule one subject over: a record that could not be read drawn as "no update recorded yet" would be a claim about the machine made out of a failure to read it. Unlike `audit_state` it is not gated on `managed` |
 
 **The `audit` member is the bounded subset, and the bound is the point**
 (D1476):
@@ -2737,6 +2740,63 @@ managed project is the only one that files a record (D1025), so an object left
 in the bucket for a project whose marks do not say so is not a fact about that
 project, and reading it anyway would let a trail outlive the marks that justify
 it.
+
+**The last update's retirement is in this document too** (the managed-screens
+plan's CM8; F21, D1484, D1485). The Project tab draws what the last plain
+`fugaro update` retired by itself and the runs it walked past while it did, and
+nothing else on the machine remembers that once the run is over: the summary is
+printed once and the plan file is overwritten by the next update. The record of
+it is CM1's own document on disk (`localcfg.UpdateProject`,
+`$XDG_CONFIG_HOME/fugaro/state/update.json`, beside the remembered checkouts),
+and this is where a screen reads it — **the same argv the marks are read with**,
+so a console spawns nothing extra for the retirement, which is what F21 means by
+filing the record as one of the managed screens' subjects. It is a **local**
+read, and the marks do not gate it: a project that is not managed runs updates
+too. **The entry is the record's own type**, embedded rather than retyped into a
+second struct with the same tags, so a member the record gains arrives here with
+this section moving or the contract test failing rather than as a row a screen
+has been told nothing about.
+
+**The three answers are three.** An entry is the record and its `version`. Null
+with no state is "this machine has recorded no update for the project" — a
+record file that is not there is an empty document and not an error. Null **with**
+a state is a record that is there and could not be read, and the state is the
+whole of why the member exists.
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `version` | int | never | never | the version of the record the entry was read from (`localcfg.UpdateRecordVersion`, `1` today). It is not a member of the record's entry: a consumer compares it against the shape it knows before it draws a row, and an entry of a version it does not know never reaches it — that answer is `retirements_state` |
+| `at` | string | never | never | when the run **settled its retirement**, as the record spells it: RFC 3339 with the offset the update ran in, and nanoseconds when it has them. It is **not** UTC: the record is written on the operator's own machine, from that machine's clock and zone, and this document carries the entry rather than re-spelling it — so a consumer draws it as it stands and never assumes a zone (`audit`'s `at` is the CLI's own UTC rendering, and the two are not the same claim). It is not the end of the command either, which may go on to build images and write the local config: the record's subject is the retirement, and `at` dates that |
+| `retire` | array | never | never | the retired addresses, in the run's own order, and the rows below. **`[]` is "the last update retired nothing"** — a set that was written — and never null, which is the record's own spelling |
+| `runs_in_flight` | int | **yes** | never | how many runs the registry held when the retirement was settled. **Absent when the number is not known** — the project has no budget backend, or the read did not answer — and never `0` in its place: a run that could not be counted must not be drawn as a run that was not there (D1483) |
+
+**One `retire` row is one address, and what a screen may draw of it is D1485's
+closed list.** The nine members are the record's own, member for member with
+`infra.Retirement` (and with the run's own `--json` rows), because the record is
+a document the console already knows how to draw. A screen draws seven of them:
+`job` and `region` are the members the later state-removal steps need, and they
+are carried here for the same reason the record holds them — the document is the
+record, and a screen that reads the keys it draws and only those leaves them in
+no cell. **A secret is drawn as its name and never as a value**: the record
+holds a container's `logical` name and its Secret Manager `secret_id`, both
+identifiers, and no secret's contents are in this document at all.
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `address` | string | never | never | the Terraform address that leaves the state |
+| `kind` | string | never | never | what it was: `secret container`, `workflow job`, `check job`, `IAM member`, … |
+| `cause` | string | never | never | the config change that retired it, in the user's words |
+| `kept` | string | **yes** | never | what survives the retirement, and **absent when nothing does**. A secret container's promise is `infra.KeptSecret`: the address leaves Terraform's state and nothing deletes the container or its versions |
+| `logical` | string | **yes** | never | a secret container's logical name, absent otherwise |
+| `secret_id` | string | **yes** | never | its Secret Manager **ID — a name, not a value** — absent otherwise |
+| `job` | string | **yes** | never | a job's Cloud Run job name, absent otherwise |
+| `region` | string | **yes** | never | its region, absent otherwise |
+| `protected` | bool | never | never | whether an ordinary apply can delete this address at all. It is not implied by the address: a secret container and the registry carry `prevent_destroy`, and a job whose state says `deletion_protection = true` does too |
+
+**The retirement half is the `--json` document's, and the text rendering is
+unchanged by it.** What a person reads from this command at a terminal is the
+marks and the trail: the update that wrote the record printed its own retirement
+summary when it ran, and a screen is what this half is for.
 
 **Flags** (`newManagedStatusCmd`): `--json`, and the aiming pair `--project
 <name>` and `--config <path>` that every project read carries. `--gcp-project
