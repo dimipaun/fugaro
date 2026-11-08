@@ -484,6 +484,15 @@ func validateRigor(p string, mode rigor.Mode, areas []rigor.Area) []Problem {
 // mistake its writer has to see. Unlike validateRigor's duplicate glob this
 // does not read the glob: two rows may match overlapping paths on purpose (a
 // folder's row and the one file inside it), and the union keeps both.
+//
+// The engine's own floor is the same rule read across the layers, and the one
+// name collision this function can see from a single layer: the floor is the
+// union's first writer (sensitivity.Union, D1506), so a row named after one of
+// its rows is dropped whichever glob it carries and whichever layer writes it.
+// A repository that means "and also this tree is sensitive" therefore cannot
+// say it under a name the floor already spent — the row would be the silent
+// no-op this file exists to refuse, so it is refused at its own index, with
+// the fix the writer owns: another name.
 func validateSecurity(p string, patterns []sensitivity.Pattern) []Problem {
 	var ps []Problem
 	if len(patterns) > sensitivity.MaxPatterns {
@@ -492,10 +501,18 @@ func validateSecurity(p string, patterns []sensitivity.Pattern) []Problem {
 	// A row already refused for its own shape is not also called a repeat: it
 	// can never reach the union for the name to matter, and the first reason is
 	// the one its writer has to fix.
+	floorNames := make(map[string]bool)
+	for _, row := range sensitivity.Floor() {
+		floorNames[row.Name] = true
+	}
 	seen := make(map[string]int, len(patterns))
 	for i, row := range patterns {
 		if msg := row.Validate(); msg != "" {
 			ps = append(ps, Problem{Path: fmt.Sprintf("%s.patterns[%d]", p, i), Message: msg})
+			continue
+		}
+		if floorNames[row.Name] {
+			ps = append(ps, Problem{Path: fmt.Sprintf("%s.patterns[%d]", p, i), Message: fmt.Sprintf("repeats the name %q of the engine's own floor: the floor is the union's first writer, so this row is dropped and the tree it matches is never escalated — give the row a name of its own", row.Name)})
 			continue
 		}
 		if j, dup := seen[row.Name]; dup {

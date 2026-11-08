@@ -254,6 +254,40 @@ func TestUpdateRepoRefusesSecurityOnOlderBaseImage(t *testing.T) {
 	}
 }
 
+// TestRepoEngineRefusesSecurityOnAnOlderBaseImage is gateSecurity at its call
+// site in repoEngine, before the plan and before any apply — the half
+// TestUpdateRepoRefusesSecurityOnOlderBaseImage cannot reach by calling the
+// gate itself, where deleting the call in repoEngine would leave a green suite
+// and an older base deploying a job that dies at bootstrap. The repository's
+// own fugaro.yaml is the only place the key can be written in this build (the
+// project layer's half arrives with the task that lets a layer carry it), so
+// there is one case here where TestRepoEngineRefusesRigorOnAnOlderBaseImage has
+// two.
+func TestRepoEngineRefusesSecurityOnAnOlderBaseImage(t *testing.T) {
+	below := shiftRelease(t, securitySince, -1)
+	const head = "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: bitbucket }\n"
+	const wf = "workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	r := newInitRig(t)
+	isolateCache(t)
+	noProjectLayerBucket(t)
+	r.appendConfig(t, "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:"+below+"}\n")
+	r.save(t)
+	t.Chdir(repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", head+securitySkewBlock+wf))
+	e := rigEngine(t, r, &initOptions{})
+	err := e.r.repoEngine(t.Context(), ".", "", true)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit = %d, err = %v: want the security: block refused on this installation's base image", ExitCode(err), err)
+	}
+	for _, want := range []string{securitySince, below, "fugaro update --base base", "fugaro.yaml's security: block of"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	if applies := r.ran(t, "apply"); len(applies) != 0 {
+		t.Errorf("the refusal applied anyway: %v", applies)
+	}
+}
+
 // validateSecurity runs fugaro validate on a repository file whose top level
 // carries securityLines, in a directory that is no checkout and has no project
 // config: the file's own key is all this judges. It is validateRigor's shape.

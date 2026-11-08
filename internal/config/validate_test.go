@@ -386,6 +386,13 @@ func TestSecurityKeyRefusesAPatternThatMatchesEverything(t *testing.T) {
 // repository's row for a tree the project's own list also names is refused
 // here only when the project wrote the same *name*, which is the union's rule
 // and not this function's to check.
+//
+// The floor is the same rule on the one side this function can see whole: it
+// is the union's first writer, so a row named after one of the engine's own
+// rows is dropped whichever glob it carries — the silent no-op D1503 refuses
+// `**` for, one name long. The name is taken from the floor table itself
+// rather than spelled here, so the case cannot pass by naming a row the engine
+// no longer has.
 func TestSecurityKeyRefusesARepeatedName(t *testing.T) {
 	const block = `security:
   patterns:
@@ -403,6 +410,26 @@ func TestSecurityKeyRefusesARepeatedName(t *testing.T) {
 	for _, want := range []string{`"payments"`, "patterns[0]"} {
 		if !strings.Contains(ps[0].Message, want) {
 			t.Errorf("the refusal of security.patterns[2] does not carry %q: %q", want, ps[0].Message)
+		}
+	}
+
+	// A glob the floor's own row does not cover, so the refusal is the name's
+	// and not the overlap's: the row asks for a tree the engine never named.
+	floorName := sensitivity.Floor()[0].Name
+	const own = `security:
+  patterns:
+    - { name: %s, match: "internal/billing/**", category: targets }
+`
+	cfg, ps = Parse([]byte(securityRepo + fmt.Sprintf(own, floorName)))
+	if cfg != nil {
+		t.Fatalf("a file reusing the floor's name %q resolved: %+v", floorName, cfg.Security)
+	}
+	if len(ps) != 1 || ps[0].Path != "security.patterns[0]" {
+		t.Fatalf("problems for the floor's name %q = %s", floorName, problemsText(ps))
+	}
+	for _, want := range []string{fmt.Sprintf("%q", floorName), "the engine's own floor"} {
+		if !strings.Contains(ps[0].Message, want) {
+			t.Errorf("the refusal of a floor name does not carry %q: %q", want, ps[0].Message)
 		}
 	}
 }
