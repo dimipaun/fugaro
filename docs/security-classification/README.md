@@ -1,12 +1,17 @@
 # Security classification — each project says what counts as security-sensitive for it
 
-**Status: plan only; nothing implemented; no task approved.** This is a design-only folder: it adds no
-code, no schema, no config, no fixture and no workflow, it edits no file outside
-`docs/security-classification/`, and it writes nothing under `internal/`, `schemas/`, `plugin/`,
-`console/`, `mobile/`, `shared/`, `ee/`, `deploy/` or `testdata/`. Every command, flag, key, field,
-table and document below is a **proposal**, and — unlike a design whose decisions are answered — **every
-one of the twenty decisions `D1500–D1519` carries an empty owner's-answer cell**
-([reconciliation.md](reconciliation.md) §8). Nothing in this folder is approved by anyone.
+**Status: three of the plan's tasks are in the tree and no decision is answered.** **SC1** — the floor,
+the matcher and the union merge — landed as `e5a4605f` (#1916:
+`internal/orchestrator/sensitivity/{pattern,floor}.go`); **SC4** — doctor's line about the list in force,
+D1513 — landed as `0ee73e2e` (#1975: `internal/cli/doctor_security.go`); and **SC2** — the pin for this
+folder's own claims — lands with this change (`internal/cli/docs_security_classification_test.go`). The
+other eight tasks are written and not built, and what this folder **proposes** for a repository — the two
+config keys, `fugaro security paths`, the runner's escalation — is not in force, because **every one of
+the twenty decisions `D1500–D1519` still carries an empty owner's-answer cell**
+([reconciliation.md](reconciliation.md) §8): the ask's own rule is that nothing is decided silently.
+Beyond the landed tasks' code and SC2's pin the folder adds no code, no schema, no config, no fixture and
+no workflow: it edits no file outside `docs/`, and apart from those it writes nothing under `schemas/`,
+`plugin/`, `console/`, `mobile/`, `shared/`, `ee/`, `deploy/` or `testdata/`.
 
 **Asked by:** the owner, 2026-11-07, as task **SC0**: "we have to find a way to allow each project using
 Fugaro to determine what counts as security sensitive for their own situation. It should have a project
@@ -16,8 +21,10 @@ are the only text here he wrote.
 **Spec owner:** the owner, 2026-11-07. [spec.md](spec.md) is his ask, verbatim; where
 [reconciliation.md](reconciliation.md) disagrees with it about the code, **reconciliation wins** — and
 it does, twice: the ask's `internal/projectpolicy` is the published policy node rather than the project
-layer (reconciliation F4), and the ask's tasks OD1, OD2 and pull request #1822 are **not in this tree**
-(F15).
+layer (reconciliation F4); its tasks **OD1 and OD2 were not in this tree when this was read** — **OD1
+landed the same day** (`505718ab`, #1882: a finding marked `needs_owner` stops the loop rather than
+buying a fix round) and OD2 has not — while the classifier its **pull request #1822** names **is in it**
+(`405dae8b`, an ancestor of the base this folder was read against), which is F15.
 
 | File | What it is |
 | --- | --- |
@@ -69,15 +76,20 @@ section and the cited number — rather than claiming all four.
 
 ## What this design does not do
 
-- It **changes no code, schema, config, fixture or workflow**, and it edits no file outside this folder.
-- It **adds no pinning test**, and it **does not move the docs census**. There is **no registry test
-  over `docs/`** (F25), so a folder may be documents alone — `docs/image-env/` is the four-document
-  precedent this folder follows. Adding a pin would move `docs/rigor-modes/reconciliation.md`'s census
-  row **101 → 102** and force edits to three census re-check tests in other folders' files (F17), which
-  the brief's DOCS ONLY forbids: **the plan's tasks name the pin each will add**, and the census moves
-  once, in the task that adds the first test (SC2, D1519).
-- It **implements neither OD1 nor OD2 nor any part of the needs_owner work**; **none of the three exists
-  in this tree** (F15), and the design is written to be independent of them (D1518).
+- Beyond the code the two landed tasks add (`internal/orchestrator/sensitivity/`,
+  `internal/cli/doctor_security.go`), it **changes no code, schema, config, fixture or workflow**, and it
+  edits no file outside `docs/` and the one Go test that pins this folder.
+- It **adds one pinning test, and the census moved once.** There is **no registry test over `docs/`**
+  (F25), so a folder may be documents alone — `docs/image-env/` is the four-document precedent this
+  folder follows — and the brief's DOCS ONLY left the pin to the plan's tasks, which name the one each
+  adds: this folder's is `internal/cli/docs_security_classification_test.go` (SC2, D1519), and its
+  arrival moved `docs/rigor-modes/reconciliation.md`'s census row **112 → 113**, as that row's own
+  amendment sentence records. The three census re-check tests in other folders' files (F17) re-derive
+  the count from the tree and needed no edit.
+- It **implements no part of OD1's or OD2's work** and is written to be independent of both (D1518):
+  **OD1 landed while this folder was being read** (2026-11-07, `505718ab`: a finding marked `needs_owner`
+  stops the loop), and this design neither consumes nor changes it — no pattern list is read or written
+  by it — while **OD2 is still not in this tree** (F15).
 - It **builds no console screen** (D1514): the ask defers it and the console's own rule agrees — a read
   is an exact-argv row on two fences held equal by a Go test (F24).
 - It **adds nothing to `settings set`'s allow-list** (D1515): the list is edited in the layer file and
