@@ -433,6 +433,45 @@ func TestRemovedKeysOut(t *testing.T) {
 	})
 }
 
+// TestARemovalNeverPrintsAProfileNameItDidNotRead: the profile names in the
+// removal's report come out of the layer document, and the published project
+// layer is an object any writer of the project's bucket can put a name in. A
+// profile whose every key the removal takes is emptied out of the document the
+// removal leaves, so ParseProjectLayer's check of a profile name never sees it
+// (which is why that reader spells `profiles.<name>` through config.ShowKey) —
+// the name is the only thing of that profile this run prints, and a control
+// character in it would rewrite the terminal line the write is confirmed on,
+// the rule the refusal sentences follow (removedKeysFolded).
+func TestARemovalNeverPrintsAProfileNameItDidNotRead(t *testing.T) {
+	const hostile = "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  \"p\\e[2Jevil\":\n    image: { apt: [libvips-dev] }\n  svc:\n    commands: { test: sh test.sh }\ndefault_profile: svc\n"
+	lc := &localcfg.Config{Name: "aurora", GCPProject: "proj-1234"}
+	r := removedKeysOut([]byte(hostile), lc)
+	if r == nil || r.unwritable() {
+		t.Fatalf("the removal refused a layer it should migrate: %+v", r)
+	}
+	if len(r.Profiles) != 1 || r.Profiles[0] != "p\x1b[2Jevil" {
+		t.Fatalf("the emptied profile is not the one the document names: %q", r.Profiles)
+	}
+	var printed strings.Builder
+	printLayerRemoval(&printed, "the published project layer", r)
+	p := &layerPlan{migrate: true, objectRemoval: r, localRemoval: r}
+	for what, got := range map[string]string{
+		"the keys' sentence":  r.text(),
+		"the plan":            p.planDetail(),
+		"the status":          p.migrateDetail(),
+		"the removal clause":  p.removalClause(),
+		"the printed report":  printed.String(),
+		"the stopped removal": removedKeysFolded(r),
+	} {
+		if strings.ContainsRune(got, '\x1b') {
+			t.Errorf("%s prints the layer's control character: %q", what, got)
+		}
+		if !strings.Contains(got, `p\u001b[2Jevil`) {
+			t.Errorf("%s does not name the profile the layer holds, escaped: %q", what, got)
+		}
+	}
+}
+
 // TestTheMigrateStateNamesEveryWriteItMakes: the migrate state rewrites the
 // published object in place and this machine's layer file with it, in one apply
 // behind one confirmation — migrateLocal asks nothing of its own when there is

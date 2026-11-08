@@ -383,6 +383,16 @@ func showKey(k string) string {
 	return pluginwire.Printable(tokenRE.ReplaceAllString(k, "<credential>"))
 }
 
+// ShowKey is showKey for a reader outside this package that prints a key of a
+// layer this Fugaro refuses — a profile name, say, which the repository-image
+// removal reads out of the published object before ParseProjectLayer has judged
+// it, and which every launcher of an installation without the IAM hardening can
+// write there. It is the same spelling this package's own problems use for
+// `profiles.<name>`, so a name nobody validated cannot rewrite the terminal
+// line it is printed on, and a reader who meets the migration and one who meets
+// validate's refusal see one path.
+func ShowKey(k string) string { return showKey(k) }
+
 // badRune reports a character no project layer value holds: a control
 // character other than tab and newline, an invisible formatting (bidi)
 // character, a line or paragraph separator or invalid UTF-8.

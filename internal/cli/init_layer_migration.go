@@ -47,8 +47,17 @@ type layerRemovedKey struct {
 
 // Path is where the key sat in the layer, spelled the way the layer's own
 // problems spell it: a reader who meets the migration and one who meets
-// `fugaro validate`'s refusal are looking at the same path.
-func (k layerRemovedKey) Path() string { return "profiles." + k.Profile + "." + k.Key }
+// `fugaro validate`'s refusal are looking at the same path. The profile goes
+// through config.ShowKey rather than being printed as it is written, because it
+// is a name the published object supplies and this read is made before any
+// reader has judged it: a profile whose only keys are removed ones is emptied
+// by the removal, and so is never reached by ParseProjectLayer's profile-name
+// check — its name is the one thing of it left to print, and a control
+// character in it would rewrite the report of the write the reader is being
+// asked to confirm. The key half is config's own list, written here.
+func (k layerRemovedKey) Path() string {
+	return "profiles." + config.ShowKey(k.Profile) + "." + k.Key
+}
 
 // Sentence is what the key is refused with when it is written today: the same
 // words at both points, so the migration names the command that replaces what
@@ -413,7 +422,7 @@ func printLayerRemoval(w io.Writer, place string, r *layerRemoval) {
 		fmt.Fprintf(w, "  %s: %s\n", k.Path(), k.Sentence())
 	}
 	for _, name := range r.Profiles {
-		fmt.Fprintf(w, "  the profile %s held nothing else, so it goes with them: a repository whose profile: names it has to select another one\n", name)
+		fmt.Fprintf(w, "  the profile %s held nothing else, so it goes with them: a repository whose profile: names it has to select another one\n", config.ShowKey(name))
 	}
 	if r.Reencoded {
 		fmt.Fprintf(w, "  this document writes a removed key where no splice of this editor measures it, so it is written from its own tree: the order, the styles and the comments stay, the spacing and the quoting may not\n")
