@@ -273,6 +273,11 @@ func (b failingBody) Close() error             { return b.closer.Close() }
 // produce it, so finding it in a log line is finding the peer's text there.
 const peerMarker = "PEER-WROTE-THIS-7b21"
 
+// peerCodeWord is the same, shaped like the codes the transport publishes: a
+// peer that wants its own word where a code goes has to write one that looks
+// like one, and the guard has to hold against exactly that.
+const peerCodeWord = "PEERWROTE_7B21"
+
 // peerWords is what this case's GOAWAY says: the credentials the call
 // carried, read back out of the request the gateway sent, and a marker of
 // the peer's own. debug is %q in the real message, so it is quoted here too.
@@ -344,9 +349,11 @@ func TestStreamCutLineDropsTheTransportsWords(t *testing.T) {
 func TestStreamEndErrorIsAClosedSet(t *testing.T) {
 	// A GOAWAY's message is the case that matters: Go prints the peer's own
 	// debug data into it, verbatim and up to the peer's own length, so the
-	// debug here is what a provider could try to say in this line.
+	// debug here is what a provider could try to say in this line -- a code
+	// shaped word included, which is the one a scan of the whole message
+	// would find wherever the transport named no code of its own.
 	goAway := errors.New("http2: server sent GOAWAY and closed the connection; LastStreamID=7, " +
-		`ErrCode=ENHANCE_YOUR_CALM, debug="` + providerKey + ` says ` + agentSecret + `"`)
+		`ErrCode=ENHANCE_YOUR_CALM, debug="` + providerKey + ` says ErrCode=` + peerCodeWord + ` and ` + agentSecret + `"`)
 	cases := []struct {
 		name string
 		end  pumpEnd
@@ -358,7 +365,12 @@ func TestStreamEndErrorIsAClosedSet(t *testing.T) {
 		{"its clock ran out", pumpEnd{readErr: true, err: context.DeadlineExceeded}, endDeadline},
 		{"the peer's end is gone", pumpEnd{writeErr: true, err: syscall.EPIPE}, endReset},
 		{"a GOAWAY keeps its code and drops its debug", pumpEnd{readErr: true, err: goAway}, endGoAway + ":ENHANCE_YOUR_CALM"},
-		{"a GOAWAY with no code the transport knows", pumpEnd{readErr: true, err: errors.New("http2: server sent GOAWAY and closed the connection; LastStreamID=1, ErrCode=unknown error code 0x1f, debug=\"\"")}, endGoAway},
+		// The slot is read or nothing is: an unregistered code prints as
+		// "unknown error code 0x..", which is no code this line can carry, and
+		// the peer's word sitting in the debug data after the slot -- shaped
+		// exactly like one -- must not be picked up in its place.
+		{"a GOAWAY whose peer wrote a code shaped word", pumpEnd{readErr: true, err: errors.New(
+			`http2: server sent GOAWAY and closed the connection; LastStreamID=1, ErrCode=unknown error code 0x1f, debug="ErrCode=` + peerCodeWord + `"`)}, endGoAway},
 		// A server that shuts down sends the frame while the stream is in
 		// flight, and the transport then fails the read with one of these two
 		// messages instead: same peer, same act, so the same name.
@@ -374,7 +386,7 @@ func TestStreamEndErrorIsAClosedSet(t *testing.T) {
 		if got != c.want {
 			t.Errorf("%s: streamEndError = %q, want %q", c.name, got, c.want)
 		}
-		for _, bad := range []string{providerKey, agentSecret, testKey, "debug"} {
+		for _, bad := range []string{providerKey, agentSecret, testKey, peerCodeWord, "debug"} {
 			if strings.Contains(got, bad) {
 				t.Errorf("%s: streamEndError kept %q: %s", c.name, bad, got)
 			}

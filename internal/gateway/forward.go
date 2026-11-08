@@ -1430,19 +1430,23 @@ const (
 	endOther         = "other"
 )
 
-// The two HTTP/2 codes, and each is read for its own and for nothing else:
-// the code position holds ErrCode.String, a name from the transport's fixed
-// list (an unregistered code prints as "unknown error code 0x..", which
-// neither matches and so leaves out), and every other word the message says
-// -- the GOAWAY's `debug` data above all -- is the peer's text and is never
-// taken. A GOAWAY spells its code two ways, "ErrCode=" in the error a body
-// read fails with and "ErrCode:" in the message a stream is aborted with; the
-// equals sign comes first here, so a `debug` carrying that spelling cannot
-// displace the transport's own. The stream message is anchored on its own
-// fixed opening, so a word shaped like a code further along it (in the cause
-// the transport appends) cannot be mistaken for one.
+// The two HTTP/2 codes, and each is read from the one position the transport
+// writes it in and from nothing else: that slot holds ErrCode.String, a name
+// from the transport's fixed list, and every other word the message says --
+// the GOAWAY's `debug` data above all -- is the peer's text and is never
+// taken. Both patterns are anchored on the message's own first byte for that
+// reason, spelling out the transport's wording up to the code's slot: an
+// unregistered code prints as "unknown error code 0x.." and so matches at
+// neither, which leaves the code out, and a word shaped like one further
+// along (in the debug data, which follows the GOAWAY's slot, or in the cause
+// the stream message appends) is out of a roving scan's reach. A GOAWAY
+// spells its code two ways -- "ErrCode=" in the error a body read fails with,
+// "ErrCode:" in the one a stream is aborted with -- and each is fixed here to
+// the message that uses it.
 var (
-	goAwayCodeRE = regexp.MustCompile(`ErrCode[=:]([A-Z0-9_]{1,32})`)
+	goAwayCodeRE = regexp.MustCompile(
+		`^(?:http2: server sent GOAWAY and closed the connection; LastStreamID=[0-9]+, ErrCode=` +
+			`|http2: Transport received GOAWAY from server ErrCode:)([A-Z0-9_]{1,32})`)
 	streamCodeRE = regexp.MustCompile(`^stream error: stream ID [0-9]+; ([A-Z0-9_]{1,32})`)
 )
 
