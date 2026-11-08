@@ -1,11 +1,12 @@
 # Security classification — each project says what counts as security-sensitive for it
 
 **Status: plan only; nothing implemented; no task approved.** This is a design-only folder: it adds no
-code, no schema, no config, no fixture and no workflow, it edits no file outside
-`docs/security-classification/`, and it writes nothing under `internal/`, `schemas/`, `plugin/`,
-`console/`, `mobile/`, `shared/`, `ee/`, `deploy/` or `testdata/`. Every command, flag, key, field,
-table and document below is a **proposal**, and — unlike a design whose decisions are answered — **every
-one of the twenty decisions `D1500–D1519` carries an empty owner's-answer cell**
+code, no schema, no config, no fixture and no workflow, it edits no file outside `docs/` and the one Go
+test that pins this folder (`internal/cli/docs_security_classification_test.go`, added by SC2), and
+apart from that file it writes nothing under `internal/`, `schemas/`, `plugin/`, `console/`, `mobile/`,
+`shared/`, `ee/`, `deploy/` or `testdata/`. Every command, flag, key, field, table and document below
+is a **proposal**, and — unlike a design whose decisions are answered — **every one of the twenty
+decisions `D1500–D1519` carries an empty owner's-answer cell**
 ([reconciliation.md](reconciliation.md) §8). Nothing in this folder is approved by anyone.
 
 **Asked by:** the owner, 2026-11-07, as task **SC0**: "we have to find a way to allow each project using
@@ -69,13 +70,14 @@ section and the cited number — rather than claiming all four.
 
 ## What this design does not do
 
-- It **changes no code, schema, config, fixture or workflow**, and it edits no file outside this folder.
-- It **adds no pinning test**, and it **does not move the docs census**. There is **no registry test
-  over `docs/`** (F25), so a folder may be documents alone — `docs/image-env/` is the four-document
-  precedent this folder follows. Adding a pin would move `docs/rigor-modes/reconciliation.md`'s census
-  row **101 → 102** and force edits to three census re-check tests in other folders' files (F17), which
-  the brief's DOCS ONLY forbids: **the plan's tasks name the pin each will add**, and the census moves
-  once, in the task that adds the first test (SC2, D1519).
+- It **changes no code, schema, config, fixture or workflow**, and it edits no file outside `docs/` and
+  the one Go test that pins this folder.
+- It **adds one pinning test, and the census moved once.** There is **no registry test over `docs/`**
+  (F25), so a folder may be documents alone — `docs/image-env/` is the four-document precedent this
+  folder follows — and the brief's DOCS ONLY left the pin to the plan's tasks, which name the one each
+  adds: this folder's is `internal/cli/docs_security_classification_test.go` (SC2, D1519), and its
+  arrival moved `docs/rigor-modes/reconciliation.md`'s census row **111 → 112**. The three census
+  re-check tests in other folders' files (F17) re-derive the count from the tree and needed no edit.
 - It **implements neither OD1 nor OD2 nor any part of the needs_owner work**; **none of the three exists
   in this tree** (F15), and the design is written to be independent of them (D1518).
 - It **builds no console screen** (D1514): the ask defers it and the console's own rule agrees — a read

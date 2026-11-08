@@ -399,17 +399,18 @@ The level-3 trigger has to be a **positive list**, which is exactly why the ask 
 ## 7. What this design does not do, and what it satisfies
 
 - **It changes no code, no schema, no config, no fixture and no workflow.** It writes nothing under
-  `internal/`, `schemas/`, `plugin/`, `console/`, `mobile/`, `ee/`, `deploy/` or `testdata/`, and no
-  file outside `docs/security-classification/`. Every command, flag, field, key and table below is a
-  proposal.
-- **It adds no pinning test, and it does not move the docs census.** There is **no registry test over
-  `docs/`** in `internal/cli` (`docs/bitbucket_credentials_test.go`, `docs_rigor_modes_test.go`,
+  `schemas/`, `plugin/`, `console/`, `mobile/`, `ee/`, `deploy/` or `testdata/`, and no file outside
+  `docs/` and the one Go test that pins this folder
+  (`internal/cli/docs_security_classification_test.go`, SC2). Every command, flag, field, key and table
+  below is a proposal.
+- **It adds one pinning test, and the census moved once.** There is **no registry test over `docs/`** in
+  `internal/cli` (`docs/bitbucket_credentials_test.go`, `docs_rigor_modes_test.go`,
   `docs_in_job_review_test.go` and `docs_backlog_test.go` all say so in their own comments), so a folder
-  may be documents alone; `docs/image-env/` is the four-document precedent this folder follows. Adding
-  a pin would move `docs/rigor-modes/reconciliation.md`'s census row **101 → 102** and force edits to
-  three census re-check tests (§7, D1519, F17) — **edits to files outside this folder**, which the
-  brief's DOCS ONLY forbids. The plan's tasks therefore **name the pin each will add**, and the census
-  moves once, in the task that adds the first test.
+  may be documents alone; `docs/image-env/` is the four-document precedent this folder follows. The
+  brief's DOCS ONLY left the pin to the plan's tasks, which name the one each adds: this folder's is
+  `internal/cli/docs_security_classification_test.go` (SC2, D1519), and its arrival moved
+  `docs/rigor-modes/reconciliation.md`'s census row **111 → 112**. The three census re-check tests
+  (§7, D1519, F17) re-derive the count from the tree and needed no edit.
 - **It does not build OD1, OD2, the needs_owner work, the orchestrator or the console screen.** The
   console screen is deferred by the ask itself and by the console's own precedent (§3).
 - **It does not invent a role**, a new permission model, or a second matcher (§3, F21).
