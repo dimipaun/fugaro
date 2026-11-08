@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
 // The converge (internal/initflow) over the engines the converge already
@@ -57,6 +58,14 @@ type initEngine struct {
 	policy    *policyMigrateStage
 
 	redact, held []string // the loop's redaction list, and the slots at its end a stage fills with a value it holds
+
+	// accessDB is the grants node's database as the roles step found it
+	// (update_access.go): set when this run has a node to read at all, and nil
+	// when it has none — no budget backend, or a database this installation
+	// never adopted. The installation root re-reads the node through it for the
+	// lists its own apply carries (F29a, deriveAccessAgain), which is why the
+	// client outlives the step that made it.
+	accessDB *rtdb.Client
 }
 
 // environment runs the environment check once (it prints the local

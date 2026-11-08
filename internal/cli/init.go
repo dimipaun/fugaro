@@ -598,6 +598,18 @@ type initRun struct {
 	// confirmations they always had.
 	gate *initGate
 
+	// accessDerive is the roles step's derive, taken again by the installation
+	// root for itself just before its own tfvars are written (F29a): the step
+	// that runs before the loop reconciles the node and hands the run its two
+	// lists, and this is the same derive read as late as the run can read one —
+	// immediately before the terraform whose plan takes the state lock — so a
+	// grant or a revoke that landed in between is applied rather than
+	// overwritten from the list the earlier read held. The engine sets it
+	// (update_access.go, deriveAccessAgain); this struct cannot read the node
+	// itself, the database client being the engine's, and it is nil in every run
+	// whose roles step found no node.
+	accessDerive func(ctx context.Context) (operators, admins []string, ok bool, err error)
+
 	// refresh is `fugaro image refresh`'s own read of the same marks
 	// (openRefreshManaged), set by runImageRefresh and nil in every other run.
 	// It is what the refresh's steps that are not builds — the base pin, the
@@ -2505,6 +2517,23 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	verifiers, err := r.effectiveVerifiers(ctx, lc)
 	if err != nil {
 		return outs, false, err
+	}
+	// The roles step's derive, taken again here and never earlier (F29a): the
+	// two lists this apply carries are read off the grants node at the last
+	// point the run can read one — immediately before the tfvars below, whose
+	// plan is the terraform that takes the state lock — so a grant or a revoke
+	// that landed since the step ran is what lands, rather than the list that
+	// read held. It is nil when the step found no node (no budget backend, a
+	// database this installation never adopted), and the lists are then the
+	// local config's, as they were before this release.
+	if r.accessDerive != nil {
+		operators, admins, ok, err := r.accessDerive(ctx)
+		if err != nil {
+			return outs, false, err
+		}
+		if ok {
+			spec.Launchers, spec.Operators = operators, admins
+		}
 	}
 	backend, err := prepare(wd, spec, im, verifiers, false)
 	if err != nil {

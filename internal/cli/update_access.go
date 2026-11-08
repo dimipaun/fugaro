@@ -25,17 +25,23 @@ import (
 //   - the node is ABSENT (an installation at the previous shape, or a fresh one):
 //     the step MIGRATES. It reads the lists the installation itself carries —
 //     its Terraform outputs, never the file on this machine, which may be one
-//     operator's stale copy — refuses when that machine's copy disagrees with
-//     them (userFresh, the same refusal `fugaro user ls` makes), turns each
-//     `user:` member into a grant (operators at project scope, admins at project
-//     scope) and writes the node conditionally on the ETag it read (F23).
+//     admin's stale copy — turns each `user:` member into a grant (operators at
+//     project scope, admins at project scope) and writes the node conditionally
+//     on the ETag it read (F23). A copy that disagrees with the installation is
+//     said out loud and not obeyed (accessStale): the migration is the one step
+//     of `fugaro update` that may not be refused, because the refusal's own way
+//     out is the command being refused (the livelock the plan's "refuses on
+//     drift" would have been), and the roster written is the installation's
+//     either way — a member the stale copy named and the installation does not
+//     loses the role in this run's apply, which accessDropped says.
 //   - the node is PRESENT: the step DERIVES. The two lists are read off the
 //     node's project-scope grants, and the spec builders get them, so an
 //     installation whose roles the commands changed converges its IAM to what
 //     the node says rather than to what a file remembers. A revoked member is
-//     gone from the next apply for exactly that reason: the derive reads the
-//     node fresh, in the run that applies, and never the copy the config held
-//     (F29a, TestRevokeIsNotUndoneByAStaleDerive).
+//     gone from the next apply for exactly that reason, and the read the apply
+//     itself carries is taken again by that apply (deriveAccessAgain), so a
+//     revoke landing between this step and the plan is not undone by a list
+//     that read an older node (F29a, TestRevokeIsNotUndoneByAStaleDerive).
 //
 // The version-1 keys retire with the migration and are never written again:
 // they are the file's spelling of the two lists, the file is written as version
@@ -85,6 +91,11 @@ func (e *initEngine) syncAccess(ctx context.Context) error {
 		e.r.warn(why)
 		return nil
 	}
+	// The client outlives the step: the installation root re-reads the node
+	// through it for the lists its own apply carries (F29a, deriveAccessAgain),
+	// and a nil client is exactly the "this run has no node" the root checks.
+	e.accessDB = db
+	e.r.accessDerive = e.deriveAccessAgain
 	node, err := accesslib.Read(ctx, db)
 	if err != nil {
 		return remote(err)
@@ -344,11 +355,11 @@ func foldProjectGrants(grants []accesslib.Grant, role accesslib.Role, members []
 // read a caller's groups — and deriveAccess carries each one forward into the
 // list it came from, so the cloud grant it has is not touched by the migration.
 func migrationGrants(operators, admins []string) ([]accesslib.Grant, error) {
-	o, err := projectGrants(operators, accesslib.RoleOperator, "the installation's launcher list")
+	o, err := projectGrants(operators, accesslib.RoleOperator, "the installation's operator list")
 	if err != nil {
 		return nil, err
 	}
-	a, err := projectGrants(admins, accesslib.RoleAdmin, "the installation's operator list")
+	a, err := projectGrants(admins, accesslib.RoleAdmin, "the installation's admin list")
 	if err != nil {
 		return nil, err
 	}
@@ -430,10 +441,10 @@ func grantKeys(grants []accesslib.Grant) []string {
 // the spec's lists). So the file ends the run holding what the node says —
 // D1585's "the local lists become derived" — and a file that says otherwise
 // (a hand edit, a machine that has not converged) is corrected rather than
-// obeyed. It is taken from the node as it stands at this point in the run,
-// after the migration and after the run's own flags landed, and never from a
-// list read earlier: a member revoked between two runs is gone from the apply
-// for exactly that reason (F29a).
+// obeyed. The node this reads is the one the roles step ended with, after the
+// migration and after the run's own flags landed; the installation root derives
+// again for its own apply (deriveAccessAgain), later, and that later one is what
+// the tfvars hold (F29a).
 //
 // The legacy members are the ones carried forward: a `group:` or `domain:`
 // member is in no grant and would otherwise fall out of the installation on the
@@ -478,6 +489,38 @@ func (e *initEngine) deriveAccess(node accesslib.Node) {
 			e.r.warn(fmt.Sprintf(accessDropped, safetext.FieldListLine(gone), l.role))
 		}
 	}
+}
+
+// deriveAccessAgain is the derive the installation root takes for itself,
+// immediately before its own tfvars are written (F29a): the node is read again
+// and the two lists are handed back, so the apply carries what the node says
+// NOW rather than what the roles step read before the run's stages.
+//
+// The window it closes is a real one and it is the one F29 names: the IAM
+// lists are derived from a read, they are applied under Terraform's state lock,
+// and a grant or a revoke landing between the read and the apply would be
+// re-granted (or dropped) by a list that judged an older node. The read here is
+// taken as late as the run can take one — the tfvars prepared from these lists
+// are what the plan that holds the lock reads — and `ok` is false when there is
+// no node to read, which leaves the lists the file's.
+//
+// It derives and never writes: landing a change is the roles step's own job
+// (the migration, and foldFlagLists for the run's flags), and a step that wrote
+// the node from the apply path could overwrite a grant another machine made
+// while this run planned.
+func (e *initEngine) deriveAccessAgain(ctx context.Context) (operators, admins []string, ok bool, err error) {
+	if e.accessDB == nil {
+		return nil, nil, false, nil
+	}
+	node, err := accesslib.Read(ctx, e.accessDB)
+	if err != nil {
+		return nil, nil, false, remote(err)
+	}
+	if !node.Found {
+		return nil, nil, false, nil
+	}
+	e.deriveAccess(node)
+	return e.spec.Launchers, e.spec.Operators, true, nil
 }
 
 // accessDropped is the warning a converge prints when a machine's own list
