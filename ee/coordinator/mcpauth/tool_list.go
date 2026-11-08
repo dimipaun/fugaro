@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"slices"
 	"strings"
 	"time"
@@ -144,14 +143,16 @@ func (p *ProjectRuns) listTasks(ctx context.Context, call Call) (any, error) {
 // used: one that does not decode, or one past its read cap (runstore's own
 // MaxRecordBytes, and the only two failures ReadRecord's own read produces).
 //
+// Both are sentinels runstore returns rather than a list of the decoder's own
+// error types: what a record's bytes decode into is encoding/json's business
+// and, through a time.Time field, the time package's, so a check spelled in
+// those types is a check that goes stale the moment the record grows a field.
+//
 // A failure that is neither — the bucket, the network — is not the run's and
 // still fails the call, which is the distinction internal/cli/runs.go draws
 // between an unusable object and a read that failed.
 func unreadableRecord(err error) bool {
-	var syntax *json.SyntaxError
-	var typ *json.UnmarshalTypeError
-	return errors.As(err, &syntax) || errors.As(err, &typ) ||
-		errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, runstore.ErrTooLarge)
+	return errors.Is(err, runstore.ErrCorrupt) || errors.Is(err, runstore.ErrTooLarge)
 }
 
 // listed is one of the project's runs as the listing found it, before its

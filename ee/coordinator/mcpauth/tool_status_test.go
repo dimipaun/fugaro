@@ -59,11 +59,15 @@ const (
 	testBigTranscriptRunID = "20300101-170000-3d4c"
 	testBigPatchRunID      = "20300101-180000-5b6a"
 
-	// testCorruptRunID wrote a result.json that does not decode and
-	// testTooBigRecordRunID one over runstore.MaxRecordBytes: both are the
-	// run's own object, written by the run's own agent, and each is one of the
-	// two ways a record is there and unusable.
+	// The next three are the ways a record is there and unusable, each one the
+	// run's own object and each one writable by the run's own agent:
+	// testCorruptRunID wrote bytes that are not JSON at all, testBadTimeRunID
+	// one that decodes into the record's own shape but not into its fields (a
+	// timestamp that is not a time, which is the decoder's business and the
+	// time package's rather than a JSON type), and testTooBigRecordRunID one
+	// over runstore.MaxRecordBytes.
 	testCorruptRunID      = "20300101-190000-7a8b"
+	testBadTimeRunID      = "20300101-193000-4e5f"
 	testTooBigRecordRunID = "20300101-200000-9c0d"
 
 	// testRunsBucket is the runs bucket of this installation, derived the way
@@ -252,6 +256,13 @@ func TestListTasksNamesOnlyTheProjectsRuns(t *testing.T) {
 // decode, or one past runstore.MaxRecordBytes, costs its own row its status
 // and nothing else.
 //
+// The three records below are the ways that goes: bytes that are not JSON, one
+// that decodes into the record's own shape but not into its fields (a
+// timestamp that is not a time — a failure the JSON decoder reports as the
+// time package's, not as one of encoding/json's own types, which is why the
+// test is what holds the sentinel in place), and one longer than a read will
+// take.
+//
 // The record is the run's own object and the run's own agent writes it, so one
 // bad object is the run's problem rather than the listing's — the rule
 // internal/cli/runs.go applies to the same failure (corruptObject: "that is
@@ -262,18 +273,19 @@ func TestListTasksNamesOnlyTheProjectsRuns(t *testing.T) {
 func TestListTasksKeepsARowWhoseRecordIsUnusable(t *testing.T) {
 	f := newRunsFixture(t)
 	f.seedRun(testSlug, testRunID, &runstore.Record{Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeReady}, nil)
-	// Neither of the two below can be seeded through WriteRecord, which writes
-	// the record it is given: one run's object is bytes that are not JSON at
-	// all, and the other is longer than a read will take.
+	// None of the three below can be seeded through WriteRecord, which writes
+	// the record it is given.
 	f.seedRun(testSlug, testCorruptRunID, nil, map[string][]byte{"result.json": []byte("{not json")})
+	f.seedRun(testSlug, testBadTimeRunID, nil, map[string][]byte{"result.json": []byte(`{"started_at":"not a time"}`)})
 	f.seedRun(testSlug, testTooBigRecordRunID, nil, map[string][]byte{
 		"result.json": bytes.Repeat([]byte(" "), runstore.MaxRecordBytes+1),
 	})
+	unreadable := []string{testCorruptRunID, testBadTimeRunID, testTooBigRecordRunID}
 
 	var rows []taskStatus
 	text := f.answer("list_tasks", `{}`, &rows)
-	if len(rows) != 3 {
-		t.Fatalf("list_tasks named %d row(s) %s; want all three of the project's runs, two of them unreadable", len(rows), text)
+	if len(rows) != len(unreadable)+1 {
+		t.Fatalf("list_tasks named %d row(s) %s; want all %d of the project's runs, %d of them unreadable", len(rows), text, len(unreadable)+1, len(unreadable))
 	}
 	byID := map[string]taskStatus{}
 	for _, row := range rows {
@@ -282,7 +294,7 @@ func TestListTasksKeepsARowWhoseRecordIsUnusable(t *testing.T) {
 	if got := byID[testRunID]; got.Status != string(runstore.StatusSucceeded) || got.Unreadable {
 		t.Errorf("list_tasks answered %+v for the run whose record reads; want its status", got)
 	}
-	for _, id := range []string{testCorruptRunID, testTooBigRecordRunID} {
+	for _, id := range unreadable {
 		got, ok := byID[id]
 		if !ok {
 			t.Fatalf("list_tasks left out the row of %s; want its row kept and marked, because one run's own unusable record is not the project's listing", id)
@@ -295,9 +307,11 @@ func TestListTasksKeepsARowWhoseRecordIsUnusable(t *testing.T) {
 	// The same run asked about on its own is refused instead: a listing has
 	// rows to keep, and a question about one run has nothing to answer with —
 	// the run's state is not this package's to invent.
-	err := f.refusal("get_task_status", `{"run_id":"`+testCorruptRunID+`"}`)
-	if errors.Is(err, runstore.ErrNotFound) {
-		t.Errorf("get_task_status of a run whose record does not decode answered %v; want the read failure, not a run that is not there", err)
+	for _, id := range unreadable {
+		err := f.refusal("get_task_status", `{"run_id":"`+id+`"}`)
+		if errors.Is(err, runstore.ErrNotFound) {
+			t.Errorf("get_task_status of %s, whose record cannot be used, answered %v; want the read failure, not a run that is not there", id, err)
+		}
 	}
 }
 
