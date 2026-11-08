@@ -16,17 +16,17 @@ import (
 // printer no longer knows how to shape.
 const snapshotFormat = 1
 
-// installationRE accepts a digest of the runs bucket URL, the name the
-// snapshot is filed under. Only hex, of any length F7's digest may grow to:
-// the name is joined into a path, and a name that cannot hold a separator, a
-// dot or a drive letter cannot leave the directory it is joined to.
+// installationRE accepts the name a snapshot is filed under: a digest of the
+// runs bucket URL (F8b). It takes hex of any length and nothing else, because
+// the name is joined into a path — a value that holds no separator, dot or
+// drive letter cannot leave the directory, whatever a caller hands over.
 var installationRE = regexp.MustCompile(`^[0-9a-fA-F]{1,64}$`)
 
 // SnapshotRow is one row of a snapshot: the display data of one issue of the
-// last successful `mine`, and nothing else. It is deliberately not T-IM1's
-// row type: a snapshot outlives the shared read it came from, so it must not
-// be able to carry that read's command or any reporter's identity into a
-// later, offline run.
+// last successful `mine`, and nothing else. It is deliberately not the row
+// type `mine` prints (T-IM1's): a snapshot outlives the shared read it came
+// from, so it must not be able to carry that read's command or any reporter's
+// identity into a later, offline run.
 type SnapshotRow struct {
 	// Number is the shared issue number, empty for a row that is still local
 	// (LocalID names it then); Display is the derived status, and Coverage
@@ -54,8 +54,8 @@ type SnapshotRow struct {
 
 // Snapshot is the last successful `mine` for one installation. A zero
 // Snapshot means there is none: AsOf is the clock of the run that wrote it,
-// so a written snapshot never has a zero one, and a caller prints "as of"
-// only when it is set.
+// never zero in one that was written, so a caller can tell the two apart
+// without a second return value.
 type Snapshot struct {
 	Format int           `json:"format"`
 	AsOf   time.Time     `json:"as_of"`
@@ -106,7 +106,8 @@ func ReadSnapshot(dir, installation string) (Snapshot, error) {
 // WriteSnapshot files the rows of a successful `mine`, stamped with now. It
 // is best effort at the call site: a cache that cannot be written is one
 // offline run without a snapshot, never an error the command reports. now is
-// the caller's clock, so the "as of" line and the file agree.
+// the caller's clock, so the as-of line and the file agree, and it is stored
+// as UTC so the file holds one spelling of the instant.
 func WriteSnapshot(dir, installation string, rows []SnapshotRow, now time.Time) error {
 	path, err := snapshotPath(dir, installation)
 	if err != nil {
@@ -123,7 +124,10 @@ func WriteSnapshot(dir, installation string, rows []SnapshotRow, now time.Time) 
 // temporary file renamed over the path: a reader sees the old snapshot or the
 // new one, never a part of one. The sync before the rename means a crash
 // cannot leave the name pointing at contents that never reached the disk —
-// which, for this file, would be a snapshot the next offline run trusts.
+// which, for this file, would be a snapshot the next offline run trusts. It
+// is localcfg's writeCacheFile over again, as updatecheck's own writer is: a
+// few lines of file handling are cheaper than a dependency between the
+// packages that keep files in the user's cache.
 func writeSnapshotFile(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
