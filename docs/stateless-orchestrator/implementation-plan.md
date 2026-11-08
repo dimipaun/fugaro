@@ -839,10 +839,10 @@ follows the ruling through O9, G11 and the conventions above.
   verified against `main`.
 - **P3.** Whether a new top-level RTDB subtree needs a `RulesVersion` bump or a marker of its own: this plan recommends the marker (the credentials cascade
   precedent) and O2's red step confirms it against `internal/projectpolicy/version.go`.
-- **P4.** BF1's open-findings file, O14's third input: not in this repository. `git grep` over this branch's `main` on 2026-11-08 finds no
+- **P4.** Everything reconciliation U1-U8 carries stays open; in particular the cost of a cycle (U4) is measured only by Check 303.
+- **P5 (BF2).** BF1's open-findings file, O14's third input: not in this repository. `git grep` over this branch's `main` on 2026-11-08 finds no
   "completed with open findings" outcome, no findings file under the runs bucket and no 80%-of-budget rule in `internal/runner` or `internal/config`
   (reconciliation U10). O14 is therefore written against the brief's description of BF1 and **follows it rather than leads it**: the findings file's own
   shape is BF1's to fix, and until it does, the triage's read of it is a shape this plan does not own. What it does own is the behaviour without it — the
   rule **fails closed**, reading an absent file as a critical finding set rather than as an empty (therefore non-critical) one, which is what its red
   step proves.
-- **P4.** Everything reconciliation U1-U8 carries stays open; in particular the cost of a cycle (U4) is measured only by Check 303.
