@@ -6,12 +6,12 @@ package mcpauth
 import (
 	"context"
 	"encoding/json"
+	"go/parser"
+	"go/token"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/dimipaun/fugaro/internal/budget/rules"
-	"github.com/dimipaun/fugaro/internal/gcpfake"
-	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
 // This file is M10's record tests: what one identity's calls come to, who may
@@ -210,14 +210,22 @@ func TestOperatorSeesTheRecordAndALauncherDoesNot(t *testing.T) {
 
 // TestTheRecordIsNotInTheProjectsDatabase is D935's own row for the audit: the
 // record is an object in the store's bucket, written through M2's Store, and
-// the project's Realtime Database holds nothing under the `mcpauth` node the
-// rules refuse whole.
+// the front door has no route at all to the project's Realtime Database, where
+// the `mcpauth` node stays in the rules as a second barrier.
 //
-// The second half is a guard and it is written as one: this process holds no
-// client to that database, so the read below can only find what something else
-// wrote there — which is the day this record moves back into the database D935
-// took it out of (reconciliation.md F32: no rule keeps a launcher, an operator
-// or a budget admin out of it).
+// The second half is a guard over this package's own source rather than a read
+// against a database, and that is the assertion that can fail: this process
+// holds no client to that database, so a fake opened here would be written to
+// by nobody and would answer nothing however the front door behaved — the row
+// would pass on the day a later task moved the audit back into the node. What
+// is decidable is the claim underneath it, that the front door has no way there
+// at all: no file of this package outside its tests imports the database client
+// or the rules package that names `rules.PathMCPAuth`, so no path of this door
+// can write into the node. A task that gives the front door a database client —
+// to read the installation's published roster, say — edits this row and says
+// why, and that edit is where an audit moving back into the node has to be
+// argued (reconciliation.md F32: no rule keeps a launcher, an operator or a
+// budget admin out of that node, which is why D935 takes the record out of it).
 func TestTheRecordIsNotInTheProjectsDatabase(t *testing.T) {
 	ts := newResourceServer(t)
 	ts.serve(t, "get_task_status", answering("run-7 is implementing"))
@@ -244,19 +252,80 @@ func TestTheRecordIsNotInTheProjectsDatabase(t *testing.T) {
 		t.Errorf("the key %s carries the identity: a key is a path in a bucket, and an address in a path is an address in every listing, metric and error that names it", key)
 	}
 
-	database := gcpfake.NewRTDB(t)
-	client, err := rtdb.New(database.URL, rtdb.Auth{IDToken: func() string { return "an-id-token-of-a-test" }})
+	sources := frontDoorSources(t)
+	if _, read := sources["store.go"]; !read {
+		t.Fatalf("the scan read %v and no store.go of this package, so it is not reading the front door's source", keysOf(sources))
+	}
+	for name, src := range sources {
+		if routes := databaseRoutesIn(t, name, src); len(routes) > 0 {
+			t.Errorf("%s imports %s: the audit record is the store's (D935), and a client to the project's database is the one route back into the `mcpauth` node the rules refuse whole", name, strings.Join(routes, ", "))
+		}
+	}
+
+	// The scan is shown a file that does reach the database, so the loop above
+	// cannot pass by reading nothing or by matching nothing — a guard nobody has
+	// seen fail is not a guard.
+	planted := []byte("package planted\n\nimport (\n\t_ \"github.com/dimipaun/fugaro/internal/rtdb\"\n)\n")
+	if routes := databaseRoutesIn(t, "planted.go", planted); len(routes) != 1 {
+		t.Errorf("the scan finds %v in a file that imports the database client: it would not fail on the day the front door gains one", routes)
+	}
+}
+
+// projectDatabaseRoutes are the two imports that are a way into the project's
+// Realtime Database: the client itself, and the rules package, whose
+// rules.PathMCPAuth is the path of the `mcpauth` node this door's records were
+// once kept under.
+var projectDatabaseRoutes = []string{
+	"github.com/dimipaun/fugaro/internal/rtdb",
+	"github.com/dimipaun/fugaro/internal/budget/rules",
+}
+
+// frontDoorSources is this package's own source with the tests left out: the
+// scan is about what the front door can reach, and a test file may hold whatever
+// it needs to check that.
+func frontDoorSources(t *testing.T) map[string][]byte {
+	t.Helper()
+	entries, err := os.ReadDir(".")
 	if err != nil {
-		t.Fatalf("opening the project's database: %v", err)
+		t.Fatalf("reading the package's own directory: %v", err)
 	}
-	var heldThere map[string]any
-	found, err := client.Get(context.Background(), rules.PathMCPAuth, &heldThere)
+	out := map[string][]byte{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("reading %s: %v", name, err)
+		}
+		out[name] = src
+	}
+	return out
+}
+
+// databaseRoutesIn parses one file and names the project-database imports it
+// carries. It parses rather than searches the text, so a comment that mentions
+// one of them — audit_record.go's own does — is not mistaken for a route.
+func databaseRoutesIn(t *testing.T, name string, src []byte) []string {
+	t.Helper()
+	file, err := parser.ParseFile(token.NewFileSet(), name, src, parser.ImportsOnly)
 	if err != nil {
-		t.Fatalf("reading /%s of the project's database: %v", rules.PathMCPAuth, err)
+		t.Fatalf("parsing %s: %v", name, err)
 	}
-	if found {
-		t.Errorf("the project's database holds /%s: the audit record is the store's (D935), and the node the rules refuse whole is where it must not come back", rules.PathMCPAuth)
+	var out []string
+	for _, imp := range file.Imports {
+		path, err := strconv.Unquote(imp.Path.Value)
+		if err != nil {
+			t.Fatalf("reading an import path of %s: %v", name, err)
+		}
+		for _, route := range projectDatabaseRoutes {
+			if path == route {
+				out = append(out, path)
+			}
+		}
 	}
+	return out
 }
 
 // keysOf is the store's keys, for the failure message that says where the

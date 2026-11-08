@@ -308,14 +308,15 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request, auth authorize
 // learns the name is not served, which is exactly what finding M-e's "a tool
 // with no mapping is refused" looks like from outside.
 //
-// **Every answer below the tool's name is audited once** (M10, audit.go): the
-// call reached a tool of this installation, so its line and its record entry
-// are written whatever the answer is — the door's own 403, a name nothing
-// serves yet, a tool's own refusal, or the tool's data. The two refusals above
-// the name are not: a request whose params are not an object and one naming no
-// tool at all have no tool to name, and they are the JSON-RPC layer's answers
-// rather than events about a person's call (SECURITY.md says the same in the
-// operator's words).
+// **Every answer from the catalogue's own lookup down is audited once** (M10,
+// audit.go): the call named a tool of this installation, so its line and its
+// record entry are written whatever the answer is — the door's own 403, a
+// catalogue name nothing has registered yet, a tool's own refusal, or the
+// tool's data. The three refusals above that lookup are not: params that are
+// not an object, a call naming no tool, and one naming a name the catalogue
+// does not hold. None of the three has a tool to name, so each is the JSON-RPC
+// layer's answer rather than an event about a person's call (SECURITY.md says
+// the same in the operator's words).
 func (s *Server) callTool(w http.ResponseWriter, r *http.Request, auth authorized, req rpcRequest) {
 	var params callParams
 	if len(req.Params) > 0 {
