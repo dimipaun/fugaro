@@ -429,15 +429,6 @@ func (s *Server) auditedCall(w http.ResponseWriter, r *http.Request, id json.Raw
 	return true
 }
 
-// auditCall writes the line and the record entry one call leaves.
-//
-// The two are not one act, and the amendment of 2026-11-04 is why: the line is
-// the durable copy and the record is the readable view (reconciliation.md §4a),
-// so a record that could not be written loses an entry and not the evidence,
-// and the door goes on to answer the call. The fault is recorded on the door's
-// own logger, so a store that stopped taking entries is visible rather than
-// quietly missing from a view an operator trusts. The line is the one that
-// fails closed, and it is the caller's to report.
 // auditEntryGrace bounds the record write this door owes after the caller's own
 // request has ended (auditCall). It is a grace and not the request's own bound,
 // which is why it is a value of its own rather than the context's: the write is
@@ -448,6 +439,15 @@ func (s *Server) auditedCall(w http.ResponseWriter, r *http.Request, id json.Raw
 // shape: bookkeeping about work the caller will never see the answer to.
 const auditEntryGrace = 30 * time.Second
 
+// auditCall writes the line and the record entry one call leaves.
+//
+// The two are not one act, and the amendment of 2026-11-04 is why: the line is
+// the durable copy and the record is the readable view (reconciliation.md §4a),
+// so a record that could not be written loses an entry and not the evidence,
+// and the door goes on to answer the call. The fault is recorded on the door's
+// own logger, so a store that stopped taking entries is visible rather than
+// quietly missing from a view an operator trusts. The line is the one that
+// fails closed, and it is the caller's to report.
 func (s *Server) auditCall(ctx context.Context, auth authorized, tool, outcome, reason string) error {
 	ev := AuditEvent{Identity: auth.identity, Tool: tool, Scopes: auth.scopes, Outcome: outcome, Reason: reason}
 	a := s.audit
