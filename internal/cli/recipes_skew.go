@@ -108,16 +108,24 @@ const sharedSince = "0.14.0"
 // predates it is exactly the direction the gate wants, since a proxied run on
 // an older runner cannot work at all.
 //
-// It names 0.21.0, the release this work is slotted for, which is not tagged
-// yet (docs/release-streams.yaml's cli stream: current 0.20.3, next Rhino), and
-// NOT the plan's own S1 number 0.15.0: that slot was spent on other work and
-// 0.15.0 is tagged, so a gate naming it would refuse nothing — every image in
-// the field is at or past it. docs/release.md's Before-you-tag list verifies
-// the number against the tag actually cut, as it does for noneModelSince,
-// which this release is also the number of. A wrong value refuses too late (a
-// proxied run reaches a runner that cannot do it) or too early (an image that
-// would have worked stays blocked).
-const proxySince = "0.21.0"
+// It names 0.22.0, the CLI minor after the 0.21.0 tag, and NOT the plan's own
+// S1 number 0.15.0: that slot was spent on other work and 0.15.0 is tagged, so
+// a gate naming it would refuse nothing — every image in the field is at or
+// past it. It named 0.21.0 until 2026-11-08, while that release was not yet
+// tagged, and the tag was then cut without the runner half: its tree has no
+// proxySince, nothing of the proxy in internal/runner, and no proxied path in
+// internal/gitprov's providers, while internal/infra's resolveBitbucketProxied
+// — the flip that takes the mount off the job — is already in it and carries no
+// image-version condition of its own. 0.21.0 is therefore the one release this
+// gate must refuse, and the base image `fugaro update` installs today: a value
+// naming it admits exactly the launch the gate exists to refuse, which is the
+// "refuses too late" failure the number exists to avoid. The number is the
+// release that carries the runner half, not the one the work was first slotted
+// for. docs/release.md's Before-you-tag list verifies it against the release
+// actually cut, as it does for the other *Since constants. A wrong value
+// refuses too late (a proxied run reaches a runner that cannot do it) or too
+// early (an image that would have worked stays blocked).
+const proxySince = "0.22.0"
 
 // policySince is the first fugaro release whose launcher and runner read the
 // project's policy (the release phase 1 of the project-centric model ships

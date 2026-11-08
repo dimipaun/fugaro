@@ -1368,8 +1368,9 @@ func proxiedLaunchSpec() (string, *task.Spec) {
 // flip takes the mount off it), so a runner that knows no forwarder has no
 // credential to reach Bitbucket with and dies at bootstrap with a repository
 // it cannot even clone. The judge is the one every *Since gate uses, against
-// the release the proxy ships in (proxySince, which is the release this work
-// is slotted for and not the plan's spent 0.15.0 number).
+// the release whose runner carries the proxy (proxySince, which is the release
+// after the one the work was first slotted for and not the plan's spent 0.15.0
+// number).
 //
 // The cases beside it are what makes the refusal proxiedness' and not the
 // image's: a repository the published node does not proxy is launched on the
@@ -1485,12 +1486,19 @@ func TestLaunchRefusesProxiedRunOnBatch(t *testing.T) {
 	}
 }
 
-// TestProxySinceHasAReleaseBullet: proxySince names 0.21.0, which is not
-// tagged, so docs/release.md's Before-you-tag list is what holds the constant
-// to the release actually cut — the job every other *Since constant's bullet
-// does, and the only thing that would catch the plan's spent 0.15.0 number
-// coming back. Nothing else ties the number the gate refuses on to the release
-// whose runner serves Bitbucket through the forwarder.
+// TestProxySinceHasAReleaseBullet: proxySince names 0.22.0, the release that
+// carries the runner half, so docs/release.md's Before-you-tag list is what
+// holds the constant to the release actually cut — the job every other *Since
+// constant's bullet does, and the only thing that would catch the plan's spent
+// 0.15.0 number coming back. Nothing else ties the number the gate refuses on
+// to the release whose runner serves Bitbucket through the forwarder.
+//
+// The pinned phrases are the bullet's account of why the number is not 0.21.0:
+// that release was tagged without the runner half, and the flip in
+// internal/infra has no image-version condition of its own, so a bullet that
+// lost the fact and kept only "not tagged yet" would pin a sentence that reads
+// as true of any future release and would let the value slide back onto the one
+// image this gate has to refuse.
 func TestProxySinceHasAReleaseBullet(t *testing.T) {
 	var bullet string
 	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
@@ -1505,7 +1513,7 @@ func TestProxySinceHasAReleaseBullet(t *testing.T) {
 	if !strings.Contains(bullet, "currently `\""+proxySince+"\"`") {
 		t.Errorf("docs/release.md's proxySince bullet does not carry the constant's release (%q)", proxySince)
 	}
-	for _, want := range []string{"bitbucket_token", "proxy: true", "not tagged yet"} {
+	for _, want := range []string{"bitbucket_token", "proxy: true", "0.21.0 was tagged", "without the runner half"} {
 		if !strings.Contains(bullet, want) {
 			t.Errorf("docs/release.md's proxySince bullet does not say %q", want)
 		}
