@@ -1,0 +1,56 @@
+package issues
+
+import (
+	"regexp"
+	"strings"
+
+	"github.com/dimipaun/fugaro/internal/redact"
+)
+
+// scrubMarker is what a removed word leaves behind, spelled the way every
+// other pass spells it — redact's own marker, which is unexported — so a
+// reader of a post sees one word for what was taken out of its text,
+// whichever pass took it.
+const scrubMarker = "[REDACTED]"
+
+// Redact is the gate every piece of an issue passes before it is written down
+// or sent anywhere: the values this machine holds and the shapes nobody has to
+// hold to know they are a credential, and then the two things only an issue
+// has to lose — an email address and a path under a home directory (F5). The
+// masks are not held back for the post: the issue file is read by a teammate
+// and may be posted by them, so its text leaves the machine already without
+// the person who wrote it.
+//
+// It substitutes and never cuts, so an excerpt that arrives short stays whole
+// and stays short: the length of the excerpt is the collector's decision, not
+// this pass's.
+func Redact(text string, secrets []string) string {
+	return redact.Report(redact.Text(text, secrets))
+}
+
+// scrubMin is the shortest name Scrub replaces. A name of two characters is
+// as likely to sit inside an ordinary word as to be a name, and the leak it
+// would close is a two-letter project name.
+const scrubMin = 3
+
+// Scrub removes the names of the project, the repository and the
+// organisation from text on its way into a public post (F4): they are what
+// says whose private work this is, and the reporter's own words name them as
+// readily as a URL does. The names are matched without regard to case,
+// because the same name is written `acme-widgets` in a path and `Acme-Widgets`
+// in a sentence.
+//
+// It is not a boundary: a name the caller does not list survives, and one
+// that is also an ordinary word takes that word with it. Both are the
+// caller's to weigh, because only the caller knows what the project is
+// called.
+func Scrub(text string, names []string) string {
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if len(name) < scrubMin {
+			continue
+		}
+		text = regexp.MustCompile(`(?i)`+regexp.QuoteMeta(name)).ReplaceAllLiteralString(text, scrubMarker)
+	}
+	return text
+}

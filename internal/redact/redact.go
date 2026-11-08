@@ -130,6 +130,9 @@ func patternPass(s string) string {
 	s = authHeader.ReplaceAllString(s, `$1`+redacted)
 	s = authScheme.ReplaceAllString(s, "$1 "+redacted)
 	s = signedParam.ReplaceAllString(s, "$1$2="+redacted)
+	s = connString.ReplaceAllString(s, "$1:"+redacted+"@")
+	s = passwordValue.ReplaceAllString(s, "$1$2$3$4$5"+redacted)
+	s = passwordFlag.ReplaceAllString(s, "$1 $2"+redacted)
 	for _, re := range tokenShapes {
 		s = re.ReplaceAllString(s, redacted)
 	}
@@ -247,6 +250,43 @@ var (
 	// elsewhere, such as `CLIENT_SECRET=...` in an environment dump, is not
 	// one of the shapes this pass claims.
 	signedParam = regexp.MustCompile(`(?i)([?&#])(x-amz-signature|x-amz-credential|x-amz-security-token|x-goog-signature|x-goog-credential|googleaccessid|awsaccesskeyid|signature|sig|access_token|id_token|refresh_token|api_key|apikey|client_secret|password|token)=([^&\s"'<>]+)`)
+
+	// connString is the userinfo of a connection string, where the password is
+	// a credential whatever its value: `postgres://app:<password>@host/db` in
+	// a message, a config or an error body. Only the password goes — the
+	// scheme, the user and the host are the diagnosis, and the host is
+	// usually public. The user may be absent (`redis://:<password>@host` is
+	// how a Redis URL with no user is written) and the host has to follow,
+	// which is what keeps a URL that merely carries a port
+	// (`https://host:8080/x`) out of it.
+	connString = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*://[^\s:/@?#]*):([^\s:/@?#]+)@`)
+
+	// passwordValue is the credential a name introduces with a sign, wherever
+	// that is written: an environment dump (`PGPASSWORD=…`), a config or a
+	// record (`{"db_password":"…"}`), the field of a keyword connection string
+	// (`Password=…;`), and a transcript's escaped record
+	// (`{\"password\":\"…\"}`), which is what the doubling of the quotes and
+	// of the opening one reads. signedParam above knows the same name only
+	// where a URL query parameter puts it, which is the one place a delimiter
+	// tells the value from the text around it.
+	//
+	// What may stand before the name is anything but a lower-case letter: a
+	// name is written `DB_PASSWORD`, `PGPASSWORD`, `AWS_SECRET_ACCESS_KEY` or
+	// `MyPassword`, while a lower-case word that merely ends in one of these
+	// words — `bypass`, `compass`, `surpass` — is English, and redacting the
+	// value after it would eat the sentence instead. The value needs four
+	// bytes, the floor the exact pass uses and for its reason: a shorter one
+	// is not a credential, and replacing it mangles the text around it.
+	passwordValue = regexp.MustCompile(`(?i)(^|(?-i:[^a-z]))(pass(?:word|phrase|wd)?s?|pwd|secret(?:[_-]?(?:access[_-])?key)?)(\\*"?)(\s*[:=]\s*)((?:\\+)?")?([^\s"',;&\\]{4,})`)
+
+	// passwordFlag is the same credential on a command line, where the value
+	// follows the flag after a space rather than a sign
+	// (`--password <password>`) — the argv of a command that failed, which is
+	// what a diagnosis quotes.
+	// This is the one spelling of it with nothing between the name and the
+	// value to read by, so the dashes before the name are what keeps a
+	// sentence out of the rule.
+	passwordFlag = regexp.MustCompile(`(?i)(-{1,2}(?:pass(?:word|phrase|wd)?s?|pwd|secret(?:[_-]?(?:access[_-])?key)?))\s+("?)([^\s"',;&\\]{4,})`)
 
 	// keyBlock is a PEM private key, terminated or not: an unterminated block
 	// is still a key, so an END that never comes redacts to the end of the

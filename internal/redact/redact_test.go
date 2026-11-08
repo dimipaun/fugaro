@@ -15,7 +15,8 @@ func fake(parts ...string) string { return strings.Join(parts, "") }
 
 // patternCases are what the exact pass cannot know: credentials Fugaro never
 // held, printed by something else — a failing cloud call, a provider's error
-// body, a signed URL in a message, a key block in a Terraform stream.
+// body, a signed URL in a message, a key block in a Terraform stream, the
+// password of a connection string or of a command line.
 var patternCases = []struct {
 	name string
 	in   string
@@ -329,11 +330,62 @@ var patternCases = []struct {
 		in:   fake("-----BEGIN ", "PRIVATE KEY-----\n", "dW50ZXJtaW5hdGVk"),
 		leak: "dW50ZXJtaW5hdGVk",
 	},
+	{
+		name: "password in an environment dump",
+		in:   "PGPASSWORD=" + fake(strings.Repeat("Qw3", 5)) + " psql: connection refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "psql: connection refused",
+	},
+	{
+		name: "password field of a json record",
+		in: `{"db_password":"` + fake(strings.Repeat("Qw3", 5)) +
+			`","message":"quota exceeded","step":"terraform apply"}`,
+		leak: strings.Repeat("Qw3", 5),
+		keep: `"step":"terraform apply"}`,
+	},
+	{
+		name: "password escaped inside a json string",
+		in:   `{"content":"{\"password\":\"` + fake(strings.Repeat("Qw3", 5)) + `\"}"}`,
+		leak: strings.Repeat("Qw3", 5),
+	},
+	{
+		name: "password on a command line",
+		in:   "--password " + fake(strings.Repeat("Qw3", 5)) + " --user someone failed",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "--user someone failed",
+	},
+	{
+		name: "password of a connection string",
+		in: "postgres://app:" + fake(strings.Repeat("Qw3", 5)) +
+			"@db.example.com:5432/app refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "db.example.com:5432/app refused",
+	},
+	{
+		name: "connection string with no user",
+		in:   "redis://:" + fake(strings.Repeat("Qw3", 5)) + "@cache.example.com:6379 timed out",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "cache.example.com:6379 timed out",
+	},
+	{
+		name: "password field of a keyword connection string",
+		in: "Server=db.example.com;User Id=app;Pwd=" + fake(strings.Repeat("Qw3", 5)) +
+			";Database=app",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "Database=app",
+	},
+	{
+		name: "secret key in an environment dump",
+		in:   "AWS_SECRET_ACCESS_KEY=" + fake(strings.Repeat("Qw3", 5)) + " aws s3 refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "aws s3 refused",
+	},
 }
 
-// TestTextRedactsPatterns: a shape the exact pass cannot name is still a
-// credential, and Text removes it while leaving the rest of the line alone.
-func TestTextRedactsPatterns(t *testing.T) {
+// TestRedactCorpus: a shape the exact pass cannot name is still a credential,
+// and Text removes it while leaving the rest of the line alone. One row per
+// kind, every value built from fragments.
+func TestRedactCorpus(t *testing.T) {
 	for _, tc := range patternCases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Text(tc.in, nil)
@@ -531,6 +583,10 @@ func TestRedactPassesLeaveCleanTextAlone(t *testing.T) {
 		"see https://example.com/home/page and /var/home/user for the shape",
 		"https://host/cb?token=&state=ok returned nothing",
 		"retrying with Bearer\nQWERTYUIOPASDFGHJKLZXCVBNM now",
+		"the password is wrong, so the update stops",
+		"the secret: it was rotated by the operator",
+		"compass: north, and bypass the cache to surpass it",
+		"see https://api.example.com:8080/v1/runs for the endpoint",
 	} {
 		if got := Text(s, []string{"a-secret-value"}); got != s {
 			t.Errorf("Text(%q) = %q, want it unchanged", s, got)
