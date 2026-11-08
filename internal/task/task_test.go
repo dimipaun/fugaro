@@ -239,6 +239,84 @@ func TestReviewPRsValidation(t *testing.T) {
 	}
 }
 
+// TestOwnerRuledValidation covers the owner ruling's own shape rules (OD1,
+// fugaro run --owner-ruled): it is a follow-up's field, so it needs the three
+// follow-up fields, and it is text a brief and a run record carry, so a blank
+// one, one over the cap and one carrying a control character are refused — a
+// ruling this package accepts is one the run stores and quotes.
+//
+// Mutation (drop the `!allFollowUp` case): the first case below validates,
+// and a ruling nobody could act on is stored on a first run's task.
+func TestOwnerRuledValidation(t *testing.T) {
+	base := func() *Spec {
+		return &Spec{Version: 1, RunID: "20260926-221530-a1b2", Repo: "acme/app", Ref: "main",
+			Branch: "fugaro/20260926-221530-a1b2", PR: 7, PreviousRun: "20260926-221530-a1b2"}
+	}
+	cases := []struct {
+		name  string
+		ruled string
+		want  string
+	}{
+		{"no follow-up", "ship it", "owner_ruled answers findings a run on a pull request left"},
+		{"blank", " \n\t ", "owner_ruled is blank"},
+		{"over the cap", strings.Repeat("x", MaxOwnerRuledBytes+1), "longer than 4096 bytes"},
+		{"a NUL", "ship\x00it", "control character"},
+		{"a bidi override", "ship‮it", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := base()
+			if c.name == "no follow-up" {
+				s.Branch, s.PR, s.PreviousRun = "", 0, ""
+				s.Task = "do it"
+			}
+			s.OwnerRuled = c.ruled
+			err := s.Validate()
+			if c.want == "" {
+				// A bidi override is not a control character: the ruling is a
+				// person's prose, and the launcher's own clip and the brief's
+				// own rendering are what keep it from rewriting a line. It
+				// validates, which is what keeps a real ruling from being
+				// refused for a character nobody typed on purpose.
+				if err != nil {
+					t.Fatalf("Validate() = %v, want the ruling accepted", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("Validate() = %v, want it to mention %q", err, c.want)
+			}
+		})
+	}
+	ok := base()
+	ok.OwnerRuled = "Counsel cleared the licence text.\nKeep the flow as it is."
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("a plain ruling: %v", err)
+	}
+	// And the rule as the exported function it is, because a reader of a run
+	// record applies it to the ruling inherited from that record
+	// (internal/runner, prepareFollowUp): empty is no ruling at all and passes,
+	// and every text the task refuses is refused there too.
+	if err := ValidateOwnerRuled(""); err != nil {
+		t.Errorf(`ValidateOwnerRuled("") = %v, want nil: a record with no ruling is a run that works from none`, err)
+	}
+	for _, c := range cases {
+		if c.name == "no follow-up" {
+			continue
+		}
+		err := ValidateOwnerRuled(c.ruled)
+		if c.want == "" {
+			if err != nil {
+				t.Errorf("ValidateOwnerRuled(%q) = %v, want the ruling accepted", c.ruled, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("ValidateOwnerRuled(%q) = %v, want it to mention %q", c.ruled, err, c.want)
+		}
+	}
+}
+
 func TestApply(t *testing.T) {
 	rounds, budget := 4, 10.0
 	s := &Spec{Overrides: Overrides{ReviewRounds: &rounds, MaxBudgetUSD: &budget, Model: "m", TotalTimeout: "45m"}}
@@ -466,6 +544,51 @@ func TestOAuthTokenValidate(t *testing.T) {
 		if err := s.Validate(); err == nil {
 			t.Errorf("oauth_token %q (%d chars): accepted, want refused", name, len(name))
 		}
+	}
+}
+
+// TestOAuthTokenAdmitsTheProjectsAnthropicKey: a task's oauth_token admits the
+// account axis's one value that is not an account at all
+// (config.AnthropicKeyAccount, the project's own Anthropic API key), and it is
+// admitted as its own value rather than by loosening the shape rule: a review
+// launch names it as the run's own credential (D1417), so the spec a review is
+// stored as carries it, and the runner resolves the class's model path from
+// exactly this field (internal/runner's checkReviewClassModelPath). The schema
+// halves of the same rule are schemas/task.schema.json's oauth_token property
+// (its anyOf's second branch), and its own test pins the literal to this
+// constant.
+//
+// Mutation (run, restore): drop the case — every review launch's own spec is
+// refused here, after it was paid for, and the refusal names the run's
+// credential as a name that is "not a Claude account name".
+func TestOAuthTokenAdmitsTheProjectsAnthropicKey(t *testing.T) {
+	ok := Spec{Version: 1, RunID: "20261009-101010-abcd", Repo: "acme/app", Ref: "main", Task: "x"}
+	// The admission can only be this case's: the sentinel is outside the shape
+	// rule every other name in this field is held to, which is the whole reason
+	// it is spelled the way it is.
+	if config.ClaudeAccountNameRE.MatchString(config.AnthropicKeyAccount) {
+		t.Fatalf("%s matches ClaudeAccountNameRE, so this test proves nothing about the sentinel's own case", config.AnthropicKeyAccount)
+	}
+	s := ok
+	s.OAuthToken = config.AnthropicKeyAccount
+	if err := s.Validate(); err != nil {
+		t.Errorf("oauth_token %s: %v", config.AnthropicKeyAccount, err)
+	}
+	// The value is the constant and not a prefix of one: a name carrying it as
+	// a stem is still held to the shape rule that refuses it.
+	for _, name := range []string{config.AnthropicKeyAccount + "-review", "x" + config.AnthropicKeyAccount} {
+		s := ok
+		s.OAuthToken = name
+		if err := s.Validate(); err == nil {
+			t.Errorf("oauth_token %q: accepted, want refused: the field admits the sentinel itself and no name built from it", name)
+		}
+	}
+	// And the value the constant is built from is unaffected: a legal Claude
+	// account name beside it still passes.
+	s = ok
+	s.OAuthToken = "acme-personal"
+	if err := s.Validate(); err != nil {
+		t.Errorf("acme-personal: %v", err)
 	}
 }
 

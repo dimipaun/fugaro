@@ -2,8 +2,9 @@
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
 merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
-prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); the rest is
-not started; this folder approves no task.** The design is
+prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
+except the reading of the installation's published state its lists come from, which no task of this
+plan carries; M8–M10 are not started; this folder approves no task.** The design is
 [spec.md](spec.md), the findings and the fifteen decisions are
 [reconciliation.md](reconciliation.md). **All fifteen were answered on 2026-11-04** — **every one of
 them the recommendation**, with the owner's own detail written into M3, M5, M6 and M9 — and this
@@ -160,7 +161,8 @@ this amended plan, because M4's draft predates the D934 and M-e answers and M6's
 half (#1716) are merged on `main`** — M4's half being the account, the front door service and its
 public invoker binding (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`,
 `:527`) — **M5 is built apart from the paired device M-a asks for, which is M5b below and is not
-built, and M4's store half and M7–M10 are not started**. **What each built task
+built, M7 is built apart from the reading of the installation's published state its lists come from,
+which no task below carries, and M4's store half and M8–M10 are not started**. **What each built task
 still owes is named in its own section below**
 ([reconciliation.md](reconciliation.md) §4a, "What has happened since").
 
@@ -897,6 +899,14 @@ this task still owes is its own rerun against M-a and H1 rather than that step.
   to the database**. Its tests carry `TestAToolWithNoScopeIsRefused`,
   `TestTheListsComeFromTheInstallationsOwnState` and
   `TestAnUnauthenticatedRefusalIsNotWrittenToTheDatabase`.
+- **What this task leaves unbuilt, and it is D933's other half.** `identity.go` is the interface the
+  identity is resolved through, and a server with none set refuses every token (fail-closed), but
+  **the reading of the installation's published state is not in the tree and no task of this plan
+  carries it**: nothing on a binary's side supplies a `Roster`, so the two lists bound what a token
+  buys only once one does. **The task that mounts this package on a binary — the one M5b gates —
+  owes that reading beside the two bounds**, and spec.md §11 carries it as an open item until the
+  owner assigns it. What M7 holds is the rule that reading has to keep: the lists are the source and
+  never one machine's local config, and only exact `user:` entries are read.
 
 ### M8 — The read tools
 

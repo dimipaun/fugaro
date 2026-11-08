@@ -1785,7 +1785,7 @@ func TestResultSchemaHalted(t *testing.T) {
 		runstore.HaltNoCap, runstore.HaltTokenCap, runstore.HaltBudgetUnavailable, runstore.HaltBudgetTokenExpired,
 		runstore.HaltNoCredential, runstore.HaltCredsRulesDenied,
 		runstore.HaltStageBudget, runstore.HaltReviewRatio, runstore.HaltFanout,
-		runstore.HaltReviewScope, runstore.HaltExpectedExceeded,
+		runstore.HaltReviewScope, runstore.HaltExpectedExceeded, runstore.HaltOwnerDecision,
 	} {
 		if err := check(r); err != nil {
 			t.Errorf("schema rejects halt reason %q: %v", r, err)
@@ -1793,6 +1793,119 @@ func TestResultSchemaHalted(t *testing.T) {
 	}
 	if err := check("other"); err == nil {
 		t.Error(`schema accepts halt reason "other"`)
+	}
+}
+
+// TestResultSchemaOwnerDecisions: the pair a run that stopped waiting on its
+// owner leaves (OD1) validates — the decisions the run left (`owner_decisions`)
+// with their total, the ruling a follow-up works from (`owner_ruled`), and the
+// decisions that ruling answered (`owner_ruled_decisions`, which is what carries
+// it on from follow-up to follow-up) — and the schema refuses the shapes that
+// would let a reader render something the runner did not write: an unknown key
+// inside a decision, a decision with no sentence, a sentence past
+// runstore.MaxOwnerDecisionText, more decisions than the cap, and a total that
+// is not a count. A record with nothing pending writes no key at all, and the
+// empty block is refused too: absent is the fact "this run is not waiting on
+// anything", which an empty block would blur.
+func TestResultSchemaOwnerDecisions(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 11, 7, 10, 0, 0, 0, time.UTC)
+	rec := func(od, answered *runstore.OwnerDecisions, ruled string) runstore.Record {
+		return runstore.Record{
+			Version: 1, RunID: "20261107-100000-abcd", Status: runstore.StatusHalted, Stage: "review", Outcome: runstore.OutcomeDraft,
+			Reason: "review is waiting on 1 owner decision", CostUSD: 1, StartedAt: at,
+			Halt:                &runstore.Halt{Reason: runstore.HaltOwnerDecision, Scope: "run", At: at, Detail: "review is waiting on 1 owner decision"},
+			OwnerDecisions:      od,
+			OwnerRuled:          ruled,
+			OwnerRuledDecisions: answered,
+		}
+	}
+	validate := func(t *testing.T, r runstore.Record) error {
+		t.Helper()
+		data, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	good := runstore.NewOwnerDecisions([]runstore.OwnerDecision{
+		{File: "LICENSE.md", Summary: "the licence text needs counsel's clearance"},
+		{Summary: "the approval flow is a product decision"},
+	})
+	// A ruled follow-up whose reviewers accepted the ruling left no decisions of
+	// its own: the ruling and what it answered are the record's whole account of
+	// the owner's answer, and the run after it reads them from here.
+	if err := validate(t, rec(nil, good, "Counsel cleared it.")); err != nil {
+		t.Errorf("schema rejects the pair a ruled run works from: %v", err)
+	}
+	// A ruled run may leave new decisions of its own beside the pair.
+	if err := validate(t, rec(good, good, "Counsel cleared it.")); err != nil {
+		t.Errorf("schema rejects a ruled run that left decisions of its own: %v", err)
+	}
+	if err := validate(t, rec(good, nil, "")); err != nil {
+		t.Errorf("schema rejects the run's own block: %v", err)
+	}
+	bad := map[string]*runstore.OwnerDecisions{
+		"no sentence":   {Decisions: []runstore.OwnerDecision{{File: "a.go"}}, Total: 1},
+		"no decisions":  {Decisions: []runstore.OwnerDecision{}, Total: 1},
+		"over the cap":  {Decisions: good.Decisions, Total: 1},
+		"long sentence": {Decisions: []runstore.OwnerDecision{{Summary: strings.Repeat("x", runstore.MaxOwnerDecisionText+1)}}, Total: 1},
+	}
+	bad["over the cap"].Decisions = make([]runstore.OwnerDecision, runstore.MaxOwnerDecisions+1)
+	for i := range bad["over the cap"].Decisions {
+		bad["over the cap"].Decisions[i] = runstore.OwnerDecision{Summary: "s"}
+	}
+	for name, od := range bad {
+		if err := validate(t, rec(od, nil, "")); err == nil {
+			t.Errorf("schema accepts %s", name)
+		}
+		if err := validate(t, rec(nil, od, "Counsel cleared it.")); err == nil {
+			t.Errorf("schema accepts %s as the decisions a ruling answered", name)
+		}
+	}
+	// A ruling with no block beside it is a follow-up that answered a run this
+	// record does not describe as waiting: legal on its own, and the field is
+	// the text only.
+	if err := validate(t, rec(nil, nil, "Counsel cleared it.")); err != nil {
+		t.Errorf("schema rejects a ruling with no decisions: %v", err)
+	}
+	// The rulings behind the newest one, each with the decisions it answered
+	// (owner_ruled_earlier): what a follow-up carrying a new ruling keeps, so
+	// that a question the owner settled two rulings ago is not raised and halted
+	// on again. An entry is the pair above under the same rules, and the schema
+	// refuses what a reader could render from it that the runner never wrote.
+	withChain := func(rs []runstore.OwnerRuling) runstore.Record {
+		r := rec(nil, good, "Counsel cleared it.")
+		r.OwnerRuledEarlier = rs
+		return r
+	}
+	if err := validate(t, withChain([]runstore.OwnerRuling{{Ruling: "Keep the MIT text.", Decisions: good}})); err != nil {
+		t.Errorf("schema rejects the rulings behind the newest one: %v", err)
+	}
+	over := make([]runstore.OwnerRuling, runstore.MaxOwnerRulings+1)
+	for i := range over {
+		over[i] = runstore.OwnerRuling{Ruling: "Keep the MIT text.", Decisions: good}
+	}
+	// A ruling of blanks, or one carrying a control character, is refused the way
+	// a launcher's own ruling is (task.ValidateOwnerRuled), and that is a rule
+	// about text: no JSON Schema keyword states it, which is why
+	// task.schema.json's owner_ruled is held to minLength and maxLength and no
+	// more. Here the schema refuses an entry with no text at all, one past the
+	// bound, and one with nothing listed under it.
+	for name, rs := range map[string][]runstore.OwnerRuling{
+		"no ruling text":                 {{Decisions: good}},
+		"a ruling past the bound":        {{Ruling: strings.Repeat("r", task.MaxOwnerRuledBytes+1), Decisions: good}},
+		"a ruling with no decisions":     {{Ruling: "Keep the MIT text."}},
+		"a block with no decision in it": {{Ruling: "Keep the MIT text.", Decisions: &runstore.OwnerDecisions{Decisions: []runstore.OwnerDecision{}, Total: 1}}},
+		"over the cap":                   over,
+	} {
+		if err := validate(t, withChain(rs)); err == nil {
+			t.Errorf("schema accepts %s behind the newest ruling", name)
+		}
 	}
 }
 
@@ -2956,12 +3069,18 @@ func TestTaskSchemaPlanTaskMatchesTheGoRule(t *testing.T) {
 }
 
 // TestTaskSchemaOAuthTokenMatchesTheGoRules ties the task schema's
-// `oauth_token` property to the Go rules it mirrors (config.ClaudeAccountNameRE
-// and config.MaxClaudeAccountNameLen): the schema pattern and maxLength are
-// separate copies, so without this a change to the Go rule would drift from the
-// schema with only the corpus fixtures noticing. The pattern alone admits 61
-// characters (it counts repetition units of one or two), which is why the
-// bound is a separate maxLength.
+// `oauth_token` property to the Go rules it mirrors (config.ClaudeAccountNameRE,
+// config.MaxClaudeAccountNameLen and config.AnthropicKeyAccount): the schema
+// pattern and maxLength are separate copies, so without this a change to the Go
+// rule would drift from the schema with only the corpus fixtures noticing. The
+// pattern alone admits 61 characters (it counts repetition units of one or
+// two), which is why the bound is a separate maxLength.
+//
+// The shape rule is one branch of the property's anyOf, the axis's one
+// non-account value being the other (the sentinel is outside the pattern by
+// construction and admitting it must not widen the pattern), so the pattern is
+// read out of the branches — and the branch that is a const is held to the Go
+// constant here, which is what keeps the schema's literal from drifting.
 func TestTaskSchemaOAuthTokenMatchesTheGoRules(t *testing.T) {
 	data, err := os.ReadFile("task.schema.json")
 	if err != nil {
@@ -2969,8 +3088,11 @@ func TestTaskSchemaOAuthTokenMatchesTheGoRules(t *testing.T) {
 	}
 	var doc struct {
 		Properties map[string]struct {
-			Pattern   string `json:"pattern"`
-			MaxLength int    `json:"maxLength"`
+			MaxLength int `json:"maxLength"`
+			AnyOf     []struct {
+				Pattern string `json:"pattern"`
+				Const   string `json:"const"`
+			} `json:"anyOf"`
 		} `json:"properties"`
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
@@ -2980,22 +3102,36 @@ func TestTaskSchemaOAuthTokenMatchesTheGoRules(t *testing.T) {
 	if !ok {
 		t.Fatal("task.schema.json has no oauth_token property")
 	}
-	if p.Pattern != config.ClaudeAccountNameRE.String() {
-		t.Errorf("schema pattern %q != config.ClaudeAccountNameRE %q", p.Pattern, config.ClaudeAccountNameRE.String())
-	}
 	if p.MaxLength != config.MaxClaudeAccountNameLen {
 		t.Errorf("schema maxLength %d != config.MaxClaudeAccountNameLen %d", p.MaxLength, config.MaxClaudeAccountNameLen)
+	}
+	var patterns, consts []string
+	for _, b := range p.AnyOf {
+		if b.Pattern != "" {
+			patterns = append(patterns, b.Pattern)
+		}
+		if b.Const != "" {
+			consts = append(consts, b.Const)
+		}
+	}
+	if len(patterns) != 1 || patterns[0] != config.ClaudeAccountNameRE.String() {
+		t.Errorf("the oauth_token anyOf's pattern branches = %q, want exactly config.ClaudeAccountNameRE %q: the shape rule is not loosened to admit the sentinel", patterns, config.ClaudeAccountNameRE.String())
+	}
+	if len(consts) != 1 || consts[0] != config.AnthropicKeyAccount {
+		t.Errorf("the oauth_token anyOf's const branches = %q, want exactly config.AnthropicKeyAccount %q: the property admits the project's own key only as the sentinel the Go rule admits", consts, config.AnthropicKeyAccount)
 	}
 }
 
 // TestTaskSchemaRefusesReservedAccountName: a task's oauth_token may not name
 // the account the credentials bundle reserves for the platform's own git
-// credential. The decoder is the authority (task.Spec.Validate, through
-// config.ReservedClaudeAccountName) and the schema is its published copy, so
-// both are held to the same fixture here: a name that is legal everywhere else
-// passes both, and the reserved name fails both. The field is optional and the
-// document is additionalProperties: false, so nothing else in either reader
-// says anything about this name.
+// credential, and — the other direction of the same cross-reader agreement —
+// it does admit the axis's one non-account value. The decoder is the authority
+// (task.Spec.Validate, through config.ReservedClaudeAccountName and the
+// sentinel's own case) and the schema is its published copy, so both are held
+// to the same fixture here: a name that is legal everywhere else passes both,
+// the reserved name and the sentinel's reference twin fail or pass both. The
+// field is optional and the document is additionalProperties: false, so nothing
+// else in either reader says anything about these names.
 func TestTaskSchemaRefusesReservedAccountName(t *testing.T) {
 	sch := compile(t, "task.schema.json")
 	docFor := func(name string) string {
@@ -3007,8 +3143,10 @@ func TestTaskSchemaRefusesReservedAccountName(t *testing.T) {
 		return string(data)
 	}
 	for name, valid := range map[string]bool{
-		"acme-personal":        true,
-		config.BitbucketSecret: false,
+		"acme-personal":               true,
+		config.AnthropicKeyAccount:    true,
+		config.BitbucketSecret:        false,
+		"anthropic-api-key--project2": false, // one character past the sentinel: the const branch is the literal, not a prefix rule
 	} {
 		raw := docFor(name)
 		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(raw))
@@ -3141,18 +3279,29 @@ func TestFugaroSchemaAgentOAuthToken(t *testing.T) {
 
 // TestSchemaRefusesReservedOAuthTokenName: fugaro.yaml's agent.oauth_token
 // may not name the account the credentials bundle reserves for the platform's
-// own git credential. The decoder is the authority (config.Validate) and the
-// schema is its published copy, so both are held to the same fixture here: a
-// name that is legal everywhere else passes both, the reserved name fails
-// both, and the decoder refuses it at its own path — a schema that admitted
-// the name, or a decoder that accepted it, is the drift this catches.
+// own git credential, nor the axis's one non-account value (the project's own
+// Anthropic API key, config.AnthropicKeyAccount). The decoder is the authority
+// (config.Validate) and the schema is its published copy, so both are held to
+// the same fixture here: a name that is legal everywhere else passes both, the
+// reserved name and the sentinel fail both, and the decoder refuses them at its
+// own path — a schema that admitted the name, or a decoder that accepted it, is
+// the drift this catches.
+//
+// The sentinel's row is the deliberate half: a *task's* oauth_token admits it
+// and a repository's document does not. The key is a fact of the installation
+// and of the launch (a review names it as the run's own credential, with
+// --token or the pairing's own account), never of a repository's fugaro.yaml,
+// which speaks of the Claude accounts a repository's runs may use — and
+// config.Validate's own agent.oauth_token rule reads the same shape rule the
+// schema does.
 func TestSchemaRefusesReservedOAuthTokenName(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	const head = "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { oauth_token: "
 	const tail = " }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 	for name, valid := range map[string]bool{
-		"acme-personal":        true,
-		config.BitbucketSecret: false,
+		"acme-personal":            true,
+		config.BitbucketSecret:     false,
+		config.AnthropicKeyAccount: false,
 	} {
 		doc := []byte(head + name + tail)
 		if schemaOK := sch.Validate(yamlInstance(t, doc)) == nil; schemaOK != valid {

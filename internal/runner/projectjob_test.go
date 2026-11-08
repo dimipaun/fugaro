@@ -8,9 +8,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -82,10 +85,18 @@ func projectJobOf() projectJob {
 // it was launched for, which is what admissionRunCfg's slugRepo is for too.
 func projectRun(t *testing.T, job projectJob, mode, capUSD, policy string) *bk {
 	t.Helper()
+	return projectRunCfg(t, job, gwConfig(t, ""), mode, capUSD, policy)
+}
+
+// projectRunCfg is projectRun with the repository's own fugaro.yaml replaced:
+// the fixture's config with one key moved, for the runs whose workflow names a
+// clock the job they are on does not have (clampTotalToJob).
+func projectRunCfg(t *testing.T, job projectJob, cfg, mode, capUSD, policy string) *bk {
+	t.Helper()
 	if job.specRepo == "" {
 		job.specRepo = job.slugRepo
 	}
-	b := newBK(t, gwConfig(t, ""), mode, capUSD)
+	b := newBK(t, cfg, mode, capUSD)
 	slug, err := task.Slug(job.provider, job.slugRepo)
 	if err != nil {
 		t.Fatal(err)
@@ -158,6 +169,17 @@ func projectPolicyFor(project, profile string) string {
 func projectPolicyCloning(project, url string) string {
 	return `{"version":4,"allow_repos":` + project + `,"clone_urls":{"github%2Facme%2Fapp":"` + url + `"},` +
 		`"profiles":{"standard":{"provider":"github",` + profileShape + `}}}`
+}
+
+// projectPolicyClass is projectPolicyFor with the standard profile's timeout
+// class replaced. The class is the job's Cloud Run task timeout less
+// backend.TaskTimeoutSlack, and it is the clock a run on that job is held to
+// (clampTotalToJob). The fixture's own class is 6h — longer than any workflow
+// these tests run — so a test that wants the clamp to bite names one of its
+// own.
+func projectPolicyClass(project, class string) string {
+	return strings.Replace(projectPolicyFor(project, ""), `"timeout_class":"6h"`,
+		`"timeout_class":"`+class+`"`, 1)
 }
 
 // providerCloneURL is repourl.CloneURL's own answer for a repository: what a
@@ -275,6 +297,91 @@ func TestProjectJobRunsWhenTheProfileAdmitsTheRepository(t *testing.T) {
 	b := projectRun(t, projectJobOf(), "off", "", projectPolicyFor(`["github/acme/*"]`, ""))
 	projectHost(t, b)
 	projectSucceeded(t, b)
+}
+
+// classConfig is the fixture's config with the workflow's clock moved out to an
+// hour: a total and a reserve no four-minute class can hold, which is the shape
+// a repository that took the new three-hour default has on a job sized for the
+// previous one.
+func classConfig(t *testing.T) string {
+	t.Helper()
+	const (
+		fixture = "timeouts: { total: 5m, stage: 2m, verify: 1m, finalize_reserve: 30s }"
+		moved   = "timeouts: { total: 1h, stage: 30m, verify: 10m, finalize_reserve: 5m }"
+	)
+	base := gwConfig(t, "")
+	cfg := strings.Replace(base, fixture, moved, 1)
+	if cfg == base {
+		t.Fatalf("the fixture config no longer writes %s", fixture)
+	}
+	return cfg
+}
+
+// TestProjectJobHoldsTheRunBudgetToItsClass is the clamp where bootstrap puts
+// it: the workflow's timeouts.total and its reserve are the job's class's
+// before anything reads the workflow, so the budget, the record's own clocks
+// and the lock's expiry are all the class's. The budget itself has no reader
+// outside the run, so a whole run is asked about it the way it is asked about
+// any other clock — by what it does when the clock is the test's: a jump past
+// the clamped finalize point and well inside the workflow's own hour leaves a
+// run that was clamped stopped before its next stage, and one that was not
+// finishes.
+//
+// Mutation (run, restored): drop the clampTotalToJob call from bootstrap, or
+// move it past r.budget, past the record's finalize_reserve_s, or past
+// acquireLock. The first subtest fails on the reserve and on the deadline, the
+// second on the review that then runs.
+func TestProjectJobHoldsTheRunBudgetToItsClass(t *testing.T) {
+	// A class under the default five-minute reserve: the clamp cuts the reserve
+	// with the total (to 4m/5 = 48s), which is the one value of the record's
+	// own that only moves when the clamp ran.
+	const class = "4m"
+	policy := projectPolicyClass(`["github/acme/*"]`, class)
+
+	t.Run("the record's clocks are the class's", func(t *testing.T) {
+		b := projectRunCfg(t, projectJobOf(), classConfig(t), "off", "", policy)
+		projectHost(t, b)
+		rec := projectSucceeded(t, b)
+		if reserve, ok := rec.FinalizeReserve(); !ok || reserve != 48*time.Second {
+			t.Errorf("finalize_reserve_s = %v, want 48s: the workflow's own 5m reserve does not fit in the class", rec.FinalizeReserveS)
+		}
+		// The lock's expiry is the record's deadline (lockcache.go's
+		// lockDeadline): the class, the task timeout's slack, and the lock's own
+		// minute past it. The workflow's hour is not in it.
+		want := rec.StartedAt.Add(4*time.Minute + backend.TaskTimeoutSlack + time.Minute)
+		if rec.Deadline == nil || !rec.Deadline.Equal(want) {
+			t.Errorf("deadline = %v, want %v (started %v + the 4m class): a run on this job must finalize, and let its lock go, before the job's own task timeout kills it",
+				rec.Deadline, want, rec.StartedAt)
+		}
+	})
+
+	t.Run("the budget is the class's", func(t *testing.T) {
+		b := projectRunCfg(t, projectJobOf(), classConfig(t), "off", "", policy)
+		projectHost(t, b)
+		// The clock is the test's, and the jump is free: four minutes is past
+		// the clamped finalize point (4m less the 48s reserve) and nowhere near
+		// the workflow's own hour less its 5m, so a budget that was left
+		// unclamped runs the review this one refuses.
+		var mu sync.Mutex
+		clock := time.Now()
+		b.deps.Now = func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }
+		tick := func(s step) step {
+			return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+				res, err := s(t, ctx, req)
+				mu.Lock()
+				clock = clock.Add(4 * time.Minute)
+				mu.Unlock()
+				return res, err
+			}
+		}
+		rec, _ := b.run(t, tick(implement("feature")), review("ship", 0))
+		if len(b.agent.calls) != 1 {
+			t.Errorf("the run ran %d stages, want 1: the stage after the first was inside the budget the workflow names, not the one the job has", len(b.agent.calls))
+		}
+		if !strings.Contains(rec.Reason, "time budget exhausted") {
+			t.Errorf("the run ended %s with reason %q, want it stopped at the job's %s class", rec.Status, rec.Reason, class)
+		}
+	})
 }
 
 // The clone URL is computed from task.json's repository and the job's provider,

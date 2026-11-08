@@ -148,6 +148,15 @@ type runOptions struct {
 	// fact; the release that owns that file documents it (reconciliation
 	// F22/E4).
 	reviewRun string
+	// ownerRuled is --owner-ruled: the repository owner's answer to the
+	// findings a run on this PR left for them (OD1). A follow-up whose
+	// previous run stopped waiting on owner decisions is refused without it
+	// (resolvePR), so a person's answer is what unblocks the pull request
+	// rather than another blind run; the text is stored on the task
+	// (task.Spec.OwnerRuled) and appended to the brief verbatim by the
+	// runner. Empty is no ruling at all, which is every launch that is not
+	// answering one.
+	ownerRuled string
 	// attach is --attach, repeated: files this launch uploads into the
 	// run's own inputs/ for a mode: artifact run to download (design
 	// artifact-runs.md §4, plan Task 6). It is refused outright on a run id
@@ -319,6 +328,7 @@ func newRunCmd() *cobra.Command {
 	// Hidden: see the field's own note on the generated reference.
 	f.StringVar(&o.reviewRun, "review-run", "", "carry the findings of review RUN (<repo-slug>/<run-id> or a run ID) into this fix round's brief; needs --pr, and refused with a mode: review recipe")
 	_ = f.MarkHidden("review-run")
+	f.StringVar(&o.ownerRuled, "owner-ruled", "", "the repository owner's ruling on the findings a run on this PR left for them (OD1): either the text itself, a file, or - for stdin. A follow-up on a pull request whose last run stopped waiting on owner decisions is refused without it, and one whose last run left no such decisions is refused with it: the ruling answers what that run left, and nothing else; it is appended to this run's brief verbatim and recorded in the run")
 	f.IntVar(&o.attempts, "attempts", 0, "launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe")
 	f.BoolVar(&o.noCompression, "no-compression", false, "turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
@@ -409,6 +419,15 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		if err = reviewLevelsFlag(cmd, o); err != nil {
 			return err
 		}
+		// --owner-ruled, read here with the rest of the launch's text: the
+		// task may not read stdin twice, and the ruling is stored on the task
+		// (task.Spec.OwnerRuled) rather than kept beside it.
+		if o.ownerRuled == "-" && (o.tf == "-" || o.reviewLevelsPath == "-") {
+			return userErr("--owner-ruled - and another flag both read stdin; pass one of them as a file")
+		}
+		if o.ownerRuled, err = ownerRuledText(cmd, o.ownerRuled); err != nil {
+			return err
+		}
 		if o.totalTimeout != "" {
 			if total, err = parseTotalTimeout(o.totalTimeout); err != nil {
 				return err
@@ -424,6 +443,12 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	// checked below, where the recipe is resolved.
 	if cmd.Flags().Changed("review-run") && !prSet {
 		return userErr("--review-run needs --pr: it carries a review run's findings into a fix round of a pull request")
+	}
+	// --owner-ruled answers findings a run on a pull request left (OD1), so
+	// it is a follow-up's flag and nothing else: refused here, before
+	// openCloud, the way --review-run is.
+	if cmd.Flags().Changed("owner-ruled") && !prSet {
+		return userErr("--owner-ruled needs --pr: it answers the findings the last run on that pull request left for you")
 	}
 	env, err := openCloud(ctx, o.cloud)
 	if err != nil {
@@ -484,6 +509,18 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			case rerr == nil && rr.Recipe.Mode == recipe.ModeReview:
 				if cmd.Flags().Changed("review-run") {
 					return userErr("--review-run carries a review run's findings into a fix round, and --recipe %s reviews a pull request instead", rr.Name)
+				}
+				// --owner-ruled is refused here for the same reason
+				// --review-run is: the ruling answers findings a run on the
+				// pull request left, the runner appends it to that
+				// follow-up's brief, and task.Validate holds it to a spec
+				// with a branch, a pr and a previous_run — the reviewSpec
+				// below builds none of the three, because a review-mode
+				// launch reviews a pull request rather than continuing one.
+				// Accepted, the flag would write no field anywhere and the
+				// owner's answer would be dropped without a word.
+				if cmd.Flags().Changed("owner-ruled") {
+					return userErr("--owner-ruled answers the findings a run on a pull request left, and --recipe %s reviews a pull request instead of fixing one", rr.Name)
 				}
 				if lo, hi, ok := recipe.ReviewPRRange(rr.Name); ok {
 					if n := len(o.pr); n < lo || n > hi {
@@ -1251,6 +1288,50 @@ func taskText(cmd *cobra.Command, file string, args []string, optional bool) (st
 	}
 	if text = strings.TrimSpace(text); text == "" && !optional {
 		return "", userErr("the task is empty")
+	}
+	return text, nil
+}
+
+// ownerRuledText is fugaro run --owner-ruled's value as the ruling to store
+// (task.Spec.OwnerRuled): "-" reads stdin, a value naming a regular file reads
+// that file, and every other value is the ruling as it was given. A value that
+// happens to name an existing file is read rather than taken literally, which
+// is what makes one flag carry "text or file" without a second flag saying
+// which — and why the help text says so.
+//
+// The text is trimmed and its CRLFs are made newlines, and nothing else about
+// it is touched: the ruling is a person's own words, appended to the brief
+// verbatim, and a launcher that rewrote them would be answering for them.
+// Blank and over-long rulings are refused here, in the launcher's words,
+// rather than by the run at bootstrap: the rules are task.Spec.Validate's, so
+// a ruling this accepts is never one the run refuses after it was paid for.
+func ownerRuledText(cmd *cobra.Command, value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	text := value
+	switch {
+	case value == "-":
+		data, err := io.ReadAll(cmd.InOrStdin())
+		if err != nil {
+			return "", userErr("reading the owner's ruling from stdin: %v", err)
+		}
+		text = string(data)
+	default:
+		if fi, err := os.Stat(value); err == nil && fi.Mode().IsRegular() {
+			data, err := os.ReadFile(value)
+			if err != nil {
+				return "", userErr("reading the owner's ruling: %v", err)
+			}
+			text = string(data)
+		}
+	}
+	text = strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n"))
+	switch {
+	case text == "":
+		return "", userErr("--owner-ruled is empty: pass the owner's ruling, a file holding it, or - for stdin")
+	case len(text) > task.MaxOwnerRuledBytes:
+		return "", userErr("--owner-ruled is %d bytes; a ruling must be at most %d", len(text), task.MaxOwnerRuledBytes)
 	}
 	return text, nil
 }
@@ -2032,16 +2113,34 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 	// launch's own account is the mix's (mixedRunAccount): the run's review
 	// stages are served by that account and read its token out of the runner's
 	// environment, which only the account's own job variant mounts. The
-	// sentinel is not a name of the run's own — it is how spec.OAuthToken
-	// spells "no token", and claudeAccountAllowed admits it — so it leaves the
-	// mix's account standing; any other name is left to the walk below, which
-	// refuses it unless it is the mix's own. A *stage* asked for is not this
-	// resolution: it has its own chain above, and the mix serves the two stages
-	// of the allow-list and no other.
+	// sentinel here is config.DefaultClaudeAccount — the spelling a repeated
+	// launch's stored task uses for "no account chosen", which is not a name of
+	// the run's own, so it leaves the mix's account standing; the account
+	// axis's other non-account value, config.AnthropicKeyAccount, is not this
+	// case and must not be: it is what names the review class's own pairing
+	// (D1417, D1422), so the mix never takes its place, and the test below is
+	// exactly why — the sentinel is neither "" nor the default. Any other name
+	// is left to the walk below, which refuses it unless it is the mix's own. A
+	// *stage* asked for is not this resolution: it has its own chain above, and
+	// the mix serves the two stages of the allow-list and no other.
+	//
+	// The sentinel and a declared mix are the one pair here that neither of
+	// those answers covers: the name is no account, so it is refused below only
+	// where the pair cannot be judged at all (claudeAccountAllowed admits it for
+	// api-key, which is the auth a mix is declared under), while the runner
+	// serves the run's review and adversarial stages out of the mix whatever the
+	// launch's own account is. Such a launch would start on the sentinel's job —
+	// the one whose account segment it is — which mounts no Claude token, and
+	// its review stages would halt for one. It is refused here instead, where
+	// the mix is known.
 	if stage == "" {
 		mix, err := mixedRunAccount(ctx, env, repo, auth, co)
 		if err != nil {
 			return "", err
+		}
+		if mix != "" && name == config.AnthropicKeyAccount {
+			return "", userErr("this launch names the project's own Anthropic API key (%s) as the run's own account, and this run declares a mix: %s serves its %s stages, and those stages read the account's token out of the runner's environment, which only the account's own job mounts — the mix is the one Claude account an api-key run may hold, and the key is not an account, so the launch would start on the key's job, whose review stages have no token to run on. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Launch without --token, which is where a mixed run starts — the mix is the run's own account — or remove the account this mix names for the %s stages",
+				config.AnthropicKeyAccount, mix, strings.Join(config.MixedAccountStages, " and "), strings.Join(config.MixedAccountStages, " and "))
 		}
 		if mix != "" && (name == "" || name == config.DefaultClaudeAccount) {
 			name = mix
@@ -2445,6 +2544,12 @@ func checkoutAgentAuth(co *config.Config) string {
 // known is then only checked for membership, which is the rule the two
 // pre-check callers (a follow-up's inherited account, --retry's stored task)
 // depend on.
+//
+// The account axis's one non-account value is the exception, and it is the
+// membership half it is excepted from: config.AnthropicKeyAccount names the
+// project's own Anthropic API key, which no claude_accounts entry may define
+// and which the launch is judged against the profile's own list for (the arm
+// below says the whole of it).
 func claudeAccountAllowed(env *cloudEnv, repo, name, auth string) error {
 	if name == config.DefaultClaudeAccount {
 		return nil
@@ -2465,6 +2570,32 @@ func claudeAccountAllowed(env *cloudEnv, repo, name, auth string) error {
 	if auth != "" && !config.KnownAgentAuth(auth) {
 		return userErr("named Claude account %s cannot be judged against %s's agent.auth, which is %s — not a value this Fugaro knows (agent.auth is one of %s)",
 			pluginwire.Printable(name), repo, pluginwire.Printable(auth), strings.Join(config.AgentAuths, ", "))
+	}
+	// The axis's one non-account value (config.AnthropicKeyAccount) is admitted
+	// here and judged where it can be: the profile's own claude_accounts list is
+	// what deploys the job it names and its review-only variant
+	// (internal/infra's ProjectJobs and ProjectReviewJobs), and the first thing
+	// the launch does with this name is ask that list (project_job.go's
+	// projectJobAccountFor). It cannot be judged HERE, by the allow-list: the
+	// sentinel is not a Claude account and config.ValidateClaudeAccounts refuses
+	// to define it in claude_accounts, so config.AllowedClaudeAccounts — the
+	// list this function's membership half reads — can never hold it, and a
+	// refusal here would name a claude_accounts entry the operator may not write.
+	//
+	// api-key is the auth it is admitted for, and "" beside it: D1417 pairs the
+	// key with a repository whose own agent.auth is api-key (the launch names the
+	// pairing with --token), which is the one auth the class serves the key
+	// under, and the pre-check callers — a follow-up's inherited account and
+	// --retry's stored task, resolved with no document to read an auth from —
+	// are held to the same rule at the launch that can read one
+	// (projectJobAccountFor, and the runner's own checkProjectJobAccount after
+	// it). Every other auth keeps the answer it already had: an OAuth run's
+	// credential is a Claude account and this is not one, and vertex and cascade
+	// are refused by the class path itself (internal/runner's
+	// checkReviewClassModelPath), so admitting the sentinel for them would write
+	// a task the run then halts on.
+	if name == config.AnthropicKeyAccount && (auth == "api-key" || auth == "") {
+		return nil
 	}
 	if auth != "" && auth != "oauth" {
 		return userErr("named Claude account %s only applies to a workflow whose agent.auth is oauth; %s's agent.auth is %s",
@@ -3624,6 +3755,20 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 			return res, err
 		}
 	}
+	// The project's own Anthropic API key, named as the run's own account
+	// (claudeAccountAllowed's arm), is placed on the shared project job whose
+	// account segment is the sentinel — and on the review-only variant of it,
+	// which is the one job a review served by the key runs on (D1417, D1422).
+	// A launch the shared path resolved can be on either; a per-repository
+	// launch derives its job's name from the account segment
+	// (gcp.WorkflowVariant), and no installation deploys a job of its own under
+	// this one. Starting it would be Cloud Run's 404 for a job this
+	// installation was never asked for; the launch stops here instead, before
+	// the claim, as the account gate's refusals do.
+	if job == nil && spec.OAuthToken == config.AnthropicKeyAccount {
+		return res, userErr("this launch names the project's own Anthropic API key (%s) as the run's own account, and this repository runs on a job of its own: the key is not a Claude account and no per-repository job holds it, so the job this launch derived from the name is one no installation was ever asked for. The key's jobs are the shared project job of a profile that lists it and that job's review-only variant, and a repository reaches them from a workflow whose checkout is clone. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Run this repository from a clone workflow, or launch without --token",
+			config.AnthropicKeyAccount)
+	}
 	hook(launchHooks.beforeClaim)
 	holder := claimHolder()
 	for round := 0; ; round++ {
@@ -3717,7 +3862,18 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		rcancel()
 		return res, err
 	}
-	variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken)
+	// The workflow variant is the per-repository job's name, so it is derived
+	// where the job is the repository's own and nowhere else: a launch that
+	// resolved a shared project job runs the job the project named (lspec.Job
+	// below), and the backend reads no workflow from the spec for a job it is
+	// handed by name. It is also the one derivation the account axis's
+	// non-account value cannot survive — gcp.WorkflowVariant refuses the
+	// sentinel's doubled hyphen — and a launch on the job the sentinel's
+	// profile deploys needs no per-repository name at all.
+	variant, ok := spec.Workflow, true
+	if job == nil {
+		variant, ok = jobWorkflow(spec.Workflow, spec.OAuthToken)
+	}
 	if !ok {
 		// spec.Workflow, unlike spec.OAuthToken, is never shape-checked by
 		// task.Parse: a bad --workflow, a stored task from before this

@@ -726,7 +726,7 @@ C3.9g1's half on the CLI side, and the documents. It lands with C3.9g1, for the 
   or a follow-up run's, and many `internal/cli/docs_*_test.go` pins read that file, so moving the row is not
   a one-line edit. What the design does fix is the row's **shape**, so that whoever writes it copies one
   rather than deriving it: [live-check.md](live-check.md) holds the register's own convention read off
-  Check 190 (the heading and its scope parentheses, the `NOT RUN` paragraph that carries no steps of its
+  Check 190 (the heading and its scope parentheses, the status paragraph that carries no steps of its
   own, and the four sections after it) and §8's eleven steps one line each under §8's own numbering — so
   this task adds nothing to that file but the number it takes and the row it puts in the register.
 - **Files (6):** `internal/cli/credentials_serve.go` (the optional read, the config field and the one comment

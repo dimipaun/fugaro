@@ -83,7 +83,7 @@ func (r *signerRig) findNumber(t *testing.T, n uint64) ([]SignerFinding, error) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return TokenSigners(ctx, c, i, tsProject, tsSigner, n)
+	return TokenSigners(ctx, c, i, tsProject, tsSigner, n, Managed{})
 }
 
 // unexpected is the findings that are a risk: neither designed nor one of
@@ -344,7 +344,7 @@ func TestTokenSignersUnreadable(t *testing.T) {
 	ctx := context.Background()
 	c, _ := crm.NewService(ctx, option.WithEndpoint(r2.crm.URL+"/"), option.WithoutAuthentication())
 	i, _ := iam.NewService(ctx, option.WithEndpoint(r2.iam.URL+"/"), option.WithoutAuthentication())
-	if _, err := TokenSigners(ctx, c, i, "no-such-project", tsSigner, 111); err == nil || !strings.Contains(err.Error(), "no-such-project") {
+	if _, err := TokenSigners(ctx, c, i, "no-such-project", tsSigner, 111, Managed{}); err == nil || !strings.Contains(err.Error(), "no-such-project") {
 		t.Fatalf("err = %v", err)
 	}
 	// A service account whose own policy cannot be read is named.
@@ -435,7 +435,7 @@ func TestTokenSignersSignerComparison(t *testing.T) {
 	c, _ := crm.NewService(ctx, opts(r.crm.URL+"/")...)
 	i, _ := iam.NewService(ctx, opts(r.iam.URL+"/")...)
 	for signer, want := range map[string]int{strings.ToUpper(tsSigner): 0, tsSched: 1, "x" + tsSigner: 1, tsSigner[:len(tsSigner)-1]: 1} {
-		fs, err := TokenSigners(ctx, c, i, tsProject, signer, 111)
+		fs, err := TokenSigners(ctx, c, i, tsProject, signer, 111, Managed{})
 		if err != nil {
 			t.Fatal(err)
 		}

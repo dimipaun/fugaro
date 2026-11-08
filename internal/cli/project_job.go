@@ -252,17 +252,20 @@ func (e *cloudEnv) repoProvider(repo string, co *config.Config) string {
 // targets, and the launch's gate on the Claude credential that job holds (plan
 // task 3, design §4.4 rows 4 to 6).
 //
-// The account is the run's own credential's, and only a run whose credential is
-// an OAuth account has one: a named account is selected by a workflow whose
-// agent.auth is oauth, and by nothing else (claudeAccountAllowed, run.go,
-// before any launch), while every other run — api-key, Vertex, fake — has no
-// Claude account to place and targets the profile's no-account job, which is
-// the job every profile keeps whatever it serves (D9). The account axis is
-// therefore spelled the way the job's own name spells it: a named account is
-// that account, and the default account and no selection at all are both the
-// empty account, which is the profile's no-account job (projectJobAccount).
+// The account is the run's own credential's, and only two kinds of run have
+// one: a named Claude account, selected by a workflow whose agent.auth is oauth
+// and by nothing else (claudeAccountAllowed, run.go, before any launch), and
+// the axis's one value that is not a Claude account at all — the project's own
+// Anthropic API key (config.AnthropicKeyAccount), which is the account of its
+// job for the api-key workflow D1417 pairs it with. Every other run — Vertex,
+// cascade, fake — has no account to place and targets the profile's no-account
+// job, which is the job every profile keeps whatever it serves (D9). The
+// account axis is therefore spelled the way the job's own name spells it: a
+// named account is that account, and the default account and no selection at
+// all are both the empty account, which is the profile's no-account job
+// (projectJobAccount).
 //
-// Two rules then decide whether that job may serve this run:
+// Three rules then decide whether that job may serve this run:
 //
 //   - an OAuth run may only target a job of the account it selects, so a
 //     selection the profile serves no job for is refused (checkProjectJobAccount).
@@ -279,16 +282,66 @@ func (e *cloudEnv) repoProvider(repo string, co *config.Config) string {
 //     not of the run's selection, because on the no-account job it is the
 //     profile's `default` entry that decides which token the run holds (D5),
 //     whatever the run's own credential is.
+//   - the project's own API key is that job's account for an api-key run and
+//     for no other run, whatever the task's oauth_token says
+//     (claudeAccountAllowed admits it for api-key, and for "" — a pre-check
+//     with no document to read an auth from — and leaves the judgement to
+//     here). A run whose own workflow resolves any other auth is refused
+//     rather than placed on the profile's no-account job: it would start on a
+//     job its own credential does not name, which the runner halts on.
 func projectJobAccountFor(p *projectpolicy.Policy, profile string, pr projectpolicy.Profile, auth, selected, provider, repo string) (string, error) {
 	// The account is the run's own credential's: a named account is only ever
 	// selected by a workflow whose agent.auth is oauth (claudeAccountAllowed,
-	// run.go, before any launch), and the default account and no selection at
-	// all are both the empty account — the profile's no-account job
-	// (projectJobAccount). Every other kind of run has no Claude account to
+	// run.go, before any launch), the project's own API key only by one whose
+	// agent.auth is api-key (the arm below), and the default account and no
+	// selection at all are both the empty account — the profile's no-account
+	// job (projectJobAccount). Every other kind of run has no Claude account to
 	// place and targets that same no-account job, whatever its task.json or a
 	// stale selection says.
 	account := ""
-	if auth == "oauth" {
+	switch {
+	case auth == "api-key" && selected == config.AnthropicKeyAccount:
+		// The axis's one value that is not a Claude account (D1417, D1422): it
+		// names the project's own Anthropic API key, and a profile that lists it
+		// deploys a job whose account segment is the sentinel itself
+		// (internal/infra's ProjectJobs, mounting no token on it). A launch that
+		// names it targets that job, and it is what the review class needs: the
+		// review-only variant of THAT job is the pairing the key is served from,
+		// so a launch resolving the profile's no-account job instead would run
+		// in a variant the run refuses as a pairing that names no key. It is no
+		// second way onto an account's job — the sentinel's job holds no token
+		// for a run to pick up, and api-key is the one auth the sentinel
+		// survives claudeAccountAllowed under, which is the auth D1417 pairs the
+		// key with.
+		account = selected
+	case selected == config.AnthropicKeyAccount:
+		// The same value under every other auth, and the arm that makes
+		// claudeAccountAllowed's promise true: it admits the sentinel for
+		// api-key, and for "" — the pre-check callers that resolve with no
+		// document to read an auth from (a stored task repeated or retried) —
+		// and it is this function that re-judges it at the launch that can read
+		// one. Without this arm the sentinel falls to the no-account job below
+		// and the run starts on it carrying an account its own configuration
+		// does not use: a vertex or cascade run has no Claude account to place,
+		// and the sentinel is no account under any auth but the one D1417 pairs
+		// the key with, so the launch would take the claim, mint the budget
+		// token and start Cloud Run on a job the run's own credential does not
+		// name — and, on a profile whose no-account job mounts the default
+		// account's token, hold a token the run never asked for.
+		//
+		// The refusal is not checkProjectJobAccount's: that one's move — add
+		// the value to profiles.<p>.claude_accounts and publish again — is the
+		// move for a job the profile does not serve, and it cannot answer this
+		// one, where the value is refused for the auth the run's own workflow
+		// names however the profile's list is written (and is false besides for
+		// a profile that already lists the sentinel: its job is deployed).
+		authText := "could not be read"
+		if auth != "" {
+			authText = fmt.Sprintf("is %q", auth)
+		}
+		return "", userErr("this run's own credential is %s, the project's own Anthropic API key, and that key is a job's account only for a run whose own workflow reads it (agent.auth: api-key, D1417): the account axis is spelled from the run's own credential, and this run's agent.auth %s, so the key is no account this run can be placed by — the job it names is not the job this run's own credential names, and the run would start on a job its own configuration does not read. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Launch the run without the key, which is where the account its own workflow names is resolved, or, if this repository is meant to run on the project's key, set agent.auth: api-key in its fugaro.yaml — the auth whose job and review variant the key names",
+			config.AnthropicKeyAccount, authText)
+	case auth == "oauth":
 		account = projectJobAccount(selected)
 	}
 	// The job that account names, and the token it holds. Both are the
@@ -375,20 +428,36 @@ func projectJobReviewFor(profile, provider, account string, timeout time.Duratio
 // release's selections do: a repository that must run as another account
 // belongs on a profile that serves it.
 //
-// The two cases the caller reaches this with are the run's own credential being
-// the default account on a profile that does not list it — including a profile
-// that lists nothing, which is every profile of an installation that has not
-// adopted accounts — and a named account the profile does not list. Both are
-// refusals of the same rule, and both name the token and the account: an OAuth
-// run on a profile that serves no Claude account would start with no credential
-// at all, and the runner refuses exactly that, so the launch stops here, before
-// the claim and before the token, rather than at a run that halts.
+// The three cases the caller reaches this with are the run's own credential
+// being the default account on a profile that does not list it — including a
+// profile that lists nothing, which is every profile of an installation that has
+// not adopted accounts — a named account the profile does not list, and the
+// account axis's one non-account value, the project's own Anthropic API key
+// (config.AnthropicKeyAccount), which no claude_accounts entry may define and
+// which has a sentence of its own below. The first two are refusals of the same
+// rule, and both name the token and the account: an OAuth run on a profile that
+// serves no Claude account would start with no credential at all, and the runner
+// refuses exactly that, so the launch stops here, before the claim and before
+// the token, rather than at a run that halts.
 //
 // The default account is spelled the way the model spells it everywhere: the
 // default account (config.DefaultClaudeAccount) and a profile that serves no
 // Claude account are both the empty account on a job's axis
 // (config.ProjectJobAccounts, config.ProjectJobTokenAccount).
 func checkProjectJobAccount(profile string, pr projectpolicy.Profile, selected string) error {
+	// The axis's one value that is no account at all, and the sentence for it
+	// cannot be the one below: that one names the account's token and the
+	// claude_accounts entry whose allow_data_to list bounds it, while the
+	// sentinel has no token and config.ValidateClaudeAccounts refuses to define
+	// it in claude_accounts — so the move it names would be a key the operator
+	// may not write. What this says instead is what the value is and where its
+	// job comes from (D1417, D1422): the profile's own claude_accounts list is
+	// what deploys it, and the key's own reach in the local config is what its
+	// published list is derived from.
+	if selected == config.AnthropicKeyAccount {
+		return userErr("this run's own credential is %s, the project's own Anthropic API key, which is not a Claude account and is no job of the profile %q: a project job's Claude credential is fixed where the job is deployed — one job per (profile, provider, account), the account segment of the job's own name — and the key's job is the one a profile deploys by listing it, whose review-only variant is what a review of such a repository runs on. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Add %s to profiles.%s.claude_accounts in the project's local config — the profile's own allow_repos are then the repositories the key serves, and project_secrets.%s.allow_data_to must reach them — and run fugaro update to deploy the job and its review variant",
+			config.AnthropicKeyAccount, profile, config.AnthropicKeyAccount, profile, config.AnthropicSecret)
+	}
 	secret := config.ClaudeAccountSecret(projectJobAccount(selected))
 	chose := fmt.Sprintf("the default Claude OAuth account, whose token is %s", secret)
 	if selected != "" {
