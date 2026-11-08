@@ -101,6 +101,17 @@ func (e *initEngine) syncAccess(ctx context.Context) error {
 		return remote(err)
 	}
 	if !node.Found {
+		if e.r.o.planOnly {
+			// --plan-only applies nothing, and every other writer in the run
+			// reads the flag for exactly that reason (gateable, managedStage:
+			// the plan the user is shown must not be the one thing that
+			// changed the project). The migration is a write, so a preview of an
+			// installation at the previous shape leaves the node absent and the
+			// two lists the file's — the state the installation is in, which is
+			// what a plan is a plan of — and the next update that runs migrates
+			// them.
+			return nil
+		}
 		if node, err = e.migrateAccess(ctx, db, node); err != nil {
 			return err
 		}
@@ -116,7 +127,14 @@ func (e *initEngine) syncAccess(ctx context.Context) error {
 		}
 	}
 	if e.r.o.operatorsChanged || e.r.o.adminsChanged {
-		if node, err = e.foldFlagLists(ctx, db, node); err != nil {
+		if e.r.o.planOnly {
+			// A preview may name its lists too, and the fold is the same
+			// computation with the write left out (foldedNode): the plan shows
+			// the roles this run would land, and the node keeps the ones it has.
+			if node, err = e.foldedNode(node); err != nil {
+				return err
+			}
+		} else if node, err = e.foldFlagLists(ctx, db, node); err != nil {
 			return err
 		}
 	}
@@ -293,25 +311,17 @@ func (r *initRun) noteAccess(msg string) {
 // stays in the list the derive builds (F25).
 func (e *initEngine) foldFlagLists(ctx context.Context, db *rtdb.Client, node accesslib.Node) (accesslib.Node, error) {
 	for range 3 {
-		grants := node.Grants
-		var err error
-		if e.r.o.operatorsChanged {
-			if grants, err = foldProjectGrants(grants, accesslib.RoleOperator, e.r.o.operators, "the --operator list"); err != nil {
-				return accesslib.Node{}, userErr("%v", err)
-			}
+		folded, err := e.foldedNode(node)
+		if err != nil {
+			return accesslib.Node{}, err
 		}
-		if e.r.o.adminsChanged {
-			if grants, err = foldProjectGrants(grants, accesslib.RoleAdmin, e.r.o.admins, "the --admin list"); err != nil {
-				return accesslib.Node{}, userErr("%v", err)
-			}
-		}
-		if sameGrants(grants, node.Grants) {
+		if sameGrants(folded.Grants, node.Grants) {
 			return node, nil
 		}
-		err = accesslib.WriteIfMatch(ctx, db, grants, node.ETag)
+		err = accesslib.WriteIfMatch(ctx, db, folded.Grants, node.ETag)
 		switch {
 		case err == nil:
-			return accesslib.Node{Found: true, Grants: grants, ETag: node.ETag}, nil
+			return folded, nil
 		case errors.Is(err, rtdb.ErrPrecondition):
 			again, rerr := accesslib.Read(ctx, db)
 			if rerr != nil {
@@ -325,6 +335,26 @@ func (e *initEngine) foldFlagLists(ctx context.Context, db *rtdb.Client, node ac
 		}
 	}
 	return accesslib.Node{}, userErr("the grants node was written by another run every time this one tried to land its --operator/--admin list: run %s again", selfCommand()+" update")
+}
+
+// foldedNode is the node as this run's own --operator/--admin lists would leave
+// it: the computation foldFlagLists writes, on its own, so a run that may not
+// write — --plan-only — derives from the roles it named rather than from the
+// ones the node happens to hold.
+func (e *initEngine) foldedNode(node accesslib.Node) (accesslib.Node, error) {
+	grants := node.Grants
+	var err error
+	if e.r.o.operatorsChanged {
+		if grants, err = foldProjectGrants(grants, accesslib.RoleOperator, e.r.o.operators, "the --operator list"); err != nil {
+			return accesslib.Node{}, userErr("%v", err)
+		}
+	}
+	if e.r.o.adminsChanged {
+		if grants, err = foldProjectGrants(grants, accesslib.RoleAdmin, e.r.o.admins, "the --admin list"); err != nil {
+			return accesslib.Node{}, userErr("%v", err)
+		}
+	}
+	return accesslib.Node{Found: true, Grants: grants, ETag: node.ETag}, nil
 }
 
 // foldProjectGrants is the node's grants with the project-scope grants of ONE
@@ -518,6 +548,18 @@ func (e *initEngine) deriveAccessAgain(ctx context.Context) (operators, admins [
 	}
 	if !node.Found {
 		return nil, nil, false, nil
+	}
+	if e.r.o.planOnly && (e.r.o.operatorsChanged || e.r.o.adminsChanged) {
+		// A plan-only run lands no flag list, so the roster the node holds is
+		// not the roster this run would apply: the plan a preview shows is the
+		// one the run the user asked for would make, which is the folded node
+		// (foldedNode) — the same computation the roles step makes with the
+		// write left out. Without this the preview would report the member the
+		// user just named as one this run drops, which is the opposite of what
+		// the run it previews does.
+		if node, err = e.foldedNode(node); err != nil {
+			return nil, nil, false, err
+		}
 	}
 	e.deriveAccess(node)
 	return e.spec.Launchers, e.spec.Operators, true, nil
