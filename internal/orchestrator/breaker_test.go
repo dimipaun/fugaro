@@ -1,6 +1,7 @@
 package orchestrator_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -34,8 +35,8 @@ func TestBreakerRaisesADecision(t *testing.T) {
 
 	// The question waits on a person: the daemon does not answer it itself.
 	now := o6Now()
-	op := b.Decision(now)
-	if op.Op != orchestrator.OpDecisionAdd || op.Decision == nil {
+	op, ok := b.Decision(o6Node(t, now), now)
+	if !ok || op.Op != orchestrator.OpDecisionAdd || op.Decision == nil {
 		t.Fatalf("the breaker raised %+v", op)
 	}
 	if !strings.HasPrefix(op.Decision.ID, orchestrator.BreakerDecisionID) || op.Decision.WaitingOn != orchestrator.OnPerson {
@@ -52,8 +53,12 @@ func TestBreakerRaisesADecision(t *testing.T) {
 	for range orchestrator.BreakerThreshold {
 		answered.Observe(orchestrator.CycleEmpty)
 	}
-	again := answered.Decision(now.Add(time.Hour))
-	if again.Decision == nil || again.Decision.ID == op.Decision.ID {
+	asked := o6Apply(t, o6Node(t, now), op, orchestrator.Actor{Class: orchestrator.Daemon, Now: now})
+	asked = o6Apply(t, asked, orchestrator.Op{Op: orchestrator.OpDecisionResolve, Resolve: &orchestrator.ResolveOp{
+		ID: op.Decision.ID, Answer: "carry on",
+	}}, orchestrator.Actor{Class: orchestrator.Person, Name: "owner", Now: now})
+	again, ok := answered.Decision(asked, now.Add(time.Hour))
+	if !ok || again.Decision.ID == op.Decision.ID {
 		t.Errorf("the second trip raised %+v, and a streak after an answer is a question of its own", again.Decision)
 	}
 
@@ -123,7 +128,11 @@ func TestBreakerPausesAcrossARestart(t *testing.T) {
 	for range orchestrator.BreakerThreshold {
 		tripped.Observe(orchestrator.CycleEmpty)
 	}
-	s = o6Apply(t, s, tripped.Decision(now), orchestrator.Actor{Class: orchestrator.Daemon, Now: now})
+	question, ok := tripped.Decision(s, now)
+	if !ok {
+		t.Fatal("the tripped breaker had no question to raise")
+	}
+	s = o6Apply(t, s, question, orchestrator.Actor{Class: orchestrator.Daemon, Now: now})
 	if n := len(s.Decisions); n != 2 {
 		t.Fatalf("the node carries %d decision(s): %+v", n, s.Decisions)
 	}
@@ -145,6 +154,25 @@ func TestBreakerPausesAcrossARestart(t *testing.T) {
 	restarted.Observe(orchestrator.CycleProgress)
 	if got := orchestrator.Plan(s, orchestrator.RunView{}, o6Caps(), now); len(got) != 0 {
 		t.Fatalf("a cycle that did work lifted a question no person has answered: %+v", got)
+	}
+
+	// The restarted daemon runs its cycles, and every one of them ends empty
+	// because the pause it inherited refuses every plan — so it counts to the
+	// threshold again. It has nothing to ask: the question this streak would
+	// raise is the one already on the node, and a second one beside it is a
+	// pause a person has to answer twice — and one that outlives the answer to
+	// either of them, because the pause is every unanswered question.
+	for range orchestrator.BreakerThreshold {
+		if !restarted.Observe(orchestrator.CycleEmpty) {
+			continue
+		}
+		raised, ok := restarted.Decision(s, now.Add(time.Hour))
+		if ok {
+			t.Fatalf("the restarted daemon raised %+v beside the question that stopped it", raised.Decision)
+		}
+	}
+	if n := len(s.Decisions); n != 2 {
+		t.Fatalf("the restarted daemon left %d decision(s) on the node: %+v", n, s.Decisions)
 	}
 
 	// A person answers, and the same node plans the launch again.
@@ -182,7 +210,11 @@ func TestBreakerAsksAgainAfterAnAnswer(t *testing.T) {
 				b.Reset()
 			}
 			if b.Observe(orchestrator.CycleEmpty) {
-				s = o6Apply(t, s, b.Decision(at), orchestrator.Actor{Class: orchestrator.Daemon, Now: at})
+				question, ok := b.Decision(s, at)
+				if !ok {
+					t.Fatalf("the cycle that reached the threshold had no question to raise over %+v", s.Decisions)
+				}
+				s = o6Apply(t, s, question, orchestrator.Actor{Class: orchestrator.Daemon, Now: at})
 				raised++
 			}
 		}
@@ -224,6 +256,43 @@ func TestBreakerAsksAgainAfterAnAnswer(t *testing.T) {
 	}
 	if got := orchestrator.Plan(s, orchestrator.RunView{}, o6Caps(), now.Add(time.Hour)); len(got) != 0 {
 		t.Fatalf("the second trip planned %+v over its own question", got)
+	}
+}
+
+// TestSessionCannotForgeTheBreakerPause: the pause is a decision, and adding
+// one takes no class, so the prefix alone would let a session — or a decision
+// agent — stop every spawn on the node until a person resolved a question no
+// breaker asked. What carries that power is the daemon's own guard, so the
+// write is the daemon's: a class that is not the daemon asking for the
+// breaker's prefix is refused. Every other question stays any class's to ask,
+// which is what keeps the daemon's agents able to ask a person things.
+func TestSessionCannotForgeTheBreakerPause(t *testing.T) {
+	now := o6Now()
+	s := o6Node(t, now, o6Item("wi-1", orchestrator.PhaseQueued, now.Add(-time.Hour)))
+	ask := func(id string) orchestrator.Op {
+		return orchestrator.Op{Op: orchestrator.OpDecisionAdd, Decision: &orchestrator.DecisionOp{
+			ID: id, Question: "Stop everything?", WaitingOn: orchestrator.OnPerson,
+		}}
+	}
+	for _, class := range []orchestrator.Class{orchestrator.Session, orchestrator.DecisionAgent, orchestrator.Person} {
+		if _, err := applyAs(t, s, class, "session:20261107-120000-abcd", now, ask(orchestrator.BreakerDecisionID+"-forged")); !errors.Is(err, orchestrator.ErrActorNotAllowed) {
+			t.Fatalf("a %s actor halted the spawns: err = %v, want %v", class, err, orchestrator.ErrActorNotAllowed)
+		}
+	}
+	if orchestrator.BreakerOpen(s) {
+		t.Fatal("a refused write still stopped the daemon")
+	}
+
+	// The daemon's own trip lands, and the question nobody's breaker asked is
+	// still a class's to add — an agent that cannot ask a person anything is no
+	// use.
+	s = o6Apply(t, s, ask(orchestrator.BreakerDecisionID+"-20261107T120000Z"), orchestrator.Actor{Class: orchestrator.Daemon, Now: now})
+	s = o6Apply(t, s, ask("ask-the-owner"), orchestrator.Actor{Class: orchestrator.DecisionAgent, Now: now})
+	if !orchestrator.BreakerOpen(s) {
+		t.Fatal("the daemon's own question did not stop the spawns")
+	}
+	if got := orchestrator.Plan(s, orchestrator.RunView{}, o6Caps(), now); len(got) != 0 {
+		t.Fatalf("the plan beside the daemon's question is %+v", got)
 	}
 }
 

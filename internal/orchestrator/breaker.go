@@ -19,18 +19,18 @@ const BreakerThreshold = 3
 // second write of the same id is refused, so one fixed id could ask this
 // question once in the life of a node and never again — the next streak would
 // pause the daemon with nothing for a person to look at. Two trips inside one
-// second are the only collision, and a streak takes three cycles.
+// second are the only collision, and a streak takes three cycles. The node
+// never carries two at once: Decision declines while an unanswered one stands.
 //
-// It is the whole of what BreakerOpen recognises the pause by, and writing a
-// decision takes no class: applyDecisionAdd checks who is asking for nothing —
-// the class gates in that file are the approval, the resolution, the goal and
-// the daemon-only work-item fields. So anyone who may add a decision, a session
-// included, can add one carrying this prefix and stop every spawn until a
-// person resolves it. That residual is the state layer's and D1241/D1242 accept
-// it (the node is written with the person's own credential, and a person at a
-// terminal is the person); what limits it here is that the question waits on a
-// person, so a writer who is not one cannot lift it either. Narrowing who may
-// add a decision is O0's change, not this read's.
+// It is the whole of what BreakerOpen recognises the pause by, and a read of
+// the state cannot tell who wrote what it reads — so the class is settled at
+// the write, and applyDecisionAdd refuses this prefix from every class but the
+// daemon. Without that gate any writer able to add a decision, a session or a
+// decision agent included, would stop every spawn on the node until a person
+// resolved a question no breaker asked; the prefix is the daemon's guard, so
+// the write is the daemon's. What the gate does not check is why: a daemon that
+// wrote this id for something other than a trip would stop the spawns exactly
+// as a trip does.
 const BreakerDecisionID = "breaker-tripped"
 
 // CycleOutcome is how one cycle ended, as the breaker reads it. It is the
@@ -74,6 +74,9 @@ type Breaker struct {
 // An outcome this release does not know neither counts nor clears, so the
 // streak stays where it was rather than being read as progress.
 //
+// What the cycle does with the report is Decision's: the question is the
+// node's, and a tick commits one only when Decision hands one back.
+//
 // The count belongs to this process and the answer belongs to the node, so the
 // loop that owns a Breaker has to re-arm it: Reset once BreakerOpen says the
 // answer landed. Nothing here can do that itself — an answered question is not
@@ -116,7 +119,10 @@ func (b *Breaker) Reset() { b.consecutive = 0 }
 // is not one, and neither is anything else the daemon can do on its own.
 //
 // The id is what tells this question from every other one the loop asks a
-// person, and it is the trip's own (see BreakerDecisionID).
+// person, and it is the trip's own (see BreakerDecisionID). What it is read for
+// is both halves of a trip: it is the pause a plan refuses over, and it is how
+// Decision knows that the question a streak just reached is one the node
+// already carries.
 func BreakerOpen(s State) bool {
 	for _, d := range s.Decisions {
 		if !d.Resolved() && strings.HasPrefix(d.ID, BreakerDecisionID+"-") {
@@ -127,13 +133,29 @@ func BreakerOpen(s State) bool {
 }
 
 // Decision is the question a tripped breaker raises, for the tick to commit
-// with the rest of its patch. now is the tick's server time, and it is what
-// makes this trip's question its own rather than the first one's.
-func (b *Breaker) Decision(now time.Time) Op {
+// with the rest of its patch, and false when there is none to raise: the node
+// already carries the breaker's question (see BreakerOpen), and a cycle that
+// reached the threshold beside one has nothing to ask. now is the tick's
+// server time, and it is what makes this trip's question its own rather than
+// the first one's.
+//
+// A second question is the one thing this must not write. A daemon that
+// restarted while a question stood counted from zero, and every cycle it ran
+// since ended empty because the pause it inherited refuses every plan — so it
+// reaches the threshold again with nothing new to ask. Writing the question
+// anyway leaves two on the node, and the pause is every unanswered one, so a
+// person answers the question they can see and the daemon stays stopped by the
+// other. The count is the process's and the question is the node's, which is
+// why the guard sits here and not in Observe: a report is a fact about the
+// cycle, and the tick commits a question only when this says there is one.
+func (b *Breaker) Decision(s State, now time.Time) (Op, bool) {
+	if BreakerOpen(s) {
+		return Op{}, false
+	}
 	return Op{Op: OpDecisionAdd, Decision: &DecisionOp{
 		ID: BreakerDecisionID + "-" + now.UTC().Format("20060102T150405Z"),
 		Question: fmt.Sprintf("The orchestrator has ended %d cycles in a row without starting or finishing anything. What should it do?",
 			BreakerThreshold),
 		WaitingOn: OnPerson,
-	}}
+	}}, true
 }

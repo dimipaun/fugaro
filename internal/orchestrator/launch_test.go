@@ -341,6 +341,52 @@ func TestUnapprovedItemIsNeverLaunched(t *testing.T) {
 	}
 }
 
+// TestAnItemARunIsMovingThroughIsNeverStarted: startable is the other half of
+// the phase rule — an attempt is declared from queued, failed or blocked, the
+// phases a person's go re-opens — and an item a run is moving through is not
+// one to start however fresh the approval on it is. The state is reachable: a
+// run that reported leaves the item in review, a finish is the only thing that
+// clears the approval it was launched under, and a person's new go for the
+// same spec is an approval with no attempt stamped under it, so the count of
+// attempts reads zero and the digest matches. Without the phase guard the plan
+// would hold a launch the `Starter` can only refuse: the state declares an
+// attempt from queued, and the phase table has no edge from review or running
+// to it. Both phases a run moves through are pinned, review being the one a
+// record reaches.
+func TestAnItemARunIsMovingThroughIsNeverStarted(t *testing.T) {
+	now := o6Now()
+	first, reported := now.Add(-2*time.Hour), now.Add(-time.Hour)
+
+	// A run that reported a success, and the person approves the item again.
+	underway, it := o6OpenItem("wi-1", "20261107-090000-abcd", first, first)
+	s := o6Node(t, now, underway)
+	s.Intents = []orchestrator.Intent{it}
+	s = o6Report(t, s, "wi-1", it.ID, orchestrator.OutcomeSucceeded, orchestrator.PhaseReview, reported)
+	s = o6Approve(t, s, "wi-1", now.Add(-time.Minute))
+	if got := orchestrator.Plan(s, orchestrator.RunView{}, o6Caps(), now); len(got) != 0 {
+		t.Fatalf("the plan for an item in review with a person's new approval on it is %+v", got)
+	}
+
+	// An item in flight is the other phase, and the guard is the same one: a
+	// run is going, and a second approval over it starts nothing beside it.
+	live := o6Item("wi-2", orchestrator.PhaseRunning, now.Add(-time.Minute))
+	if got := orchestrator.Plan(o6Node(t, now, live), orchestrator.RunView{}, o6Caps(), now); len(got) != 0 {
+		t.Fatalf("the plan for an item in flight with a person's approval on it is %+v", got)
+	}
+
+	// The phase is what holds it back, and nothing else: the same item, the
+	// same record and the same approval one phase earlier — a person's new go
+	// for an item whose attempt failed — is the launch it withholds.
+	failed, failedIntent := o6FailedItem("wi-1", first, first)
+	f := o6Node(t, now, failed)
+	f.Intents = []orchestrator.Intent{failedIntent}
+	f = o6Approve(t, f, "wi-1", now.Add(-time.Minute))
+	a := onlyAction(t, orchestrator.Plan(f, orchestrator.RunView{}, o6Caps(), now))
+	if a.Kind != orchestrator.ActionLaunch || a.ItemID != "wi-1" || a.Attempt != 2 {
+		t.Fatalf("the plan for a failed item a person approved again is %+v", a)
+	}
+}
+
 // TestRecoveryReissuesUnderTheRecordedRunID is the red step's first half, and
 // the money rule itself: the run id is minted once, committed with the intent
 // before anything starts, and a daemon that died in between re-issues that
