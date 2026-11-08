@@ -11387,10 +11387,14 @@ rows, five under the relative form were reached — four `PASS`ing and the `repo
 nine were not reached at all. **The row 340 above is still NOT RUN and no `PASS` is recorded for `list-prefix`
 anywhere here**: four `PASS`ing criteria and one `FAIL`ed listing are not an answer about the attribute, and the
 full-path form — the only one that could have carried it — was never read. Three faults left that run where it
-stopped, and all three are fixed in the same task: **either permission is a refusal** for the `tokens/` read and the
-`tokens/` and `cache/` listings (a denial naming `objects.get` **or** `objects.list`, for this account and about a
-resource inside this check's own bucket), while every other unclassified failure — an expired session, a 5xx gcloud
-did not retry, a killed call, a denial naming another permission or another bucket's resource — still stops the run;
+stopped, and all three are fixed in the same task: **either permission is a refusal** for the `tokens/` **read**,
+while the `tokens/` and `cache/` **listings** require `storage.objects.list` and a denial naming only
+`storage.objects.get` there is read for what it is — gcloud resolving the prefix as an object **before** it lists — and
+recorded as **NOT OBSERVED**, neither a criterion that held nor one that failed, because that probe is a call about an
+object under `tokens/` or `cache/` that neither of R12's clauses governs and so says nothing about the listing clause's
+reach; a denial for this account about a resource inside this check's own bucket is what makes either reading a
+refusal at all, and every other unclassified failure — an expired session, a 5xx gcloud did not retry, a killed call, a
+denial naming another permission or another bucket's resource — still stops the run;
 **both forms are always read to the end of their criteria**, so a failed criterion is that form's failure alone and
 the answer is decided from the two result sets instead of the first form's first failure, and a form that fails a
 listing no longer keeps the other form from being measured at all; and the **`reports/` criterion lists both
@@ -11417,10 +11421,14 @@ listing half joined by `||`, written through `--condition-from-file` so the expr
 gcloud's comma-splitting; seeds four small objects of its own under `runs/<slug>/`, `reports/<slug>/`,
 `tokens/<slug>/` and `cache/<slug>/`; and then, impersonating that account, reads **both** candidate forms to the
 end of their criteria, **relative** first and **full path** second, whatever the first one did. Each form is read the
-same seven ways: `runs/<slug>/` must list, `reports/<slug>/` **and** the bare `reports/` must list — two calls, each
+same ways: `runs/<slug>/` must list, `reports/<slug>/` **and** the bare `reports/` must list — two calls, each
 answer recorded in the row, so a clause that matches the slug level and not the bare prefix is visible instead of
 folded into one `FAIL` — one `runs/` object must read, and the root listing and a `tokens/` read and a `tokens/`
-and a `cache/` listing must all be refused. The two listings and the read that must succeed are **retried** for
+and a `cache/` listing must all be refused. The two prefixed listings are the pair that can come back
+**NOT OBSERVED**: their rows are criteria only when the denial names the permission the missing **listing** clause
+would have carried, and a denial naming `storage.objects.get` alone is the probe described below, so those rows then
+say what they could not read and the form is answered on the criteria that were read. The two listings and the read
+that must succeed are **retried** for
 `CHECK340_PROPAGATION_SECONDS` (150 seconds by default) before a failure is recorded, and the four refusals are
 read only once one of those three has held under that form — if none did, they are recorded as **not read**, because
 a refusal then could be the fresh grant simply not being in effect yet. IAM propagates a fresh grant and its
@@ -11428,10 +11436,16 @@ condition asynchronously (V7's neighbour, §11 item **V5**), and reading one as 
 the one thing this check must not do. A refusal that is **allowed** instead is a grant wider than R12's two prefixes,
 and it fails that form. And a refusal has to **be** a refusal: the four calls are criteria only when the failure is
 the refusal itself, **for this account** and about **a resource inside this check's own bucket**, naming a permission
-the missing clause could have carried: `storage.objects.list` for the root listing, and **either**
-`storage.objects.list` **or** `storage.objects.get` for the `tokens/` read and the `tokens/` and `cache/` listings —
-gcloud probes a prefix as an object before it lists it, so a refused `ls gs://<bucket>/tokens/` names
-`storage.objects.get`, and that is the denial the second run stopped on. A call that did not answer instead — a 5xx
+the missing clause could have carried: `storage.objects.list` for the root listing, **either** permission for the
+`tokens/` **read** (a read is an object request, so the denial names the object permission the missing clause would
+have carried, and either name is the refusal itself), and `storage.objects.list` again for the `tokens/` and `cache/`
+**listings**.
+The object permission is what gcloud names when it resolves a prefix as an object before it lists it, so a refused
+`ls gs://<bucket>/tokens/` that names `storage.objects.get` is that probe — the denial the second run stopped on — and
+the row says **NOT OBSERVED** rather than reporting a listing clause that may be wider than R12's two prefixes as one
+that refused: the probe is a call about an object under `tokens/` or `cache/` that neither clause governs, so it is
+neither a criterion that held nor one that failed, and the form is answered on the criteria that were read. A listing
+that WAS allowed is the opposite reading and fails that form. A call that did not answer instead — a 5xx
 gcloud did not retry, an expired session, a killed request, a denial naming **another** permission or **another**
 bucket's resource — stops the run, because recorded as a refusal it would be a criterion nobody observed passing,
 and the form it names is one R12 must not write. A **grant the bucket refuses**, and a **removal it refuses** between the two forms, are a
@@ -11460,15 +11474,17 @@ not an answer.
 **Reading the `CHECK 340 RESULT` block.** The same shape as the other scripted checks': ONE block on stdout, a
 `FACT <key>: PASS|FAIL|INFO — <detail>` line per fact, ending `CHECK 340 RESULT END (exit N)`. The two forms carry
 their own rows — `relative-lists-runs`, `relative-lists-reports`, `relative-reads-runs` and the four refusals, then
-the same seven under `full-` — and the row that matters is **`list-prefix`**: `PASS` names the form that held and
-prints the exact string R12's builder must write, above the block in one line to copy back. One form passing every
-criterion is enough **unless both do**: no single attribute value starts with both candidate strings, so a bucket
+the same under `full-` — and the row that matters is **`list-prefix`**: `PASS` names the form that held and
+prints the exact string R12's builder must write, above the block in one line to copy back, carrying a **NOTE** when
+the `tokens/` or `cache/` listing was **NOT OBSERVED** under that form. One form passing every criterion it could
+**read** is enough **unless both do**: no single attribute value starts with both candidate strings, so a bucket
 that lets both forms through contradicts itself and the run stops, exit `2`, rather than naming a form off two result
 sets that disagree. A form that failed a listing is that form's failure alone, and the verdict is taken from the two
 result sets rather than from the first form to stop. `FAIL` says **neither**
 form listed, which is the reading that stops the plan (E4). The bucket-wide `objectViewer` a listing would otherwise
 need is deliberately **not** a fallback here, because it reads `tokens/` and `cache/` too. Exit `0` means a form
-passed every criterion **and** the Restore confirmed it deleted everything this run made; `1` means none did — or a
+passed every criterion it could **read** **and** the Restore confirmed it deleted everything this run made; `1` means
+none did — or a
 form passed and the Restore could not confirm what it deleted, in which case the block's `restore` row names the
 account and the prefixes to remove by hand — so exit `1` reads as **E4** only when that row passed; and `2` means the
 run could not tell (a guard stopped it, a tool is missing, a grant or a removal the bucket refused, a refusal that

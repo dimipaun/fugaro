@@ -206,6 +206,15 @@ func TestDocsCheck340RecordsTheSecondRun(t *testing.T) {
 		// The three fixes this task made, so a reader of the second run's
 		// paste-back knows what the next run will do differently.
 		"either permission is a refusal",
+		// The other half of the widened refusal rule, and the half the second
+		// run's own reading forced: a listing denial that names only the read
+		// permission is gcloud's prefix probe, so the row is NOT OBSERVED
+		// rather than a criterion that held, and a listing that WAS allowed is
+		// the failure instead. A section that stopped at "either permission is
+		// a refusal" would have the owner read the two listing rows as readings
+		// about the listing clause whatever the clause allows.
+		"recorded as **NOT OBSERVED**",
+		"neither a criterion that held nor one that failed",
 		"reads **both** candidate forms to the end of their criteria",
 		// The other half of "both forms are read": one form passing is the
 		// answer, and two passing is a contradiction the run stops on — a
