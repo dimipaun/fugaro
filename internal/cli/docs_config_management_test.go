@@ -99,9 +99,12 @@ const (
 // generic path does not carry: they are the config file's own keys, and a key
 // added to the registry and not to the allowlist widens the gap the audit is
 // about rather than narrowing it. planning.decoupling moved it a third time
-// (docs/contract-first-decoupling, CD6): the key brings its project-layer row
-// too, and both are carried — the repository's by name, the layer's through
-// layer.defaults. — so the carried figure moves with the row count.
+// (docs/contract-first-decoupling, CD6), and the two figures moved by different
+// amounts for one key: the project layer's row is carried through the
+// layer.defaults. prefix, while the repository's own key is in no list here --
+// `fugaro settings planning.decoupling --json` prints it unwritable -- so it
+// joins the rows with no generic writer and widens §1's 213 rather than
+// narrowing it. The row count moves by two, the carried count by one.
 const (
 	cfmRegistryRows   = 378
 	cfmAllowlistNamed = 88
