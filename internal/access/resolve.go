@@ -110,6 +110,13 @@ const (
 	// all-repos scope (F19; D1591 keeps these to a project-scope admin until
 	// RS12).
 	ActionManageProject Action = "manage-project"
+	// ActionHandoffAgent hands an orchestrator agent from one developer to
+	// another, or to the project (the stateless orchestrator plan's O17). It is
+	// an action of its own rather than ActionManageProject because a command
+	// asks about the thing it is doing (F19), and it is project-level like the
+	// others: an agent belongs to the project, so an all-repos admin and a
+	// repository admin are as far from it as they are from its settings.
+	ActionHandoffAgent Action = "handoff-agent"
 )
 
 // actionRule is what one action takes: the least role that may do it, and
@@ -130,6 +137,7 @@ var actionRules = map[Action]actionRule{
 	ActionManageRepo:    {min: RoleAdmin, project: false},
 	ActionViewProject:   {min: RoleViewer, project: true},
 	ActionManageProject: {min: RoleAdmin, project: true},
+	ActionHandoffAgent:  {min: RoleAdmin, project: true},
 }
 
 // Allowed reports whether caller may do action in repo. A project-level action

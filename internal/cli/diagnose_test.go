@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -469,6 +470,63 @@ func TestDiagnoseToleratesLogFailure(t *testing.T) {
 	var d Diagnosis
 	if err != nil || json.Unmarshal([]byte(js), &d) != nil || d.Row.Status != "failed" || d.AgentMessage != "could not finish" || len(d.LogTail) != 0 {
 		t.Fatalf("diagnose --json with Logging down: %s, %v", js, err)
+	}
+}
+
+// TestDiagnosePrintsTheClass: D1460 answered "both" — the field on --json's
+// shape and one printed line, which is the answer's first sentence (design §8
+// D9), so it stands directly under the status it describes. Both halves of the
+// reading are here: a record carrying the field prints it, a record written
+// before the field shipped prints the class its reason reads as, and a run that
+// did not fail prints no line at all.
+func TestDiagnosePrintsTheClass(t *testing.T) {
+	f := newCloudFixture(t)
+	wrote := func(id, reason string, class failure.Class) {
+		exec := seedRun(t, f, id, "", "", true)
+		writeRecord(t, f, id, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+			Status: runstore.StatusFailed, Stage: "verify", Reason: reason, FailureClass: class})
+	}
+	const legacy, held = "20260927-100000-abcd", "20260927-110000-abcd"
+	// The sentence the runner writes for a tests failure, with no class on the
+	// record: the reader's table is what names it.
+	wrote(legacy, "tests failing on the final commit", "")
+	// A record that carries a class: the field is the class, and its reason —
+	// a sentence the reader's table classes review_not_converged — is not read
+	// back over it.
+	wrote(held, "the mode was raised to pro at finalize, after the last review round", failure.NoCommits)
+
+	for _, tc := range []struct {
+		id, line string
+		want     failure.Class
+	}{
+		{legacy, "Status:   failed (stage verify)\nClass:    tests_failed\n", failure.TestsFailed},
+		{held, "Class:    no_commits\n", failure.NoCommits},
+	} {
+		human, errOut, err := execute(t, "diagnose", tc.id)
+		if err != nil {
+			t.Fatalf("diagnose %s: %v\n%s", tc.id, err, errOut)
+		}
+		if !strings.Contains(human, tc.line) {
+			t.Errorf("diagnose %s lacks %q:\n%s", tc.id, tc.line, human)
+		}
+		if strings.Contains(human, "Class:    unclassified") {
+			t.Errorf("diagnose %s classes a cause its table knows as unclassified:\n%s", tc.id, human)
+		}
+		out, _, err := execute(t, "diagnose", "--json", tc.id)
+		var d Diagnosis
+		if err != nil || json.Unmarshal([]byte(out), &d) != nil || d.FailureClass != tc.want {
+			t.Fatalf("diagnose --json %s: class %q (%v):\n%s", tc.id, d.FailureClass, err, out)
+		}
+	}
+
+	done := "20260927-120000-cccc"
+	seedFinishedRun(t, f, done)
+	human, _, err := execute(t, "diagnose", done)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(human, "Class:") {
+		t.Errorf("a succeeded run prints a class:\n%s", human)
 	}
 }
 

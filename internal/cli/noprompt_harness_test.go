@@ -111,7 +111,7 @@ const closedStdinDeadline = 10 * time.Second
 //
 // The y/N question is read a second time, unanchored, because the
 // print-then-refuse ordering it guards against puts the refusal on the
-// prompt's own line. The four prints of the bracketed form are its only
+// prompt's own line. The three prints of the bracketed form are its only
 // writers, so it is a question wherever it appears.
 //
 // Reading a line that ends in ": " as a question is deliberately generous: no
@@ -172,20 +172,19 @@ type closedStdinFixture struct {
 // because there the sentence is the proof the run got to the ask; elsewhere the
 // proof is the body having run at all, which the harness checks for every leaf.
 var closedStdinFixtures = map[string]closedStdinFixture{
-	// The raise is what asks: the caps are unset in the fixture's database, so
-	// setting one from nothing is a loosening.
+	// The caps are unset in the fixture's database, so the run sets one from
+	// nothing — the loosening T3's owner-session fence is about. It asks nothing
+	// now, so the sentence is the write itself rather than a banner.
 	"fugaro budget set": {args: []string{"--global", "--per-run", "50"}, reaches: "global caps per-run: not set -> $50"},
-	// The project-wide kill switch used to ask with the typed name; T3 removed
-	// the ask and the sentence below is what the run says instead. Its sentence
-	// is the proof this fixture reaches the kill: a repository's switch is the
-	// one that would not.
-	"fugaro budget kill": {args: []string{"--all"}, reaches: "project aurora killed"},
-	// A resume moves a switch only where there is one set, so the fixture's
-	// database is killed first: the resume is the subject of this run, and the
-	// sentence T3 left in the ask's place is the proof it ran.
+	// The project-wide kill switch, which a repository's own is not: the
+	// fixture drives --all, and T3 took the ask away, so what the run says is
+	// the kill and its undo.
+	"fugaro budget kill": {args: []string{"--all"}, reaches: "Running runs halt within seconds"},
+	// A resume moves a switch, so the fixture's database is killed first: the
+	// move is the subject of this run.
 	"fugaro budget resume": {
 		args:    []string{"--all"},
-		reaches: "project aurora resumed",
+		reaches: "resumed (by someone@example.com)",
 		seed: func(t *testing.T, f *budgetFixture) {
 			f.db.Set(budget.PathKillGlobal, map[string]any{"on": true, "by": "boss@example.com", "at": int64(1)})
 		},
@@ -300,6 +299,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro config publish":         "refuses with no fugaro.yaml to publish",
 	"fugaro config show":            "refuses outside a git checkout, which is what the world is",
 	"fugaro coordinator":            "refuses: the edition is not in this build",
+	"fugaro craft ls":               "prints the four crafts with no project selected, on the default credential",
 	"fugaro credentials serve":      "refuses without FUGARO_PROJECT in its own environment",
 	"fugaro creds":                  "is a name for set and ls: a bare run prints its own usage and returns",
 	"fugaro creds ls":               "prints the no-project-config refusal",
@@ -322,7 +322,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro project policy show":    "prints that this installation has published no policy",
 	"fugaro project repos ls":       "prints the no-project-config refusal",
 	"fugaro project show":           "prints the no-project-config refusal",
-	"fugaro project sync":           "refuses before its ask: the deployed rules here carry no policy marker",
+	"fugaro project sync":           "refuses before its write: the deployed rules this world serves carry no policy marker",
 	"fugaro reaper":                 "prints the no-project-config refusal",
 	"fugaro recipes ls":             "prints the no-project-config refusal",
 	"fugaro report":                 "refuses: the edition is not in this build",
@@ -332,8 +332,8 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro runs stats":             "prints the no-project-config refusal",
 	"fugaro runs summary":           "prints the no-project-config refusal",
 	"fugaro secrets":                "is a name for set, ls and rm: a bare run prints its own usage and returns",
-	"fugaro security paths":         "refuses outside a git checkout, which is what the world is",
 	"fugaro secrets ls":             "prints the no-project-config refusal",
+	"fugaro security paths":         "refuses from inside its body: it answers only for the checkout it stands in, and this world's directory names no origin repository",
 	"fugaro settings":               "prints the registry's every row with no project selected, which is the whole of what a bare run does",
 	"fugaro seats":                  "reads the selected project's records for an advisory estimate, and this world selects no project",
 	"fugaro setup":                  "refuses on this world's runs bucket name before the wizard's first step",
@@ -378,24 +378,6 @@ type closedStdinUnreachedAsk struct {
 // named removes the ask, and the commit that removes it has to delete this entry
 // too, or the marker check below fails.
 var closedStdinUnreached = map[string]closedStdinUnreachedAsk{
-	// The restore refuses a session with no terminal before its banner, in a
-	// sentence of its own, so the banner is never printed here.
-	"fugaro restore": {
-		file: "restore.go", marker: "func (rr *restoreRun) confirm(cmd *cobra.Command) error {",
-		task: "T6", why: "refuses a session with no terminal before the banner it would print",
-	},
-	// Both banners stand behind the managed installation: the flag's behind the
-	// project-number read its banner carries, the unflag's behind the marker
-	// read, and both behind a runs bucket with the name a managed project's
-	// marker lives in. This world's is the project config's own.
-	"fugaro managed flag": {
-		file: "managed_flag.go", marker: "confirmTypedGCPProject(cmd, lc.GCPProject)",
-		task: "T6", why: "prints its banner after a project-number read, which needs the managed installation this world is not",
-	},
-	"fugaro managed unflag": {
-		file: "managed_unflag.go", marker: "confirmTypedGCPProject(cmd, lc.GCPProject)",
-		task: "T6", why: "prints its banner after a marker read, which needs the managed installation this world is not",
-	},
 	// managed apply asks from inside an apply: the question carries a saved
 	// plan's hash and counts, so it takes a planned root this world has none of.
 	"fugaro managed apply": {
@@ -417,12 +399,6 @@ var closedStdinUnreached = map[string]closedStdinUnreachedAsk{
 	"fugaro project policy publish": {
 		file: "project_cmd.go", marker: "confirmRemoval(cmd, lc, o.yes,",
 		task: "T7", why: "asks after a deployed-rules read, which this world refuses",
-	},
-	// An un-enrollment asks once runs are in flight, or where it drops an
-	// approval the rules already carry.
-	"fugaro project sync": {
-		file: "project_enroll.go", marker: "confirmRemovalStrict(cmd, lc,",
-		task: "T6", why: "asks where the sync drops an approval the deployed rules hold",
 	},
 	// update and setup ask from their stages: the workspace and layer steps, the
 	// policy steps, and the wizard's own confirmations.

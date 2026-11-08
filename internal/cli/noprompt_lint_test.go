@@ -701,27 +701,30 @@ var notADecisionSites = map[string]string{}
 // `confirmTypedStrict` and `askTyped`, so their entries are the helpers' own
 // sites in `budget.go` and `init.go` — the read is what the lint holds.
 var pendingSites = map[string]string{
-	"billing_prompt.go:billingAPIOff":        "T7",
-	"budget.go:confirmTyped":                 "T3",
-	"budget.go:confirmTypedStrict":           "T3",
-	"image.go:confirmBuild":                  "T4",
-	"init.go:Read":                           "T7",
-	"init.go:confirmResumedMark":             "T7",
-	"init.go:newInitRun":                     "T7",
-	"init.go:typed":                          "T7",
-	"init_firebase.go:confirmLocation":       "T7",
-	"init_fugaroyaml.go:writeAnchor":         "T7",
-	"init_inputs.go:promptChoice":            "T7",
-	"init_plugin_stage.go:Apply":             "T7",
-	"init_project.go:typed":                  "T7",
-	"init_repo_gate.go:confirmRepo":          "T7",
-	"managed_apply.go:managedAsk":            "T9",
-	"managed_flag.go:confirmTypedGCPProject": "T6",
-	"pair.go:pairReadCode":                   "T7",
-	"project_cmd.go:confirmRemoval":          "T6",
-	"project_enroll.go:runProjectSync":       "T6",
-	"restore.go:anchor":                      "T6",
-	"restore.go:confirm":                     "T6",
+	"billing_prompt.go:billingAPIOff":  "T7",
+	"budget.go:confirmTyped":           "T3",
+	"budget.go:confirmTypedStrict":     "T3",
+	"image.go:confirmBuild":            "T4",
+	"init.go:Read":                     "T7",
+	"init.go:confirmResumedMark":       "T7",
+	"init.go:newInitRun":               "T7",
+	"init.go:typed":                    "T7",
+	"init_firebase.go:confirmLocation": "T7",
+	"init_fugaroyaml.go:writeAnchor":   "T7",
+	"init_inputs.go:promptChoice":      "T7",
+	"init_plugin_stage.go:Apply":       "T7",
+	"init_project.go:typed":            "T7",
+	"init_repo_gate.go:confirmRepo":    "T7",
+	"managed_apply.go:managedAsk":      "T9",
+	"pair.go:pairReadCode":             "T7",
+	// T6 removed every read of this command family it could remove. This one
+	// stays because its callers do not: confirmRemoval is defined in a file T6
+	// owns, but init_layer_stage.go and init_policy_migrate.go (T7),
+	// project_enroll.go (T6) and update_workspace.go (T15) still call it —
+	// upgrade.go's own caller went with T5 — so the entry outlives T6 and
+	// belongs to the task that removes the last caller. Deleting it here would
+	// not compile.
+	"project_cmd.go:confirmRemoval": "T6's file, whose callers T7 and T15 remove",
 }
 
 // forms is the shapes found at one site, in a stable order, for a failure's

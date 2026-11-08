@@ -474,7 +474,7 @@ func (r *resolver) answerOf(id string, facts []RunFact) nodeAnswer {
 		// The run a screen names, and the pull request number it shows, come
 		// from the latest run: the record's own number when it has one (F9),
 		// the run's otherwise.
-		a.run, a.pr = runSuffix(latest.RunID), prOf(latest)
+		a.run, a.pr = task.ShortRun(latest.RunID), prOf(latest)
 
 		// A merged pull request anywhere in the task's runs is the task's own
 		// done fact — a run cancelled after the merge, or a follow-up that
@@ -483,7 +483,7 @@ func (r *resolver) answerOf(id string, facts []RunFact) nodeAnswer {
 		// screen is the one that carried it.
 		for i := len(facts) - 1; i >= 0; i-- {
 			if merged, known := mergeOf(facts[i], r.o.Merge); known && merged {
-				return nodeAnswer{state: StateDone, run: runSuffix(facts[i].RunID), pr: prOf(facts[i])}
+				return nodeAnswer{state: StateDone, run: task.ShortRun(facts[i].RunID), pr: prOf(facts[i])}
 			}
 		}
 		switch latest.Status {
@@ -583,17 +583,6 @@ func prOf(f RunFact) int {
 // time, so ordering by it is ordering by when each was launched (rule iii).
 func sortRuns(facts []RunFact) {
 	sort.SliceStable(facts, func(i, j int) bool { return facts[i].RunID < facts[j].RunID })
-}
-
-// runSuffix is the label a run is shown by: the four characters after its last
-// dash, which is the part a person reads out loud and a launch prints. A run id
-// is shape-checked where it is read (internal/runstore); a string that is not
-// one is shown whole rather than cut into a suffix it does not have.
-func runSuffix(id string) string {
-	if i := strings.LastIndexByte(id, '-'); i >= 0 && i+1 < len(id) {
-		return id[i+1:]
-	}
-	return id
 }
 
 // joinRuns assigns the runs to the tasks they claim, by the join's rules (i)
