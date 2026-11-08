@@ -54,6 +54,37 @@ type Layer struct {
 	// (spec §1–2), the built-in vertex excepted: it needs no layer (D1624).
 	Credentials []config.Credential
 	Pools       []config.Pool
+	// KeyPrefix is where this layer's craft keys live in its own document:
+	// "defaults.agent.crafts" in the project layer's file, "crafts" in the
+	// installation's config and in the project policy node, which publishes it
+	// under that member. "" is a repository's fugaro.yaml, the one document
+	// that writes them unprefixed.
+	//
+	// It is carried rather than derived from Name because a name is not a
+	// document: the project is one layer here and two documents — the layer
+	// file's defaults.agent.crafts and the policy node's crafts — and the
+	// caller that holds one of them is the one that knows its path.
+	KeyPrefix string
+}
+
+// defaultCraftKeys is where a craft's keys live in a document whose layer names
+// no prefix: the repository's own fugaro.yaml (config.Scopes).
+const defaultCraftKeys = "agent.crafts"
+
+// CraftKey is the path of one of a craft's keys in this layer's own document.
+//
+// A problem about a half is reported at this path rather than at a fixed one:
+// the three documents that write a craft write it in three places — a
+// repository's agent.crafts.<craft>.<key>, the installation config's
+// crafts.<craft>.<key>, the project layer's defaults.agent.crafts.<craft>.<key>
+// — and a reader told to fix a key that is not in the file they have is being
+// sent to the wrong file.
+func (l Layer) CraftKey(craft, key string) string {
+	prefix := l.KeyPrefix
+	if prefix == "" {
+		prefix = defaultCraftKeys
+	}
+	return prefix + "." + craft + "." + key
 }
 
 // Effective is one craft's answer: the model it runs and the credential or pool
@@ -101,24 +132,30 @@ type Effective struct {
 // inside a pool that also holds another kind is the run's own rule (D1626,
 // MC5) and not part of this answer.
 //
-// The problems are the accesses that name nothing. An access one craft inherits
-// is reported on the craft that wrote it and not again on each craft that
-// inherits it.
+// The problems are the accesses that name nothing, reported at the path of the
+// key in the document that wrote it (Layer.CraftKey). An access one craft
+// inherits is reported on the craft that wrote it and not again on each craft
+// that inherits it.
 func Resolve(layers []Layer, subscriptionSpread bool) (map[string]Effective, []config.Problem) {
 	// written is a half a craft sets itself. The layers are read narrowest
 	// first and the first one that writes a half wins it, so the winner is the
-	// narrowest layer that sets it.
-	type written struct{ value, from string }
+	// narrowest layer that sets it — and the layer is kept whole, not just its
+	// name: a problem about the half is reported at the path of the document
+	// that wrote it (Layer.CraftKey).
+	type written struct {
+		value string
+		layer Layer
+	}
 	models := map[string]written{}
 	accesses := map[string]written{}
 	for _, name := range config.CraftNames {
 		for _, l := range layers {
 			c := l.Crafts.Of(name)
 			if _, ok := models[name]; !ok && c.Model != "" {
-				models[name] = written{c.Model, l.Name}
+				models[name] = written{c.Model, l}
 			}
 			if _, ok := accesses[name]; !ok && c.Access != "" {
-				accesses[name] = written{c.Access, l.Name}
+				accesses[name] = written{c.Access, l}
 			}
 		}
 	}
@@ -132,10 +169,10 @@ func Resolve(layers []Layer, subscriptionSpread bool) (map[string]Effective, []c
 	eff = func(name string) Effective {
 		e := Effective{ModelFrom: SourceDefault, AccessFrom: SourceDefault}
 		if w, ok := models[name]; ok {
-			e.Model, e.ModelFrom = w.value, w.from
+			e.Model, e.ModelFrom = w.value, w.layer.Name
 		}
 		if w, ok := accesses[name]; ok {
-			e.Access, e.AccessFrom = w.value, w.from
+			e.Access, e.AccessFrom = w.value, w.layer.Name
 		}
 		if parent := config.CraftParent(name); parent != "" {
 			p := eff(parent)
@@ -166,7 +203,7 @@ func Resolve(layers []Layer, subscriptionSpread bool) (map[string]Effective, []c
 			continue
 		}
 		ps = append(ps, config.Problem{
-			Path: "agent.crafts." + name + ".access",
+			Path: w.layer.CraftKey(name, "access"),
 			Message: "names no credential or pool any layer holds: name one this project defines, " +
 				"or the built-in " + config.CredentialVertex + ", or drop the key to inherit the craft it follows",
 		})
@@ -180,40 +217,51 @@ func defined(name string, layers []Layer) bool {
 	if credentialType(name, layers) != "" {
 		return true
 	}
-	_, ok := pool(name, layers)
+	_, _, ok := pool(name, layers)
 	return ok
 }
 
 // credentialType is the type of the credential name, "" when no layer defines
-// it and it is not the built-in vertex.
+// it and it is not the built-in vertex. An access names a credential of any
+// layer — a repository's file selects among the credentials the owner created
+// elsewhere (F12, D1628) — so this reads every layer, narrowest first.
 func credentialType(name string, layers []Layer) string {
+	for _, l := range layers {
+		if typ := credentialTypeIn(name, l.Credentials); typ != "" {
+			return typ
+		}
+	}
+	return credentialTypeIn(name, nil)
+}
+
+// credentialTypeIn is the type of name among one document's own credentials,
+// then among the built-ins, "" when neither holds it.
+func credentialTypeIn(name string, creds []config.Credential) string {
+	for _, c := range creds {
+		if c.Name == name {
+			return c.Type
+		}
+	}
 	for _, c := range config.BuiltinCredentials() {
 		if c.Name == name {
 			return c.Type
 		}
 	}
-	for _, l := range layers {
-		for _, c := range l.Credentials {
-			if c.Name == name {
-				return c.Type
-			}
-		}
-	}
 	return ""
 }
 
-// pool is the first pool of that name the layers hold: the same narrowest-first
-// rule a half is resolved by, so two layers that hold one name cannot give two
-// answers.
-func pool(name string, layers []Layer) (config.Pool, bool) {
+// pool is the first pool of that name the layers hold, with the layer that
+// holds it: the same narrowest-first rule a half is resolved by, so two layers
+// that hold one name cannot give two answers.
+func pool(name string, layers []Layer) (config.Pool, Layer, bool) {
 	for _, l := range layers {
 		for _, p := range l.Pools {
 			if p.Name == name {
-				return p, true
+				return p, l, true
 			}
 		}
 	}
-	return config.Pool{}, false
+	return config.Pool{}, Layer{}, false
 }
 
 // inert is whether name is a pool that serves nothing yet: a pool of two or
@@ -221,17 +269,25 @@ func pool(name string, layers []Layer) (config.Pool, bool) {
 // subscription-spread switch is off (D1622). A credential, an undefined name, a
 // pool with fewer than two OAuth members and a pool of another kind are none of
 // them inert.
+//
+// A member's type is read in the pool's own layer and among the built-ins, not
+// across the layers: a pool's members are credentials of the document that
+// defines the pool (config.ValidatePools), so one name may be a subscription
+// there and another type in a narrower layer that happens to reuse it — and
+// reading the layers narrowest-first would then count that layer's credential
+// and call the pool something it is not, letting a pool of two subscriptions
+// serve while the switch is off.
 func inert(name string, layers []Layer, subscriptionSpread bool) bool {
 	if subscriptionSpread {
 		return false
 	}
-	p, ok := pool(name, layers)
+	p, l, ok := pool(name, layers)
 	if !ok {
 		return false
 	}
 	oauth := 0
 	for _, m := range p.Members {
-		if credentialType(m, layers) == config.CredentialTypeClaudeOAuth {
+		if credentialTypeIn(m, l.Credentials) == config.CredentialTypeClaudeOAuth {
 			oauth++
 		}
 	}

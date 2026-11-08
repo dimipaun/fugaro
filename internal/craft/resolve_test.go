@@ -300,6 +300,85 @@ func TestResolveUnknownAccessRefused(t *testing.T) {
 	}
 }
 
+// TestResolveInertPoolTypesMembersInTheirOwnLayer: a pool's members are the
+// credentials of the document that defines the pool (config.ValidatePools), so
+// a narrower layer that reuses a member's name with another type does not
+// change what the pool holds — the pool is still two Claude OAuth subscriptions
+// and still inert while the switch is off (D1622). Reading the member across
+// the layers would take that other credential instead, count one subscription
+// and let the pool serve while the switch is off.
+func TestResolveInertPoolTypesMembersInTheirOwnLayer(t *testing.T) {
+	layers := []Layer{
+		// The narrowest layer reuses claude-2 as a plain API key: a name of
+		// another type, and no member of any pool of its own.
+		{
+			Name:        SourceLocal,
+			Credentials: []config.Credential{{Name: "claude-2", Type: config.CredentialTypeAnthropic}},
+		},
+		{
+			Name:   config.SourceProject,
+			Crafts: config.Crafts{Coder: config.Craft{Access: "subscriptions"}},
+			Credentials: []config.Credential{
+				{Name: "claude-1", Type: config.CredentialTypeClaudeOAuth},
+				{Name: "claude-2", Type: config.CredentialTypeClaudeOAuth},
+			},
+			Pools: []config.Pool{{Name: "subscriptions", Members: []string{"claude-1", "claude-2"}}},
+		},
+	}
+	got, ps := Resolve(layers, false)
+	if len(ps) > 0 {
+		t.Fatalf("the access names a pool the project layer holds: %v", ps)
+	}
+	if !got[config.CraftCoder].Inert {
+		t.Errorf("a pool of two subscriptions serves while the switch is off: %+v", got[config.CraftCoder])
+	}
+}
+
+// TestResolveUnknownAccessNamesItsOwnDocument: a problem points at the key in
+// the document that wrote it — a repository's agent.crafts.<craft>.access, the
+// installation config's crafts.<craft>.access, the project layer's
+// defaults.agent.crafts.<craft>.access — because a reader told to fix a key
+// that is not in the file they have is sent to the wrong file.
+func TestResolveUnknownAccessNamesItsOwnDocument(t *testing.T) {
+	for _, tc := range []struct {
+		layer Layer
+		want  string
+	}{
+		{ // the repository's own file writes no prefix
+			layer: Layer{Name: config.SourceRepo, Crafts: config.Crafts{Coder: config.Craft{Access: "claude-9"}}},
+			want:  "agent.crafts.coder.access",
+		},
+		{
+			layer: Layer{
+				Name:      SourceLocal,
+				Crafts:    config.Crafts{Coder: config.Craft{Access: "claude-9"}},
+				KeyPrefix: "crafts",
+			},
+			want: "crafts.coder.access",
+		},
+		{
+			layer: Layer{
+				Name:      config.SourceProject,
+				Crafts:    config.Crafts{Coder: config.Craft{Access: "claude-9"}},
+				KeyPrefix: "defaults.agent.crafts",
+			},
+			want: "defaults.agent.crafts.coder.access",
+		},
+	} {
+		got, ps := Resolve([]Layer{tc.layer}, false)
+		if len(ps) != 1 {
+			t.Fatalf("%s: got %d problems, want one: %v", tc.layer.Name, len(ps), ps)
+		}
+		if ps[0].Path != tc.want {
+			t.Errorf("the %s layer reports at %q, want %q", tc.layer.Name, ps[0].Path, tc.want)
+		}
+		// The path is the only thing that differs: the name stays as written.
+		if got[config.CraftCoder].Access != "claude-9" {
+			t.Errorf("%s: the coder resolves to %q, want the name as written", tc.layer.Name, got[config.CraftCoder].Access)
+		}
+	}
+}
+
 // TestResolveWalksConfigsOwnChain: the craft a craft follows is config's own
 // rule (config.CraftParent, Crafts.Inherited), not a second copy of it here, so
 // the resolver and the keys it reads cannot disagree about which craft a half
