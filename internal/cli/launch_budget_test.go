@@ -1314,12 +1314,20 @@ const proxiedBlock = "credentials_service: { url: " + proxiedServiceURL + " }\n"
 const proxiedPolicy = `{"version":4,"allow_repos":["bitbucket/workspace-a/repo-a"],"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true}}`
 const notProxiedPolicy = `{"version":4,"allow_repos":["bitbucket/workspace-a/repo-a"],"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":false}}`
 
+// proxiedPolicyOtherRepo is a node that brokers Bitbucket access (proxy: true)
+// but names another repository in its bitbucket_token block: the launch's own
+// allow-list admits proxiedRepo, so nothing else refuses it, and what the two
+// halves of proxiedness disagree about is only whether THIS repository's runs
+// are brokered (G15's AdmitRepo, proxiedRepo's last check).
+const proxiedPolicyOtherRepo = `{"version":4,"allow_repos":["bitbucket/workspace-a/repo-a"],"bitbucket_token":{"allow_repos":["bitbucket/workspace-b/repo-b"],"proxy":true}}`
+
 // addProxiedRepo enrolls proxiedRepo in a launch fixture: the local config
 // entry (inside the repos block the fixture writes, which is why the file is
-// rewritten rather than appended to), the installation's credentials service,
-// the deployed job and the build record of its job image, whose base image is
-// `base`.
-func addProxiedRepo(t *testing.T, f *launchBudgetFixture, base string) {
+// rewritten rather than appended to), the credentials_service block `block` --
+// "" is an installation that carries no service, the other half of
+// proxiedness -- the deployed job and the build record of its job image, whose
+// base image is `base`.
+func addProxiedRepo(t *testing.T, f *launchBudgetFixture, base, block string) {
 	t.Helper()
 	path := os.Getenv("FUGARO_CONFIG")
 	data, err := os.ReadFile(path)
@@ -1331,7 +1339,7 @@ func addProxiedRepo(t *testing.T, f *launchBudgetFixture, base string) {
 		t.Fatalf("the fixture's config no longer enrolls its own repository as this helper expects (%q is missing): the entry below would land outside the repos block", anchor)
 	}
 	updated := strings.Replace(string(data), anchor, anchor+"  "+proxiedRepo+": { provider: bitbucket, workflows: [app] }\n", 1)
-	updated += proxiedBlock
+	updated += block
 	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -1355,25 +1363,34 @@ func proxiedLaunchSpec() (string, *task.Spec) {
 // the release the proxy ships in (proxySince, which is the release this work
 // is slotted for and not the plan's spent 0.15.0 number).
 //
-// The two cases beside it are what makes the refusal proxiedness' and not the
+// The cases beside it are what makes the refusal proxiedness' and not the
 // image's: a repository the published node does not proxy is launched on the
 // very same image (G9), and a proxied repository on an image at proxySince or
-// later is launched too.
+// later is launched too. The rows between them take each half of proxiedness
+// away on its own — a node that brokers Bitbucket access but does not admit
+// this repository, and an installation that carries no service — because a
+// launch that is not proxied is judged by every gate it always was and refused
+// by none of them (G9): a regression there would refuse every ordinary
+// Bitbucket launch on every image older than proxySince, which today is every
+// image installed.
 func TestLaunchRefusesProxiedRunOnOldImage(t *testing.T) {
 	const old = "ghcr.io/dimipaun/fugaro-base:0.20.3"
 	for _, tc := range []struct {
 		name    string
 		policy  string
+		block   string
 		base    string
 		refused bool
 	}{
-		{"the node proxies the repository", proxiedPolicy, old, true},
-		{"the node does not proxy it", notProxiedPolicy, old, false},
-		{"the job image is at the proxy's release", proxiedPolicy, "ghcr.io/dimipaun/fugaro-base:" + proxySince, false},
+		{"the node proxies the repository", proxiedPolicy, proxiedBlock, old, true},
+		{"the node does not proxy it", notProxiedPolicy, proxiedBlock, old, false},
+		{"the node proxies another repository, not this one", proxiedPolicyOtherRepo, proxiedBlock, old, false},
+		{"the installation carries no credentials service", proxiedPolicy, "", old, false},
+		{"the job image is at the proxy's release", proxiedPolicy, proxiedBlock, "ghcr.io/dimipaun/fugaro-base:" + proxySince, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newLaunchBudget(t, "enforce")
-			addProxiedRepo(t, f, tc.base)
+			addProxiedRepo(t, f, tc.base, tc.block)
 			publishPolicy(t, f, tc.policy)
 			_, _, err := execute(t, "run", "--repo", proxiedRepo, "--run-id", budgetRun, "Add a feature")
 			slug := mustSlug("bitbucket", proxiedRepo)
@@ -1428,7 +1445,7 @@ func TestLaunchRefusesProxiedRunOnBatch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newLaunchBudget(t, "enforce")
-			addProxiedRepo(t, f, current)
+			addProxiedRepo(t, f, current, proxiedBlock)
 			publishPolicy(t, f, tc.policy)
 			slug, spec := proxiedLaunchSpec()
 			// fileEnv, not memEnv: the build record the image gate reads is
