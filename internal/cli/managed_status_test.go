@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strconv"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 )
 
@@ -348,15 +351,209 @@ func TestManagedStatusUnreadIsNotAnEmptyDay(t *testing.T) {
 // path under the console's tree (internal/cli/docs_console_boundary_test.go),
 // which is why the two halves live in two files.
 func TestManagedStatusNamesItsFieldsInTheContract(t *testing.T) {
-	types := []reflect.Type{reflect.TypeOf(managedStatusDoc{}), reflect.TypeOf(managedStatusAudit{})}
+	types := []reflect.Type{
+		reflect.TypeOf(managedStatusDoc{}), reflect.TypeOf(managedStatusAudit{}),
+		// The retirement half is the machine's own record of the last update,
+		// carried as that record's types rather than as a second set of tags
+		// (CM8): the walker follows an embedded type into its members and a
+		// slice into its row shape, so the names below are the record's own and
+		// a member the record gains fails here until the contract lists it.
+		reflect.TypeOf(managedStatusRetirements{}),
+		reflect.TypeOf(localcfg.UpdateProject{}),
+		reflect.TypeOf(localcfg.UpdateRetirement{}),
+	}
 	got := jsonTagNames(t, namedTypes(types...), types...)
 	slices.Sort(got)
+	// A name two shapes carry is one member of the document's vocabulary: `at`
+	// is the trail's and the record's, `version` the marks' and the record's,
+	// and this list is a set of names rather than a list of positions.
+	got = slices.Compact(got)
 	want := []string{
-		"at", "audit", "audit_count", "audit_day", "audit_state", "command",
-		"gcp_project", "generation", "identity", "managed", "plan_digest",
-		"project", "reason", "verdict", "version",
+		"address", "at", "audit", "audit_count", "audit_day", "audit_state",
+		"cause", "command", "gcp_project", "generation", "identity", "job", "kept",
+		"kind", "logical", "managed", "plan_digest", "project", "protected",
+		"reason", "region", "retire", "retirements", "retirements_state",
+		"runs_in_flight", "secret_id", "verdict", "version",
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("the document's json members = %v, want %v: the shape is closed, so a member that is not one of these is one a screen has been told nothing about, and one of these that is gone is a screen reading a field no command writes", got, want)
+	}
+}
+
+// TestManagedStatusCarriesTheLastUpdatesRetirement: the document carries the
+// machine's own record of the project's last update — the entry CM1 writes —
+// member for member, with the record's version beside it (CM8's read, F21,
+// D1485). The entry is the record's own type and not a copy of it, so the check
+// is a comparison against what RecordUpdate was handed: a member dropped,
+// renamed or retyped on the way to the console fails here.
+//
+// The four members of the entry are also the whole of the entry's shape: the
+// document is closed at this level too, and a consumer reading it reads these.
+func TestManagedStatusCarriesTheLastUpdatesRetirement(t *testing.T) {
+	r := newManagedStatusRig(t, managedAuditOpts{})
+	when := managedAuditTestNow.Add(-2 * time.Hour)
+	runs := 3
+	up := localcfg.UpdateProject{
+		At: when,
+		Retire: []localcfg.UpdateRetirement{{
+			Address:   "module.images.google_secret_manager_secret.gh_token",
+			Kind:      "secret",
+			Cause:     "the repository declares no secret of that name",
+			Kept:      "the value is escrowed under the installation's own name",
+			Logical:   "gh-token",
+			SecretID:  "fugaro-example-cloud-gh-token",
+			Job:       "fugaro-images",
+			Region:    "us-east5",
+			Protected: true,
+		}},
+		RunsInFlight: &runs,
+	}
+	// Written through the writer the update itself calls: what the read is
+	// asked about is a document this program produced.
+	if err := localcfg.RecordUpdate(os.Getenv, "aurora", up); err != nil {
+		t.Fatal(err)
+	}
+	doc, out := managedStatusOf(t, r)
+	if doc.Retirements == nil {
+		t.Fatalf("retirements = null with an entry recorded for the project: %s", out)
+	}
+	if doc.RetirementsState != "" {
+		t.Errorf("retirements_state = %q beside an entry that was read: the state is for a record that could NOT be read, and a sentence here would draw a refusal over a row that is there", doc.RetirementsState)
+	}
+	if doc.Retirements.Version != localcfg.UpdateRecordVersion {
+		t.Errorf("retirements.version = %d, want the record's own version (%d): it is what a consumer compares against the shape it knows", doc.Retirements.Version, localcfg.UpdateRecordVersion)
+	}
+	if !doc.Retirements.At.Equal(when) {
+		t.Errorf("retirements.at = %s, want the time the run settled its retirement (%s)", doc.Retirements.At, when)
+	}
+	if !slices.Equal(doc.Retirements.Retire, up.Retire) {
+		t.Errorf("retirements.retire = %+v, want the record's own rows (%+v), member for member: the entry is the record's type and not a second one that can drift", doc.Retirements.Retire, up.Retire)
+	}
+	if doc.Retirements.RunsInFlight == nil || *doc.Retirements.RunsInFlight != runs {
+		t.Errorf("retirements.runs_in_flight = %v, want the count the record holds (%d)", doc.Retirements.RunsInFlight, runs)
+	}
+	// The bytes, and not only the decoded struct: the entry's own member set is
+	// what a console reads, and a member that arrives unannounced is one it has
+	// been told nothing about.
+	var raw struct {
+		Retirements map[string]json.RawMessage `json:"retirements"`
+	}
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	keys := make([]string, 0, len(raw.Retirements))
+	for k := range raw.Retirements {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	if want := []string{"at", "retire", "runs_in_flight", "version"}; !slices.Equal(keys, want) {
+		t.Errorf("the retirements member carries %v, want exactly %v: the record's entry plus the record's version", keys, want)
+	}
+}
+
+// TestManagedStatusCarriesAnEmptySetAsAList: a run that read its retirement set
+// and found it empty records `[]` and not null, and the document carries it
+// that way — "the last update retired nothing" is a set that was written, and a
+// null would read as the record's absence (CM1, D1484). The count the registry
+// could not answer is absent rather than zero (D1483): it is a pointer for the
+// same reason.
+func TestManagedStatusCarriesAnEmptySetAsAList(t *testing.T) {
+	r := newManagedStatusRig(t, managedAuditOpts{})
+	if err := localcfg.RecordUpdate(os.Getenv, "aurora", localcfg.UpdateProject{At: managedAuditTestNow}); err != nil {
+		t.Fatal(err)
+	}
+	doc, out := managedStatusOf(t, r)
+	if doc.Retirements == nil {
+		t.Fatalf("retirements = null for a run that recorded an empty set: %s", out)
+	}
+	if doc.Retirements.Retire == nil || len(doc.Retirements.Retire) != 0 {
+		t.Errorf("retirements.retire = %#v, want an empty list: a nil set would be drawn as the record's absence, which is a different fact about the machine", doc.Retirements.Retire)
+	}
+	if doc.Retirements.RunsInFlight != nil {
+		t.Errorf("retirements.runs_in_flight = %d, want absent for a run that did not count the runs: a number nothing read must not be drawn as one that was (D1483)", *doc.Retirements.RunsInFlight)
+	}
+	var raw struct {
+		Retirements map[string]json.RawMessage `json:"retirements"`
+	}
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if got := string(raw.Retirements["retire"]); got != "[]" {
+		t.Errorf(`retire in the document = %s, want []`, got)
+	}
+	if _, ok := raw.Retirements["runs_in_flight"]; ok {
+		t.Errorf("the document carries runs_in_flight (%s) for a run that recorded no count: the record's own spelling of an unknown number is absence", raw.Retirements["runs_in_flight"])
+	}
+}
+
+// TestManagedStatusTellsNoUpdateRecordedFromAnUnreadableRecord: the three
+// answers are three (D1484's rule, one subject over from the trail's). No entry
+// for the project — no record file at all, or one that was read and holds
+// another project — is "no update recorded yet" and no state. A record that is
+// there and could not be read is the same null WITH a state, and never the
+// first: a machine whose record is corrupt is not a machine that has never
+// updated, and the console's Project tab draws the two differently.
+//
+// It is not an exit either: the record is one subject of a document whose
+// others were read, so the command prints the document and exits zero, and the
+// state is the answer (the audit trail's own rule).
+func TestManagedStatusTellsNoUpdateRecordedFromAnUnreadableRecord(t *testing.T) {
+	t.Run("a machine that has recorded no update", func(t *testing.T) {
+		r := newManagedStatusRig(t, managedAuditOpts{})
+		doc, out := managedStatusOf(t, r)
+		if doc.Retirements != nil || doc.RetirementsState != "" {
+			t.Errorf("retirements = %+v, state %q on a machine with no record file, want null and no state: no file is an empty document and not an error (LoadUpdateRecord's own rule): %s",
+				doc.Retirements, doc.RetirementsState, out)
+		}
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(out), &raw); err != nil {
+			t.Fatalf("json: %v", err)
+		}
+		if got := string(raw["retirements"]); got != "null" {
+			t.Errorf("retirements in the document = %s, want null: the member is always printed so that a consumer tells a document that carries no record from one that carries none for the project", got)
+		}
+	})
+	t.Run("a record that was read and holds another project", func(t *testing.T) {
+		r := newManagedStatusRig(t, managedAuditOpts{})
+		if err := localcfg.RecordUpdate(os.Getenv, "vega", localcfg.UpdateProject{At: managedAuditTestNow}); err != nil {
+			t.Fatal(err)
+		}
+		doc, out := managedStatusOf(t, r)
+		if doc.Retirements != nil || doc.RetirementsState != "" {
+			t.Errorf("retirements = %+v, state %q for a record that answered and holds no entry for aurora, want null and no state: this machine has recorded no update for THIS project, which is not a failure to read: %s",
+				doc.Retirements, doc.RetirementsState, out)
+		}
+	})
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"a record this build cannot parse", "{ not json"},
+		{"a record of a version this build does not write", `{"version": 7, "projects": {}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newManagedStatusRig(t, managedAuditOpts{})
+			path, err := localcfg.UpdateRecordPath(os.Getenv)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			doc, out := managedStatusOf(t, r)
+			if doc.Retirements != nil {
+				t.Errorf("retirements = %+v beside a record that could not be read, want null: there is no entry, and an empty one would draw a run that never happened", doc.Retirements)
+			}
+			if !strings.Contains(doc.RetirementsState, "could not") {
+				t.Errorf("retirements_state = %q, want the sentence saying the record could not be read: a null with no state is the claim that this machine has never updated, and this one has a file the read refused: %s",
+					doc.RetirementsState, out)
+			}
+			if !doc.Managed {
+				t.Errorf("managed = false when the marks' read answered and only the local record did not: the two are separate reads, and conflating them would report a fact about the project from a failure about this machine's state")
+			}
+		})
 	}
 }
