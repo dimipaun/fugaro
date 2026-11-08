@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/failure"
@@ -166,5 +167,30 @@ func TestRowCarriesTheClassTheRecordHolds(t *testing.T) {
 	}
 	if row := Join(Input{Task: spec}, prices, now); row.FailureClass != "" {
 		t.Errorf("an unlaunched row carries the class %q", row.FailureClass)
+	}
+	// A row the read side ends itself carries none either, and this is the case
+	// a reader would otherwise meet as a contradiction: the row says `failed`
+	// (or `infra_error`, or `cancelled`) with no class on it. Nothing the run
+	// wrote recorded an ending at all — a preemption, a lost execution and a
+	// cancel before launch all leave a record that never settled — so no object
+	// ever named a cause, and the read side's own account of what happened is
+	// the Derived field rather than a class it would have to invent.
+	for _, tc := range []struct {
+		name string
+		in   Input
+	}{
+		{"a preemption", Input{Task: spec, Launch: launch, Exec: preemptedExec()}},
+		{"a lost execution", Input{Task: spec, Launch: &runstore.Launch{Execution: "exec-1", LaunchedAt: now.Add(-runstore.ClaimTTL - time.Hour)}}},
+		{"a cancel before launch", Input{Task: spec, CancelMarker: true}},
+	} {
+		row := Join(tc.in, prices, now)
+		switch row.Status {
+		case string(runstore.StatusFailed), string(runstore.StatusInfraError), string(runstore.StatusCancelled):
+		default:
+			t.Fatalf("%s: the row reads %q, which is not one of the failure endings this case is about", tc.name, row.Status)
+		}
+		if row.FailureClass != "" {
+			t.Errorf("%s: the row reads %q and carries the class %q, want none: the record under it never settled, so nothing named a cause", tc.name, row.Status, row.FailureClass)
+		}
 	}
 }

@@ -110,9 +110,15 @@ type Row struct {
 	// vocabulary of docs/design/failure-classes.md §3: the class the runner
 	// wrote beside the status, and — for a record written before the field
 	// shipped — the reader's reading of the record's own reason (ClassOf).
-	// Absent for a run that did not fail: a succeeded run, a run still going
-	// and a run that never started have no cause to name, and a class on them
-	// would be a classification of a success (D1464).
+	//
+	// It is the record's own ending and nothing else. Absent for a run that did
+	// not fail — a succeeded run, a run still going and a run that never
+	// started have no cause to name, and a class on them would be a
+	// classification of a success (D1464) — and absent for a row the read side
+	// settled itself: a preemption, a lost execution, a cancel before launch.
+	// No object of such a run ever recorded an ending, so nothing named a cause
+	// there and there is no reason to read one out of; the read side's own
+	// account of what happened to it is the Derived field beside this one.
 	//
 	// It is a *reading* of a legacy record and says so by living in the row
 	// alone: nothing writes it back to the runs bucket, and no reader treats
@@ -328,10 +334,13 @@ func priced(p backend.Prices) bool {
 }
 
 // ClassOf is the class a record carries: why the run did not end succeeded, as
-// one value of the closed vocabulary, and nothing at all for a run that did
-// not fail (design §3, D1464). It answers with the record's own field where
-// the record has one, and with a reading of the record's own reason where it
-// does not — every record written before the field shipped (design §5).
+// one value of the closed vocabulary, and nothing at all for a record that did
+// not fail — a run still going, a record that never settled, the record under a
+// row the read side ended itself. The class is the record's own ending, so a
+// derivation is never one (design §3, D1464). It answers with the record's own
+// field where the record has one, and with a reading of the record's own
+// reason where it does not — every record written before the field shipped
+// (design §5).
 //
 // The reading is a reading: it never writes the record back, so the bytes the
 // store handed over are the bytes the next reader gets, and the answer is
@@ -365,9 +374,12 @@ func ClassOf(rec *runstore.Record) failure.Class {
 	return legacyClass(rec.Reason)
 }
 
-// failedStatus reports whether status is an ending a run did not succeed
-// under, which is the set a class is written for: a succeeded run, a run still
-// going and a row that never started carry none (design §3, D1464).
+// failedStatus reports whether a record's status is an ending the run did not
+// succeed under, which is the set a record's class is written for: a succeeded
+// run, a run still going and a record that never settled carry none (design
+// §3, D1464). It is asked of the *record*, so the status a row derives over
+// such a record — a preemption, a lost execution — never reaches it: that
+// derivation is the read side's, and the record recorded no ending at all.
 func failedStatus(status runstore.Status) bool {
 	switch status {
 	case runstore.StatusFailed, runstore.StatusHalted, runstore.StatusInfraError, runstore.StatusCancelled:

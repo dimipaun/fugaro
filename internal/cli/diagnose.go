@@ -849,6 +849,15 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		status += " (stage " + r.Stage + ")"
 	}
 	fmt.Fprintf(&b, "Status:   %s\n", oneLine(status))
+	// The class is the answer's first sentence (design §8 D9), so it stands
+	// directly under the status it describes: the closed vocabulary's name for
+	// why the run stopped, the runner's own where the record carries one and the
+	// reader's reading of its reason where it does not (runview.ClassOf). A run
+	// that did not fail, and a row whose ending the read side derived rather than
+	// read, has no cause to name and gets no line.
+	if d.FailureClass != "" {
+		fmt.Fprintf(&b, "Class:    %s\n", oneLine(string(d.FailureClass)))
+	}
 	if r.Reason != "" {
 		fmt.Fprintf(&b, "Reason:   %s\n", oneLine(r.Reason))
 	}
