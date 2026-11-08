@@ -119,7 +119,7 @@ Pin every download by version and checksum. Don't pipe a download into a shell, 
 
 ## 7. Build the image locally, and loop
 
-`fugaro image build --local --json` (add `--workflow <name>` with several workflows). A workflow that runs a catalog entry (`image_name:`) builds no per-repository image: verify it with `fugaro image ls --json` instead. `reference/validation.md` has the failure table. If the same failure survives three fixes, stop and ask the user. Done when `fugaro validate --json` prints `"valid": true` and the smoke result says `"passed": true` for every workflow.
+`fugaro image build --local --json` (add `--workflow <name>` with several workflows). A workflow that runs a catalog entry (`image_name:`) builds no per-repository image: verify it with `fugaro image ls --json` (the entry listed, its tags covering the workflow's `needs:`) instead. `reference/validation.md` has the failure table. If the same failure survives three fixes, stop and ask the user. Done when `fugaro validate --json` prints `"valid": true` and the smoke result says `"passed": true` for every workflow.
 
 ## 8. Secrets
 
@@ -162,7 +162,7 @@ The periodic reviews are the user's cadence: Fugaro schedules nothing, so say th
 - **An agent routine**, running the same command and opening the pull request with the report.
 - **A scheduled report run**: `fugaro run --recipe run-digest "periodic run review"`.
 
-`fugaro runs digest --due` says whether the cadence has lapsed: it reads the checkout's report folder, offline. The `working` skill's `reference/periodic-reviews.md` has the reading.
+`fugaro runs digest --due` says whether the cadence has lapsed. The `working` skill's `reference/periodic-reviews.md` has the reading.
 
 ## 11. Changing the auth, a workflow, a secret or a provider
 
