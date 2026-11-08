@@ -39,11 +39,13 @@ lands the notes, on `main` before the tag:
   rather than inside it, because that file is keyed `vX.Y.Z` and validated
   against the CLI's own release files. What a sentence says, and what it must
   not, is [../README.md](../README.md)'s rule and holds here as it does there:
-  what the release gives a user, not what changed inside the repository. Nothing
-  reads this file automatically yet — the app's stream has no release body
-  generated for it — so it is written for the app's own release page and for the
-  store listing's "what's new" text, and it is the app's record of the release's
-  one sentence.
+  what the release gives a user, not what changed inside the repository. **The
+  site's build reads this file**: the changelog renders the line as the app's own
+  line, below the CLI's entries (`website/src/pages/changelog.astro`), and the
+  build stops when the app's latest release has no line there — so the line goes
+  in the same commit as the notes and the two version lines. It is also written
+  for the app's own release page and for the store listing's "what's new" text,
+  and it is the app's record of the release's one sentence.
 
 **The name comes first.** The app's releases are named after birds, spent in
 order: the **first is Falcon** (`mobile-v0.200.0`), then **Pelican**

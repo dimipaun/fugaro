@@ -2529,6 +2529,14 @@ func TestUpdateRecordsTheRunsInFlightItSaw(t *testing.T) {
 // retirement as the last one's for the rest of the installation's life.
 func TestTheUpdateRecordIsTheLastRunsAndNotAMerge(t *testing.T) {
 	r := newManagedRetireRig(t, retireOpts{protection: true, keptAsNote: true, member: true})
+	// The first update writes the checkout's gcp_project: line — a managed
+	// project's own terminal is asked nothing for it (the owner's ruling of
+	// 2026-11-06) — so the second update's images stage resolves a project
+	// layer for the checkout, and this rig's local config carries no
+	// bucket_url: to answer with. The layer is not what this test is about:
+	// the empty file:// bucket answers "no layer" and keeps the read local
+	// (noProjectLayerBucket; TestMain panics a real gs:// one).
+	noProjectLayerBucket(t)
 	out, errOut, err := executeStdin(t, "", "update")
 	text := out + errOut
 	if err != nil && !strings.Contains(text, firstBuildHold) {
@@ -2552,6 +2560,13 @@ func TestTheUpdateRecordIsTheLastRunsAndNotAMerge(t *testing.T) {
 	}
 	r.script["show@repo"] = map[string]any{"stdout": string(b)}
 	r.save(t)
+	// And the line the first update wrote is on the default branch by now: its
+	// own message tells the owner to commit it like any change, and the
+	// repository stage reads the working tree against that branch, so an
+	// uncommitted line would be the second update's own needs-you rather than
+	// the record this test is about.
+	commit(t, ".", "the gcp_project line fugaro update wrote")
+	fetched(t, ".")
 	out, errOut, err = executeStdin(t, "", "update")
 	text = out + errOut
 	if err != nil && !strings.Contains(text, firstBuildHold) {

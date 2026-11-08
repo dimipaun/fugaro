@@ -2450,7 +2450,7 @@ registry (D1102).
 | `sensitive` | bool | **yes** | never | `omitempty`, so it appears only on a sensitive row. **The console drops such a row whole** — no key, no value, no control (D1111, the owner's ruling of 2026-11-01) — which is why the `value` member above is absent for one |
 | `writable` | bool | never | never | whether the **generic path** may write this key (`settings set KEY --layer <L> --yes -- <VALUE>`). Written on every row — a consumer branches on the value, never on the member's presence |
 | `owner` | string | never | never | the command family that writes the key when the generic path may not (`settingsFamilyCommands`, `internal/cli/settings_set.go`: `fugaro models`, `fugaro rigor set`, `fugaro rigor floor`, `fugaro accounts`, `fugaro secrets`, `fugaro project`), or `""` when there is none. `writable` and `owner` are answers about the same question, and a row with neither is a row no command writes |
-| `target_layer` | string | never | never | the layer an edit would write (`project` or `local`, the two the generic path writes), or `""` when the generic path would not write the key at all. **Empty is a refusal, not a default**: a console offers no pencil for such a row |
+| `target_layer` | string | never | never | the layer a write with **no** `--layer` lands in: the narrowest of `repo`, `project` and `local` the key may be set in (`settingsDefaultLayer`, `internal/cli/settings_set.go`), and the layer the console passes back as `--layer` — what the window showed is what is spawned (D1105). **It is a fact about the key and not about the generic path's allowlist**, so it is **non-empty on a row the generic path refuses**: `mailbox.keychain_item` is `writable: false` with `owner: fugaro secrets` and `target_layer: "local"`. `""` is a key none of the three layers holds, which is a row no edit may target — a document from a CLI older than D1102 carries no such member at all, and it reads the same — and **empty is not a layer a screen can pass**: such a row gains no pencil, whatever `writable` says |
 | `levels` | array of level rows | **yes** | never | one row per layer that sets the key, for `--why`. Absent when the read did not compute them |
 
 **The default block is the built-in default, and exactly one of its two
@@ -2473,12 +2473,17 @@ spellings is set:**
 **The three writability members are the whole point of the console's half**
 (D1102), and they are the reason no list of the generic path's keys is kept in
 `console/`: `writable` says whether the generic path may write the key at all,
-`target_layer` says which layer it would write and is **empty** for a key it
-would not, and `owner` names the family that does write the key when the
-generic path may not — in S5's own words, so the sentence the screen draws
-("`written by <owner>, not by the generic path`") is the CLI's refusal
-sentence and not the console's invention. A screen reads the three and draws a
-control from them; it never decides for itself which keys are editable.
+`target_layer` names the layer a write with no `--layer` lands in — the
+narrowest of `repo`, `project` and `local` the key may be set in, which the
+console passes back as `--layer` — and `owner` names the family that does write
+the key when the generic path may not — in S5's own words, so the sentence the
+screen draws ("`written by <owner>, not by the generic path`") is the CLI's
+refusal sentence and not the console's invention. **The first and the second are
+independent**: `target_layer` is a fact about the key, so a row the generic path
+refuses still names a layer and is refused by `writable: false`; the empty
+`target_layer` is a key none of the three layers holds, and there a screen has
+no layer to pass at all. A screen reads the three and draws a control from them;
+it never decides for itself which keys are editable.
 
 **A `sensitive` row's value is never in this document.** `settingsJSON` writes
 no `value` member for one at all, and the human table prints `set`/`unset`

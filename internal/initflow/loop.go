@@ -73,6 +73,18 @@ type Options struct {
 	// The caller points the reporter and Out at the same writer, so the two
 	// are one view.
 	Report *report.Reporter
+	// ReportBorrowed says the reporter is the caller's and not this run's, so
+	// the loop prints its steps and the blocks it owes and leaves the closing
+	// line to whoever opened the reporter. A run whose steps do not end with
+	// the loop — `accounts add` accounts for eight of them and runs three
+	// through the loop, with the read-back after it — would otherwise be
+	// accounted "Done" in the middle of itself, and a step that failed after
+	// that line exits 1 behind an account that says the run finished (G3).
+	//
+	// False is a run whose reporter is its own: the converge (init.go) opens
+	// it, the loop is the whole of the run, and the closing line is its last
+	// word.
+	ReportBorrowed bool
 	// Program is the command the run's own lines name: the front door the
 	// caller is running ("fugaro setup", "fugaro update"). The loop is
 	// behind both and cannot know which one it is, so it never names a
@@ -295,15 +307,21 @@ func (l *loop) left(stage string, lf Left) Left {
 
 // preview checks every stage (read-only) and, in a plan-only run, plans the
 // first one with something to do. A stage that waits for one with something
-// to do is shown as will-do with the stage it waits for. It prints the view
-// first in an applying run, and the whole result in a plan-only one.
+// to do is shown as will-do with the stage it waits for, and the wait is
+// converge's own: a stop holds everything after it that does not run past it,
+// while a project paused for billing holds only what needs billing
+// (NeedsBilling). It prints the view first in an applying run, and the whole
+// result in a plan-only one.
 func (l *loop) preview(ctx context.Context, stages []Stage) error {
 	var waiting string // the first stage with something to do or someone to wait for
+	var paused string  // the stage that paused for billing: what needs billing waits for it
+	var stops []stop   // the stops the stages after them wait for, and those they run past
 	for _, s := range stages {
 		name := s.Name()
 		if l.cancelled(ctx, name) {
 			return nil
 		}
+		l.pastStops(s, name, stops)
 		st, err := checkStage(ctx, s)
 		if err != nil {
 			l.fail(name, err)
@@ -316,39 +334,64 @@ func (l *loop) preview(ctx context.Context, stages []Stage) error {
 			if waiting == "" {
 				waiting = name
 			}
+			stops = append(stops, stop{name: name})
 		case NeedsYou, BillingPending:
 			lf := s.Left()
 			if st.Left != nil {
 				lf = *st.Left
 			}
 			l.res.Left = append(l.res.Left, l.left(name, lf))
+			if st.State == BillingPending {
+				// Not a stop, and not what the stages after it wait for:
+				// converge pauses there and lets the stages billing does not
+				// gate run on (NeedsBilling), so the wait is said below, at
+				// the stages that have it.
+				paused = name
+				break
+			}
+			if waiting == "" {
+				waiting = name
+			}
+			stops = append(stops, stop{name: name, yours: true})
 		default:
 			r.State = Todo
-			if waiting != "" {
-				r.After = waiting
+			if b := blocker(name, stops); b != nil {
+				r.After = b.name
+			} else if paused != "" && NeedsBilling(name) {
+				r.After = paused
 			} else {
-				waiting = name
-				if l.o.PlanOnly {
-					p, err := planStage(ctx, s, l.env(name))
-					if err != nil {
-						l.fail(name, err)
-						return nil
-					}
-					if d := oneLine(p.Detail); d != "" {
-						r.Detail = l.redact(d)
-					}
-					if p.NothingToDo {
-						// The real plan is empty: nothing waits for this stage.
-						r.State, waiting = Done, ""
-						if r.Detail == "" {
-							r.Detail = "No changes"
+				if waiting != "" && stoppedYours(waiting, stops) {
+					// The stage the view was waiting for is a stop this one
+					// does not read: it is not what this stage waits for, so
+					// the stages after it are not waiting for it either. Only
+					// a stop is cleared this way: a stage with something to do
+					// is one the run applies first, and this stage waits for
+					// it like every other stage behind it.
+					waiting = ""
+				}
+				if waiting != "" {
+					r.After = waiting
+				} else {
+					waiting = name
+					if l.o.PlanOnly {
+						p, err := planStage(ctx, s, l.env(name))
+						if err != nil {
+							l.fail(name, err)
+							return nil
+						}
+						if d := oneLine(p.Detail); d != "" {
+							r.Detail = l.redact(d)
+						}
+						if p.NothingToDo {
+							// The real plan is empty: nothing waits for this stage.
+							r.State, waiting = Done, ""
+							if r.Detail == "" {
+								r.Detail = "No changes"
+							}
 						}
 					}
 				}
 			}
-		}
-		if st.State == NeedsYou && waiting == "" {
-			waiting = name
 		}
 		l.res.Stages = append(l.res.Stages, r)
 	}
@@ -407,25 +450,81 @@ func (l *loop) failureContext(err error) []string {
 	return out
 }
 
+// stop is a stage the run stopped at, and whether what stopped it is the
+// user's to clear.
+type stop struct {
+	name string
+	// yours is whether the stop is a step only the user can give (NeedsYou),
+	// which is the one stop a later stage may run past (RunsPastStop). A
+	// failure and a block a stage's own Check reported are the user's to fix
+	// too, and are still not: nothing is known about the state they left.
+	yours bool
+}
+
+// blocker is the first stop before name that name may not run past, nil when
+// it runs past every one of them. It is the whole of the gating rule: the
+// stages are linear, and the tolerance is the stopped stage's own (RunsPastStop).
+func blocker(name string, stops []stop) *stop {
+	for i := range stops {
+		if !stops[i].yours || !RunsPastStop(name, stops[i].name) {
+			return &stops[i]
+		}
+	}
+	return nil
+}
+
+// stoppedYours is whether name is one of the stops of stops that is the user's
+// to clear: the only kind a later stage's row runs past (RunsPastStop). A
+// stage with something to do is not one of them, however close the row's
+// tolerance comes to it.
+func stoppedYours(name string, stops []stop) bool {
+	for _, s := range stops {
+		if s.name == name && s.yours {
+			return true
+		}
+	}
+	return false
+}
+
+// pastStops tells a stage the stops it is running past (PastStops), before the
+// loop reads anything of it. They are the run's own, and a stage whose own
+// steps are not all alike about a stop has no other way to them: the world
+// records what the stopped stage left behind, never that the run stopped.
+func (l *loop) pastStops(s Stage, name string, stops []stop) {
+	x, ok := s.(PastStops)
+	if !ok {
+		return
+	}
+	var out []string
+	for _, st := range stops {
+		if st.yours && RunsPastStop(name, st.name) {
+			out = append(out, st.name)
+		}
+	}
+	x.PastStops(out)
+}
+
 // converge applies, in order, each stage that is not done, re-checking it
 // right before and verifying it right after, and stops at the first stage
-// that needs the user or fails: nothing after it runs.
+// that needs the user or fails: nothing after it runs, except the stages that
+// run past that stop (RunsPastStop).
 func (l *loop) converge(ctx context.Context, stages []Stage) error {
 	l.res.Stages, l.res.Left, l.res.Failed, l.res.Cause = nil, []Left{}, nil, nil
 	l.failedContext = nil
 	l.executing = true
-	stopped := "" // the stage everything after waits for
-	paused := ""  // the stage that paused for billing: what needs billing waits for it
+	var stops []stop // the stages the run stopped at: what everything after waits for
+	paused := ""     // the stage that paused for billing: what needs billing waits for it
 	for _, s := range stages {
 		name := s.Name()
-		if stopped != "" {
-			l.record(StageResult{Name: name, State: Blocked, Detail: "waits for " + stopped})
+		if b := blocker(name, stops); b != nil {
+			l.record(StageResult{Name: name, State: Blocked, Detail: "waits for " + b.name})
 			continue
 		}
 		if paused != "" && NeedsBilling(name) {
 			l.record(StageResult{Name: name, State: WaitingForBilling, Detail: "waiting for billing"})
 			continue
 		}
+		l.pastStops(s, name, stops)
 		// The line in flight goes up before the stage is looked at: its check
 		// and its plan are seconds, and the apply behind them is minutes.
 		l.openStep(name)
@@ -435,7 +534,7 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 		st, err := checkStage(ctx, s)
 		if err != nil {
 			l.fail(name, err)
-			stopped = name
+			stops = append(stops, stop{name: name})
 			continue
 		}
 		detail := l.redact(oneLine(st.Detail))
@@ -445,7 +544,7 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 			continue
 		case Blocked:
 			l.record(StageResult{Name: name, State: Blocked, Detail: detail})
-			stopped = name
+			stops = append(stops, stop{name: name})
 			continue
 		case NeedsYou:
 			lf := s.Left()
@@ -453,7 +552,7 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 				lf = *st.Left
 			}
 			l.needsYou(name, detail, lf)
-			stopped = name
+			stops = append(stops, stop{name: name, yours: true})
 			continue
 		case BillingPending:
 			lf := s.Left()
@@ -469,12 +568,12 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 		if l.o.Agent != "" {
 			if done, err := l.agentStage(ctx, s); err != nil {
 				l.fail(name, err)
-				stopped = name
+				stops = append(stops, stop{name: name})
 				continue
 			} else if done {
 				continue
 			}
-			stopped = name
+			stops = append(stops, stop{name: name, yours: true})
 			continue
 		}
 		// The managed project's gate, for the owner at their own terminal:
@@ -495,18 +594,18 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 		if l.interactive && !l.o.JSON && l.o.ManagedGate != nil && l.o.ManagedGate(name) {
 			if done, err := l.gatedStage(ctx, s); err != nil {
 				l.fail(name, err)
-				stopped = name
+				stops = append(stops, stop{name: name})
 				continue
 			} else if done {
 				continue
 			}
-			stopped = name
+			stops = append(stops, stop{name: name, yours: true})
 			continue
 		}
 		if !YesCovers(name) && (!l.interactive || l.o.JSON) {
 			// Never auto-confirmed, never prompted: left for the user.
 			l.needsYou(name, "needs your own confirmation, which --yes does not give", s.Left())
-			stopped = name
+			stops = append(stops, stop{name: name, yours: true})
 			continue
 		}
 		if _, self := s.(SelfConfirming); !l.o.Yes && !l.interactive && !(self && YesCovers(name)) {
@@ -524,12 +623,12 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 		}
 		if errors.As(err, &ag) {
 			l.needsYou(name, ag.Error(), s.Left())
-			stopped = name
+			stops = append(stops, stop{name: name, yours: true})
 			continue
 		}
 		if errors.As(err, &ny) {
 			l.needsYou(name, "", ny.Left)
-			stopped = name
+			stops = append(stops, stop{name: name, yours: true})
 			continue
 		}
 		if err == nil {
@@ -537,7 +636,7 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 		}
 		if err != nil {
 			l.fail(name, err)
-			stopped = name
+			stops = append(stops, stop{name: name})
 			continue
 		}
 		l.applied(name, out)
@@ -640,10 +739,13 @@ func (l *loop) agentApplied(ctx context.Context, s Stage) (done bool, err error)
 		l.needsYou(name, ag.Error(), s.Left())
 		return false, nil
 	case errors.As(err, &ge):
-		// The gate's sentence is the detail, and the stage's own Left is where
-		// the user is told to run it: the step is theirs to confirm, at their
-		// own terminal, and the gate says nothing a session could act on.
-		l.needsYou(name, ge.Error(), s.Left())
+		// The gate's sentence is the detail, and what stands beside it is the
+		// refusal's own answer about who this step is for: the stage's Left
+		// only when the step IS the owner's (the class refusal, D1026), and a
+		// commandless refusal otherwise — a plan the cover would not admit is
+		// nobody's to type past (CV1), and the stage's own prompt asks this
+		// reader to do the one thing the gate exists to make impossible.
+		l.needsYou(name, ge.Error(), ge.Left(s.Left()))
 		return false, nil
 	case errors.As(err, &ny):
 		l.needsYou(name, "", ny.Left)
@@ -821,11 +923,13 @@ func (l *loop) finish() {
 		// The error itself is the caller's to print (the CLI returns it).
 		fmt.Fprintf(l.o.Out, "stopped at %s; fix: %s\n", f.Stage, f.Fix)
 	}
-	if l.o.Report != nil && !l.o.PlanOnly && !l.refused {
+	if l.o.Report != nil && !l.o.PlanOnly && !l.refused && !l.o.ReportBorrowed {
 		// Last, so the closing line is the last thing the run says: the
 		// reporter counts the steps it was given and names the outcome.
 		// A refused run has no outcome to name — the caller's exit code is
-		// not the account's — so it says nothing more (G3).
+		// not the account's — so it says nothing more (G3), and neither does a
+		// borrowed reporter, whose owner prints the line where its own run
+		// ends (ReportBorrowed).
 		l.o.Report.Summary()
 	}
 }

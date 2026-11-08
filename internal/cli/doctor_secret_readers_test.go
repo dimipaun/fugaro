@@ -79,8 +79,8 @@ func (r *secretReadersRig) doctor(t *testing.T, args ...string) (doctorOutput, e
 	return o, err
 }
 
-// withCredentialsService opts the rig's installation into the credentials
-// service, the way `fugaro update --provision-credentials` writes it.
+// withCredentialsService gives the rig's installation the credentials service,
+// the way an ordinary `fugaro update` writes it.
 func (r *secretReadersRig) withCredentialsService(t *testing.T) {
 	t.Helper()
 	addLocalLines(t, r.doctorRig, "credentials_service: { url: https://fugaro-credentials-abc-uc.a.run.app }\n")

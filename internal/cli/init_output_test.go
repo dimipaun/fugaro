@@ -154,6 +154,12 @@ func outputHygieneLefts(t *testing.T) []printedLeft {
 	add("firebase", newFirebaseStage(e).Left())
 	add("images", newImagesStage(e).Left())
 	add("installation-2", newInstallation2Stage(e).Left())
+	// The installation-2 stage's other arm: --firebase-project's history job,
+	// whose command names the flag, where the row above is the catalog check job
+	// a plain update deploys. Its own engine, because the flag decides the arm.
+	efb := &initEngine{r: &initRun{o: &initOptions{}}, lc: &localcfg.Config{Name: "aurora"}}
+	efb.r.o.firebase = "proj-1234"
+	add("installation-2/firebase", newInstallation2Stage(efb).Left())
 	add("secrets/no-checkout", (&secretsStage{e: e}).Left())
 	add("secrets/github", (&secretsStage{e: e, tg: &secretTarget{repo: "acme/app", wanted: []string{multilineSecret, "claude-oauth-token"}}, checked: true, missing: []string{multilineSecret, "claude-oauth-token"}}).Left())
 	add("secrets/bitbucket", (&secretsStage{e: e, tg: &secretTarget{repo: "acme/app", wanted: []string{"bitbucket-token"}}}).Left())

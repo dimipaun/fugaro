@@ -955,7 +955,7 @@ func coordinatorReaderWith(mint coordinatorReadMint, warn io.Writer) (coordinato
 // refusal is the caller's and not the host's: there is no key to find and
 // nothing to retry.
 func coordinatorNoAppKey(context.Context, string) (string, time.Time, error) {
-	return "", time.Time{}, fcli.UserErr("the project-wide read mints its GitHub token at the installation's credentials service, and this project publishes none (no credentials_service block in its configuration). An operator turns the service on with `fugaro update --provision-credentials`; the read is refused rather than made with a GitHub App key, which a person's machine does not hold")
+	return "", time.Time{}, fcli.UserErr("the project-wide read mints its GitHub token at the installation's credentials service, and this project publishes none (no credentials_service block in its configuration). An ordinary `fugaro update` deploys the service on every installation that can carry one, which needs the installation's Firebase backend and at least one repository job; the read is refused rather than made with a GitHub App key, which a person's machine does not hold")
 }
 
 // coordinatorTokens remembers the installation tokens one status run minted, so

@@ -47,7 +47,7 @@ type accountsOptions struct {
 
 func (o *accountsOptions) addFlags(cmd *cobra.Command) {
 	addCloudFlags(cmd, &o.cloud)
-	cmd.Flags().StringVar(&o.repo, "repo", "", "repository as owner/name (default: this checkout's origin)")
+	cmd.Flags().StringVar(&o.repo, "repo", "", "repository as owner/name, or a path inside its checkout (default: this checkout's origin)")
 	cmd.Flags().BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 }
 
@@ -178,8 +178,11 @@ func accountsConfig(cmd *cobra.Command, o cloudOptions) (lc *localcfg.Config, no
 func accountsLs(cmd *cobra.Command, o accountsOptions) error {
 	ctx := cmd.Context()
 	repo := o.repo
+	var err error
+	if repo, err = repoArg(ctx, o.cloud, repo); err != nil {
+		return err
+	}
 	if repo == "" {
-		var err error
 		if repo, err = originRepo(ctx); err != nil {
 			return err
 		}
@@ -542,9 +545,21 @@ func accountsClear(cmd *cobra.Command, o accountsClearOptions, name string) erro
 		return userErr("account %q carries the state %q, which this Fugaro does not know: clearing it could take off a hold a newer release placed, so nothing was changed", name, oneLine(string(prev.State)))
 	}
 
+	// The run's account is opened here and not at the top of the command: the
+	// refusals above decide whether there is a mark to clear at all, and a
+	// refused clear writes nothing — not even a log (D1352). The step is
+	// abandoned on every path that leaves the write unmade, which is what a
+	// declined confirmation is.
+	run := stepRunFor(cmd, "accounts-clear", cmd.OutOrStdout())
+	defer run.close()
+	st := run.rep.Step("Clearing the " + stateText(accountStateOf(prev)) + " mark of " + pluginwire.Printable(name))
+	defer st.Abandon()
+
 	what := fmt.Sprintf("clear the %s mark of Claude account %s, putting it back in the cascade's rotation",
 		stateText(accountStateOf(prev)), pluginwire.Printable(name))
-	if err := confirmTyped(cmd, bufio.NewReader(cmd.InOrStdin()), lc, o.yes, what); err != nil {
+	if err := run.ask(func() error {
+		return confirmTyped(cmd, bufio.NewReader(cmd.InOrStdin()), lc, o.yes, what)
+	}); err != nil {
 		return err
 	}
 
@@ -588,7 +603,6 @@ func accountsClear(cmd *cobra.Command, o accountsClearOptions, name string) erro
 	if err != nil {
 		return remote(err)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "cleared the %s mark of %s (now %s)\n",
-		stateText(accountStateOf(prev)), pluginwire.Printable(name), stateText(accountStateOf(written)))
+	st.Done("now " + stateText(accountStateOf(written)))
 	return nil
 }

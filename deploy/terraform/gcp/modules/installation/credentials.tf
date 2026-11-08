@@ -16,7 +16,7 @@
 # the service's own account — with the permissions spelled out at the role.
 
 locals {
-  # The whole file is gated on the one opt-in: null creates nothing, and a
+  # The whole file is gated on the one variable: null creates nothing, and a
   # single boolean keeps the six resources of this file in step (the account,
   # the bundle container, the accessor grant on it, the database role and its
   # binding, and the service — TestCredentialsServiceResourcesAreCounted is
@@ -26,8 +26,8 @@ locals {
 
   # The release the image pin names, or "" when the reference carries no
   # released version. The digest says nothing about which process is inside it,
-  # and the version beside it is the only thing that does: C1.20's stage
-  # resolves the release's own image and writes both (`mirror.RemoteRef`, so
+  # and the version beside it is the only thing that does: `fugaro update`'s
+  # deploy resolves the release's own image and writes both (`mirror.RemoteRef`, so
   # `…/fugaro-credentials:<version>@sha256:<digest>`), and a reference an
   # operator wrote by hand, a digest alone, or a version that is not
   # three numbers reads as "" — the direction that claims nothing.
@@ -36,11 +36,10 @@ locals {
   # Whether that process serves HTTP/2 cleartext, which is what the port's name
   # below is read as by Cloud Run's front end. The two MUST move together, and
   # what makes them is that the image is pinned by the run that plans this root:
-  # the owner-run credentials stage when the service is switched on, and — an
-  # installation that opted in under an earlier release — an ordinary
-  # `fugaro update`, which re-resolves this release's image and re-pins its
-  # digest before planning (internal/cli/init_stages.go's
-  # pinCredentialsImage). So the apply that moves the image onto this release
+  # every `fugaro update` resolves this release's image and re-pins its digest
+  # before planning the root (internal/cli/init_stages.go's pinCredentialsImage),
+  # whether the service is being deployed or an installation that already has it
+  # is being carried forward. So the apply that moves the image onto this release
   # is the one that renames the port. The direction of the name is the other
   # half: h2c in front of a process that answers HTTP/1.1 only serves nothing
   # at all — the front end reads the HTTP/2 preface as a malformed request line
@@ -321,7 +320,7 @@ resource "google_cloud_run_v2_service" "credentials" {
 
   # The service holds no data of its own: what is worth keeping is the bundle
   # container, and that one carries prevent_destroy above. So dropping the
-  # opt-in is NOT a removal a plan may make: with the container in state the
+  # block from the tfvars is NOT a removal a plan may make: with the container in state the
   # plan fails ("Instance cannot be destroyed") and applies nothing — the
   # service, this account and the grant above cannot be removed in that plan
   # either (independent security review of this file, M2, whose first version
@@ -404,12 +403,12 @@ resource "google_cloud_run_v2_service" "credentials" {
       # reads exactly these names, and internal/infra/tf's
       # credentialsServiceEnv is the allow-list that refuses anything else at
       # plan time). Seven of them are always set and the process REQUIRES
-      # them; the two below, the verifier list and the read mint's admitted
-      # people, are rendered only when the installation names the accounts they
-      # carry and are read as optional values. No
-      # credential is among them: it reads the one bundle secret as
-      # its own account, by the name it derives from FUGARO_PROJECT (the
-      # project-wide container of the logical name "creds-bundle",
+      # them; the rest are read as optional values, and — the verifier list
+      # alone excepted, which is rendered in every state of its own list
+      # (CSR14) — are rendered only when the installation names the accounts
+      # they carry. No credential is among them: it reads the one bundle
+      # secret as its own account, by the name it derives from FUGARO_PROJECT
+      # (the project-wide container of the logical name "creds-bundle",
       # internal/backend/gcp's ProjectSecretID — the same value
       # var.credentials_service.bundle_secret carries, which is what the
       # container above is created with), so no secret ID and no secret value
@@ -464,6 +463,30 @@ resource "google_cloud_run_v2_service" "credentials" {
       env {
         name  = "FUGARO_JOB_ACCOUNTS"
         value = jsonencode(var.credentials_service.job_accounts)
+      }
+      # The review class's admitted set (C3.9a): the installation's
+      # review-only job variants, as the same kind of document — the
+      # {profile, provider, account} triple each variant's job and service
+      # account are derived from, plus the Claude account the variant's calls
+      # are served by. It is the same rule as the table above and the same
+      # reason: the emails are that derivation's output, so a list of them
+      # here would be a second spelling that can drift from the accounts the
+      # deployer creates. The one thing the triple cannot carry is the Claude
+      # account the pairing serves a review call by, and the service cannot
+      # read the published policy for it (D143: a revision's start-up depends
+      # on no installation state), so it travels here.
+      #
+      # It is rendered only on an installation that deploys a variant, for the
+      # reason the three lists below are: the process reads the name as an
+      # optional value, so an installation with no review job starts with an
+      # EMPTY review set — a service that admits no review caller, which is the
+      # fail-closed state — rather than refusing to bind a port.
+      dynamic "env" {
+        for_each = length(var.credentials_service.review_job_accounts) == 0 ? [] : [jsonencode(var.credentials_service.review_job_accounts)]
+        content {
+          name  = "FUGARO_REVIEW_JOB_ACCOUNTS"
+          value = env.value
+        }
       }
       # The verifier list: the addresses that may ask the verify route whether
       # a verdict's signature is this service's (C3.9g1, D1068).
