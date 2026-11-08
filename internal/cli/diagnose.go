@@ -68,8 +68,9 @@ type Diagnosis struct {
 	// command a person runs to be told why, and D1460 is that a reader of this
 	// document is never sent into the row for it. Absent for a run that did
 	// not fail, and for a row the read side ended itself — a preemption, a
-	// lost execution — where nothing the run wrote named a cause and the row's
-	// own account of it is `derived` (runview.Row.FailureClass).
+	// lost execution, or an `error` for a run it could not follow — where the
+	// row's own account of it is `derived`, or that sentence
+	// (runview.Row.FailureClass).
 	FailureClass failure.Class    `json:"failure_class,omitempty"`
 	Halt         *runstore.Halt   `json:"halt,omitempty"`     // why a halted run was halted
 	Verify       []verify.Record  `json:"verify,omitempty"`   // result.json's verify records
@@ -855,8 +856,9 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	// directly under the status it describes: the closed vocabulary's name for
 	// why the run stopped, the runner's own where the record carries one and the
 	// reader's reading of its reason where it does not (runview.ClassOf). A run
-	// that did not fail, and a row whose ending the read side derived rather than
-	// read, has no cause to name and gets no line.
+	// that did not fail, and a row whose ending is the read side's own — derived,
+	// or an `error` for a run it could not follow — has no cause to name and gets
+	// no line.
 	if d.FailureClass != "" {
 		fmt.Fprintf(&b, "Class:    %s\n", oneLine(string(d.FailureClass)))
 	}

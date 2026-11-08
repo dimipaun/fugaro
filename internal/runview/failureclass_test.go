@@ -206,4 +206,25 @@ func TestRowCarriesTheClassTheRecordHolds(t *testing.T) {
 			t.Errorf("%s: the row reads %q and carries the class %q, want none: the record under it never settled, so nothing named a cause", tc.name, row.Status, row.FailureClass)
 		}
 	}
+	// The same absence on the row the read side cannot follow at all: the CLI
+	// sets Problem when the run's execution could not be read, or is not the
+	// one the record names, and the row is rewritten to `error` with that
+	// sentence (internal/cli/runs.go). This is a record whose reason *would*
+	// read as a class, and the row must not carry one: the row's own account
+	// is that it cannot follow this run, so a class read out of the object it
+	// cannot follow would be the one claim it makes about that object -- and
+	// `runs ls --json` and `diagnose` would both print it beside `Status:
+	// error`, a cause named for a run the reader was just told was unreadable.
+	followed := Join(Input{
+		Task:    spec,
+		Launch:  launch,
+		Record:  &runstore.Record{Status: runstore.StatusFailed, Reason: "tests failing on the final commit"},
+		Problem: "not following its execution: boom",
+	}, prices, now)
+	if followed.Status != StatusError {
+		t.Fatalf("the problem row reads %q, want %q: this case is about what a row says when the read side cannot follow the run", followed.Status, StatusError)
+	}
+	if followed.FailureClass != "" {
+		t.Errorf("the problem row reads %q and carries the class %q, want none: the class would be read from the record the row just said it cannot follow, and it would be printed beside the status on runs ls and diagnose", followed.Status, followed.FailureClass)
+	}
 }

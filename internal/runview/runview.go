@@ -115,10 +115,11 @@ type Row struct {
 	// not fail — a succeeded run, a run still going and a run that never
 	// started have no cause to name, and a class on them would be a
 	// classification of a success (D1464) — and absent for a row the read side
-	// settled itself: a preemption, a lost execution, a cancel before launch.
-	// No object of such a run ever recorded an ending, so nothing named a cause
-	// there and there is no reason to read one out of; the read side's own
-	// account of what happened to it is the Derived field beside this one.
+	// ends itself: a preemption, a lost execution and a cancel before launch,
+	// whose record never settled, so nothing named a cause there and there is
+	// no reason to read one out of — the read side's own account of those is
+	// the Derived field beside this one — and `error`, the row for a run it
+	// could not follow at all, whose record it may not claim to have read.
 	//
 	// It is a *reading* of a legacy record and says so by living in the row
 	// alone: nothing writes it back to the runs bucket, and no reader treats
@@ -335,9 +336,12 @@ func priced(p backend.Prices) bool {
 
 // ClassOf is the class a record carries: why the run did not end succeeded, as
 // one value of the closed vocabulary, and nothing at all for a record that did
-// not fail — a run still going, a record that never settled, the record under a
-// row the read side ended itself. The class is the record's own ending, so a
-// derivation is never one (design §3, D1464). It answers with the record's own
+// not fail — a run still going, and a record that never settled, which is what
+// a preemption, a lost execution and a cancel before launch leave behind. The
+// class is the record's own ending, so a derivation is never one (design §3,
+// D1464) — including the derivation that is a row's own: the row whose
+// execution could not be followed drops the class this function answers with
+// (Row.FailureClass). It answers with the record's own
 // field where the record has one, and with a reading of the record's own
 // reason where it does not — every record written before the field shipped
 // (design §5).
@@ -657,6 +661,12 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 	if in.Problem != "" {
 		// Settled: re-reading won't make an untrusted object trustworthy.
 		row.Status, row.Reason, row.Execution, row.Settled = StatusError, in.Problem, "", true
+		// The class goes with the reason and the status it was read from: this
+		// ending is the read side's own, and it says the run's objects could
+		// not be followed, so nothing the record holds is published -- an
+		// unreadable record's reason is exactly what this row may not claim to
+		// have read (Row.FailureClass).
+		row.FailureClass = ""
 		row.Cost = runstore.ModelOnlyCost(0, runstore.BasisAPIList)
 		return row
 	}

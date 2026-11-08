@@ -1200,8 +1200,10 @@ export const FINISHED_KEYS = [
  * the decisions themselves yet.
  *
  * **`failure_class` arrived with the failure classes (FC5)**, between `reason`
- * and `derived` in the struct, and the CLI writes it on a row whose run did not
- * end `succeeded`: one value of the closed vocabulary of
+ * and `derived` in the struct, and the CLI writes it on the rows its record
+ * names a cause for — not on a row that did not fail, and not on a row the read
+ * side ended itself, a row the CLI could not follow among them (contract
+ * section 5): one value of the closed vocabulary of
  * `docs/design/failure-classes.md` §3 — the class the runner wrote beside the
  * terminal status, or, for a record written before the field shipped, this
  * build's reading of the record's own `reason` (`runview.ClassOf`; contract
