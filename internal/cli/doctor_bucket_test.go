@@ -143,7 +143,7 @@ func TestDoctorRunsBucketIAMProjectEditorWarns(t *testing.T) {
 	var warned bool
 	for _, c := range o.Checks {
 		if strings.HasPrefix(c.ID, "runs-bucket-iam") && c.Severity == "warning" &&
-			strings.Contains(c.Problem, "roles/editor") && strings.Contains(c.Fix, "fugaro update --operator") {
+			strings.Contains(c.Problem, "roles/editor") && strings.Contains(c.Fix, "fugaro update --admin") {
 			warned = true
 		}
 	}

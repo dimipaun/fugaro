@@ -25,11 +25,13 @@ func writeDenied(err error) bool {
 }
 
 // operatorWriteErr is the refusal of a write to the runs bucket that only
-// operators may make (docs/design/bucket-iam.md H8): since 0.7.0 launchers
-// read the whole bucket but write only runs/ and tokens/ (the sealed budget
-// token, since 0.9.0). A 403 is a user error (exit 1)
-// naming the object, the bucket and what to do; any other error is returned
-// unchanged, for the caller's own wrapping.
+// admins may make (docs/design/bucket-iam.md H8). The two lists those
+// sentences were written for are the same two roles under the old words: the
+// role the releases name a launcher reads the whole bucket but writes only
+// runs/ and tokens/ (the sealed budget token, since 0.9.0), and the role they
+// name an operator writes it all -- operator and admin now (D1581). A 403 is
+// a user error (exit 1) naming the object, the bucket and what to do; any
+// other error is returned unchanged, for the caller's own wrapping.
 //
 // lead opens the message; only its first value is used, and it defaults to
 // "nothing was published" when none is given. A caller for which that isn't
@@ -43,22 +45,22 @@ func operatorWriteErr(url, key string, err error, lead ...string) error {
 	if len(lead) > 0 {
 		open = lead[0]
 	}
-	return userErr("%s: writing %s in %s needs the operator role (since 0.7.0 launchers read the runs bucket but write only runs/, and since 0.9.0 tokens/); ask an operator to publish it, or to add you with fugaro update --operator", open, key, url)
+	return userErr("%s: writing %s in %s needs the admin role (since 0.7.0 operators read the runs bucket but write only runs/, and since 0.9.0 tokens/); ask an admin to publish it, or to add you with fugaro update --admin", open, key, url)
 }
 
 // checkWriteErr is writeState's refusal of a check.json write the daily
 // check job's build service account could not make (docs/design/bucket-iam.md
 // H8). The job runs as that account, scoped to builds/<repository>/ by its
-// own Terraform IAM condition, not the launcher/operator grants
+// own Terraform IAM condition, not the operator/admin grants
 // operatorWriteErr explains: unlike every other operatorWriteErr caller,
-// the account refused here is never a launcher asking to publish something,
-// so operatorWriteErr's "ask an operator to publish it, or to add you with
-// fugaro update --operator" would send whoever reads the job's log looking in
+// the account refused here is never an operator asking to publish something,
+// so operatorWriteErr's "ask an admin to publish it, or to add you with
+// fugaro update --admin" would send whoever reads the job's log looking in
 // the wrong place. A 403 almost always means that account's grant is
-// missing or broken, which only an operator fixes in Terraform. (A person
+// missing or broken, which only an admin fixes in Terraform. (A person
 // who ran `fugaro image check --job` directly, impersonating the job with
 // their own credentials, hits the same 403 for a different reason; an
-// operator checking the grant first is still the reasonable start there
+// admin checking the grant first is still the reasonable start there
 // too.) Any other error is returned unchanged, for the caller's own
 // wrapping; a refused write is a remote failure (exit 2), not a user error:
 // whoever is running the job cannot fix a broken Terraform grant itself.
@@ -66,5 +68,5 @@ func checkWriteErr(url, key string, err error) error {
 	if !writeDenied(err) {
 		return err
 	}
-	return remote(fmt.Errorf("writing %s in %s was refused: the repository's build service account may be missing its builds/ write grant; an operator needs to check this repository's Terraform IAM condition (docs/design/bucket-iam.md): %w", key, url, err))
+	return remote(fmt.Errorf("writing %s in %s was refused: the repository's build service account may be missing its builds/ write grant; an admin needs to check this repository's Terraform IAM condition (docs/design/bucket-iam.md): %w", key, url, err))
 }

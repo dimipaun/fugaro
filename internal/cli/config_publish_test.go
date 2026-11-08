@@ -165,7 +165,7 @@ func TestPublishRefusesAClaimForAnUndefinedProvider(t *testing.T) {
 	}
 }
 
-// A launcher's publish is refused with the operator-role text before any
+// A launcher's publish is refused with the admin-role text before any
 // write (stand-in for bucket-iam plan Task 6's own test on operator_write.go,
 // not yet merged; see operatorWriteErr in layer_copy.go).
 func TestPublishLayerRefusedAsLauncher(t *testing.T) {
@@ -179,7 +179,7 @@ func TestPublishLayerRefusedAsLauncher(t *testing.T) {
 	}
 	var w bytes.Buffer
 	_, err := publishLayer(ctx, &w, b, l, true, nil, layerRecord{}, nil)
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "operator role") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "admin role") {
 		t.Fatalf("err = %v", err)
 	}
 	if _, _, rerr := b.Read(ctx, config.LayerKey); !errors.Is(rerr, blobx.ErrNotExist) {
@@ -194,7 +194,7 @@ func TestWriteLayerCopyRefusedAsLauncher(t *testing.T) {
 	fake.DenyWrites("fugaro-runs-proj-1234", "builds/")
 	b := fake.Bucket(t, "fugaro-runs-proj-1234")
 	err := writeLayerCopy(ctx, b, appSlug, []byte(testProjectLayer))
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "operator role") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "admin role") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -226,7 +226,7 @@ func TestWriteLayerCopyRemoveRefusedAsLauncher(t *testing.T) {
 	fake.DenyWrites("fugaro-runs-proj-1234", "builds/")
 	b := fake.Bucket(t, "fugaro-runs-proj-1234")
 	err := writeLayerCopy(ctx, b, appSlug, nil)
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "operator role") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "admin role") {
 		t.Fatalf("err = %v", err)
 	}
 	if _, _, rerr := b.Read(ctx, key); rerr != nil {
@@ -237,7 +237,7 @@ func TestWriteLayerCopyRemoveRefusedAsLauncher(t *testing.T) {
 // Review Focus 4: the oversized-object branch of writeLayerCopy's removal
 // (the generation is not known, so it deletes through the embedded gocloud
 // Bucket, not a blobx writer) must still classify a 403 as needing the
-// operator role, not a generic error.
+// admin role, not a generic error.
 func TestWriteLayerCopyRemoveOfOversizedIsRefusedAsLauncher(t *testing.T) {
 	ctx := context.Background()
 	fake := gcpfake.NewGCS(t)
@@ -246,7 +246,7 @@ func TestWriteLayerCopyRemoveOfOversizedIsRefusedAsLauncher(t *testing.T) {
 	fake.DenyWrites("fugaro-runs-proj-1234", "builds/")
 	b := fake.Bucket(t, "fugaro-runs-proj-1234")
 	err := writeLayerCopy(ctx, b, appSlug, nil)
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "operator role") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "admin role") {
 		t.Fatalf("err = %v", err)
 	}
 	if data, _, rerr := b.Read(ctx, key); rerr != nil || len(data) != config.LayerMaxBytes+1 {
@@ -656,8 +656,8 @@ func TestFanOutForbiddenMessageDoesNotClaimNothingWasPublished(t *testing.T) {
 	if strings.Contains(w.String(), "nothing was published") {
 		t.Fatalf("a copy failure falsely claimed nothing was published: %s", w.String())
 	}
-	if !strings.Contains(w.String(), "operator role") {
-		t.Fatalf("stderr lacks the operator-role text: %s", w.String())
+	if !strings.Contains(w.String(), "admin role") {
+		t.Fatalf("stderr lacks the admin-role text: %s", w.String())
 	}
 }
 

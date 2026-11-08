@@ -248,7 +248,7 @@ func ProjectStorageWriters(p *crm.Policy, launchers, operators []string) []Bucke
 				pm := pluginwire.Printable(m)
 				out = append(out, BucketFinding{Severity: "warning", Member: m, Role: bd.Role,
 					Problem: "launcher " + pm + " holds " + bd.Role + " on the project, which writes fugaro/ whatever the bucket's policy says",
-					Fix:     "make " + pm + " an operator (fugaro update --operator), or remove the project role"})
+					Fix:     "make " + pm + " an admin (fugaro update --admin), or remove the project role"})
 			}
 		}
 	}

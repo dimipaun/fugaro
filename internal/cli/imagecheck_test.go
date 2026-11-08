@@ -905,12 +905,12 @@ func TestCheckJobRecordWriteFailureAfterSubmit(t *testing.T) {
 // TestCheckJobForbiddenWriteStaysExitRemoteError: the daily check job runs
 // as the build account, the only writer of check.json, so a check.json
 // write it is forbidden to make means that account's builds/ grant itself
-// is broken (an infrastructure fault for an operator to fix with Terraform,
-// not something "ask an operator to publish it" or fugaro update --operator
+// is broken (an infrastructure fault for an admin to fix with Terraform,
+// not something "ask an admin to publish it" or fugaro update --admin
 // addresses). The job's documented exit 2 for a failed check
 // (imagecheck.go's "It exits 2 when the check itself failed") holds; the
 // refusal text in the JSON log line names the build account's Terraform
-// grant, not the operator role, so an on-call engineer is pointed at the
+// grant, not the admin role, so an on-call engineer is pointed at the
 // right fix.
 func TestCheckJobForbiddenWriteStaysExitRemoteError(t *testing.T) {
 	f := newCheckJob(t, checkFiles(), bitbucketYAML)
@@ -927,10 +927,10 @@ func TestCheckJobForbiddenWriteStaysExitRemoteError(t *testing.T) {
 		t.Fatalf("lines = %+v", lines)
 	}
 	// The real fix is the Terraform grant, not adding a person as an
-	// operator: the job never runs as a launcher asking to publish
+	// admin: the job never runs as an operator asking to publish
 	// something.
-	if strings.Contains(lines[0].Error, "operator role") || strings.Contains(lines[0].Error, "fugaro update --operator") {
-		t.Errorf("error points at the operator role, not the build account's Terraform grant: %s", lines[0].Error)
+	if strings.Contains(lines[0].Error, "admin role") || strings.Contains(lines[0].Error, "fugaro update --admin") {
+		t.Errorf("error points at the admin role, not the build account's Terraform grant: %s", lines[0].Error)
 	}
 	// "nothing was published" would be false here: the build did run.
 	if strings.Contains(lines[0].Error, "nothing was published") {
