@@ -378,8 +378,9 @@ already holds in workflow_secrets (that block can hold no reserved name),
 and --repo cannot be combined with either flag: the entry is the project's
 own and no repository owns it. --proxy is refused for a workflow secret,
 because no workflow_secrets entry holds the switch. Adding a repository to
-the list, or turning proxy on, is a widening, so it takes the project's own
-name at a terminal — or --yes outside a coding agent's session. --dry-run
+the list, or turning proxy on, is a widening: it is the owner's own step,
+asked nothing at your own terminal, and a coding agent's session is refused
+it with the command to run yourself (D1552). --dry-run
 says what the write would do and writes nothing, and --json prints that as
 the settings-write document.
 
@@ -1037,8 +1038,7 @@ func secretsPolicyTyped(o secretsOptions, block, name string, proxy bool) (bool,
 	if len(parts) == 0 {
 		return false, ""
 	}
-	return true, "this widens what the secret reaches: " + strings.Join(parts, ", and ") +
-		", so the project's own name is what confirms it, or --yes outside a coding agent's session"
+	return true, "this widens what the secret reaches: " + strings.Join(parts, ", and ")
 }
 
 // secretsPolicyWhat is the sentence the confirmation shows. The list is the one

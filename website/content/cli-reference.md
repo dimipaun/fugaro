@@ -4557,8 +4557,9 @@ already holds in workflow_secrets (that block can hold no reserved name),
 and --repo cannot be combined with either flag: the entry is the project's
 own and no repository owns it. --proxy is refused for a workflow secret,
 because no workflow_secrets entry holds the switch. Adding a repository to
-the list, or turning proxy on, is a widening, so it takes the project's own
-name at a terminal — or --yes outside a coding agent's session. --dry-run
+the list, or turning proxy on, is a widening: it is the owner's own step,
+asked nothing at your own terminal, and a coding agent's session is refused
+it with the command to run yourself (D1552). --dry-run
 says what the write would do and writes nothing, and --json prints that as
 the settings-write document.
 
@@ -4693,10 +4694,11 @@ unset to remove the key.
 
 Loosening a ceiling key (budget.*, governance.*, the agent caps
 agent.max_budget_usd and agent.max_run_tokens with the layer's own spellings),
-adding a name to a followup.* list or turning one of those keys on, is
-confirmed by the project's name typed at a terminal, or by --yes. Writing
-outside a repository is refused in a coding agent's session, --yes included,
-and so is the typed form at any layer: --yes never lifts that fence.
+adding a name to a followup.* list or turning one of those keys on, is a
+widening, and a widening is the owner's own step: nothing is asked for it at
+your own terminal, and a coding agent's session is refused it with the command
+to run yourself (D1552). Writing outside a repository is refused in a coding
+agent's session, --yes included: --yes never lifts that fence.
 
 --dry-run says what the edit would do — the key, the layer, the file, the old
 and the new value, and whether it raises a limit — and writes nothing: no
@@ -4716,7 +4718,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--add` | string | "" | no | add an item to a string-list key |
 | `--add-entry` | stringArray | `[]` | no | add one entry to a map or an object list (field=value, once per member the entry has) |
-| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmations this write would otherwise get (the y/N, or the typed project name for a widening direction) instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the questions back. Refused where nobody can answer them (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get (the y/N) instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back — a widening is the owner's own step and is asked nothing with or without it (D1552). Refused where nobody can answer them (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dry-run` | bool | `false` | no | print what the edit would do and write nothing |
 | `-h`, `--help` | bool | `false` | no | help for set |
@@ -4743,8 +4745,9 @@ indistinguishable from a deliberate pin and silently wrong the day the built-in
 changes. Nothing to remove is a no-op with a sentence and exit 0, so an
 idempotent script does not fail.
 
-Removing a ceiling key is confirmed by the project's name typed at a terminal,
-or by --yes outside a coding agent's session.
+Removing a ceiling key is the owner's own step: nothing is asked for it at your
+own terminal, and a coding agent's session is refused it, with the command to
+run yourself (D1552).
 
 --dry-run says what the removal would do — the key, the layer, the file, the
 value it takes away, and whether it raises a limit — and writes nothing: no
