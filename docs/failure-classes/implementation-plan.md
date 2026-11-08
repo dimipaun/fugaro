@@ -1,7 +1,7 @@
 # A closed failure class on every run record, and a failures report: implementation plan
 
 **Status (2026-11-07): D1450–D1469 are answered 2026-11-07 and all tasks are approved 2026-11-07
-(owner: "All tasks approved. Jobmax"); of them, FC1 and FC2 are built on `main` and FC3–FC9 are not
+(owner: "All tasks approved. Jobmax"); of them, FC1–FC4 are built on `main` and FC5–FC9 are not
 started.**
 Nine tasks, **FC1–FC9** — the design's own FC1–FC8 (its §10, kept by name, by order and by edge — its
 **task** names, that is: one
@@ -24,9 +24,9 @@ reconciliation's findings (F1–F36) and decisions (D1450–D1469) win, and the 
 
 **Every task here is approved, and what each one's gate named is settled.** The design stays a design
 and this stays a plan (§10 of the design and [README.md](README.md) say so); each task's gate is in
-§7, and the decision rows most of them name carry the owner's dated answer of 2026-11-07. **Two of the
-nine are built** — FC1 and FC2, which their own headings below say — and **FC3–FC9 are not started**:
-an approved task is still built on its own, in its own run, in the order §1 fixes.
+§7, and the decision rows most of them name carry the owner's dated answer of 2026-11-07. **Four of
+the nine are built** — FC1–FC4 — and **FC5–FC9 are not started**: an approved task is still built on
+its own, in its own run, in the order §1 fixes.
 
 **Rules every task obeys** (this repository's own, not this plan's invention):
 
@@ -241,19 +241,24 @@ written anywhere else, and is the last-writer rule the only rule?* **Owner-run:*
   `outcome.Decide` already returns at `internal/runner/outcome.go:46`, beside it) and
   `haltClass(h runstore.HaltReason) failure.Class`. **The halt table is the load-bearing one**
   (D1455): the writer's `haltClass` and the reader's legacy mapping (FC5) must agree halt reason by
-  halt reason, including `HaltBudgetUnavailable` (`internal/runstore/runstore.go:54`), which the
-  design's `halted_credential` range `:55–71` misses (F17) and which is a **budget** halt. The one
-  slice is `runstore.GovernanceHaltReasons()` (`:104`) plus the budget and credential families, and
-  the agreement test walks it.
+  halt reason, including `HaltBudgetUnavailable` (`internal/runstore/runstore.go:54`), which sits one
+  line above the design's `halted_credential` range `:55–71` (F17): what starts late is the citation,
+  not the family — the design's row names the reason ("no credential became usable, or the budget
+  database refused", `docs/design/failure-classes.md:170`), so the reason is `halted_credential` in
+  the writer's table (`internal/runner/halt.go:238`), as its two neighbours
+  (`HaltBudgetTokenExpired`, `HaltNoCredential`) are. The one slice is
+  `runstore.GovernanceHaltReasons()` (`:104`) plus the budget and credential families, and the
+  agreement test walks it — FC5's, since its other half is that reader.
 - **Tests:** `TestDecideRefusalsCarryTheirClass`, `TestHaltReasonsMapToTheirFamily` (every value of
-  the closed `HaltReason` set, including `:54`), `TestConfigRefusalIsConfigInvalid`, and
-  `TestHaltClassesAgreeWithTheReadersTable` — the test D1455 exists for: the same walk over the same
-  slice, asserted against the reader's mapping, so a rename in one place and not the other is red.
+  the closed `HaltReason` set, including `:54`) and `TestConfigRefusalIsConfigInvalid`. **The
+  agreement walk D1455 exists for is not one of them**: it is asserted against the reader's mapping,
+  which this task does not write, so it is FC5's and is named with the reader's own tests below.
 - **Red step:** every class assertion fails against a tree where the class is `unclassified` — the
   tree after FC2 and before this task.
-- **Mutation to hold it:** move `HaltBudgetUnavailable` to `halted_credential` → the family test and
-  the agreement test both fail.
-- **Command:** `GOFLAGS=-p=2 go test ./internal/runner -run 'DecideRefusals|HaltReasons|ConfigRefusal|HaltClasses' -count=1 -timeout 40m`
+- **Mutation to hold it:** move `HaltBudgetUnavailable` to `halted_budget` → the family test fails;
+  once FC5's reader exists, the same move reddens the agreement walk too, which is the cross-task half
+  of D1455.
+- **Command:** `GOFLAGS=-p=2 go test ./internal/runner -run 'DecideRefusals|HaltReasons|ConfigRefusal' -count=1 -timeout 40m`
 - **Commit:** `runner: the classes the runner knows from its own state`.
 
 ### FC4. The classifier over the agent's own message (SEC)
@@ -291,9 +296,12 @@ does anything act on the class?* **Owner-run:** no.
 **Decisions:** D1454. **Findings:** F20, F21, F27, F32. **Depends on:** FC1, FC3. **Reviewer tier:**
 standard, with the Docs run in the same pull request. **SEC:** no. **Owner-run:** no.
 
-- **Files (5):** `internal/runview/runview.go` (`Row.FailureClass`, beside `Reason` at `:106`, and
+- **Files (6):** `internal/runview/runview.go` (`Row.FailureClass`, beside `Reason` at `:106`, and
   `ClassOf`), `internal/runview/failureclass_test.go` (new, `launched_by_test.go`'s neighbour),
-  `internal/cli/runs_test.go` (the row's class on the listing), `console/docs/json-contract.md`
+  `internal/runner/haltclasses_agree_internal_test.go` (new: D1455's agreement walk, which has to sit
+  on this side of the import — `internal/runner` imports `internal/runview` for its own reasons, so a
+  test in `internal/runview` cannot call `haltClass`), `internal/cli/runs_test.go` (the row's class on
+  the listing), `console/docs/json-contract.md`
   (**the row's `failure_class` row, in this commit** — the reflect pin
   `TestDocsDesktopConsoleContractNamesTheOtherShapesFields`
   (`internal/cli/docs_desktop_console_test.go:353`) walks `runview.Row{}` and asserts the document
@@ -314,17 +322,24 @@ standard, with the Docs run in the same pull request. **SEC:** no. **Owner-run:*
   `branch_moved` and the reader must therefore class `branch_moved` too: one fact, one class, which is
   the agreement **D1455** asks for and the split F34 names), `TestLegacyUnmatchedReasonIsUnclassified`, `TestLegacyClassIsNeverWrittenBack`
   (serialise the record before and after a read through `ClassOf` and `runs ls`: the bytes are equal
-  — this is the test that holds the read-only property), `TestRowCarriesTheClassTheRecordHolds`, and
+  — this is the test that holds the read-only property), `TestRowCarriesTheClassTheRecordHolds`,
   `TestRunsLsCarriesTheLegacyClass` (a window holding one old and one new record: both rows carry a
-  class, and the old one's comes from its reason).
+  class, and the old one's comes from its reason), and **`TestHaltClassesAgreeWithTheReadersTable`** —
+  the walk D1455 exists for and FC3 hands over here: `runstore.GovernanceHaltReasons()` plus the
+  budget and credential families, every reason read twice, through FC3's `haltClass` and through
+  `ClassOf`'s halt mapping, so a reason renamed, or moved to another family, on one side and not the
+  other is red.
+  It reads both halves because it can: the runner may import the reader, never the other way round.
 - **Red step:** `TestLegacyClassFromReasonTable` fails against a function that returns the class only
   when the field is present (every legacy row is `unclassified`), and the Docs run fails on the
   contract before the row is added.
 - **Mutation to hold it:** write the derived class back onto the record → the bytes test fails;
   unexport `ClassOf` → `internal/digest` does not compile, which is the proof D1454's recommendation
-  is the only placement that works.
+  is the only placement that works; move a reason's family in `haltClass` alone →
+  `TestHaltClassesAgreeWithTheReadersTable` fails.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/runview -run 'Legacy|RowCarries|RunsLs' -count=1`
-  then `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|RunsLs' -count=1 -timeout 40m`.
+  then `GOFLAGS=-p=2 go test ./internal/runner -run 'HaltClasses' -count=1 -timeout 40m`, then
+  `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|RunsLs' -count=1 -timeout 40m`.
 - **Commit:** `feat(runview): read a legacy record's class from its reason`.
 
 ### FC6. `runs ls --group-by failure_class`
@@ -635,13 +650,13 @@ sentence and nothing else moves. **If D1460 = no**, FC5's diagnose field and FC8
 fall away. **If FC2 slips**, FC1 ships alone — a field nothing writes, which is harmless and true —
 and FC3–FC9 start when it lands.
 
-**FC1's and FC2's rows are answered in full.** The plan was approved; **D1453** is answered as
-recommended (`internal/failure`) and **D1452** and **D1456** for FC2, and both tasks are merged, so
-FC3's and FC4's first gate (FC2 merged) is met as well. Every other row waits on its own run, in the
-order §1 fixes.
+**FC1's, FC2's and FC3's rows are answered in full.** The plan was approved; **D1453** is answered as
+recommended (`internal/failure`), **D1452** and **D1456** for FC2, and **D1455** for FC3 — FC4 names
+no decision of its own — and all four tasks are merged, so FC4's first gate (FC2 merged) and FC5's
+(FC1 and FC3 merged) are met as well. Every other row waits on its own run, in the order §1 fixes.
 
 **And the plan's own status:** a plan, **every task of it approved on 2026-11-07** (owner: "All
 tasks approved. Jobmax"); the dated answer this plan's decisions share is in
-[reconciliation.md](reconciliation.md) §6; **FC1 and FC2 are built and FC3–FC9 are not started**,
-which their own headings above say. The design's §10 status records the same fact and answers none of
-the design's own decisions, which are D1–D9 and O1–O6 of that document and not this folder's.
+[reconciliation.md](reconciliation.md) §6; **FC1–FC4 are built and FC5–FC9 are not started**. The
+design's §10 status records the same fact and answers none of the design's own decisions, which are
+D1–D9 and O1–O6 of that document and not this folder's.

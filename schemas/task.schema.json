@@ -61,6 +61,11 @@
     "branch": { "type": "string", "pattern": "^fugaro/[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
     "pr": { "type": "integer", "minimum": 1 },
     "previous_run": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
+    "owner_ruled": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "description": "The repository owner's ruling this follow-up was launched with (OD1, fugaro run --owner-ruled): their answer to the findings a run on this pull request left for them, which no code change could settle. The runner appends it to the follow-up's brief verbatim and echoes it onto the run's record (runstore.Record.OwnerRuled). Bounded at task.MaxOwnerRuledBytes, never blank, and carrying no control character other than a newline or a tab — the rules task.Spec.Validate applies. A launcher refuses a follow-up on a pull request whose last run stopped waiting on owner decisions unless this carries one, so the loop that spent the runs in the first place cannot start again." },
     "review_prs": {
       "type": "array",
       "description": "Set only for a mode: review recipe (design generic-tool §3.6): the pull requests to review, 1 to 4, never together with branch/pr/previous_run.",
@@ -257,6 +262,7 @@
     "branch": ["pr", "previous_run"],
     "pr": ["branch", "previous_run"],
     "previous_run": ["branch", "pr"],
+    "owner_ruled": ["branch", "pr", "previous_run"],
     "mutate": ["review_prs"]
   },
   "allOf": [

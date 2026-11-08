@@ -1118,10 +1118,10 @@ export const FINISHED_KEYS = [
  * The list is derived from the struct rather than from the fields the console
  * happens to read, and pinned to it, so it stays the console's statement of
  * what it has read. Keys accepted and not read (`title`, `project_layer`,
- * `config_sha256`, `image_age_s`, `changed_files`, `rigor`, `artifact_count`, `artifact_bytes`,
- * `task_pr`, `record_pr`, `pr`, `pushed_head`, `started_at`, `draft_fallback`,
- * `pr_status_at`, `stale_draft`, `execution`, `batch`, `halt`, `previous_run`,
- * `base_branch`, `derived`)
+ * `config_sha256`, `image_age_s`, `changed_files`, `owner_decisions`, `rigor`,
+ * `artifact_count`, `artifact_bytes`, `task_pr`, `record_pr`, `pr`,
+ * `pushed_head`, `started_at`, `draft_fallback`, `pr_status_at`, `stale_draft`,
+ * `execution`, `batch`, `halt`, `previous_run`, `base_branch`, `derived`)
  * are the ones this screen has no use for yet; they are listed so that a
  * document carrying them is read rather than thrown away.
  *
@@ -1185,6 +1185,18 @@ export const FINISHED_KEYS = [
  * ever draws them. The reader drops a key it does not know the class of; the
  * `mode` word is drawn only when this build's own table names it, and
  * otherwise as bounded text.
+ *
+ * **`owner_decisions` arrived with OD1 (2026-11-07)**, between `changed_files`
+ * and `rigor` in the struct, and a run whose review left the owner a question
+ * writes it: the decisions it is waiting on (`file` and `summary`) and how many
+ * there are. It is `plan_task`'s and `rigor`'s omission a fourth time -- the
+ * console reads neither key, so the pin against the struct is the only place a
+ * missing one shows up -- and the omission is silent rather than fatal: since
+ * the owner's ruling of 2026-10-30 an unlisted key is ignored, so a row
+ * carrying the block decodes with it dropped, and nothing on the screen says a
+ * decision is pending. What says it is the row's `reason`, the CLI's own
+ * sentence for it (console/docs/json-contract.md section 5); no screen draws
+ * the decisions themselves yet.
  */
 export const RECORD_KEYS = [
   'run',
@@ -1216,6 +1228,7 @@ export const RECORD_KEYS = [
   'branch',
   'outcome',
   'changed_files',
+  'owner_decisions',
   'rigor',
   'artifact_count',
   'artifact_bytes',

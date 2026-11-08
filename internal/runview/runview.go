@@ -185,6 +185,16 @@ type Row struct {
 	// that died before finalize, or a record from before the field existed —
 	// so a reader never sees an empty set where the answer is unknown.
 	ChangedFiles *runstore.ChangedFiles `json:"changed_files,omitempty"`
+	// OwnerDecisions is what the run's review left for the repository's owner
+	// to settle (OD1): the findings a reviewer marked needs_owner, which no
+	// code change can fix — the run halted on them where they were the whole
+	// round, and ended a draft that waits on them otherwise. It is the
+	// record's own block, bounded again on read (runstore.OwnerDecisions.Bounded)
+	// and nil when the run's review left none (or the run stopped for its own
+	// reason), so no reader renders "no record" as "nothing is pending". The
+	// run's own reason says the count — its halt's where it halted on them —
+	// and this says what each decision is, which is what a person answers.
+	OwnerDecisions *runstore.OwnerDecisions `json:"owner_decisions,omitempty"`
 	// Rigor is the mode the run resolved, the layer that decided it, the
 	// areas that matched — each with the mode it sets and the moment it was
 	// first applied at, strictest first (D23) — and the moment of the block
@@ -354,6 +364,9 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 		// rigor.Layers or one of D22's three moments reaches the row as none
 		// at all, which is the answer its absence already gives.
 		row.Rigor = r.Rigor.Bounded()
+		// Bounded again on read, like the two above: the block is the model's
+		// output and the record is job-writable.
+		row.OwnerDecisions = r.OwnerDecisions.Bounded()
 		row.Stage = r.Stage
 		if r.Reason != "" {
 			row.Reason = r.Reason

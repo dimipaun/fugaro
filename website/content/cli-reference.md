@@ -1992,6 +1992,17 @@ when it was assembled, one entry per scope in sources, the nodes, the edges
 (the coordinator's view has none) and the warnings. Without it, a short
 table: each scope's state, then its nodes grouped by release.
 
+--watch --json prints a whole document per change instead of one and
+exits, one compact object per line: the first snapshot at once, then one
+document for every change of the scopes it covers, at most one a second,
+and a document every 30 seconds while nothing changes. Every document
+carries the stream's own id and a sequence that rises within it, so a
+reader reads a new id as a whole new snapshot rather than comparing its
+sequence with the one before. It subscribes to each scope once, and a
+scope it cannot reach is a state in the document rather than an exit.
+--watch needs --json, which is the only shape a reader of the stream can
+consume.
+
 Exit codes: 1 for a refused scope or a project with no database, 2 for a
 failure of the database or the runs bucket.
 
@@ -2008,6 +2019,7 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--source` | string | `all` | no | the scope to read: all, coordinator, orchestrator:<id> or local:<id> |
+| `--watch` | bool | `false` | no | print a whole document per change, one compact object per line (needs --json) |
 
 Subcommands:
 
@@ -2627,6 +2639,14 @@ This is the read a screen of a managed project is built on: one closed document
 about one project, holding the two marks' own answer and the bounded subset of
 the newest audit record — never a sentence to be parsed, whose next rewording
 would change what a screen draws.
+
+The document also carries this machine's record of the project's last plain
+"fugaro update": what that update retired by itself, when it settled the
+retirement and how many runs the registry held while it did, with the record's
+own version beside it — or a sentence instead of the entry when that record
+cannot be read, so a record that is corrupt is never drawn as a project nothing
+was recorded for. It is a local read, and it is made whatever the marks answer:
+a project that is not managed runs updates too.
 
 It reads the same two facts a managed apply reads, and changes no cloud object:
 whether the project is managed is the creation fact in its runs bucket and the
@@ -3908,6 +3928,7 @@ Flags:
 | `--mode` | string | "" | no | the rigor mode to ask for: poc, startup, pro, critical, hotfix; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it, and takes no hotfix; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps |
 | `--no-budget-check` | bool | `false` | no | skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts |
 | `--no-compression` | bool | `false` | no | turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change |
+| `--owner-ruled` | string | "" | no | the repository owner's ruling on the findings a run on this PR left for them (OD1): either the text itself, a file, or - for stdin. A follow-up on a pull request whose last run stopped waiting on owner decisions is refused without it, and one whose last run left no such decisions is refused with it: the ruling answers what that run left, and nothing else; it is appended to this run's brief verbatim and recorded in the run |
 | `--path` | stringArray | `[]` | no | declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none matches no area rule |
 | `--plan-task` | string | "" | no | record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given |
 | `--pr` | intSlice | `[]` | no | continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR) |
