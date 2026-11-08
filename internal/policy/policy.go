@@ -491,10 +491,11 @@ type Effective struct {
 
 // Ignored records a value a later layer set that did not tighten the running
 // effective value. Value and Effective are rendered as text; Source is the
-// layer the effective value came from, and "" when the value has no effective
-// counterpart at all — a credential, a pool or a craft's access a later layer
-// may not introduce (F12, D1628), where the running answer is that there is
-// none.
+// layer the effective value came from — or, for a value with no effective
+// counterpart at all, a credential, a pool or a craft's access a later layer
+// may not introduce (F12, D1628), the project's own layer, whose answer that
+// it holds no such name is what stands (craftSource). It is never empty: a
+// record's ignored[].source is one of the layer names.
 type Ignored struct{ Key, Value, Effective, Source string }
 
 // ValidMode reports whether m is one of "off", "observe", "enforce". Merge

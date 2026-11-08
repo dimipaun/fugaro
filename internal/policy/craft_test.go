@@ -39,7 +39,10 @@ func TestRepoCannotAddCredential(t *testing.T) {
 	if e.Sources[CraftCredentialKey("openrouter-main")] != SourceCeiling {
 		t.Fatalf("sources = %v", e.Sources)
 	}
-	if want := []Ignored{{CraftCredentialKey("repo-key"), "repo-key", "", ""}}; !reflect.DeepEqual(e.Ignored, want) {
+	// The entry names a layer like every other: what the name was measured
+	// against is the project's own list — the layer a record's
+	// ignored[].source has to be one of (schemas/result.schema.json).
+	if want := []Ignored{{CraftCredentialKey("repo-key"), "repo-key", "", SourceCeiling}}; !reflect.DeepEqual(e.Ignored, want) {
 		t.Fatalf("ignored = %+v, want %+v", e.Ignored, want)
 	}
 
@@ -100,7 +103,7 @@ func TestLooserPoolNeverWins(t *testing.T) {
 	if len(e.Craft.Pools) != 1 {
 		t.Fatalf("pools = %+v", e.Craft.Pools)
 	}
-	if want := []Ignored{{CraftPoolKey("repo-pool"), "repo-pool", "", ""}}; !reflect.DeepEqual(e.Ignored, want) {
+	if want := []Ignored{{CraftPoolKey("repo-pool"), "repo-pool", "", SourceCeiling}}; !reflect.DeepEqual(e.Ignored, want) {
 		t.Fatalf("ignored = %+v, want %+v", e.Ignored, want)
 	}
 
@@ -182,7 +185,7 @@ func TestCraftAccessSelectsWhatTheProjectMakesAvailable(t *testing.T) {
 	}
 	want := []Ignored{
 		{CraftAccessKey("coder"), "repo-key", "openrouter-main", SourceCeiling},
-		{CraftAccessKey("review"), "repo-key", "", ""},
+		{CraftAccessKey("review"), "repo-key", "", SourceCeiling},
 	}
 	if !reflect.DeepEqual(e.Ignored, want) {
 		t.Fatalf("ignored = %+v, want %+v", e.Ignored, want)

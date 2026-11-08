@@ -169,8 +169,27 @@ func (e *Effective) refuseCraftCredentials(names []string) {
 		if name == "" || slices.Contains(e.Craft.Credentials, name) {
 			continue
 		}
-		e.Ignored = append(e.Ignored, Ignored{CraftCredentialKey(name), name, "", ""})
+		key := CraftCredentialKey(name)
+		e.Ignored = append(e.Ignored, Ignored{key, name, "", e.craftSource(key)})
 	}
+}
+
+// craftSource is the layer a refused craft value lost to, as a record reads it:
+// the layer that set the effective value where one did, and the project's own —
+// the merge's first layer — where none did. The project's set of credentials
+// and pools is the whole answer to "may this name be used", so its silence
+// about a name is the answer a later layer may not loosen, and it is that layer
+// the value was measured against.
+//
+// It is never "": a record's ignored[].source is the layer of the effective
+// value and a schema pins it to the four layer names (schemas/result.schema.json,
+// internal/runner's policyRecord publishes this string verbatim), so a value
+// with no effective counterpart still names the layer that answers for it.
+func (e *Effective) craftSource(key string) string {
+	if src := e.Sources[key]; src != "" {
+		return src
+	}
+	return SourceCeiling
 }
 
 // defineCraftPools takes the project's pools as they stand, each member list
@@ -206,7 +225,8 @@ func (e *Effective) defineCraftPools(pools map[string]CraftPool, src string) {
 func (e *Effective) tightenCraftPool(name string, p CraftPool, src string) {
 	cur, defined := e.Craft.Pools[name]
 	if !defined {
-		e.Ignored = append(e.Ignored, Ignored{CraftPoolKey(name), name, "", ""})
+		key := CraftPoolKey(name)
+		e.Ignored = append(e.Ignored, Ignored{key, name, "", e.craftSource(key)})
 		return
 	}
 	out := cur
@@ -251,7 +271,8 @@ func (e *Effective) selectCraftAccess(access map[string]string, src string, proj
 			continue
 		}
 		if !project && !e.craftAccessAvailable(name) {
-			e.Ignored = append(e.Ignored, Ignored{CraftAccessKey(craft), name, cur, e.Sources[CraftAccessKey(craft)]})
+			key := CraftAccessKey(craft)
+			e.Ignored = append(e.Ignored, Ignored{key, name, cur, e.craftSource(key)})
 			continue
 		}
 		if e.Craft.Access == nil {
