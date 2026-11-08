@@ -339,13 +339,17 @@ func TestDisplayNamesAndConditions(t *testing.T) {
 		{BucketConditionTitle("fugaro-x-12345678"), "fugaro-fugaro-x-12345678"},
 		{BucketCondition("b", []string{"runs", "cache"}, "s"),
 			`resource.name.startsWith("projects/_/buckets/b/objects/runs/s/") || resource.name.startsWith("projects/_/buckets/b/objects/cache/s/")`},
-		{LauncherBucketConditionTitle, "fugaro-launchers-runs-tokens"},
+		{LauncherBucketConditionTitle, "fugaro-launchers-runs-tokens-issues"},
 		{LauncherBucketCondition("fugaro-runs-proj-1234"),
+			`resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/runs/") || resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/") || resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/issues/")`},
+		// The launchers' grant as 0.9.0 wrote it, before issues/ joined it:
+		// what a reader must recognise as that grant's older form rather than
+		// as a stranger's condition (internal/infra's RunsBucketFindings), and
+		// the bytes no release writes any more.
+		{LauncherBucketConditionRunsTokensTitle, "fugaro-launchers-runs-tokens"},
+		{LauncherBucketConditionRunsTokens("fugaro-runs-proj-1234"),
 			`resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/runs/") || resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/")`},
-		// The launchers' grant as every release before 0.9.0 wrote it: what a
-		// reader must recognise as that grant's old form rather than as a
-		// stranger's condition (internal/infra's RunsBucketFindings), and the
-		// bytes no release writes any more.
+		// And as every release before 0.9.0 wrote it, for the same reader.
 		{LegacyLauncherBucketConditionTitle, "fugaro-launchers-runs"},
 		{LegacyLauncherBucketCondition("fugaro-runs-proj-1234"),
 			`resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/runs/")`},
@@ -423,25 +427,44 @@ func TestLauncherBucketConditionRejectsBadBucketNames(t *testing.T) {
 	if got := LauncherBucketCondition("fugaro-runs-proj-1234"); got == "" {
 		t.Error("a valid bucket name panicked")
 	}
-	// The old form embeds the bucket the same way, so it takes the same guard.
-	for _, bad := range []string{`fugaro-runs-proj-1234"`, "fugaro runs proj", ""} {
-		t.Run("legacy "+bad, func(t *testing.T) {
-			defer func() {
-				if recover() == nil {
-					t.Errorf("LegacyLauncherBucketCondition(%q) did not panic", bad)
-				}
-			}()
-			LegacyLauncherBucketCondition(bad)
-		})
-	}
-	// The old form is not the new one (the new expression *starts* with the
-	// old clause — it is that clause plus tokens/ — so the two are told apart
-	// by the whole string and by the title, which is what every reader
-	// compares): a reader that confused them would accept the runs/-only
-	// write as the widened grant, the failure this pair exists to name.
+	// The older forms embed the bucket the same way, so they take the same
+	// guard.
 	b := "fugaro-runs-proj-1234"
-	if got, want := LegacyLauncherBucketCondition(b), LauncherBucketCondition(b); got == want || LegacyLauncherBucketConditionTitle == LauncherBucketConditionTitle {
-		t.Errorf("the launchers' old form and its replacement are not told apart: %q vs %q, titles %q vs %q", got, want, LegacyLauncherBucketConditionTitle, LauncherBucketConditionTitle)
+	for _, older := range []struct {
+		name string
+		cond func(string) string
+	}{
+		{"runs/ and tokens/", LauncherBucketConditionRunsTokens},
+		{"runs/ only", LegacyLauncherBucketCondition},
+	} {
+		for _, bad := range []string{`fugaro-runs-proj-1234"`, "fugaro runs proj", ""} {
+			t.Run(older.name+" "+bad, func(t *testing.T) {
+				defer func() {
+					if recover() == nil {
+						t.Errorf("%s(%q) did not panic", older.name, bad)
+					}
+				}()
+				older.cond(bad)
+			})
+		}
+	}
+	// Neither older form is the current one: each expression is a *prefix* of
+	// the one that replaced it — the current condition is the runs/ clause,
+	// then tokens/, then issues/ — so the two are told apart by the whole
+	// string and by the title, which is what every reader compares. A reader
+	// that confused them would accept an older, narrower write as the current
+	// grant, which is the failure these constants exist to name.
+	for _, older := range []struct {
+		name  string
+		title string
+		cond  string
+	}{
+		{"0.9.0's", LauncherBucketConditionRunsTokensTitle, LauncherBucketConditionRunsTokens(b)},
+		{"pre-0.9.0's", LegacyLauncherBucketConditionTitle, LegacyLauncherBucketCondition(b)},
+	} {
+		if older.cond == LauncherBucketCondition(b) || older.title == LauncherBucketConditionTitle {
+			t.Errorf("the launchers' %s older form and its replacement are not told apart: %q vs %q, titles %q vs %q", older.name, older.cond, LauncherBucketCondition(b), older.title, LauncherBucketConditionTitle)
+		}
 	}
 }
 
@@ -1115,6 +1138,54 @@ func TestTheTokenPrefixIsTheTokenPackages(t *testing.T) {
 	for _, p := range append(append([]string{}, JobBucketPrefixes...), BuildBucketPrefixes...) {
 		if p == TokenBucketPrefix {
 			t.Fatalf("%q is a prefix an account may write", p)
+		}
+	}
+}
+
+// TestLauncherConditionCoversIssuesPrefix: the shared issue store is one of
+// the three areas a launcher may write, and it is the launcher's condition
+// that says so (docs/troubleshoot-issue, D1727; reconciliation F11): an
+// ordinary launcher holds objectViewer plus that objectUser grant and no
+// operator role, so a prefix the condition does not name is a prefix it
+// cannot upload to. A condition that dropped issues/ would leave every
+// non-operator's `fugaro issue sync` refused by GCS with nothing in the code
+// saying why, which is the shape of bug this pins.
+func TestLauncherConditionCoversIssuesPrefix(t *testing.T) {
+	b := "fugaro-runs-proj-1234"
+	cond := LauncherBucketCondition(b)
+	if !strings.Contains(cond, `/objects/`+IssueBucketPrefix+`/")`) {
+		t.Fatalf("gcp.LauncherBucketCondition does not cover %s/: %q", IssueBucketPrefix, cond)
+	}
+	if !strings.Contains(LauncherBucketConditionTitle, IssueBucketPrefix) {
+		t.Errorf("the launchers' title %q does not name %s/, though the expression widened to it", LauncherBucketConditionTitle, IssueBucketPrefix)
+	}
+	for _, older := range []string{LauncherBucketConditionRunsTokens(b), LegacyLauncherBucketCondition(b)} {
+		if strings.Contains(older, "/objects/"+IssueBucketPrefix+"/") {
+			t.Errorf("the older form %q already covers %s/, so it is not an older form", older, IssueBucketPrefix)
+		}
+	}
+}
+
+// TestJobPrefixesExcludeIssues: no run account may reach the shared issue
+// store. A job's objectUser grant is gcp.BucketCondition over
+// gcp.JobBucketPrefixes (and the project job's the widened
+// ProjectBucketCondition, over the same list), so the exclusion is the list:
+// an issue added to it would let any run of a repository — and, on a shared
+// project job, any run on the profile — rewrite or delete the team's records,
+// the number counter and the claims, which is the forging a job account must
+// not be able to do (D1727, plan Check 452).
+func TestJobPrefixesExcludeIssues(t *testing.T) {
+	for _, p := range append(append([]string{}, JobBucketPrefixes...), BuildBucketPrefixes...) {
+		if p == IssueBucketPrefix {
+			t.Fatalf("%q is a prefix a job or build account may write", p)
+		}
+	}
+	for _, cond := range []string{
+		BucketCondition("b", JobBucketPrefixes, "acme-web-0123456789abcdef"),
+		ProjectBucketCondition("b", JobBucketPrefixes),
+	} {
+		if strings.Contains(cond, "/objects/"+IssueBucketPrefix+"/") {
+			t.Errorf("a job's objectUser condition reaches %s/: %q", IssueBucketPrefix, cond)
 		}
 	}
 }
