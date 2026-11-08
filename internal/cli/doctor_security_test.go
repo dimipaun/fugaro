@@ -55,8 +55,12 @@ func doctorSecurityTestChecks(t *testing.T) []doctorCheck {
 	if ref != "origin/main" {
 		t.Fatalf("defaultBranchRef = %q, want origin/main", ref)
 	}
+	paths, ok := doctorSecurityBaseTree(ctx, root, ref)
+	if !ok {
+		t.Fatalf("no base tree for %s", ref)
+	}
 	return doctorSecurityListChecks(sensitivity.Floor(), doctorSecurityTestWritten(), func() (string, []string) {
-		return ref, doctorSecurityBaseTree(ctx, root, ref)
+		return ref, paths
 	})
 }
 
@@ -161,6 +165,25 @@ func TestDoctorSecurityCheckIsAFindingWhenAPatternMatchedNothing(t *testing.T) {
 	}
 	if out := doctorDefaultOutput(t, checks); !strings.Contains(out, "prod-secrets") {
 		t.Errorf("the default view hides the finding:\n%s", out)
+	}
+}
+
+// A base nothing can be measured against — no ref, or a tree that cannot be
+// read — says the floor alone rather than calling every written row unmatched.
+func TestDoctorSecuritySaysNothingAboutABaseItCannotRead(t *testing.T) {
+	root := doctorSecurityTestBase(t, map[string]string{"README.md": "# aurora\n"})
+	ctx := context.Background()
+	if _, ok := doctorSecurityBaseTree(ctx, root, "origin/nothing-here"); ok {
+		t.Error("a ref with no tree was read as one")
+	}
+	if _, ok := doctorSecurityBaseTree(ctx, root, ""); ok {
+		t.Error("no ref was read as a tree")
+	}
+	checks := doctorSecurityListChecks(sensitivity.Floor(), doctorSecurityTestWritten(), func() (string, []string) {
+		return "", nil
+	})
+	if len(checks) != 1 {
+		t.Fatalf("checks = %+v, want the floor's line alone", checks)
 	}
 }
 

@@ -49,7 +49,11 @@ func doctorSecurityChecks(ctx context.Context, root string) []doctorCheck {
 	// closure below is what reads the base then.
 	return doctorSecurityListChecks(sensitivity.Floor(), nil, func() (string, []string) {
 		ref := defaultBranchRef(ctx, root)
-		return ref, doctorSecurityBaseTree(ctx, root, ref)
+		paths, ok := doctorSecurityBaseTree(ctx, root, ref)
+		if !ok {
+			return "", nil
+		}
+		return ref, paths
 	})
 }
 
@@ -57,8 +61,9 @@ func doctorSecurityChecks(ctx context.Context, root string) []doctorCheck {
 // engine's rows, written the project's and the repository's, and baseTree
 // answers the base branch's ref and its committed paths — lazily, since a list
 // nothing was written to has no row of the reader's to measure and costs no
-// git read at all. A checkout with no base ref says the floor alone: there is
-// no tree to measure a row against, and a finding nobody can check is worse
+// git read at all. An answer of no ref at all — a checkout with no default
+// branch, or a tree this checkout could not read — says the floor alone: there
+// is no tree to measure a row against, and a finding nobody can check is worse
 // than none.
 func doctorSecurityListChecks(floor, written []sensitivity.Pattern, baseTree func() (string, []string)) []doctorCheck {
 	out := []doctorCheck{doctorSecurityInForce(floor, written)}
@@ -69,6 +74,8 @@ func doctorSecurityListChecks(floor, written []sensitivity.Pattern, baseTree fun
 	if ref == "" {
 		return out
 	}
+	// A name is a row's identity in the list in force (sensitivity.Union), so
+	// the names Match answered with are what says which written rows matched.
 	matched := map[string]bool{}
 	for _, row := range sensitivity.Match(paths, written) {
 		matched[row.Name] = true
@@ -86,7 +93,9 @@ func doctorSecurityListChecks(floor, written []sensitivity.Pattern, baseTree fun
 }
 
 // doctorSecurityInForce is the measurement: the list in force by counts, and
-// where each count comes from.
+// where each count comes from. The project's rows and the repository's are one
+// count here, because slice 1 can hold rows from neither: SC9 takes the one
+// resolution's per-layer lists and gives each its own.
 func doctorSecurityInForce(floor, written []sensitivity.Pattern) doctorCheck {
 	problem := fmt.Sprintf("the security list in force is %s: %s from the engine's floor, and %s written by this project or by this repository",
 		doctorSecurityPatternCount(len(floor)+len(written)), doctorSecurityPatternCount(len(floor)), doctorSecurityPatternCount(len(written)))
@@ -139,23 +148,26 @@ func doctorSecurityPatternCount(n int) string {
 // what a change being reviewed can edit). It is the listing internal/runner
 // reads a base's paths with, so the two agree about what a tree's paths are.
 //
-// A ref this checkout cannot read the tree of is no base here, and the check
-// then says only what it can stand behind: defaultBranchRef has already
-// resolved a ref that exists, and a read that fails anyway is the caller's
-// best effort, the way doctor's other reads of this checkout are.
-func doctorSecurityBaseTree(ctx context.Context, root, ref string) []string {
+// ok is false when there is no tree to read: no checkout, no ref, a read that
+// failed, or a tree with no paths in it. None of those is a base a row can be
+// measured against, and an empty listing that a failed read answered with
+// would call every written row unmatched — a finding nobody can check is worse
+// than none, which is the same rule a checkout with no default branch gets.
+// gitCmd is used rather than gitRead because this listing is NUL-separated:
+// trimming it would eat the leading byte of the base's first path.
+func doctorSecurityBaseTree(ctx context.Context, root, ref string) ([]string, bool) {
 	if root == "" || ref == "" {
-		return nil
+		return nil, false
 	}
-	out, err := gitRead(ctx, root, "ls-tree", "-r", "-z", "--name-only", "--end-of-options", ref)
+	out, err := gitCmd(ctx, root, "ls-tree", "-r", "-z", "--name-only", "--end-of-options", ref).Output()
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	var paths []string
-	for _, p := range strings.Split(out, "\x00") {
+	for _, p := range strings.Split(string(out), "\x00") {
 		if p != "" {
 			paths = append(paths, p)
 		}
 	}
-	return paths
+	return paths, len(paths) > 0
 }
