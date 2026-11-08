@@ -126,10 +126,20 @@ func TestWorkspaceKillStopsAMemberRunInFlight(t *testing.T) {
 // ways it could be read as another scope are refused rather than resolved — a
 // second scope flag, and the flags that name the project the command acts on —
 // and a kill of one workspace leaves another's database byte for byte as it was.
+//
+// The named workspace and the project the command runs in are two different
+// projects here, and that is the point of the fixture: --project is refused
+// precisely because the selected project is not the scope, so a command that
+// read the selected project's config instead of the named workspace's would
+// write the wrong database and every other test in this file would still pass
+// (the two are the same project there). This is also the ordinary use: a member
+// runs this from its own checkout, where the selected project is its own.
 func TestWorkspaceKillDoesNotStopAnotherWorkspace(t *testing.T) {
 	h := newWSUpdateHome(t, wsOwnerTable)
 	other := h.add(t, "workspace-beta", "ws-beta-gcp", "")
-	before := other.db.Value("")
+	selected := h.add(t, "other-project", "other-gcp", "")
+	h.selectProject(t, "other-project")
+	before, selectedBefore := other.db.Value(""), selected.db.Value("")
 
 	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha", "--all", "--yes"); err == nil ||
 		!strings.Contains(err.Error(), "name one scope") {
@@ -143,8 +153,9 @@ func TestWorkspaceKillDoesNotStopAnotherWorkspace(t *testing.T) {
 		!strings.Contains(err.Error(), "workspace-nowhere") {
 		t.Errorf("an unknown workspace: %v, want a refusal naming it", err)
 	}
-	if !reflect.DeepEqual(before, other.db.Value("")) {
-		t.Fatal("a refused kill wrote a workspace")
+	if !reflect.DeepEqual(before, other.db.Value("")) ||
+		!reflect.DeepEqual(selectedBefore, selected.db.Value("")) {
+		t.Fatal("a refused kill wrote a database")
 	}
 
 	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha", "--yes", "--reason", "runaway spend"); err != nil {
@@ -152,6 +163,12 @@ func TestWorkspaceKillDoesNotStopAnotherWorkspace(t *testing.T) {
 	}
 	if on, _ := wsKillStop(t, h.project(t, "workspace-alpha").db, "workspace-alpha"); !on {
 		t.Error("the killed workspace's own switch is not on")
+	}
+	if after := selected.db.Value(""); !reflect.DeepEqual(selectedBefore, after) {
+		t.Errorf("the kill wrote the project the command ran in (other-project), not the workspace it named:\nbefore %v\nafter  %v", selectedBefore, after)
+	}
+	if on, _ := wsKillStop(t, selected.db, "other-project"); on {
+		t.Error("the selected project's own switch is on: the kill acted on the project the command ran in")
 	}
 	if after := other.db.Value(""); !reflect.DeepEqual(before, after) {
 		t.Errorf("killing workspace-alpha wrote workspace-beta:\nbefore %v\nafter  %v", before, after)
