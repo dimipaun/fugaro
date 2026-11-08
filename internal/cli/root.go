@@ -203,6 +203,11 @@ func newCoreRoot() *cobra.Command {
 		// sentence a person can read, and a name the tree does not hold is a
 		// command nobody can type.
 		newReviewCmd(),
+		// The reader an agent calls instead of guessing what this repository
+		// treats as security-sensitive (the security-classification design's
+		// SC3, D1512). It reads a file at the base branch and nothing else: no
+		// bucket, no database and no host.
+		newSecurityCmd(),
 		// The credentials service's own entry point: hidden, and the only
 		// thing the service's image runs (credentials_serve.go, plan task
 		// C1.14). It is registered like every other command so `fugaro

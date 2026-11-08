@@ -680,6 +680,12 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		// CM2): the marks' four facts and the bounded subset of the newest
 		// audit record, which is bounded because argv is not in it.
 		reflect.TypeOf(managedStatusDoc{}), reflect.TypeOf(managedStatusAudit{}),
+		// §6.23, the security list's own document (the security-classification
+		// design's SC3, D1512): the list in force with the layer of every row,
+		// and one answer per checked path.
+		reflect.TypeOf(securityPathsDoc{}), reflect.TypeOf(securityListDoc{}),
+		reflect.TypeOf(securityPattern{}), reflect.TypeOf(securityPathAnswer{}),
+		reflect.TypeOf(securityMatch{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command,
 		// as in the test above.
 	}
@@ -1023,6 +1029,13 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// does not spawn it yet — but the document describes its flags, so they are
 	// checked against this constructor like any other command's.
 	"managed status": newManagedStatusCmd,
+	// §6.23 documents the security list's own read (the security-classification
+	// design's SC3, D1512): the list of paths this repository's runs treat as
+	// security-sensitive, and the answer per checked path. It is offline and
+	// reads nothing of a cloud, so it is not on the console's spawn list either
+	// (D1514 defers the screen) — but the document describes its two flags, so
+	// they are checked against this constructor like any other command's.
+	"security paths": newSecurityPathsCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document

@@ -57,6 +57,7 @@ Subcommands:
 - `fugaro runs` -- List and inspect runs
 - `fugaro seats` -- Estimate how many people a subscription's seat rule would count
 - `fugaro secrets` -- Store, list and withdraw a repository's secrets in Secret Manager
+- `fugaro security` -- Answer what this repository treats as security-sensitive
 - `fugaro settings` -- Show every setting, what decides it, and its default
 - `fugaro setup` -- Create a fresh GCP project and stand up its installation, or a repository's cloud resources, through Terraform
 - `fugaro stats` -- Aggregate one installation's run records into figures a page can publish
@@ -4583,6 +4584,62 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | work on one repository's own copy, given as owner/name or a path inside its checkout (no value: this checkout's origin); without it, a name that has a project-wide meaning is stored and listed project-wide |
 | `--yes` | bool | `false` | no | confirm the policy write without a prompt (outside a coding agent's session) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro security`
+
+Answer what this repository treats as security-sensitive
+
+Answer what this repository's runs treat as security-sensitive.
+
+The list in force is a positive one: the trees, files and file classes a change
+has to touch to be reviewed as a security-sensitive change, one named row each.
+It is read at the base branch, so a change can never carry the list that governs
+its own review.
+
+Every read here is offline: it touches no bucket, no database and no host, and
+it reads a file at a ref only out of the checkout's own object database.
+
+Usage: `fugaro security`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for security |
+
+Subcommands:
+
+- `fugaro security paths` -- Print the pattern list in force, and answer a path against it
+
+## `fugaro security paths`
+
+Print the pattern list in force, and answer a path against it
+
+Print the list of paths this repository's runs treat as security-sensitive.
+
+Without --check the whole list in force is printed, each row with the layer it
+came from. With --check, each named path is answered against that list instead:
+whether it is security-sensitive, and the row that decided. A path no row
+matches and that the classifier cannot place inside a tree it knows is answered
+sensitive, never routine: an unknown path fails closed.
+
+The list is read at the base branch — the ref the next run from this checkout is
+cut from — and never from the working copy, so a change cannot carry the rule
+that governs its own review.
+
+Usage: `fugaro security paths`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--check` | stringArray | `[]` | no | answer a repository-relative path against the list in force instead of printing it (repeatable) |
+| `-h`, `--help` | bool | `false` | no | help for paths |
+| `--json` | bool | `false` | no | print the document as JSON |
 
 Subcommands:
 
