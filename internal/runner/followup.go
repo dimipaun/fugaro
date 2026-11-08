@@ -44,12 +44,12 @@ type followState struct {
 	// (OD1), listed in the review briefs so a reviewer can tell a finding that
 	// ruling settles from one it does not (ownerRuling).
 	prevOwner *runstore.OwnerDecisions
-	// prevRuled and prevRuledDecisions are the ruling the previous run worked
-	// from and the decisions it answered, as that run recorded them: what this
-	// one inherits when its own launch carries no ruling, so a question the
-	// owner has settled stays settled (workingRuling).
-	prevRuled          string
-	prevRuledDecisions *runstore.OwnerDecisions
+	// prevRulings are the rulings the previous run worked from, newest first,
+	// each with the decisions it answered, as that run recorded them: what this
+	// one inherits when its own launch carries no ruling, and what it carries
+	// behind a ruling of its own, so a question the owner has settled stays
+	// settled however many rulings ago it was answered (workingRulings).
+	prevRulings []runstore.OwnerRuling
 	// prevAnswer is the previous follow-up's followup.md, as stored.
 	prevAnswer string
 	// rootTask and diffStat are a fresh session's context.
@@ -243,24 +243,28 @@ func (r *run) prepareFollowUp(ctx context.Context) error {
 	// bounded it before it accepted the ruling this launch carries: the review
 	// briefs list these beside the ruling (ownerRuling).
 	r.follow.prevOwner = prevRec.OwnerDecisions.Bounded()
-	// And what that run itself worked from, with the decisions its ruling
-	// answered: this follow-up inherits the pair when its own launch carries no
-	// ruling, so a question the owner has already settled is not raised and
-	// halted on again (workingRuling). The decisions are the record's own
-	// block, bounded again on read for the reason above, and the ruling is text
-	// out of the same record, held to the rule a launcher's own ruling is held
-	// to (task.ValidateOwnerRuled): a record is an object the job's service
-	// account writes, and text a brief cannot carry — a control character, a
-	// length no task may state — is no ruling at all. The pair is dropped
-	// together when it is not one, and the reason logged: a ruling with no
-	// decisions answers nothing, and the decisions with no ruling settle
-	// nothing a reviewer may be told to be silent about.
-	r.follow.prevRuled = prevRec.OwnerRuled
-	r.follow.prevRuledDecisions = prevRec.OwnerRuledDecisions.Bounded()
-	if err := task.ValidateOwnerRuled(r.follow.prevRuled); err != nil {
-		r.d.Log.Warn("the record of the run before this one carries a ruling no brief may hold; this run inherits none",
-			"previous_run", prevID, "err", err)
-		r.follow.prevRuled, r.follow.prevRuledDecisions = "", nil
+	// And the rulings that run itself worked from, each with the decisions it
+	// answered: this follow-up inherits them when its own launch carries no
+	// ruling, and carries them behind its own otherwise, so a question the
+	// owner has already settled is not raised and halted on again however many
+	// rulings ago it was answered (workingRulings). The record's own pair comes
+	// first, then the pairs it held behind it, and the whole chain is bounded
+	// and validated again on read (runstore.BoundedRulings): a record is an
+	// object the job's service account writes, so text a brief cannot carry — a
+	// control character, a length no task may state — is no ruling at all, and
+	// a ruling with nothing to answer, or answers no ruling settles, is dropped
+	// the way it is everywhere else. What is dropped is logged: the chain is
+	// what keeps an answered question answered, and losing an entry to a
+	// hand-edited record is worth a line in the run's log.
+	chain := make([]runstore.OwnerRuling, 0, 1+len(prevRec.OwnerRuledEarlier))
+	if prevRec.OwnerRuled != "" {
+		chain = append(chain, runstore.OwnerRuling{Ruling: prevRec.OwnerRuled, Decisions: prevRec.OwnerRuledDecisions})
+	}
+	chain = append(chain, prevRec.OwnerRuledEarlier...)
+	r.follow.prevRulings = runstore.BoundedRulings(chain)
+	if n := len(chain) - len(r.follow.prevRulings); n > 0 {
+		r.d.Log.Warn("the record of the run before this one holds rulings this run does not inherit: no brief may hold them, or the chain is longer than a record carries; this run works from the rest",
+			"previous_run", prevID, "dropped", n, "of", len(chain))
 	}
 	prevTask, err := prev.ReadTask(ctx)
 	if err != nil {
@@ -406,10 +410,12 @@ func (r *run) promptData() followup.PromptData {
 		Instructions: r.spec.Task, Resumed: f.restored.Resumed, MovedCommits: f.restored.Moved,
 		RootTask: f.rootTask, DiffStat: f.diffStat, PreviousAnswer: f.prevAnswer, Nonce: f.nonce, Redact: r.redactor(),
 		// The ruling this run works from, which is the launch's own or the one
-		// it inherits from the run before it (workingRuling): the implement
+		// it inherits from the run before it (workingRulings): the implement
 		// stage is told the owner's answer either way, or it would set about
-		// changing what the owner settled.
-		OwnerRuled: r.ownerRuling().Text,
+		// changing what the owner settled. It is the newest one of the chain,
+		// which is the answer this run's work is held to; the rulings behind it
+		// answered questions this run is not asked to touch.
+		OwnerRuled: r.rulingText(),
 	}
 }
 

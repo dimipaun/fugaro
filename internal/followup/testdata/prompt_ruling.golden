@@ -1,12 +1,12 @@
-This run works from the repository owner's ruling on the decisions the last run on this pull request left for them. The ruling is quoted below as it was given: it is the text the run that answered those decisions was launched with, not a review instruction, and what it settles is what is listed under it and nothing else.
+This run works from the repository owner's rulings on the decisions the runs on this pull request left for them. Each ruling is quoted below as it was given: it is the text the run that answered those decisions was launched with, not a review instruction, and what each settles is the decisions listed under it and nothing else. The first is the ruling this run works from; the ones after it answered decisions that are settled just as firmly, and they are here so that a question the owner has already answered is not put to them again.
 
 <<<fugaro-owner-ruling-0123456789abcdef>>>
     Counsel cleared the MIT text as it stands. Keep the approval flow.
 <<<end-fugaro-owner-ruling-0123456789abcdef>>>
 
-It answers these decisions, which that run left waiting:
+It answers these decisions, which the run before it left waiting:
 
     `LICENSE.md`: the licence text needs counsel's clearance
     `internal/approval/flow.go`: the approval flow is a product decision
 
-A finding that is one of the decisions above is answered by that ruling: report it only if the change contradicts the answer, and never mark it needs_owner. Any other finding is reported as any finding is, and a new question only the owner can settle is still needs_owner, which is how the owner is asked about it.
+A finding that is one of the decisions above is answered by the ruling it is listed under: report it only if the change contradicts the answer, and never mark it needs_owner. Any other finding is reported as any finding is, and a new question only the owner can settle is still needs_owner, which is how the owner is asked about it.

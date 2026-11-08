@@ -2713,11 +2713,14 @@ func (r *run) agentLoop(ctx context.Context) {
 		// of their own, and a reviewer that does not know the run was answered
 		// marks the same finding needs_owner again — the run stops where it
 		// stopped and the next follow-up is refused, which is the loop the
-		// ruling exists to end. It goes in with the decisions it answers listed
-		// beside it, so it settles those and not whatever else it names. All
-		// three levels are handed this one brief (reviewPromptWithFocus,
-		// AdversarialPrompt), so they all read it.
-		if add := followup.RulingAddendum(r.ownerRuling(), f.nonce, r.redactor()); add != "" {
+		// ruling exists to end. Every ruling the run works from goes in, each
+		// with the decisions it answers listed beside it, so a ruling settles
+		// those and not whatever else it names — including the rulings behind
+		// the newest one, whose questions are as settled as its own: the
+		// reviewer that re-raises one of those stops the run on a question the
+		// owner answered two rulings ago. All three levels are handed this one
+		// brief (reviewPromptWithFocus, AdversarialPrompt), so they all read it.
+		if add := followup.RulingAddendum(r.ownerRulings(), f.nonce, r.redactor()); add != "" {
 			reviewPrompt += "\n\n" + add
 		}
 	}

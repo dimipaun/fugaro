@@ -641,6 +641,65 @@ func (od *OwnerDecisions) Bounded() *OwnerDecisions {
 	return out
 }
 
+// MaxOwnerRulings bounds the rulings a record carries — the one the run worked
+// from (Record.OwnerRuled) and the ones before it (Record.OwnerRuledEarlier) —
+// for the reason MaxOwnerDecisions bounds one block: the list grows one entry
+// per ruling the owner gives, and the record is a small object every listing
+// reads.
+const MaxOwnerRulings = 8
+
+// OwnerRuling is one ruling the owner gave with the decisions it answered
+// (OD1): the pair Record.OwnerRuled and Record.OwnerRuledDecisions hold for
+// the ruling the run worked from, and one entry of Record.OwnerRuledEarlier
+// for the rulings before it.
+type OwnerRuling struct {
+	// Ruling is the owner's ruling as it was given, the text the run that
+	// answered the decisions below was launched with.
+	Ruling string `json:"ruling"`
+	// Decisions is the block that ruling answered: the decisions the run
+	// before that one left waiting. Absent when it answered none a reader may
+	// show, which is what a ruling with no decisions beside it is.
+	Decisions *OwnerDecisions `json:"decisions,omitempty"`
+}
+
+// BoundedRulings is rs as a record may store it and as a reader may show it:
+// one rule for both, because the chain is written from the previous record's
+// own chain and read back out of a record the job's service account can write.
+// An entry is dropped whole when it is not a pair a brief may quote — no
+// ruling text, a text no brief may hold (task.ValidateOwnerRuled, and an empty
+// one: it is valid there and still quotes nothing), or no decisions left once
+// OwnerDecisions.Bounded has read them, which is what a block whose every
+// sentence is unreadable comes to. A ruling and the decisions it answered are
+// dropped together everywhere else for the reason they are kept together: a
+// ruling no brief may quote is no ruling, and decisions no ruling settles are a
+// list no reviewer may be told to be silent about. At most MaxOwnerRulings
+// entries are kept, newest first, so what the cap costs is the answer to the
+// oldest question — one the reviewers have not raised for many rulings.
+func BoundedRulings(rs []OwnerRuling) []OwnerRuling {
+	if len(rs) == 0 {
+		return nil
+	}
+	out := make([]OwnerRuling, 0, min(len(rs), MaxOwnerRulings))
+	for _, r := range rs {
+		if len(out) >= MaxOwnerRulings {
+			break
+		}
+		if r.Ruling == "" {
+			continue
+		}
+		if err := task.ValidateOwnerRuled(r.Ruling); err != nil {
+			continue
+		}
+		if d := r.Decisions.Bounded(); d != nil {
+			out = append(out, OwnerRuling{Ruling: r.Ruling, Decisions: d})
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // StageTiming records how long one stage took, and what its model calls
 // cost (generic-tool plan Task 24). ModelUSD is the gateway's StageReport
 // figure for the stage when the run went through the gateway, and the
@@ -998,7 +1057,7 @@ type Record struct {
 	// OwnerRuled is the owner's ruling this run worked from: the one its launch
 	// was given (task.Spec.OwnerRuled, fugaro run --owner-ruled), or, for a
 	// follow-up launched without one, the one the run before it worked from,
-	// which it inherits (internal/runner's workingRuling). The text its brief
+	// which it inherits (internal/runner's workingRulings). The text its brief
 	// works from verbatim, echoed onto the record so a reader can see it beside
 	// the decisions it answers. Absent for every run that worked from none,
 	// which is every record written before this field existed.
@@ -1018,6 +1077,22 @@ type Record struct {
 	// the ruling to task.ValidateOwnerRuled and drops both when it fails, so
 	// what a record says the run worked from is always text a brief may hold.
 	OwnerRuledDecisions *OwnerDecisions `json:"owner_ruled_decisions,omitempty"`
+	// OwnerRuledEarlier is the rulings the runs before this one worked from,
+	// newest first, each with the decisions it answered (OD1): the pairs behind
+	// OwnerRuled, as each of those runs recorded them. They are carried
+	// because a ruling answers the decisions of the run it was launched over
+	// and nothing else, so a newer ruling would otherwise drop the answers
+	// before it: the next reviewers, shown the new ruling alone, would meet a
+	// question the owner settled two rulings ago, mark it needs_owner and stop
+	// the run in the same place — a run per question, the loop the ruling
+	// exists to end. With the chain the reviewers are shown every ruling the
+	// pull request has been answered with and the decisions each settles
+	// (followup.RulingAddendum). Bounded at MaxOwnerRulings entries and by
+	// BoundedRulings on the way in and out, like every block here. Absent —
+	// never an empty list — for a run that followed none, which is every
+	// record written before this field existed: the field is additive, so an
+	// old reader sees the record it always saw.
+	OwnerRuledEarlier []OwnerRuling `json:"owner_ruled_earlier,omitempty"`
 	// Checkpoint is the report a governance halt left (T6.1, D329, G7):
 	// what stopped the run, why it is over and what it would have done
 	// next, written by the runner as the run stops. Absent — never an empty

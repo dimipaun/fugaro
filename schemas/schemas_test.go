@@ -1873,6 +1873,40 @@ func TestResultSchemaOwnerDecisions(t *testing.T) {
 	if err := validate(t, rec(nil, nil, "Counsel cleared it.")); err != nil {
 		t.Errorf("schema rejects a ruling with no decisions: %v", err)
 	}
+	// The rulings behind the newest one, each with the decisions it answered
+	// (owner_ruled_earlier): what a follow-up carrying a new ruling keeps, so
+	// that a question the owner settled two rulings ago is not raised and halted
+	// on again. An entry is the pair above under the same rules, and the schema
+	// refuses what a reader could render from it that the runner never wrote.
+	withChain := func(rs []runstore.OwnerRuling) runstore.Record {
+		r := rec(nil, good, "Counsel cleared it.")
+		r.OwnerRuledEarlier = rs
+		return r
+	}
+	if err := validate(t, withChain([]runstore.OwnerRuling{{Ruling: "Keep the MIT text.", Decisions: good}})); err != nil {
+		t.Errorf("schema rejects the rulings behind the newest one: %v", err)
+	}
+	over := make([]runstore.OwnerRuling, runstore.MaxOwnerRulings+1)
+	for i := range over {
+		over[i] = runstore.OwnerRuling{Ruling: "Keep the MIT text.", Decisions: good}
+	}
+	// A ruling of blanks, or one carrying a control character, is refused the way
+	// a launcher's own ruling is (task.ValidateOwnerRuled), and that is a rule
+	// about text: no JSON Schema keyword states it, which is why
+	// task.schema.json's owner_ruled is held to minLength and maxLength and no
+	// more. Here the schema refuses an entry with no text at all, one past the
+	// bound, and one with nothing listed under it.
+	for name, rs := range map[string][]runstore.OwnerRuling{
+		"no ruling text":                 {{Decisions: good}},
+		"a ruling past the bound":        {{Ruling: strings.Repeat("r", task.MaxOwnerRuledBytes+1), Decisions: good}},
+		"a ruling with no decisions":     {{Ruling: "Keep the MIT text."}},
+		"a block with no decision in it": {{Ruling: "Keep the MIT text.", Decisions: &runstore.OwnerDecisions{Decisions: []runstore.OwnerDecision{}, Total: 1}}},
+		"over the cap":                   over,
+	} {
+		if err := validate(t, withChain(rs)); err == nil {
+			t.Errorf("schema accepts %s behind the newest ruling", name)
+		}
+	}
 }
 
 // TestResultSchemaCheckpoint: the checkpoint block a governance halt leaves

@@ -35,64 +35,101 @@ func pendingOwner(od *runstore.OwnerDecisions) int {
 	return od.Total
 }
 
-// workingRuling is the ruling this run works from and the decisions it
-// answers (OD1): the one its own launch was given (task.Spec.OwnerRuled) and
-// the block the run before it left waiting, which that ruling was accepted
-// against — or, when the launch carries none, the pair the run before it
-// worked from, which this follow-up inherits.
+// workingRulings is the rulings this run works from, newest first, each with
+// the decisions it answered (OD1): the one its own launch was given
+// (task.Spec.OwnerRuled), accepted against the block the run before it left
+// waiting — or, when the launch carries none, the rulings the run before it
+// worked from, which this follow-up inherits — and, behind the newest pair,
+// the rulings those runs worked from, each with the decisions it settled.
 //
 // The inheritance is what keeps a settled question settled. A ruled run whose
 // review accepts the ruling leaves no decisions of its own, so nothing on its
 // record says the owner answered anything; the next follow-up's reviewers,
 // handed no ruling, would read the same diff, mark the same finding
 // needs_owner again and halt the run — which is the loop the ruling exists to
-// end, one run further out. The pair is read from the run before it
-// (prepareFollowUp), so the ruling goes on from follow-up to follow-up with
-// the questions it answers until a newer ruling supersedes it: a run launched
-// with a ruling of its own answers the block its own previous run left, and
-// that is the pair it records and passes on.
+// end, one run further out. The pairs are read from the run before it
+// (prepareFollowUp), so the rulings go on from follow-up to follow-up with the
+// questions they answer until a newer ruling supersedes them.
+//
+// The whole chain and not only the newest pair, because a ruling answers the
+// decisions of the run it was launched over and no others: the owner answers
+// one question, the review raises another, and a follow-up carrying the new
+// ruling alone leaves the first question open — its reviewers, told nothing
+// about it, mark it needs_owner again, the run stops on it, and the ruling
+// after that drops the second one in turn. Two questions, two rulings, a run
+// per swap and no end to it. Carrying every pair the runs before it held is
+// what makes an answer outlive the ruling that gave it
+// (runstore.Record.OwnerRuledEarlier, followup.RulingAddendum).
 //
 // A launch that carries no ruling and follows a run that worked from none
-// gives "", nil, which builds no addendum: a ruling nothing answers is the
+// gives nothing, which builds no addendum: a ruling nothing answers is the
 // launch's text settling whatever it names, and no reviewer is handed it as an
 // answer (followup.RulingAddendum, and the launcher's refusal of a ruling with
 // nothing to answer).
-func (r *run) workingRuling() (string, *runstore.OwnerDecisions) {
-	if r.spec.OwnerRuled != "" {
-		if r.follow == nil {
-			return r.spec.OwnerRuled, nil
+func (r *run) workingRulings() []runstore.OwnerRuling {
+	if r.follow == nil {
+		if r.spec.OwnerRuled == "" {
+			return nil
 		}
-		return r.spec.OwnerRuled, r.follow.prevOwner
+		// A first run answers nothing: the launcher accepts --owner-ruled only
+		// where the run before it left decisions to answer (internal/cli,
+		// resolvePR), and a first run has no run before it.
+		return []runstore.OwnerRuling{{Ruling: r.spec.OwnerRuled}}
 	}
-	if r.follow == nil || r.follow.prevRuledDecisions == nil {
-		return "", nil
+	if r.spec.OwnerRuled == "" {
+		return r.follow.prevRulings
 	}
-	return r.follow.prevRuled, r.follow.prevRuledDecisions
+	return append([]runstore.OwnerRuling{{Ruling: r.spec.OwnerRuled, Decisions: r.follow.prevOwner}},
+		r.follow.prevRulings...)
 }
 
-// recordRuling writes the ruling this run works from onto the record with the
-// decisions it answers (OD1), which is the pair a later follow-up inherits.
-// The bootstrap writes the launch's own text onto the record with the rest of
-// what the task says the run is; this refines it once the run before this one
-// has been read, which is the only thing that can say what the ruling answered
-// and whether there is one to inherit at all.
+// rulingText is the newest ruling, the one the run's implement brief works
+// from: "" when the run works from none.
+func (r *run) rulingText() string {
+	if rs := r.workingRulings(); len(rs) > 0 {
+		return rs[0].Ruling
+	}
+	return ""
+}
+
+// recordRuling writes the rulings this run works from onto the record, each
+// with the decisions it answered (OD1): the newest pair in OwnerRuled and
+// OwnerRuledDecisions, the pairs behind it in OwnerRuledEarlier. That is what
+// a later follow-up inherits. The bootstrap writes the launch's own text onto
+// the record with the rest of what the task says the run is; this refines it
+// once the run before this one has been read, which is the only thing that can
+// say what each ruling answered and what there is to inherit at all.
 func (r *run) recordRuling() {
-	if text, od := r.workingRuling(); text != "" {
-		r.rec.OwnerRuled, r.rec.OwnerRuledDecisions = text, od
+	rs := r.workingRulings()
+	if len(rs) == 0 {
+		return
+	}
+	// The newest pair is recorded as the launch gave it, with no decisions
+	// beside it when it answered none this record can name: the ruling is the
+	// text the run works from, and the brief states it whether or not there is
+	// a list to show under it.
+	r.rec.OwnerRuled = rs[0].Ruling
+	r.rec.OwnerRuledDecisions = rs[0].Decisions.Bounded()
+	if earlier := runstore.BoundedRulings(rs[1:]); len(earlier) > 0 {
+		r.rec.OwnerRuledEarlier = earlier
 	}
 }
 
-// ownerRuling is workingRuling as the brief builders take it: the ruling and
-// the decisions it answers, or the zero value, which builds no addendum.
-func (r *run) ownerRuling() followup.OwnerRuling {
-	text, od := r.workingRuling()
-	out := followup.OwnerRuling{Text: text}
-	if od == nil {
-		return out
-	}
-	out.Total = od.Total
-	for _, d := range od.Decisions {
-		out.Decisions = append(out.Decisions, followup.OwnerDecision{File: d.File, Summary: d.Summary})
+// ownerRulings is workingRulings as the brief builders take it: the rulings
+// with the decisions each answers, newest first, or nothing, which builds no
+// addendum.
+func (r *run) ownerRulings() []followup.OwnerRuling {
+	rs := r.workingRulings()
+	out := make([]followup.OwnerRuling, 0, len(rs))
+	for _, e := range rs {
+		o := followup.OwnerRuling{Text: e.Ruling}
+		if d := e.Decisions; d != nil {
+			o.Total = d.Total
+			for _, dec := range d.Decisions {
+				o.Decisions = append(o.Decisions, followup.OwnerDecision{File: dec.File, Summary: dec.Summary})
+			}
+		}
+		out = append(out, o)
 	}
 	return out
 }
