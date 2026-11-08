@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -160,6 +161,12 @@ func TestVerifiedOnlyIgnoresCache(t *testing.T) {
 	if got.Source != SourceNone || got.Address != "" || got.Digest != "" {
 		t.Fatalf("got %+v", got)
 	}
+	// A session that may not ask at all is refused the same way, cache or no
+	// cache: an upload never names a reporter nobody verified.
+	got, err = VerifiedOnly(context.Background(), Deps{NoLookup: true, Lookup: verifiedLookup(testOtherMember), Getenv: env, GOOS: "linux"})
+	if err == nil || got.Source != SourceNone || got.Address != "" {
+		t.Fatalf("got %+v, %v", got, err)
+	}
 	// A credential that answers is what it names, cache or no cache.
 	got, err = VerifiedOnly(context.Background(), identityDeps(env, verifiedLookup(testOtherMember)))
 	if err != nil || got.Source != SourceVerified || got.Address != testOtherMember {
@@ -188,6 +195,7 @@ func TestIdentityCacheIsPrivateAndStrict(t *testing.T) {
 		"no address":       `{"format":1}`,
 		"a second value":   `{"format":1,"address":"user:user@example.test"}{"format":1,"address":"user:user@example.test"}`,
 		"not JSON":         `{`,
+		"over the bound":   `{"format":1,"address":"` + strings.Repeat("a", maxIdentityCacheBytes) + `"}`,
 	} {
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			t.Fatal(err)

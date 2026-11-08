@@ -114,6 +114,9 @@ func ResolveIdentity(ctx context.Context, deps Deps) (Identity, error) {
 // something it may decide (F3). A run whose credential cannot be read gets no
 // identity and the lookup's error, so the issue stays local.
 func VerifiedOnly(ctx context.Context, deps Deps) (Identity, error) {
+	if !canLookup(deps) {
+		return Identity{Source: SourceNone}, errNoVerifiedIdentity
+	}
 	member, err := lookupMember(ctx, deps)
 	if err != nil {
 		return Identity{Source: SourceNone}, err
@@ -124,11 +127,11 @@ func VerifiedOnly(ctx context.Context, deps Deps) (Identity, error) {
 // canLookup reports whether the seam may be called at all.
 func canLookup(deps Deps) bool { return !deps.NoLookup && deps.Lookup != nil }
 
-// lookupMember asks the credential, under this package's own bound.
+// lookupMember asks the credential, under this package's own bound. Its
+// callers have already decided that the seam may be called at all, so the
+// refusal for a session that may not ask lives at the entry that has to make
+// it: ResolveIdentity's own branch, and VerifiedOnly's.
 func lookupMember(ctx context.Context, deps Deps) (string, error) {
-	if !canLookup(deps) {
-		return "", errNoVerifiedIdentity
-	}
 	ctx, cancel := context.WithTimeout(ctx, identityLookupTimeout)
 	defer cancel()
 	member, err := deps.Lookup(ctx)
@@ -200,7 +203,14 @@ func loadIdentityCache(deps Deps) (Identity, bool) {
 	if err != nil {
 		return Identity{}, false
 	}
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
+	if err != nil {
+		return Identity{}, false
+	}
+	defer f.Close()
+	// The bound is applied to the read itself and not to its result: a file
+	// that is not this cache must not cost its whole size in memory first.
+	data, err := io.ReadAll(io.LimitReader(f, maxIdentityCacheBytes+1))
 	if err != nil || len(data) > maxIdentityCacheBytes {
 		return Identity{}, false
 	}
