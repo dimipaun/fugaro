@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -207,6 +208,12 @@ func loadIdentityCache(deps Deps) (Identity, bool) {
 	dec.DisallowUnknownFields()
 	var doc identityCacheDoc
 	if dec.Decode(&doc) != nil || doc.Format != identityCacheFormat || doc.Address == "" {
+		return Identity{}, false
+	}
+	// Nothing may follow the document: a file carrying a second value is not
+	// the one document this build writes.
+	var trailing any
+	if dec.Decode(&trailing) != io.EOF {
 		return Identity{}, false
 	}
 	return identityFrom(doc.Address, SourceCached), true

@@ -186,6 +186,7 @@ func TestIdentityCacheIsPrivateAndStrict(t *testing.T) {
 		"another format":   `{"format":2,"address":"user:user@example.test"}`,
 		"no format":        `{"address":"user:user@example.test"}`,
 		"no address":       `{"format":1}`,
+		"a second value":   `{"format":1,"address":"user:user@example.test"}{"format":1,"address":"user:user@example.test"}`,
 		"not JSON":         `{`,
 	} {
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
