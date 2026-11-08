@@ -564,7 +564,11 @@ func (r *run) readPRRetrying(ctx context.Context) (gitprov.PRInfo, error) {
 // before updating its pull request, as the infra_error Run then records,
 // so diagnose still shows what the agent did. Nothing is posted.
 func (r *run) storeUnposted(ctx context.Context, err error, records []verify.Record) {
-	rec := reportCopy(r.rec, runstore.StatusInfraError, runstore.OutcomeNone, failure.InfraError, r.redact(err.Error()))
+	// The copy carries the class the ending itself is written with, read off
+	// the error the same way Run's fallback reads it (endClassOf): a stored
+	// report that named a different family from the record beside it would be
+	// two readings of one run's cause.
+	rec := reportCopy(r.rec, runstore.StatusInfraError, runstore.OutcomeNone, endClassOf(err), r.redact(err.Error()))
 	fu := r.followUpSection()
 	report := agent.Redact(FollowUpReport(&rec, r.d.Store.Prefix(), r.logTail(false, records), fu), r.secretList())
 	r.storeReport(ctx, report, fu)

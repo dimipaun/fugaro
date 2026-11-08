@@ -598,7 +598,13 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 			// already be recorded; only fall back to infra_error when the
 			// run never got far enough to decide anything else.
 			if r.rec.Status == runstore.StatusRunning {
-				r.recordEnd(runstore.StatusInfraError, runstore.OutcomeNone, failure.InfraError, reason)
+				// The status is here for every error of this shape — the
+				// machinery stopped the run — while the class is the error's
+				// own where its site named one (endClass): a configuration the
+				// runner refused and a forge call it could not make are causes
+				// this fallback can read off the error itself, and every other
+				// error is the one infra_error means.
+				r.recordEnd(runstore.StatusInfraError, runstore.OutcomeNone, endClassOf(err), reason)
 			}
 			d.Log.Error("run failed", "stage", r.rec.Stage, "err", reason)
 		}
@@ -1601,6 +1607,35 @@ func (r *run) failureClass() failure.Class {
 	return r.failClass
 }
 
+// endClass is an error that carries the class of the ending it will cause. The
+// errors that end a run without going through r.fail still know their cause
+// where they are raised — a configuration the runner refuses before any work
+// starts, a forge call finalize could not make — and the ending itself is
+// written far from there, by Run's deferred fallback, which has only the error
+// left. It wraps, so errors.Is and errors.As keep answering what they answered
+// before this existed (the shadow arm's own refusal among them), and the
+// fallback reads the class back with endClassOf.
+type endClass struct {
+	class failure.Class
+	err   error
+}
+
+func (e endClass) Error() string { return e.err.Error() }
+
+func (e endClass) Unwrap() error { return e.err }
+
+// endClassOf is the class the ending of err is written with: the class an
+// endClass carries, and infra_error for every other error — the run never got
+// far enough to name anything else, which is what the fallback wrote for all
+// of them before this existed (design §3).
+func endClassOf(err error) failure.Class {
+	var ec endClass
+	if errors.As(err, &ec) {
+		return ec.class
+	}
+	return failure.InfraError
+}
+
 // stateDirOutsideCheckout validates that stateDir is non-empty, resolvable,
 // and disjoint from workDir in both directions, so it can be neither inside,
 // equal to, nor an ancestor of the checkout. Symlinks are resolved first, so
@@ -1912,7 +1947,10 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	name, wf, err := cfg.SelectWorkflow(spec.Workflow)
 	if err != nil {
-		return fmt.Errorf("selecting workflow: %w", err)
+		// The file is what is refused here: a workflow the task does not name
+		// and the configuration defines more than one of is a fugaro.yaml the
+		// runner cannot run as it stands, which is config_invalid's own case.
+		return endClass{failure.ConfigInvalid, fmt.Errorf("selecting workflow: %w", err)}
 	}
 	if err := spec.Apply(cfg, &wf); err != nil {
 		return fmt.Errorf("applying task overrides: %w", err)
@@ -1941,6 +1979,9 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	rcp, rrec, err := r.resolveRecipe(ctx, cfg)
 	if err != nil {
+		// The refusals about the recipe itself carry config_invalid already
+		// (recipe.go, which raises them); a read that failed leaves it to the
+		// deferred fallback, the way every other machinery error does.
 		return err
 	}
 	// The digest step is the runner's own work (T3.2): it writes the run
@@ -2140,15 +2181,25 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// (applyChallenger), so the policy refusing *that* pin is the arm's
 		// own refusal and is recorded as one (D556) rather than as
 		// infrastructure that failed. Only the coder pin is the arm's: the
-		// pins both arms share, and everything else these checks can fail
-		// over — a Vertex budget, a settings directory, a price table — fails
-		// a challenger exactly as it fails a run carrying no arm, and is left
-		// to end the run infra_error (modelRefusal, gateway.go). A halt is
-		// not a refusal either: a cap the run has reached stops a shadow
-		// exactly as it stops any other run.
+		// pins both arms share fail a challenger exactly as they fail a run
+		// carrying no arm, and what refuses them is the run's configuration —
+		// the same cause, and so the same class, the arm's own refusal is
+		// recorded under (refuseArm, shadow.go). What these checks raise with
+		// no refusal in it — a Vertex budget, a settings directory — keeps the
+		// fallback's infra_error. A halt is not a refusal either: a cap the run
+		// has reached stops a shadow exactly as it stops any other run.
 		var refused *modelRefusal
 		if r.shadow && errors.As(err, &refused) && refused.coderPin {
 			return r.refuseArm(err.Error())
+		}
+		if errors.As(err, &refused) {
+			// A model this run may not run, or a pin no price covers: the
+			// configuration the run resolved was refused before any stage
+			// could start, which is config_invalid's own case — the pins are
+			// the resolved file's, and the remedy is to change them. Every
+			// other error these checks raise is machinery under the run and
+			// keeps the fallback's infra_error.
+			return endClass{failure.ConfigInvalid, err}
 		}
 		return err
 	}
@@ -2486,7 +2537,7 @@ func (r *run) resolveConfig(data []byte) (*config.Config, error) {
 			// run's layer for ls and diagnose (design §8, task 17), even
 			// though it never resolved anything.
 			r.rec.ProjectLayer = &runstore.ProjectLayerRecord{SHA256: pl.SHA256, Generation: pl.Generation}
-			return nil, out.LayerErr
+			return nil, endClass{failure.ConfigInvalid, out.LayerErr}
 		}
 		r.rec.ProjectLayer = &runstore.ProjectLayerRecord{SHA256: pl.SHA256, Generation: pl.Generation, Applied: out.Applied}
 		if !out.Applied {
@@ -2503,7 +2554,7 @@ func (r *run) resolveConfig(data []byte) (*config.Config, error) {
 		r.noteIgnoredAB()
 	}
 	if len(out.Problems) > 0 {
-		return nil, fmt.Errorf("fugaro.yaml is invalid: %s", problemsText(out.Problems))
+		return nil, endClass{failure.ConfigInvalid, fmt.Errorf("fugaro.yaml is invalid: %s", problemsText(out.Problems))}
 	}
 	// The layer's claims are merged here, before anything reads a route:
 	// bootstrap reaches this at runner.go's own first step, and the plan that
@@ -2529,7 +2580,7 @@ func (r *run) resolveConfig(data []byte) (*config.Config, error) {
 	if out.Applied {
 		merged, ps := config.ApplyClaudeClaims(r.d.Providers, config.ClaimsOnRoutes(r.d.Providers, out.Layer.ClaudeModels))
 		if len(ps) > 0 {
-			return nil, fmt.Errorf("the project layer's claude_models: %s", problemsText(ps))
+			return nil, endClass{failure.ConfigInvalid, fmt.Errorf("the project layer's claude_models: %s", problemsText(ps))}
 		}
 		r.providers = merged
 	}
@@ -4370,7 +4421,10 @@ func (r *run) finalize(ctx context.Context) error {
 			return fmt.Errorf("counting the run's own commits: %w", err)
 		}
 		if ahead == 0 {
-			r.fail("the agent made no commits")
+			// The count is the runner's own — it read the branch — so the
+			// class is known here and no other site can name it later
+			// (design §3's no_commits, which cites this count).
+			r.failWithClass(failure.NoCommits, "the agent made no commits")
 			if err := r.repo.CommitEmpty(ctx, "fugaro: "+r.failure()); err != nil {
 				return fmt.Errorf("recording an empty commit: %w", err)
 			}
@@ -4421,13 +4475,20 @@ func (r *run) finalize(ctx context.Context) error {
 	// reason records none (recordOwnerDecisions).
 	r.recordOwnerDecisions(halt)
 	pol := r.findingsPolicy()
-	ready, reason := Decide(records, decided, r.decidingReview(), pol, r.rec.OwnerDecisions)
+	ready, reason, class := Decide(records, decided, r.decidingReview(), pol, r.rec.OwnerDecisions)
 	r.rec.Tolerated = r.toleratedRecord(pol)
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
 	}
+	// The class follows the reason, and it is chosen by this same three-way
+	// choice in the same place by the same lines (design §4.2): the run's own
+	// first failure outranks what Decide read, a halt outranks both, and each
+	// override hands over the class of the sentence it just wrote. That is
+	// what keeps the field describing the status the record carries —
+	// unverified_final_commit under a halt's reason would name a cause the
+	// record no longer holds.
 	if fr := r.failure(); fr != "" {
-		ready, reason = false, fr
+		ready, reason, class = false, fr, r.failureClass()
 	}
 	if halt != nil {
 		// Never ready, and the reason is the halt's, whatever failed first. The
@@ -4435,8 +4496,10 @@ func (r *run) finalize(ctx context.Context) error {
 		// passed but a question it cannot answer, so its reason is the plain
 		// sentence the record, the pull request's status block and the
 		// launcher's refusal all print, and not the halt's own
-		// "halted: <reason>: <detail>" spelling of it (OD1).
-		ready = false
+		// "halted: <reason>: <detail>" spelling of it (OD1). The class is the
+		// halt's own family either way: the sentence a reader sees changes with
+		// the reason, and what the run stopped for does not.
+		ready, class = false, haltClass(halt.Reason)
 		if halt.Reason == runstore.HaltOwnerDecision {
 			reason = halt.Detail
 		} else {
@@ -4526,7 +4589,7 @@ func (r *run) finalize(ctx context.Context) error {
 			// outcome must never be reported unless the PR really is
 			// ready, so this is recorded as a draft with a reason
 			// naming the failure.
-			ready, reason = false, r.redact(err.Error())
+			ready, reason, class = false, r.redact(err.Error()), failure.GitProviderError
 		}
 	case err != nil:
 		if pr.Number != 0 && r.giveUpNoteAllowed(ctx) {
@@ -4552,7 +4615,7 @@ func (r *run) finalize(ctx context.Context) error {
 				r.d.Log.Warn("updating the pull request status failed", "err", r.redact(serr.Error()))
 			}
 		}
-		err = fmt.Errorf("opening pull request: %w", err)
+		err = providerRefusal(fmt.Errorf("opening pull request: %w", err))
 		if r.follow != nil {
 			// The branch was pushed: the next follow-up quotes this run's
 			// answer, and diagnose shows its report.
@@ -4560,6 +4623,10 @@ func (r *run) finalize(ctx context.Context) error {
 		}
 		return err
 	}
+	// The class is never empty in the failed case: every way of reaching it
+	// above hands one over — Decide names its own refusal, r.failure() names
+	// the class written with the run's first reason (unclassified where its
+	// site named none), and the forge's own failure names git_provider_error.
 	switch {
 	case ready:
 		r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeReady, "", reason)
@@ -4569,12 +4636,7 @@ func (r *run) finalize(ctx context.Context) error {
 	case r.isCancelled():
 		r.recordEnd(runstore.StatusCancelled, runstore.OutcomeDraft, failure.Cancelled, reason)
 	default:
-		// The reason is r.failure() when the run failed for one, so the class
-		// is the one that site wrote beside it (failureClass) and the two
-		// describe the same sentence. A reason Decide chose — a review that did
-		// not converge — has no class of its own yet, which is unclassified and
-		// counted rather than dropped.
-		r.recordEnd(runstore.StatusFailed, runstore.OutcomeDraft, r.failureClass(), reason)
+		r.recordEnd(runstore.StatusFailed, runstore.OutcomeDraft, class, reason)
 	}
 	r.updateCost()
 	r.narrowText = r.narrowSummary(ctx)
