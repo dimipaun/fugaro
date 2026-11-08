@@ -366,12 +366,15 @@ func haltLines(rec *runstore.Record) string {
 		fmt.Fprintf(&b, "To continue: an operator re-runs `fugaro update --firebase-project <gcp-project-id>` with this release, which deploys the rules the cascade's fields need, then %s.\n\n", again)
 	case runstore.HaltOwnerDecision:
 		// OD1: there is no limit to raise and nothing to retry. A person
-		// answers the decisions listed above, and the answer is what the next
+		// answers the decisions listed below, and the answer is what the next
 		// launcher carries — without it the next review finds the same finding
-		// again and stops in the same place.
-		decisions := "the decisions above"
+		// again and stops in the same place. Below, not above: the report writes
+		// this line and then the Waiting-on-you list (followUpReport), and
+		// nothing above names a decision — the Halted line carries the count
+		// alone (ownerWaitingReason).
+		decisions := "the decisions below"
 		if n := pendingOwner(rec.OwnerDecisions); n > 0 {
-			decisions = Plural(n, "decision") + " above"
+			decisions = Plural(n, "decision") + " below"
 		}
 		fmt.Fprintf(&b, "To continue: the owner answers %s, then %s with `--owner-ruled <text-or-file>` carrying the ruling.\n\n", decisions, again)
 	case runstore.HaltRunCap, runstore.HaltNoCap:
