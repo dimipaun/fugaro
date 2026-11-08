@@ -626,3 +626,67 @@ func TestListTasksAnswersTheCountItWasGiven(t *testing.T) {
 		}
 	}
 }
+
+// TestARunWithNoRecordYetIsRunning: a run that has written its task.json and
+// no result.json is one that started and has not recorded anything yet, and
+// that is what every tool answers about it — the question, the listing's own
+// row and the outcome alike.
+//
+// The direction is the deliberate one: a missing record reports work rather
+// than hiding it (the rule runview applies to the same case), and the only
+// other answer available is a status this package would have to invent. The
+// fields the record would carry are asserted empty beside it, so an answer
+// that stopped at "running" and filled nothing is told from one that invented
+// an outcome.
+func TestARunWithNoRecordYetIsRunning(t *testing.T) {
+	f := newRunsFixture(t)
+	f.seedRun(testSlug, testRunID, nil, nil)
+
+	var status taskStatus
+	f.answer("get_task_status", `{"run_id":"`+testRunID+`"}`, &status)
+	if status.RunID != testRunID || status.Repo != testSlug || status.Status != string(runstore.StatusRunning) {
+		t.Errorf("get_task_status answered %+v for a run whose result.json is not there yet; want it running", status)
+	}
+	if status.Outcome != "" || status.Reason != "" || status.FinishedAt != "" || status.Unreadable {
+		t.Errorf("get_task_status answered %+v for a run with no record; want nothing the record would have carried", status)
+	}
+
+	var rows []taskStatus
+	f.answer("list_tasks", `{}`, &rows)
+	if len(rows) != 1 || rows[0].RunID != testRunID || rows[0].Status != string(runstore.StatusRunning) || rows[0].Unreadable {
+		t.Errorf("list_tasks named %v for a project whose one run has no record yet; want its row, running", rows)
+	}
+
+	var res runResult
+	f.answer("get_result", `{"run_id":"`+testRunID+`"}`, &res)
+	if res.Status != string(runstore.StatusRunning) || res.Patch != "" || res.PatchTruncated {
+		t.Errorf("get_result answered %+v for a run with neither record nor diff; want it running with nothing else", res)
+	}
+}
+
+// TestResultOfARunThatUploadedNoDiffIsItsRecord: the diff is the run's own
+// object under its own prefix, and a run killed before writeback never
+// uploaded one — which is the case get_result is reached for. An object that
+// is not there is read as a run with no diff rather than as a failure, so what
+// a caller gets is the record's own account of it: what became of the run, the
+// pull request it is on and the files it changed.
+func TestResultOfARunThatUploadedNoDiffIsItsRecord(t *testing.T) {
+	f := newRunsFixture(t)
+	f.seedRun(testSlug, testRunID, &runstore.Record{
+		Status:       runstore.StatusFailed,
+		Outcome:      runstore.OutcomeNone,
+		Reason:       "the run stopped before it wrote a diff",
+		PR:           &runstore.PRRef{Number: 12, URL: "https://github.com/acme/aurora/pull/12"},
+		ChangedFiles: &runstore.ChangedFiles{Paths: []string{"internal/x.go"}, Total: 1},
+	}, nil)
+
+	var res runResult
+	text := f.answer("get_result", `{"run_id":"`+testRunID+`"}`, &res)
+	if res.Status != string(runstore.StatusFailed) || res.Reason != "the run stopped before it wrote a diff" ||
+		res.PR == nil || res.PR.Number != 12 || !slices.Equal(res.ChangedFiles, []string{"internal/x.go"}) {
+		t.Errorf("get_result answered %s for a run with no ab/patch.diff; want its own record", text)
+	}
+	if res.Patch != "" || res.PatchTruncated {
+		t.Errorf("get_result answered a %d-byte diff (truncated=%v) for a run that uploaded none: an absent object is a run with no diff, not a failure and not an empty one", len(res.Patch), res.PatchTruncated)
+	}
+}
