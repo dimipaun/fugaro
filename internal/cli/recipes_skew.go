@@ -177,6 +177,17 @@ const imageCatalogSince = "0.17.0"
 // same fact and moves with this one.
 const imageCatalogShipped = true
 
+// imageContextShipped is infra's imageContextShipped (readiness.go) at this
+// release, the same fact the pair above keeps for the catalog key itself:
+// false, because no released runner reads a catalog source's context member
+// yet. The two gates are one question asked of two readers — readiness holds
+// back the job whose image comes from such an entry, and policyContextRefusal
+// refuses to publish the node that carries it — and they move together, in the
+// commit that bumps this constant to the release that reads the member: the
+// member is not optional the way the catalog key is, so an older runner
+// refuses the whole image_catalog block rather than skipping it (D1403).
+const imageContextShipped = false
+
 // managedDeployerShipped is true as of 0.10.0, the release the owner's ruling
 // of 2026-10-22 ships the managed deployer in: managed projects ship enabled.
 // Until then it was false, because the deployer's scoped half could not be

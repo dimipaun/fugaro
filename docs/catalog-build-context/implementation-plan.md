@@ -412,6 +412,18 @@ half landed with the key rather than with CB5**, because a `main` carrying the m
 is one release away from that failure: the plan's own dependency table already had CB5's gate half
 depending on **CB1 alone**.
 
+**The gate has a second half, and the key landed with that too.** Readiness holds back the
+*deployment*; the published **node** is the other way the member reaches a runner, and both doors that
+write it — `fugaro update`'s policy stage and `fugaro project policy publish` — build it through one
+function (`internal/cli`'s `policyNodeForPublish`). `internal/cli/recipes_skew.go`'s
+`imageContextShipped` is infra's constant at this release, and `policyContextRefusal` refuses that
+build when the node about to be published carries a `context:`, naming the entry and the way out. It
+judges the node and not the local config, because a config silent about the catalog keeps the
+published one, so the member can reach those bytes from either side. The two constants are one fact
+and move in the same commit as the flip. **CB5's interface list above names readiness's branch alone**,
+and the plan's file counts with it; a gate that only stopped the deploy would leave `fugaro update`
+free to publish the node D1403 is about, which is why this half landed here.
+
 **Check 292 is not a gate on the release and does not move the slot.** It is the evidence the owner
 runs on a real installation, and it is the last thing this work owes, not the first.
 
