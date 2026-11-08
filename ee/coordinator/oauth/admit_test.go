@@ -79,12 +79,11 @@ func TestAdmitRefusesAnAddressTheMembersListsDoNotName(t *testing.T) {
 		[]string{"user:person-3@example.com"},
 	))
 
-	sess, err := admission.Admit(context.Background(), assertionFor(t, key, testProject, exchangeURL(member.name), nil))
+	err := mustErr(admission.Admit(context.Background(), assertionFor(t, key, testProject, exchangeURL(member.name), nil)))
 	refuse(t, err, "an assertion for a person neither of this member's lists names")
 	if strings.Contains(err.Error(), testEmail) {
 		t.Fatalf("the refusal repeats the address it refused (%v): a refusal that names the person off the lists tells whoever holds the assertion whether that person is a member here, which is the enumeration a refusal must not do", err)
 	}
-	_ = sess
 }
 
 // TestAdmitDoesNotWidenAMembersLists is the other half of the red step, and it
