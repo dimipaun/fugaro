@@ -114,6 +114,24 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     'sentence.ok ? sentence.text : REFUSAL_UNREADABLE':
       'the CLI\'s refusal sentence on the `SourceRefusal` channel (`src/source/source.ts`), not a document string, **through `sanitizeRefusal`** in `refusedState` and again in `refused()` (a state built without `refusedState` is still sanitized; idempotent): design section 6.3 requires it verbatim, the free-text rules would draw `roles/datastore.viewer` as `[redacted]` and the project as `<project>`, and the credential rules still redact a token a child echoed -- `degraded.test.ts` asserts both halves of that',
   },
+  // The credentials service section (managed screens CM9) draws one document --
+  // `doctor --json`'s `credentials-service-deployed` line -- and its strings
+  // reach the window through the two doors every screen uses: `putText` for the
+  // check's `severity`, and `sanitizeRefusal`/`sanitizeText` for the problem, the
+  // fix and the section's own sentences, each applied in `buildCredentialsService`
+  // before the string is stored on the model. What is left is the class list of
+  // the `make` helper and the `term` helper's own parameter.
+  'credentialsservice.ts': {
+    text: {
+      within: 'term',
+      reason:
+        'the parameter of the `term` helper itself; every call site passes one of this file\'s own term constants (`CREDENTIALS_SERVICE_SEVERITY_TERM`, `CREDENTIALS_SERVICE_PROBLEM_TERM`, `CREDENTIALS_SERVICE_FIX_TERM`), which are the console\'s words for what the value beside them is',
+    },
+    'value.text':
+      'one of a check\'s three members, **after its own door**: `wordMember` puts the severity through `sanitizeText` in the `label` class and `sentenceMember` puts the problem and the fix through `sanitizeRefusal`, and the door\'s answer is what is stored -- so what is drawn is the door\'s text and never the document\'s string. The refusal door is the one design section 6.3 keeps for a CLI sentence, which is what keeps `roles/run.invoker` in the fix that names it (`sentence` would draw `[redacted]`) while a credential a child echoed is still redacted',
+    'model.because':
+      'the section\'s one reason sentence: the CLI\'s own refusal, **through `sanitizeRefusal`** in `drawnRefusal` (the free-text rules would draw `roles/datastore.viewer` as `[redacted]` and the project as `<project>`, and the remedy is the whole value of a refusal), or this file\'s own sentence naming the command (`absent`), or `REFUSAL_UNREADABLE` when the CLI\'s sentence cannot be drawn at all -- the same three-way door `projects.ts`\'s `panel.because` and `managed.ts` keep',
+  },
   'live.ts': {
     'flag.name': 'a RunFlag is built only from live.ts\'s own flag table (`runFlags`); an unknown health or deadline is the console\'s "unknown ..." flag, never the document\'s word',
     UNAVAILABLE_MARK:
@@ -469,6 +487,11 @@ function skipString(source: string, at: number): number {
  * CLOSED_VOCABULARY.
  */
 const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>>> = Object.freeze({
+  'credentialsservice.ts': {
+    "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
+    'model.state':
+      '`CredentialsServiceState`, a closed union the model assigns (`read`, `no-check`, `absent`, `shape`) and this file\'s own: the four are four different facts, and `no-check` in particular is not the read case with nothing to show',
+  },
   'live.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
     "formatReading(reading, 'percent')": '`formatReading` of a Reading: the console\'s own number formatting or its unavailable mark',
@@ -1195,6 +1218,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
     expect([...SCREEN_FILES]).toEqual([
       'accountkeys.ts',
       'coordinator.ts',
+      'credentialsservice.ts',
       'degraded.ts',
       'graph.ts',
       'launch.ts',
@@ -1536,6 +1560,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'installations.ts',
       'screens/accountkeys.ts',
       'screens/coordinator.ts',
+      'screens/credentialsservice.ts',
       'screens/degraded.ts',
       'screens/graph.ts',
       'screens/launch.ts',
