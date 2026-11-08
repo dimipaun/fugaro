@@ -227,10 +227,12 @@ func TestGitForwardServesTheRouteOnly(t *testing.T) {
 		t.Errorf("the service was sent %d requests for a path outside the route, want none", n)
 	}
 
-	// A path that walks out of the route, spelled the four ways it can be: the
-	// dot segments a client may write, and the same ones encoded as %2e — which
-	// the service refuses as spelling and a normalizing hop reads as meaning the
-	// same thing.
+	// A path that walks out of the route, in the spellings it has: the dot
+	// segments a client may write and the same ones escaped as %2e, and then a
+	// step hidden inside a segment by an escaped separator — %2f, or %5c, a
+	// backslash being a separator to some servers. Each is a path to another
+	// route of the service for a hop that decodes before it normalizes, and the
+	// service refuses every one of them as spelling.
 	u, err := url.Parse(f.URL())
 	if err != nil {
 		t.Fatal(err)
@@ -240,6 +242,15 @@ func TestGitForwardServesTheRouteOnly(t *testing.T) {
 		"/v1/bitbucket/proxy/%2e%2e/%2e%2e/v1/mint",
 		"/v1/bitbucket/proxy/%2E%2e/",
 		"/v1/bitbucket/proxy/./info/refs",
+		"/v1/bitbucket/proxy/..%2f..%2fv1%2fmint",
+		"/v1/bitbucket/proxy/%2e%2e%2f%2e%2e%2fv1%2fmint",
+		"/v1/bitbucket/proxy/..%5C..%5Cv1%5Cmint",
+		`/v1/bitbucket/proxy/..\..\v1\mint`,
+		// An escaped separator that leads nowhere, refused for the same reason
+		// the service refuses it: this listener reads the path's spelling the
+		// way the classification will, so the two never disagree about which
+		// path was asked for.
+		"/v1/bitbucket/proxy/repo.git%2finfo%2frefs",
 	} {
 		ans := rawAnswer(t, u.Host, target)
 		if line, _, _ := strings.Cut(ans, "\r\n"); !strings.HasPrefix(line, "HTTP/1.1 404") {
@@ -247,7 +258,7 @@ func TestGitForwardServesTheRouteOnly(t *testing.T) {
 		}
 	}
 	if n := svc.count(); n != 0 {
-		t.Errorf("the service was sent %d requests for a path with a dot segment, want none", n)
+		t.Errorf("the service was sent %d requests for a path that walks out of the route, want none", n)
 	}
 
 	// The route itself is served, so the refusal above is the prefix and not

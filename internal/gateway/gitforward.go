@@ -31,11 +31,12 @@ package gateway
 //     and it refuses a spelling whose meaning depends on who decodes it — a
 //     reading this listener cannot do for it, because it would have to agree
 //     with it byte for byte about every escape (G13). What it does check is
-//     that the path is its own route's — the prefix, and then no dot segment,
-//     written "." or as "%2e" — because a listener that relayed any path would
-//     present this job's identity to the credentials service's every route, and
-//     a hop that normalized "/v1/bitbucket/proxy/../v1/mint" before routing it
-//     would be presenting it to another one.
+//     that the path is its own route's — the prefix, and then no segment that
+//     walks out of it, in any spelling (traversalSegment) — because a listener
+//     that relayed any path would present this job's identity to the
+//     credentials service's every route, and a hop that normalized
+//     "/v1/bitbucket/proxy/../v1/mint" or the "%2f"-spelled form of it before
+//     routing it would be presenting it to another one.
 //   - Both directions stream. The body is handed to the service as it arrives
 //     and the answer as it is answered; nothing is read to measure or buffer
 //     it. A proxied repository pushes its pack through here (Check 190's 33
@@ -226,49 +227,74 @@ func (f *GitForward) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // gitRoute reports whether an escaped request path is this listener's route:
-// the proxy's prefix, and then a path with no dot segment in it.
+// the proxy's prefix, and then no segment that can be read as a step out of it.
 //
 // The prefix alone does not say it. "/v1/bitbucket/proxy/../v1/mint" is
-// prefixed by the route and is a path to the service's mint route, and this
-// listener is the one client that puts a run's identity on a call to the
-// service: a hop that normalized the path before routing it would be handing
-// that identity to a route gated for someone else. The service's classifier
-// refuses the spelling too (a path whose meaning depends on who decodes it is
-// not one it classifies), but that refusal happens after the identity is on the
-// request, and this check is the one that keeps it off.
+// prefixed by the route and is a path to the service's mint route, and
+// "/v1/bitbucket/proxy/..%2f..%2fv1%2fmint" is the same path spelled so that
+// only a hop which decodes before it normalizes reads it as one — the hop this
+// check exists for. This listener is the one client that puts a run's identity
+// on a call to the service, and either spelling would hand that identity to a
+// route gated for someone else. The service's classifier refuses both (a path
+// whose meaning depends on who decodes it is not one it classifies), but that
+// refusal happens after the identity is on the request, and this check is the
+// one that keeps it off.
 func gitRoute(p string) bool {
 	rest, ok := strings.CutPrefix(p, GitProxyPrefix)
 	if !ok {
 		return false
 	}
 	for _, seg := range strings.Split(rest, "/") {
-		if dotSegment(seg) {
+		if traversalSegment(seg) {
 			return false
 		}
 	}
 	return true
 }
 
-// dotSegment is a path segment that is one or two dots once its %2e escapes are
-// read, in either case: "%2e%2e", "%2E." and ".." all name the level above, and
-// which of the spellings a hop reads is the hop's own decision. A segment with
-// no escape is read as it stands, and nothing else is unescaped here — what the
-// service reads the rest of a path's escapes for is its own business (G13).
-func dotSegment(seg string) bool {
+// traversalSegment is a path segment that can be read as a step out of the
+// route: one or two dots, or one carrying a separator, once the escapes that
+// can spell either are read.
+//
+// Both readings are refused in every spelling — ".." and "%2e%2e", "..%2f..%2f"
+// and "..%5c..%5c" — because which spelling a hop reads is the hop's own
+// decision: a check that judged only the plain ones would hand the run's
+// identity to a hop that decodes and then normalizes, which is the whole of
+// what this is for. Only %2e, %2f and %5c are read (in either case): those are
+// the escapes that can hide a step, and every other escape means what the
+// service's own classification says it means (G13).
+func traversalSegment(seg string) bool {
 	if strings.Contains(seg, "%") {
 		var b strings.Builder
 		b.Grow(len(seg))
 		for i := 0; i < len(seg); i++ {
-			if seg[i] == '%' && i+2 < len(seg) && seg[i+1] == '2' && (seg[i+2] == 'e' || seg[i+2] == 'E') {
-				b.WriteByte('.')
-				i += 2
-				continue
+			if seg[i] == '%' && i+2 < len(seg) {
+				if c, ok := stepEscape(seg[i+1], seg[i+2]); ok {
+					b.WriteByte(c)
+					i += 2
+					continue
+				}
 			}
 			b.WriteByte(seg[i])
 		}
 		seg = b.String()
 	}
-	return seg == "." || seg == ".."
+	return seg == "." || seg == ".." || strings.ContainsAny(seg, `/\`)
+}
+
+// stepEscape is the byte the three escapes that can hide a step out of the
+// route name: a dot, and the two separators. ok is false for every other
+// escape, which is left as it was written.
+func stepEscape(hi, lo byte) (byte, bool) {
+	switch {
+	case hi == '2' && (lo == 'e' || lo == 'E'):
+		return '.', true
+	case hi == '2' && (lo == 'f' || lo == 'F'):
+		return '/', true
+	case hi == '5' && (lo == 'c' || lo == 'C'):
+		return '\\', true
+	}
+	return 0, false
 }
 
 // upstream builds the call to the service for one arriving request, or answers
