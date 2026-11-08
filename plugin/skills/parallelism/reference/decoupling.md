@@ -29,9 +29,11 @@ A stub file is scaffolding, not one of the contract's own files: the integration
 
 Keep it small: one short patch, reviewable in one sitting. A contract that is nearly the task it was meant to unblock is a loss, so it has to be far cheaper than the edge it removes. A contract costs two tasks — itself and its integration task — and two edges broken through one contract share both.
 
-The contract is reviewed at least as strictly as the task that consumes it. Launch it with `fugaro run --mode <mode>`, where that mode is the highest rigor of the tasks that consume it: `--mode` may raise the mode a run resolves and never lower it, which is exactly the "at least" this needs.
+The contract is reviewed at least as strictly as the task that consumes it. It is launched with `fugaro run --mode <mode>`, where that mode is the highest rigor of the tasks that consume it: `--mode` may raise the mode a run resolves and never lower it, which is exactly the "at least" this needs.
 
-A contract over credentials, authentication, IAM or a wire format is the one place not to rush: settle it at the strictest rigor the project resolves for those paths, and let a consumer's mode raise the contract's rather than lower it.
+The pass proposes every run it calls for and takes none of them. A contract task, its integration task, the independent review a security-relevant contract gets and every follow-up are paid cloud launches like any other, so they go to the user together — the number of runs and the worst case — and none of them starts until the user says yes. That is the go-ahead the batch rule asks for, unchanged, and the pass brings no new way to spend (D1820).
+
+A contract over credentials, authentication, IAM or a wire format is the one place not to rush: settle it at the strictest rigor the project resolves for those paths, let a consumer's mode raise the contract's rather than lower it, and have its pull request reviewed independently — `fugaro review --pr N`, in a job of its own rather than the run that wrote it — before either side is written against it. That mistake is one both sides then build on, which is why this contract gets the second opinion the others may go without (F10).
 
 ## The mode a task resolves
 
@@ -63,11 +65,11 @@ One integration task per contract, named `I-...`, depending on the contract and 
 
 A task that finds the contract wrong or incomplete must not quietly work around it: a deviation nobody records is the contract changing unannounced, and the next task is written against the wrong shape. Raise a change request instead.
 
-- **The change is a node of the plan**, with an id of its own, amending the contract's files. The contract and its changes own those files: no other task's footprint names them, so an edit to one shows up in review as a contract change and not as a task's own detail.
+- **The change is a node of the plan**, with an id of its own, amending the contract's files. The contract and its changes own those files, and no other task's footprint names them — but a footprint is a prediction and nothing checks a run's real changes against it, so treat any other task's diff to a contract file as a contract change: ask for the change request rather than letting the edit stand as that task's own detail (F10).
 - **Every dependent that has not launched** gets an edge on the change node: it waits for the amendment, not for the contract it replaces.
-- **Every dependent that has launched** is driven by a follow-up run: `fugaro run --pr N` on its pull request, launched as the `working` skill's follow-up reference shows, with instructions that name the contract file as it is on `origin/<base>` — a contract file of the merged plan — and ask the run to merge the base and conform to it. The instructions name the contract file; they never paste its text, because instructions are trusted and a contract's text pasted into them would be plan text the runner acts on as its own.
+- **Every dependent that has launched** is reached by a follow-up run, proposed like the rest: `fugaro run --pr N` on its pull request, launched as the `working` skill's follow-up reference shows and only once the user has said yes, with instructions that name the contract file as it is on `origin/<base>` — a contract file of the merged plan — and ask the run to merge the base and conform to it. The instructions name the contract file; they never paste its text, because instructions are trusted and a contract's text pasted into them would be plan text the runner acts on as its own.
 - **A base branch that changed `.github/workflows/`** is never merged into a branch with a cloud follow-up run: the push is refused and the work in it is lost. Merge that base locally first, or wait for a person. This holds for every follow-up a change request launches.
-- **Tell the user**, once: what the amendment is, and which runs it sends.
+- **Propose the runs to the user**, once: what the amendment is, which follow-ups it would send and what they cost at worst — launched only after the user's yes.
 
 ## What the plan says afterwards
 

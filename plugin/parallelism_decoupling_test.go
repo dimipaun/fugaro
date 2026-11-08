@@ -121,6 +121,7 @@ func TestParallelismSkillContractTaskRigor(t *testing.T) {
 		"fugaro run --mode",
 		"fugaro settings rigor.default rigor.areas --repo",
 		`"scope": "repo:<owner/name>"`,
+		"fugaro review --pr",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the decoupling text never says %q, so a contract can be launched below the rigor of what depends on it", want)
@@ -143,6 +144,11 @@ func TestParallelismSkillContractTaskRigor(t *testing.T) {
 // anything, so they name the contract file on the base branch and ask the run
 // to merge the base and conform — never paste the contract's own text, which
 // would put plan text into instructions the runner trusts.
+//
+// The go-ahead rule is pinned here too, because this is where the pass's runs
+// are: every launch it calls for is a paid job under the same caps as any other
+// (F11, D1820), so the pass proposes them and the user's yes comes first. Text
+// that read as an order to launch would spend without asking.
 func TestFollowupInstructionsNameTheContractFile(t *testing.T) {
 	text := decouplingText(t)
 	for _, want := range []string{
@@ -152,6 +158,14 @@ func TestFollowupInstructionsNameTheContractFile(t *testing.T) {
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the decoupling text never says %q, so a launched dependent is never told its contract changed", want)
+		}
+	}
+	for _, want := range []string{
+		"until the user says yes",
+		"only after the user's yes",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the decoupling text never says %q, so a contract, an integration task or a follow-up can be launched without the user's go-ahead: the pass proposes its runs and adds no way to spend", want)
 		}
 	}
 }
