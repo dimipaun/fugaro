@@ -34,6 +34,16 @@ type KillGetter interface {
 // ReadKills reads the two switches a run of slug honours: the global one and
 // the repository's, exactly the pair checkKills reads for a running run.
 //
+// An empty slug is a caller with no repository in hand, and it asks for the
+// global switch alone: the credentials service's person-facing routes name a
+// person and no repository — the two git reads and the read mint — and they are
+// stopped by the global switch only (docs/bitbucket-credentials/
+// reconciliation.md §3, where "the read mint has no slug" is the route's own
+// fact). The repository's node is then not read at all, and not merely skipped:
+// PathKillRepo panics on an empty slug, because an empty segment would collapse
+// the path onto another node, so the alternative is a stop read that answers
+// "is the service stopped" with a panic.
+//
 // It is exported for the credentials service (C1.11), whose stop flag is this
 // pair — the owner's answer of 2026-10-19 is that an operator stops the
 // service with the switch they already have, `fugaro budget kill`, and not
@@ -44,9 +54,14 @@ type KillGetter interface {
 //
 // found is false for an absent node, which is off.
 func ReadKills(ctx context.Context, db KillGetter, slug string) (Kills, error) {
-	var kg, kr killNode
+	var kg killNode
 	fg, err1 := db.Get(ctx, PathKillGlobal, &kg)
-	fr, err2 := db.Get(ctx, PathKillRepo(slug), &kr)
+	var kr killNode
+	var fr bool
+	var err2 error
+	if slug != "" {
+		fr, err2 = db.Get(ctx, PathKillRepo(slug), &kr)
+	}
 	if err := errors.Join(err1, err2); err != nil {
 		return Kills{}, err
 	}

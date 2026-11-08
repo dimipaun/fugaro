@@ -275,7 +275,10 @@ func (p *fakePolicy) readAdmissions() []string {
 	return append([]string(nil), p.admissionReads...)
 }
 
-// fakeKills is the operator's two stop switches as the service reads them.
+// fakeKills is the operator's two stop switches as the service reads them, and
+// it takes any slug, the empty one included: the real reader's rule for the
+// slug a person-facing route has — none — is asserted against a real database
+// client in kills_test.go.
 type fakeKills struct {
 	global bool
 	repos  map[string]bool
