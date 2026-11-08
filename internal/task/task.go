@@ -417,8 +417,10 @@ type Spec struct {
 	// by a runner that has never heard of the field. A task that carries one
 	// needs a runner that knows it: Parse decodes with DisallowUnknownFields,
 	// so an older runner refuses the whole spec — the skew every new task
-	// field has, and the reason the launcher gates a launch that would set
-	// it, the way rigor's own request is gated.
+	// field has, and the reason a launch that would set it is to be gated the
+	// way rigor's own request is. That gate is T-TR10's of the same plan and
+	// does not exist yet, so today only a task written by hand can carry the
+	// field.
 	//
 	// The parent is checked (Validate below) and the keys are not: a key
 	// names a finding of the parent's own record — a hash of a file and a
@@ -441,10 +443,12 @@ type FollowUpOf struct {
 	// run names nothing a reader could look the findings up in.
 	Run string `json:"run"`
 	// Keys are the parent record's own finding keys (D1850) this task
-	// carries: one task per group, and the ungrouped case is one key. They
-	// are opaque here — compared for equality with the record's keys, never
-	// joined into a path, a command or a prompt — so unlike every other list
-	// in this spec they are carried through as written.
+	// carries: one task per group, and the ungrouped case is one key. A task
+	// the CLI files always names at least one, since a group is formed from
+	// the deferrals themselves, but nothing here requires it: a key is only
+	// ever compared for equality with the keys of the parent's record, never
+	// joined into a path, a command or a prompt, and one key alone is read by
+	// nobody.
 	Keys []string `json:"keys,omitempty"`
 }
 

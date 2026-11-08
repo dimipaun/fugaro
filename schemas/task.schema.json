@@ -102,13 +102,13 @@
         "keys": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "The parent record's own finding keys (D1850, a hash of a file and a summary) that this task carries: one task per group, and the ungrouped case is one key. They are opaque here — the CLI only ever compares them with the keys the parent's record carries, and never joins one into a path, a command or a prompt — so unlike every other list in this schema they are carried through as written, and task.Spec.Validate does not judge them."
+          "description": "The parent record's own finding keys (D1850, a hash of a file and a summary) that this task carries: one task per group, and the ungrouped case is one key. A task the CLI files always names at least one, since a group is formed from the deferrals themselves, but neither this schema nor task.Spec.Validate requires it: a key is only ever compared with the keys the parent's record carries, and never joined into a path, a command or a prompt. Unlike the spec's other lists, this one is carried through as written — the keys are opaque hashes, not launcher text."
         }
       }
     },
     "debt": {
       "type": "boolean",
-      "description": "True marks a task filed from a triage deferral (task.Spec.Debt, docs/post-review-triage), which is what `fugaro runs ls --debt` lists. Absent — and so false — for every task that is not one, which is every task written before this field, so such a spec is byte-identical to the previous release's. Like `follow_up_of` it needs a runner that knows it (task.Parse decodes with DisallowUnknownFields), which is why the launch that writes it is gated the same way (plan T-TR10)."
+      "description": "True marks a task filed from a triage deferral (task.Spec.Debt, docs/post-review-triage), which is what `fugaro runs ls --debt` lists. Absent — and so false — for every task that is not one, which is every task written before this field, so such a spec is byte-identical to the previous release's. Like `follow_up_of` it needs a runner that knows it (task.Parse decodes with DisallowUnknownFields), which is why a launch that writes it is to be gated the same way (the launcher-side gate T-TR10 of that plan adds)."
     },
     "overrides": {
       "type": "object",
