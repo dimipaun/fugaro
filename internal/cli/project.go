@@ -339,6 +339,13 @@ var consoleReadPaths = map[string]bool{
 	// and it is the read the Project tab's policy panel was missing. It reads
 	// the project's database node and writes neither it nor the state file.
 	"fugaro project policy show": true,
+	// The effective-craft read (the model-crafts plan's MC8, D1633): per
+	// craft, the model and the credential or pool it runs on, with the layer
+	// each half came from and whether the pool serves anything yet. It is
+	// offline -- the local config, the cached project layer and the checkout
+	// the command runs in -- and it writes nothing, the remembered checkouts
+	// included, so the console may spawn it.
+	"fugaro craft ls": true,
 	// The one the design names and §5.1 has not carried a row for yet (the
 	// console task adds it); it resolves no checkout today.
 	"fugaro plan graph": true,
