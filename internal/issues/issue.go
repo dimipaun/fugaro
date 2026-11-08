@@ -375,8 +375,8 @@ func splitSections(body string) ([]bodySection, error) {
 	return sections, nil
 }
 
-// parseExcerpts reads one section's blocks: one fenced block per excerpt, in
-// the order they were written.
+// parseExcerpts reads one section's blocks: the text of a section is one
+// block, the log's excerpts are one each, in the order they were written.
 func parseExcerpts(lines []string) ([]string, error) {
 	var out []string
 	for i := 0; i < len(lines); {
@@ -386,7 +386,7 @@ func parseExcerpts(lines []string) ([]string, error) {
 		}
 		open := lines[i]
 		if !isFence(open) {
-			return nil, fmt.Errorf("issues: %q stands outside an excerpt", lines[i])
+			return nil, fmt.Errorf("issues: %q stands outside a section's block", lines[i])
 		}
 		i++
 		start := i
@@ -394,7 +394,7 @@ func parseExcerpts(lines []string) ([]string, error) {
 			i++
 		}
 		if i == len(lines) {
-			return nil, errors.New("issues: an excerpt's fence is never closed")
+			return nil, errors.New("issues: a block's fence is never closed")
 		}
 		out = append(out, strings.Join(lines[start:i], "\n"))
 		i++
