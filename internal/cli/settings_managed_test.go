@@ -646,6 +646,42 @@ func TestSettingsSetManagedUnreadMarksKeepTheRefusal(t *testing.T) {
 	}
 }
 
+// The other half of the same condition. --ask asks for the confirmations back,
+// so the marks have to be read for it wherever no prompt can be answered as
+// well — a pipe, --non-interactive, a coding agent's session — and the answer
+// there is a refusal and never a silent proceed. A run that skipped the read
+// would answer a managed project's --ask with the sentence for a project whose
+// marks did not answer "managed", and then write.
+//
+// The mutation caught: settingsManagedStep called with settingsWriteOwnTerminal
+// alone, which drops --ask from the gate's condition (accounts_managed.go's own
+// call keeps the term, and the two have to agree).
+func TestSettingsSetManagedAskWithoutATerminalReadsTheMarks(t *testing.T) {
+	r := newSettingsManagedRig(t, settingsMarksManaged)
+	r.managedRunsBucket(t)
+	path := settingsManagedLayerFile(t, minimalAnchored)
+	before := readFileString(t, path)
+	noAgentSession(t)
+	noTerminal(t)
+
+	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--ask")
+	if err == nil {
+		t.Fatalf("--ask with no terminal wrote instead of refusing:\n%s", out)
+	}
+	if want := initflow.AskRefusal(initflow.Conditions{}); !strings.Contains(err.Error(), want) {
+		t.Errorf("--ask with no terminal was refused with %q, want the refusal the flag earns where nobody can answer it (%q)", err, want)
+	}
+	if strings.Contains(out, initflow.AskUnmanaged()) {
+		t.Errorf("a managed project's --ask run was answered with the sentence for a project whose marks did not answer managed:\n%s", out)
+	}
+	if after := readFileString(t, path); after != before {
+		t.Errorf("a refused --ask run rewrote the layer:\n%s", after)
+	}
+	if recs := r.audits(t); len(recs) != 0 {
+		t.Errorf("a refused --ask run filed %+v", recs)
+	}
+}
+
 // A run that asks nothing pays nothing: --yes answers the edit itself, and a
 // run with no terminal is refused before the file is touched, so neither has a
 // question for the gate to answer and neither pays for the read. That is what
