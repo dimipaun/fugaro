@@ -1121,7 +1121,8 @@ export const FINISHED_KEYS = [
  * `config_sha256`, `image_age_s`, `changed_files`, `owner_decisions`, `rigor`,
  * `artifact_count`, `artifact_bytes`, `task_pr`, `record_pr`, `pr`,
  * `pushed_head`, `started_at`, `draft_fallback`, `pr_status_at`, `stale_draft`,
- * `execution`, `batch`, `halt`, `previous_run`, `base_branch`, `derived`)
+ * `execution`, `batch`, `halt`, `previous_run`, `base_branch`, `failure_class`,
+ * `derived`)
  * are the ones this screen has no use for yet; they are listed so that a
  * document carrying them is read rather than thrown away.
  *
@@ -1197,6 +1198,21 @@ export const FINISHED_KEYS = [
  * decision is pending. What says it is the row's `reason`, the CLI's own
  * sentence for it (console/docs/json-contract.md section 5); no screen draws
  * the decisions themselves yet.
+ *
+ * **`failure_class` arrived with the failure classes (FC5)**, between `reason`
+ * and `derived` in the struct, and the CLI writes it on a row whose run did not
+ * end `succeeded`: one value of the closed vocabulary of
+ * `docs/design/failure-classes.md` §3 — the class the runner wrote beside the
+ * terminal status, or, for a record written before the field shipped, this
+ * build's reading of the record's own `reason` (`runview.ClassOf`; contract
+ * section 5). It is `plan_task`'s and `owner_decisions`' omission a fifth time,
+ * and the pin against the struct is what caught this one, in the pull request
+ * that added the key: `RECORD_KEYS` had every other key of the row and not this
+ * one. It is accepted and not read — no screen draws a run's class yet, the
+ * Failures table that switches on it being FC8's — and it carries no entry in
+ * `WIRE_TEXT_CLASSES` because its value is a name of the CLI's own vocabulary
+ * and not text a job wrote: the screen that reads it takes it through
+ * `NON_TEXT_STRING_KEYS`, as `status` and `derived` are.
  */
 export const RECORD_KEYS = [
   'run',
@@ -1211,6 +1227,7 @@ export const RECORD_KEYS = [
   'status',
   'stage',
   'reason',
+  'failure_class',
   'derived',
   'halt',
   'batch',
