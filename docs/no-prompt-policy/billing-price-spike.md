@@ -120,7 +120,7 @@ This matters here, in three ways:
     a grant: the lookup exists to feed a **dollar reservation**, and the reservation is the backend's
     ledger, so without the backend there is nothing to reserve and nothing to look up. That is the repo's
     own pattern for a ledger feature on a project with no backend — return before the call
-    (`internal/cli/accounts.go:262-264`, whose remedy sentence is `fugaro update --firebase-project <p>`;
+    (`internal/cli/accounts.go:261-263`, whose remedy sentence is `fugaro update --firebase-project <p>`;
     `internal/cli/api.go:159` refuses the same way for the spend history). §3 records what the alternative
     would cost if the owner ever wants a price without the backend, and §6 makes the gate a T8 test.
   - **Service-account credentials — the catalog check job, and the history job — pass no quota project
@@ -514,7 +514,7 @@ price refuses — with three amendments.**
    lookup rather than a grant. T8 pins all four with tests beside the lookup: the option slice carries
    `option.WithQuotaProject(<installation project>)` for user ADC and **not** for service-account
    credentials; the env var changes neither answer; and the lookup is never constructed without a
-   backend (the repo's own early return, `internal/cli/accounts.go:262-264`). No `iam.tf` edit, no
+   backend (the repo's own early return, `internal/cli/accounts.go:261-263`). No `iam.tf` edit, no
    `grantRules` row, no secret, no API key — on the **user** path, which the 2026-11-08 probe (§1.4) read
    green, so there this is the design as built rather than the design if the route works. The job path's
    half is T8's live run (§9 item 1), and it is what decides the `iam.tf` entry T8 keeps on its list.
@@ -605,7 +605,7 @@ The repository, by path and symbol:
 | `google.golang.org/api@v0.299.0` `transport/http/dial.go:189,240-242`; `internal/creds.go:29,285-303` | The header rule the split rests on: `X-Goog-User-Project` is set whenever a quota project resolved non-empty, whatever the credential kind; with no client option the only fallbacks are `GOOGLE_CLOUD_QUOTA_PROJECT` and a `quota_project_id` in the credentials file |
 | `internal/cli/image_check_catalog.go:50,540` | The catalog check job's client, built with `gcp.Options{GCPProject: …}` — the same account, already sending the same header |
 | `deploy/terraform/gcp/modules/firebase/iam.tf:102-121` | `usage_consumer` (people and admins) and `history_usage` (the history account): who holds `serviceUsageConsumer`, and why the Firestore client needs it — an account naming a project that is **not** its own |
-| `internal/cli/init.go:422`; `internal/cli/init_stages.go:947-951`; `internal/cli/accounts.go:262-264`; `internal/cli/api.go:159` | `--firebase-project` is what turns the backend on (*"a run without it builds none"*) and its stage skips without it; and the repo's own shape for a ledger feature on a project with no backend — return before the call, with the `fugaro update --firebase-project` remedy |
+| `internal/cli/init.go:422`; `internal/cli/init_stages.go:947-951`; `internal/cli/accounts.go:261-263`; `internal/cli/api.go:159` | `--firebase-project` is what turns the backend on (*"a run without it builds none"*) and its stage skips without it; and the repo's own shape for a ledger feature on a project with no backend — return before the call, with the `fugaro update --firebase-project` remedy |
 | `docs/git-providers.md:82-85`; `docs/gcp-live-checklist.md:7415` | The repo's rule for a bearer token: `curl --config` from a process substitution, because `ps` shows argv to every local user for the process's lifetime |
 | `internal/cli/init_project.go:437,490` | `adcInfo`/`credentialNote`: `authorized_user` is the person |
 | `internal/billing/accounts.go:41-68,150-174,249-271` | The repo's existing Cloud Billing client: ADC only, `billingAccounts.list`, the permission/quota-project/API-disabled errors — and `newService`, which names **no** quota project, so the lookup must not copy it (§1.2) |

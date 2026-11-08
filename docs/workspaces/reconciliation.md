@@ -267,7 +267,7 @@ stand** — with one addition: the workspace service's person class is a new sur
 
 **F25 — Three commands are on main that were not. — Exists (new).** `fugaro settings`
 (`internal/cli/settings.go:61` `newSettingsCmd`, with the writes G0–G2 added), `fugaro accounts`
-(`internal/cli/accounts.go:25` `newAccountsCmd`, with `accounts add` under the gate) and the rigor
+(`internal/cli/accounts.go:24` `newAccountsCmd`, with `accounts add` under the gate) and the rigor
 surface (`docs/rigor-command/`). All are registered in `internal/cli/root.go:191`. Consequence:
 spec §6's `fugaro workspace` family is still a free name, and the design's two rules that touch
 these — a workspace write is a **local config edit** and every write ends with `next: fugaro
@@ -306,7 +306,7 @@ it a false one while every sentence around it stays true. **One had moved**: the
 `PerRunUSD float64`; `internal/budget/model.go:5-8` (money is µ$) and `:31` `PathCapsGlobal`;
 `internal/budget/rules/rules.json.tmpl:60` (`NEW >= OLD`); `internal/policy/merge.go:44` `Merge`;
 `internal/localcfg/localcfg.go:41` `Config`; `internal/cli/config_list.go:53` `configListDoc`;
-`internal/cli/user.go:73`, `internal/cli/settings.go:61`, `internal/cli/accounts.go:25`,
+`internal/cli/user.go:73`, `internal/cli/settings.go:61`, `internal/cli/accounts.go:24`,
 `internal/cli/root.go:191`; the managed-gate set
 (`internal/cli/managed_gate.go:181` and its four callers, `internal/managed/plan.go:217`,
 `internal/managed/budget.go:124`); `internal/runner/stray.go:24`; `internal/credsvc/auth.go:375`,

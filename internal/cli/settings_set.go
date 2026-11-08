@@ -223,9 +223,8 @@ type settingsWriteOptions struct {
 	yes     bool
 	// ask is --ask, the symmetric half of --yes (the owner's rule of
 	// 2026-11-04): in a project whose marks say it is managed, where this
-	// command would ask nothing, it asks the write's own question — the ordinary
-	// one, since a widening asks none with or without it — instead. Unmanaged,
-	// it says so and changes nothing;
+	// command would ask nothing, it asks the write's own question instead — and
+	// never one for a widening. Unmanaged, it says so and changes nothing;
 	// with no terminal, in a managed project, it refuses rather than proceeds
 	// (managed_ask.go is the whole of it). It is refused beside --yes.
 	ask    bool

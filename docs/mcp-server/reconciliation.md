@@ -853,7 +853,7 @@ discover:
    repository already has rather than one invented here.
 3. **Three commands are now on `main`**: `fugaro settings` (`internal/cli/settings.go:61`),
    `fugaro rigor` (`internal/cli/settings_set.go:45` names `fugaro rigor set` as the owner of the
-   rigor keys) and `fugaro accounts` (`internal/cli/accounts.go:25`). F21's gap is unchanged — none
+   rigor keys) and `fugaro accounts` (`internal/cli/accounts.go:24`). F21's gap is unchanged — none
    of them writes an MCP token — but the CLI surface a token-minting command would join exists, and
    F21's own row is the finding that says so.
 4. **The project image catalog is on `main`** (`docs/project-image-catalog/`), and the

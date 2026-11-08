@@ -44,7 +44,7 @@ what the guard at the end of this section re-runs.
   `project_secrets.*.proxy` (`internal/settings/registry.go:644`), `batch.secrets`, `bitbucket_api_roots`,
   `mailbox.keychain_item`, `verifier_accounts` (`:684`) — have no flag and no command.
 - **F5 — `accounts` has no `rm`.** The family is `ls`, `add` (`internal/cli/accounts_add.go:41`) and
-  `clear` (`internal/cli/accounts.go:25`), and `clear` writes a project-database mark rather than a
+  `clear` (`internal/cli/accounts.go:24`), and `clear` writes a project-database mark rather than a
   config. `claude_accounts.*.allow_data_to` (`internal/settings/registry.go:627`) is written by `add`
   and removable by nothing.
 - **F6 — a repository's `workflows.*` has no writer at all.** 37 keys
