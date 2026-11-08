@@ -145,6 +145,67 @@ func TestIssueRejectsLocalClass(t *testing.T) {
 	}
 }
 
+// TestIssueRejectsALocalIDThatIsNotItsRun covers the one guard that keeps an
+// unsaved issue's file name inside the store: before it has a number, the name
+// is the header's own local ID (FileName), so the local ID has to be the one
+// the run stem gives. The run stem below is a real D1609 stem, so nothing but
+// this check refuses the record (F20).
+func TestIssueRejectsALocalIDThatIsNotItsRun(t *testing.T) {
+	local := issueLocal()
+	local.LocalID = "../../escape"
+	if _, err := Marshal(local); err == nil {
+		t.Fatal("Marshal wrote a record whose local ID is a path")
+	} else if !strings.Contains(err.Error(), "local ID") {
+		t.Errorf("refused for another reason: %v", err)
+	}
+	// The same record read back: a record from the shared store is the one this
+	// has to hold, so the read path checks it too.
+	data, err := Marshal(issueSample())
+	if err != nil {
+		t.Fatalf("marshalling: %v", err)
+	}
+	head, body := issueHeaderAndBody(t, data)
+	head = strings.Replace(head, "local_id: local-update-20261107183012-48213", "local_id: ../../escape", 1)
+	if _, err := Unmarshal([]byte(head + "\n---\n" + body)); err == nil {
+		t.Fatal("Unmarshal read a record whose local ID is a path")
+	} else if !strings.Contains(err.Error(), "local ID") {
+		t.Errorf("refused for another reason: %v", err)
+	}
+}
+
+// TestIssueRejectsAHeaderValueThatSpansLines covers the other guard the file
+// name rests on: a value with a newline in it would write text past the fence
+// that ends the header, where the reader looks for the body.
+func TestIssueRejectsAHeaderValueThatSpansLines(t *testing.T) {
+	cases := []struct {
+		name string
+		edit func(*Issue)
+	}{
+		{"reporter", func(i *Issue) { i.Reporter = "ana@example.test\nsurprise: 1" }},
+		{"failed command", func(i *Issue) { i.FailedCommand = "fugaro update\nrm -rf /" }},
+		{"fugaro version", func(i *Issue) { i.FugaroVersion = "0.9.0\n---" }},
+		{"os", func(i *Issue) { i.OS = "linux\r\nsurprise: 1" }},
+		{"url", func(i *Issue) { i.URL = "https://github.com/dimipaun/fugaro/issues/7\nsurprise: 1" }},
+		{"fingerprint", func(i *Issue) { i.Fingerprint = "9f2c4a1b\nsurprise: 1" }},
+		{"resolved_in", func(i *Issue) { i.ResolvedIn = "0.21.1\nsurprise: 1" }},
+		{"original url", func(i *Issue) { i.OriginalURL = "https://github.com/dimipaun/fugaro/issues/3\nsurprise: 1" }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			i := issueSample()
+			c.edit(&i)
+			if _, err := Marshal(i); err == nil {
+				t.Fatal("Marshal wrote a record whose header spans lines")
+			} else if !strings.Contains(err.Error(), "spans lines") {
+				t.Errorf("refused for another reason: %v", err)
+			}
+			if _, err := i.FileName(); err == nil {
+				t.Error("FileName built a name for a record whose header spans lines")
+			}
+		})
+	}
+}
+
 func TestIssueFailedCommandIsRedacted(t *testing.T) {
 	// D1732: the header keeps the command name and its flags; a value that
 	// could be a path, a URL or an identifier goes. The sample secret is built

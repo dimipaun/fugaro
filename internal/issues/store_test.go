@@ -195,6 +195,19 @@ func TestStoreRefusesTraversalStem(t *testing.T) {
 	if !strings.Contains(err.Error(), "run stem") {
 		t.Errorf("Save refused the stem for another reason: %v", err)
 	}
+	// The local ID is the other half of the name, and before the issue has a
+	// number it is the whole of it: the run stem here is a real one, so only
+	// the check that the local ID names it keeps Save from building a path out
+	// of the header. The walk below is what would find the file it wrote.
+	escape := issueLocal()
+	escape.LocalID = "../../escape"
+	err = s.Save(escape)
+	if err == nil {
+		// Not fatal: the walk below is what names the file this wrote.
+		t.Error("Save wrote an issue whose local ID is a path")
+	} else if !strings.Contains(err.Error(), "local ID") {
+		t.Errorf("Save refused the local ID for another reason: %v", err)
+	}
 	err = filepath.WalkDir(state, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
