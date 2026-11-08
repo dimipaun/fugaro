@@ -27,6 +27,11 @@ const (
 	// for, spelled the way the runs tree keys it (task.Slug's own shape:
 	// a readable name and a hash).
 	testSlug = "aurora-app-9f8e7d6c5b4a3210"
+	// testSiblingSlug is a second repository of the project the read tools
+	// answer for: the fence is per repository as well as per project, so a
+	// listing narrowed to one of them answers that one's runs and not its
+	// sibling's.
+	testSiblingSlug = "aurora-docs-0a1b2c3d4e5f6071"
 	// testOtherSlug is another project's repository in the same bucket. The
 	// installation's runs bucket holds a run of every repository somebody
 	// launched from its project, and this is the one the fence exists for.
@@ -34,11 +39,16 @@ const (
 
 	// testRunID is the project's own run, and testOtherRunID is the other
 	// project's — minted later, so a list that leaked it would name it first
-	// rather than last. testDeadRunID is a second run of the project's own,
-	// for the case whose record names no stage.
-	testRunID      = "20300101-120000-a1b2"
-	testOtherRunID = "20300102-120000-c3d4"
-	testDeadRunID  = "20300101-130000-e5f6"
+	// rather than last. testSiblingRunID is the sibling repository's, minted
+	// after testRunID for the same reason. testDeadRunID is a second run of
+	// the project's own, for the case whose record names no stage, and
+	// testCappedRunID is the one that wrote more transcripts than one call
+	// reads.
+	testRunID        = "20300101-120000-a1b2"
+	testSiblingRunID = "20300101-140000-7e8f"
+	testOtherRunID   = "20300102-120000-c3d4"
+	testDeadRunID    = "20300101-130000-e5f6"
+	testCappedRunID  = "20300101-150000-9c0d"
 
 	// testRunsBucket is the runs bucket of this installation, derived the way
 	// production derives it: fugaro-runs-<gcp-project>.
@@ -56,7 +66,7 @@ func newRunsFixture(t *testing.T) *runsFixture {
 	t.Helper()
 	g := gcpfake.NewGCS(t)
 	g.AddBucket(testRunsBucket, 1234, nil)
-	reach, err := NewProjectRuns(g.Bucket(t, testRunsBucket).Bucket, []string{testSlug})
+	reach, err := NewProjectRuns(g.Bucket(t, testRunsBucket).Bucket, []string{testSlug, testSiblingSlug})
 	if err != nil {
 		t.Fatalf("NewProjectRuns: %v", err)
 	}
@@ -141,22 +151,42 @@ func (f *runsFixture) refusal(tool, args string) error {
 // the runs of the repositories this project's own list holds, and a run
 // belonging to another project — in the same bucket, minted later, so a list
 // that leaked it would put it first — is absent from the answer and
-// unreachable by the identifier it is named by.
+// unreachable by the identifier it is named by. The same list is what a `repo`
+// argument narrows to, and the only argument of these tools that names a
+// repository: a slug outside it is refused before the bucket is read.
 func TestListTasksNamesOnlyTheProjectsRuns(t *testing.T) {
 	f := newRunsFixture(t)
 	f.seedRun(testSlug, testRunID, &runstore.Record{Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeReady, StartedAt: testNow}, nil)
+	f.seedRun(testSiblingSlug, testSiblingRunID, &runstore.Record{Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeReady}, nil)
 	f.seedRun(testOtherSlug, testOtherRunID, &runstore.Record{Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeReady}, nil)
 
 	var rows []taskStatus
 	text := f.answer("list_tasks", `{}`, &rows)
-	if len(rows) != 1 || rows[0].RunID != testRunID {
-		t.Fatalf("list_tasks named %d run(s) (%v); want only this project's %s", len(rows), rows, testRunID)
+	named := map[string]string{}
+	for _, row := range rows {
+		named[row.Repo+"/"+row.RunID] = row.Status
 	}
-	if rows[0].Repo != testSlug || rows[0].Status != string(runstore.StatusSucceeded) {
-		t.Errorf("list_tasks answered %+v; want the project's own run of %s, succeeded", rows[0], testSlug)
+	if len(rows) != 2 || named[testSlug+"/"+testRunID] != string(runstore.StatusSucceeded) ||
+		named[testSiblingSlug+"/"+testSiblingRunID] != string(runstore.StatusSucceeded) {
+		t.Fatalf("list_tasks named %v; want this project's own two runs, %s and %s", rows, testRunID, testSiblingRunID)
 	}
 	if strings.Contains(text, testOtherSlug) || strings.Contains(text, testOtherRunID) {
 		t.Errorf("the answer names another project's runs: %s", text)
+	}
+
+	// A repository of the project's own narrows the listing to that one, and
+	// the narrowing is the project's own list rather than a filter over the
+	// bucket: the sibling's run is newer and would be named first if it leaked.
+	rows = nil
+	f.answer("list_tasks", `{"repo":"`+testSlug+`"}`, &rows)
+	if len(rows) != 1 || rows[0].RunID != testRunID || rows[0].Repo != testSlug {
+		t.Errorf("list_tasks of %s named %v; want only that repository's own run", testSlug, rows)
+	}
+
+	// And a repository the project does not hold is refused rather than read:
+	// another project's slug, and a name that is nobody's, alike.
+	for _, args := range []string{`{"repo":"` + testOtherSlug + `"}`, `{"repo":"no-such-repository"}`} {
+		f.refusal("list_tasks", args)
 	}
 
 	// The other project's run is unreachable by both of the names it has: its

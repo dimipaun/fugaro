@@ -4,6 +4,7 @@
 package mcpauth
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -31,6 +32,11 @@ func transcriptLine(text string) []byte {
 // Both the record's own stage list and a run that died before its record named
 // a stage are read: the second is the case stream_logs exists for, and the
 // files under the run's own transcripts/ prefix are what name its stages then.
+//
+// The read is bounded too: a run that wrote more transcripts than one call
+// reads answers the newest of them and says how many it left out, because the
+// run's own agent writes that prefix and the cost of a call is not its to
+// choose.
 func TestLogsComeFromTheRunsOwnArtefacts(t *testing.T) {
 	f := newRunsFixture(t)
 	f.seedRun(testSlug, testRunID, &runstore.Record{
@@ -72,6 +78,33 @@ func TestLogsComeFromTheRunsOwnArtefacts(t *testing.T) {
 	if len(logs.Stages) != 1 || logs.Stages[0].Stage != "plan" ||
 		!strings.Contains(logLines(logs), "the run that died before its record named the stage") {
 		t.Errorf("stream_logs answered %+v for a run whose record names no stage; want the transcripts it wrote", logs)
+	}
+
+	// And what one call reads is bounded: the run's own agent writes under its
+	// own prefix, so a run that wrote more transcripts than maxLogTranscripts
+	// gets the newest of them and an answer that says how many it left out,
+	// rather than a read whose cost the run chooses.
+	const extra = 3
+	timings := make([]runstore.StageTiming, 0, maxLogTranscripts+extra)
+	files := map[string][]byte{}
+	for i := 1; i <= maxLogTranscripts+extra; i++ {
+		stage := fmt.Sprintf("s%d", i)
+		timings = append(timings, runstore.StageTiming{Name: stage, StartedAt: testNow})
+		files["transcripts/"+stage+"-1.jsonl"] = transcriptLine("a line of " + stage)
+	}
+	f.seedRun(testSlug, testCappedRunID, &runstore.Record{Status: runstore.StatusSucceeded, Stages: timings}, files)
+
+	logs = runLogs{}
+	f.answer("stream_logs", `{"run_id":"`+testCappedRunID+`"}`, &logs)
+	stages := stageNames(logs)
+	if len(stages) != maxLogTranscripts || stages[0] != fmt.Sprintf("s%d", extra+1) || stages[len(stages)-1] != fmt.Sprintf("s%d", maxLogTranscripts+extra) {
+		t.Errorf("stream_logs answered the stages %v for a run with %d transcripts; want the newest %d, the run's own tail", stages, maxLogTranscripts+extra, maxLogTranscripts)
+	}
+	if !logs.Truncated || logs.OmittedTranscripts != extra {
+		t.Errorf("stream_logs answered truncated=%v omitted_transcripts=%d; want the cut recorded as %d transcripts left out", logs.Truncated, logs.OmittedTranscripts, extra)
+	}
+	if strings.Contains(logLines(logs), "a line of s1\n") {
+		t.Errorf("stream_logs read a transcript the cap leaves out: %s", logLines(logs))
 	}
 }
 

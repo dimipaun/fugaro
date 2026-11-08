@@ -61,13 +61,17 @@ const (
 	// transcriptsPrefix is the leaf a run's stage transcripts live under,
 	// inside the run's own prefix.
 	transcriptsPrefix = "transcripts/"
-	// maxLogLines and maxLogLineRunes bound the answer. A transcript is a
-	// stage's whole stream and is capped at 32 MiB (runstore's own read cap),
-	// so what a caller gets is a tail: the last lines the run recorded, each
-	// one an event of that stream, which routinely runs past a screenful and
-	// is cut to keep one recorded line from being the whole answer.
-	maxLogLines     = 200
-	maxLogLineRunes = 2000
+	// maxLogTranscripts, maxLogLines and maxLogLineRunes bound one call. A
+	// transcript is a stage's whole stream and is capped at 32 MiB
+	// (runstore.MaxTranscriptBytes), so what a caller gets is a tail — of the
+	// run's transcripts and of each one's lines — and what a call costs is the
+	// cap rather than what the run wrote: the run's own agent writes objects
+	// under its own prefix, and without the count a run that wrote a hundred
+	// transcripts would make one read of it a hundred bucket reads. The oldest
+	// transcripts and the oldest lines are the ones left out.
+	maxLogTranscripts = 20
+	maxLogLines       = 200
+	maxLogLineRunes   = 2000
 )
 
 // logStage is one stage's recorded lines, under the stage's own name.
@@ -83,8 +87,13 @@ type runLogs struct {
 	Repo   string     `json:"repo"`
 	Stages []logStage `json:"stages"`
 	// Truncated is set when the answer is a tail: the run recorded more lines
-	// than maxLogLines, and the lines left out are the older ones.
+	// than maxLogLines, or wrote more transcripts than maxLogTranscripts, and
+	// what is left out is the older material.
 	Truncated bool `json:"truncated,omitempty"`
+	// OmittedTranscripts is how many of the run's own transcripts the answer
+	// read nothing out of, the oldest ones, so that a caller can tell which of
+	// the two cuts it is reading. It is non-zero only where Truncated is set.
+	OmittedTranscripts int `json:"omitted_transcripts,omitempty"`
 }
 
 // streamLogs is the stream_logs tool: the progress one of the project's own
@@ -101,6 +110,14 @@ func (p *ProjectRuns) streamLogs(ctx context.Context, call Call) (any, error) {
 	names, err := p.transcripts(ctx, st)
 	if err != nil {
 		return nil, err
+	}
+	logs := runLogs{RunID: st.RunID(), Repo: st.Slug()}
+	// The transcripts read are capped, oldest first: the answer is a tail, and
+	// how many objects one call reads is the cap's to say rather than the run's.
+	if len(names) > maxLogTranscripts {
+		logs.OmittedTranscripts = len(names) - maxLogTranscripts
+		logs.Truncated = true
+		names = names[len(names)-maxLogTranscripts:]
 	}
 	var lines []recorded // the last maxLogLines recorded lines, in order
 	for _, name := range names {
@@ -126,7 +143,6 @@ func (p *ProjectRuns) streamLogs(ctx context.Context, call Call) (any, error) {
 			}
 		}
 	}
-	logs := runLogs{RunID: st.RunID(), Repo: st.Slug()}
 	if len(lines) > maxLogLines {
 		lines, logs.Truncated = lines[len(lines)-maxLogLines:], true
 	}

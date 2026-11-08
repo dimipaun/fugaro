@@ -929,6 +929,17 @@ this task still owes is its own rerun against M-a and H1 rather than that step.
   a log line, an echoed environment, a command it ran. The front door serves **the progress record
   redacted through `internal/safetext`** (`internal/safetext/safetext.go:17`) and **never the raw
   file**: `TestLogsAreRedactedAndTheRawTranscriptIsNeverServed`.
+- **What this task leaves unserved, and it is the wiring's, not M8's.** The four tools are registered
+  on M7's registry and **no binary registers them**: `RegisterReadTools` is called by nobody and
+  `NewProjectRuns` is constructed nowhere, so the read reach this task adds is reach no process has
+  while the door is dormant (D936), and `TestNoBinaryLinksTheFrontDoorYet` still holds. **The task
+  that mounts this package on a binary — the one M5b gates, which owes M7's reading of the published
+  state and the two bounds the open registration endpoint is accepted under — owes this wiring
+  beside them**: it is where the project's own repository slugs are read, from the
+  `FUGARO_COORDINATOR_REPOS` the installation already puts on the front door's own service
+  (`deploy/terraform/gcp/modules/installation/coordinator.tf:491`, "the repositories the front door
+  may answer about"), and where a token's own repository filter is applied on top of that list
+  rather than instead of it. spec.md §11 carries it as an open item until the owner assigns it.
 
 ### M9 — `spawn_task`, `cancel_task`, and the narrowed ceiling — **DEFERRED (D936)**
 **Out of the first slice (D936).** The first slice is **the authorization server plus the read
