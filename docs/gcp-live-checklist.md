@@ -11214,8 +11214,11 @@ scripts/live-checks/check180.sh --installation <sandbox> --token-file <the token
 place the value lives. Each `--repo owner/name=<checkout path>` is one of the two allow-listed
 repositories and the checkout the check runs `fugaro update --repo` in, one pair each.
 `--probe-repo` is the sandbox repository added to the same Bitbucket project afterwards (step 7),
-which must **not** be in `project_secrets`. `--new-token-file`, `--source`, `--gcloud-config` and
-`--merge` are optional. The script plans first (`--dry-run` prints the plan and touches nothing) and
+which must **not** be in `project_secrets` and **must already exist** when you run the command: the
+check reads it with the token as one of the repositories that token has to reach, so a probe
+repository created after the command has started reads as a 404 and fails U3 on a run that has
+already launched billed runs and opened pull requests. `--new-token-file`, `--source`,
+`--gcloud-config` and `--merge` are optional. The script plans first (`--dry-run` prints the plan and touches nothing) and
 refuses `belong` by name at every step — as `--installation`, as either repository's workspace, as
 the probe repository and as the installation `fugaro doctor --project` selects. That and one stop
 are the whole of its installation guard: it reads the installation you name with `fugaro doctor
@@ -11278,9 +11281,11 @@ launcher of an allow-listed repository hold the token's value (F7), which is why
    and record what each call answered. A merge cannot be undone; on a sandbox repository that is the
    point, and no step of this check touches `belong`.
 7. **A repository added to the Bitbucket project afterwards** (U3, D464). Create one more sandbox
-   repository in the same Bitbucket project and check that the allow-listed token reaches it with no
-   new local-config entry. U3 is the reading D464's wildcard rests on: **added to the Bitbucket
-   project afterwards** is what a project-scoped token does rather than what a list of names does.
+   repository in the same Bitbucket project — **before** the one command above runs, since the check
+   reads it with the token during that run — and check that the allow-listed token reaches it
+   with no new local-config entry. U3 is the reading D464's wildcard rests on: **added to the
+   Bitbucket project afterwards** is what a project-scoped token does rather than what a list of
+   names does.
 8. **Rotate the token** (F3). Store the new token as a new version of the same secret
    (`fugaro secrets set bitbucket-token --project-wide < <new-token-file>`), wait for the running
    executions to end, then revoke the old token in the Bitbucket UI, and record that **the next run
