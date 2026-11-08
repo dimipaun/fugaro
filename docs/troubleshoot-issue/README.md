@@ -7,3 +7,5 @@
 - [implementation-plan.md](implementation-plan.md): tasks T-IS1–T-IS17 and T-IS19 in three slices (local, shared store, terminal report), levels, critical path, shared-files table, Checks 450–453.
 
 **Numbers reserved:** D1720–D1749, Checks 450–459. **Typo fixes to the spec:** none. **Builds on:** `docs/diagnose-agent/` (the `fugaro troubleshoot` command is its T-DG8, not built yet). Amends D1605 of that plan (D1728). Untouched: D327 (`runs digest --submit-draft` files nothing).
+
+**Amended by [`docs/issues-resolved-on-update/`](../issues-resolved-on-update/README.md)** (the `update` spec this plan assumed): the status enum gains `resolved` and the record `closed_as` (F25), a submitted record may move to `resolved` or `dismissed` once (T-IS10), T-IS19's wording and the retry command's source (F28, D1755).
