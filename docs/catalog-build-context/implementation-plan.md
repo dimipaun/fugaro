@@ -1,16 +1,18 @@
 # A repository build context for catalog `dockerfile` entries: implementation plan
 
-**Status: plan only; nothing is implemented; no task approved.** Five tasks, **CB1–CB5**, each with
+**Status: plan only; nothing is implemented on `main`; the decisions D1390–D1409 are all answered
+2026-11-07 (each the recommendation) and all five tasks CB1–CB5 are approved 2026-11-07.** Five tasks, **CB1–CB5**, each with
 its files (at most six, and CB1 is exactly at the cap), its interfaces, its named tests, its **red
 step**, its **mutation**, its **reviewer tier**, what it depends on, its command and its commit.
 Written against the tree of **2026-11-06** (`495104e5`, the tip of `main` when this folder was
 written); every path and symbol below was resolved against that tree while writing it.
 
-**No task may start.** `docs/project-image-catalog/context-design.md` — merged on `main`, in the
-folder whose spec this feature belongs to — already designs exactly this feature, unbuilt and
-unapproved ([reconciliation.md](reconciliation.md) **F29**). **D1408** asks whether this folder folds
-into it, supersedes it or stands beside it, and until the owner answers, **CB1 does not start**, because
-the answer decides which folder's tasks are real. Every other gate is §7.
+**The gate this plan opened with is answered, and no task waits on it.** `docs/project-image-catalog/context-design.md` —
+merged on `main`, in the folder whose spec this feature belongs to — already designs exactly this
+feature, unbuilt ([reconciliation.md](reconciliation.md) **F29**). **D1408** asked whether this folder
+folds into it, supersedes it or stands beside it, and **the owner answered 2026-11-07: fold into it** —
+so the tasks below are written in that design's series, **CB1 starts against it**, and **CB5** carries
+the fold-in itself. Every other gate is §7.
 
 **Written to:** [spec.md](spec.md) (issue **#1738** verbatim) and [reconciliation.md](reconciliation.md).
 **Where they disagree, the reconciliation wins**; where a task below and the reconciliation disagree,
@@ -378,11 +380,14 @@ that describes behaviour, CB1 alone for the gate half. **Reviewer tier:** standa
 **No slot is claimed here.** **D1409** is the owner's: which release carries this, and in what order
 against `docs/repo-image-removal` — whose **D1208** (owner ruling 2026-11-04) refused an engine-side
 mechanism keyed by repository, on the ground that it "re-creates the per-repository build input inside
-the catalog, which is the thing the ruling removes" (F30). The plan **assumes the removal lands
-first**, so this work is a later release than the one that makes the catalog the only image path, and
-the design can then be read against the entries D1208 actually produced. If the owner answers the
-other way, CB1 and CB5's gate half are unaffected and CB2–CB4's ordering against R0–R2 becomes a
-release-planning problem rather than a code one.
+the catalog, which is the thing the ruling removes" (F30). **The plan as written assumed the removal
+lands first**, so this work would be a later release than the one that makes the catalog the only
+image path, and the design could then be read against the entries D1208 actually produced. **The
+owner amended D1409 on 2026-11-08: this work does not wait for the removal chain**, so that
+assumption is superseded and the design is read against the shape D1208 has produced so far. The
+amendment moves no task: CB1 and CB5's gate half were unaffected either way, and CB2–CB4's ordering
+against R0–R2 becomes a release-planning problem rather than a code one. The slot sentence above
+stands: the amendment removed an ordering constraint, not the owner's choice of release.
 
 **The `### For operators` sentence the release owes, quoted here so it is not invented on release
 day.** `fugaro update` is the whole upgrade — the repository's hard rule — so this section may not
@@ -395,6 +400,17 @@ name a second command, a deletion or a manual repair:
 > exactly as before and its image is not rebuilt. A runner older than this release refuses a project
 > whose catalog carries a `context:` with a message naming the version it needs, rather than building
 > an entry whose context it would silently ignore.
+
+**The gate the release that first writes the key flips, and where it is.** `internal/infra/readiness.go`'s
+`imageContextShipped` is **false**, and it is the gate D1403 requires: a job whose catalog entry names
+a `context:` is held back, with a refusal naming the entry and `fugaro update`, because a runner older
+than the release that reads the member meets it as an unknown source key and refuses the whole
+published node — failing the project's runs rather than its catalog. The release that first reads the
+member (CB2/CB3) flips it in the same commit that says so in its notes, exactly as `imageCatalogShipped`
+was flipped; until it does, nothing in this work may be published to a runner that predates it. **This
+half landed with the key rather than with CB5**, because a `main` carrying the member and not the gate
+is one release away from that failure: the plan's own dependency table already had CB5's gate half
+depending on **CB1 alone**.
 
 **Check 292 is not a gate on the release and does not move the slot.** It is the evidence the owner
 runs on a real installation, and it is the last thing this work owes, not the first.
