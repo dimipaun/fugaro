@@ -161,7 +161,7 @@ func (c *imageCost) take(ctx context.Context, id string) (budget.BuildLease, *bu
 	if err != nil {
 		return budget.BuildLease{}, nil, err
 	}
-	d := budget.EvaluateBuild(want, budget.Write{Op: budget.OpLease, Day: want.Day(), Amount: want.Reserved},
+	d := budget.EvaluateBuild(budget.Write{Op: budget.OpLease, Day: want.Day(), Amount: want.Reserved},
 		read.State, read.Caps, read.Kills, now)
 	if !d.Allow {
 		return budget.BuildLease{}, nil, c.refuse(d, read.Caps, want, read.State)
@@ -214,7 +214,7 @@ func (c *imageCost) raiseCounters(ctx context.Context, want budget.BuildLease, n
 		}
 		again.State.Repo = withoutThisTake(again.State.Repo, budget.PathSpendRepo(day, c.slug), moved)
 		again.State.Global = withoutThisTake(again.State.Global, budget.PathSpendGlobal(day), moved)
-		d := budget.EvaluateBuild(want, budget.Write{Op: budget.OpLease, Day: day, Amount: want.Reserved},
+		d := budget.EvaluateBuild(budget.Write{Op: budget.OpLease, Day: day, Amount: want.Reserved},
 			again.State, again.Caps, again.Kills, now)
 		if !d.Allow {
 			return c.refuse(d, again.Caps, want, again.State)

@@ -369,3 +369,122 @@ func skuJSON(id, desc, unit, currency string, micros Micros, regions ...string) 
 		}},
 	}
 }
+
+// tier is one band of a SKU's pricing expression: the usage it starts at, its
+// unit price and that price's currency.
+type tier struct {
+	start    float64 // startUsageAmount: the usage this band begins at
+	micros   Micros
+	currency string
+}
+
+// tieredSKUJSON is the same row with several bands, in the order the API
+// returns them (ascending startUsageAmount).
+func tieredSKUJSON(id, desc, unit, region string, bands ...tier) map[string]any {
+	rates := make([]map[string]any, 0, len(bands))
+	for _, band := range bands {
+		rates = append(rates, map[string]any{
+			"startUsageAmount": band.start,
+			"unitPrice": map[string]any{
+				"currencyCode": band.currency,
+				"units":        strconv.FormatInt(int64(band.micros)/1_000_000, 10),
+				"nanos":        (int64(band.micros) % 1_000_000) * 1_000,
+			},
+		})
+	}
+	return map[string]any{
+		"skuId":          id,
+		"description":    desc,
+		"serviceRegions": []string{region},
+		"pricingInfo": []map[string]any{{
+			"pricingExpression": map[string]any{
+				"usageUnit":   unit,
+				"tieredRates": rates,
+			},
+		}},
+	}
+}
+
+// TestBillingTiersPriceTheDearestBand: a SKU's bands are ascending spans of
+// usage, and the estimator reserves the dearest of them. Cloud Build's free
+// tier is a first band priced at zero, so reading the first band alone makes a
+// priced row look unpriced and refuses every build; and a later band dearer
+// than the first would price the build below the bound the reservation claims.
+// Bands in more than one currency are not a rate at all, and the refusal says
+// which two they were.
+func TestBillingTiersPriceTheDearestBand(t *testing.T) {
+	read := func(t *testing.T, skus ...map[string]any) (PriceBook, error) {
+		t.Helper()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"skus": skus})
+		}))
+		t.Cleanup(srv.Close)
+		return ReadBuildCatalog(context.Background(), "aurora-fp", CatalogCreds{
+			ServiceAccount: true,
+			Endpoint:       srv.URL,
+			HTTPClient:     srv.Client(),
+		})
+	}
+
+	// The free tier as the catalog carries it: a first band at zero, and the
+	// rate the build really pays above it.
+	cpu := tieredSKUJSON("SKU-E2-CPU-USC1", "E2 CPU utilization per minute in us-central1", "min", "us-central1",
+		tier{micros: 0, currency: "USD"},
+		tier{start: 2500, micros: fixtureCPUMicros, currency: "USD"},
+	)
+	ram := tieredSKUJSON("SKU-E2-RAM-USC1", "E2 ram utilization per minute in us-central1", "min", "us-central1",
+		tier{micros: 0, currency: "USD"},
+		tier{start: 2500, micros: fixtureRAMMicros, currency: "USD"},
+	)
+	book, err := read(t, cpu, ram)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rate, err := BuildCost(book, "E2_HIGHCPU_8", "us-central1")
+	if err != nil {
+		t.Fatalf("a free first band refused the build instead of reserving the band above it: %v", err)
+	}
+	wantMinute := Micros(8)*fixtureCPUMicros + Micros(8)*fixtureRAMMicros
+	if rate.MicrosPerMinute != wantMinute {
+		t.Errorf("priced at %d µ$/min, want %d: the dearest band of each row", rate.MicrosPerMinute, wantMinute)
+	}
+
+	// A dearer band above a cheaper one is the one the estimate has to bound.
+	dearer := tieredSKUJSON("SKU-E2-CPU-USC1", "E2 CPU utilization per minute in us-central1", "min", "us-central1",
+		tier{micros: 1_000, currency: "USD"},
+		tier{start: 1000, micros: fixtureCPUMicros, currency: "USD"},
+	)
+	book, err = read(t, dearer, ram)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rate, err = BuildCost(book, "E2_HIGHCPU_8", "us-central1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantMinute = Micros(8)*fixtureCPUMicros + Micros(8)*fixtureRAMMicros
+	if rate.MicrosPerMinute != wantMinute {
+		t.Errorf("priced at %d µ$/min, want %d: the band above the first is the dearest, and the reservation must bound it", rate.MicrosPerMinute, wantMinute)
+	}
+
+	// Bands in two currencies are not a rate: the build refuses, and the
+	// refusal names both of them.
+	mixed := tieredSKUJSON("SKU-E2-CPU-USC1", "E2 CPU utilization per minute in us-central1", "min", "us-central1",
+		tier{micros: 0, currency: "USD"},
+		tier{start: 2500, micros: fixtureCPUMicros, currency: "EUR"},
+	)
+	book, err = read(t, mixed, ram)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = BuildCost(book, "E2_HIGHCPU_8", "us-central1")
+	if err == nil {
+		t.Fatal("a row whose bands are priced in two currencies priced a build")
+	}
+	for _, want := range []string{"USD", "EUR", "SKU-E2-CPU-USC1"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not name %q", err, want)
+		}
+	}
+}

@@ -165,7 +165,7 @@ func TestBuildLeaseCountsAgainstTheRunCaps(t *testing.T) {
 	}
 	day2 := st
 	take := func(caps Caps, kills Kills, s BuildState) Decision {
-		return EvaluateBuild(l, Write{Op: OpLease, Day: day, Amount: l.Reserved}, s, caps, kills, leaseNow)
+		return EvaluateBuild(Write{Op: OpLease, Day: day, Amount: l.Reserved}, s, caps, kills, leaseNow)
 	}
 
 	// A per-run cap below the estimate refuses, and the refusal is the rules'
@@ -173,6 +173,14 @@ func TestBuildLeaseCountsAgainstTheRunCaps(t *testing.T) {
 	d := take(testCaps(ModeEnforce, 500_000, 10_000_000, 10_000_000, 100_000_000), Kills{}, st)
 	if d.Allow || d.Reason != ReasonRunCap || d.Scope != ScopeRun {
 		t.Errorf("over the per-run cap: %+v, want run_cap refused", d)
+	}
+	// A cap between one and two times the estimate is room for the build: the
+	// lease's node does not exist yet, so the reservation is counted once, as
+	// what this take adds, and never as held as well. Both caps are named
+	// because 2_000_000 is just over twice the estimate — the one width at
+	// which a doubled count still fits.
+	if d := take(testCaps(ModeEnforce, 1_500_000, 10_000_000, 10_000_000, 100_000_000), Kills{}, st); !d.Allow {
+		t.Errorf("a cap between one and two times the estimate: %+v, want allowed (the reservation is counted once)", d)
 	}
 	if d := take(testCaps(ModeEnforce, 2_000_000, 10_000_000, 10_000_000, 100_000_000), Kills{}, st); !d.Allow {
 		t.Errorf("under the cap: %+v, want allowed", d)
@@ -237,7 +245,7 @@ func TestReadBuildStateFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d := EvaluateBuild(openLease(leaseNow, 1_000), Write{Op: OpLease, Day: day, Amount: 1_000}, empty.State, empty.Caps, empty.Kills, leaseNow); d.Allow || d.Reason != ReasonMaxReserve {
+	if d := EvaluateBuild(Write{Op: OpLease, Day: day, Amount: 1_000}, empty.State, empty.Caps, empty.Kills, leaseNow); d.Allow || d.Reason != ReasonMaxReserve {
 		t.Errorf("a lease with maxReserve unset: %+v, want a refusal", d)
 	}
 }

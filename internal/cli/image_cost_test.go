@@ -181,6 +181,31 @@ func TestOverCapRefusalNamesTheSideThatBoundIt(t *testing.T) {
 	}
 }
 
+// TestAPerRunCapBetweenOneAndTwoTimesTheEstimateHasRoom: the take is judged
+// with the reservation counted once. A judgement that read the lease as already
+// holding what it is about to reserve would add the $0.94 estimate to itself,
+// refuse this build under a $1.50 per-run cap, and name room it never asked
+// for — and the fail-closed side of that is worse in observe mode, where the
+// same arithmetic logs a false advisory for a build that fits.
+func TestAPerRunCapBetweenOneAndTwoTimesTheEstimateHasRoom(t *testing.T) {
+	f, c := imageCostFixture(t, fakePricer{book: pricedBook()})
+	f.db.Set(budget.PathCapsGlobal, map[string]any{"perRunMicros": 1_500_000, "dailyMicros": 100 * usd1})
+
+	l, advisory, err := c.take(context.Background(), "build-1")
+	if err != nil {
+		t.Fatalf("a $0.94 build under a $1.50 per-run cap was refused: %v", err)
+	}
+	if advisory != nil {
+		t.Errorf("the take came back with the advisory %+v: the cap has room for the estimate once", advisory)
+	}
+	if l.Reserved != 936_000 {
+		t.Errorf("the lease reserved %d µ$, want 936000 (one e2-highcpu-8 build's estimate)", l.Reserved)
+	}
+	if got := repoCounter(t, c, "counted"); got != 936_000 {
+		t.Errorf("the repository counts %d µ$, want the estimate counted once", got)
+	}
+}
+
 // TestUnknownPriceRefusesTheBuild: a price the catalog does not carry refuses
 // the build, and no configuration may supply one (D1550). It is the operator's
 // refusal (exit 1: fix the machine type), not the network's.

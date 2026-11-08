@@ -121,12 +121,6 @@ func (l BuildLease) Day() int64 { return Day(time.UnixMilli(l.StartedAt)) }
 // less settled. A settle or a release may take at most this.
 func (l BuildLease) Unsettled() Micros { return l.Reserved - l.Released - l.Settled }
 
-// Ledger is the lease as the ledger Evaluate judges: the build's own
-// reservation, spend and expiry.
-func (l BuildLease) Ledger() RunLedger {
-	return RunLedger{Reserved: l.Reserved, Released: l.Released, Spent: l.Settled, Exp: l.Exp, Crashed: l.Abandoned(time.Now())}
-}
-
 // Abandoned reports whether the CLI that took the lease never closed it: the
 // lease is open and past its deadline. A lease with no deadline is never
 // abandoned — refusing to guess is the fail-closed side, and every lease this
@@ -184,17 +178,21 @@ type BuildState struct {
 	Global Counters
 }
 
-// EvaluateBuild judges a build lease's reserve, settle or release with the
-// same predicate the rules are generated from, so a build is bounded by the
-// per-run cap, the day caps, maxReserve and the switches exactly as a job is,
-// and observe mode returns the cap refusal as an advisory instead of a denial
-// (D1548).
+// EvaluateBuild judges the take of a build lease with the same predicate the
+// rules are generated from, so a build is bounded by the per-run cap, the day
+// caps, maxReserve and the switches exactly as a job is, and observe mode
+// returns the cap refusal as an advisory instead of a denial (D1548).
 //
-// w.Amount is the write's amount — the reservation when the lease is taken,
-// the day's release when it is settled or given back — and w.Day is the day
-// node that write touches.
-func EvaluateBuild(l BuildLease, w Write, st BuildState, caps Caps, kills Kills, now time.Time) Decision {
-	return Evaluate(State{Run: l.Ledger(), DayRun: l.Ledger(), Repo: st.Repo, Global: st.Global}, w, caps, kills, now)
+// The lease has no ledger here, because the node it would hold is what the take
+// writes: nothing of the build is held yet, and w.Amount — the reservation —
+// is the whole of what it asks for. A ledger carrying that reservation as well
+// has Evaluate count it twice, once as held and once as added, which refuses a
+// build whose estimate is between half and all of its per-run cap and prints an
+// amount twice the one the cap was compared against. There is no ledger
+// parameter to hand it, so the two cannot be added up. w.Day is the day node
+// the take's counters touch.
+func EvaluateBuild(w Write, st BuildState, caps Caps, kills Kills, now time.Time) Decision {
+	return Evaluate(State{Repo: st.Repo, Global: st.Global}, w, caps, kills, now)
 }
 
 // BuildRead is ReadBuildState's answer: the caps, switches and counters a

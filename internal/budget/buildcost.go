@@ -112,6 +112,7 @@ type BuildSKU struct {
 	Currency      string
 	Regions       []string
 	MicrosPerUnit Micros // zero: the row carries no price the estimator may use
+	Unpriced      string // why, where the row itself is the reason: the refusal quotes it
 }
 
 // PriceBook is one read of the catalog: the Cloud Build SKUs and when they
@@ -259,6 +260,8 @@ func buildResource(b PriceBook, shape BuildMachine, resource, region string) (pr
 	switch {
 	case sku.Unit != "min":
 		return no(fmt.Sprintf("the row's usage unit is %q, not the billed minute", sku.Unit), []string{sku.ID})
+	case sku.Unpriced != "":
+		return no(sku.Unpriced, []string{sku.ID})
 	case sku.Currency != "USD":
 		return no(fmt.Sprintf("the row is priced in %q", sku.Currency), []string{sku.ID})
 	case sku.MicrosPerUnit <= 0:
@@ -401,12 +404,35 @@ func readSKU(sku *cloudbilling.Sku) BuildSKU {
 	if len(expr.TieredRates) == 0 {
 		return out
 	}
-	price := expr.TieredRates[0].UnitPrice
-	if price == nil {
-		return out
+	// The bands are ascending spans of usage, and the estimator reserves the
+	// dearest of them. Cloud Build's free tier is a first band priced at zero,
+	// so the first band alone makes a priced row look like a row with no price
+	// and refuses every build; and a later band dearer than the first would
+	// price the build below the bound the reservation claims. Bands in more
+	// than one currency are not a rate this estimator may take at all, and a
+	// band with no unit price leaves the row's dearest price unknown — so a row
+	// either has one currency and a price to take, or it is refused.
+	var top Micros
+	currency := ""
+	for _, tier := range expr.TieredRates {
+		price := tier.UnitPrice
+		if price == nil {
+			out.Unpriced = "a band of the row carries no unit price"
+			return out
+		}
+		switch {
+		case currency == "":
+			currency = price.CurrencyCode
+		case price.CurrencyCode != currency:
+			out.Unpriced = fmt.Sprintf("the row's bands are priced in %s and %s, so which one prices the build is not something the estimator may guess", currency, price.CurrencyCode)
+			return out
+		}
+		if v := moneyMicros(price); v > top {
+			top = v
+		}
 	}
-	out.Currency = price.CurrencyCode
-	out.MicrosPerUnit = moneyMicros(price)
+	out.Currency = currency
+	out.MicrosPerUnit = top
 	return out
 }
 
