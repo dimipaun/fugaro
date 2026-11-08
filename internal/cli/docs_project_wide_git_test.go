@@ -260,7 +260,9 @@ func TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository(t *testing
 // (F17, D476), that Bitbucket Data Center stays out of scope (D366, T2), the
 // single author every repository's pull requests then carry (F8, D472),
 // that no one has run the path with such a token yet (D468 = no, Check 180),
-// and where the API-root lock stands: unchecked in 0.12.1, D474's in 0.13.0.
+// where the API-root lock stands: unchecked in 0.12.1, D474's in 0.13.0, and
+// that nothing here keeps the token out of the job (D490, the 2026-10-27
+// amendment to plan T1.1).
 // The sentences wrap in the files, so the assertions are made against the
 // whitespace-normalized text.
 //
@@ -269,8 +271,10 @@ func TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository(t *testing
 // no list yet" put back → FAIL, on both new pins — the claim was the reverse of
 // F7, since `providers.FromEnv` passes `FUGARO_BITBUCKET_API_URL` unchecked and
 // a launcher can override the job's environment; the "is 0.13.0's (D474,
-// T2.8)" clause deleted → FAIL. The base floor's move into step 4 is a
-// placement fix and is deliberately unpinned: the fact is F3's, and pinning
+// T2.8)" clause deleted → FAIL; the D490 pointer sentence deleted → FAIL,
+// which is the one that says the page describes a token in the job and the
+// design that would keep it out is a plan. The base floor's move into step 4
+// is a placement fix and is deliberately unpinned: the fact is F3's, and pinning
 // where a paragraph sits would fail on the next reordering that keeps it.
 func TestDocsStateTheBitbucketProjectTokenReach(t *testing.T) {
 	providers := strings.Join(strings.Fields(readDoc(t, "docs/git-providers.md")), " ")
@@ -328,6 +332,10 @@ func TestDocsStateTheBitbucketProjectTokenReach(t *testing.T) {
 		"every enrolled repository's pull requests and comments carry the same author",
 		// The live check (D468 = no).
 		"Not yet live-checked with a workspace or project token (Check 180).",
+		// The pointer sentence the 2026-10-27 amendment added (D490): the page
+		// describes the token reaching the job, and the one design that would
+		// keep it out of the job is a plan, not code.
+		"A proxy that keeps the token out of the job is designed in [docs/secrets-brokering](secrets-brokering/README.md) and not built: every reading above is a run that holds the token's value itself (D490).",
 	} {
 		if !strings.Contains(providers, strings.Join(strings.Fields(want), " ")) {
 			t.Errorf("docs/git-providers.md does not say %q: it is the page an operator reads to opt in to one Bitbucket token for many repositories", want)
