@@ -17,7 +17,7 @@ summaries:
   v0.8.7: A sentence saying what this release gives a user.
 ```
 
-The website's changelog page prints that sentence above the entry's Highlights, and the site's build reads one entry per release file and stops, naming the file, when a release file has none (`website/src/content.ts`). So it is a required artifact wherever this file is, from 0.4.0 on, and `scripts/release.sh X.Y.Z` refuses to start when `main` carries no entry for the version being released. What a sentence says, and what it must not: this is the page a user reads before a release note, so it is what the release gives them, not what changed inside the repository — the entry's Highlights, one click below it, are where the details are.
+The website's changelog page prints that sentence above the entry's Highlights for the three newest releases, and the site's build reads one entry per release file — every release file, not only the three the page renders — and stops, naming the file, when a release file has none (`website/src/pages/changelog.astro`). So it is a required artifact wherever this file is, from 0.4.0 on, and `scripts/release.sh X.Y.Z` refuses to start when `main` carries no entry for the version being released. What a sentence says, and what it must not: this is the page a user reads before a release note, so it is what the release gives them, not what changed inside the repository — the entry's Highlights, one click below it, are where the details are.
 
 ## Format
 
