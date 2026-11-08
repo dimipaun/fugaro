@@ -234,7 +234,8 @@ func isIssueFile(name string) bool {
 	if !ok || !digits(number) {
 		return false
 	}
-	if _, err := strconv.Atoi(number); err != nil {
+	n, err := strconv.Atoi(number)
+	if err != nil || validateNumber(n) != nil {
 		return false
 	}
 	return validateRun(rest) == nil
