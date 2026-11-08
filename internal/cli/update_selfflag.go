@@ -9,6 +9,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	// managedmode is the package of the managed apply path, and the derived
+	// bucket names are its (the same alias init.go and managed_flag.go use): the
+	// check below is the flag command's own, by its name and not a literal.
+	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -136,6 +140,25 @@ func (e *initEngine) selfFlagUnmanaged(ctx context.Context) error {
 		r.warn(fmt.Sprintf("this run was given a budget, and %s's creation fact is a figure this build refuses (%s): nothing was flagged, and no command of ours replaces that fact — `fugaro managed flag` replaces a version-1 creation fact, which records no amount, and nothing else. Read the object with `gcloud storage cat gs://%s/%s` and write the fact the owner means",
 			r.gcpProject, safetext.Field(managedReasonFor(answer)), bucket, managed.MarkerObject))
 		return nil
+	}
+	// And the installation's own state bucket, by the same rule and for the same
+	// reason `fugaro managed flag` refuses on (managed_flag.go's check, and
+	// checkManagedStateBucket's on the creating path): the managed apply reads
+	// what the installation's Terraform accounts for out of
+	// gs://fugaro-tfstate-<gcp_project> BY THAT DERIVED NAME, never from a flag
+	// or from the config, so state kept anywhere else reads as CauseStateUnread —
+	// and every managed apply of the project would keep the typed confirmation
+	// this step exists to take away, with a coding agent's run stopping there
+	// rather than applying. The flag command refuses the write; nothing here may
+	// fail an update, so this step warns and flags nothing: the state is the
+	// owner's to move, and a mark written first would only be one the managed
+	// read's apply-time gate does not believe.
+	if e.lc != nil {
+		want := managedmode.InstallationsStateBucket(r.gcpProject)
+		if got := e.lc.Terraform.StateBucket; got != "" && got != want {
+			r.warn(fmt.Sprintf("this run was given a budget and %s is not managed, but the project config records the Terraform state bucket %q, and a managed project's installation state must live in %s: the managed apply reads that state out of the derived bucket name — a function of the GCP project, never of a flag or of the config — so state kept anywhere else reads as state that could not be read at all, and every apply of %s would keep the typed confirmation instead of skipping it, so nothing was flagged: move the state to %s and run this again, or leave this project unmanaged", r.gcpProject, safetext.Field(got), safetext.Field(want), safetext.Field(r.projectName), safetext.Field(want)))
+			return nil
+		}
 	}
 	// The fence, exactly where the write would be: past this point this run
 	// flags the installation, and what it writes is what turns the typed

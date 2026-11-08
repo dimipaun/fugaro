@@ -92,6 +92,54 @@ func TestUpdateOnAnUnmanagedInstallationFlagsItAndNeedsNoSecondCommand(t *testin
 	}
 }
 
+// TestUpdateDoesNotFlagAProjectWhoseStateIsElsewhere: the other half of what
+// `fugaro managed flag` refuses before it writes (managed_flag.go, and
+// checkManagedStateBucket on the creating path). The managed apply reads the
+// installation's Terraform state out of gs://fugaro-tfstate-<gcp_project> BY
+// THAT DERIVED NAME, so a project whose config keeps it in another bucket is
+// one whose every managed apply reads CauseStateUnread and keeps the typed
+// confirmation the marks would take away. Writing them anyway would leave an
+// installation the managed read believes and the apply does not, and the trap
+// is permanent: a second `fugaro update --budget` finds a fact that records an
+// amount and leaves it, so the repair would be a hand-run unflag and a state
+// move — the operator step the HARD RULE forbids. So this step warns and
+// writes neither half.
+func TestUpdateDoesNotFlagAProjectWhoseStateIsElsewhere(t *testing.T) {
+	r := unmanagedUpdateRig(t)
+	// The bucket the config names, seeded as this project's own — a bucket name
+	// is global, and the run proves the one it resolves. Without it the run's
+	// own preflight refuses earlier and this test would prove nothing about the
+	// self-flag.
+	r.appendConfig(t, "terraform: { state_bucket: fugaro-tfstate-elsewhere }\n")
+	r.gcs.AddBucket("fugaro-tfstate-elsewhere", initProjectNumber, map[string]string{"fugaro": "tfstate"})
+	out, errOut, err := executeStdin(t, "", updateBudgetArgs()...)
+	if err != nil {
+		t.Fatalf("fugaro update with the budget and a state bucket the config names: %v\n%s\n%s", err, out, errOut)
+	}
+	// Neither half of the mark, and the read the apply-time gate makes still
+	// refuses the project.
+	if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); ok {
+		t.Errorf("the self-flag wrote gs://%s/%s = %s on an installation whose state is elsewhere", initRunsBucket, managed.MarkerObject, got)
+	}
+	if l := r.crm.Labels(initProject)[managed.ProjectLabelKey]; l != "" {
+		t.Errorf("the self-flag wrote %s=%q on an installation whose state is elsewhere", managed.ProjectLabelKey, l)
+	}
+	if managedFlagIsManaged(t, r) {
+		t.Error("the managed read believes a project the self-flag did not flag")
+	}
+	// It says why, names the bucket the config records and the one the state
+	// would have to move to, and does not claim to have flagged anything.
+	said := out + errOut
+	for _, want := range []string{"nothing was flagged", "fugaro-tfstate-elsewhere", initStateBucket} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the warning does not say %q:\n%s", want, said)
+		}
+	}
+	if strings.Contains(said, "no second command") {
+		t.Errorf("the run claimed to have flagged the installation:\n%s", said)
+	}
+}
+
 // TestUpdatePlanOnlyFlagsNothing: --plan-only creates and changes nothing, and
 // the self-flag's whole output is the two marks that take the installation's
 // typed confirmation away. A preview that wrote them would turn a consent gate
