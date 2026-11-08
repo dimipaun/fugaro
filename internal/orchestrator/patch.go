@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -475,9 +476,21 @@ func applyArchive(s *State, op ArchiveOp, a Actor) error {
 	return nil
 }
 
+// applyDecisionAdd writes a question. Adding one takes no class — the daemon
+// and its agents ask people things, and a person reads them — with one
+// exception: the breaker's own prefix is the daemon's, because a decision
+// carrying it stops every spawn on the node until a person resolves it
+// (BreakerOpen, which the plan refuses over). A read of the state cannot tell
+// who wrote a decision, so the class has to be settled here or the pause is
+// anyone's to raise (D1241 leaves the node writable by whoever holds the
+// person's credential, which is what makes the class the fence rather than the
+// credential).
 func applyDecisionAdd(s *State, op DecisionOp, a Actor) error {
 	if _, ok := s.Decision(op.ID); ok {
 		return fmt.Errorf("%w: the decision %q is already there", ErrInvalid, safetext.OneLine(op.ID))
+	}
+	if a.Class != Daemon && strings.HasPrefix(op.ID, BreakerDecisionID+"-") {
+		return fmt.Errorf("%w: a %s actor asked the breaker's question in %q, and the pause it carries is the daemon's to raise", ErrActorNotAllowed, a.Class, safetext.OneLine(op.ID))
 	}
 	question := cleanText(op.Question, MaxQuestionRunes)
 	if question == "" {
