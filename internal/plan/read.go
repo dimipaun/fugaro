@@ -179,12 +179,12 @@ func Normalize(path string, doc Document) (Document, error) {
 		if node.Version != nil && strings.TrimSpace(*node.Version) == "" {
 			return Document{}, refuse(path, "node %q carries an empty version; a task with no target version says so with null", node.ID)
 		}
-		// The shape is the current schema's promise and not a retroactive one:
-		// a v1 planner wrote its own words and they are read as written, while
-		// a v2 artifact promises a number a release box can be drawn from.
-		// The literal 2 again: the shape became a promise with the second
-		// schema and it holds at every schema from there on, so a v3 graph's
-		// versions are checked exactly as a v2 graph's are.
+		// The shape became a promise with the second schema and not
+		// retroactively: a v1 planner wrote its own words and they are read as
+		// written, while a v2 or later artifact promises a number a release
+		// box can be drawn from. The literal 2, not SchemaVersion: the promise
+		// holds at every schema from there on, so a v3 graph's versions are
+		// checked exactly as a v2 graph's are.
 		if doc.SchemaVersion >= 2 && node.Version != nil && !versionNumber(*node.Version) {
 			return Document{}, refuse(path, "node %q carries the version %q; a schema version 2 graph spells a target version MAJOR.MINOR or MAJOR.MINOR.PATCH",
 				node.ID, *node.Version)
