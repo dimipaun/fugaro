@@ -522,8 +522,8 @@ func secClassCheck370Commands(section string) [][]string {
 // so in three places, and it went on saying so after the command landed on the
 // tree -- which tells a reader that the free, offline half of the check cannot
 // be run at all and leaves only the half that spends money. So: every command
-// the section's blocks name has to resolve in this tree's own command tree, and
-// the reader command has to be one of them.
+// the section's blocks name has to resolve in this tree's own command tree, all
+// the way down to its last word, and the reader command has to be one of them.
 func TestDocsSecurityClassificationCheck370NamesOnlyCommandsTheTreeCarries(t *testing.T) {
 	section := secClassCheck370Section(t, readDoc(t, liveChecksDoc))
 	cmds := secClassCheck370Commands(section)
@@ -533,10 +533,16 @@ func TestDocsSecurityClassificationCheck370NamesOnlyCommandsTheTreeCarries(t *te
 	root := NewRootCmd()
 	reader := false
 	for _, c := range cmds {
-		if sub, _, err := root.Find(c); err != nil || sub == root {
+		// The leftover args are the telling half. Find answers a word it cannot
+		// descend through by handing back the command it ran out of names at,
+		// with no error: `["security", "pathes"]` returns `security` and
+		// `["pathes"]`. So `err != nil || sub == root` alone passes for a
+		// renamed or dropped subcommand -- the drift this case is here for,
+		// since the command it names is two words deep.
+		if sub, rest, err := root.Find(c); err != nil || sub == root || len(rest) > 0 {
 			t.Errorf("Check 370 names `fugaro %s`, which this tree does not carry: a step a reader cannot run is a part of the check written off as unrunnable", strings.Join(c, " "))
 		}
-		if c[0] == "security" {
+		if strings.Join(c, " ") == "security paths" {
 			reader = true
 		}
 	}

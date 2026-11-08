@@ -35,12 +35,15 @@ type SecurityEscalation struct {
 	// SecurityAtFix. The first one a run takes is kept — the escalation is
 	// raise-only, so a later moment that matches again escalates nothing.
 	At string `json:"at"`
-	// Pattern is the matched row's name, as its layer wrote it — what the
-	// record, the pull request body and fugaro watch print when they say which
-	// rule decided (D1500).
+	// Pattern is the matched row's name, as its layer wrote it — the word that
+	// answers "why did this run a level-3 review?" for whoever reads the run
+	// back. Nothing draws it yet: only the record carries it, and the reader
+	// that shows a run's own escalation is a later slice's. D1500 took one row
+	// per pattern, which is rigor.Area's shape, so drawing it is a formatting
+	// job rather than a new contract.
 	Pattern string `json:"pattern"`
-	// Category is the matched row's category, the word printed beside the
-	// name. It is carried on the record rather than looked up in the list
+	// Category is the matched row's category, the word carried beside the
+	// name. It is on the record rather than looked up in the list
 	// again, because the list is read from the base branch and the record has
 	// to explain itself without it.
 	Category sensitivity.Category `json:"category"`
