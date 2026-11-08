@@ -29,11 +29,11 @@ import (
 // and never the plain run — a list may be written before the tree it names
 // exists, which is exactly what D1503 refuses to call an error at write time).
 //
-// The floor's own rows are counted and never measured: the floor is 43 rows
-// over trees most repositories do not have (internal/creds/**, mobile/**), so
-// measuring it would put a finding on nearly every screen in a repository with
-// nothing wrong in it — and the reader could not repair it, since the floor is
-// not theirs to edit. A row a person wrote is the row a person can fix.
+// The floor's own rows are counted and never measured: the floor names trees
+// most repositories do not have (internal/creds/**, mobile/**), so measuring it
+// would put a finding on nearly every screen in a repository with nothing wrong
+// in it — and the reader could not repair it, since the floor is not theirs to
+// edit. A row a person wrote is the row a person can fix.
 const (
 	doctorSecurityID       = "security-list"
 	doctorSecurityUnusedID = "security-list-unused"
@@ -136,8 +136,8 @@ func doctorSecurityPatternCount(n int) string {
 // doctorSecurityBaseTree is the path set of ref's tree in this checkout: the
 // base branch's committed paths, read from git and never from the working tree
 // (D1518 — the controls a run reads come from the base, and a working copy is
-// what a change being reviewed can edit). `git ls-tree -r --name-only` is the
-// same listing imagecheck uses to read a commit's tree.
+// what a change being reviewed can edit). It is the listing internal/runner
+// reads a base's paths with, so the two agree about what a tree's paths are.
 //
 // A ref this checkout cannot read the tree of is no base here, and the check
 // then says only what it can stand behind: defaultBranchRef has already
@@ -147,7 +147,7 @@ func doctorSecurityBaseTree(ctx context.Context, root, ref string) []string {
 	if root == "" || ref == "" {
 		return nil
 	}
-	out, err := gitRead(ctx, root, "ls-tree", "-r", "--name-only", "-z", ref)
+	out, err := gitRead(ctx, root, "ls-tree", "-r", "-z", "--name-only", "--end-of-options", ref)
 	if err != nil {
 		return nil
 	}
