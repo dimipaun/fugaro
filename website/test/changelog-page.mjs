@@ -19,9 +19,9 @@
 //      any release file it renders.** Every sentence the page renders is in a release file
 //      or in the summary a data file carries for that release, and every content line of a
 //      rendered release file appears on the page. The only words the page writes itself are
-//      its title, the notes block's label, the "not yet released" marker, the tags (which
-//      come from the filenames), the link to the full list, and the label of each stream's
-//      line — named in the case below, and nothing else.
+//      its title, the notes block's label, the tags (which come from the filenames), the
+//      link to the full list, and the label of each stream's line — named in the case below,
+//      and nothing else.
 //   4. **Every entry links to its GitHub release**, at a URL built from site.yaml's
 //      repository rather than typed into the page, and the page states no date — the files
 //      carry none, and the date a reader wants is the one GitHub states (D100).
@@ -59,19 +59,14 @@
 //      refusal firing, because a look nothing refuses is a look that drifts back with the
 //      next edit.
 //
-// **How it builds, and why the copy's plugin version is lowered.** A page is observable only
+// **How it builds, and what makes the expected set deterministic.** A page is observable only
 // as HTML, so this file builds the site — in a **copy of the repository in a temp directory**,
 // with `node_modules` symlinked rather than installed, the way W1.3's layout test builds for
 // the same reason: a build must not be run against the checkout it is asserted over, and the
 // assertion needs a checkout whose shape this file controls. The copy carries **no `.git`**,
-// which is what makes the released state deterministic without any test reading a tag: which
-// releases are published is decided by the plugin's own version
-// (`plugin/.claude-plugin/plugin.json`, the owner's brief of 2026-10-19), a file this copy
-// carries. The copy's manifest is written with **the second-newest release's version** (the
-// files above the CLI stream's `current` are drafts of the next release, not releases), so the
-// build under test is the state of a tree one release ahead of its version bump: exactly the
-// newest release file is not yet released, and every older one is. A build whose "not yet
-// released" came from the checkout's tags could not produce that answer at all.
+// and nothing in it is edited: which releases the page renders is decided by the CLI stream's
+// `current` version in `docs/release-streams.yaml`, a file every checkout carries, and never by
+// the checkout's tags — which is what the deploy build, checked out without tags, needs (D100).
 //
 // The build is network-free: `npm ci` is not run here, and the only executable it starts is
 // the site's own installed Astro.
@@ -95,10 +90,8 @@ const REPO = path.dirname(SITE)
 
 const RELEASES_DIR = path.join(REPO, 'docs', 'releases')
 
-// The site's own data: the end-user summary of each release (the owner's brief of
-// 2026-10-19), and the plugin manifest whose version decides which releases are published.
+// The site's own data: the end-user summary of each release (the owner's brief of 2026-10-19).
 const SUMMARIES_FILE = path.join(SITE, 'data', 'release-summaries.yaml')
-const PLUGIN_FILE = path.join(REPO, 'plugin', '.claude-plugin', 'plugin.json')
 
 // The release streams catalogue, whose CLI stream's `current` version says which release files
 // are releases at all: a file above it is the next release's notes, written ahead of their
@@ -203,8 +196,7 @@ function build() {
       const parent = path.basename(path.dirname(src))
       if (path.dirname(src) === REPO && SKIP.has(name)) return false
       // `plugin/skills` and `plugin/.claude-plugin` are the parts of `plugin/` a build
-      // reads: the slider's "See it" panel quotes the skills, and the changelog decides which releases
-      // are published from the plugin's own version (website/test/lib/build.mjs).
+      // reads: the slider's "See it" panel quotes the skills (website/test/lib/build.mjs).
       if (parent === 'plugin' && !READ_UNDER_PLUGIN.has(name)) return false
       if (parent === 'website' && SKIP_UNDER_WEBSITE.has(name)) return false
       return true
@@ -223,19 +215,6 @@ function build() {
   mkdirSync(path.join(root, 'console'))
   cpSync(path.join(REPO, 'console', 'package.json'), path.join(root, 'console', 'package.json'))
 
-  // The plugin's version the copy is built with: the second-newest **release's** — the files
-  // above the CLI's current version are the next release's notes and are not rendered at all —
-  // so the build under test is a tree one release ahead of its version bump. Exactly the newest
-  // release is then not yet released, and every older one is — an answer a tag-reading rule
-  // could not produce, because the copy has no `.git` at all (the header says why).
-  const rank = releasedFirst()
-  assert.ok(rank.length >= 2, 'docs/releases/ carries fewer than two release files, so this file cannot build the state of a tree one release ahead')
-  const publishedVersion = rank[1].slice(1)
-  writeFileSync(
-    path.join(root, 'plugin', '.claude-plugin', 'plugin.json'),
-    `${JSON.stringify({ name: 'fugaro', version: publishedVersion }, null, 2)}\n`,
-  )
-
   const site = path.join(root, 'website')
   const result = spawnSync(process.execPath, [path.join(site, 'node_modules', 'astro', 'bin', 'astro.mjs'), 'build'], {
     cwd: site,
@@ -248,7 +227,6 @@ function build() {
     dir,
     root,
     site,
-    publishedVersion,
     status: result.status,
     output: `${result.stdout ?? ''}${result.stderr ?? ''}`,
     html: existsSync(page) ? readFileSync(page, 'utf8') : null,
@@ -579,17 +557,6 @@ function streamLines(html) {
   })
 }
 
-/** The tags whose entry carries the "not yet released" marker, in the order they appear. */
-function unpublishedOnPage(html) {
-  return [...html.matchAll(/<article\b[^>]*>([\s\S]*?)<\/article>/g)]
-    .filter((article) => article[1].includes('data-status="not-yet-released"'))
-    .map((article) => {
-      const heading = /<h2\b[^>]*\bid="([^"]*)"[^>]*>/.exec(article[1])
-      assert.ok(heading, 'an entry carries the "not yet released" marker and no heading with a tag in its id, so this reader cannot name it')
-      return heading[1]
-    })
-}
-
 /**
  * One entry's body, element by element, in the order the page renders it: the text of each
  * `<h3>`, `<p>` and `<li>` inside that entry's own `<article>`, with the tags, the entities
@@ -598,10 +565,9 @@ function unpublishedOnPage(html) {
  * Reading the entry out of its own `<article>` — which opens at the heading its tag carries
  * — is what lets the case below compare one release's rendering against one release file:
  * the sequence of elements is the file's lines, in the file's order, with each section
- * heading as the heading element it is. The "not yet released" marker and the summary are
- * the page's own lines rather than the release file's — the summary is the data file's, and
- * the case below holds it there — so both are left out here, as they are left out of the
- * gate above.
+ * heading as the heading element it is. The summary is a data file's line rather than the
+ * release file's — the case below holds it there — so it is left out here, as it is left out
+ * of the gate above.
  */
 function entryElements(html, tag) {
   const at = html.indexOf(`<h2 id="${tag}"`)
@@ -610,7 +576,7 @@ function entryElements(html, tag) {
 
   const out = []
   for (const match of article.matchAll(/<(h3|p|li)\b([^>]*)>([\s\S]*?)<\/\1>/g)) {
-    if (match[2].includes('release-status') || match[2].includes('release-summary')) continue
+    if (match[2].includes('release-summary')) continue
     const text = decodeEntities(match[3].replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim()
     if (text.length > 0) out.push({ kind: match[1], text: plain(text) })
   }
@@ -756,7 +722,7 @@ test('the changelog page lists exactly the three newest CLI releases', () => {
 
   // The cut is a cut: the directory holds more files than the page renders, so a page that
   // once again listed all of them fails here rather than passing by having nothing to drop
-  // (D1640, D1645 — the three newest files, the "not yet released" one included).
+  // (D1640, D1645 — the three newest release files, a draft of the next release not counted).
   assert.ok(
     files.length > SHOWN,
     `docs/releases/ holds ${files.length} release files, and this case is about the page rendering the ${SHOWN} newest of them: with no older file there is no cut to read`,
@@ -885,9 +851,9 @@ test('the changelog page adds no sentence of its own', () => {
   const mobileRelease = newestNotes(MOBILE)
   // The page's own words, and the whole of them: its title, the notes block's label — the
   // one word of an entry that names what the block is rather than saying anything about a
-  // release — the marker a release the plugin's version has not reached carries, the link to
-  // the full list, the label of each stream's line (the two the owner allowed in the
-  // reconciliation's section 4 item 3), and the tags, which come from the filenames. Every
+  // release — the link to the full list, the label of each stream's line (the two the owner
+  // allowed in the reconciliation's section 4 item 3), and the tags, which come from the
+  // filenames. Every
   // other word the page renders comes from a release file, from the release's own summary in
   // website/data/release-summaries.yaml, or from the app's line in the summaries file beside
   // it. Each label below is named by its words and the version the tree's own notes give, so
@@ -895,7 +861,6 @@ test('the changelog page adds no sentence of its own', () => {
   const own = new Set([
     'Changelog',
     NOTES_LABEL,
-    'not yet released',
     MORE_LABEL,
     ...(consoleRelease === null ? [] : [`${CONSOLE_LABEL} v${consoleRelease.version}`]),
     ...(mobileRelease === null ? [] : [`${MOBILE_LABEL} v${mobileRelease.version}`]),
@@ -968,39 +933,18 @@ test('a release’s summary is the site’s words, not an internal id or a repos
   }
 })
 
-test('the release the plugin’s version has not reached is rendered as not yet released', () => {
+test('no entry carries a state marker: the page renders releases, and nothing else', () => {
   const html = builtPage()
-  const { publishedVersion } = build()
-  // The releases above the version the copy's plugin manifest carries — the same rule the
-  // generator applies (`src/lib/changelog.mjs`), computed here from the filenames so the
-  // expectation is the directory's rather than the generator's own answer. The files above the
-  // CLI's current version are not among them: those are the next release's notes, and the page
-  // does not render them at all.
-  const ahead = releasedFirst().filter((tag) => {
-    const file = versionOf(tag)
-    const published = versionOf(`v${publishedVersion}`)
-    for (let i = 0; i < 3; i++) {
-      if (file[i] !== published[i]) return file[i] > published[i]
-    }
-    return false
-  })
 
-  // The copy's manifest carries the second-newest **release's** version and the copy has no
-  // `.git` at all, so a tag cannot be the reason for this answer: the one release ahead of that
-  // version is the one entry the page marks, and every older one is published (the header says
-  // why the copy is built this way). **The pill survives the cut** (D1645): the three newest
-  // releases are the three the page renders, so the newest one — the file written ahead of its
-  // version bump — is among them, and a page that marked nothing, marked everything, or dropped
-  // the draft differs here.
-  assert.equal(
-    ahead.length,
-    1,
-    'the copy is built one release ahead of its version bump, so exactly one release file is above it',
-  )
-  assert.deepEqual(
-    unpublishedOnPage(html),
-    ahead,
-    `the page marks ${JSON.stringify(unpublishedOnPage(html))} as not yet released, and the release files above the plugin’s ${publishedVersion} are ${JSON.stringify(ahead)}`,
+  // A release file written ahead of its release is not an entry at all (`src/lib/changelog.mjs`
+  // leaves it out), so the page has no "not yet released" state to render and no entry may
+  // carry one: the marker this page used to print for the newest file — above the plugin's
+  // version — could never be set, because the release process records the CLI stream's current
+  // version and bumps the plugin in the same release commit. An entry here is a release that
+  // happened, and a page that marked one differs from the three release files it renders.
+  assert.ok(
+    !html.includes('not-yet-released'),
+    'the page renders a "not yet released" marker, and every entry it renders is a release: a file ahead of the CLI stream’s current version is not rendered at all (src/lib/changelog.mjs)',
   )
 })
 
@@ -1518,22 +1462,6 @@ test('an entry is read in one hierarchy: the tag, the summary, then the notes', 
     `the notes’ own lines are not the quieter tone (${notes}): the collapsed block is the operator’s detail, and it reads below the summary that says what the release gives a reader`,
   )
 
-  // The "not yet released" marker is the board's pill — the shape it draws a badge of one or
-  // two words in — and the warning tone, because it is the one line of the card that says
-  // "not yet" (the case above reads which release carries it).
-  for (const [, attrs] of html.matchAll(/<p\b([^>]*data-status="not-yet-released"[^>]*)>/g)) {
-    assert.match(
-      attrs,
-      /\bclass="[^"]*\bpill\b[^"]*"/,
-      `the not-yet-released marker is not the board’s pill (${JSON.stringify(attrs)}): the marker is a badge of two words, and the pill is the shape the boards draw those in`,
-    )
-  }
-  const status = declarationsFor(css, 'the not-yet-released marker', '.release-status[')
-  assert.match(
-    status,
-    /color:\s*var\(--warn\)/,
-    `the not-yet-released marker is not in the warning tone (${status}): the tone that means "pay attention" is the one a line saying "not yet" is read in`,
-  )
 })
 
 test('the notes’ code chips are painted on the ground, by a rule that reaches them', () => {
