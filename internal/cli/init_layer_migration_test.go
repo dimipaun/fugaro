@@ -518,6 +518,16 @@ func TestRemovedKeysOut(t *testing.T) {
 		if !strings.Contains(r.why(), "more than one YAML document") {
 			t.Errorf("the refusal does not name the document the stream holds: %s", r.why())
 		}
+		// The tree write fails with no keys of its own, so the sentence the
+		// operator acts on is built from the text pass's: a refusal that reads
+		// "takes 0 keys ... ()" and names no key is no instruction, and this is
+		// the one state in which the key has to be taken out by hand.
+		if len(r.Keys) != 1 || r.Keys[0].Path() != "profiles.svc.image.apt" {
+			t.Errorf("the refusal lists the keys the removal would have taken out as %v", r.Keys)
+		}
+		if folded := removedKeysFolded(r); !strings.Contains(folded, "profiles.svc.image.apt") {
+			t.Errorf("the refusal names no key to take out by hand: %s", folded)
+		}
 	})
 
 	t.Run("a profile the removal empties stays, written as an empty mapping", func(t *testing.T) {

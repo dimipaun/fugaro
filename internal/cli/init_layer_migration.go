@@ -254,8 +254,13 @@ func removedKeysOut(data []byte, lc *localcfg.Config) *layerRemoval {
 		// one this migration has to repair: the side it is on is what every
 		// repository of the project resolves against (or the file the owner
 		// reads), and `fugaro update` is the whole upgrade.
-		var ok bool
-		if out, keys, ok = nodeRemoval(data, doc); !ok {
+		// The tree's own keys are nil on every path it fails on, so the refusal
+		// is built from the keys the text pass reported — the ones already taken
+		// out of its edit and the keys of the edit that met the refusal. The
+		// sentence this reaches an operator with is "take the key out by hand",
+		// and a key-less sentence is no instruction at all.
+		tree, treeKeys, ok := nodeRemoval(data, doc)
+		if !ok {
 			r.Keys = keys
 			if err != nil {
 				r.Refused = spliceRefusal(err)
@@ -264,6 +269,7 @@ func removedKeysOut(data []byte, lc *localcfg.Config) *layerRemoval {
 			}
 			return r
 		}
+		out, keys = tree, treeKeys
 		r.Reencoded = true
 	}
 	r.Keys = keys
