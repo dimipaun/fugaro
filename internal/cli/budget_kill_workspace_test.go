@@ -72,6 +72,10 @@ func TestWorkspaceKillStopsAMemberRunInFlight(t *testing.T) {
 	member := h.add(t, "member-a", "member-a-gcp", "")
 	before := member.db.Value("")
 	wsDB := h.project(t, "workspace-alpha").db
+	// The workspace's own database is one of the workspace's own project: the
+	// name check every budget write makes reads this (checkDBProject), and the
+	// test for a database that does not hold it is beside this one.
+	wsDB.Set(budget.PathProject, "workspace-alpha")
 
 	// The word asked for is the workspace's own name (confirmTyped compares
 	// against the config the switch is written from), and a different word
@@ -141,6 +145,7 @@ func TestWorkspaceKillDoesNotStopAnotherWorkspace(t *testing.T) {
 	other := h.add(t, "workspace-beta", "ws-beta-gcp", "")
 	selected := h.add(t, "other-project", "other-gcp", "")
 	h.selectProject(t, "other-project")
+	h.project(t, "workspace-alpha").db.Set(budget.PathProject, "workspace-alpha")
 	before, selectedBefore := other.db.Value(""), selected.db.Value("")
 
 	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha", "--all", "--yes"); err == nil ||
@@ -177,5 +182,72 @@ func TestWorkspaceKillDoesNotStopAnotherWorkspace(t *testing.T) {
 	}
 	if on, _ := wsKillStop(t, other.db, "workspace-beta"); on {
 		t.Error("killing workspace-alpha stopped workspace-beta")
+	}
+}
+
+// TestWorkspaceKillRefusesHTTP2Debug: every cloud command of this repository
+// refuses to run while GODEBUG holds http2debug, because Go then prints
+// requests — the person's ADC bearer token included — to stderr, and GODEBUG is
+// read before main runs so it cannot be unset in time (refuseHTTP2Debug). The
+// workspace scope resolves its own project instead of selecting one, so it
+// never passes through openBudgetDB, which is where the project scopes get the
+// refusal: without its own it is the one budget write that leaks the token.
+func TestWorkspaceKillRefusesHTTP2Debug(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTable)
+	db := h.project(t, "workspace-alpha").db
+	db.Set(budget.PathProject, "workspace-alpha")
+	before := db.Value("")
+	t.Setenv("GODEBUG", "http2debug=2")
+
+	for _, verb := range []string{"kill", "resume"} {
+		_, _, err := execute(t, "budget", verb, "--workspace", "workspace-alpha", "--yes")
+		if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "http2debug") {
+			t.Errorf("budget %s --workspace under GODEBUG=http2debug: %v, want the refusal every cloud command makes: Go would print the person's bearer token to stderr", verb, err)
+		}
+	}
+	if after := db.Value(""); !reflect.DeepEqual(before, after) {
+		t.Errorf("a command that ran under GODEBUG=http2debug wrote the workspace's database:\nbefore %v\nafter  %v", before, after)
+	}
+}
+
+// TestWorkspaceKillRefusesADatabaseThatIsNotTheWorkspaces is the second check,
+// beside the ownership question: the database's own /fugaro/project has to be
+// the workspace's name (checkDBProject). A workspace whose
+// budget.firebase_project is its own gcp_project passes the ownership check on
+// an empty, unmarked database, so without this one the stop is written into a
+// database nothing proves is the workspace's — and the operator reads a success
+// that stopped nothing.
+func TestWorkspaceKillRefusesADatabaseThatIsNotTheWorkspaces(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTable)
+	db := h.project(t, "workspace-alpha").db
+
+	// No /fugaro/project at all: the state the ownership check passes.
+	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha", "--yes"); err == nil ||
+		!strings.Contains(err.Error(), "/fugaro/project") {
+		t.Errorf("a workspace database with no /fugaro/project: %v, want the refusal that it is not this project's budget database", err)
+	}
+	if db.Value(budget.PathKillGlobal) != nil {
+		t.Error("the refused kill wrote the workspace's switch: the stop went into a database nothing proves is the workspace's")
+	}
+
+	// And a database that names another project, which is the same refusal with
+	// the name check's own sentence.
+	db.Set(budget.PathProject, "some-other-project")
+	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha", "--yes"); err == nil ||
+		!strings.Contains(err.Error(), "some-other-project") {
+		t.Errorf("a workspace database belonging to another project: %v, want the refusal naming it", err)
+	}
+	if db.Value(budget.PathKillGlobal) != nil {
+		t.Error("the refused kill wrote the workspace's switch")
+	}
+
+	// The workspace's own database, marked with its own name, goes through:
+	// the two checks are refusals of the wrong database and not of this scope.
+	db.Set(budget.PathProject, "workspace-alpha")
+	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha", "--yes"); err != nil {
+		t.Fatalf("budget kill --workspace on the workspace's own database: %v", err)
+	}
+	if on, _ := wsKillStop(t, db, "workspace-alpha"); !on {
+		t.Error("the workspace's own database was not stopped")
 	}
 }

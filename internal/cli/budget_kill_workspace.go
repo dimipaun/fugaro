@@ -23,6 +23,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -38,6 +39,17 @@ var workspaceKillNoProjectFlags = []string{"config", "project", "gcp-project"}
 
 func runBudgetKillWorkspace(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 	ctx := cmd.Context()
+	// Before the database is opened, as openBudgetDB does: GODEBUG=http2debug
+	// makes Go print HTTP/2 requests with their headers — the OAuth bearer
+	// token of the person's own ADC, which is what this write authenticates
+	// with — to stderr, and GODEBUG is read before main runs, so it cannot be
+	// unset in time. This scope resolves its own project rather than selecting
+	// one, so it never passes through openBudgetDB and has to refuse here
+	// (refuseHTTP2Debug, the rule every cloud command of this repository
+	// follows).
+	if err := refuseHTTP2Debug(os.Getenv); err != nil {
+		return err
+	}
 	for _, name := range workspaceKillNoProjectFlags {
 		if cmd.Flags().Changed(name) {
 			return userErr("--workspace %s acts on the workspace's own project and its own database, so --%s cannot be combined with it: this command would read one project and write another; leave --%s out, or run the scope it names with --project", o.workspace, name, name)
@@ -64,6 +76,18 @@ func runBudgetKillWorkspace(cmd *cobra.Command, o *budgetKillOptions, kill bool)
 	// own first question, so the database a record is published in and the
 	// database a stop is written in are known to be the same one.
 	if err := requireOwnBudgetDB(ctx, lc, db, declined); err != nil {
+		return err
+	}
+	// And then the name check `fugaro budget set` and `fugaro budget kill`
+	// make, as this scope's siblings do (openBudget holds it for the project
+	// scopes): requireOwnBudgetDB asks whether this installation may write to
+	// the database at all, and this asks whether the database's own
+	// /fugaro/project is the workspace's name. A workspace whose
+	// budget.firebase_project is its own gcp_project passes the first question
+	// on an empty, unmarked database, so without this the stop would be written
+	// into a database nothing proves is the workspace's and the operator would
+	// read a success that stopped nothing.
+	if err := checkDBProject(ctx, db, lc); err != nil {
 		return err
 	}
 	printProjectHeader(o.cloud.errw(), lc)
