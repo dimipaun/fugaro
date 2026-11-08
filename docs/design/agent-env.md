@@ -850,7 +850,7 @@ lacked.
 the first release whose runner's strict `fugaro.yaml` decoder knows
 `agent.env` — an older binary refuses the key outright (the same "Binaries
 before 0.6.5 refuse this key" comment pattern already on `OAuthToken`,
-`config.go:184-185`). `fugaro run` must refuse a launch against an older job
+`config.go:192-193`). `fugaro run` must refuse a launch against an older job
 image the same way `checkImageSince` already refuses one that doesn't know
 `agent.recipe` or `OAuthToken`
 (`recipes_skew.go:91-137`): a new `checkAgentEnvImage` wired the same way,

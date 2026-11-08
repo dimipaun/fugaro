@@ -221,7 +221,7 @@ next apply. There is no flag, no second command and no per-repository choice in 
 GitHub provider is opened with `ServiceHeldKey: true` and the function **returns before `appKey(vars)`
 is ever called**, so there is no path that falls back to the mounted App key. The comment says why
 ("a run that reached for a key it was not given would be a credential the platform meant to withhold").
-`internal/cli/run.go:3647` (`credentialsServiceLaunchEnv`) is what sets it, from `lc.CredentialsService
+`internal/cli/run.go:3657` (`credentialsServiceLaunchEnv`) is what sets it, from `lc.CredentialsService
 .URL`. **And the App key's own half is inert today**, which is the one mercy here: `config
 .ServiceHeldSecretNames` is empty (`internal/config/providers.go:542`, #907), so `sa.tf`'s
 `service_held_secret_names` names no key and the *App key's* accessor is not dropped — the mount drop
@@ -285,7 +285,7 @@ why one flag could never have been the whole switch.
 |---|---|---|---|
 | 1 | the job account's **accessor on the model secrets**, and the job's **mount** of them | `deploy/terraform/gcp/modules/workflow/sa.tf:148-151` (`job_secret_names`, gated on `var.credentials_service == null` and `is_service_held` at `:135-137`); the Go spec's `dropModelMounts` (`internal/infra/spec.go:1177-1178`) and `repoCredentialsService` (`:244-248`, called at `:1314`) | **the bundle holds at least one model credential** — the service is the only source left once the mount is gone (D143, fail closed), and a `cascade` run with an empty bundle stops at the service's named refusal |
 | 2 | the **keyless GitHub provider** | `internal/gitprov/providers/providers.go:93-99` — `FUGARO_CREDENTIALS_SERVICE_URL` set opens the provider with `ServiceHeldKey: true` and returns **before `appKey(vars)`**, so the mounted key is never read | **the installation's service must mint**, which it does from the App key in the bundle: the runner installs the service as the token source (`internal/runner/runner.go:1119`, `serviceTokens` at `:1399-1420`), so this flip is already wired and needs the bundle's App key, not a code change |
-| 3 | the **URL on the execution** | `internal/cli/run.go:3647` (`credentialsServiceLaunchEnv`), which is what sets `FUGARO_CREDENTIALS_SERVICE_URL` at all (`:3553`) | **the workflow's `agent.auth` must be one the service serves** — today `cascade` alone (`config.AuthCascade`, `internal/config/defaults.go:83`); for an `oauth`, `api-key` or `vertex` job the URL buys nothing and flips 1 and 2 against it |
+| 3 | the **URL on the execution** | `internal/cli/run.go:3657` (`credentialsServiceLaunchEnv`), which is what sets `FUGARO_CREDENTIALS_SERVICE_URL` at all (`:3553`) | **the workflow's `agent.auth` must be one the service serves** — today `cascade` alone (`config.AuthCascade`, `internal/config/defaults.go:85`); for an `oauth`, `api-key` or `vertex` job the URL buys nothing and flips 1 and 2 against it |
 
 **The auth-mode condition is not a new rule — it is the tree's own rule, read from the same place.**
 `internal/infra/spec.go`'s `SecretMounts` (`:926`) already branches on `cfg.Agent.Auth`: the `cascade`
@@ -951,7 +951,7 @@ the field. **It needs no second command**, which is the owner's own constraint: 
      `internal/cli/doctor_brokering.go:432` already performs). **This is the condition that makes the
      switch safe**, because the mount it removes is the credential the service must then hand back;
   3. **the repository's `agent.auth` is one the service serves** — today `config.AuthCascade` alone
-     (`internal/config/defaults.go:83`), and this is the condition the review's finding is about. **It
+     (`internal/config/defaults.go:85`), and this is the condition the review's finding is about. **It
      is read live from `c.in.Cfg.Agent.Auth` at every build of the repository root's spec**, not stored:
      the auth mode is in `fugaro.yaml` in the checkout, and a stored copy could outlive an edit to it,
      which is the one way this switch could break a run that used to work. The record below carries a
@@ -1114,7 +1114,7 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   no `roles/run.invoker` on the service. `sa.tf` is not edited, the `workflow` and `repo` modules'
   variables are not edited, and **no golden plan moves** — every installation's repository roots plan
   today exactly what a held-off repository must plan. Flip 3 is the same predicate at
-  `internal/cli/run.go:3647`, where the launch decides whether to set `FUGARO_CREDENTIALS_SERVICE_URL`;
+  `internal/cli/run.go:3657`, where the launch decides whether to set `FUGARO_CREDENTIALS_SERVICE_URL`;
   flip 2 (`internal/gitprov/providers/providers.go:93-99`) follows the URL and needs nothing.
 - **Tests:** `TestTheSwitchIsOffUntilTheBundleHoldsAModelCredential` (a converged installation with an
   empty bundle plans a repository root whose `installation.credentials_service` is null and whose jobs

@@ -24,7 +24,7 @@ make that a hole the orchestrator cannot close from outside:
   `fugaro setup` and re-converged by `fugaro update`, and read by the runner at bootstrap. A launcher
   cannot pass a cap.
 - The one limit a launch *can* pass, `--total-timeout`, is a **timeout** and may raise the run's own clock
-  (`internal/cli/run.go:2350`); nothing a launch passes can tighten the dollar or token ceiling.
+  (`internal/cli/run.go:2360`); nothing a launch passes can tighten the dollar or token ceiling.
 - Every limit is measured from **zero at each run**. A follow-up (`--pr N`) or a retry starts with the
   whole cap again, so a chain of restarts multiplies the spend with nothing in the engine counting it.
 

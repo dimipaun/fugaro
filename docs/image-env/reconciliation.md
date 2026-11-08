@@ -90,10 +90,10 @@ cannot set an agent environment variable at all: `docs/design/agent-env.md` desi
 its §1 says the allow-list **is** Fugaro's own Go code and never a `fugaro.yaml` field
 (`docs/design/agent-env.md:305-314`), and **nothing of it is built** (its own status line, `:3-4`).
 But a repository's **Dockerfile** is repository-authored text: `image:`/`dockerfile:`
-(`internal/config/config.go:631-632`) make a per-repository job whose image sets whatever names the
+(`internal/config/config.go:639-640`) make a per-repository job whose image sets whatever names the
 repository wrote. That is the fact O1's scope answers, and F5 is what makes it enforceable. **One
 thing the stamp does not claim:** a repository names *which* operator-owned entry it runs
-(`image_name:`, `internal/config/config.go:633-647`, added in 0.17.0), so the stamp proves the image
+(`image_name:`, `internal/config/config.go:641-655`, added in 0.17.0), so the stamp proves the image
 came **from the operator's catalog**, never that the operator chose that entry for that repository —
 the trust a repository already extends by writing `image_name:` today, over entries every one of
 which the operator published.
@@ -209,7 +209,7 @@ and IAM and reads no container. So option 3's command needs one new read (D1377)
 `Jobs.Get`, which `doctor` does not make today (it lists jobs and reads their IAM); the launcher role already holds `run.jobs.get`.
 
 **F15. One stale comment, noted and not taken.** `internal/backend/backend.go:131` says "No launcher
-sets an entry here today", and two do: `internal/cli/run.go:3553`
+sets an entry here today", and two do: `internal/cli/run.go:3563`
 (`FUGARO_CREDENTIALS_SERVICE_URL`) and `:3560` (`FUGARO_REVIEW_JOB`) set `LaunchSpec.Env`. It is a
 one-line comment fix in a file this plan does not otherwise touch; the plan does not take it, and
 whoever takes IE1 may fix it in the same commit if they touch that file.

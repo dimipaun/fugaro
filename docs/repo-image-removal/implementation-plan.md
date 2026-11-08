@@ -212,7 +212,7 @@ readiness branches that decide between them.
 - **Interface.** `catalog.Applies` (`internal/catalog/select.go:318`) stops reading `image:`/`dockerfile:`
   as "not a catalog workflow" — those keys no longer exist — and keeps its other refusals. The new
   refusal lives where the spec is built: a workflow whose `checkout` is `baked`
-  (`internal/config/config.go:685`) and whose chosen entry's source is a prebuilt image
+  (`internal/config/config.go:693`) and whose chosen entry's source is a prebuilt image
   (`SourceImage`, `internal/config/catalog.go:71`) is refused with a sentence naming the entry, the
   source kind and the two ways out (`checkout: clone`, or an entry that is built). `checkout`'s two
   values and both their meanings are unchanged.

@@ -430,7 +430,7 @@ local config: build.machine_type   (default E2_HIGHCPU_8; internal/localcfg/loca
         │
         ├─ internal/cli/image.go:310 → cloudBuildSpec(…, lc.Build.MachineType, …) → :456, the spec at :460
         ├─ internal/cli/image_build_catalog.go:361
-        ├─ internal/cli/init.go:4660 (converge), image_refresh_steps.go:416 (refresh)
+        ├─ internal/cli/init.go:4682 (converge), image_refresh_steps.go:416 (refresh)
         ├─ internal/infra/spec.go:1729   (FUGARO_CHECK_SPEC, the repo daily check job)
         └─ internal/infra/catalogcheck.go:218 (FUGARO_CATALOG_CHECK_SPEC)
         │

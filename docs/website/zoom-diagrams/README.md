@@ -64,7 +64,7 @@ one `<img>` where the brief wants a slider.
 The corrections the reconciliation makes, in one line each:
 
 - **Level 1's loop is close to the runner and wrong in three of its six lines.** The "cheap
-  reviewer" is the coder's own model (`internal/config/config.go:236` `StageRole`, `:226`
+  reviewer" is the coder's own model (`internal/config/config.go:244` `StageRole`, `:226`
   `ModelFor`); the senior review is a
   **loop** of up to `agent.review_rounds` rounds, default 2, not "one final review"
   (`internal/runner/runner.go:1764`); and a draft PR flips to ready on a senior `ship` **and**

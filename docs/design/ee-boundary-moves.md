@@ -676,7 +676,7 @@ those paths share with the core.
 | `budgetScopes` (`cloud.go:344`) | `BudgetScopes` | `func BudgetScopes() []string` |
 | `checkDatabaseHost` (`history.go:187`) | `CheckDatabaseHost` | `func CheckDatabaseHost(rawURL, firebaseProject string) error` |
 | `envProject`, `envFirebaseFP`, `envRTDBURL`, `envRunsBucket` (`history.go:34`) | `EnvProject`, `EnvFirebaseFP`, `EnvRTDBURL`, `EnvRunsBucket` | consts |
-| `reportIntentTimeout` (`run.go:2918`) | `ReportIntentTimeout` | const |
+| `reportIntentTimeout` (`run.go:2928`) | `ReportIntentTimeout` | const |
 
 The third block (E2.2a) is what `fugaro report`'s command reads where the second block's list stops:
 the run reader its degraded and by-mode paths share with `runs ls`/`runs stats`, and the four core

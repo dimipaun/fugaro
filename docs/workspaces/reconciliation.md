@@ -302,7 +302,7 @@ it a false one while every sentence around it stays true. **One had moved**: the
 `pricing.FromUSD` cap refusal, cited in [implementation-plan.md](implementation-plan.md) W0, was
 `internal/config/validate.go:796,801` at `3d6ed04d` and those lines are now inside `levelProblems`
 (`:789`); the two calls are at `:861` and `:866`, in `validateBudget` (`:850`). The rest hold:
-`internal/pricing/pricing.go:18` `Micros`, `:26` `FromUSD`; `internal/config/config.go:194`
+`internal/pricing/pricing.go:18` `Micros`, `:26` `FromUSD`; `internal/config/config.go:202`
 `PerRunUSD float64`; `internal/budget/model.go:5-8` (money is µ$) and `:31` `PathCapsGlobal`;
 `internal/budget/rules/rules.json.tmpl:60` (`NEW >= OLD`); `internal/policy/merge.go:44` `Merge`;
 `internal/localcfg/localcfg.go:41` `Config`; `internal/cli/config_list.go:53` `configListDoc`;

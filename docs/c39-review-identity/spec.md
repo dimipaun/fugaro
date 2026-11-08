@@ -162,7 +162,7 @@ publishes (O4, `docs/credentials-service/implementation-plan.md`):
 4. the run identity must be a **review** identity (§3.3).
 
 Both halves of the admission are the launcher's and neither is new: the account's `allow_data_to` must
-list the repository or the **launch** is refused (`claudeAccountAllowed`, `internal/cli/run.go:1790`), and
+list the repository or the **launch** is refused (`claudeAccountAllowed`, `internal/cli/run.go:1800`), and
 the run identity can only be minted by whoever holds the launcher's minting authority. The service's check
 is the second, independent reading of the same fact — the reading that is available to a service which
 must not trust the caller.

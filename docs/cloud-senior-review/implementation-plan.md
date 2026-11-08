@@ -1197,7 +1197,7 @@ that is still the check's step 3.
   (§2's rule, §6.4's note): the constant and its comment, `TestRecipesSkewRefusesReviewJobOnAnOldImage`
   (whose `0.19.0` row is a refused one now and whose admitted row is `"0.20.0"`, derived image and clone
   alike), two new tests — `TestReviewJobSinceHasAReleaseBullet`, the reader this constant never had,
-  since `docs/release.md:226`'s checklist bullet is what holds it to a release and every sibling
+  since `docs/release.md:227`'s checklist bullet is what holds it to a release and every sibling
   `…Since` constant has that test and this one did not, and `TestReviewJobSinceCitationsPointAtItsOwnLine`,
   because the citation checks resolve a line against its file and never against its subject, which is
   how this constant's own citations here went stale in the change that moved it — the same file's
@@ -1460,7 +1460,7 @@ task **Open item 4** became. **Depends on:** nothing unmerged — **CSR8 has mer
 class this task reads is the one CSR8 landed: `r.runClass()` (`internal/runner/projectjob.go:82`, the
 **task's mode**) and the class of the candidate the run was admitted to, never `r.reviewJob()`
 (`internal/runner/reviewartifact.go:934`, the environment marker `FUGARO_REVIEW_JOB` the **launcher** writes
-at `internal/cli/run.go:3560`) — see *the keying* below, which is the correction this task was re-read for.
+at `internal/cli/run.go:3570`) — see *the keying* below, which is the correction this task was re-read for.
 **E7 does not reach the code**: the
 review class exists on the service's side (C3.9a–C3.9g, merged) and every test here is hermetic; what E7
 still decides is whether a placed review run's **first call is served** (§1). **Before CSR11**: a flipped
@@ -1487,7 +1487,7 @@ constant launches a run whose reviewer this task is what gives a model to reach.
     `internal/credsvc/cascade.go:105`). `r.reviewJob()` reads `r.d.Env` — the whole of the function is
     `envLookup(r.d.Env, EnvReviewJob) != ""` (`internal/runner/reviewartifact.go:934`, the read at `:935`)
     — which is the container's environment, the one input the launcher writes for the execution
-    (`backend.LaunchSpec.Env`, `internal/cli/run.go:3553`) and the one
+    (`backend.LaunchSpec.Env`, `internal/cli/run.go:3563`) and the one
     a job definition carries — and CSR8's own rule for the class is the opposite in as many words:
     `r.runClass()` is the **task's mode** (`internal/runner/projectjob.go:82`), "never anything the job's
     environment says, so a container cannot be told which class it is by the name it was started under",
@@ -2412,7 +2412,7 @@ recommendation). **Why, in one line:** the 0.19.0 release in flight carries none
 release that carries the flip has to carry the tasks that make the flip work — the placement, the
 registration, the verifier and the switch's own removal. Two consequences, settled together as the item
 said: the release note's `### For operators` sentence is written for that release (§6.5), and
-**`reviewJobSince` is `"0.20.0"`** — `docs/release.md:226`'s bullet verifies it against the release
+**`reviewJobSince` is `"0.20.0"`** — `docs/release.md:227`'s bullet verifies it against the release
 whose runner can serve the launch, `internal/cli/recipes_skew.go:456` holds it, and a wrong value refuses
 too late (a launch names a variant the installation has not deployed, or a runner that cannot serve one)
 or too early (an installation that holds both stays blocked). **The move waited for CSR11's flip**:

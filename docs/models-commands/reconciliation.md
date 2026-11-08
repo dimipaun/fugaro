@@ -93,7 +93,7 @@ secret name) is not asked for and stays a hand edit; `models add` extends an exi
 
 **F13: Exists, offline. Each repository's pins can be read without the network.** The remembered checkouts
 (`internal/localcfg/checkouts.go`, `CheckoutsVersion` at `:57`) record where this machine has each repository;
-`agentAtRef` (`internal/cli/run.go:1661`) already reads a `fugaro.yaml` at a ref from a local checkout with no
+`agentAtRef` (`internal/cli/run.go:1671`) already reads a `fugaro.yaml` at a ref from a local checkout with no
 fetch; `layerRoutes` (`internal/cli/layer_resolve.go:357`) resolves the project layer's part. *Consequence:*
 `models ls` and `models rm` read usage from local checkouts only, and say which repositories they could not see
 (D783, D793).

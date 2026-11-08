@@ -67,7 +67,7 @@ needs no change at all.
 `yamledit.RemoveListItem` (`internal/yamledit/yamledit.go:234`, `:258`). They do not
 reach a **map** (`workflows.*.cache.*.key`, `providers.*.models`) or an **object list**
 (`workflows.*.cache` is a sequence of mappings, `workflows.*.secrets` a sequence of
-`{name, env}` — `internal/config/config.go:850`, `:828`).
+`{name, env}` — `internal/config/config.go:858`, `:828`).
 
 **Recommendation (D1162): one new pair, `--add-entry` / `--remove-entry`, for maps and object lists.**
 `--add` stays the string-list flag it is, and the new pair carries the entry's shape:
@@ -225,7 +225,7 @@ publish a file every writer here has just written (D831's own task, inherited).
 ### 3.7 A repository's `workflows.*`, and what `setup` and `config init` write (D1177)
 
 A repository's `fugaro.yaml` `workflows.*` block (37 registry keys,
-`internal/config/config.go:600`) has **no writer**: `fugaro config init` writes a
+`internal/config/config.go:608`) has **no writer**: `fugaro config init` writes a
 minimal file (`internal/cli/config_init.go:84`) and the setup skill writes the rest
 **with the user**, in the user's own agent session (`plugin/skills/setup/SKILL.md:13`).
 

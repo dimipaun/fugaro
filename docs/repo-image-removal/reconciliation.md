@@ -24,13 +24,13 @@ code. A `:line` is a **declaration** line at `777b902d`; the symbol is what to s
   about the image is project-level except the catalog's newer path.
 
 - **F2: Exists. `image:` is the repository's build input and it has no name.**
-  `internal/config/config.go:631` is the field, `internal/config/config.go:780` the block it holds
+  `internal/config/config.go:639` is the field, `internal/config/config.go:788` the block it holds
   (`apt`, `setup`, `tools`, `skip_build_scripts`, `key_files`, and the `node`/`jdk` tombstones
   `internal/config/image.go:119`, `:122`). The block is rendered into a Dockerfile by
   `internal/image/render.go:163`; nothing in it is addressable from outside the repository.
 
 - **F3: Exists. `dockerfile:` is one repository-relative path, and only the repository's own.**
-  `internal/config/config.go:632`, validated inside `validateImage` (`internal/config/image.go:109`),
+  `internal/config/config.go:640`, validated inside `validateImage` (`internal/config/image.go:109`),
   which refuses a path outside the repository. It is the escape hatch for exactly the repository that
   commits it.
 
@@ -46,7 +46,7 @@ code. A `:line` is a **declaration** line at `777b902d`; the symbol is what to s
 
 - **F6: Exists. The catalog's deploy-time selection is built**, with the tag-cover rule and the two
   refusals: `internal/infra/spec.go:807`, and the config-side references
-  (`image_name`, `needs`) at `internal/config/config.go:647`, `:626`.
+  (`image_name`, `needs`) at `internal/config/config.go:655`, `:626`.
 
 - **F7: Exists, in two pieces and at two stages. The catalog's scheduled check has its decision layer
   and its job mode, and not yet its schedule.** `internal/imagecheck/catalog.go:20` (`CheckCatalog`)
@@ -145,7 +145,7 @@ code. A `:line` is a **declaration** line at `777b902d`; the symbol is what to s
   the engine — a decision, not an implementation detail (D1191).
 
 - **F23: Exists. The project layer can set the same keys.** `schemas/project-layer.schema.json:265`
-  (`image`) and `:338` (`rebuild`), validated through `internal/config/layer.go:328`
+  (`image`) and `:338` (`rebuild`), validated through `internal/config/layer.go:327`
   (`ParseProjectLayer`, which refuses a key outside its scope). A profile is therefore a **second door**
   to the removed build, so the removal has four configuration surfaces to move — this repository's
   schema, the project layer's, the settings document's and the registry's — and not one.
@@ -249,7 +249,7 @@ its `Recommendation` and both costs, so the answer and the price of the other re
   deploy time.** The reason: `checkout` is a wire field and `CLAUDE.md` forbids re-meaning one, and a
   prebuilt image is the one source kind nothing guarantees holds the checkout. **The refusal is a new
   deploy-time refusal, so R1 is a SEC task.**
-  Recommendation: `checkout` **keeps both values** (`internal/config/config.go:685`) and both their
+  Recommendation: `checkout` **keeps both values** (`internal/config/config.go:693`) and both their
   meanings; a `baked` workflow's image is the **catalog's** choice, and a `baked` workflow whose chosen
   entry's source is a **prebuilt image** (`SourceImage`, `internal/config/catalog.go:71`) is **refused
   at deploy time**, where the spec is built (F14), the way the `docker` tag is refused on Cloud Run
@@ -303,7 +303,7 @@ its `Recommendation` and both costs, so the answer and the price of the other re
   Recommendation: each removed key becomes a **tombstone** in the config — the mechanism
   `image.node`/`image.jdk` already use (`internal/config/image.go:119`, `:122`) — and its refusal names
   the release and the catalog command that replaces it. Strict decoding
-  (`internal/config/config.go:1223`) is what makes a tombstone necessary: the field has to exist for
+  (`internal/config/config.go:1231`) is what makes a tombstone necessary: the field has to exist for
   the refusal to be the message rather than the decoder's.
   Cost of the alternative: deleting the fields makes every removed key read as *field image not found*,
   which names no replacement, reads as a typo and gives a person nothing to do next.

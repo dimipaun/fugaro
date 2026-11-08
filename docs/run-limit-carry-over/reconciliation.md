@@ -152,7 +152,7 @@ the caches. *Consequence:* a halted run's usage is normally readable, and the wr
 charged (spec §5).
 
 **F18: Exists. `--total-timeout` may raise the run's clock.** `parseTotalTimeout`
-(`internal/cli/run.go:2354`, its declaration) accepts up to `OverrideCap` (`:2350`, the const; its comment
+(`internal/cli/run.go:2364`, its declaration) accepts up to `OverrideCap` (`:2350`, the const; its comment
 starts at `:2344`) and writes `overrides.total_timeout`
 (`:1306`, `:1557`). *Consequence:* `--total-timeout` cannot be the tighten-only wall-time limit; `--max-time`
 is new, and the two compose as `min` (spec §2).

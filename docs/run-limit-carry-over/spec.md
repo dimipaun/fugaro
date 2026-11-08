@@ -48,7 +48,7 @@ tells the caller their limit took effect when it did not. So the launcher resolv
 layer that set the lower one (D1043).
 
 `--total-timeout` **keeps its present meaning** (D1043): it is a timeout, it may raise the run's own clock
-up to `OverrideCap` (`internal/cli/run.go:2350`), and it is not one of the four. `--max-time` is the new,
+up to `OverrideCap` (`internal/cli/run.go:2360`), and it is not one of the four. `--max-time` is the new,
 tighten-only one. A launch that gives both is accepted; the run's clock is `min(--total-timeout,
 --max-time remaining)`, and the report says which one bound it.
 

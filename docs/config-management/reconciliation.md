@@ -49,7 +49,7 @@ what the guard at the end of this section re-runs.
   and removable by nothing.
 - **F6 — a repository's `workflows.*` has no writer at all.** 37 keys
   (`internal/config/scope.go:102`), the registry rows at `internal/settings/registry.go:223`, the struct
-  at `internal/config/config.go:600`, its blocks at `:627` — `commands` (`:792`), `cache` (`:822`),
+  at `internal/config/config.go:608`, its blocks at `:627` — `commands` (`:792`), `cache` (`:822`),
   `secrets` (`:828`), `resources` (`:879`), `timeouts` (`:1005`). `fugaro config init` writes a
   four-line file (`internal/cli/config_init.go:84`) and the setup skill writes the rest **with the
   user**, in the user's own agent session (`plugin/skills/setup/SKILL.md:13`).
