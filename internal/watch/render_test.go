@@ -664,6 +664,52 @@ func TestTUIShortRunCollision(t *testing.T) {
 	}
 }
 
+// The collision rule is the frame's, not the block's (spec.md §3, F15/D1706):
+// the TUI draws one table per repository but one screen, and a person reads the
+// screen. Two runs of two repositories that share their last four characters
+// are therefore extended against each other, so no two rows of the frame carry
+// the same RUN cell; a per-block rule would print `3bb2` for both.
+func TestTUIShortRunCollisionAcrossRepos(t *testing.T) {
+	v := fixture()
+	v.Repos[0].Runs[0].Run = "20261108-115248-3bb2"
+	v.Repos[2].Runs[0].Run = "20261107-010101-3bb2"
+	got := frame(v, 120, 0)
+	for _, want := range []string{"8-3bb2", "1-3bb2"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the colliding ending %q is not on the screen:\n%s", want, got)
+		}
+	}
+	if strings.Count(got, " 3bb2") != 0 {
+		t.Fatalf("two rows of one frame share the RUN cell `3bb2`:\n%s", got)
+	}
+	if strings.Contains(got, "20261108") || strings.Contains(got, "20261107") {
+		t.Fatalf("a launch stamp is still shown:\n%s", got)
+	}
+}
+
+// A run id two repositories both hold has no distinguishing ending at all, so
+// the frame shows each row as `<slug>/<ending>` (F15) — the widest RUN cell the
+// rule produces. The column takes the width of the whole cell, so the row still
+// ends inside the screen and the title, the elastic cell, is what gives the
+// columns up.
+func TestTUISameRunIDTwoRepos(t *testing.T) {
+	const id = "20261108-115248-3bb2"
+	v := fixture()
+	v.Repos[0].Runs[0].Run = id
+	v.Repos[2].Runs[0].Run = id
+	got := frame(v, 120, 0)
+	for _, want := range []string{"acme__app/3bb2", "acme__docs/3bb2"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the ambiguous row %q is not on the screen:\n%s", want, got)
+		}
+	}
+	for _, l := range strings.Split(got, "\n") {
+		if strings.Contains(l, "/3bb2") && dw(stripSGR(l)) >= 120 {
+			t.Fatalf("the row with the repository in front of its ending is cut at the edge:\n%s", got)
+		}
+	}
+}
+
 // headerLine is the table's column header line: the one naming RUN and STAGE.
 func headerLine(t *testing.T, frame string) string {
 	t.Helper()

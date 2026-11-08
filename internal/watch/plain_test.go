@@ -110,6 +110,47 @@ func TestPlainCollision(t *testing.T) {
 	}
 }
 
+// A collision is a property of the rows one renderer prints together, not of
+// the repository block (spec.md §3, F15/D1706): the plain frame is one text
+// frame, so two rows of two different repositories that share their last four
+// characters must not leave the frame with the same RUN cell. A rule computed
+// per block would print `3bb2` twice here, and a reader who copies one of them
+// into a command has named two runs.
+func TestPlainCollisionAcrossRepos(t *testing.T) {
+	v := View{Now: t0, Repos: []RepoBlock{
+		{Slug: "acme__app", Name: "acme/app", Runs: []RunRow{mkRun("20261108-115248-3bb2", "Fix the flaky login test", "coding", nil)}},
+		{Slug: "acme__lib", Name: "acme/lib", Runs: []RunRow{mkRun("20261107-010101-3bb2", "Speed up the parser", "coding", nil)}},
+	}}
+	got := plainFrame(t, v)
+	for _, want := range []string{"8-3bb2", "1-3bb2"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the colliding ending %q is not in the plain frame:\n%s", want, got)
+		}
+	}
+	if strings.Count(got, "3bb2") != 2 || strings.Contains(got, " 3bb2 ") {
+		t.Fatalf("two rows of the frame share the RUN cell `3bb2`:\n%s", got)
+	}
+}
+
+// One run id can exist in two repositories (runstore's Locate reports that as
+// ambiguous), and no ending tells those two rows apart — the ids are equal. The
+// rule answers with the repository in front of the ending (F15), the same
+// `<slug>/<ending>` form the commands' lookup takes, so the plain frame names
+// each row the way Locate resolves it.
+func TestPlainSameRunIDTwoRepos(t *testing.T) {
+	const id = "20261108-115248-3bb2"
+	v := View{Now: t0, Repos: []RepoBlock{
+		{Slug: "acme__app", Name: "acme/app", Runs: []RunRow{mkRun(id, "Fix the flaky login test", "coding", nil)}},
+		{Slug: "acme__lib", Name: "acme/lib", Runs: []RunRow{mkRun(id, "Speed up the parser", "coding", nil)}},
+	}}
+	got := plainFrame(t, v)
+	for _, want := range []string{"acme__app/3bb2", "acme__lib/3bb2"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the ambiguous row %q is not in the plain frame:\n%s", want, got)
+		}
+	}
+}
+
 // TestRenderPlainWarnsAtEightyPercent: the plain frames have no colour at all,
 // so the cap figure they print must carry the 80% warning itself (R5), and the
 // threshold is the ratio, not the rounded figure: 79.9% draws "(80%)" and no

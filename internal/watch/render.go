@@ -234,10 +234,9 @@ func Render(v View, o RenderOptions) Frame {
 		return Frame{Lines: []string{r.clipW(tooNarrow, o.Width)}}
 	}
 	live := v.Conn.Kind == ConnLive || v.Conn.Kind == ConnPolling
-	// One RUN column for the frame, as wide as the longest ending any block
-	// shows: the table has one header, and a collision anywhere in it widens
-	// every block's cell.
-	runW := runColWidth(v)
+	// One table for the frame: the endings its rows are shown by, and the RUN
+	// column wide enough to hold the longest of them.
+	table := tableOf(v)
 
 	// Header: identity, then the connection.
 	var top []string
@@ -267,7 +266,7 @@ func Render(v View, o RenderOptions) Frame {
 	}
 
 	if tier >= 2 && !o.Help {
-		top = append(top, r.colHeader(tier, runW))
+		top = append(top, r.colHeader(tier, table.runW))
 	}
 
 	// Body.
@@ -285,7 +284,7 @@ func Render(v View, o RenderOptions) Frame {
 	} else {
 		for _, b := range v.Repos {
 			before := len(body)
-			lines, rowTop, rowBottom := r.repo(tier, b, sel, o.Expanded, o.Collapsed[b.Slug], runW)
+			lines, rowTop, rowBottom := r.repo(tier, b, sel, o.Expanded, o.Collapsed[b.Slug], table)
 			body = append(body, lines...)
 			if rowTop >= 0 {
 				selTop, selBottom = before+rowTop, before+rowBottom
@@ -564,42 +563,46 @@ func (r *rend) scope(tier int, label string, b Bar, counted, spent, notional bud
 	return []string{r.line(segs...)}
 }
 
-// blockEndings is the short form of every run one repository block shows: its
-// active rows and its finished ones, under the one collision rule
-// (task.DisplayRuns, spec.md §3). A block's own rows are the set that is shown
-// together — an ending is a property of what a renderer prints, not of the
-// bucket (reconciliation F15) — and the tables a block draws read one set, so
-// a collision between an active run and a finished one widens both cells. The
-// map is keyed by the whole run id, the form a row and a cursor carry; the
-// rule takes the pair of repository and id.
-func blockEndings(b RepoBlock) map[string]string {
-	refs := make([]task.Ref, 0, len(b.Runs)+len(b.Finished))
-	for _, run := range b.Runs {
-		refs = append(refs, task.Ref{Slug: b.Slug, RunID: run.Run})
-	}
-	for _, run := range b.Finished {
-		refs = append(refs, task.Ref{Slug: b.Slug, RunID: run.Run})
-	}
-	out := make(map[string]string, len(refs))
-	for ref, ending := range task.DisplayRuns(refs) {
-		out[ref.RunID] = ending
-	}
-	return out
+// runTable is what every row of one frame shares: the RUN column's width and
+// the ending each run of the frame is shown by. Both come from one
+// task.DisplayRuns call over the frame's rows, because the rows a frame prints
+// are the set that is shown together: a person reads one screen and one text
+// frame, across the repository blocks in it, so an ending that is unique in its
+// own block is not enough (spec.md §3, D1706) — and a run id that exists in two
+// repositories has no ending that tells the two rows apart at all, which the
+// rule answers with `<slug>/<ending>` (F15).
+type runTable struct {
+	runW    int
+	endings map[task.Ref]string
 }
 
-// runColWidth is the table's RUN column for a frame: as wide as the longest
-// ending any of its blocks shows, so an ending a collision extended is never
-// clipped, and never narrower than task.MinEnding. The table has one header
-// for the whole frame, so the cell is one width: a block whose rows collide
-// widens every block's RUN cell, which is padding fit puts back.
-func runColWidth(v View) int {
-	w := task.MinEnding
+// tableOf resolves a frame's rows — every block's active runs and its finished
+// ones — to the table they are drawn with.
+func tableOf(v View) runTable {
+	var refs []task.Ref
 	for _, b := range v.Repos {
-		for _, ending := range blockEndings(b) {
-			w = max(w, dw(ending))
+		for _, run := range b.Runs {
+			refs = append(refs, task.Ref{Slug: b.Slug, RunID: run.Run})
+		}
+		for _, run := range b.Finished {
+			refs = append(refs, task.Ref{Slug: b.Slug, RunID: run.Run})
 		}
 	}
-	return w
+	endings := task.DisplayRuns(refs)
+	// The RUN column holds the longest ending of the frame, so an ending a
+	// collision extended is never clipped, and never less than task.MinEnding.
+	// The table has one header, so the cell is one width for every block and
+	// fit pads the shorter endings back.
+	w := task.MinEnding
+	for _, ending := range endings {
+		w = max(w, dw(ending))
+	}
+	return runTable{runW: w, endings: endings}
+}
+
+// ending is the cell a run of slug is shown by.
+func (t runTable) ending(slug, run string) string {
+	return t.endings[task.Ref{Slug: slug, RunID: run}]
 }
 
 // runCols are the widths of the run table (tiers 2 and 3).
@@ -627,9 +630,8 @@ const launcherColNarrow = 8
 //
 // The BY column is the one cell the budgets had to absorb, and it comes out
 // of the cells with room to give: run is runW, and that is task.MinEnding for
-// every frame but one whose block shows the same ending twice, so the column
-// the old eight-wide run cell kept for an ellipsis was dead weight; tier 3's
-// flags gives up one of
+// every frame but one whose rows collide, so the column the old eight-wide run
+// cell kept for an ellipsis was dead weight; tier 3's flags gives up one of
 // its thirty columns; and the rest is the title's, the elastic cell: five of
 // the fifteen columns it had at 120 columns of screen, where the row was
 // clipping it anyway. Tier 2 starts at 70 columns and has no slack anywhere
@@ -643,8 +645,10 @@ const launcherColNarrow = 8
 // An extension (a collision, runW past task.MinEnding) is the title's to give
 // up like the BY column was: the ending is what a person types back, so it is
 // never clipped, and where the title's floor binds first the row is cut at the
-// screen's edge like any other that does not fit. A frame whose rows collide
-// is rare and its rows are one character longer each time the extension grows.
+// screen's edge like any other that does not fit. A frame whose rows collide is
+// rare, and each extension step costs the row one character; the one cell wider
+// still is the repository in front of an ending two repositories share, which
+// runW measures and the title pays for as any other.
 //
 // The trailing constants leave the elastic row one column short of the
 // screen's edge, so a cell is clipped by its own width and never by the
@@ -709,7 +713,7 @@ func flagColour(run RunRow) string {
 // selected row). selTop and selBottom are the first and last line of the
 // selected row within the returned lines (selBottom past an expanded
 // selected run's own detail), or -1 when sel names no row of this block.
-func (r *rend) repo(tier int, b RepoBlock, sel Cursor, expanded map[Cursor]bool, collapsed bool, runW int) (lines []string, selTop, selBottom int) {
+func (r *rend) repo(tier int, b RepoBlock, sel Cursor, expanded map[Cursor]bool, collapsed bool, table runTable) (lines []string, selTop, selBottom int) {
 	headerSel := sel.Slug == b.Slug && sel.Run == ""
 	cur, nameC := " ", ""
 	if headerSel {
@@ -740,12 +744,11 @@ func (r *rend) repo(tier int, b RepoBlock, sel Cursor, expanded map[Cursor]bool,
 	if collapsed {
 		return out, selTop, selBottom
 	}
-	c := colsOf(tier, r.w, runW)
-	endings := blockEndings(b)
+	c := colsOf(tier, r.w, table.runW)
 	for _, run := range b.Runs {
 		runSel := sel.Slug == b.Slug && sel.Run != "" && sel.Run == run.Run
 		idx := len(out)
-		out = append(out, r.runRows(tier, c, run, runSel, endings[run.Run])...)
+		out = append(out, r.runRows(tier, c, run, runSel, table.ending(b.Slug, run.Run))...)
 		last := len(out) - 1
 		if expanded[Cursor{Slug: b.Slug, Run: run.Run}] {
 			out = append(out, r.detail(run)...)
@@ -758,7 +761,7 @@ func (r *rend) repo(tier int, b RepoBlock, sel Cursor, expanded map[Cursor]bool,
 	for _, run := range b.Finished {
 		runSel := sel.Slug == b.Slug && sel.Run != "" && sel.Run == run.Run
 		idx := len(out)
-		out = append(out, r.finishedRow(run, runSel, endings[run.Run]))
+		out = append(out, r.finishedRow(run, runSel, table.ending(b.Slug, run.Run)))
 		if runSel {
 			selTop, selBottom = idx, idx
 		}
