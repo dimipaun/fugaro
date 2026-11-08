@@ -172,7 +172,7 @@ var (
 	authHeaderQuoted = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api[_-]?key|private[_-]?token)"?\s*:\s*)(")((?:\\.|[^"\\\r\n])*)("?)`)
 
 	// authHeader is the same header in plain text, where no closing quote
-	// bounds the value. Four shapes of value, each ending where the text
+	// bounds the value. Five shapes of value, each ending where the text
 	// around it can still be read:
 	//
 	//   - a plain value — a bearer token, a key — ends at a quote, single or
@@ -181,8 +181,10 @@ var (
 	//     Bearer …","step":"…"}`) and inside the single quotes of a shell
 	//     command (`curl -H 'Authorization: Bearer …' <url>`), and in both the
 	//     text after the value is the diagnosis; a rule that ran to the line
-	//     would take it. No credential shape carries either quote, so ending
-	//     the value at one leaves nothing behind.
+	//     would take it. A plain value carries neither quote, so ending it at
+	//     one leaves nothing behind: the schemes whose value does carry one
+	//     write it after an `=`, which is the form below, read by its own
+	//     branch.
 	//   - a value in quotes — `'<token>'`, or behind a scheme word
 	//     (`Bearer "<token>"`, and the same with those quotes escaped inside a
 	//     record) — ends at its own closing quote, or at the line when that
@@ -195,6 +197,15 @@ var (
 	//     should be there may instead be a bare quote of a record cut in half
 	//     (`{"message":"Authorization: Bearer \"<token>`), and ending the value
 	//     there would leave the token standing after it.
+	//   - a value that is a parameter list takes the rest of the line. That is
+	//     how the schemes which put a credential in a quoted parameter write it
+	//     — `Token token="…"`, the OAuth 1.0 header, a Digest `response="…"` —
+	//     and its opening quote is the one that follows an `=`, which is what
+	//     tells it from the quote that ends a plain value in a record. The list
+	//     has no end this rule can trust, since the commas and the quotes are
+	//     both its own, and stopping at the first closing quote would leave the
+	//     parameters after it in place. A record carrying one is mangled the way
+	//     the container below is.
 	//   - a bracketed value with no quote in it ends at its own bracket. That
 	//     covers a list a log printed (`authorization: [1, 2]`) and, since
 	//     the marker is bracketed too, the rule's own replacement, which is
@@ -211,7 +222,7 @@ var (
 	// quote — a quoted value is the form above, already redacted — and a
 	// leading backslash counts only when what follows it is not a quote, or
 	// this rule would eat the line from the escaped form's `\"[REDACTED]\"`.
-	authHeader = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api[_-]?key|private[_-]?token)"?\s*:\s*)(?:\[[^"\r\n]*?\]|[\[{][^\r\n]*|(?:bearer|basic)[ \t]+\\+"(?:\\.|[^"\\\r\n])*\\+"|(?:bearer|basic)[ \t]+\\+"[^\r\n]*|(?:bearer|basic)[ \t]+"(?:\\.|[^"\\\r\n])*"?|(?:bearer|basic)[ \t]+'(?:\\.|[^'\\\r\n])*'?|'(?:\\.|[^'\\\r\n])*'?|(?:[^\s"'\\\r\n\[{]|\\[^\s"\r\n])[^"'\r\n]*)`)
+	authHeader = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api[_-]?key|private[_-]?token)"?\s*:\s*)(?:\[[^"\r\n]*?\]|[\[{][^\r\n]*|(?:bearer|basic)[ \t]+\\+"(?:\\.|[^"\\\r\n])*\\+"|(?:bearer|basic)[ \t]+\\+"[^\r\n]*|(?:bearer|basic)[ \t]+"(?:\\.|[^"\\\r\n])*"?|(?:bearer|basic)[ \t]+'(?:\\.|[^'\\\r\n])*'?|'(?:\\.|[^'\\\r\n])*'?|(?:[^\s"'\\\r\n\[{]|\\[^\s"\r\n])[^"'\r\n]*=\\?"[^\r\n]*|(?:[^\s"'\\\r\n\[{]|\\[^\s"\r\n])[^"'\r\n]*)`)
 
 	// authScheme is the same credential where no header name introduces it:
 	// a curl line or an error body prints `Bearer <token>` on its own. The

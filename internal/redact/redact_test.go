@@ -199,6 +199,35 @@ var patternCases = []struct {
 		keep: `","step":"terraform apply"}`,
 	},
 	{
+		name: "token scheme with a quoted parameter",
+		in:   `Authorization: Token token="` + fake(strings.Repeat("A1b2C3d4", 3)) + `"`,
+		leak: strings.Repeat("A1b2C3d4", 3),
+	},
+	{
+		name: "oauth 1.0 parameters in the header",
+		in: `Authorization: OAuth oauth_consumer_key="abc", oauth_signature="` +
+			fake(strings.Repeat("A1b2C3d4", 3)) + `"`,
+		leak: strings.Repeat("A1b2C3d4", 3),
+	},
+	{
+		name: "digest parameters in the header",
+		in: `Authorization: Digest username="u", response="` +
+			fake(strings.Repeat("A1b2C3d4", 3)) + `"`,
+		leak: strings.Repeat("A1b2C3d4", 3),
+	},
+	{
+		name: "digest response behind an unquoted parameter",
+		in: `Authorization: Digest username=u, response="` +
+			fake(strings.Repeat("A1b2C3d4", 3)) + `"`,
+		leak: strings.Repeat("A1b2C3d4", 3),
+	},
+	{
+		name: "quoted parameter inside a record",
+		in: `{"message":"Authorization: Token token=\"` + fake(strings.Repeat("A1b2C3d4", 3)) +
+			`\"","step":"terraform apply"}`,
+		leak: strings.Repeat("A1b2C3d4", 3),
+	},
+	{
 		name: "escaped token after the scheme word that is never closed",
 		in:   `{"message":"Authorization: Bearer \"` + fake(strings.Repeat("A1b2C3d4", 3)),
 		leak: strings.Repeat("A1b2C3d4", 3),
