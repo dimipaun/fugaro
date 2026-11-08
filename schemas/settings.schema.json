@@ -992,7 +992,8 @@
           "default": "unset = the file is refused (gcp_project: is required)"
         },
         "local.version": {
-          "default": "1"
+          "$comment": "localcfg.ConfigVersion",
+          "default": "2"
         },
         "log_view": {
           "default": "unset = the project's default logs"
@@ -1163,6 +1164,9 @@
         "stages.*.claude_account": {
           "default": "unset = the project's default account"
         },
+        "terraform.admins": {
+          "default": "unset = none"
+        },
         "terraform.alert_email": {
           "default": "unset = none: no budget alert is mailed"
         },
@@ -1174,9 +1178,6 @@
         },
         "terraform.coordinator": {
           "default": "unset = false: no coordinator is deployed"
-        },
-        "terraform.launchers": {
-          "default": "unset = none"
         },
         "terraform.no_log_isolation": {
           "default": "unset = false: each run's logs are isolated"

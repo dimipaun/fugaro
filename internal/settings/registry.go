@@ -659,8 +659,8 @@ var localRows = []Row{
 
 	loc("terraform.state_bucket", "the installation's state bucket", "setup", docSetup),
 	loc("terraform.alert_email", "none: no budget alert is mailed", "setup", docSetup),
-	loc("terraform.launchers", "none", "setup", docSetup),
 	loc("terraform.operators", "none", "setup", docSetup),
+	loc("terraform.admins", "none", "setup", docSetup),
 	loc("terraform.budget_admins", "none", "setup", docSetup),
 	loc("terraform.registry_cleanup", "Fugaro's own cleanup rule", "setup", docSetup),
 	loc("terraform.no_log_isolation", "false: each run's logs are isolated", "setup", docSetup),
@@ -869,10 +869,11 @@ var defaultValues = map[string]Default{
 	"update_check":       value("true", "config.DefaultUpdateCheck"),
 	"max_parallel":       value("20", "localcfg.DefaultMaxParallel"),
 	"build.machine_type": value("E2_HIGHCPU_8", "localcfg.DefaultBuildMachineType"),
-	// The local file's own format version: the loader fills 1 for a file that
-	// sets it nowhere (localcfg.Parse) and no constant holds it, so the value
-	// is written here and read back out of a parsed config like the two above.
-	"local.version": value("1", ""),
+	// The local file's own format version: the loader fills the version this
+	// release writes for a file that sets it nowhere (localcfg.Parse), which is
+	// localcfg.ConfigVersion, so the value is written here and read back out of
+	// a parsed config like the two above.
+	"local.version": value("2", "localcfg.ConfigVersion"),
 }
 
 // sensitiveKeys are the keys whose value is never printed (spec §2.3): the

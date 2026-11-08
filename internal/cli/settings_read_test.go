@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1113,14 +1114,18 @@ func TestSettingsRepoVersionIsNotTheLocalConfigs(t *testing.T) {
 
 // TestSettingsLocalVersionIsNotTheRepoScopes: the other half of that split —
 // the local config's format version is decided by the local layer in both
-// scopes, because no repository file carries it.
+// scopes, because no repository file carries it. The value is the one a run
+// gets rather than the one the fixture's file spells: the loader writes the
+// version this release reads (localcfg.Parse), so the fixture's older `version:
+// 1` is read back as localcfg.ConfigVersion.
 func TestSettingsLocalVersionIsNotTheRepoScopes(t *testing.T) {
 	home := settingsFixture(t, "")
 	settingsCheckout(t, home, "owner/repo-a", settingsRepoYAML(""))
 	doc := readSettingsJSON(t, "local.version", "--all-repos")
+	want := strconv.Itoa(localcfg.ConfigVersion)
 	proj := rowOf(t, doc, "local.version", "project")
-	if proj.Value == nil || *proj.Value != "1" || proj.Wins != "local" {
-		t.Errorf("the project scope = %q/%q, want the local file's 1 and local", deref(proj.Value), proj.Wins)
+	if proj.Value == nil || *proj.Value != want || proj.Wins != "local" {
+		t.Errorf("the project scope = %q/%q, want the local file's %s and local", deref(proj.Value), proj.Wins, want)
 	}
 	repo := rowOf(t, doc, "local.version", "repo:owner/repo-a")
 	if repo.Wins != "local" {
