@@ -127,8 +127,16 @@ deny() { # permission
     # The IAM shape of the same denial, which spells the resource out: a refusal
     # whose resource is another bucket's is a call about something else, and the
     # check has to tell it from a refusal on the bucket it is reading.
-    printf "ERROR: (gcloud.storage) HTTPError 403: Permission '%s' denied on resource '//storage.googleapis.com/projects/_/buckets/%s/objects' (or it may not exist).\n" \
-      "$perm" "$FAKE340_DENY_RESOURCE" >&2
+    # FAKE340_DENY_LEVEL=bucket-level is IAM's OTHER spelling of the same thing —
+    # `denied on resource (e.g. 'projects/_/buckets/<bucket>')` — where the name
+    # the check reads sits inside quotes and parenthesis and not before a slash.
+    if [ "${FAKE340_DENY_LEVEL:-}" = bucket-level ]; then
+      printf "ERROR: (gcloud.storage) HTTPError 403: Permission '%s' denied on resource (e.g. 'projects/_/buckets/%s').\n" \
+        "$perm" "$FAKE340_DENY_RESOURCE" >&2
+    else
+      printf "ERROR: (gcloud.storage) HTTPError 403: Permission '%s' denied on resource '//storage.googleapis.com/projects/_/buckets/%s/objects' (or it may not exist).\n" \
+        "$perm" "$FAKE340_DENY_RESOURCE" >&2
+    fi
   fi
   if [ -n "${FAKE340_ERROR_DETAIL:-}" ]; then
     # A failure whose message runs past its first line: a check that quoted the
@@ -240,6 +248,28 @@ allowed_list() { # ATTR
   done < <(bindings_in_force)
   return 1
 }
+
+# prefix_listed_under_any_form PREFIX: FAKE340_BOTH_FORMS models the one thing
+# this check's contradiction stop is about — a bucket that lets a prefixed
+# listing through under BOTH candidate forms at once, which no single attribute
+# value can do. The binding's own clause value is read for its relative tail
+# (`projects/_/buckets/<b>/objects/runs/` → `runs/`) and matched against the
+# request's prefix, so the form the case does not carry still lists: the form
+# knob keeps deciding which of the two the bucket carries, and this is a second,
+# impossible one on top of it.
+prefix_listed_under_any_form() { # prefix
+  local prefix=$1 bmember brole bexpr btitle candidate
+  [ -n "${FAKE340_BOTH_FORMS:-}" ] || return 1
+  while IFS=$'\t' read -r bmember brole bexpr btitle; do
+    [ -n "$bexpr" ] || continue
+    candidate=$(list_clause "$bexpr")
+    [ -n "$candidate" ] || continue
+    candidate=${candidate##*objects/}
+    case "$prefix" in "$candidate"*) return 0 ;; esac
+  done < <(bindings_in_force)
+  return 1
+}
+
 allowed_read() { # OBJECT
   local object=$1 bmember brole bexpr btitle candidate
   while IFS=$'\t' read -r bmember brole bexpr btitle; do
@@ -321,7 +351,7 @@ storage)
         full) attr="projects/_/buckets/$bucket/objects/$prefix" ;;
         *) attr='__no-form-carries-this__' ;;
         esac
-        if ! allowed_list "$attr"; then
+        if ! allowed_list "$attr" && ! prefix_listed_under_any_form "$prefix"; then
           # FAKE340_LIST_DENY="prefix=permission …": a listing of that prefix is
           # refused naming THAT permission, which is the two denials a listing can
           # come back with — the listing permission the missing clause would have
@@ -1160,7 +1190,7 @@ test_a_listing_that_fails_for_another_reason_does_not_end_the_wait() {
   run340_default
   expect_status "$status" 2 "listing error"
   expect_contains "$out" "FACT aborted: FAIL — " "listing error: the abort is recorded"
-  expect_contains "$out" "kept failing without naming storage.objects.list" "listing error: the row says what the failure was not"
+  expect_contains "$out" "kept failing without naming storage.objects.get or storage.objects.list" "listing error: the row says what the failure was not"
   expect_contains "$out" "HTTPError 500" "listing error: and quotes the call that did not answer"
   expect_contains "$out" "FACT full-lists-runs: FAIL — not reached" "listing error: the second form was never granted"
   expect_absent "$out" "FACT full-lists-runs: PASS" "listing error: so it cannot list through the earlier clause"
@@ -1535,6 +1565,67 @@ test_a_missing_bucket_says_how_to_create_it() {
   expect_bucket_clean "missing bucket"
 }
 
+# The wait between the two forms reads the SAME prefixed listing the criteria do
+# — `gs://B/runs/<slug>/` — so it is refused the same way, and a refusal naming
+# `storage.objects.get` (gcloud probed the prefix as an object before listing it)
+# is as much "the earlier clause is gone" as one naming `storage.objects.list`.
+# Before this the wait accepted the listing permission alone, so a removal that
+# took effect became an abort at the first request that named the read one — and
+# since both forms are now read on every run, that abort sits on the PASSING path
+# too, where the run used to answer at once.
+test_the_wait_accepts_a_removal_refusal_naming_the_read_permission() {
+  setup_case removal-get relative
+  RUN340_ENV=(FAKE340_LIST_DENY="runs/=storage.objects.get")
+  run340_default
+  expect_status "$status" 0 "removal refused naming objects.get"
+  expect_absent "$out" "FACT aborted" "removal refused naming objects.get: the wait does not stop the run"
+  expect_contains "$out" "FACT full-lists-runs: FAIL — the account could not list every prefix" \
+    "removal refused naming objects.get: the wait ended and the second form really was read"
+  expect_contains "$out" "FACT list-prefix: PASS — the RELATIVE form passed all seven criteria" \
+    "removal refused naming objects.get: the form that held is still answered"
+  expect_bucket_clean "removal refused naming objects.get"
+}
+
+# A denial that names THIS bucket in IAM's bucket-level spelling — `denied on
+# resource (e.g. 'projects/_/buckets/<bucket>')` — is a refusal about this check's
+# own bucket, quoted and parenthesized. Read as a name with the punctuation on
+# it, it was a different string from the bucket's, and the guard stopped the run
+# on a denial about the very bucket it is reading: a criterion never observed
+# recorded as a stop.
+test_a_bucket_level_denial_about_this_bucket_is_a_refusal() {
+  setup_case bucket-level-denial relative
+  RUN340_ENV=(FAKE340_DENY_RESOURCE="$BUCKET" FAKE340_DENY_LEVEL=bucket-level)
+  run340_default
+  expect_status "$status" 0 "bucket-level denial about this bucket"
+  expect_absent "$out" "FACT aborted" "bucket-level denial about this bucket: nothing stops the run"
+  expect_absent "$out" "outside gs://$BUCKET" "bucket-level denial about this bucket: the denial is not read as another bucket's"
+  expect_contains "$out" "FACT relative-root-refused: PASS — " "bucket-level denial about this bucket: the root listing is refused"
+  expect_contains "$out" "FACT relative-tokens-list-refused: PASS — " "bucket-level denial about this bucket: and tokens/ is refused"
+  expect_contains "$out" "FACT list-prefix: PASS — the RELATIVE form passed all seven criteria" "bucket-level denial about this bucket: the form is answered"
+  expect_bucket_clean "bucket-level denial about this bucket"
+}
+
+# Two forms passing every criterion is a contradiction, not an answer: no single
+# attribute value starts with both `runs/` and
+# `projects/_/buckets/<bucket>/objects/runs/`, so a bucket that lets both through
+# is not the bucket this check is reading, and naming either form would name a
+# form off two result sets that disagree. The run stops as could-not-tell and the
+# register's "one form passing is enough" has to say so.
+test_both_forms_passing_is_a_contradiction_and_stops() {
+  setup_case both-forms relative
+  RUN340_ENV=(FAKE340_BOTH_FORMS=yes)
+  run340_default
+  expect_status "$status" 2 "both forms passing"
+  expect_contains "$out" "FACT relative-lists-runs: PASS — " "both forms passing: the first form held"
+  expect_contains "$out" "FACT full-lists-runs: PASS — " "both forms passing: and so did the second"
+  expect_contains "$out" "FACT aborted: FAIL — both the RELATIVE and the FULL PATH forms passed every criterion" \
+    "both forms passing: the run stops instead of answering"
+  expect_absent "$out" "FACT list-prefix: PASS" "both forms passing: no form is named as the answer"
+  expect_absent "$out" "THE LIST PREFIX R12 MUST USE" "both forms passing: and no string is printed to copy back"
+  expect_contains "$out" "CHECK 340 RESULT END (exit 2)" "both forms passing: the end line carries the could-not-tell exit"
+  expect_bucket_clean "both forms passing"
+}
+
 # Sharding, so the package's Go test can run the tests of this file side by
 # side: CHECK_TEST_SHARD="i/n" runs every n-th test starting at i, and
 # CHECK_TEST_ONLY=name runs that one test alone. Neither set: all run.
@@ -1591,6 +1682,9 @@ t test_the_second_form_runs_after_the_first_failed_a_listing
 t test_the_second_form_is_read_even_after_the_first_passed
 t test_the_reports_criterion_records_both_prefixes
 t test_a_missing_bucket_says_how_to_create_it
+t test_the_wait_accepts_a_removal_refusal_naming_the_read_permission
+t test_a_bucket_level_denial_about_this_bucket_is_a_refusal
+t test_both_forms_passing_is_a_contradiction_and_stops
 
 if [ "$failures" -ne 0 ]; then
   echo "check340_test: $failures failure(s)" >&2

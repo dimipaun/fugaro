@@ -207,6 +207,12 @@ func TestDocsCheck340RecordsTheSecondRun(t *testing.T) {
 		// paste-back knows what the next run will do differently.
 		"either permission is a refusal",
 		"reads **both** candidate forms to the end of their criteria",
+		// The other half of "both forms are read": one form passing is the
+		// answer, and two passing is a contradiction the run stops on — a
+		// section that said only the first would have the owner read a PASS
+		// where the run exits 2.
+		"no single attribute value starts with both candidate strings",
+		"let **both** forms through",
 		"`reports/<slug>/` **and** the bare `reports/` must list",
 	} {
 		if !strings.Contains(section, want) {

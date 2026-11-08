@@ -666,9 +666,11 @@ poll_read() {
 # clause, pass, and be answered as the form the attribute carries. That is the
 # one answer this check must never produce, so the next form is not granted until
 # this account is REFUSED the listing the previous form allowed AND refused for
-# that reason: the failure has to be a permission denial NAMING
-# storage.objects.list, the permission the clause just removed carried. A failure
-# that names it for another permission, or names no permission at all — a session
+# that reason: the failure has to be a permission denial NAMING one of the
+# permissions the removal takes away — see PREFIX_LISTING_REFUSALS below, which is
+# the same pair the criteria accept, because the request is the same prefixed
+# listing and gcloud refuses it the same way. A failure
+# that names another permission, or names no permission at all — a session
 # that expired, a 5xx gcloud did not retry, a killed call, and gcloud's own
 # command prefix (`(gcloud.storage.ls)`, whose dots read like a permission) — is
 # a call that did not answer rather than a binding that is gone, and reading it
@@ -676,17 +678,18 @@ poll_read() {
 # listing that still succeeds, and the stop below quotes it. A bucket that never
 # gets there, and a call that never answers, are a stop (exit 2), never a
 # verdict — the same rule a grant that never arrives follows.
+PREFIX_LISTING_REFUSALS="storage.objects.get storage.objects.list"
 wait_for_removal() {
-  local deadline out named still_lists=no last=""
+  local deadline out named perm still_lists=no last=""
   deadline=$((SECONDS + PROPAGATION_SECONDS))
   while :; do
     if out=$(list_as_sa "gs://$B/runs/$SLUG/"); then
       still_lists=yes
     else
       named=$(missing_permission "$out")
-      case "$named" in
-      *storage.objects.list*) return 0 ;;
-      esac
+      for perm in $PREFIX_LISTING_REFUSALS; do
+        case " $named " in *" $perm "*) return 0 ;; esac
+      done
       still_lists=no
       last=$out
     fi
@@ -694,7 +697,7 @@ wait_for_removal() {
       if [ "$still_lists" = yes ]; then
         stop "the bindings the form just tried are still in effect ${PROPAGATION_SECONDS}s after the bucket accepted their removal: the bucket still lists runs/$SLUG/ to the throwaway account, so the next form would list and read through the EARLIER clause and this check would answer the wrong form. Nothing was measured under the next form; wait for the removal to propagate and run the check again"
       fi
-      stop "the removal of the bindings the form just tried could not be CONFIRMED in ${PROPAGATION_SECONDS}s: the account's listing of runs/$SLUG/ kept failing without naming storage.objects.list, the permission the removed clause carried (gcloud last said: $(gcloud_said "$last")) — that is a call that did not answer, not a binding that is gone, and nothing this check reads can tell the two apart. Nothing was measured under the next form; check that gcloud can reach the project and run the check again"
+      stop "the removal of the bindings the form just tried could not be CONFIRMED in ${PROPAGATION_SECONDS}s: the account's listing of runs/$SLUG/ kept failing without naming $(permission_words "$PREFIX_LISTING_REFUSALS"), the permissions the removed clause carried (gcloud last said: $(gcloud_said "$last")) — that is a call that did not answer, not a binding that is gone, and nothing this check reads can tell the two apart. Nothing was measured under the next form; check that gcloud can reach the project and run the check again"
     fi
     sleep "$POLL_SECONDS"
   done
@@ -759,11 +762,18 @@ permission_words() {
 # handed (`gs://<bucket>/…`) and IAM's own path
 # (`//storage.googleapis.com/projects/_/buckets/<bucket>/objects/…`) — so both
 # shapes are read. A message that names no bucket names no other one.
+#
+# What the split leaves after the name is not part of it: gcloud quotes the
+# resource in some of its own sentences — IAM's bucket-level denial reads
+# `denied on resource (e.g. 'projects/_/buckets/<bucket>')` — so the token is cut
+# at the first character a bucket name cannot carry. Without that cut this
+# check's OWN bucket extracts as `<bucket>')`, which is a different string, and
+# the guard would stop the run on a denial about this very bucket.
 other_bucket_named() {
   local names name
   names=$(printf '%s\n' "$1" |
     grep -oE 'gs://[^/[:space:]]+|buckets/[^/[:space:]]+' |
-    sed -e 's|^gs://||' -e 's|^buckets/||' | sort -u || true)
+    sed -e 's|^gs://||' -e 's|^buckets/||' -e 's/[^A-Za-z0-9._-].*$//' | sort -u || true)
   for name in $names; do
     [ "$name" = "$B" ] || return 0
   done
@@ -1010,13 +1020,13 @@ try_form() {
     # storage.objects.get, and gcloud refuses a listing of a prefix it probes as
     # an object by naming that same permission — see must_refuse.
     if ! must_refuse "$how-tokens-read-refused" "the read of the seeded tokens/ object gs://$B/$TOKEN_OBJ" \
-      "storage.objects.get storage.objects.list" \
+      "$PREFIX_LISTING_REFUSALS" \
       cat_as_sa "gs://$B/$TOKEN_OBJ"; then ok=no; fi
     if ! must_refuse "$how-tokens-list-refused" "the listing of gs://$B/tokens/" \
-      "storage.objects.get storage.objects.list" \
+      "$PREFIX_LISTING_REFUSALS" \
       list_as_sa "gs://$B/tokens/"; then ok=no; fi
     if ! must_refuse "$how-cache-list-refused" "the listing of gs://$B/cache/" \
-      "storage.objects.get storage.objects.list" \
+      "$PREFIX_LISTING_REFUSALS" \
       list_as_sa "gs://$B/cache/"; then ok=no; fi
   else
     # Nothing under this form held, so the grant is either not in effect or not

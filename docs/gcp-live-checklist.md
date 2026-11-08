@@ -11445,8 +11445,10 @@ forms speak for the same throwaway account, so if the relative form failed for a
 read past its 150-second window — the full-path form would list and read through the still-active relative clause
 and be answered as the form the attribute carries. The second form is therefore not granted until the account is
 **refused** the listing the first form allowed — read as the account's own reach and not yours — **and refused for
-that reason**: the refusal has to be a denial naming `storage.objects.list`, the permission the removed clause
-carried, because that is the reading that says the clause is gone. A listing that failed naming another permission,
+that reason**: the refusal has to be a denial naming one of the permissions the removal takes away —
+`storage.objects.list`, the listing permission the clause carried, or `storage.objects.get`, which is what gcloud
+names for the very same request when it probes the prefix as an object (the pair the three refused criteria accept) —
+because that is the reading that says the clause is gone. A listing that failed naming another permission,
 or naming none — an expired session, a 5xx gcloud did not retry, a killed call, and gcloud's own command prefix in
 the message, whose dots read like a permission — is a call that
 did not answer rather than a binding that is gone, so it is retried like a listing that still succeeds: reading it as
@@ -11459,9 +11461,11 @@ not an answer.
 `FACT <key>: PASS|FAIL|INFO — <detail>` line per fact, ending `CHECK 340 RESULT END (exit N)`. The two forms carry
 their own rows — `relative-lists-runs`, `relative-lists-reports`, `relative-reads-runs` and the four refusals, then
 the same seven under `full-` — and the row that matters is **`list-prefix`**: `PASS` names the form that held and
-prints the exact string R12's builder must write, above the block in one line to copy back; one form passing every
-criterion is enough to answer it, and a form that failed a listing is that form's failure alone — the verdict is
-decided from the two result sets, never from the first form to stop; `FAIL` says **neither**
+prints the exact string R12's builder must write, above the block in one line to copy back. One form passing every
+criterion is enough **unless both do**: no single attribute value starts with both candidate strings, so a bucket
+that lets both forms through contradicts itself and the run stops, exit `2`, rather than naming a form off two result
+sets that disagree. A form that failed a listing is that form's failure alone, and the verdict is taken from the two
+result sets rather than from the first form to stop. `FAIL` says **neither**
 form listed, which is the reading that stops the plan (E4). The bucket-wide `objectViewer` a listing would otherwise
 need is deliberately **not** a fallback here, because it reads `tokens/` and `cache/` too. Exit `0` means a form
 passed every criterion **and** the Restore confirmed it deleted everything this run made; `1` means none did — or a
@@ -11469,7 +11473,7 @@ form passed and the Restore could not confirm what it deleted, in which case the
 account and the prefixes to remove by hand — so exit `1` reads as **E4** only when that row passed; and `2` means the
 run could not tell (a guard stopped it, a tool is missing, a grant or a removal the bucket refused, a refusal that
 came back as a call that did not answer, a removal that had not taken effect in time, a listing that never answered,
-an internal error ended it) — `2` is not an answer about
+a bucket that let **both** forms through, an internal error ended it) — `2` is not an answer about
 the attribute, and the block's `aborted` row says so. `belong`, `bucket-reachable`, `account` and `seed` say what the run was reading, and `restore` is last.
 
 **Cost.** Nothing billable and no model call: one throwaway service account, two bucket bindings, one impersonation
