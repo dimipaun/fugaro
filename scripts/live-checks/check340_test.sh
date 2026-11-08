@@ -926,6 +926,14 @@ test_a_dry_run_prints_the_plan_and_makes_no_call() {
   expect_contains "$(cat "$dir/err")" "--condition-from-file" "dry run: and the condition file"
   expect_contains "$(cat "$dir/err")" "storage cp" "dry run: and the seeded objects"
   expect_contains "$(cat "$dir/err")" "remove-iam-policy-binding" "dry run: and the Restore's removes"
+  # The plan is what the owner reads BEFORE a run, so it has to move with the
+  # code: the wait between the two forms reads the same prefixed listing the
+  # criteria do and takes the same pair of denials, and a plan naming the listing
+  # permission alone had the owner read an abort as the expected behaviour.
+  expect_contains "$(cat "$dir/err")" "retried until the account is REFUSED it by a denial naming storage.objects.get or storage.objects.list" \
+    "dry run: the plan's wait names both permissions the removal can be read by"
+  expect_contains "$(cat "$dir/err")" "either storage.objects.list or storage.objects.get for the other three" \
+    "dry run: and the plan's refusals line names both for the three criteria"
   expect_bucket_clean "dry run"
   expect_scratch_gone "dry run"
 }
