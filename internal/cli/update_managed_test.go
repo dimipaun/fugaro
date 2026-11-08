@@ -750,6 +750,27 @@ func TestUpdateManagedConvergesTheLauncherGrantUpgrade(t *testing.T) {
 		if len(recs) != 1 || recs[0].Verdict != managedmode.AuditAdmitted {
 			t.Fatalf("%d record(s) after the upgrade, want one admitted: %+v", len(recs), recs)
 		}
+		// And the record says what admitted THIS plan. Its rules are what an
+		// owner reads back and checks against the plan they kept, so on a plan
+		// the gate admitted a replace of, the two rules of the empty case are
+		// false as they stand — "the guard refused no delete and no replace"
+		// (it admitted one) and "the cover admitted every change" (it judged
+		// the change as the create it makes) — and a record that stated them
+		// anyway would be a false admission record nothing else catches, the
+		// verdict being the same either way.
+		rules := strings.Join(recs[0].Rules, "\n")
+		if strings.Contains(rules, "the guard refused no delete and no replace, so the plan removes nothing") {
+			t.Errorf("the record claims the plan removes nothing of fugaro's own, and this plan replaces a launcher's grant:\n%s", rules)
+		}
+		if !strings.Contains(rules, `runs_launcher["`+a+`"]`) {
+			t.Errorf("the record does not name the replace it admitted:\n%s", rules)
+		}
+		if !strings.Contains(rules, "asked as the create it makes") {
+			t.Errorf("the record does not say the cover judged the replace's create half:\n%s", rules)
+		}
+		if !strings.Contains(rules, "the cost list blocked no attribute of the plan") {
+			t.Errorf("the record dropped a rule the plan did pass:\n%s", rules)
+		}
 	})
 
 	// The narrow half: the gate admits the replaces this binary's own upgrade
