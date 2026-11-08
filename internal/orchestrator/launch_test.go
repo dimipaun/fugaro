@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -993,6 +994,44 @@ func TestRecoveryBeforeTaskJSONAfterAnEditAbandonsTheIntent(t *testing.T) {
 	}
 	if o3.s.Intents[0].Outcome != orchestrator.OutcomeAbandoned {
 		t.Errorf("the intent of the failed item reads %+v", o3.s.Intents[0])
+	}
+
+	// The third reason an unstarted attempt is closed: the item is the spec the
+	// intent was committed for, and the approval behind it is not the one the
+	// item carries any more — a person gave the item a new go while the attempt
+	// had not reported. Nothing may start under the old approval, and the note
+	// has to say that rather than blame an edit nobody made.
+	reapproved, replaced := o6OpenItem("wi-4", "20261107-120000-eeee", approvedAt, now)
+	again := o6Node(t, now, reapproved)
+	again.Intents = []orchestrator.Intent{replaced}
+	again = o6Approve(t, again, "wi-4", now.Add(2*time.Minute))
+
+	a = onlyAction(t, orchestrator.Plan(again, orchestrator.RunView{}, o6Caps(), later))
+	if a.Kind != orchestrator.ActionAbandon || a.ItemID != "wi-4" {
+		t.Fatalf("recovery planned %+v for an attempt whose approval a person has replaced", a)
+	}
+	o4 := newO6Starter(t, again, later)
+	if err := o4.run(a); err != nil {
+		t.Fatalf("closing the attempt a new approval replaced was refused: %v", err)
+	}
+	if len(o4.l.asked) != 0 {
+		t.Fatalf("the replaced approval asked the launcher for %v", o4.l.asked)
+	}
+	w, _ = o4.s.Item("wi-4")
+	if w.Note == "" || w.Note == editNote {
+		t.Errorf("the closed attempt says %q, and the spec the intent was committed for was never edited", w.Note)
+	}
+	if !strings.Contains(w.Note, "approv") {
+		t.Errorf("the closed attempt says %q, and what closed it is a person's new approval", w.Note)
+	}
+	if w.Approved == nil {
+		t.Error("closing the attempt under the old approval took the new one with it")
+	}
+	// And the person's new go is not lost with the old attempt: what the next
+	// tick plans is the first attempt under the approval they gave just now.
+	after := onlyAction(t, orchestrator.Plan(o4.s, orchestrator.RunView{}, o6Caps(), later.Add(time.Hour)))
+	if after.Kind != orchestrator.ActionLaunch || after.IntentID != orchestrator.IntentID("wi-4", 2) {
+		t.Errorf("the plan over the closed attempt is %+v, and the new approval opens an attempt of its own", after)
 	}
 }
 

@@ -12,6 +12,13 @@ import (
 // as the note a person reads.
 const abandonEditedSpec = "the attempt was abandoned: the item's spec is not the one the intent was committed for, so nothing was started under its run id and nothing will be"
 
+// abandonReplacedApproval is why an attempt is closed when the item still is
+// the spec the intent was committed for but the approval behind it has been
+// replaced: a person's new go is another approval, and the attempt under the
+// old one is not one to start. The spec is untouched in that case, so the note
+// says what actually closed the attempt — it is the sentence a person reads.
+const abandonReplacedApproval = "the attempt was abandoned: a person approved the item again since, so nothing was started under its run id and nothing will be"
+
 // abandonFinishedItem is the other reason: the item is done or cancelled, and a
 // finished item never leaves its phase, so an attempt of it that never started
 // is closed rather than launched. A cancellation is a person stopping the work,
@@ -144,8 +151,9 @@ func nextAttempt(s State, w WorkItem) (Action, bool) {
 // never a second one. An item that is no longer the spec its intent was
 // committed for is abandoned instead: nothing may start under that intent, and
 // the alternative to closing it is an attempt nothing will ever report on. So
-// is an item that is finished, whatever its spec and whichever approval the
-// attempt spent.
+// is an item whose approval has been replaced since the intent was committed
+// under it, and so is a finished item, whatever its spec and whichever approval
+// the attempt spent. Each leaves the note that says which of the three it was.
 func recovery(s State, view RunView, w WorkItem, it Intent, now time.Time) (Action, bool) {
 	if view.Run(it.RunID).Started {
 		return Action{}, false
@@ -170,13 +178,18 @@ func recovery(s State, view RunView, w WorkItem, it Intent, now time.Time) (Acti
 		a.Reason = abandonFinishedItem
 		return a, true
 	}
-	if SpecDigest(w) == it.SpecDigest && (approvalCovers(w, it) || spentBy(w, it)) {
-		a.Kind = ActionReissue
-		a.Spec = SpecOf(w)
+	if SpecDigest(w) != it.SpecDigest {
+		a.Kind = ActionAbandon
+		a.Reason = abandonEditedSpec
 		return a, true
 	}
-	a.Kind = ActionAbandon
-	a.Reason = abandonEditedSpec
+	if !approvalCovers(w, it) && !spentBy(w, it) {
+		a.Kind = ActionAbandon
+		a.Reason = abandonReplacedApproval
+		return a, true
+	}
+	a.Kind = ActionReissue
+	a.Spec = SpecOf(w)
 	return a, true
 }
 
