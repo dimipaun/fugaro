@@ -1954,15 +1954,24 @@ func (r *initRun) confirmNow(question string) (bool, error) {
 // everything else that has no terminal — a pipe, --non-interactive — where the
 // step is the user's and the sentence names the flag that reaches it.
 func (r *initRun) notConfirmed(undone string) error {
+	return userErr("%s; %s", r.unconfirmedWhy(), undone)
+}
+
+// unconfirmedWhy is that sentence's own clause, for the one caller whose
+// refusal runs on past it rather than naming what was left undone
+// (resourceManager, which names the gcloud command to run instead). It is one
+// function so the two refusals cannot come to say different things about the
+// same session.
+func (r *initRun) unconfirmedWhy() string {
 	switch {
 	case r.o.ask:
-		return userErr("not confirmed (the question was answered no); %s", undone)
+		return "not confirmed (the question was answered no)"
 	case r.o.asJSON:
-		return userErr("not confirmed (--json confirms no step: run this one in your own terminal window, without --json); %s", undone)
+		return "not confirmed (--json confirms no step: run this one in your own terminal window, without --json)"
 	case r.o.nonInteractive || !stdinIsTerminal(r.cmd.InOrStdin()):
-		return userErr("%s%s; %s", initflow.NeedsTerminal("the confirmation of this step"), r.yesRoute(), undone)
+		return initflow.NeedsTerminal("the confirmation of this step") + r.yesRoute()
 	}
-	return userErr("not confirmed (this step was not confirmed); %s", undone)
+	return "not confirmed (this step was not confirmed)"
 }
 
 // yesRoute is what follows "needs a real terminal" when a step cannot be
@@ -2168,12 +2177,8 @@ func (r *initRun) resourceManager(ctx context.Context, c *infra.Clients) error {
 		return err
 	}
 	if !ok {
-		why := initflow.NeedsTerminal("the typed confirmation of this step") + r.yesRoute() + ", or"
-		if !r.o.nonInteractive && stdinIsTerminal(r.cmd.InOrStdin()) {
-			why = "not confirmed (the project's name was not typed):"
-		}
-		return userErr("%s enable the Cloud Resource Manager API yourself with %s and rerun; "+r.o.doorProgram()+" needs it to read the project's number. Nothing was enabled or applied",
-			why, command)
+		return userErr("%s; enable the Cloud Resource Manager API yourself with %s and rerun; "+r.o.doorProgram()+" needs it to read the project's number. Nothing was enabled or applied",
+			r.unconfirmedWhy(), command)
 	}
 	stderr := r.cmd.ErrOrStderr()
 	fmt.Fprintf(stderr, "enabling %s in %s...\n", infra.ServiceResourceManager, r.gcpProject)

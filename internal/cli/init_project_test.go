@@ -23,14 +23,17 @@ const (
 	billingAcc = "0123AB-4567CD-89EF01"
 )
 
-// The three patterns TestTheBillingListIsNarrow reads the tree with: the one
-// call site that lists a caller's billing accounts, and the predicate that
+// The two patterns TestTheBillingListIsNarrow reads the tree with: the one
+// call site that lists a caller's billing accounts, and the value entry that
 // bounds it. They are written on the call and not on the callee's own name so
 // that an aliased import is caught too.
 var (
 	billingListCallRE = regexp.MustCompile(`\.ListWithFallback\(`)
-	canTypeReadRE     = regexp.MustCompile(`\br\.canType\(\)`)
-	canTypeGuardRE    = regexp.MustCompile(`if !r\.canType\(\) \{`)
+	// billingValueReadRE is the answer's own read (valueentry.go): since T7 the
+	// billing answer is a value and not a confirmation, so the predicate that
+	// keeps the list out of a session nobody can answer is the read's own
+	// refusal, made in askBilling before the accounts are asked for.
+	billingValueReadRE = regexp.MustCompile(`\breadValue\(`)
 )
 
 // projectRig is the init rig with the Firebase Management and Cloud
@@ -1019,39 +1022,26 @@ func TestCreatedHereUnreadableBillingStillAttempted(t *testing.T) {
 	}
 }
 
-// onRead runs fn the first time the reader is read: the moment the person
-// is at the prompt.
-type onRead struct {
-	r  *strings.Reader
-	fn func()
-}
-
-func (o *onRead) Read(p []byte) (int, error) {
-	if o.fn != nil {
-		o.fn()
-		o.fn = nil
-	}
-	return o.r.Read(p)
-}
-
-// Billing becomes linked between the decision and the write (while the
-// confirmation is typed): the write is not sent.
-func TestBillingLinkedWhileConfirmingIsNotReplaced(t *testing.T) {
+// Billing becomes linked between the decision and the write: the write is not
+// sent. Nothing is read at the confirmation any more (T7), so there is no
+// moment left between the two for a test to take by hand: the flip happens on
+// the fake's own answer to the plan's read of the project's billing info
+// (gcpfake.Billing.AfterBillingReads), and infra.LinkBilling's own read, taken
+// one corner before the write, is what finds the link that appeared in between
+// and refuses to replace it (ProjectLinkGuard). The run reads the link back
+// after that and records it, so what it refuses to do is visible in its own
+// line.
+func TestBillingLinkedWhileTheRunDecidesIsNotReplaced(t *testing.T) {
 	r := newProjectRig(t)
 	r.existing(false)
 	fakeTerminal(t)
-	cmd := NewRootCmd()
-	var out, errOut strings.Builder
-	cmd.SetIn(&onRead{r: strings.NewReader(billingAcc + "\n"), fn: func() { r.bill.SetBilling(newProj, true) }})
-	cmd.SetOut(&out)
-	cmd.SetErr(&errOut)
-	cmd.SetArgs([]string{"setup", "--gcp-project", newProj, "--create-project", "--link-billing", billingAcc})
-	err := cmd.Execute()
+	r.bill.AfterBillingReads(1, func() { r.bill.SetBilling(newProj, true) })
+	out, _, err := r.run(t, true, "", "--create-project", "--link-billing", billingAcc)
 	if n := r.bill.Attempts(); n != 0 {
-		t.Errorf("%d write(s) attempted\n%s", n, out.String())
+		t.Errorf("%d write(s) attempted\n%s", n, out)
 	}
-	if ExitCode(err) != ExitUserError || !strings.Contains(out.String(), "never replaces a link") {
-		t.Errorf("exit %d (%v)\n%s", ExitCode(err), err, out.String())
+	if !strings.Contains(out, "never changes an existing link") {
+		t.Errorf("the run does not report the link it found between the two reads (%v)\n%s", err, out)
 	}
 }
 
@@ -1137,7 +1127,8 @@ func TestFirebaseProjectIsAlwaysTheInstallations(t *testing.T) {
 // W4.3 made the first false for exactly one call site — the wizard's billing
 // question, at a real terminal — so what this test pins is how narrow that
 // reversal is: the account list is asked for from one place in the whole tree,
-// in a file that reads canType() only to refuse. And the second clause is
+// in a file that reaches it only through the value entry that asks for the
+// answer. And the second clause is
 // untouched, in the stage and in the question both: a run over a project that
 // IS linked to an account never prints that account.
 func TestTheBillingListIsNarrow(t *testing.T) {
@@ -1172,22 +1163,27 @@ func TestTheBillingListIsNarrow(t *testing.T) {
 	if want := filepath.ToSlash(filepath.Join(root, "internal", "cli", "billing_prompt.go")); len(callers) != 1 || callers[0] != want {
 		t.Errorf("the caller's billing accounts are listed from %v, want only %s: a second call site is a wider reversal than the owner answered (D6)", callers, want)
 	}
-	// That file reads canType() only to refuse, so the one list call cannot be
-	// reached on a path that skipped it (Global Constraint 8).
+	// That file reads the answer through the value entry and nothing else, so
+	// the one list call cannot be reached on a path that skipped it: a run with
+	// no terminal is refused by readValue itself, naming the flag that supplies
+	// the account, and never reaches the operator's own accounts (D1540, and
+	// Global Constraint 8).
 	b, err := os.ReadFile("billing_prompt.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	reads, guards := len(canTypeReadRE.FindAll(b, -1)), len(canTypeGuardRE.FindAll(b, -1))
-	if reads == 0 || reads != guards {
-		t.Errorf("billing_prompt.go reads canType() %d time(s), %d of them as a refusal: the account list may be asked for only where canType() says yes", reads, guards)
+	if reads := len(billingValueReadRE.FindAll(b, -1)); reads != 1 {
+		t.Errorf("billing_prompt.go reads a value %d time(s), want the one read the question is answered through", reads)
 	}
-	// And the call is inside askBilling, after the asksBilling() guard that
-	// reads it: the two halves of the condition, in one function, in order.
+	// And the read is inside askBilling, after the asksBilling() guard that
+	// reads the condition and before the list: the two halves of the question,
+	// in one function, in order. A list reached without the read is a list
+	// nobody was asked for.
 	body := funcBody(t, string(b), "func (r *initRun) askBilling(")
-	guard, call := strings.Index(body, "if !r.asksBilling() {"), billingListCallRE.FindStringIndex(body)
-	if guard < 0 || call == nil || call[0] < guard {
-		t.Errorf("askBilling does not reach the account list through its asksBilling() guard (the guard at %d, the call at %v): the question's condition is askedBilling, and the list may be asked for only past it", guard, call)
+	guard, ask := strings.Index(body, "if !r.asksBilling() {"), billingValueReadRE.FindStringIndex(body)
+	call := billingListCallRE.FindStringIndex(body)
+	if guard < 0 || ask == nil || call == nil || ask[0] < guard || call[0] < ask[0] {
+		t.Errorf("askBilling reaches the account list without passing its own value entry (the guard at %d, the read at %v, the call at %v): the question's condition is asksBilling, and the list may be asked for only past a read someone can answer", guard, ask, call)
 	}
 
 	// The half of the old rule that survives. The project is linked to an

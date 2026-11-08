@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -76,7 +77,16 @@ func (s valueSpec) supply() string {
 // prompt behaves — whether an empty value is allowed is the caller's rule, as
 // are the value's length and shape.
 func readValue(cmd *cobra.Command, spec valueSpec) ([]byte, error) {
-	in := cmd.InOrStdin()
+	return readValueIn(cmd.Context(), cmd.InOrStdin(), cmd.ErrOrStderr(), spec)
+}
+
+// readValueIn is readValue over a reader and a writer the caller holds rather
+// than over a command's. The wizard's own questions come through it
+// (init_inputs.go's promptChoice): a run keeps its input in one field, and a
+// question is answered from the same reader as everything else the run reads
+// (initRun.in, which newInitRun takes from the command's own input, so the two
+// are one reader in every real run).
+func readValueIn(ctx context.Context, in io.Reader, out io.Writer, spec valueSpec) ([]byte, error) {
 	if !stdinIsTerminal(in) {
 		refusal := initflow.NeedsTerminal(spec.what)
 		if supply := spec.supply(); supply != "" {
@@ -84,13 +94,12 @@ func readValue(cmd *cobra.Command, spec valueSpec) ([]byte, error) {
 		}
 		return nil, userErr("%s", refusal)
 	}
-	out := cmd.ErrOrStderr()
 	if spec.secret {
 		f, ok := in.(*os.File)
 		if !ok {
 			return nil, userErr("%s is read with the terminal's echo off, and this input is not a terminal", spec.what)
 		}
-		return readHidden(cmd.Context(), f, out, spec.what)
+		return readHidden(ctx, f, out, spec.what)
 	}
 	fmt.Fprintf(out, "Type %s: ", spec.what)
 	line, err := readConfirmLine(in)

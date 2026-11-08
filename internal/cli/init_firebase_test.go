@@ -180,12 +180,14 @@ func strs(v any) []string {
 }
 
 // Each of the three applies, and the database step, has its own plan and its
-// own confirmation: typing the name n times gets exactly n steps.
+// own question: --ask puts them back one step at a time, and answering n of
+// them yes gets exactly n steps. Nothing is typed for one that was not asked
+// (T7).
 func TestInitFirebaseThreeAppliesConfirmedSeparately(t *testing.T) {
 	r := newFBRig(t)
 	r.historyImage()
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, names(3)+"us-east5\n"+names(1), "setup", "--firebase-project", fpID, "--budget-mode", "observe")
+	out, _, err := executeStdin(t, strings.Repeat("y\n", 5), "setup", "--firebase-project", fpID, "--budget-mode", "observe", "--ask")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -204,12 +206,12 @@ func TestInitFirebaseThreeAppliesConfirmedSeparately(t *testing.T) {
 		t.Errorf("rules deployed %d times", r.db.RulePuts())
 	}
 
-	// Each confirmation is its own: with only two names the second apply is
+	// Each confirmation is its own: with only two answers the second apply is
 	// the last thing that happens, and the database is never touched.
 	r2 := newFBRig(t)
 	r2.historyImage()
 	fakeTerminal(t)
-	_, _, err = executeStdin(t, names(2), "setup", "--firebase-project", fpID)
+	_, _, err = executeStdin(t, strings.Repeat("y\n", 2), "setup", "--firebase-project", fpID, "--ask")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "not confirmed") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}

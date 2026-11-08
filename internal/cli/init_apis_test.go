@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -52,19 +51,15 @@ func TestInitEnablesResourceManager(t *testing.T) {
 		t.Fatalf("calls = %q", r.calls(t))
 	}
 
-	// --json lists it among the changes made.
+	// --json at a terminal confirms no step at all, so the enable is refused
+	// and the API stays disabled: a plan cannot be given a word it never had
+	// (T7, D1540), and the refusal names the flag rather than a terminal.
 	r = newInitRig(t)
 	r.stateBucket()
 	r.su.Disable(infra.ServiceResourceManager, r.crm.Server)
-	out, _, err = executeStdin(t, initProjectName+"\n", "setup", "--plan-only", "--json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var res struct {
-		Enabled []string `json:"enabled"`
-	}
-	if err := json.Unmarshal([]byte(out), &res); err != nil || !slices.Equal(res.Enabled, []string{infra.ServiceResourceManager}) {
-		t.Fatalf("result %s: %+v, %v", out, res, err)
+	_, _, err = executeStdin(t, initProjectName+"\n", "setup", "--plan-only", "--json")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "--json") || len(r.su.Enables()) != 0 {
+		t.Fatalf("--json: exit %d, err %v, enables %q", ExitCode(err), err, r.su.Enables())
 	}
 }
 
@@ -82,7 +77,8 @@ func TestInitResourceManagerEnabledAsksNothing(t *testing.T) {
 }
 
 // Without a terminal and without --yes, nothing is enabled: exit 1 with
-// the command to run by hand. At a terminal, a wrong answer is the same.
+// the command to run by hand. At a terminal the person there is the
+// confirmation, and nothing is read for it (T7).
 func TestInitResourceManagerDisabledNeedsConfirmation(t *testing.T) {
 	noEnableWait(t, 1)
 	r := newInitRig(t)
@@ -97,12 +93,9 @@ func TestInitResourceManagerDisabledNeedsConfirmation(t *testing.T) {
 	}
 
 	fakeTerminal(t)
-	_, _, err = executeStdin(t, "yes\n", "setup", "--plan-only")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), enableCommand) || len(r.su.Enables()) != 0 {
-		t.Fatalf("declined at a terminal: exit %d, err %v, enables %q", ExitCode(err), err, r.su.Enables())
-	}
-	if _, _, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only"); err != nil || len(r.su.Enables()) != 1 {
-		t.Fatalf("typed project name: %v, enables %q", err, r.su.Enables())
+	_, _, err = executeStdin(t, "no\n", "setup", "--plan-only")
+	if err != nil || len(r.su.Enables()) != 1 {
+		t.Fatalf("a person at the terminal: exit %d, err %v, enables %q", ExitCode(err), err, r.su.Enables())
 	}
 }
 

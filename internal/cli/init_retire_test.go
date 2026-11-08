@@ -701,12 +701,14 @@ func TestInitRepoRetireShowsThePlanBeforeTheSecondConfirmation(t *testing.T) {
 }
 
 // I1: a declined second confirmation says what has already happened, not what
-// was predicted. The state removal runs before the prompt, so the message must
-// name the addresses that left the state, by address, and the command that
-// finishes the work -- "nothing was removed" would be false by then.
+// was predicted. The state removal runs before the question, so the message
+// must name the addresses that left the state, by address, and the command
+// that finishes the work -- "nothing was removed" would be false by then. The
+// question is the one --ask puts back: nothing is read at a retirement's
+// confirmation otherwise (T7).
 func TestInitRepoRetireDeclinedSecondConfirmationNamesWhatLeftTheState(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true})
-	out, errOut, err := executeStdin(t, "aurora\nno\n", "setup", "--repo", "--retire", "--no-build")
+	out, errOut, err := executeStdin(t, "y\nn\n", "update", "--repo", "--retire", "--no-build", "--ask")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s%s; want the decline to stop the run", ExitCode(err), err, out, errOut)
 	}
@@ -737,14 +739,14 @@ func TestInitRepoRetireDeclinedSecondConfirmationNamesWhatLeftTheState(t *testin
 	}
 }
 
-// The no-change (resume) path owes the same second typed confirmation: the
+// The no-change (resume) path owes the same second confirmation: the
 // plan changes nothing because an earlier run already removed the addresses
 // and applied, but the API job delete is still in front of the user, and no
 // plan shows it (design §4.2). Declining stops the run there, with nothing
 // deleted I-C.
 func TestInitRepoRetireResumeNoChangeAsksBeforeTheDeleteAndDecliningStopsIt(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true, noJobInState: true, planClean: true})
-	out, errOut, err := executeStdin(t, "aurora\nno\n", "setup", "--repo", "--retire", "--no-build")
+	out, errOut, err := executeStdin(t, "y\nn\n", "update", "--repo", "--retire", "--no-build", "--ask")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s%s; want the declined confirmation to stop the run", ExitCode(err), err, out, errOut)
 	}
@@ -755,12 +757,12 @@ func TestInitRepoRetireResumeNoChangeAsksBeforeTheDeleteAndDecliningStopsIt(t *t
 	if n := strings.Count(text, "⚠ CONFIRM"); n != 2 {
 		t.Errorf("%d confirmations, want two: the resume owes the delete's own:\n%s", n, text)
 	}
-	// Both prompts are the typed route. ask is the one --yes covers, and
-	// retireConfirm uses askTyped precisely because this step is not one --yes
-	// may cover: the prompt text is what tells the two apart, and the
-	// --yes-coverable one here would let a --yes run delete a job.
-	if n := strings.Count(text, "Type "+initProjectName+" to confirm: "); n != 2 {
-		t.Errorf("%d typed prompts, want two: the delete's confirmation is not the --yes-coverable one:\n%s", n, text)
+	// Both questions are the route --yes never covers: askTyped is what
+	// retireConfirm uses precisely because this step is not one --yes may
+	// cover, and --ask is the only flag that asks it -- a run that could
+	// reach the delete through --yes would delete a job nobody answered for.
+	if n := strings.Count(text, "[y/N]: "); n != 2 || strings.Contains(text, "confirmed by --yes") {
+		t.Errorf("%d asked questions, and --yes said to have confirmed one:\n%s", n, text)
 	}
 	if deletes := r.run.JobDeletes(); len(deletes) != 0 {
 		t.Errorf("a declined confirmation still deleted %v", deletes)
@@ -781,9 +783,10 @@ func TestInitRepoRetireResumeNoChangeAsksBeforeTheDeleteAndDecliningStopsIt(t *t
 // rather than naming an apply that is not coming.
 func TestInitRepoRetireResumeNoChangeDeletesAfterTheConfirmation(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true, noJobInState: true, planClean: true})
-	// The third answer is the local config's own confirmation: this run never
-	// applied, so that write is not covered by an apply's.
-	out, errOut, err := executeStdin(t, "aurora\naurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
+	// The third answer is the local config's own question: this run never
+	// applied, so that write is not covered by an apply's, and --ask is what
+	// asks it.
+	out, errOut, err := executeStdin(t, "y\ny\ny\n", "update", "--repo", "--retire", "--no-build", "--ask")
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}

@@ -521,14 +521,16 @@ func TestInitRemovesRunsBucketViewers(t *testing.T) {
 	}
 }
 
-// Declining the viewers' removal is allowed; the run goes on and says so.
+// Declining the viewers' removal is allowed; the run goes on and says so. The
+// question is the removal's own, and --ask is what puts it back: nothing is
+// typed at a confirmation by default (T7).
 func TestInitRunsBucketViewersDeclined(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{"fugaro": "managed"})
 	r.gcs.SetBucketPolicy(initRunsBucket, gcpfake.ConvenienceBindings(initProject))
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, "no\n"+initProjectName+"\n", "setup")
+	out, _, err := executeStdin(t, "n\ny\n", "setup", "--ask")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -539,12 +541,12 @@ func TestInitRunsBucketViewersDeclined(t *testing.T) {
 		t.Errorf("the summary doesn't note the declined removal:\n%s", out)
 	}
 	if len(r.ran(t, "apply")) != 1 {
-		t.Fatal("the typed project name did not confirm the apply")
+		t.Fatal("the apply's own question was answered yes and nothing was applied")
 	}
 }
 
-// fakeTerminal makes init treat stdin as a terminal, where the project name
-// is typed to confirm.
+// fakeTerminal makes init treat stdin as a terminal, where a person's being
+// there is what confirms a step (nothing is typed at it: T7).
 func fakeTerminal(t *testing.T) {
 	t.Helper()
 	old := stdinIsTerminal
@@ -594,19 +596,9 @@ func typedThroughYes(t *testing.T) {
 	t.Cleanup(func() { canConfirmTyped = old })
 }
 
-// At a terminal, anything but the project name declines.
-func TestInitTypedConfirmation(t *testing.T) {
-	r := newInitRig(t)
-	r.stateBucket()
-	fakeTerminal(t)
-	_, _, err := executeStdin(t, "yes\n", "setup")
-	if ExitCode(err) != ExitUserError || len(r.ran(t, "apply")) != 0 {
-		t.Fatalf("exit %d, err %v, calls %q", ExitCode(err), err, r.calls(t))
-	}
-	if _, _, err := executeStdin(t, initProjectName+"\n", "setup"); err != nil || len(r.ran(t, "apply")) != 1 {
-		t.Fatalf("typed project name: %v, calls %q", err, r.calls(t))
-	}
-}
+// The typed confirmation fugaro setup used to take — the project's name, and
+// nothing else — is gone. What stands in its place is at the command level
+// too: TestInitAsksNoConfirmation.
 
 func TestInitRefusesForeignStateBucket(t *testing.T) {
 	for name, labels := range map[string]map[string]string{"other project": {"fugaro": "tfstate"}, "unmarked": nil} {

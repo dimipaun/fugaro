@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -69,8 +70,79 @@ func (c condition) run(t *testing.T, stdin string) (*initRun, *readSpy, *strings
 	cmd.Flags().Bool("json", o.asJSON, "")
 	cmd.Flags().Bool("non-interactive", o.nonInteractive, "")
 	cmd.SetIn(spy)
+	// One writer for the step's own lines and for --ask's question, as a real
+	// run has (newInitRun writes through the command's own output).
+	cmd.SetOut(out)
 	r := &initRun{cmd: cmd, o: &o, w: out, in: bufio.NewReader(spy), projectName: initProjectName, gcpProject: initProject}
 	return r, spy, out
+}
+
+// TestInitAsksNoConfirmation is the no-prompt policy's own test at the point
+// every confirmation of the converge comes through (T7, docs/no-prompt-policy
+// and its spec: "any confirmation prompt in Fugaro is a bug"). What answers a
+// step is the session itself, and no arm of it types anything: --yes stands in
+// where the run has the flag, a person at their own terminal confirms the step
+// by being there, and a session nobody can answer — no terminal, --json,
+// --non-interactive, a coding agent's — leaves the step for the user rather
+// than reading a line nobody could end. The one arm that reads is --ask, and
+// it reads a y/N and not a name.
+func TestInitAsksNoConfirmation(t *testing.T) {
+	const question = "apply all of the steps above to GCP project " + initProject + "?"
+	for _, c := range conditions() {
+		t.Run(c.name, func(t *testing.T) {
+			r, spy, out := c.run(t, initProjectName+"\n")
+			ok, err := r.confirmNow(question)
+			if err == nil {
+				// What the session is decides, and nothing about it is typed:
+				// the flag stands in, and otherwise the person at the terminal
+				// is the whole of the answer (canType). A run that leaves the
+				// step says so by answering no, and the caller is the one that
+				// refuses with what that left undone.
+				want := c.opts.yes || (c.terminal && !c.opts.nonInteractive && !c.opts.asJSON)
+				if ok != want {
+					t.Fatalf("confirmed %v, want %v", ok, want)
+				}
+			} else {
+				var ag *initflow.AgentError
+				if ok || c.agent == "" || !errors.As(err, &ag) || ag.Marker != c.agent {
+					t.Fatalf("confirmed %v (err %v), want the agent refusal naming %s", ok, err, c.agent)
+				}
+			}
+			if spy.read {
+				t.Fatalf("stdin was read: no confirmation of this run is typed any more")
+			}
+			if line := out.String(); line != "" {
+				t.Fatalf("the step printed a prompt: %q", line)
+			}
+		})
+	}
+	t.Run("--ask puts the question back as a y/N", func(t *testing.T) {
+		c := condition{name: "--ask", opts: initOptions{ask: true}, terminal: true}
+		r, spy, out := c.run(t, "y\n")
+		ok, err := r.confirmNow(question)
+		if err != nil || !ok || !spy.read {
+			t.Fatalf("confirmed %v, err %v, read %v: --ask asks the step's own question", ok, err, spy.read)
+		}
+		if want := question + " [y/N]: "; !strings.Contains(out.String(), want) {
+			t.Fatalf("--ask printed %q, want %q", out.String(), want)
+		}
+	})
+	t.Run("--ask where nobody can answer refuses without reading", func(t *testing.T) {
+		for _, c := range []condition{
+			{name: "--ask, a pipe", opts: initOptions{ask: true}},
+			{name: "--ask --json at a terminal", opts: initOptions{ask: true, asJSON: true}, terminal: true},
+			{name: "--ask --non-interactive at a terminal", opts: initOptions{ask: true, nonInteractive: true}, terminal: true},
+			{name: "--ask in a coding agent's session", opts: initOptions{ask: true}, terminal: true, agent: "CLAUDECODE"},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				r, spy, out := c.run(t, "y\n")
+				ok, err := r.confirmNow(question)
+				if ok || err == nil || spy.read || !strings.Contains(err.Error(), "asked for") || strings.Contains(out.String(), "[y/N]") {
+					t.Fatalf("confirmed %v, err %v, read %v, printed %q: --ask a confirmation nobody can answer is a refusal", ok, err, spy.read, out.String())
+				}
+			})
+		}
+	})
 }
 
 // TestTypedOnlyFirestoreLocationMatrix: the Firestore location is permanent,

@@ -373,23 +373,10 @@ func TestInitGCPCallsUseID(t *testing.T) {
 	}
 }
 
-// fugaro setup's typed confirmation is the project's name, not the GCP ID,
-// and the prompt names both.
-func TestInitConfirmationTypesName(t *testing.T) {
-	r := newInitRig(t)
-	r.stateBucket()
-	fakeTerminal(t)
-	out, _, err := executeStdin(t, initProject+"\n", "setup")
-	if ExitCode(err) != ExitUserError || len(r.ran(t, "apply")) != 0 {
-		t.Fatalf("typing the GCP ID: exit %d, err %v, calls %q", ExitCode(err), err, r.calls(t))
-	}
-	if !strings.Contains(out, "Type aurora to apply to GCP project proj-1234: ") {
-		t.Errorf("prompt:\n%s", out)
-	}
-	if _, _, err := executeStdin(t, "aurora\n", "setup"); err != nil || len(r.ran(t, "apply")) != 1 {
-		t.Fatalf("typing the name: %v, calls %q", err, r.calls(t))
-	}
-}
+// fugaro setup's typed confirmation of the project (the project's name, not
+// the GCP ID, with the prompt naming both) is gone with the confirmations
+// themselves: a person at the terminal is the confirmation now, and the run
+// reads no line at all (T7, docs/no-prompt-policy).
 
 // In a checkout of a project with no project config yet, init creates
 // that project's config (the checkout names it); a --name for another

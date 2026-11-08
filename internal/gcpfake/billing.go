@@ -32,6 +32,10 @@ type Billing struct {
 	hidden   map[string]bool
 	links    []Link
 	failLink *apiError
+	// afterReads counts down the reads of a project's billing info still to be
+	// answered before afterFn runs, once (AfterBillingReads).
+	afterReads int
+	afterFn    func()
 }
 
 // Link is an updateBillingInfo the fake accepted.
@@ -127,6 +131,21 @@ func (f *Billing) Attempts() int {
 	return n
 }
 
+// AfterBillingReads runs fn once, after the next n reads of a project's
+// billing info have been answered, and not while the fake's own lock is held.
+// It is for a test that needs the world to change between two of one run's
+// reads of the same project — the plan's, which decides what to do, and the
+// guard read infra.LinkBilling makes before a write, which refuses to replace
+// a link that appeared in between. The confirmation that used to sit between
+// the two no longer reads a line (T7, docs/no-prompt-policy), so a test that
+// took its moment there takes it here: n counts the reads before the one the
+// run decides on.
+func (f *Billing) AfterBillingReads(n int, fn func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.afterReads, f.afterFn = n, fn
+}
+
 // Links are the updateBillingInfo calls accepted so far.
 func (f *Billing) Links() []Link {
 	f.mu.Lock()
@@ -174,29 +193,50 @@ func (f *Billing) handle(w http.ResponseWriter, r *http.Request, req []byte) {
 		f.unhandled(w, r)
 		return
 	}
+	after := f.billingInfo(w, r, m[1], req)
+	if after != nil {
+		after()
+	}
+}
+
+// billingInfo answers one project's billing info, and returns the hook the
+// caller must run once this reply has been written — outside the lock, since
+// the hook is what a test uses to change the state the next read answers from
+// (AfterBillingRead).
+func (f *Billing) billingInfo(w http.ResponseWriter, r *http.Request, project string, req []byte) func() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if _, known := f.enabled[m[1]]; !known && f.crm != nil && f.crm.Has(m[1]) {
-		f.enabled[m[1]] = false
+	if _, known := f.enabled[project]; !known && f.crm != nil && f.crm.Has(project) {
+		f.enabled[project] = false
 	}
-	if f.hidden[m[1]] {
+	if f.hidden[project] {
 		writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "The caller does not have permission")
-		return
+		return nil
 	}
 	if r.Method == http.MethodPut {
-		f.link(w, m[1], req)
-		return
+		f.link(w, project, req)
+		return nil
 	}
-	on, ok := f.enabled[m[1]]
+	on, ok := f.enabled[project]
 	if !ok {
 		writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "The caller does not have permission")
-		return
+		return nil
 	}
-	body := map[string]any{"name": "projects/" + m[1] + "/billingInfo", "projectId": m[1], "billingEnabled": on}
-	if on || f.account[m[1]] != "" {
-		body["billingAccountName"] = cmpOr(f.account[m[1]], "billingAccounts/000000-000000-000000")
+	body := map[string]any{"name": "projects/" + project + "/billingInfo", "projectId": project, "billingEnabled": on}
+	if on || f.account[project] != "" {
+		body["billingAccountName"] = cmpOr(f.account[project], "billingAccounts/000000-000000-000000")
 	}
 	writeJSON(w, http.StatusOK, body)
+	if f.afterFn == nil {
+		return nil
+	}
+	f.afterReads--
+	if f.afterReads > 0 {
+		return nil
+	}
+	after := f.afterFn
+	f.afterFn, f.afterReads = nil, 0
+	return after
 }
 
 func (f *Billing) link(w http.ResponseWriter, project string, body []byte) {

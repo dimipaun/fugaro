@@ -664,7 +664,7 @@ func TestNoDecisionReadOutsideTheTwoHelpers(t *testing.T) {
 // allowing a read rather than having lost one.
 var sanctionedSites = map[string]string{
 	"managed_ask.go:askConfirm":    "the --ask helper, the owner's single sanctioned exemption (D1544, T1)",
-	"valueentry.go:readValue":      "the value-entry helper: a value is not a confirmation and cannot be defaulted (D1540)",
+	"valueentry.go:readValueIn":    "the value-entry helper: a value is not a confirmation and cannot be defaulted (D1540)",
 	"restore.go:readConfirmLine":   "the line read both sanctioned helpers read through: a value's line is read here, and T6 deletes restore's confirmations, not this",
 	"secrets.go:readHiddenLine":    "the hidden read of the value entry's hidden path, readValue to readHidden to here (D1540; T7 changes its door, not its hiding)",
 	"initsecrets.go:readHiddenPEM": "the multi-line shape of the same value entry: a PEM cannot be typed on one line, and the one-line helper cannot take it (D1540 keeps value entry; T12 owns this file)",

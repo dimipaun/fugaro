@@ -123,17 +123,18 @@ func rigUpdated(path string) string {
 	return "Updated " + path + " with gcp_project. Review it with git diff and commit it like any change. " + cliCaution + "\n"
 }
 
-// (a) Everything is ready: the diff, the question, the write; no Terraform,
-// no publish.
+// (a) Everything is ready: the diff, the write; no Terraform, no publish.
+// Nothing is asked at a terminal (T7): the diff above is what the person
+// reads, and the line that said "Write this to ...? [y/N]" is gone.
 func TestInitAnchorWritesAfterTheChecks(t *testing.T) {
 	r := newAnchorModeRig(t, anchorModeYAML(), true)
 	putWorkflowRecord("app", "0.4.0")
 	fakeTerminal(t)
-	out, _, err := anchorExec(t, "y\n", "setup", "--anchor")
+	out, _, err := anchorExec(t, "n\n", "setup", "--anchor")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if want := rigDiff(r.path) + "Write this to " + r.path + "? [y/N]: " + rigUpdated(r.path); out != want {
+	if want := rigDiff(r.path) + rigUpdated(r.path); out != want {
 		t.Errorf("output:\n%s\nwant:\n%s", out, want)
 	}
 	r.check(t, withRigAnchor(r.yaml))
@@ -458,7 +459,8 @@ func TestTheAnchorAndRepoRefusalNamesTheReadersDoor(t *testing.T) {
 }
 
 // (k) The confirmation matrix: --yes writes without asking; no terminal and
-// no --yes prints the line and exits 1; a terminal's "n" leaves the bytes.
+// no --yes prints the line and exits 1; a terminal writes it too, reading
+// nothing (T7).
 func TestInitAnchorConfirmation(t *testing.T) {
 	r := newAnchorModeRig(t, anchorModeYAML(), true)
 	putWorkflowRecord("app", "0.4.0")
@@ -480,10 +482,15 @@ func TestInitAnchorConfirmation(t *testing.T) {
 	putWorkflowRecord("app", "0.4.0")
 	fakeTerminal(t)
 	out, _, err = anchorExec(t, "n\n", "setup", "--anchor")
-	if ExitCode(err) != ExitUserError || out != rigDiff(r.path)+"Write this to "+r.path+"? [y/N]: "+rigAddLine(r.path) {
-		t.Fatalf("n: exit %d, err %v\n%s", ExitCode(err), err, out)
+	if err != nil || out != rigDiff(r.path)+rigUpdated(r.path) {
+		t.Fatalf("a terminal: exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
-	r.check(t, r.yaml)
+	r.check(t, withRigAnchor(r.yaml))
+
+	// There is no third answer to try: nothing is typed at the confirmation
+	// (T7), so the step is written wherever an operator's own terminal is, and
+	// --ask — the flag that puts a y/N back — is `fugaro update`'s alone
+	// (TestSetupRefusesAskByName): setup refuses it before this step.
 }
 
 // (l) --anchor is a mode of its own.

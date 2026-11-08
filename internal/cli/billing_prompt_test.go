@@ -27,10 +27,12 @@ import (
 // (2026-10-20): at a real terminal the wizard lists the open billing accounts
 // the operator can use, by number, picks by number, takes a single account as
 // the default, and on none says the one clear thing about creating one in the
-// console and prints today's guided line. Where any of the four conditions
-// canType() names fails — no terminal, --non-interactive, --json, a coding
-// agent's session — nothing is listed and the run is exactly today's run
-// (Global Constraint 8, reconciliation F6).
+// console and prints today's guided line. Where the question is not asked at
+// all — --non-interactive, --json, --yes, --print-vars, a coding agent's
+// session — nothing is listed and the run is exactly today's run (Global
+// Constraint 8, reconciliation F6). Where it *is* asked and there is no
+// terminal, the answer is a value and readValue refuses it at once, naming
+// --link-billing, before a single account is read (T7, D1540).
 //
 // The account ids here are built at run time from the test's name, never a
 // literal that looks like one, and every source is a fake: no test in this
@@ -219,8 +221,8 @@ func TestPickerEnterOnSeveralAccountsAsksAgain(t *testing.T) {
 	if r.o.linkBilling != offered[1] {
 		t.Errorf("Enter on a list of two left the question answered with %q, want the number typed after it (%q)\n%s", r.o.linkBilling, offered[1], out)
 	}
-	if n := strings.Count(out.String(), "Billing account"); n < 2 {
-		t.Errorf("the empty answer was taken as an answer: the question was shown %d time(s), want it asked again\n%s", n, out)
+	if n := strings.Count(out.String(), "Type the billing account"); n < 2 {
+		t.Errorf("the empty answer was taken as an answer: the entry was shown %d time(s), want it asked again\n%s", n, out)
 	}
 	if strings.Contains(out.String(), "[1]") {
 		t.Errorf("the question offers a default it does not have — with two accounts there is nothing for Enter to take:\n%s", out)
@@ -367,7 +369,7 @@ func TestPickerNeverRunsInAnAgentSession(t *testing.T) {
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out.String(), "GCP project ID") {
+	if !strings.Contains(out.String(), "the GCP project's ID") {
 		t.Errorf("the run asks nothing at all, and only the billing question is an agent's to refuse:\n%s", out)
 	}
 	if r.o.linkBilling != "" || billingListCalls(f) != 0 || strings.Contains(out.String(), acct) {
@@ -375,9 +377,15 @@ func TestPickerNeverRunsInAnAgentSession(t *testing.T) {
 	}
 }
 
-// TestPickerNeverRunsWithoutATerminal: no terminal is the fourth condition,
-// and a pipe is what has none.
-func TestPickerNeverRunsWithoutATerminal(t *testing.T) {
+// TestBillingChoiceFailsAtOnceWithoutATerminal: the answer is a value, and a
+// value is read at a terminal and nowhere else (T7, D1540). Here the question
+// is asked — this run's flags leave it unanswered and nothing about the
+// session says it asks nothing — and the run is refused at once, in the
+// sentence that names the flag supplying the same value, rather than waiting
+// on a person who is not there or quietly linking nothing. The refusal comes
+// before any account is read: the operator's own account list is not a thing a
+// run nobody can answer has any business reading.
+func TestBillingChoiceFailsAtOnceWithoutATerminal(t *testing.T) {
 	f := gcpfake.NewBilling(t)
 	acct := pickerAccountID(t, "one")
 	f.AddAccountNamed(acct, "the operator's own account", true)
@@ -385,8 +393,12 @@ func TestPickerNeverRunsWithoutATerminal(t *testing.T) {
 	r, out := pickerRun(t, false, "", &initOptions{createProject: true, name: "aurora",
 		cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}})
 	pickerSources(t, f)
-	if err := r.gatherInputs(t.Context()); err != nil {
-		t.Fatalf("%v\n%s", err, out)
+	err := r.gatherInputs(t.Context())
+	if err == nil {
+		t.Fatalf("a run with no terminal answered its own billing question:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--link-billing") {
+		t.Errorf("exit %d, %v: the refusal does not name the flag that answers it", ExitCode(err), err)
 	}
 	if out.Len() != 0 {
 		t.Errorf("a pipe is no terminal, and the wizard asked something into it:\n%s", out)

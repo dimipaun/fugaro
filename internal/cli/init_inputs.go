@@ -387,19 +387,20 @@ func (r *initRun) prompt(spec valueSpec, def string, valid func(string) error) (
 // at a terminal it is read, beside no terminal it is refused at once naming the
 // flag or the variable that supplies it, and neither is a confirmation — so
 // what the helper reads here is a value and never a yes or a no. The suggestion
-// is printed above the read, the way the wizard has always offered it, and an
-// empty line takes it: the entry has no default of its own, and a value that
-// cannot be defaulted is refused rather than guessed (a run with no terminal
-// gets the refusal, never the suggestion in the person's place). A value the
-// caller's own rule refuses is asked again, three attempts in all, and a
-// question that runs out of attempts is noAnswer — a run that stopped at a
-// question, not a refusal.
+// is printed above the read, the way the wizard has always offered it, and the
+// entry asks for the value under it in its own words ("Type …: "): an empty
+// line takes the suggestion, and the entry has no default of its own, so a
+// value that cannot be defaulted is refused rather than guessed (a run with no
+// terminal gets the refusal, never the suggestion in the person's place). A
+// value the caller's own rule refuses is asked again, three attempts in all,
+// and a question that runs out of attempts is noAnswer — a run that stopped at
+// a question, not a refusal.
 func (r *initRun) promptChoice(spec valueSpec, def, alt, why string, valid func(string) error) (string, error) {
 	if line := suggestionLine(spec.what, def, alt, why); line != "" {
 		fmt.Fprintf(r.w, "%s\n", line)
 	}
 	for range 3 {
-		b, err := readValue(r.cmd, spec)
+		b, err := readValueIn(r.ctx(), r.in, r.w, spec)
 		if err != nil {
 			return "", err
 		}

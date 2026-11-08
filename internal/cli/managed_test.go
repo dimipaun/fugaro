@@ -155,11 +155,18 @@ func (s agentEnvState) apply(t *testing.T) {
 //
 //   - condYes: initflow.Conditions.Yes as initRun.conditions must build it
 //     (--plan-only never takes --yes);
-//   - ordRight/ordWrong: whether initRun.ask (the YesOrTyped class) proceeds
-//     when the project's name is typed / when something else is typed;
-//   - typRight/typWrong: the same for initRun.askTyped (the Typed class).
+//   - ordRight/ordWrong: whether the RULE lets a run of this row take a
+//     YesOrTyped step (initflow.CanConfirm, which
+//     TestManagedConfirmRuleMatchesTheTable reads back out of the row);
+//   - typRight/typWrong: the same for the Typed class.
 //
-// Under any agent marker every one of the four is false.
+// The *Wrong columns are false in every row: the rule asks who is there and
+// never what was typed. They were the run's own expectation while a
+// confirmation was the step's name typed at the terminal — typing something
+// else left the step — and the run's own expectation is runConfirms now, which
+// is not the rule any more (see it) and is what the property drives.
+//
+// Under any agent marker every one of them is false.
 type confirmRow struct {
 	yes, planOnly, nonInteractive, json, terminal bool
 	condYes                                       bool
@@ -550,13 +557,23 @@ func TestManagedWorldsWithDifferentNamesAreDifferentWorlds(t *testing.T) {
 	}
 }
 
-// confirmRig is an initRun over the row's flags and terminal, with what is
-// typed at the prompt; the spy says whether stdin was read at all.
+// confirmRig is an initRun over the row's flags and terminal, with what the
+// terminal carries as its input; the spy says whether stdin was read at all.
 func confirmRig(t *testing.T, row confirmRow, typed string) (*initRun, *readSpy) {
 	t.Helper()
 	spy := &readSpy{Reader: strings.NewReader(typed + "\n")}
 	cmd := &cobra.Command{}
 	cmd.SetIn(spy)
+	cmd.SetOut(io.Discard)
+	// The four flags the sanctioned readers look up on the command rather than
+	// on the options (askConfirm reads --ask, --yes, --json and
+	// --non-interactive there, and boolFlag answers false for a flag its
+	// command does not carry): a rig whose command lacks them is a run whose
+	// --ask nothing ever sees.
+	cmd.Flags().Bool("ask", row.ask, "")
+	cmd.Flags().Bool("yes", row.yes, "")
+	cmd.Flags().Bool("json", row.json, "")
+	cmd.Flags().Bool("non-interactive", row.nonInteractive, "")
 	o := &initOptions{yes: row.yes, planOnly: row.planOnly, nonInteractive: row.nonInteractive, asJSON: row.json, ask: row.ask}
 	return &initRun{cmd: cmd, o: o, w: io.Discard, in: bufio.NewReader(spy), projectName: initProjectName, gcpProject: initProject}, spy
 }
@@ -585,11 +602,46 @@ func managedDecision(mode func(bool, string, error) bool, rd managedRead, r *ini
 	return r.ask("an applying step")
 }
 
+// runConfirms is what the run itself does at a step of the class in a row, for
+// a project nothing recorded (so the mode never answers) and under marker (the
+// environment's, "" for a person's own session), written by hand beside the
+// property that drives it. It is the run's own path and not the rule: the two
+// were one predicate while a confirmation was the step's name typed at a
+// terminal, and since T7 they are not, which is why both are written out.
+//
+// --ask is the one arm that reads, and what it reads is a y/N and never the
+// step's name: where nobody can answer it, it refuses before reading (so the
+// arm is false there), and it refuses --yes outright, so a run given both
+// confirms no step at all.
+//
+// Every other arm ends at confirmNow's last one, canType(): a real terminal,
+// with no --json and no --non-interactive. That is narrower than the rule for a
+// YesOrTyped step by the --json arm alone (initflow.CanConfirm asks only
+// whether a person may type, and under --json a name could still be typed) —
+// and a run that reads no name at all has nothing to do with the flag, so
+// --json at a terminal leaves the step. A Typed step — creating the project,
+// linking the billing account, the Firestore location in setup — is --yes's in
+// neither door, and its column already says so.
+func runConfirms(row confirmRow, class initflow.ConfirmClass, marker string) bool {
+	if marker != "" {
+		return false
+	}
+	if row.ask {
+		return !row.yes && row.terminal && !row.json && !row.nonInteractive
+	}
+	if class == initflow.Typed {
+		return row.typRight
+	}
+	return row.condYes || (row.terminal && !row.json && !row.nonInteractive)
+}
+
 // managedViolations runs the decision over the whole product — every read,
-// every agent environment state, every row of the table, both classes, the
-// right name typed and a wrong one — and returns every combination in which
-// a project the oracle says is NOT managed does other than the hand-written
-// table says (and, in a coding agent's session, anything but refuse).
+// every agent environment state, every row of the table, both classes, and both
+// lines a terminal could carry (the step's name, which nothing reads any more,
+// and the y and the n --ask's own question is answered with) — and returns
+// every combination in which a project the oracle says is NOT managed does
+// other than runConfirms says (and, in a coding agent's session, anything but
+// refuse).
 func managedViolations(t *testing.T, mode func(bool, string, error) bool, reads []managedRead) (bad []string, n int) {
 	t.Helper()
 	old := canConfirmTyped
@@ -607,26 +659,31 @@ func managedViolations(t *testing.T, mode func(bool, string, error) bool, reads 
 				for _, class := range confirmClasses {
 					for _, right := range []bool{true, false} {
 						n++
-						typed := "not-the-project"
+						// The line the terminal carries. No confirmation reads a
+						// typed NAME any more (T7): for the rows without --ask it
+						// is the name that used to be typed, kept here so that a
+						// confirmation which quietly started reading the step's
+						// name again is caught, and the --ask rows carry the two
+						// answers that flag's own y/N has.
+						feed := "not-the-project"
 						if right {
-							typed = initProjectName
+							feed = initProjectName
 						}
-						want := false
-						if marker == "" {
-							switch {
-							case class.class == initflow.YesOrTyped && right:
-								want = row.ordRight
-							case class.class == initflow.YesOrTyped:
-								want = row.ordWrong
-							case right:
-								want = row.typRight
-							default:
-								want = row.typWrong
+						if row.ask {
+							feed = "n"
+							if right {
+								feed = "y"
 							}
 						}
-						r, spy := confirmRig(t, row, typed)
+						want := runConfirms(row, class.class, marker)
+						if row.ask {
+							// --ask put the question back, and right is which of
+							// the two answers it was given.
+							want = want && right
+						}
+						r, spy := confirmRig(t, row, feed)
 						got, err := managedDecision(mode, rd, r, class.class)
-						where := fmt.Sprintf("%s, %s, %s, typed right=%v, %s", class.name, row, env.name, right, rd.state)
+						where := fmt.Sprintf("%s, %s, %s, stdin %q, %s", class.name, row, env.name, feed, rd.state)
 						if got != want {
 							bad = append(bad, fmt.Sprintf("%s: proceeds=%v, want %v (err %v)", where, got, want, err))
 						}
@@ -809,6 +866,7 @@ var inlineAgentSites = []inlineAgentSite{
 // drive, with the test that does.
 var propertyAgentSites = map[string]string{
 	"init.go askBanner":          "TestManagedNonManagedProjectNeverSkipsAConfirmation (the YesOrTyped class); ask is its wrapper (the question is asked with the run's line in flight down)",
+	"init.go confirmNow":         "TestManagedNonManagedProjectNeverSkipsAConfirmation (both classes), which reaches it through ask and askTyped",
 	"init.go conditions":         "TestManagedConfirmRuleMatchesTheTable, and the Typed class of the property through askTyped",
 	"init_stages.go options":     "TestManagedConfirmRuleMatchesTheTable (options().Agent) and TestManagedPluginStageThroughTheLoopRefusesUnderEachMarker (the stage loop's agent gate)",
 	"init_plugin_stage.go Apply": "TestUpdateManagedPluginWiringAsksNothing (the managed gate's own hand on the wiring's y/N, in the owner's terminal and in a coding agent's session)",
