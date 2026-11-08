@@ -29,10 +29,13 @@ import (
 // identity, the tool and the scopes, and a request the JSON-RPC layer refused
 // before a tool of this installation was named — a body that is not a request,
 // a method this endpoint does not have, a `tools/call` naming no tool or a name
-// the catalogue does not hold — has no tool to name and no scope to check. Such
-// a request is answered by the protocol, with its own status and its own
-// JSON-RPC code, and it is not an event about a person's call. SECURITY.md says
-// the same in the operator's words.
+// the catalogue does not hold — has no tool to name and no scope to check, and
+// neither has a request this endpoint serves without one: an `initialize`, a
+// `ping` and a `tools/list` are answered to an admitted token and recorded
+// nowhere, and a notification is answered with no body at all. Such a request
+// is answered by the protocol, with its own status and its own JSON-RPC code,
+// and it is not an event about a person's call. SECURITY.md says the same in
+// the operator's words.
 //
 // **The line is the durable copy and the record is the readable view** (the
 // amendment of 2026-11-04, reconciliation.md §4a): the per-identity record is
