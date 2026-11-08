@@ -366,7 +366,7 @@ of them the endpoints, all of them what happens at them):
    (`:44-50`). **So any launcher can mint a device token and approve a sign-in as an operator's
    device**, and the coordinator, which only verifies what a device's session produced, cannot tell
    the difference — the repository's own rules comment already says the `mu` claim "binds nothing
-   against a minter" (`internal/budget/rules/rules.go:482-487`). **This is an ACCEPTED residual
+   against a minter" (`internal/budget/rules/rules.go:505-506`). **This is an ACCEPTED residual
    risk, not an oversight**: it is recorded here and in §8 with its consequences (§8), and the
    change that would close it is named in §11. **It is in no task** — building it is a later
    decision, not a fix smuggled into this slice.
@@ -662,7 +662,7 @@ client reads it and no client writes it**, and the template's root denies by def
 `mcpauth` carries no read rule for `TOKEN` or `USER` to satisfy
 (`internal/budget/rules/rules.json.tmpl:2-4` is the root's own
 denial, and `:10-13` is the `coordinator` node whose `USER` read `mcpauth` deliberately does not
-take). The rules' two claims are unaffected — `USER` (`internal/budget/rules/rules.go:517`) is what
+take). The rules' two claims are unaffected — `USER` (`internal/budget/rules/rules.go:529`) is what
 `coordinator/` still grants and `mcpauth` deliberately does not, so the two subtrees differ in
 exactly the way the decision was asked about.
 
@@ -833,7 +833,7 @@ and **the one amendment that is not the recommendation** ([reconciliation.md](re
 (`:44-50`). **So a launcher can mint a device token and approve a sign-in as an operator's device,
 and the coordinator — which only verifies what a device's session produced — cannot tell.** The
 repository's own rules comment says the same thing from the other side: the `mu` claim "binds
-nothing against a minter" (`internal/budget/rules/rules.go:482-487`). **The consequences are stated
+nothing against a minter" (`internal/budget/rules/rules.go:505-506`). **The consequences are stated
 rather than softened:**
 
 - a launcher reaches **operator scope** at the front door — the audit record and the read tools a

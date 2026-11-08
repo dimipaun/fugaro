@@ -93,7 +93,7 @@ listing the bucket** — the design says so in as many words: *"The runner never
 (`docs/design/v1.md` §6.1). Two facts follow from the rules and the IAM, and they decide the read:
 
 - `/runs/<slug>/<run>` is readable on `RUN` alone (`internal/budget/rules/rules.json.tmpl:56-57`), and `RUN`
-  requires `auth.token.fs == $slug && auth.token.fr == $run` (`internal/budget/rules/rules.go:580`), so **a
+  requires `auth.token.fs == $slug && auth.token.fr == $run` (`internal/budget/rules/rules.go:592`), so **a
   run's token reads its own ledger and no sibling's**.
 - A launcher and an operator already hold `roles/firebasedatabase.viewer`
   (`deploy/terraform/gcp/modules/firebase/iam.tf:44-50`), which reads **every** path.

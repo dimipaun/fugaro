@@ -66,6 +66,62 @@ import (
 // still see none of the README's citations.
 var mcpPlainCitationRE = regexp.MustCompile("[A-Za-z0-9_][A-Za-z0-9_./-]*\\.(?:go|md|json|ts|tf|tmpl|yaml|yml)`?:[0-9]+")
 
+// mcpAnyCitationRE finds any cited path carrying a line -- backticked or not,
+// a range or a single number. It is not a check; it is what tells a shortened
+// reference which file it continues, the way a reader takes one.
+var mcpAnyCitationRE = regexp.MustCompile("`?([A-Za-z0-9_][A-Za-z0-9_./-]*\\.(?:go|md|json|ts|tf|tmpl|yaml|yml)):(\\d+(?:-\\d+)?)`?")
+
+// mcpShortCitationRE finds the shortened reference: a line with no path beside
+// it, backticked. `internal/budget/rules/rules.go:552`, read at `:573` is one
+// citation written in two halves, and the second half is a number that moved
+// with the first one's file.
+var mcpShortCitationRE = regexp.MustCompile("`:(\\d+(?:-\\d+)?)`")
+
+// mcpRulesCitedPath is the one file this folder's claims about the database
+// rules all stand on. Every rules work edits it, so a number into it is stale
+// the week after it is written unless something reads what the number lands on.
+const mcpRulesCitedPath = "internal/budget/rules/rules.go"
+
+// mcpRulesCitation is one citation of the folder into that file, held to the
+// line it names: cited is written exactly as the document writes it, and anchor
+// is the text those lines have to carry.
+type mcpRulesCitation struct {
+	doc    string // the document that makes the citation
+	claim  string // what the citation is there for
+	cited  string // the line or range it names
+	anchor string // text that line or range carries
+}
+
+// mcpRulesCitations are those citations: ONE ENTRY PER CITATION, in the order
+// the documents write them, so a claim cited twice appears twice. The check
+// below counts the two sides, because the claim is that every citation into
+// this file is read rather than that the file is cited: a citation added
+// without an entry fails, and an entry no citation is left for fails too.
+//
+// None of these carries the shape csrCitationRE knows. A range
+// (`rules.go:505-506`) ends in a number the pattern does not accept, and the
+// shortened half of a citation (`:573`) carries no path at all -- and
+// csrCensusRE, which is the floor the older check is measured against, misses
+// both for the same reason. So these citations resolved to nothing and were
+// checked by nothing while their numbers moved: `rules.go:517` had been
+// `userClaim`, and the twelve lines the workspaces work merged into
+// Generate() made it a comment. The anchors are what makes the number and the
+// claim the same fact again.
+var mcpRulesCitations = []mcpRulesCitation{
+	{mcpSpec, "the `mu` claim binds nothing against a minter, which is §8's residual risk in the rules' own words", "505-506", "binds nothing"},
+	{mcpSpec, "`USER` is what `coordinator/` still grants and `mcpauth` deliberately does not", "529", "const userClaim"},
+	{mcpSpec, "the residual risk's own words again, quoted in §8", "505-506", "binds nothing"},
+	{mcpReconciled, "`USER` defined as a signed-in, device-allow-listed person", "529", "const userClaim"},
+	{mcpReconciled, "the `mu` claim binds nothing against a minter", "505-506", "binds nothing"},
+	{mcpReconciled, "the pairing session's own claim is `PAIRING`", "552", "const pairingClaim"},
+	{mcpReconciled, "the `PAIRING` case that reads it", "573", `case "PAIRING":`},
+	{mcpReconciled, "the device allowlist `PathDevices`", "470", "const PathDevices"},
+	{mcpReconciled, "the `USER` claim that requires the allowlist", "529", "const userClaim"},
+	{mcpReconciled, "whoever can sign for the project chooses the uid and every claim in it", "494-499", "chooses both the uid"},
+	{mcpPlan, "the claim M7's coordinator subtree is fenced by", "529", "const userClaim"},
+	{mcpPlan, "`config/admin` is readable by no client token, the fact the exposure argument rests on", "57-59", "config/admin by nobody with a"},
+}
+
 const (
 	mcpReadme     = "docs/mcp-server/README.md"
 	mcpSpec       = "docs/mcp-server/spec.md"
@@ -462,6 +518,13 @@ func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
 // gate file is the one file of the folder that cites no line at all -- it stands
 // on the table, which is a document rather than a line of code -- so the demand
 // that a file cite something is made of the files that stand on the tree.
+//
+// Existing is the floor and not the demand: the folder's citations into
+// internal/budget/rules/rules.go are then read at the line they name
+// (mcpRulesCitations), because a number that resolves to a comment is a
+// citation that passed the check above while holding nothing. The twelve lines
+// the workspace family added to Generate() moved every citation below it, and
+// the one test that read its cited text caught one of them.
 func TestDocsMCPServerCitationsResolve(t *testing.T) {
 	bare := csrBareNames(t)
 	for _, path := range mcpFolderDocs() {
@@ -489,6 +552,113 @@ func TestDocsMCPServerCitationsResolve(t *testing.T) {
 		t.Logf("%s: %d backticked citations carrying a line, against a census of %d path-looking tokens with one, and %d written without backticks",
 			path, len(matches), census, len(mcpPlainCitationRE.FindAllString(doc, -1)))
 	}
+	// Then the citations into the rules file, read rather than only resolved:
+	// a line that exists and carries something else is the one failure the
+	// check above cannot see.
+	mcpCheckRulesCitations(t)
+}
+
+// mcpCheckRulesCitations reads every citation the folder makes into
+// internal/budget/rules/rules.go and holds it to the text it names, then counts
+// both sides of the table: a citation with no entry behind it is unchecked, and
+// an entry with no citation left is a pin that has outlived the claim it was
+// written for. The counts are per citation and not per document, because a
+// document cited three times with one anchor behind it is one citation held and
+// two that are not.
+func mcpCheckRulesCitations(t *testing.T) {
+	t.Helper()
+	lines := coordinatorFileLines(t, mcpRulesCitedPath)
+	if lines == nil {
+		return
+	}
+	held := map[string]int{}
+	for _, c := range mcpRulesCitations {
+		held[c.doc+" "+c.cited]++
+		lo, hi := mcpCitedRange(t, c)
+		if lo == 0 {
+			continue
+		}
+		if hi > len(lines) {
+			t.Errorf("%s cites %s:%s for %s, but the file holds %d lines: a citation past the end names a line that is not there",
+				c.doc, mcpRulesCitedPath, c.cited, c.claim, len(lines))
+			continue
+		}
+		if body := strings.Join(lines[lo-1:hi], "\n"); !strings.Contains(body, c.anchor) {
+			t.Errorf("%s cites %s:%s for %s, and those lines carry no %q (%s): a citation whose number moved reads as checked while it holds nothing, so the number and the claim behind it have to be the same fact",
+				c.doc, mcpRulesCitedPath, c.cited, c.claim, c.anchor, strings.Join(lines[lo-1:hi], " "))
+		}
+	}
+	seen := map[string]int{}
+	for _, doc := range mcpFolderDocs() {
+		for _, cited := range mcpRulesCitationsIn(readDoc(t, doc)) {
+			seen[doc+" "+cited]++
+		}
+	}
+	for key, cited := range seen {
+		switch entries := held[key]; {
+		case entries == 0:
+			t.Errorf("%s cites %s at %s and mcpRulesCitations holds no entry for it: cite the line that carries the claim and name it there, or the next edit to the file moves the number and nothing notices",
+				strings.Fields(key)[0], mcpRulesCitedPath, key[strings.Index(key, " ")+1:])
+		case entries < cited:
+			t.Errorf("%s cites %s at %s %d times and mcpRulesCitations holds %d entries for it: one entry holds one citation, and a citation with none behind it is read by nothing",
+				strings.Fields(key)[0], mcpRulesCitedPath, key[strings.Index(key, " ")+1:], cited, entries)
+		}
+	}
+	for key, entries := range held {
+		if seen[key] < entries {
+			t.Errorf("mcpRulesCitations holds %d entries for %s at %s and the folder cites it %d times: delete the entries no citation is left for, or the next citation of that range is checked against a claim the file has stopped making",
+				entries, strings.Fields(key)[0], key[strings.Index(key, " ")+1:], seen[key])
+		}
+	}
+	t.Logf("%s: %d citations into %s, each read at the line it names", strings.Join(mcpFolderDocs(), ", "), len(mcpRulesCitations), mcpRulesCitedPath)
+}
+
+// mcpCitedRange turns one entry's citation into the line range it names.
+func mcpCitedRange(t *testing.T, c mcpRulesCitation) (int, int) {
+	t.Helper()
+	lo, hi := c.cited, c.cited
+	if cut := strings.Index(c.cited, "-"); cut >= 0 {
+		lo, hi = c.cited[:cut], c.cited[cut+1:]
+	}
+	from, err := strconv.Atoi(lo)
+	if err != nil {
+		t.Errorf("%s cites %s:%s, whose line is not a number: %v", c.doc, mcpRulesCitedPath, c.cited, err)
+		return 0, 0
+	}
+	to, err := strconv.Atoi(hi)
+	if err != nil {
+		t.Errorf("%s cites %s:%s, whose range is not two numbers: %v", c.doc, mcpRulesCitedPath, c.cited, err)
+		return 0, 0
+	}
+	return from, to
+}
+
+// mcpRulesCitationsIn returns the line or range every citation into the rules
+// file names, in the order the text writes them: the full `path:line` form, and
+// the shortened `:line` that continues the last path named before it -- which
+// is how the folder writes a second citation of one file, and how a reader
+// takes it. A shortened reference is attributed to the file named nearest above
+// it, so a `:573` after a `rules.json.tmpl:10-13` belongs to the template and
+// not to the rules.
+func mcpRulesCitationsIn(text string) []string {
+	var out []string
+	last := ""
+	for _, line := range strings.Split(text, "\n") {
+		at := 0
+		for _, m := range mcpAnyCitationRE.FindAllStringSubmatchIndex(line, -1) {
+			last = line[m[2]:m[3]]
+			at = m[1]
+			if last == mcpRulesCitedPath {
+				out = append(out, line[m[4]:m[5]])
+			}
+		}
+		for _, m := range mcpShortCitationRE.FindAllStringSubmatch(line[at:], -1) {
+			if last == mcpRulesCitedPath {
+				out = append(out, m[1])
+			}
+		}
+	}
+	return out
 }
 
 // mcpCheckCitation resolves one cited file and line to a line of this tree.

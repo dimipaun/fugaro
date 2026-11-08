@@ -176,9 +176,9 @@ It holds `config/caps/*`, `config/policy/*`, `config/kill/*`, `config/admin`,
 and the mailbox. No one file lists the whole tree: the path constants for `runs/`, `spend/`
 and `outcomes/` are `internal/budget/model.go:55,57,81`; the four top-level nodes a rollover
 moves are `internal/budget/rollover.go:342`; the policy and admin nodes are described in
-`internal/budget/rules/rules.go:44-51`; the agents registry is read at
+`internal/budget/rules/rules.go:53-62`; the agents registry is read at
 `internal/budget/sweep.go:121`; and the mailbox is a rules macro rather than a package
-constant (`internal/budget/rules/rules.go:375-398`).
+constant (`internal/budget/rules/rules.go:579`).
 Firestore: `internal/firestore/client.go` package doc — *"a small REST client for Cloud
 Firestore (native mode), built for the spend history"* — and the one collection is
 `spendDaily` (`internal/budget/rollover.go:48 SpendCollection`).
@@ -289,7 +289,7 @@ read-only. → **Q2**, **Q13**.
 Present: the RTDB run registry `runs/<slug>/<run>/*` (`internal/budget/model.go:30-86`),
 the live counters `agents/<slug>/<run>` and `outcomes/<day>/*`, the mailbox
 (`internal/budget/rules/rules.json.tmpl:193-231`, `inbox`/`outbox`/`heartbeat`, macros
-`MAILBOX`/`CONSUMER` at `internal/budget/rules/rules.go:375-398`), `fugaro watch`,
+`MAILBOX`/`CONSUMER` at `internal/budget/rules/rules.go:579-586`), `fugaro watch`,
 `fugaro runs ls`, `fugaro logs`, `fugaro diagnose`. Per-person money: Firestore
 `spendDaily.byPerson{<requested_by>}`, read by `fugaro report --by person`
 (`internal/cli/report.go:499`).
@@ -486,7 +486,7 @@ token, *"revoked when the runner finalises the run (and by `fx` as a backstop)"*
 (`docs/credentials-service/reconciliation.md:174`).
 A long-lived coordinator has no run: no `fs`, no `fr`, and an `fx` it cannot honour. And the
 RTDB rules gate `spend/` and `runs/` on the `RUN` macro
-(`internal/budget/rules/rules.go:396`, `internal/budget/rules/rules.json.tmpl:28-33`), so no non-run identity may
+(`internal/budget/rules/rules.go:592`, `internal/budget/rules/rules.json.tmpl:28-33`), so no non-run identity may
 write the counters.
 The spec says the cap is a **token** cap that *"counts toward the project's existing spend
 caps"*. The repo caps **dollars** (`DailyMicros` at `internal/budget/model.go:151,164` — the
@@ -640,7 +640,7 @@ not lost:
 ### Q2 — Who may call the coordinator, and what is the caller's identity?
 **Changes spec §4 (the "no extra permission model in v1" line) and §7.**
 - **(A) Recommended — Cloud Run IAM invoker with per-person IAM members, exactly as a launcher is granted today, plus a small `fugaro` command that mints the Google ID token so nobody types `gcloud auth print-identity-token`.** It is the only model the repository already validates (`modules/compute/variables.tf:122,144`) and it makes offboarding the launcher-list edit that already exists (finding **#5**). It also reuses the credentials service's own answer for a service's front door (D135, `docs/credentials-service/reconciliation.md:175`). Cost: every developer becomes an IAM member on one more resource, and the ID-token plumbing does not exist yet (finding **#4**).
-- **(B) Firebase Auth ID token as the caller identity, checked in the app, with IAM invoker as a second fence.** Reuses the identity world the phone already plans (D111, `docs/mobile/reconciliation.md`) and the `mu` user claim the rules already understand (`internal/budget/rules/rules.go:362`). Cost: Firebase Auth is a *plan*, not a build, and it puts an authorisation decision in application code rather than in IAM.
+- **(B) Firebase Auth ID token as the caller identity, checked in the app, with IAM invoker as a second fence.** Reuses the identity world the phone already plans (D111, `docs/mobile/reconciliation.md`) and the `mu` user claim the rules already understand (`internal/budget/rules/rules.go:529`). Cost: Firebase Auth is a *plan*, not a build, and it puts an authorisation decision in application code rather than in IAM.
 - **(C) A public URL with an application-level shared secret.** **Refused as written**: `allUsers` and `allAuthenticatedUsers` are refused everywhere in this repository (`modules/compute/variables.tf:122`), and a shared secret has no per-person revocation. Listed only so the refusal is on the record.
 *Consequence:* v1's "no extra permission model" is replaced by "the project's existing IAM members list", and the access list (launchers / operators / budget admins) has to be said explicitly — today they are three different things (`internal/infra/firebase.go:117-120`).
 
@@ -795,7 +795,7 @@ rewritten to it rather than to the answer above.
 | U2 | **The permissions the GitHub App has actually been granted on GitHub.** `tokenPermissions` is what a *run asks for* (`internal/gitprov/github/apptoken.go`'s `tokenPermissions`); GitHub caps it at the App's own grant, which is configured in GitHub's UI. | Only the owner can read the App's settings. It decides whether Q3's option (A) works at all: the App must already have `pull_requests: read`. |
 | U3 | **Whether an installation token with `repositories` omitted is acceptable in this design.** `tokenSource.Token` always posts one repository (`internal/gitprov/github/apptoken.go`). | A read of GitHub's API documentation, or one owner-run experiment. It decides whether a project-wide reader is N tokens or one. |
 | U4 | **The real cost of a reasoning-tier call at the spec's scale.** The arithmetic in finding **#26** is arithmetic from the shipped price catalog, not a measurement. | `fugaro report` and `fugaro budget preview` measure runs, not a service. Only running one would settle it. |
-| U5 | **Whether the RTDB rules can express a read grant for a coordinator's own state without widening anything else.** The template's macros are `TOKEN`, `RUN`, `USER`, `MAILBOX`, `CONSUMER` (`internal/budget/rules/rules.go:375-398`). | The rules have an emulator and a golden file (`internal/budget/rules/testdata/rules.golden.json`), so this is answerable by writing the change — but it is a change, and none is proposed here. |
+| U5 | **Whether the RTDB rules can express a read grant for a coordinator's own state without widening anything else.** The template's macros are `TOKEN`, `RUN`, `USER`, `MAILBOX`, `CONSUMER` (`internal/budget/rules/rules.go:565-592`). | The rules have an emulator and a golden file (`internal/budget/rules/testdata/rules.golden.json`), so this is answerable by writing the change — but it is a change, and none is proposed here. |
 | U6 | **What `docs/design/always-on-orchestrator.md` (PR #632) finally rules.** It is an open draft and it asks Q1–Q7 rather than deciding. | Reading it at the commit it merges with. Q10's option (A) depends on its answers. |
 | U7 | **What PR #634 (the console styling design) settles.** It is open and not on `main`; `docs/design/console-styling.md` does not exist locally. | Reading the merged file. It adds a `SERVED_FILES` entry and a Phase 6, and it does not change the CSP — so it should not affect Q8, but that is a claim about a draft. |
 

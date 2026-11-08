@@ -399,7 +399,7 @@ Terraform file rather than any interface any other task builds against.
   child of it** (D922's answer) — with **`.read: false` and `.write: false`**, named in the file so
   that the next person who adds a grant can see it is there, plus the constant the parity test reads
   it through. It deliberately does **not** copy `coordinator/`'s `.read: "USER"`
-  (`internal/budget/rules/rules.json.tmpl:10-13`, the claim at `internal/budget/rules/rules.go:517`):
+  (`internal/budget/rules/rules.json.tmpl:10-13`, the claim at `internal/budget/rules/rules.go:529`):
   the node is refused to every client, and the one account that could write it — the coordinator's
   own — reaches it through `roles/firebasedatabase.admin`
   (`deploy/terraform/gcp/modules/firebase/iam.tf:138`) and not through a rule. **That last sentence
@@ -454,7 +454,7 @@ Terraform file rather than any interface any other task builds against.
   proves — and **not** refused to the installation's own IAM identities: the token records, the
   client list, the redirect URIs, the revocation state and the whole tool-call audit were inside that
   exposure. The rules package already records this fact for `config/admin`
-  (`internal/budget/rules/rules.go:59`), [roles.md](../design/roles.md) states it for the database as
+  (`internal/budget/rules/rules.go:57-59`), [roles.md](../design/roles.md) states it for the database as
   a whole (`docs/design/roles.md:104` — "Any confidential thing placed in RTDB is readable by
   everyone on either list"), and M3's own SEC bullet above is the question it answers: something
   other than the coordinator's account **can** reach this node. **The options it put to the owner,

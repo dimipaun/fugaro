@@ -33,7 +33,7 @@ Five things already name people, and none of them is a role model.
 | `terraform.operators` | `internal/localcfg/localcfg.go:511`, `fugaro setup --operator` (`internal/cli/init.go:363`) | IAM members who onboard repositories and apply Terraform |
 | The project's owners and editors (`admins`) | read from the project's IAM policy into `deploy/terraform/gcp/modules/firebase/variables.tf:92` | whoever Google Cloud already trusts with the whole project |
 | `terraform.budget_admins` | `internal/localcfg/localcfg.go:515`, `fugaro setup --budget-admin` (`internal/cli/init.go:372`) | further people who may change caps and kill switches; refuses `domain:` members (`internal/localcfg/localcfg_test.go:981`) |
-| The device allowlist `config/admin/devices/<uid>` | `internal/budget/rules/rules.go:458` (`PathDevices`), written over IAM by `fugaro pair` and `fugaro pair revoke` | paired phones; each entry carries a `role` child (`internal/mobileauth/mobileauth.go:117`, `NodeFieldRole`) |
+| The device allowlist `config/admin/devices/<uid>` | `internal/budget/rules/rules.go:470` (`PathDevices`), written over IAM by `fugaro pair` and `fugaro pair revoke` | paired phones; each entry carries a `role` child (`internal/mobileauth/mobileauth.go:117`, `NodeFieldRole`) |
 
 `localcfg`'s member grammar accepts `user:`, `group:`, `domain:` and `serviceAccount:`
 (`internal/localcfg/localcfg.go:830`). A `domain:` member therefore grants a whole domain whatever
@@ -44,7 +44,7 @@ Three more facts about the lists matter here.
 
 - **The role on a device node is recorded authority and not enforced authority.** The rules read
   neither the email nor the role child; `USER` turns on the node's *existence* alone
-  (`internal/budget/rules/rules.go:435`). A `role` predicate is D225's later half, and D225 answered
+  (`internal/budget/rules/rules.go:567`). A `role` predicate is D225's later half, and D225 answered
   (2026-10-22) that the role is a field on the node, read in v1 by the CLI and the console and
   **never by the rules** (`docs/mobile-auth/reconciliation.md:540`).
 - **A pairing inherits and only lowers.** `--role` defaults to the pairing user's own role and a word
@@ -53,7 +53,7 @@ Three more facts about the lists matter here.
   **both** a launcher and an operator to the device word `operator`, because the lists hold no viewer
   and no admin (`internal/cli/pair.go:511`).
 - **A pairing session is a third identity**, the one-shot `pu` claim (`pairingClaim`,
-  `internal/budget/rules/rules.go:540`). It reaches the two pairing nodes and nothing else.
+  `internal/budget/rules/rules.go:552`). It reaches the two pairing nodes and nothing else.
 - **A run is not a person.** A run's job account holds no role on the Firebase project
   (`modules/firebase/iam.tf:2`) and is on none of the lists, so it holds no `signJwt` on the signer:
   an agent inside a run cannot mint a role claim or write a device node, whatever its prompt says.
@@ -103,7 +103,7 @@ Read together, that table says who can do what today:
   call.
 - **An RTDB `roles/firebasedatabase.viewer` holder bypasses the rules.** The rules bound *client
   tokens*; they are not what keeps `config/admin` private from a launcher, which reads it through
-  IAM (`internal/budget/rules/rules.go:61`, `:496`). Any confidential thing placed in RTDB is
+  IAM (`internal/budget/rules/rules.go:61`, `:508`). Any confidential thing placed in RTDB is
   readable by everyone on either list.
 - **No viewer exists anywhere, on any surface** (F6, `docs/subscriptions/reconciliation.md:89`,
   `:101`). The `viewer` word exists in exactly two places: `internal/mobileauth`'s closed set, and
@@ -289,12 +289,12 @@ is a real question and it is not settled by D629, so it is **D693**. The shape o
 | Cancel | `run.executions.cancel` |
 | Read the project | the RTDB and bucket reads |
 | Sign-in | the minter's check, or the auth user's own state |
-| Pairing / device | the device node — the one surface where revocation *is* immediate today (`PathDevices`, `internal/budget/rules/rules.go:435`) |
+| Pairing / device | the device node — the one surface where revocation *is* immediate today (`PathDevices`, `internal/budget/rules/rules.go:470`) |
 
 The last row is the interesting one and the reason the question is worth asking rather than
 assuming: the device node was chosen precisely because deleting it revokes at once, "the next read or
 write of every family USER reaches fails its existence test"
-(`internal/budget/rules/rules.go:428`), whereas an IAM change and a minted claim both lag. A
+(`internal/budget/rules/rules.go:440`), whereas an IAM change and a minted claim both lag. A
 suspension built on IAM is not immediate; a suspension built on a node it can delete is.
 
 ## 7. Core and `ee/`

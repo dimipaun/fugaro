@@ -45,7 +45,7 @@ safe to build.
 | F4 | **The coordinator's writer holds the project's database admin**: `deploy/terraform/gcp/modules/firebase/iam.tf:138` grants `roles/firebasedatabase.admin` to the coordinator's writer account. |
 | F5 | **Firebase ID-token verification exists, and it is exact**: `internal/credsvc/auth.go:1069` compares the audience to the **bare project id**, `:1072` builds the issuer as `https://securetoken.google.com/<projectId>`, and `:1373` (`GoogleKeysURL`) is the public signing-key endpoint the owner's spec names. Its refusals name the failed check and never the value; `internal/credsvc/audit.go` writes one structured line per act and per refusal. **Exists** — the design's §4 adds no verification of its own. |
 | F6 | **Identity Platform is initialized with no sign-in providers, and a public sign-up path is refused**: `internal/cli/init_firebase.go:582` records "initialized Identity Platform (no sign-in providers)", `:686` calls `refusePublicSignUp` (`:709`) on a project whose config enables any public sign-up path, and `internal/infra/identityplatform.go:32` is the step's own name. **Exists** — and it is what F26 collides with. |
-| F7 | **The database rules already fence a coordinator subtree**: `internal/budget/rules/rules.json.tmpl:10-13` — `"coordinator": { ".read": "USER", ".write": false }`, with `USER` defined at `internal/budget/rules/rules.go:517` as a signed-in, device-allow-listed person. |
+| F7 | **The database rules already fence a coordinator subtree**: `internal/budget/rules/rules.json.tmpl:10-13` — `"coordinator": { ".read": "USER", ".write": false }`, with `USER` defined at `internal/budget/rules/rules.go:529` as a signed-in, device-allow-listed person. |
 | F8 | **The project's people lists exist and are its only permission model**: `internal/cli/user.go:32-33` writes `terraform.launchers` / `terraform.operators` into the machine's own project config, named together at `:66`, applied by the next update — and **the door already admits one person at a time**: `internal/cli/user.go:266` refuses `domain:`, `group:`, `serviceAccount:`, `allUsers`, `allAuthenticatedUsers` and wildcards, and takes `user:<email>` only, for the reason the comment at `:254-257` gives (the launcher and operator roles carry the token signer's own role, so a `domain:` member would hand a whole domain that role). **Exists** — D923's `user:`-only rule is this rule read at the front door. |
 | F9 | **The rigor vocabulary, its order and its one off-axis member exist**: `internal/rigor/mode.go:36` (`var Modes = []Mode{POC, Startup, Pro, Critical, Hotfix}`, the members at `:21-30`) is the closed vocabulary, `:46` is `Default = Pro`, `:75` ranks the four on-axis modes and gives Hotfix **0**, and `internal/rigor/resolve.go:116` states why ("off the axis and ranks below every on-axis mode"). |
 | F10 | **The run's ceiling and the enforcer exist**: `internal/runner/spend.go:21-34` is the environment the run reads its ceiling from (`FUGARO_MAX_RUN_USD` at `:23`, `Spend` at `:34`), and `internal/runner/gateway.go:141` is "The real credential stays here" — the gateway holds the cap and the agent never sees the key. |
@@ -405,7 +405,7 @@ node) — and **every launcher and operator holds `signJwt` on the project's sig
 an operator's device** at the authorize endpoint's approve step (`POST /oauth/authorize`, M-a's
 single-use POST). The repository's own rules comment says the same thing from the other side: the
 `mu` claim "binds nothing against a minter"
-(`internal/budget/rules/rules.go:482-487`). The review's recommendation was a **device-held signing
+(`internal/budget/rules/rules.go:505-506`). The review's recommendation was a **device-held signing
 key registered at pairing**; **the owner accepted the residual risk and asked for it documented
 instead** — not built, not in any task. It stands in §3 and §8 as an **ACCEPTED residual risk with
 its consequences**:
@@ -870,11 +870,11 @@ discover:
    (`internal/cli/pair.go`) walks an operator through one pairing: a one-shot token, the QR's
    payload, the phone's key, the typed eight-character code, and the device node it writes —
    `internal/budget/token/device.go:176` (`MintDevice`) mints the device's custom token, and
-   the pairing session's own claim is `PAIRING` (`internal/budget/rules/rules.go:540`, read at
-   `:561`) over the device allowlist `PathDevices` (`:458`) that the `USER` claim already requires
-   (`:517`). **This is why D923's answer can name a signer that is not the coordinator:** the
+   the pairing session's own claim is `PAIRING` (`internal/budget/rules/rules.go:552`, read at
+   `:573`) over the device allowlist `PathDevices` (`:470`) that the `USER` claim already requires
+   (`:529`). **This is why D923's answer can name a signer that is not the coordinator:** the
    repository already has a flow where a person approves something from a device that is paired to
    the installation, and the principal that mints a custom token is deliberately **not** a resident
-   service — `internal/budget/rules/rules.go:482-487` records that whoever can sign for the project chooses the uid and
+   service — `internal/budget/rules/rules.go:494-499` records that whoever can sign for the project chooses the uid and
    every claim in it, and that such a principal is a launcher or a service-account key holder. The
    coordinator holds neither.

@@ -96,7 +96,7 @@ the budget is off, where the chain is **UNENFORCED**.
 **Who performs the read is settled, and it is the launcher** (U4, [reconciliation.md](reconciliation.md) §5):
 `runs/$slug/$run` is readable on `RUN` alone (`internal/budget/rules/rules.json.tmpl:56-57`) and `RUN`
 requires `auth.token.fs == $slug && auth.token.fr == $run`
-(`internal/budget/rules/rules.go:580`), so a **run's token reads its own ledger and no sibling's** — `USER`
+(`internal/budget/rules/rules.go:592`), so a **run's token reads its own ledger and no sibling's** — `USER`
 reaches only `spend/<day>/runs/$slug/$run`. The **launcher** is the identity that reads a chain, because it
 already holds `roles/firebasedatabase.viewer`
 (`deploy/terraform/gcp/modules/firebase/iam.tf:44-50`), which reads every path; the earlier draft called this
