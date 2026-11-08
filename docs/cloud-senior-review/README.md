@@ -135,11 +135,15 @@ the coordinator's merge path blocked (spec §2, §5; reconciliation E7).
   nothing is handed in and no value sits in an execution object. **The service ships dormant**, so the
   cloud senior reviewer **requires it to be enabled for the installation** (`fugaro update
   --provision-credentials`, the App key in the bundle), **and requires the service to admit the review
-  job's own account** — a project-scoped job, which the service refuses today (its Global Constraint
-  6; **C3.9**, unscheduled, is the task that lifts it). **No `fugaro update` can supply that half**,
-  so **CSR7, CSR2 and the coordinator's `ship` → merge path stay blocked** until it lands; the check that
-  says so is CSR6's, and **E7** records the dependency.
-- **The first slice cannot run until another work stream lands, and that is the critical path.** The
+  job's own account** — a project-scoped job, which the service refused while this was written (its
+  Global Constraint 6; **C3.9**, unscheduled then, is the task that lifted it). **`fugaro update` is
+  what supplies that half**: the service reads `FUGARO_REVIEW_JOB_ACCOUNTS` (**CSRW1**, PR #1932) and
+  the installation module renders it (**CSRW2**, PR #1934), and that command applies both with no step
+  of its own. **CSR11 flipped `reviewJobAdmitted` on 2026-11-08**, so **CSR7, CSR2 and the coordinator's
+  `ship` → merge path are no longer blocked by this half** — what is still owed is the owner-run live
+  check, not code. The check that says which half is missing is CSR6's, and **E7** records the
+  dependency.
+- **The first slice could not run until another work stream landed, and that was the critical path.** The
   first slice is **E1 + CSR1 + CSR7 + CSR2** — `fugaro accounts add` (its own plan's **A1**, the local
   config edit, then **A2**, the converge half, and **A3**, `--claude`) plus the review job and the
   command that launches it, and the shared write helper the converge half uses is the settings
@@ -148,11 +152,13 @@ the coordinator's merge path blocked (spec §2, §5; reconciliation E7).
   **project-scoped review identity**, the **read-only set** its mint must serve for that identity, the
   **review class on `/v1/messages`** O1 routes the reviewer's calls through, and
   **D892(a)'s sign and verify endpoints**. That is **C3.9** of the credentials service's own Slice 3,
-  **unscheduled** — and split by the credentials-service routing design **#1514** into
-  **C3.9a–C3.9g**, which is the form this design names because that pull request is where the split is
-  written. Until it lands, **0.16.0 ships the command and the job variant and neither can run**: the
-  launch is refused by the service, and **no `fugaro update` and no local step shortens the wait**
-  (E7; spec §2, §5).
+  **unscheduled** when this was written, and split by the credentials-service routing design **#1514**
+  into **C3.9a–C3.9g**, which is the form this design names because that pull request is where the split
+  is written. Until it lands, **0.16.0 ships the command and the job variant and neither can run**: the
+  launch is refused by the binary's own constant, and no local step shortened the wait (E7; spec §2,
+  §5). **The refusal is gone as of 2026-11-08** — CSR11 flipped `reviewJobAdmitted` once the service's
+  review class was wired — so what the first slice waits on now is the owner-run live check rather than
+  a task; whether a given installation's service admits a review caller is what C3.9's check observes.
 
 ## Related
 
