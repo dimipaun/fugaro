@@ -242,8 +242,12 @@ E1, CSR1, **CSR7**, and **E7** — see the blocking note below.
   unscheduled — §1), naming **which half** is missing rather than reporting one "not configured". The
   refusal is a sentence the owner can act on: half one is `fugaro update --provision-credentials` plus
   `fugaro creds set github-app-key`; half two is not reachable from any `fugaro update` and the
-  refusal says so. **Until E7 is met, this task cannot launch a review job at all** — it is written,
-  gated and shipped, and the launch is what fails.
+  refusal says so — **CSR11's flip of 2026-11-08 rewrote that half, because the admission is the
+  BINARY's**: what supplies it is upgrading Fugaro and running `fugaro update` with the newer binary,
+  and the sentence now names both rather than sending an operator after a command that does not exist.
+  **Until E7 was met, this task could not launch a review job at all** — it was written, gated and
+  shipped, and the launch was what failed; **it launches now**, and what is still unrun is the owner's
+  live check rather than the code.
 - **Tests:** `TestReviewLaunchesOnTheNamedAccount` (the task names the account, the launch targets
   that account's **review-only job entry** and never the shared one), `TestReviewRefusesAnAccountTheRepoMayNotUse` (F4's rule, reused),
   `TestReviewRefusesAnExhaustedAccount` (D882: refused with the mark's reset time, not retried),
@@ -251,9 +255,10 @@ E1, CSR1, **CSR7**, and **E7** — see the blocking note below.
   fake sees no `Comment`), `TestReviewRefusesWhileTheCodingRunIsGoing`,
   `TestReviewShowPrintsTheArtifactAndItsMarkdown`, and
   `TestRecipesSkewRefusesReviewJobOnAnOldImage` (E6), plus two for E7's two halves:
-  `TestReviewRefusesWhereTheCredentialsServiceIsOff` and
-  `TestReviewRefusesAJobTheCredentialsServiceWillNotAdmit` (both hermetic — a fake service and a fake
-  installation, no live call).
+  `TestReviewStillRefusesWhenTheCredentialsServiceIsOff` and
+  `TestReviewStillRefusesWhenTheConstantIsOff` (both hermetic — a fake service and a fake
+  installation, no live call; the names are CSR11's, which left the first refusal standing and moved the
+  second to the pre-flip binary, where the test seam puts it back).
 - **Red step:** `TestReviewLaunchesOnTheNamedAccount` fails on an unknown subcommand: the command
   does not exist. **SEC flag:** this is the task that decides what the job may do; CSR1's set, this
   task's no-comment path and E7's refusal are reviewed together.
@@ -795,7 +800,7 @@ while documenting the others is exactly the kind of thing a plan loses by not wr
 | 2 | `fugaro review` is built and **registered nowhere**, so no released CLI answers to it: `newReviewCmd` is not in the list `newCoreRoot` adds | `internal/cli/root.go:189`, `internal/cli/review.go:93` | **CSR9 — CLOSED: merged as PR #1762.** `newReviewCmd()` is in the list `newCoreRoot` adds (`internal/cli/root.go:198`), so the command answers and its launch refusal is a sentence a person reads rather than a name nobody can type; what CSR11 inherits from it is that refusal alone |
 | 3 | the runner cannot place the job the launcher picks: the review variant's name is never a candidate, so a review container halts at admission with the client's `cannotPlaceJob` | `internal/runner/projectjob.go:178`, `internal/runner/project.go:1114` | **CSR8 — CLOSED: merged as PR #1761.** The variant is a candidate and the class is keyed on the run's own mode, not on the job name; what CSR13 inherits from it is a **fact to read**, `r.runClass()` (`internal/runner/projectjob.go:82`) and `jobTriple.Class` (`:50`), and never a mark to wait for |
 | 4 | the launcher reads `review.json` and never reads `review.json.sig`; `runner.VerifyReviewArtifact` exists and **nothing calls it**, because no implementation of `runner.SignatureVerifier` is in the tree | `internal/cli/review.go:547`, `internal/runner/reviewartifact.go:675`, `:223` | **CSR10 — CLOSED: merged as PR #1764.** The launcher's reader is a verifying one and `ServiceVerifier` implements `runner.SignatureVerifier`; what CSR15 inherits from it is the seam and the fail-closed refusal in `internal/cli/reviewverify.go` |
-| 5 | the owner-run live checks have not been run, and **cannot** be while gap 1 holds: the C3.9 check's step 3 launches `fugaro review --pr N`, and Check 125's steps 6 and 7 confirm the fence on the variant | `docs/c39-review-identity/live-check.md`, [spec.md](spec.md) §8 | **the owner** — CSR11 is the task whose gate it is, and Open item 1's answer of 2026-11-05 is **CSR12**, the switch the check's step 3 is reached with |
+| 5 | the owner-run live checks have not been run, and could not be while gap 1 held: the C3.9 check's step 3 launches `fugaro review --pr N`, and Check 125's steps 6 and 7 confirm the fence on the variant | `docs/c39-review-identity/live-check.md`, [spec.md](spec.md) §8 | **the owner**, and **the check is runnable now**: gap 1 closed on 2026-11-08, so step 3 is reached with the plain launch it names — the switch CSR12 added for it (Open item 1's answer of 2026-11-05) is deleted, and the step no longer sets anything |
 | 6 | the credentials service **ships dormant**: the opt-in, the App key and the verifier identity are the owner's own terminal (C3.9g1) | `internal/credsvc/auth.go:335` | **the owner** for the opt-in and the App key — no task here; it is the release's one conditional operator sentence (§6.5) — and **CSR14** for the verifier identity, which is a service account the installation creates rather than a value a person types (Open item 5, answered 2026-11-05) |
 | 7 | *(found while writing this section)* the review variant holds no model credential (O1) and the service has a review class for its calls, but **the runner has no model path that reaches it**: `GatewayOn` is false unless `agent.auth` is one of its three, the service is reached only from the cascade arm, and that arm is refused in bootstrap unless the **operator publishes the coding cascade switch** — the two things [spec.md](spec.md) §2 says a review job does not need | `internal/runner/routing.go:158`, `:60`, `internal/credsvc/cascade.go:105` | **CSR13** — Open item 4, answered 2026-11-05 with the fourth runner task |
 
@@ -808,7 +813,8 @@ them takes a file another one holds in the same level (§6.4).
 **The owner answered all five of the Open items §6 was written with, on 2026-11-05, and this section is
 followed through on all five.** Each answer is recorded **in its own Open item**, with the date and the one line of why, and
 the rest of §6 is what changed for it: item 1's environment switch is now **CSR12** (a task with the
-switch's constraints and its security review) and CSR11 removes it in the same change as the flip; item
+switch's constraints and its security review) and CSR11 removes it in the same change as the flip —
+**done on 2026-11-08, when the owner's ruling of 2026-11-07 lifted the flip's gate**; item
 2's verdict policy is now part of **CSR10**'s reader, which refuses an artifact whose verdict is not `fix
 first`; item 3's release is **0.20.0 "Quokka"**, and §5, §6.4 and §6.5 name it; item 4's fourth runner
 task is **CSR13**, whose class decides the review run's model path rather than `agent.auth`; and item 5's
@@ -941,9 +947,10 @@ reachable rather than true.
   `GOFLAGS=-p=2 go test ./internal/cli/ -run 'Docs|Root|Review' -count=1`.
 - **Tests:** `TestReviewIsRegisteredInTheCoreRoot` (the name resolves in the core tree, with its
   subcommand and both visible flags — the red step), the **existing**
-  `TestReviewRefusesAJobTheCredentialsServiceWillNotAdmit` (`internal/cli/review_test.go:309`, merged with
-  CSR2 and **not edited here**: the refusal sentence is what a person gets, unchanged — this task
-  registers a command, it does not admit one), `TestCliReferenceNamesTheReviewCommand` (the regenerated
+  `TestReviewStillRefusesWhenTheConstantIsOff` (`internal/cli/review_test.go:358`, CSR2's test under the
+  name CSR11's flip gave it — merged with CSR2 and **not edited here**: the refusal sentence is what a
+  person gets, unchanged — this task registers a command, it does not admit one),
+  `TestCliReferenceNamesTheReviewCommand` (the regenerated
   page carries the section and every visible flag — the existing "names every command and flag" check, now
   with a command it did not have),
   and the plugin suite's own resolution of `fugaro review` against the CLI tree
@@ -1184,7 +1191,7 @@ that is still the check's step 3.
   same two facts it reports today, and the honest consequence is stated in its own words: **a green
   `doctor` is the two halves, and the release notes are where the constant's state is written** — a
   binary older than the flip keeps refusing whatever the installation says.
-- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestReviewAdmitted|TestReviewStillRefuses|TestReviewReadsNoAdmissionSwitch' -count=1`.
+- **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestReviewLaunchIsAdmitted|TestReviewStillRefuses|TestReviewReadsNoAdmissionSwitch|TestTheRemovedAdmissionSwitch' -count=1`.
 - **Tests:** `TestReviewLaunchIsAdmittedWhenTheConstantIsFlipped` (the release's own state: the launch
   proceeds and the two halves are still checked first — the constant removes one refusal, not the others),
   `TestReviewStillRefusesWhenTheCredentialsServiceIsOff` (E7's first half, unchanged by the flip), and
@@ -1253,6 +1260,12 @@ that is still the check's step 3.
 - **Commit:** `review: admit a review launch, after the live check the flip names, and take the check's switch back out`.
 
 ### CSR12. The live-check switch: a launch that starts, and admits nothing (SEC)
+
+**REMOVED 2026-11-08 — the variable, its one read and its warning line are gone from the tree**, deleted
+by CSR11's flip in the same commit that made the constant `true`, which is what this section's own last
+paragraph asked for. **What follows is the record of the task that added it**, test names included: those
+tests were deleted with the switch, and the assertions that outlive it are CSR11's own
+(`TestReviewReadsNoAdmissionSwitch` above all, which is the one that fails if the read comes back).
 
 **Decisions:** **the owner's answer of 2026-11-05 to Open item 1** — the **environment switch**, and
 explicitly **not** that item's recommendation — together with **D893 (c)** and Global Constraint 6 / C3.9.
@@ -2050,7 +2063,7 @@ MERGED AND CLOSED (each a task that landed; none of them is a level's work any m
   CSR8  (the runner places the variant)      **MERGED, #1761** — CSR13 reads the class it landed
   CSR9  (the command is registered)          **MERGED, #1762** — CSR11 inherits its launch refusal
   CSR10 (the launcher verifies the verdict)  **MERGED, #1764** — CSR15 fills the seam it left
-  CSR12 (the live-check switch)              **MERGED, #1771** — CSR11 deletes it in the flip's commit
+  CSR12 (the live-check switch)              **MERGED, #1771** — deleted by CSR11's flip, 2026-11-08
 
 LEVEL 1 (no dependency between them, disjoint files)
   CSR13 (the review run's model path — the OAuth review, and the refusal when the budget is off)
@@ -2060,8 +2073,9 @@ LEVEL 2
 LEVEL 3
   CSR16 (the launcher reads the head through the read mint) after CSR15 — the SAME file, so ordered
 
-then, and not a level:  [the live checks: C3.9's eleven steps, Check 125's 6 and 7]  (a person's)
-then:                   CSR11 (the flip, and the switch's removal)
+then, and not a level:  [the live checks: C3.9's eleven steps, Check 125's 6 and 7]  (a person's, unrun)
+DONE 2026-11-08:        CSR11 (the flip, and the switch's removal) — the owner's ruling of 2026-11-07
+                        lifted the live-check gate, so the checks are owed AFTER the flip, not before
 
 OUTSIDE ALL OF IT, and NOT in 0.20.0:  CSR17 (the service serves a provider key) -> CSR18 (the runner
                                        reaches a provider's endpoint)   -- §6.7
@@ -2099,7 +2113,9 @@ OUTSIDE ALL OF IT, and NOT in 0.20.0:  CSR17 (the service serves a provider key)
   merged code already keys on — **Open item 6**, the budget mode, was the last thing that held it and it
   is answered (the refusal, 2026-11-05/06). **Level 2: CSR15** — after CSR14, because the account is
   CSR14's. **Level 3: CSR16** — after CSR15, because the two hold one file. **Then CSR11** — after the
-  four, and after the live checks, which are a person's and which no level holds.
+  four, and after the live checks, which are a person's and which no level holds; **it landed on
+  2026-11-08 without them**, on the owner's ruling of 2026-11-07 that lifted that gate (the DONE line of
+  the drawing above), so what the path below calls the checks are owed **after** the flip now.
 - **Critical path.** `the longest of (CSR13, CSR14) → CSR15 → the owner's live checks → CSR11`: **three
   tasks deep and one person's afternoon**, with **five of §6's nine tasks still to be built and four
   merged** (CSR8, CSR9, CSR10, CSR12). **CSR16 is a fourth task and it is deliberately not on that path**:
@@ -2128,7 +2144,7 @@ CSR18 are not in this table at all**, because no 0.20.0 level holds them and the
 | `plugin/skills/working/SKILL.md` (+ `routing/SKILL.md` if it names the flow) | **CSR9 — merged**, its level 1 | — | — | — | — | the sentence and the registration are one commit |
 | `internal/runner/reviewartifact.go`, `internal/runner/reviewartifact_test.go` | **CSR10 — merged (#1764)**, its level 1 | — | — | — | — | the verifier's implementation |
 | `internal/cli/run_test.go` | **CSR10 — merged (#1764)**, its level 1 | — | — | — | — | the `TestFixBrief*` fixtures gain the sidecar a fail-closed reader needs |
-| `internal/cli/review.go`, `internal/cli/review_test.go` | **CSR10 — merged (#1764)**, its level 1, and **CSR12 — merged (#1771)**, its level 2 | — | — | — | **CSR11** | the verifying reader and the live-check switch have run; what is left is the flip that removes the switch — **three writers, one per level, and two of them already ran** |
+| `internal/cli/review.go`, `internal/cli/review_test.go` | **CSR10 — merged (#1764)**, its level 1, and **CSR12 — merged (#1771)**, its level 2 | — | — | — | **CSR11 — DONE 2026-11-08**, its level | the verifying reader and the live-check switch have run, and so has the flip that removed the switch — **three writers, one per level, and all three have run** |
 | `internal/cli/reviewverify.go` | **CSR10 — merged (#1764)**, its level 1 | — | **CSR15** | **CSR16** | — | the seam and the fail-closed stub (PR #1764), then the impersonation that fills it, then the head read that stops reading with the machine's own App credential — **three writers, one per level** |
 | `internal/cli/reviewverify_test.go` (new in CSR15) | — | — | **CSR15** | **CSR16** | — | the impersonation's own tests, then the head read's |
 | `internal/runner/gateway.go`, `internal/runner/gateway_test.go`, `internal/runner/routing.go`, `internal/runner/routing_internal_test.go`, `internal/runner/agentenv.go`, `internal/runner/agentenv_test.go` | — | **CSR13** | — | — | — | the class accessor and its five readers — **level 1, and disjoint from CSR8's merged files** |
@@ -2142,9 +2158,9 @@ CSR18 are not in this table at all**, because no 0.20.0 level holds them and the
 
 **`internal/cli/review.go` is the one file three tasks wanted, and that is why their order was a rule rather
 than a preference:** the verifying reader (CSR10) wrote it in level 1, the live-check switch (CSR12)
-added and read one variable in level 2, and the flip (CSR11) sets the constant and **deletes the switch**
-in the level after — **and two of the three have merged**, so what is left of the row is CSR11's own
-commit. Serialising three writers of one file is what the levels buy, and it is also why CSR12 existed
+added and read one variable in level 2, and the flip (CSR11) set the constant and **deleted the switch**
+in the level after — **and all three have run**, the flip on 2026-11-08, so the row is closed and no
+level ever held two writers of it. Serialising three writers of one file is what the levels buy, and it is also why CSR12 existed
 as its own task rather than as a paragraph of CSR11: a switch that has to be removed by a later commit is
 a change with its own red step, its own tests and its own review, and the reviewer of the flip is the
 reader who has to see the removal in the same diff. **`internal/cli/reviewverify.go` is the same shape at
@@ -2171,9 +2187,10 @@ could have touched — `internal/credsvc`'s class — is nobody's in 0.20.0.
   upgrade: the command's registration, the reference rows, the plugin's skill text, the runner's placement
   and the launcher's verifier all ride the **image refresh** `update` already asks about (CSR6's), and none
   of them is a second command, a deletion or a manual repair. The plugin pins move through
-  `scripts/bump-plugin-version.sh` with the release, not by hand and not per task. **CSR12's switch adds
-  nothing to `update` either**: it is an environment variable read only in the live check's own session,
-  it is off by default, it is never written to a config file, and CSR11 takes it out. **Nor does CSR14's
+  `scripts/bump-plugin-version.sh` with the release, not by hand and not per task. **CSR12's switch added
+  nothing to `update` either**: it was an environment variable read only in the live check's own session,
+  it was off by default, it was never written to a config file, and **CSR11 took it out on 2026-11-08**.
+  **Nor does CSR14's
   verifier account**: it is a resource the same apply creates beside the credentials service, and the same
   `fugaro update` writes its address into the local config — so the account is **created and
   named by one command**, and the owner's list, written or empty, stays the owner's (the keep rule,
@@ -2246,8 +2263,11 @@ could have touched — `internal/credsvc`'s class — is nobody's in 0.20.0.
 - **Release actions, for the 0.20.0 "Quokka" release Open item 3 answered:** the release's own
   `fugaro update`, that one conditional operator sentence, and **`reviewJobSince` moved to `"0.20.0"` in
   the release's own change** (the file is CSR6's, and the release takes it as §6.4 says). **CSR11's flip
-  is not a release action**: it is a commit that lands after the owner's live check, in whichever release
-  carries it, and it is the commit that takes CSR12's switch out.
+  is not a release action**: it is a commit that lands in whichever release carries it — **it landed on
+  2026-11-08**, on the owner's ruling of 2026-11-07 that lifted its live-check gate, and 0.21.0 is the
+  release that carries it — and it is the commit that took CSR12's switch out. **The owner's live checks
+  are the one thing the flip left behind rather than in front of it**: they are still unrun, and the
+  release notes say the launch is admitted rather than that the check passed.
 - **The verifier identity is the release's one deployment-shaped fact, and Open item 5 answered it on
   2026-11-05.** `credentials_service.verifier_accounts` is a **bare-address list rendered into the
   service's own environment** (`deploy/terraform/gcp/modules/installation/credentials.tf:482`, from the

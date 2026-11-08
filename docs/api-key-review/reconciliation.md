@@ -26,7 +26,7 @@ reviews, each with its own machinery, its own credential and its own record:
 | Where it is | `internal/runner` (`resolveMixedStages`, `stageAgentEnv`) | `internal/credsvc` (the review class) + `internal/runner/gateway.go` (`reviewClassRun`) |
 | What credential it uses today | a **Claude OAuth account** scoped to the stage, held in the runner's own environment | the credentials service's **review class**, from the installation's Claude OAuth account, held by the service and never by the job |
 | Where its dollars are | **notional** (`runstore.StageTiming.ModelNotionalUSD`, `Credential: "oauth"`), uncapped by the gateway | **real**, charged by the gateway from the service's answer |
-| Whether it can be launched today | **yes** — a stage of a run | **no** — built and not admitted: `reviewJobAdmitted` is `false` (**F10**, **U6**) |
+| Whether it can be launched today | **yes** — a stage of a run | **yes since 2026-11-08** — `reviewJobAdmitted` is `true` and the live-check switch is deleted with it; before that it was built and not admitted (**F10**, **U6**) |
 | What proves it | **Check 290**, written and **NOT RUN** (**U5**) | the class's own tests |
 
 So the ask is one name for two paths. §1 and §2 read each of them; §4 states the reading this design
@@ -122,22 +122,25 @@ value will size the in-job half too large.
 
 ## 2. The cloud half
 
-**F10 — Exists, merged, and it is the OAuth path — but it is built and not admitted, so no review
-launch reaches it today.** `internal/cli/review.go`'s `reviewJobAdmitted` is a constant `false`, and
-`checkReviewJobAdmitted` refuses every launch of `fugaro review --pr N` with "this installation's
-credentials service does not admit the review job's own caller", naming the way out it can offer:
-`fugaro run --pr N --recipe review-only`, the review in the run's own job. The refusal is not a
-missing feature in the launcher — the credentials service refuses a project-scoped job's caller
-whole (its Global Constraint 6), which is why `docs/cloud-senior-review`'s **CSR11** flips the
-constant only after that is fixed — and `docs/releases/v0.20.2.md`'s known limits say the same
-("the cloud review is built and not admitted", unchanged from `docs/releases/v0.20.0.md`). The one
-door is `reviewSkipAdmissionCheckEnv`, the owner's own C3.9 live check's step 3, off by default and
-refused in an agent's session. So **every statement below about the cloud path is about code that a
-real installation cannot yet reach**, and the prerequisite for reaching it is `docs/cloud-senior-review`
-§1's **E7** — the service enabled *and* the service admitting the review job's own account, which is
-**C3.9**'s work, unscheduled and no `fugaro update` step — followed by the flip of the constant
-(**CSR11**, after the owner's live checks). None of that is in this design's slices, and neither
-**D1410** nor **D1422** is priced with it (**U6**).
+**F10 — Exists, merged, and it is the OAuth path — and a launch reaches it since 2026-11-08, when
+`docs/cloud-senior-review` §6's **CSR11** flipped `internal/cli/review.go`'s `reviewJobAdmitted` to
+`true` and deleted the live-check switch in the same commit.** What the flip rested on is this design's
+own prerequisite: that section's §1 **E7** — the service enabled *and* the service admitting the review
+job's own account (*C3.9*) — whose second half **CSRW1** (the service reads
+`FUGARO_REVIEW_JOB_ACCOUNTS`) and **CSRW2** (the installation module renders it) put in the tree, with
+`fugaro update` deploying the credentials service on every installation. **The owner's live checks were
+not run for the flip** (that section's DONE line says so in as many words), so what is still
+unmeasured is whether a **live** installation's service admits the review job's own caller, and the
+only observation of it is C3.9's check. Before the flip this finding read the other way: the constant
+was `false`, `checkReviewJobAdmitted` refused every launch of `fugaro review --pr N` with "this
+installation's credentials service does not admit the review job's own caller" (naming
+`fugaro run --pr N --recipe review-only`, the review in the run's own job, as the way out it could
+offer), the only door was the owner's C3.9 live check's own environment switch — off by default and
+refused in an agent's session — and `docs/releases/v0.20.2.md`'s known limits recorded the state of
+their release ("the cloud review is built and not admitted", unchanged from `docs/releases/v0.20.0.md`).
+**So every statement below about the cloud path is about code a real installation can reach now.**
+Nothing of the flip is in this design's slices, and neither **D1410** nor **D1422** is priced with it
+(**U6**).
 
 With that said, the class itself is real and merged.
 `internal/runner/gateway.go`'s `reviewClassRun` is the conjunction of the run's mode being `review`
@@ -243,9 +246,9 @@ becomes **false** the moment a project publishes a stage account for `review` (*
 the configuration Check 290 is written for — and, since Check 290 is **not run** (**U5**), a
 configuration nothing has yet measured on a real installation. So the clause is not a request to build
 something; it is a request to *stop* the account path from being the only one, or to make the key
-path selectable. For the cloud half the dollars are already real (**F10**) — when it runs, which
-today it cannot: the class's calls are the service's, carried by the gateway, and the launch in front
-of them is refused (**U6**).
+path selectable. For the cloud half the dollars are already real (**F10**) — when it runs, which the
+launch now admits (**U6**: the class's calls are the service's, carried by the gateway, and the refusal
+that stood in front of them went with the flip of 2026-11-08).
 
 **F20 — Wrong, and it is the one place this document corrects the ask. Clause 3's citation of D894
 is not the subscription-terms question.** D894 is `docs/cloud-senior-review`'s, and it is the
@@ -369,7 +372,7 @@ the class's own credential*, never to let the repository supply one.
 | U3 | Whether a live installation that publishes **no** Claude account has actually deployed the review variant's job | The tree says yes and this design reads it that way (**F17**: the account axis always carries the no-account entry, the deployer builds the twin for it and the service admits it), but that is read from `config.ProjectJobAccounts`, `internal/infra/projectjobs.go` and `internal/credsvc/review.go`; no live installation was inspected |
 | U4 | Whether the credentials service's review class has been exercised live for a repository whose `agent.auth` is `api-key` | The refusal is pinned by a unit test; no live run of the refused shape was found in the register |
 | **U5** | **Whether the mixed run works on a real installation at all** — the in-job account path this design reads as the state of the art | **The owner's ask says Check 290 proved it on 2026-11-06, and the register says otherwise.** `docs/gcp-live-checklist.md`'s summary row for 290 ends "**USER-RUN, NOT RUN**" and its own section is headed "NOT RUN"; `docs/design/mixed-credentials.md` §3, §9 and §11, `docs/multi-model.md` §3 and `docs/releases/v0.20.0.md` all say the check "has not been measured live". So the rule is **built** (tasks B1–B6, 0.19.0) and **unmeasured**: every statement in §1 about the account path's behaviour rests on the code and its tests, and none on a run. This is also why the design's own live check (**Check 330**, implementation-plan §5) carries the contrast case — the same task run with and without a stage account — rather than assuming Check 290's numbers exist |
-| **U6** | **Whether a cloud review launch is reachable at all on this tree** | **It is not.** `internal/cli/review.go`'s `reviewJobAdmitted` is a constant `false` and `checkReviewJobAdmitted` refuses every `fugaro review --pr N` with a sentence naming `fugaro run --pr N --recipe review-only` as the way to review today; `docs/releases/v0.20.2.md`'s known limits carry it forward from 0.20.0 ("the cloud review is built and not admitted"). The gate is `docs/cloud-senior-review` §1's **E7**, whose second half is the service admitting a project-scoped job's caller (**C3.9**, unscheduled), and the constant is flipped by **CSR11** only after the owner's live checks. **No live installation was inspected** — the refusal was read from the code and from the release notes — and the design's cloud slices, **D1410** and **D1422** are priced without this prerequisite because it is not theirs (**F10**) |
+| **U6** | **Whether a cloud review launch is reachable at all on this tree** | **It is, since 2026-11-08.** `internal/cli/review.go`'s `reviewJobAdmitted` is `true`: `docs/cloud-senior-review` §6's **CSR11** flipped it once the service's admission of a project-scoped job's caller (**C3.9**, §1's **E7**'s second half) was in the tree — **CSRW1** and **CSRW2** — and deleted the live-check switch in the same commit. **When this design was written it was not reachable**: the constant was `false` and `checkReviewJobAdmitted` refused every `fugaro review --pr N`, with `fugaro run --pr N --recipe review-only` named as the way to review then, and `docs/releases/v0.20.2.md`'s known limits carry that state forward from 0.20.0 ("the cloud review is built and not admitted"). **No live installation was inspected** — the reachability is read from the code, and the flip's own note says the owner's live checks are still unrun — and the design's cloud slices, **D1410** and **D1422** are priced without this prerequisite because it is not theirs (**F10**) |
 
 ## 7. Owner decisions D1410–D1429
 
@@ -446,9 +449,10 @@ here settles them and none is recorded. All tasks were approved the same day.
 1. **D1410 — answered: both slices.** The ask names one path and the tree has two reviews (§4), so
    the answer decides which slice the plan is about; the gate it carried — no task may start before
    it was answered — is lifted, and the plan covers both halves. The two halves also differ
-   in when they can be used: the in-job half runs today, and the cloud half is refused at the launch
-   until **E7** is met (**F10**, **U6**) — so the answer of "both" is three slices of code and a
-   path an owner still cannot reach.
+   in when they can be used: the in-job half runs today, and the cloud half was refused at the launch
+   until **E7**'s code half reached the tree (the flip of 2026-11-08, **F10**, **U6**) — so the answer
+   of "both" is three slices of code and a path an owner reaches only once a live installation's
+   service admits the review job's own caller, which is Check 330's measurement.
 2. **D1421 — answered: after 0.20.0.** The owner cut the api-key review from 0.20.0 on 2026-11-06,
    and the answer keeps that cut, so this design reopens nothing (**F11**, §4).
 3. **D1412 and D1413 — answered: no key of its own, and the key wins when the owner asks for it
@@ -470,6 +474,7 @@ here settles them and none is recorded. All tasks were approved the same day.
 8. **D1422 and D1427 — answered: yes to both.** A project with no Claude account may launch a review
    (**F17** — and note the variant is already deployed for it: what it lacks
    is a credential, not a job), and the owner runs Check 330 to prove the path. Both are
-   downstream of **E7** (**F10**, **U6**), which neither answer lifts.
+   downstream of **E7** (**F10**, **U6**) — whose code half is in the tree since the flip of
+   2026-11-08 and whose live observation is still the owner's — which neither answer lifts.
 9. **U1 and U2 (§6) — the terms question and the cost.** Both are outside the tree: clause 3's
    substance (**F20**) is an owner/counsel question, and the figures are the owner's own.
