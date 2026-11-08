@@ -481,8 +481,16 @@ func TestRecipesSkewRefusesAReviewServiceOlderThanTheClass(t *testing.T) {
 		if !strings.Contains(err.Error(), "fugaro update") || !strings.Contains(err.Error(), "refused rather than started") {
 			t.Errorf("%s: the refusal names neither the update that is the whole upgrade nor the fact that it refuses: %v", refused.base, err)
 		}
-		if strings.Contains(err.Error(), "review a pull request in the run's own job") {
-			t.Errorf("%s: the refusal offers a way out the same gate closes: fugaro run --pr N --recipe %s carries mode: review too: %v", refused.base, reviewOnlyRecipe, err)
+		// The way out the refusal NAMES has to work, and this one does: the
+		// table-driven `fugaro run --pr N --recipe <review-only>` spelling
+		// goes through run.go's --pr path, which sets no mode on the task
+		// (only fugaro review does, review.go's spec.Mode), so it launches
+		// the repository's ordinary coding job — a container with an account
+		// of its own — rather than the review-only variant this gate is
+		// about. Withholding it would leave the reader with no move but the
+		// update, and the review is reviewable today.
+		if !strings.Contains(err.Error(), "review the pull request in the run's own job with fugaro run --pr N --recipe "+reviewOnlyRecipe) {
+			t.Errorf("%s: the refusal names no way to review before the update: %v", refused.base, err)
 		}
 		if warn != "" {
 			t.Errorf("%s: warning %q, want none", refused.base, warn)

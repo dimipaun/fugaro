@@ -1210,16 +1210,20 @@ that is still the check's step 3.
   `fugaro update` was therefore admitted by every gate and died inside the job on the service's 401,
   which is the failure the other gate's own rationale says a launch refusal exists to prevent. So
   `checkReviewAdmission` (`internal/cli/recipes_skew.go`, beside `checkCloneReviewJobImage`) judges the
-  installation and is called from `run.go`'s `mode: review` block after the image gates, so the
-  `run --pr N --recipe review-only` spelling is covered exactly as `fugaro review` is. **The judge is the
+  installation and is called from `run.go`'s `mode: review` block after the image gates — the block a
+  review launch reaches, since `spec.Mode` is what makes one and only `fugaro review` writes it
+  (`internal/cli/review.go:153`; `run`'s `--pr` path is a different launch, which is why the refusal
+  names it as the way to review meanwhile rather than as a spelling of the same gate). **The judge is the
   installation's own base image**, and that is not a proxy by choice: the launcher can ask the service
   nothing (D143, `reviewJobAdmitted`'s comment), while `fugaro update` pins `base_images.base` at the
   release it runs and resolves and pins the service's image in the same run, so a base image below this
   value is an installation whose service is below it too; a base image that carries no release, or none
   at all, only warns (`releaseOf`'s rule). The refusal names `fugaro update` as the whole upgrade, and it
-  names no other way out: `fugaro run --pr N --recipe review-only` carries the same `mode: review` and
-  meets the same gate. It is **not** `reviewJobSince`'s `fugaro image refresh`, which moves no credentials
-  service, and that is why this is a second constant rather than that value raised. Tests:
+  names the one way to review before that update has run — `fugaro run --pr N --recipe review-only`,
+  which launches the repository's ordinary coding job, whose container carries its own account (only
+  `fugaro review` sets `spec.Mode`, so this spelling never enters the `mode: review` block). It is **not**
+  `reviewJobSince`'s `fugaro image refresh`, which moves no credentials service, and that is why this is a
+  second constant rather than that value raised. Tests:
   `TestRecipesSkewRefusesAReviewServiceOlderThanTheClass` (0.20.x refused, 0.21.0 admitted, an unreadable
   or absent base image warned about),
   `TestReviewRefusesAnInstallationWhoseServicePredatesTheClass` (the command's own refusal, on the
