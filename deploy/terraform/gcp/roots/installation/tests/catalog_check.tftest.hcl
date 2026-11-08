@@ -59,8 +59,8 @@ variables {
   launchers              = ["user:launcher@example.com"]
   operators              = ["user:operator@example.com"]
   launcher_bucket_condition = {
-    title      = "fugaro-launchers-runs-tokens"
-    expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")"
+    title      = "fugaro-launchers-runs-tokens-issues"
+    expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/issues/\")"
   }
   alert_email = "ops@example.com"
 }
