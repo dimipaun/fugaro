@@ -717,8 +717,8 @@ func TestM5FieldsValidation(t *testing.T) {
 		t.Fatalf("round trip = %+v, %v", again, err)
 	}
 	for name, tc := range map[string]struct{ yaml, msg string }{
-		"state bucket":     {"terraform: { state_bucket: Bad_Bucket }\n", "terraform.state_bucket"},
-		"alert email":      {"terraform: { alert_email: nobody }\n", "terraform.alert_email"},
+		"state bucket": {"terraform: { state_bucket: Bad_Bucket }\n", "terraform.state_bucket"},
+		"alert email":  {"terraform: { alert_email: nobody }\n", "terraform.alert_email"},
 		// Both spellings come back as the version-1 list they are: v1's
 		// `launchers` folds into this version's operators, v1's `operators`
 		// into its admins (foldLegacyLists).

@@ -111,7 +111,7 @@ type initOptions struct {
 	onboardRepo                         string // --onboard-repo owner/name: the explicit opt-in to onboard the checkout's repository
 	allowFork                           bool   // --allow-fork: the plugin-wiring stage may move a fork's marketplace ref
 	allowDelete                         []string
-	operatorsChanged, adminsChanged  bool
+	operatorsChanged, adminsChanged     bool
 	alertEmailChanged, baseImageChanged bool
 
 	// --firebase-project names a separate Firebase project to build the budget
