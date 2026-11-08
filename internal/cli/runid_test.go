@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/recipe"
-	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // mintRunID is the one mint of run IDs in this package's tests: d before now,
@@ -178,7 +177,7 @@ func TestWatchWindowFollowsTheClock(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return task.ShortRun(id), out
+		return id, out
 	}
 	for _, tc := range []struct {
 		name       string
@@ -198,14 +197,10 @@ func TestWatchWindowFollowsTheClock(t *testing.T) {
 				name string
 				at   func(*testing.T, time.Time, time.Time) (string, string)
 			}{{"queued scan", queuedAt}, {"degraded", degradedAt}} {
-				// Each view returns the string it names a run by: the queued
-				// scan is --json, which carries the full ID, while the degraded
-				// view is ls's own text listing, which names a run by its
-				// short ID.
-				needle, out := view.at(t, tc.mint, tc.list)
-				if got := strings.Contains(out, needle); got != tc.wantListed {
+				id, out := view.at(t, tc.mint, tc.list)
+				if got := strings.Contains(out, id); got != tc.wantListed {
 					t.Fatalf("%s: run %s listed = %v, want %v at %s:\n%s",
-						view.name, needle, got, tc.wantListed, tc.list.Format(time.RFC3339), out)
+						view.name, id, got, tc.wantListed, tc.list.Format(time.RFC3339), out)
 				}
 			}
 		})

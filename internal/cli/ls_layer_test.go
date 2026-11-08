@@ -10,15 +10,15 @@ import (
 	"github.com/dimipaun/fugaro/internal/runview"
 )
 
-// layerLine returns the one line of out whose RUN cell is cell, or fails.
-func layerLine(t *testing.T, out, cell string) string {
+// layerLine returns the one line of out whose RUN column is run, or fails.
+func layerLine(t *testing.T, out, run string) string {
 	t.Helper()
 	for _, line := range strings.Split(out, "\n") {
-		if fields := strings.Fields(line); len(fields) > 0 && fields[0] == cell {
+		if strings.HasPrefix(line, run) {
 			return line
 		}
 	}
-	t.Fatalf("no line for %q in %q", cell, out)
+	t.Fatalf("no line for %q in %q", run, out)
 	return ""
 }
 
@@ -31,9 +31,9 @@ func TestLsShowsTheLayerColumnOnlyWhenARunHasOne(t *testing.T) {
 
 	rows[0].ProjectLayer = &runstore.ProjectLayerRecord{SHA256: strings.Repeat("a", 64), Generation: 3, Applied: true}
 	rows = append(rows,
-		runview.Row{Run: "s/20261008-100001-abcd", RunID: "20261008-100001-abcd", Status: "succeeded",
+		runview.Row{Run: "s/20261008-110000-abcd", RunID: "20261008-110000-abcd", Status: "succeeded",
 			ProjectLayer: &runstore.ProjectLayerRecord{SHA256: strings.Repeat("a", 64), Generation: 3}},
-		runview.Row{Run: "s/20261008-100002-abcd", RunID: "20261008-100002-abcd", Status: "succeeded"},
+		runview.Row{Run: "s/20261008-120000-abcd", RunID: "20261008-120000-abcd", Status: "succeeded"},
 	)
 	b.Reset()
 	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil {
@@ -46,17 +46,14 @@ func TestLsShowsTheLayerColumnOnlyWhenARunHasOne(t *testing.T) {
 	// Each row's exact LAYER cell, keyed to its own run: a test that only
 	// checks the document contains "gen 3" and "gen 3 (not applied)"
 	// somewhere would still pass if the two cells were swapped between
-	// rows, so each is pinned to its own line's suffix instead. The three
-	// runs' IDs share their last four characters, so the listing extends
-	// them through the dash and each row's RUN cell is the shortest ending
-	// that tells it from the other two.
-	for cell, want := range map[string]string{
-		"0-abcd": "gen 3",
-		"1-abcd": "gen 3 (not applied)",
-		"2-abcd": "-",
+	// rows, so each is pinned to its own line's suffix instead.
+	for run, want := range map[string]string{
+		"s/20261008-100000-abcd": "gen 3",
+		"s/20261008-110000-abcd": "gen 3 (not applied)",
+		"s/20261008-120000-abcd": "-",
 	} {
-		if line := layerLine(t, out, cell); !strings.HasSuffix(line, want) {
-			t.Errorf("%s: line %q, want suffix %q", cell, line, want)
+		if line := layerLine(t, out, run); !strings.HasSuffix(line, want) {
+			t.Errorf("%s: line %q, want suffix %q", run, line, want)
 		}
 	}
 }

@@ -863,15 +863,14 @@ func TestLsPRColumn(t *testing.T) {
 		}
 	}
 	// The BY cell follows the PR column, and none of these runs recorded a
-	// launcher (seedSpec's launch.json carries none): a dash. The rows are
-	// keyed by their RUN cell, the run's short ID.
-	if l := lines["bbbb"]; !strings.Contains(l, "#7 https://github.com/acme/app/pull/7 (draft)") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
+	// launcher (seedSpec's launch.json carries none): a dash.
+	if l := lines[appSlug+"/"+r.fu1]; !strings.Contains(l, "#7 https://github.com/acme/app/pull/7 (draft)") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
 		t.Fatalf("finished follow-up line = %q\n%s", l, human)
 	}
-	if l := lines["ffff"]; !strings.Contains(l, "#7") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
+	if l := lines[appSlug+"/"+waiting]; !strings.Contains(l, "#7") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
 		t.Fatalf("unlaunched follow-up line = %q\n%s", l, human)
 	}
-	if l := lines["eeee"]; l != "" {
+	if l := lines[appSlug+"/"+r.plain]; l != "" {
 		t.Fatalf("a run off the PR is listed: %q", l)
 	}
 }
@@ -897,71 +896,6 @@ func TestLsShowsHalted(t *testing.T) {
 	}
 }
 
-// TestRunsLsHumanShortID: the text listing names a run by its short ID, and the
-// repository the `<slug>/` prefix carried moves to a column of its own. Two
-// runs whose IDs share their last four characters are shown with the shortest
-// endings that tell them apart, extended one character at a time through the
-// dash (task.DisplayRuns, F1), and no full ID appears in the listing at all
-// (spec part 1): the full ID stays in the record and in --json (D1705).
-func TestRunsLsHumanShortID(t *testing.T) {
-	f := newCloudFixture(t)
-	// The pair of the collision case: the IDs differ in the character before
-	// the dash, so the endings cross it rather than growing into a fifth hex
-	// digit.
-	older, newer := "20261107-010101-3bb2", "20261108-115248-3bb2"
-	seedRun(t, f, older, "", "someone@example.com", false)
-	seedRun(t, f, newer, "", "someone@example.com", false)
-
-	out, _, err := execute(t, "runs", "ls", "--since", "0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if len(lines) != 4 {
-		t.Fatalf("listing = %q, want a header, two rows and a totals line", out)
-	}
-	if hdr := strings.Fields(lines[0]); !slices.Equal(hdr, []string{"RUN", "REPO", "STATUS", "STAGE", "AGE", "COST", "PR", "BY"}) {
-		t.Fatalf("header = %v, want the RUN cell to carry the short ID with the repository in its own column", hdr)
-	}
-	rows := map[string]string{}
-	for _, l := range lines[1:3] {
-		fields := strings.Fields(l)
-		rows[fields[0]] = fields[1]
-	}
-	if len(rows) != 2 || rows["8-3bb2"] != appSlug || rows["1-3bb2"] != appSlug {
-		t.Fatalf("rows = %v, want 8-3bb2 and 1-3bb2, each with %s in REPO:\n%s", rows, appSlug, out)
-	}
-	for _, id := range []string{older, newer} {
-		if strings.Contains(out, id) {
-			t.Errorf("the listing prints the full ID %s:\n%s", id, out)
-		}
-	}
-}
-
-// TestRunsLsJSONKeepsFullID: the machine document is what the console, the
-// paging cursor and --after read, and the short-ID rule does not touch it: run
-// is still `<slug>/<run-id>` and run_id the full ID (D1705, F8). It passes
-// before the text listing changes, which is what it is for.
-func TestRunsLsJSONKeepsFullID(t *testing.T) {
-	f := newCloudFixture(t)
-	older, newer := "20261107-010101-3bb2", "20261108-115248-3bb2"
-	seedRun(t, f, older, "", "someone@example.com", false)
-	seedRun(t, f, newer, "", "someone@example.com", false)
-
-	got, _ := lsJSON(t, "--since", "0")
-	if len(got.Runs) != 2 {
-		t.Fatalf("runs = %v, want both", runIDs(got.Runs))
-	}
-	for _, r := range got.Runs {
-		if r.RunID != older && r.RunID != newer {
-			t.Errorf("run_id = %q, want a full ID", r.RunID)
-		}
-		if want := appSlug + "/" + r.RunID; r.Run != want {
-			t.Errorf("run = %q, want %q: --json carries the full ID whatever the text listing shows", r.Run, want)
-		}
-	}
-}
-
 func TestLsShowsDraftInProgress(t *testing.T) {
 	f := newCloudFixture(t)
 	const run, done, stale = "20260927-100000-abcd", "20260927-100100-bbbb", "20260927-100200-cccc"
@@ -982,25 +916,19 @@ func TestLsShowsDraftInProgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Each row is found by its RUN cell: the listing names a run by its short
-	// ID, the four characters its full ID ends with.
 	for _, line := range strings.Split(human, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
-			continue
-		}
-		switch fields[0] {
-		case task.ShortRun(run):
+		switch {
+		case strings.Contains(line, run):
 			// The BY cell (a dash: seedRun's launch.json records no launcher)
 			// follows the PR column.
 			if !strings.Contains(line, "https://github.com/acme/app/pull/7 (draft)") || !strings.HasSuffix(strings.TrimSpace(line), "-") {
 				t.Errorf("running line: %q", line)
 			}
-		case task.ShortRun(done):
+		case strings.Contains(line, done):
 			if strings.Contains(line, "(draft") {
 				t.Errorf("ready PR marked draft: %q", line)
 			}
-		case task.ShortRun(stale):
+		case strings.Contains(line, stale):
 			if !strings.Contains(line, "(draft, stale)") {
 				t.Errorf("stale line: %q", line)
 			}
@@ -1034,16 +962,14 @@ func TestLsRecipeColumnDefaultsEmpty(t *testing.T) {
 	var b strings.Builder
 	rows := []runview.Row{
 		{Run: "acme-app/20261007-100000-abcd", Status: "succeeded"},
-		{Run: "acme-app/20261007-100001-abcd", Status: "running", Recipe: "claude-solo"},
+		{Run: "acme-app/20261007-110000-abcd", Status: "running", Recipe: "claude-solo"},
 	}
 	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil {
 		t.Fatal(err)
 	}
 	var line string
 	for _, l := range strings.Split(b.String(), "\n") {
-		// The row whose RUN cell is 0-abcd: the two rows' IDs share their last
-		// four characters, so the listing extends them through the dash.
-		if fields := strings.Fields(l); len(fields) > 0 && fields[0] == "0-abcd" {
+		if strings.Contains(l, "100000") {
 			line = l
 		}
 	}
@@ -1059,14 +985,13 @@ func TestLsAccountColumn(t *testing.T) {
 		t.Fatalf("no named account:\n%s", b.String())
 	}
 	b.Reset()
-	rows = append(rows, runview.Row{Run: "acme-app/20261007-100001-abcd", Status: "running", OAuthAccount: "acme-personal"})
+	rows = append(rows, runview.Row{Run: "acme-app/20261007-110000-abcd", Status: "running", OAuthAccount: "acme-personal"})
 	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil || !strings.Contains(b.String(), "ACCOUNT") || !strings.Contains(b.String(), "acme-personal") {
 		t.Fatalf("with a named account:\n%s", b.String())
 	}
 	var line string
 	for _, l := range strings.Split(b.String(), "\n") {
-		// The row whose RUN cell is 0-abcd (see TestLsRecipeColumnDefaultsEmpty).
-		if fields := strings.Fields(l); len(fields) > 0 && fields[0] == "0-abcd" {
+		if strings.Contains(l, "100000") {
 			line = l
 		}
 	}
@@ -1190,7 +1115,7 @@ func TestLsJSONRecipeOmitempty(t *testing.T) {
 	var b strings.Builder
 	rows := []runview.Row{
 		{Run: "acme-app/20261007-100000-abcd", Status: "succeeded"},
-		{Run: "acme-app/20261007-100001-abcd", Status: "running", Recipe: "claude-solo"},
+		{Run: "acme-app/20261007-110000-abcd", Status: "running", Recipe: "claude-solo"},
 	}
 	if err := printRows(&b, "aurora", rows, nil, time.Now(), true); err != nil {
 		t.Fatal(err)
@@ -1217,6 +1142,73 @@ func TestRunsLsIsTheOldLs(t *testing.T) {
 	out, _, err := execute(t, "runs", "ls", "--json")
 	if err != nil || !strings.Contains(out, id) {
 		t.Fatalf("runs ls = %s, %v", out, err)
+	}
+}
+
+// TestRunsLsJSONKeepsFullID: the machine document is what the console, the
+// paging cursor and --after read, and no short-ID rule touches it: run is
+// still `<slug>/<run-id>` and run_id the full ID (D1705, F8). It passes with
+// the text listing either way, which is what it is for.
+func TestRunsLsJSONKeepsFullID(t *testing.T) {
+	f := newCloudFixture(t)
+	older, newer := "20261107-010101-3bb2", "20261108-115248-3bb2"
+	seedRun(t, f, older, "", "someone@example.com", false)
+	seedRun(t, f, newer, "", "someone@example.com", false)
+
+	got, _ := lsJSON(t, "--since", "0")
+	if len(got.Runs) != 2 {
+		t.Fatalf("runs = %v, want both", runIDs(got.Runs))
+	}
+	for _, r := range got.Runs {
+		if r.RunID != older && r.RunID != newer {
+			t.Errorf("run_id = %q, want a full ID", r.RunID)
+		}
+		if want := appSlug + "/" + r.RunID; r.Run != want {
+			t.Errorf("run = %q, want %q: --json carries the full ID whatever the text listing shows", r.Run, want)
+		}
+	}
+}
+
+// TestRunsLsRUNCellResolves: the RUN cell the text listing prints is a name the
+// CLI resolves to that run, so taking it out of a listing and into a command
+// works -- the working skill tells an agent to run `fugaro logs RUN` with it,
+// and the waiting block under the table names runs the same way. A run is shown
+// by the last four characters of its ID only once a lookup accepts an ending
+// (SR3's resolveRun, wired by SR14), so until that lands the cell is the full
+// name locateRun takes; this test is what fails if the cell is shortened ahead
+// of it.
+func TestRunsLsRUNCellResolves(t *testing.T) {
+	f := newCloudFixture(t)
+	id := recentRunID(t, time.Minute, "abcd")
+	seedRun(t, f, id, "", "someone@example.com", true)
+
+	out, _, err := execute(t, "runs", "ls", "--since", "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cell := ""
+	for _, l := range strings.Split(out, "\n") {
+		if fields := strings.Fields(l); len(fields) > 0 && strings.Contains(fields[0], "abcd") {
+			cell = fields[0]
+		}
+	}
+	if cell == "" {
+		t.Fatalf("the listing has no row for %s:\n%s", id, out)
+	}
+	// logs is the command the skill sends the cell to: it answers with the
+	// run's own lines, so the resolution is proved by its handing the run over
+	// rather than by an error.
+	if _, errOut, err := execute(t, "logs", cell); err != nil {
+		t.Fatalf("fugaro logs %q -- the RUN cell runs ls printed -- = %v (%s): the listing has to print a name a command resolves", cell, err, errOut)
+	}
+	// diagnose names the run it resolved to, so the cell is that run and not
+	// another one the lookup happened to reach.
+	got, errOut, err := execute(t, "diagnose", "--json", cell)
+	if err != nil {
+		t.Fatalf("fugaro diagnose %q = %v (%s)", cell, err, errOut)
+	}
+	if !strings.Contains(got, id) {
+		t.Fatalf("fugaro diagnose %q named no run of %s:\n%s", cell, id, got)
 	}
 }
 
@@ -1414,9 +1406,7 @@ func TestLsLauncherComesFromLaunchJSON(t *testing.T) {
 	}
 	var dashLine string
 	for _, l := range strings.Split(human, "\n") {
-		// The row of the run whose launch.json recorded no launcher, by its
-		// RUN cell (the run's short ID).
-		if fields := strings.Fields(l); len(fields) > 0 && fields[0] == "bbbb" {
+		if strings.Contains(l, "091000") {
 			dashLine = l
 		}
 	}
@@ -1479,10 +1469,9 @@ func TestLsLauncherShortFormAndClip(t *testing.T) {
 		"ffff": strings.Repeat("c", maxNameCellRunes) + "…"} {
 		found := false
 		for _, l := range strings.Split(out, "\n") {
-			// The row's RUN cell is the run's short ID, so the last four
-			// characters of its full ID are what the row is found by.
-			if f := strings.Fields(l); len(f) > 0 && f[0] == id {
+			if strings.Contains(l, "-"+id) {
 				found = true
+				f := strings.Fields(l)
 				if got := f[len(f)-1]; got != want {
 					t.Errorf("run %s: BY = %q, want %q\n%s", id, got, want, out)
 				}
@@ -2112,14 +2101,8 @@ func TestRunsLsLimitPrintsAPageAndTotalsTheWindow(t *testing.T) {
 	if !strings.Contains(out, "5 runs") {
 		t.Errorf("the text listing's totals line is not the window's:\n%s", out)
 	}
-	printed := map[string]bool{}
-	for _, l := range strings.Split(out, "\n") {
-		if f := strings.Fields(l); len(f) > 0 {
-			printed[f[0]] = true
-		}
-	}
 	for _, id := range ids[2:] {
-		if printed[task.ShortRun(id)] {
+		if strings.Contains(out, id) {
 			t.Errorf("the text listing printed run %s, which --limit 2 left out:\n%s", id, out)
 		}
 	}

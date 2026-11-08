@@ -72,12 +72,12 @@ func TestRunsLSRigorColumn(t *testing.T) {
 
 	b.Reset()
 	rows = append(rows,
-		rigorRow("acme-app/20261007-100001-abcd"),
-		runview.Row{Run: "acme-app/20261007-100002-abcd", Status: "running",
+		rigorRow("acme-app/20261007-110000-abcd"),
+		runview.Row{Run: "acme-app/20261007-120000-abcd", Status: "running",
 			Rigor: &runstore.RigorRecord{Mode: rigor.Pro, From: rigor.FromRepo, At: runstore.RigorAtBootstrap}},
 		// This one resolved none, and its launcher is named: the "-" the last
 		// column shows is the mode's, not the BY column's.
-		runview.Row{Run: "acme-app/20261007-100003-abcd", Status: "running", LaunchedBy: "me@example.com"},
+		runview.Row{Run: "acme-app/20261007-130000-abcd", Status: "running", LaunchedBy: "me@example.com"},
 	)
 	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil {
 		t.Fatal(err)
@@ -86,24 +86,21 @@ func TestRunsLSRigorColumn(t *testing.T) {
 	if !strings.Contains(out, "MODE") {
 		t.Fatalf("no MODE column:\n%s", out)
 	}
-	// The four rows' IDs share their last four characters, so the listing
-	// extends them through the dash: each row's RUN cell is the shortest
-	// ending that tells it from the others, and the cells are the key.
-	line := func(cell string) string {
+	line := func(run string) string {
 		for _, l := range strings.Split(out, "\n") {
-			if fields := strings.Fields(l); len(fields) > 0 && fields[0] == cell {
+			if strings.Contains(l, run) {
 				return strings.TrimRight(l, " ")
 			}
 		}
 		return ""
 	}
-	if got := line("1-abcd"); !strings.HasSuffix(got, "critical (area payments +1)") {
+	if got := line("110000-abcd"); !strings.HasSuffix(got, "critical (area payments +1)") {
 		t.Errorf("a run with two areas: %q", got)
 	}
-	if got := line("2-abcd"); !strings.HasSuffix(got, "pro (repo)") {
+	if got := line("120000-abcd"); !strings.HasSuffix(got, "pro (repo)") {
 		t.Errorf("a run with no area: %q", got)
 	}
-	if got := line("3-abcd"); !strings.HasSuffix(got, "-") {
+	if got := line("130000-abcd"); !strings.HasSuffix(got, "-") {
 		t.Errorf("a run that resolved none: %q", got)
 	}
 }

@@ -68,9 +68,9 @@ func TestRunsLSChangedFilesColumn(t *testing.T) {
 
 	b.Reset()
 	rows = append(rows,
-		runview.Row{Run: "acme-app/20261007-100001-abcd", Status: "running",
+		runview.Row{Run: "acme-app/20261007-110000-abcd", Status: "running",
 			ChangedFiles: runstore.NewChangedFiles([]string{"a.go", "b.go"})},
-		runview.Row{Run: "acme-app/20261007-100002-abcd", Status: "running",
+		runview.Row{Run: "acme-app/20261007-120000-abcd", Status: "running",
 			ChangedFiles: &runstore.ChangedFiles{Paths: []string{"a.go"}, Total: 40, Truncated: true}},
 	)
 	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil {
@@ -80,24 +80,21 @@ func TestRunsLSChangedFilesColumn(t *testing.T) {
 	if !strings.Contains(out, "FILES") {
 		t.Fatalf("no FILES column:\n%s", out)
 	}
-	// The three rows' IDs share their last four characters, so the listing
-	// extends them through the dash: each row's RUN cell is the shortest
-	// ending that tells it from the other two, and the cells are the key.
-	line := func(cell string) string {
+	line := func(run string) string {
 		for _, l := range strings.Split(out, "\n") {
-			if fields := strings.Fields(l); len(fields) > 0 && fields[0] == cell {
+			if strings.Contains(l, run) {
 				return strings.TrimRight(l, " ")
 			}
 		}
 		return ""
 	}
-	if got := line("1-abcd"); !strings.HasSuffix(got, " 2") {
+	if got := line("110000"); !strings.HasSuffix(got, " 2") {
 		t.Errorf("a two-path run's cell: %q", got)
 	}
-	if got := line("2-abcd"); !strings.HasSuffix(got, " 1/40") {
+	if got := line("120000"); !strings.HasSuffix(got, " 1/40") {
 		t.Errorf("a truncated run's cell: %q, want it to say 1 of 40", got)
 	}
-	if got := line("0-abcd"); !strings.HasSuffix(got, " -") {
+	if got := line("100000"); !strings.HasSuffix(got, " -") {
 		t.Errorf("a run that recorded none: %q, want -", got)
 	}
 }
