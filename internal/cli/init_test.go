@@ -713,7 +713,7 @@ func TestInitWritesLocalConfigAndBackup(t *testing.T) {
 	}
 	if lc.RunsBucket != initRunsBucket || lc.RegistryHost != "us-east5-docker.pkg.dev/proj-1234" || lc.LogView != initLogView ||
 		lc.SchedulerRegion != "us-east4" || lc.Terraform.StateBucket != initStateBucket || lc.BaseImage("base") != base ||
-		!slices.Equal(lc.Terraform.Launchers, []string{"user:launcher@example.com"}) || lc.Terraform.AlertEmail != "ops@example.com" {
+		!slices.Equal(lc.Terraform.Operators, []string{"user:launcher@example.com"}) || lc.Terraform.AlertEmail != "ops@example.com" {
 		t.Fatalf("local config = %+v", lc)
 	}
 	if lc.Build.ServiceAccount != "" {

@@ -33,7 +33,7 @@ func doctorRunsBucketIAM(ctx context.Context, lc *localcfg.Config, c *crm.Servic
 	if err != nil {
 		return unchecked(err)
 	}
-	launchers, operators := lc.Terraform.Launchers, lc.Terraform.Operators
+	launchers, operators := lc.Terraform.Operators, lc.Terraform.Admins
 	p, err := svc.Buckets.GetIamPolicy(bucket).OptionsRequestedPolicyVersion(3).Context(ctx).Do()
 	switch {
 	case err == nil:

@@ -282,8 +282,8 @@ func (e *initEngine) accessLists(ctx context.Context) []access {
 		return "from the local config"
 	}
 	out := []access{
-		{what: "launchers", members: e.spec.Launchers, source: src(o.launchersChanged), note: "launch runs; also mint run tokens when --firebase-project's token signer is applied"},
-		{what: "operators", members: e.spec.Operators, source: src(o.operatorsChanged), note: "onboard repositories and submit builds"},
+		{what: "operators", members: e.spec.Launchers, source: src(o.operatorsChanged), note: "start runs; also mint run tokens when --firebase-project's token signer is applied"},
+		{what: "admins", members: e.spec.Operators, source: src(o.adminsChanged), note: "onboard repositories and submit builds"},
 	}
 	if o.firebase != "" || e.lc.Terraform.BudgetBackend {
 		bs := "from the local config"
@@ -294,7 +294,7 @@ func (e *initEngine) accessLists(ctx context.Context) []access {
 		for _, a := range e.projectAdmins(ctx) {
 			out[len(out)-1].members = append(out[len(out)-1].members, a)
 		}
-		out = append(out, access{what: "budget viewers", members: slices.Concat(e.spec.Launchers, e.spec.Operators), source: "the launchers and operators"})
+		out = append(out, access{what: "budget viewers", members: slices.Concat(e.spec.Launchers, e.spec.Operators), source: "the operators and admins"})
 	}
 	return out
 }

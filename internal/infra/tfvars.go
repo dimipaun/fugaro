@@ -1228,8 +1228,8 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		BucketLifecycle: BucketLifecycle{RunsDays: runsDays, CacheCustomTimeDays: cacheCustomTimeDays, CacheAgeDays: cacheAgeDays},
 		EnableVertex:    o.EnableVertex || lc.UsesVertex(),
 		ManageAPIs:      !o.SkipAPIs,
-		Launchers:       members(o.Launchers, lc.Terraform.Launchers),
-		Operators:       members(o.Operators, lc.Terraform.Operators),
+		Launchers:       members(o.Launchers, lc.Terraform.Operators),
+		Operators:       members(o.Operators, lc.Terraform.Admins),
 		LauncherBucketCondition: Condition{
 			Title:      gcp.LauncherBucketConditionTitle,
 			Expression: gcp.LauncherBucketCondition(bucket),

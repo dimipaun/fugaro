@@ -67,11 +67,11 @@ func (r *initRun) newMachineConfig(ctx context.Context, e *initEngine) error {
 	if outs.CoordinatorServiceAccount != "" {
 		next.Terraform.Coordinator = true
 	}
-	if !r.o.launchersChanged && len(next.Terraform.Launchers) == 0 {
-		next.Terraform.Launchers = slices.Clone(outs.Launchers)
-	}
 	if !r.o.operatorsChanged && len(next.Terraform.Operators) == 0 {
-		next.Terraform.Operators = slices.Clone(outs.Operators)
+		next.Terraform.Operators = slices.Clone(outs.Launchers)
+	}
+	if !r.o.adminsChanged && len(next.Terraform.Admins) == 0 {
+		next.Terraform.Admins = slices.Clone(outs.Operators)
 	}
 	r.newMachineBudget(ctx, e, outs, &next)
 	if err := r.configOnly(ctx, e.c, e.t, e.wd, &next, e.spec, e.path, e.old); err != nil {

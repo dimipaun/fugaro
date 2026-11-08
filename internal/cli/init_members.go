@@ -97,7 +97,7 @@ func userEmail(ctx context.Context, hc *http.Client, url string) (string, error)
 // (a service account, no credentials) it is a needs-you naming the flags.
 func (e *initEngine) defaultMembers(ctx context.Context) error {
 	r, o := e.r, e.r.o
-	if !e.firstRun() || o.launchersChanged || o.operatorsChanged || len(e.lc.Terraform.Launchers)+len(e.lc.Terraform.Operators) > 0 {
+	if !e.firstRun() || o.operatorsChanged || o.adminsChanged || len(e.lc.Terraform.Operators)+len(e.lc.Terraform.Admins) > 0 {
 		return nil
 	}
 	email, err := authenticatedUser(ctx, e.lc)
@@ -112,8 +112,8 @@ func (e *initEngine) defaultMembers(ctx context.Context) error {
 			Commands: []string{selfCommand() + " " + e.r.o.doorName() + " --launcher " + me + " --operator " + me}}}
 	}
 	member := "user:" + email
-	o.launchers, o.operators = []string{member}, []string{member}
-	o.launchersChanged, o.operatorsChanged = true, true
+	o.operators, o.admins = []string{member}, []string{member}
+	o.operatorsChanged, o.adminsChanged = true, true
 	spec, err := installOptions(o, e.lc)
 	if err != nil {
 		return err
@@ -122,6 +122,6 @@ func (e *initEngine) defaultMembers(ctx context.Context) error {
 	// set on the spec before (nothing yet: the defaults come before the plan).
 	e.spec = spec
 	e.defaulted = member
-	fmt.Fprintf(r.w, "launchers: %s (you); operators: %s (you); change with --launcher/--operator (a new project config grants you the launcher and operator roles so that fugaro run works)\n", member, member)
+	fmt.Fprintf(r.w, "operators: %s (you); admins: %s (you); change with --operator/--admin (a new project config grants you the operator and admin roles so that fugaro run works)\n", member, member)
 	return nil
 }

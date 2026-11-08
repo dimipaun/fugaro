@@ -166,7 +166,7 @@ func TestDoctorPrintsTheLauncherReach(t *testing.T) {
 // nothing about which list the check compared against (dbLaunchers holds just
 // that pair, so this test writes its own config).
 //
-// Mutation (run, restore): compare against lc.Terraform.Launchers again
+// Mutation (run, restore): compare against lc.Terraform.Operators again
 // (doctorLauncherReach) — the operator-only job is reported as no grant, and
 // "0 grant(s)" stands beside a job the operator can start.
 func TestDoctorLauncherReachCountsOperators(t *testing.T) {

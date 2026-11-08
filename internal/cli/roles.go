@@ -65,5 +65,5 @@ func meMember(me string) string {
 // reads. launcherMember is not dead -- doctor's bucket check places the caller
 // as a launcher to say what its unconditioned write access means.
 func operatorOf(lc *localcfg.Config, me string) bool {
-	return operatorMember(meMember(me), lc.Terraform.Operators)
+	return operatorMember(meMember(me), lc.Terraform.Admins)
 }

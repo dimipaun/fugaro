@@ -37,8 +37,37 @@ import (
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
+// ConfigVersion is the version of the local config this release writes, and
+// the newest Parse reads.
+//
+// Version 1 is the document every installation had before the roles' own words
+// arrived: its `terraform` block spelled the two member lists `launchers` (who
+// may start runs — the role operator) and `operators` (who administer the
+// project — the role admin). Version 2 spells the same two lists `operators`
+// and `admins`, and the bump exists precisely because ONE NAME MOVED: the word
+// `operators` names the first list in version 2 and named the second in version
+// 1, so a reader that cannot tell the two shapes apart would read a version-1
+// admin list as this version's operator list, which is a privilege change
+// nobody asked for. The document's own `version` is therefore read BEFORE the
+// document is decoded, a version-1 document is folded into this shape
+// (foldLegacyLists), and a document of a version newer than this one is refused
+// by name rather than guessed at — which is also the floor an older Fugaro
+// meets: it reads a `version` it does not write and refuses the document, so an
+// old binary never converges an installation whose shape it cannot see.
+//
+// The two keys are the machine's copy of the role words, and the grants node
+// (internal/access, under config/admin) is their authority: `fugaro update`
+// derives these lists from it on every converge, and its migration writes the
+// node from the version-1 lists an installation already had.
+const ConfigVersion = 2
+
 // Config is the local CLI config.
 type Config struct {
+	// Version is the document's own version, and the field an older Fugaro
+	// refuses: ConfigVersion is the one this release writes, and Parse returns
+	// every accepted document as this version, because folding a version-1
+	// document produces version 2's shape and a document that says 1 while
+	// carrying 2's keys is the one spelling nobody may read.
 	Version int `yaml:"version"`
 	// Name is the Fugaro project (config.ProjectNameRE), which the file
 	// is named after.
@@ -925,11 +954,37 @@ func (c *Config) validateBudget(bad func(string, ...any)) {
 
 // Terraform is what fugaro update needs to plan the installation again: its
 // state bucket, and the inputs that exist only as flags.
+//
+// Its two member lists carry the ROLES' own words (docs/roles-scopes, D1581):
+// `operators` are the members who start and steer runs, `admins` those who
+// onboard repositories, apply Terraform and submit builds. Before this release
+// the same two lists were spelled `launchers` and `operators`, which is the
+// collision a reader of this file must know about: the word `operators` names
+// one list here and named the OTHER one until version 1, so the document's own
+// `version` is what tells the two shapes apart (Parse folds version 1 into this
+// shape, and the migration in `fugaro update` rewrites the file as version 2
+// once the grants node holds the roles). The Terraform variables keep their old
+// names (D1589) — the installation's module still takes `launchers` and
+// `operators`, filled from these two lists by internal/cli's spec builders — so
+// a pure rename plans nothing.
+//
+// The lists are the machine's copy, not the authority: the roles live in the
+// grants node, and `fugaro update` derives these two lists from it on every
+// converge (internal/cli's access step). A file that disagrees with the
+// installation's own lists is a refusal, not a silent preference.
 type Terraform struct {
-	StateBucket string   `yaml:"state_bucket,omitempty"`
-	AlertEmail  string   `yaml:"alert_email,omitempty"`
-	Launchers   []string `yaml:"launchers,omitempty"` // IAM members, such as user:a@example.com
-	Operators   []string `yaml:"operators,omitempty"`
+	StateBucket string `yaml:"state_bucket,omitempty"`
+	AlertEmail  string `yaml:"alert_email,omitempty"`
+	// Operators are the IAM members who launch and watch runs (the role word is
+	// the spec's operator). The key was `launchers` in version 1: the list is
+	// the same one, under the role's name.
+	Operators []string `yaml:"operators,omitempty"`
+	// Admins are the IAM members who onboard repositories and apply Terraform
+	// (the role word is the spec's admin). The key was `operators` in version 1,
+	// and that reuse is why the document carries a version at all: a version-1
+	// reader must not read this list as the one above, and it does not — it
+	// refuses the document instead (Version).
+	Admins []string `yaml:"admins,omitempty"`
 	// BudgetAdmins are further budget admins on the Firebase project, IAM
 	// members (user:, group: or serviceAccount:); the GCP project's owners
 	// and editors are admins too, read when fugaro update --firebase-project runs.
@@ -1589,6 +1644,84 @@ func oldMailboxKeychainItem(mailbox *yaml.Node) string {
 	return ""
 }
 
+// foldLegacyLists rewrites a version-1 document's `terraform` block into the
+// spelling this release reads: `launchers` becomes `operators` and `operators`
+// becomes `admins` (ConfigVersion).
+//
+// It is the ONE place the two spellings are told apart, and it does so from the
+// document's own version rather than from the keys it carries: a version-1
+// document's `operators` is the ADMINS, and reading it by "which keys are here"
+// would take it for this version's operators — the exact misread the version
+// exists to prevent. So a document at this version or newer is returned
+// untouched, and a version-1 document without a `launchers` key is untouched
+// too: there is nothing to move, and its `operators` list, if it has one, is
+// already spelled the way this version reads it.
+//
+// It works on the parsed YAML tree, not on text and not on the typed struct:
+// the rewrite is two key names, the comments and the rest of the document are
+// nobody's business here, and a document whose `terraform` block is not a
+// mapping (or whose `launchers` is written twice) is left for the typed decode
+// to refuse with its own message.
+func foldLegacyLists(data []byte, top map[string]yaml.Node) ([]byte, error) {
+	if documentVersion(top) >= 2 {
+		return data, nil
+	}
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return data, nil // not YAML at all: the typed decode says so, in its own words
+	}
+	if root.Kind != yaml.DocumentNode || len(root.Content) != 1 || root.Content[0].Kind != yaml.MappingNode {
+		return data, nil
+	}
+	block := mappingValue(root.Content[0], "terraform")
+	if block == nil || block.Kind != yaml.MappingNode || mappingValue(block, "launchers") == nil {
+		return data, nil
+	}
+	for i := 0; i+1 < len(block.Content); i += 2 {
+		switch block.Content[i].Value {
+		case "launchers":
+			block.Content[i].Value = "operators"
+		case "operators":
+			block.Content[i].Value = "admins"
+		}
+	}
+	out, err := yaml.Marshal(&root)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// documentVersion is the `version` a document states, or 0 when it states none
+// and when the document itself could not be read.
+func documentVersion(top map[string]yaml.Node) int {
+	n, ok := top["version"]
+	if !ok {
+		return 0
+	}
+	var v int
+	if err := n.Decode(&v); err != nil {
+		return 0
+	}
+	return v
+}
+
+// mappingValue is the value node of key in a YAML mapping node, or nil when the
+// mapping does not carry it. A key written twice answers with its last value,
+// which is what a YAML reader would take; the fold above only asks whether a
+// key is there at all.
+func mappingValue(m *yaml.Node, key string) *yaml.Node {
+	if m == nil || m.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			return m.Content[i+1]
+		}
+	}
+	return nil
+}
+
 // The local loader's own values, which Parse leaves in place for a file that
 // sets the key nowhere. They are named because the settings registry cites
 // them in the DEFAULT column (spec §2.4): the row for one of these keys is the
@@ -1614,15 +1747,27 @@ func Parse(data []byte) (*Config, error) {
 			}
 		}
 	}
+	folded, err := foldLegacyLists(data, top)
+	if err != nil {
+		return nil, fmt.Errorf("local config: %w", err)
+	}
 	var c Config
-	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec := yaml.NewDecoder(bytes.NewReader(folded))
 	dec.KnownFields(true)
 	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("local config: %w", err)
 	}
 	if c.Version == 0 {
-		c.Version = 1
+		c.Version = 1 // the first spelling: a document that says nothing is version 1's
 	}
+	if c.Version > ConfigVersion {
+		// Refused by name rather than guessed at, and the sentence names the
+		// one command that settles it, exactly as the policy node's own floor
+		// does: a newer document's shape is that release's to read, and this
+		// binary's guess at it is the misread ConfigVersion exists to prevent.
+		return nil, fmt.Errorf("local config: version %d is newer than the %d this Fugaro writes: upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then run fugaro update", c.Version, ConfigVersion)
+	}
+	c.Version = ConfigVersion
 	if c.MaxParallel == 0 {
 		c.MaxParallel = DefaultMaxParallel
 	}
@@ -1736,8 +1881,8 @@ func (c *Config) OrchestratorEffective(published *policy.Orchestrator) *policy.O
 func (c *Config) validate() error {
 	var errs []error
 	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf("local config: "+f, a...)) }
-	if c.Version != 1 {
-		bad("version must be 1")
+	if c.Version != ConfigVersion {
+		bad("version must be %d", ConfigVersion)
 	}
 	if !config.ProjectNameRE.MatchString(c.Name) {
 		bad("name %q is not a project name (1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit)", c.Name)
@@ -1856,7 +2001,7 @@ func (c *Config) validate() error {
 	for _, l := range []struct {
 		name    string
 		members []string
-	}{{"launchers", c.Terraform.Launchers}, {"operators", c.Terraform.Operators}} {
+	}{{"operators", c.Terraform.Operators}, {"admins", c.Terraform.Admins}} {
 		for _, m := range l.members {
 			if !memberRE.MatchString(m) {
 				bad("terraform.%s: %q is not an IAM member (user:, group:, serviceAccount: or domain:)", l.name, m)

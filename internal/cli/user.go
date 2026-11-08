@@ -221,18 +221,18 @@ func userRoleFlag(s string) (userRole, error) {
 // members is the list this role names, as the config holds it now.
 func (r userRole) members(lc *localcfg.Config) []string {
 	if r == userOperatorRole {
-		return lc.Terraform.Operators
+		return lc.Terraform.Admins
 	}
-	return lc.Terraform.Launchers
+	return lc.Terraform.Operators
 }
 
 // set writes list as this role's list in next.
 func (r userRole) set(next *localcfg.Config, list []string) {
 	if r == userOperatorRole {
-		next.Terraform.Operators = list
+		next.Terraform.Admins = list
 		return
 	}
-	next.Terraform.Launchers = list
+	next.Terraform.Operators = list
 }
 
 // holds reports whether member is on this role's list, read off the same two
@@ -241,9 +241,9 @@ func (r userRole) set(next *localcfg.Config, list []string) {
 // grants nothing.
 func (r userRole) holds(member string, lc *localcfg.Config) bool {
 	if r == userOperatorRole {
-		return operatorMember(member, lc.Terraform.Operators)
+		return operatorMember(member, lc.Terraform.Admins)
 	}
-	return launcherMember(member, lc.Terraform.Launchers)
+	return launcherMember(member, lc.Terraform.Operators)
 }
 
 // userMember validates the MEMBER argument and is the command's ONE rule about
@@ -409,7 +409,7 @@ func userEdit(cmd *cobra.Command, o cloudOptions, role, member string, add bool)
 				safetext.Field(who), err, safetext.Field(sel.Path), safetext.Field(onDisk.Name))
 		}
 		caller := meMember(me)
-		if slices.ContainsFunc(lc.Terraform.Operators, func(m string) bool { return sameUserMemberFold(m, caller) }) && sameUserMemberFold(who, caller) {
+		if slices.ContainsFunc(lc.Terraform.Admins, func(m string) bool { return sameUserMemberFold(m, caller) }) && sameUserMemberFold(who, caller) {
 			return userErr("you cannot remove yourself from the operators of %s: %s is the identity this invocation is running as, and the operators list is who can be told to settle the installation — run its update, add a member, read its budget — so another operator has to remove you, or a project Owner from outside the list: nothing was written",
 				safetext.Field(onDisk.Name), safetext.Field(who))
 		}
@@ -501,8 +501,8 @@ func userFresh(lc *localcfg.Config, outs infra.InstallationOutputs) error {
 		local  []string
 		remote []string
 	}{
-		{"launchers", lc.Terraform.Launchers, outs.Launchers},
-		{"operators", lc.Terraform.Operators, outs.Operators},
+		{"launchers", lc.Terraform.Operators, outs.Launchers},
+		{"operators", lc.Terraform.Admins, outs.Operators},
 	} {
 		if sameUserMembers(l.local, l.remote) {
 			continue
@@ -578,15 +578,15 @@ func printUserLists(w io.Writer, lc *localcfg.Config, asJSON bool) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(userListDoc{
 			Project: lc.Name, GCPProject: lc.GCPProject,
-			Launchers: userMembers(lc.Terraform.Launchers), Operators: userMembers(lc.Terraform.Operators),
+			Launchers: userMembers(lc.Terraform.Operators), Operators: userMembers(lc.Terraform.Admins),
 		})
 	}
 	for _, l := range []struct {
 		name    string
 		members []string
 	}{
-		{"launchers", lc.Terraform.Launchers},
-		{"operators", lc.Terraform.Operators},
+		{"launchers", lc.Terraform.Operators},
+		{"operators", lc.Terraform.Admins},
 	} {
 		fmt.Fprintf(w, "%s of %s (%d), as this machine's config lists them:\n", l.name, safetext.Field(lc.Name), len(l.members))
 		for _, m := range l.members {

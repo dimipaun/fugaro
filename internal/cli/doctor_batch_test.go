@@ -370,7 +370,7 @@ func TestDoctorBatchReportsBothLauncherConditions(t *testing.T) {
 // finding: warning about it would name a Fix -- run fugaro update -- that leaves
 // the member in exactly the state the warning complains about.
 //
-// Mutation (read lc.Terraform.Launchers and lc.Terraform.Operators together, as
+// Mutation (read lc.Terraform.Operators and lc.Terraform.Admins together, as
 // this check did): the operator is reported as not holding the grant and the
 // assertion that the check is ok fails.
 func TestDoctorBatchDoesNotRequireTheGrantOfOperators(t *testing.T) {

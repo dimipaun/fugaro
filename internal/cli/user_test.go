@@ -125,7 +125,7 @@ func (r *userRig) lists(t *testing.T) (launchers, operators []string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return lc.Terraform.Launchers, lc.Terraform.Operators
+	return lc.Terraform.Operators, lc.Terraform.Admins
 }
 
 // terraformReadsOnly fails the test when the run reached a Terraform
@@ -234,7 +234,7 @@ func TestUserAddDoesNotPersistRegion(t *testing.T) {
 	if lc.Region != "us-east5" {
 		t.Errorf("the written config's region is %q, want the file's own us-east5: an ephemeral --region became the installation's region on disk", lc.Region)
 	}
-	if got := strings.Join(lc.Terraform.Launchers, ","); got != "user:person-1@example.com" {
+	if got := strings.Join(lc.Terraform.Operators, ","); got != "user:person-1@example.com" {
 		t.Errorf("the add did not write the list it was for: %q", got)
 	}
 }

@@ -88,7 +88,7 @@ type initOptions struct {
 	imageSource                     string   // --image-source: a fork's own release registry/owner
 	expectDigests                   []string // --expect-digest KIND=sha256:...: the digest a release tag must resolve to
 	replaceImages                   []string // --replace-image KIND: kinds (history) whose tag in your registry may be replaced, each an ordinary covered step (askCovered: D12's answer of 2026-10-20 covers it in both doors, and a terminal without --yes types the project's name); a base kind is refused there, since nothing is copied for it any more
-	launchers, operators            []string
+	operators, admins               []string
 	budget                          int64
 	budgetCurrency, billingAccount  string
 	alertEmail                      string
@@ -111,7 +111,7 @@ type initOptions struct {
 	onboardRepo                         string // --onboard-repo owner/name: the explicit opt-in to onboard the checkout's repository
 	allowFork                           bool   // --allow-fork: the plugin-wiring stage may move a fork's marketplace ref
 	allowDelete                         []string
-	launchersChanged, operatorsChanged  bool
+	operatorsChanged, adminsChanged  bool
 	alertEmailChanged, baseImageChanged bool
 
 	// --firebase-project names a separate Firebase project to build the budget
@@ -322,7 +322,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f := cmd.Flags()
-			o.launchersChanged, o.operatorsChanged = f.Changed("launcher"), f.Changed("operator")
+			o.operatorsChanged, o.adminsChanged = f.Changed("operator"), f.Changed("admin")
 			o.alertEmailChanged, o.baseImageChanged = f.Changed("alert-email"), f.Changed("base-image")
 			o.budgetAdminsChanged = f.Changed("budget-admin")
 			r := newInitRun(cmd, o)
@@ -411,8 +411,8 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository, a history image is copied from it (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme)")
 	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it "+d.name+" trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag")
 	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so --yes covers it in either door and a terminal without --yes types the project's name (a pipe, --json, --non-interactive and a coding agent's session confirm nothing)")
-	f.StringArrayVar(&o.launchers, "launcher", nil, "an IAM member who launches and watches runs (repeatable; default: the local config's, and for a new config you, the authenticated user)")
-	f.StringArrayVar(&o.operators, "operator", nil, "an IAM member who onboards repositories (repeatable; default: the local config's, and for a new config you, the authenticated user)")
+	f.StringArrayVar(&o.operators, "operator", nil, "an IAM member who may start and watch runs (the operator role; repeatable; default: the local config's, and for a new config you, the authenticated user)")
+	f.StringArrayVar(&o.admins, "admin", nil, "an IAM member who may onboard repositories, apply Terraform and submit builds (the admin role; repeatable; default: the local config's, and for a new config you, the authenticated user)")
 	f.Int64Var(&o.budget, "budget", 0, "a monthly budget on the project, in whole units of --budget-currency")
 	f.StringVar(&o.budgetCurrency, "budget-currency", "", "the budget's currency, such as USD")
 	f.StringVar(&o.billingAccount, "billing-account", "", "the billing account the budget is on")
@@ -1693,11 +1693,11 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 		RegistryCleanup: cmp.Or(o.registryCleanup, lc.Terraform.RegistryCleanup),
 		NoLogIsolation:  o.noLogIsolation || lc.Terraform.NoLogIsolation,
 	}
-	if o.launchersChanged {
-		opts.Launchers = append([]string{}, o.launchers...)
-	}
 	if o.operatorsChanged {
-		opts.Operators = append([]string{}, o.operators...)
+		opts.Launchers = append([]string{}, o.operators...)
+	}
+	if o.adminsChanged {
+		opts.Operators = append([]string{}, o.admins...)
 	}
 	// The installation carries the history account (and, once it can, the
 	// sweeper's job) from the first --firebase-project on, and a plain fugaro update
@@ -2912,11 +2912,11 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	next.SetupPending = ""
 	next.LogView = outs.LogView
 	next.Terraform.StateBucket = spec.StateBucket
-	if r.o.launchersChanged {
-		next.Terraform.Launchers = slices.Clone(spec.Launchers)
-	}
 	if r.o.operatorsChanged {
-		next.Terraform.Operators = slices.Clone(spec.Operators)
+		next.Terraform.Operators = slices.Clone(spec.Launchers)
+	}
+	if r.o.adminsChanged {
+		next.Terraform.Admins = slices.Clone(spec.Operators)
 	}
 	if r.o.alertEmailChanged {
 		next.Terraform.AlertEmail = r.o.alertEmail
@@ -3575,8 +3575,8 @@ func (o *initOptions) checkRepo() error {
 func (o *initOptions) installationFlags() []string {
 	installationOnly := map[string]bool{
 		"--config-only": o.configOnly, "--publish-config": o.publishConfig, "--anchor": o.anchor, "--budget": o.budget != 0, "--budget-currency": o.budgetCurrency != "",
-		"--billing-account": o.billingAccount != "", "--alert-email": o.alertEmailChanged, "--launcher": o.launchersChanged,
-		"--operator": o.operatorsChanged, "--base-image": o.baseImageChanged, "--base": len(o.baseKinds) > 0, "--image-source": o.imageSource != "", "--expect-digest": len(o.expectDigests) > 0, "--replace-image": len(o.replaceImages) > 0, "--no-log-isolation": o.noLogIsolation,
+		"--billing-account": o.billingAccount != "", "--alert-email": o.alertEmailChanged, "--operator": o.operatorsChanged,
+		"--admin": o.adminsChanged, "--base-image": o.baseImageChanged, "--base": len(o.baseKinds) > 0, "--image-source": o.imageSource != "", "--expect-digest": len(o.expectDigests) > 0, "--replace-image": len(o.replaceImages) > 0, "--no-log-isolation": o.noLogIsolation,
 		"--registry-cleanup": o.registryCleanup != "", "--runs-bucket": o.runsBucket != "", "--scheduler-region": o.schedulerRegion != "",
 		"--firebase-project": o.firebase != "", "--budget-mode": o.budgetMode != "", "--budget-admin": o.budgetAdminsChanged,
 		"--create-project": o.createProject, "--managed": o.managed, "--display-name": o.displayName != "", "--parent": o.parent != "", "--link-billing": o.linkBilling != "",

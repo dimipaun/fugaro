@@ -425,7 +425,7 @@ func managedCover(lc *localcfg.Config, bucket string) tf.ManagedCover {
 	if host, err := infra.RegistryHost(lc); err == nil {
 		c.Registry, _, _ = strings.Cut(host, "/")
 	}
-	c.Listed = slices.Concat(lc.Terraform.Launchers, lc.Terraform.Operators, lc.Terraform.BudgetAdmins)
+	c.Listed = slices.Concat(lc.Terraform.Operators, lc.Terraform.Admins, lc.Terraform.BudgetAdmins)
 	return tf.ManagedCover{Cover: c}
 }
 

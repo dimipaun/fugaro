@@ -705,7 +705,7 @@ func TestM5FieldsValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.Terraform.StateBucket != "fugaro-tfstate-my-project" || c.Terraform.AlertEmail != "ops@example.com" ||
-		len(c.Terraform.Launchers) != 2 || len(c.Terraform.Operators) != 2 ||
+		len(c.Terraform.Operators) != 2 || len(c.Terraform.Admins) != 2 ||
 		c.LogView != "projects/my-project/locations/global/buckets/fugaro/views/runs" || c.SchedulerRegion != "us-east4" {
 		t.Fatalf("parsed = %+v", c)
 	}

@@ -821,10 +821,10 @@ func withDefaults(o InstallationOutputs, lc *localcfg.Config, bucket string) Ins
 	def(&o.RoleIDs.BuildSubmitter, role(RoleBuildSubmitter))
 	def(&o.RoleIDs.TagMover, role(RoleTagMover))
 	if o.Launchers == nil {
-		o.Launchers = slices.Clone(lc.Terraform.Launchers)
+		o.Launchers = slices.Clone(lc.Terraform.Operators)
 	}
 	if o.Operators == nil {
-		o.Operators = slices.Clone(lc.Terraform.Operators)
+		o.Operators = slices.Clone(lc.Terraform.Admins)
 	}
 	if o.Launchers == nil {
 		o.Launchers = []string{}

@@ -544,7 +544,7 @@ func TestReviewScreenGolden(t *testing.T) {
 		Launchers: []string{"user:me@example.com"}, Operators: []string{"group:ops@example.com"}}, adminsRead: true, admins: []string{"user:owner@example.com"}}
 	r.o.budgetAdmins = []string{"user:ba@example.com"}
 	r.o.budgetAdminsChanged = true
-	r.o.launchersChanged = true
+	r.o.operatorsChanged = true
 	e.defaulted = "user:me@example.com"
 	e.previewed = []initflow.StageResult{
 		{Name: initflow.Preflight, State: initflow.Done},
@@ -767,7 +767,7 @@ func TestReviewScreenListsEffectiveAccess(t *testing.T) {
 		e.reviewScreen(t.Context(), "test")
 		return b.String()
 	}
-	out := screen(t, &initOptions{launchersChanged: true, operatorsChanged: true, alertEmail: "ops@example.com"}, &localcfg.Config{},
+	out := screen(t, &initOptions{operatorsChanged: true, adminsChanged: true, alertEmail: "ops@example.com"}, &localcfg.Config{},
 		infra.InstallationSpec{Launchers: []string{"user:a@example.com"}, Operators: []string{"user:b@example.com"}}, "")
 	for _, want := range []string{"launchers:      user:a@example.com (from a flag)", "operators:      user:b@example.com (from a flag)", "alert email:    ops@example.com (from a flag)"} {
 		if !strings.Contains(out, want) {
@@ -782,7 +782,7 @@ func TestReviewScreenListsEffectiveAccess(t *testing.T) {
 			t.Errorf("config: lacks %q:\n%s", want, out)
 		}
 	}
-	out = screen(t, &initOptions{launchersChanged: true, operatorsChanged: true}, &localcfg.Config{},
+	out = screen(t, &initOptions{operatorsChanged: true, adminsChanged: true}, &localcfg.Config{},
 		infra.InstallationSpec{Launchers: []string{"user:me@example.com"}, Operators: []string{"user:me@example.com"}}, "user:me@example.com")
 	if !strings.Contains(out, "launchers:      user:me@example.com (default: you)") || !strings.Contains(out, "alert email:    none (not set)") {
 		t.Errorf("default:\n%s", out)
@@ -847,7 +847,7 @@ func TestMarkedProjectUnlistedGrantAsksItsOwn(t *testing.T) {
 // project's registry, and the billing account is named.
 func TestReviewScreenPrintsOnlySafeText(t *testing.T) {
 	var b strings.Builder
-	r := &initRun{cmd: &cobra.Command{}, o: &initOptions{launchersChanged: true, alertEmail: "a\x1b[2Jb@example.com", billingAccount: "AAAA\x1b[31m-BBBB", imageSource: "ghcr.io/ev\x1bil"},
+	r := &initRun{cmd: &cobra.Command{}, o: &initOptions{operatorsChanged: true, alertEmail: "a\x1b[2Jb@example.com", billingAccount: "AAAA\x1b[31m-BBBB", imageSource: "ghcr.io/ev\x1bil"},
 		w: &b, projectName: initProjectName, gcpProject: initProject}
 	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5", RegistryHost: "us-east5-docker.pkg.dev/" + initProject,
 		BaseImages: map[string]string{"other": "evil.example/\x1b[1mx:1", "base": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"}}

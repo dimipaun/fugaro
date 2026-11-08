@@ -56,7 +56,7 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 	// it: its GCP project (the deployer account is there) and the operators it
 	// names. Both empty recognises nothing, so a grant nobody's apply made
 	// still warns.
-	managed := infra.Managed{Project: lc.GCPProject, Operators: lc.Terraform.Operators}
+	managed := infra.Managed{Project: lc.GCPProject, Operators: lc.Terraform.Admins}
 	fs, err := infra.TokenSigners(ctx, c, i, fp, signer, number, managed)
 	if err != nil {
 		// A warning: with nothing read, --strict must not go green.

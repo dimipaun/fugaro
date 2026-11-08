@@ -381,7 +381,7 @@ func doctorBatchLauncherIAM(ctx context.Context, lc *localcfg.Config, c *crm.Ser
 	// module deliberately does not grant, and no run of `fugaro update` could
 	// clear that warning: the Fix it prints is the state the installation is
 	// already in.
-	launchers := slices.Clone(lc.Terraform.Launchers)
+	launchers := slices.Clone(lc.Terraform.Operators)
 	slices.Sort(launchers)
 	launchers = slices.Compact(launchers)
 	if len(launchers) == 0 || c == nil {

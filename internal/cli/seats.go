@@ -204,7 +204,7 @@ func runSeats(cmd *cobra.Command, o *seatsOptions) error {
 		Until:      until.Format("2006-01-02"),
 		Unreadable: unreadable,
 	}
-	doc.People, doc.NotCounted = seatsEstimate(env.lc.Terraform.Launchers, env.lc.Terraform.Operators, requesters)
+	doc.People, doc.NotCounted = seatsEstimate(env.lc.Terraform.Operators, env.lc.Terraform.Admins, requesters)
 	return writeSeats(cmd.OutOrStdout(), doc, o.asJSON)
 }
 
