@@ -155,25 +155,31 @@ func Ensure(ctx context.Context, o Options) (string, Record, error) {
 	} else {
 		w.Kind = KindGit
 	}
+	root, err := cacheRoot(o)
+	if err != nil {
+		return "", Record{}, err
+	}
 	if w.ref == "" {
 		// A build with no commit and no release version: only the remote can
 		// name what to fetch, and the newest release is the answer (D1611).
 		// It is asked once per call, so the recorded version is compared
 		// against it like any other.
-		tag, err := newestTag(ctx, o)
+		tag, err := newestTag(ctx, o, root)
 		if err != nil {
 			return "", Record{}, err
 		}
 		w.ref, w.Version = tag, tag
 	}
-	root, err := cacheRoot(o)
-	if err != nil {
-		return "", Record{}, err
-	}
 	dir := filepath.Join(root, treeName)
 	if rec, ok := readRecord(root); ok && matches(rec, w) {
-		if fi, err := os.Lstat(dir); err == nil && fi.IsDir() && treeIsAt(ctx, o, dir, rec) {
-			return dir, rec, nil
+		if fi, err := os.Lstat(dir); err == nil && fi.IsDir() {
+			// A tree git fetched is read only when its ".git" is this cache's
+			// own: a link, a "gitdir:" file or a commondir file there would
+			// have the check below ask another repository what its HEAD is,
+			// and a tree of another version would then be served.
+			if (rec.Kind != KindGit || isRepository(dir)) && treeIsAt(ctx, o, dir, rec) {
+				return dir, rec, nil
+			}
 		}
 	}
 	commit, err := fetch(ctx, o, root, w)
@@ -241,12 +247,20 @@ func fetch(ctx context.Context, o Options, root string, w want) (string, error) 
 // newestTag is the newest release tag the remote publishes, for a build that
 // carries neither a commit nor a release version (D1611). git orders the
 // tags, so this package needs no version comparison of its own. Without git
-// there is nothing to ask, and a tarball has no version to name.
-func newestTag(ctx context.Context, o Options) (string, error) {
+// there is nothing to ask, and a tarball has no version to name. The question
+// is asked in a repository this call makes, like every other git call here
+// (stageRepo): git run in the working directory would execute what the
+// configuration of whatever repository that happens to be names.
+func newestTag(ctx context.Context, o Options, root string) (string, error) {
 	if _, err := o.LookPath("git"); err != nil {
 		return "", fmt.Errorf("this is a %q build of fugaro and git is not installed, so there is no version to fetch the source of", o.Version)
 	}
-	out, err := o.Run(ctx, "", gitArgs("ls-remote", "--tags", "--refs", "--sort=-v:refname", o.SourceURL+".git", "refs/tags/v*")...)
+	stage, err := stageRepo(ctx, o, root)
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(stage)
+	out, err := o.Run(ctx, stage, gitArgs("ls-remote", "--tags", "--refs", "--sort=-v:refname", "origin", "refs/tags/v*")...)
 	if err != nil {
 		return "", fmt.Errorf("listing the release tags of %s: %w", o.SourceURL, err)
 	}

@@ -396,6 +396,35 @@ func TestDevBuildUsesTheNewestReleaseTag(t *testing.T) {
 	}
 }
 
+// TestADevBuildAsksTheRemoteWhereTheCacheIs: a build with no version asks the
+// remote for its newest release tag with git ls-remote, and git executes the
+// configuration of the repository it runs in. Run in the working directory,
+// which is whichever repository the person happened to run the command from,
+// that configuration decides what runs — here an sshCommand on a URL an
+// insteadOf rewrites to ssh. The question is asked in a repository of this
+// call's own instead, the way every fetch here is.
+func TestADevBuildAsksTheRemoteWhereTheCacheIs(t *testing.T) {
+	r := newRemote(t, "v1.1.0")
+	o := options(t, r, "dev", "unknown")
+	marker := filepath.Join(t.TempDir(), "ran")
+	cwd := t.TempDir()
+	testutil.Git(t, cwd, "init", "--quiet")
+	testutil.Git(t, cwd, "config", "core.sshCommand", "touch "+marker+" && false")
+	testutil.Git(t, cwd, "config", "url.ssh://localhost/nonexistent.insteadOf", r.url)
+	t.Chdir(cwd)
+
+	_, rec, err := Ensure(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Version != "v1.1.0" {
+		t.Fatalf("record = %+v", rec)
+	}
+	if _, err := os.Lstat(marker); err == nil {
+		t.Fatal("the working directory's repository ran a command")
+	}
+}
+
 func TestDevBuildWithoutGitIsRefused(t *testing.T) {
 	o := options(t, remote{url: "/nonexistent"}, "dev", "unknown")
 	o.LookPath = func(string) (string, error) { return "", errors.New("no git here") }
@@ -785,6 +814,60 @@ func anotherRepository(t *testing.T) string {
 	testutil.Git(t, mine, "add", "-A")
 	testutil.Git(t, mine, "commit", "--quiet", "-m", "mine")
 	return mine
+}
+
+// cloneOf is a clone of the source: another repository of this person's own
+// whose HEAD is the commit the newest release tag is at, so a check that asks
+// it what its HEAD is cannot tell it from this cache's own tree.
+func cloneOf(t *testing.T, r remote) string {
+	t.Helper()
+	mine := t.TempDir()
+	testutil.Git(t, mine, "clone", "--quiet", r.dir, mine)
+	return mine
+}
+
+// TestAWarmCacheDoesNotAskAnotherRepositoryForItsHead: the warm path asks the
+// tree it found what commit it is at, and git run in the tree reads whatever
+// its ".git" names — a repository of the person's own, whose HEAD is the same
+// commit when it is a clone of the source. The record's version would then be
+// checked against another repository's HEAD, and the tree of another version
+// beside it served as the version asked for. Only a ".git" of this cache's own
+// is read; anything else is replaced, which is what the fetch path does with
+// it as well.
+func TestAWarmCacheDoesNotAskAnotherRepositoryForItsHead(t *testing.T) {
+	r := newRemote(t, "v1.0.0")
+	for name, plant := range gitPlants {
+		t.Run(name, func(t *testing.T) {
+			o := options(t, r, "v1.0.0", r.commit["v1.0.0"])
+			mine := cloneOf(t, r)
+			if got := testutil.Git(t, mine, "rev-parse", "HEAD"); got != r.commit["v1.0.0"] {
+				t.Fatalf("the clone is at %s, not at the release commit", got)
+			}
+			before := treeNames(t, mine)
+			root := cacheRootOf(t, o)
+			tree := filepath.Join(root, treeName)
+			if err := os.MkdirAll(tree, cacheDirMode); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(tree, "VERSION"), []byte("v0.9.0\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			plant(t, tree, filepath.Join(mine, ".git"))
+			if err := writeRecord(root, Record{Version: "v1.0.0", Commit: r.commit["v1.0.0"], Kind: KindGit}); err != nil {
+				t.Fatal(err)
+			}
+			dir, _, err := Ensure(context.Background(), o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := read(t, filepath.Join(dir, "VERSION")); got != "v1.0.0\n" {
+				t.Fatalf("a tree the record did not name was served: it holds %q", got)
+			}
+			if after := treeNames(t, mine); !slices.Equal(before, after) {
+				t.Fatalf("the repository the tree's .git named was written into: %v became %v", before, after)
+			}
+		})
+	}
 }
 
 // TestATreeWhoseGitIsSomewhereElseIsRebuilt is the same attack one level
