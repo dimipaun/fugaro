@@ -3,6 +3,7 @@ package issueresolve
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,10 +14,22 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
-// maxCursorFile bounds the cursor file before it is read: a few hundred
-// issue numbers are a few KB, and a file past this is corruption or
-// tampering, refused unread rather than buffered.
+// maxCursorFile bounds the cursor file's read: a few hundred issue numbers
+// are a few KB, and anything past this is corruption or tampering, refused
+// rather than buffered whole.
 const maxCursorFile = 64 << 10
+
+// readCursor reads all of r, up to maxCursorFile bytes; ok is false when r
+// had more to give or the read itself failed. The bound is on the read, not
+// on the file the Lstat above saw: a file swapped for a larger one, or
+// grown, between that Lstat and this read is still refused unread.
+func readCursor(r io.Reader) (data []byte, ok bool) {
+	data, err := io.ReadAll(io.LimitReader(r, maxCursorFile+1))
+	if err != nil || len(data) > maxCursorFile {
+		return nil, false
+	}
+	return data, true
+}
 
 // cursorFile is the cursor as it is stored: the last time each issue number
 // was asked about, keyed by the number in decimal.
@@ -53,11 +66,16 @@ func LoadCursor(getenv func(string) string) *Cursor {
 	// not be followed. Mark only ever puts a regular file here by renaming
 	// a temporary one over the path.
 	fi, err := os.Lstat(c.path)
-	if err != nil || !fi.Mode().IsRegular() || fi.Size() > maxCursorFile {
+	if err != nil || !fi.Mode().IsRegular() {
 		return c
 	}
-	data, err := os.ReadFile(c.path)
+	file, err := os.Open(c.path)
 	if err != nil {
+		return c
+	}
+	defer file.Close()
+	data, ok := readCursor(file)
+	if !ok {
 		return c
 	}
 	var f cursorFile
