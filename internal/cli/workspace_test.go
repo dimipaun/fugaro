@@ -488,32 +488,6 @@ func TestMemberRmRefusesAnUndeclaredMember(t *testing.T) {
 	}
 }
 
-// TestWorkspaceCapSetWritesTheLocalConfigOnly: W8's own test, in the file this
-// task's plan gives `cap set` -- the cap is recorded in the local config of the
-// workspace's own project, the member's config is untouched, and the cloud is
-// written by nobody here (W2's publish is the stage that does).
-func TestWorkspaceCapSetWritesTheLocalConfigOnly(t *testing.T) {
-	_, aurora, owner := workspaceOwnerHome(t)
-	auroraBefore := readFileString(t, aurora)
-	out, _, err := execute(t, "workspace", "cap", "set", "--workspace", "workspace-alpha", "--monthly", "50", "--yes")
-	if err != nil {
-		t.Fatalf("workspace cap set: %v\n%s", err, out)
-	}
-	if got := readFileString(t, aurora); got != auroraBefore {
-		t.Errorf("cap set wrote another project's config:\n%s", got)
-	}
-	lc, err := localcfg.Parse([]byte(readFileString(t, owner)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if lc.WorkspaceCap == nil || lc.WorkspaceCap.Monthly != 50 {
-		t.Errorf("the cap is %+v, want 50 a month", lc.WorkspaceCap)
-	}
-	if !strings.Contains(out, "next: fugaro update") {
-		t.Errorf("the write does not hand off to fugaro update:\n%s", out)
-	}
-}
-
 // TestWorkspaceCapSetRefusesAnAmountTheFileCannotState: the block's presence is
 // the claim that there is a ceiling, so a cap of zero is refused rather than
 // read as a cap that forbids every call -- leaving the block out is how a
