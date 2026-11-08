@@ -809,10 +809,10 @@ while documenting the others is exactly the kind of thing a plan loses by not wr
 
 | # | the gap | where it is | the owner |
 | --- | --- | --- | --- |
-| 1 | a review launch is refused unconditionally: the constant E7's second half is `false` | `internal/cli/review.go:55` | **CSR11 — CLOSED: flipped 2026-11-08.** The constant is `true` and the switch CSR12 added is deleted in the same commit; the flip was **released from its gate by the owner's ruling of 2026-11-07**, because the reason it was held — the service admitting no review caller — is gone (CSRW1, PR #1932, the service reads `FUGARO_REVIEW_JOB_ACCOUNTS`; CSRW2, PR #1934, the installation module renders it) and `fugaro update` deploys the service on every installation (DON1), so the launch is served with no operator step between the flip and it. **The OWNER-RUN live checks below are the owner's and are still unrun**: the flip is not a claim that they passed |
-| 2 | `fugaro review` is built and **registered nowhere**, so no released CLI answers to it: `newReviewCmd` is not in the list `newCoreRoot` adds | `internal/cli/root.go:189`, `internal/cli/review.go:78` | **CSR9 — CLOSED: merged as PR #1762.** `newReviewCmd()` is in the list `newCoreRoot` adds (`internal/cli/root.go:198`), so the command answers and its launch refusal is a sentence a person reads rather than a name nobody can type; what CSR11 inherits from it is that refusal alone |
+| 1 | a review launch is refused unconditionally: the constant E7's second half is `false` | `internal/cli/review.go:58` | **CSR11 — CLOSED: flipped 2026-11-08.** The constant is `true` and the switch CSR12 added is deleted in the same commit; the flip was **released from its gate by the owner's ruling of 2026-11-07**, because the reason it was held — the service admitting no review caller — is gone (CSRW1, PR #1932, the service reads `FUGARO_REVIEW_JOB_ACCOUNTS`; CSRW2, PR #1934, the installation module renders it) and `fugaro update` deploys the service on every installation (DON1), so the launch is served with no operator step between the flip and it. **The OWNER-RUN live checks below are the owner's and are still unrun**: the flip is not a claim that they passed |
+| 2 | `fugaro review` is built and **registered nowhere**, so no released CLI answers to it: `newReviewCmd` is not in the list `newCoreRoot` adds | `internal/cli/root.go:189`, `internal/cli/review.go:81` | **CSR9 — CLOSED: merged as PR #1762.** `newReviewCmd()` is in the list `newCoreRoot` adds (`internal/cli/root.go:198`), so the command answers and its launch refusal is a sentence a person reads rather than a name nobody can type; what CSR11 inherits from it is that refusal alone |
 | 3 | the runner cannot place the job the launcher picks: the review variant's name is never a candidate, so a review container halts at admission with the client's `cannotPlaceJob` | `internal/runner/projectjob.go:178`, `internal/runner/project.go:1114` | **CSR8 — CLOSED: merged as PR #1761.** The variant is a candidate and the class is keyed on the run's own mode, not on the job name; what CSR13 inherits from it is a **fact to read**, `r.runClass()` (`internal/runner/projectjob.go:82`) and `jobTriple.Class` (`:50`), and never a mark to wait for |
-| 4 | the launcher reads `review.json` and never reads `review.json.sig`; `runner.VerifyReviewArtifact` exists and **nothing calls it**, because no implementation of `runner.SignatureVerifier` is in the tree | `internal/cli/review.go:518`, `internal/runner/reviewartifact.go:675`, `:223` | **CSR10 — CLOSED: merged as PR #1764.** The launcher's reader is a verifying one and `ServiceVerifier` implements `runner.SignatureVerifier`; what CSR15 inherits from it is the seam and the fail-closed refusal in `internal/cli/reviewverify.go` |
+| 4 | the launcher reads `review.json` and never reads `review.json.sig`; `runner.VerifyReviewArtifact` exists and **nothing calls it**, because no implementation of `runner.SignatureVerifier` is in the tree | `internal/cli/review.go:522`, `internal/runner/reviewartifact.go:675`, `:223` | **CSR10 — CLOSED: merged as PR #1764.** The launcher's reader is a verifying one and `ServiceVerifier` implements `runner.SignatureVerifier`; what CSR15 inherits from it is the seam and the fail-closed refusal in `internal/cli/reviewverify.go` |
 | 5 | the owner-run live checks have not been run, and could not be while gap 1 held: the C3.9 check's step 3 launches `fugaro review --pr N`, and Check 125's steps 6 and 7 confirm the fence on the variant | `docs/c39-review-identity/live-check.md`, [spec.md](spec.md) §8 | **the owner**, and **the check is runnable now**: gap 1 closed on 2026-11-08, so step 3 is reached with the plain launch it names — the switch CSR12 added for it (Open item 1's answer of 2026-11-05) is deleted, and the step no longer sets anything |
 | 6 | the credentials service **ships dormant**: the opt-in, the App key and the verifier identity are the owner's own terminal (C3.9g1) | `internal/credsvc/auth.go:335` | **the owner** for the opt-in and the App key — no task here; it is the release's one conditional operator sentence (§6.5) — and **CSR14** for the verifier identity, which is a service account the installation creates rather than a value a person types (Open item 5, answered 2026-11-05) |
 | 7 | *(found while writing this section)* the review variant holds no model credential (O1) and the service has a review class for its calls, but **the runner has no model path that reaches it**: `GatewayOn` is false unless `agent.auth` is one of its three, the service is reached only from the cascade arm, and that arm is refused in bootstrap unless the **operator publishes the coding cascade switch** — the two things [spec.md](spec.md) §2 says a review job does not need | `internal/runner/routing.go:158`, `:60`, `internal/credsvc/cascade.go:105` | **CSR13** — Open item 4, answered 2026-11-05 with the fourth runner task |
@@ -890,7 +890,7 @@ still decides is whether a placed review run reaches its first call** (§1), and
   growing a fourth: it reports the **variant's own account** (`team-a-review` for the account `team-a`),
   which is the account the variant's job name was computed from. Both of its outside callers are correct
   as they stand and neither file changes:
-  - the launcher's `reviewJobFor` (`internal/cli/review.go:257`) passes the **coding** job's name and
+  - the launcher's `reviewJobFor` (`internal/cli/review.go:261`) passes the **coding** job's name and
     keeps getting the coding axis, which is what it maps to the variant with (`projectJobReviewFor`,
     `internal/cli/project_job.go:351`) — and **a review job's own name never round-trips through it**;
   - watch's `JobRef` (`internal/cli/project_job.go:233`, a `--json` field) resolves the run's own job from
@@ -936,7 +936,7 @@ still decides is whether a placed review run reaches its first call** (§1), and
 **Decisions:** D880, D888, **D893 (c)**. **Findings:** **F22**, **E4** (the generated reference and the
 plugin pin). **Depends on:** CSR2 (merged — the command, its refusal and `review show` are written).
 **Nothing here launches anything**, and the launch stays refused exactly as it is: the constant is
-CSR11's, and the reason is `checkReviewJobAdmitted` (`internal/cli/review.go:234`), which this task makes
+CSR11's, and the reason is `checkReviewJobAdmitted` (`internal/cli/review.go:238`), which this task makes
 reachable rather than true.
 
 - **Files:** `internal/cli/root.go`, `internal/cli/root_test.go`, `website/content/cli-reference.md`
@@ -960,7 +960,7 @@ reachable rather than true.
   `GOFLAGS=-p=2 go test ./internal/cli/ -run 'Docs|Root|Review' -count=1`.
 - **Tests:** `TestReviewIsRegisteredInTheCoreRoot` (the name resolves in the core tree, with its
   subcommand and both visible flags — the red step), the **existing**
-  `TestReviewStillRefusesWhenTheConstantIsOff` (`internal/cli/review_test.go:358`, CSR2's test under the
+  `TestReviewStillRefusesWhenTheConstantIsOff` (`internal/cli/review_test.go:396`, CSR2's test under the
   name CSR11's flip gave it — merged with CSR2 and **not edited here**: the refusal sentence is what a
   person gets, unchanged — this task registers a command, it does not admit one),
   `TestCliReferenceNamesTheReviewCommand` (the regenerated
@@ -1029,7 +1029,7 @@ is untouched by anything here.
   (`internal/runner/reviewartifact.go:223`) — a `ServiceVerifier` beside `ServiceSigner`, posting the
   digest, the signature, the run and the repository to the verify route and reading the one refusal bit
   back — and the launcher's reader turned into a **verifying** reader: `reviewFindings`
-  (`internal/cli/review.go:475`) reads `review.json.sig` (`runner.ReviewSignName`,
+  (`internal/cli/review.go:479`) reads `review.json.sig` (`runner.ReviewSignName`,
   `internal/runner/reviewartifact.go:69`) from the same prefix it reads the artifact from, verifies the
   **bytes it read** (the digest is over `review.json`'s exact bytes, so the review's prose never travels
   to the service and nothing is re-encoded), and **fails closed**: no sidecar, no service, a reachable
@@ -1041,7 +1041,7 @@ is untouched by anything here.
   refusal in **Depends on** above. Two things the verify call needs and this section had not said:
   - **the account the call names** (`VerifyRequest.Account`, which selects **which key** the service
     recomputes under, `internal/credsvc/verdict.go:406`) has **one source: the account of the review job
-    the launcher itself resolved**. That is the axis account `reviewJobFor` (`internal/cli/review.go:257`)
+    the launcher itself resolved**. That is the axis account `reviewJobFor` (`internal/cli/review.go:261`)
     reads back out of `runner.ProjectJobOfPolicy` (`internal/runner/projectjob.go:297`) and hands to
     `projectJobReviewFor` (`internal/cli/project_job.go:351`) — the name the deployer built the variant's
     job from and the one the service keys its own `ReviewJobAccount.Account` and the sign route on
@@ -1051,7 +1051,7 @@ is untouched by anything here.
     whose **absence is the default** — the field may never spell `default` itself
     (`internal/task/task.go:1094`) — so the fix-round launcher reads the review run's task with
     `ReadTask` (`internal/runstore/runstore.go:1283`, which validates what it reads), maps "" through the
-    rule the launch already prints with (`reviewAccount`, `internal/cli/review.go:195`), and puts
+    rule the launch already prints with (`reviewAccount`, `internal/cli/review.go:198`), and puts
     `config.DefaultClaudeAccount` on the wire: `readVerifyRequest` refuses an empty account as a bad
     **call**, not as a `valid:false` about an artifact.
     **`oauth_account` in the run's record is deliberately not that source**
@@ -1245,7 +1245,7 @@ that is still the check's step 3.
   record under the test's own state home). `docs/recipes.md`'s review paragraph,
   `plugin/skills/working/SKILL.md`'s sentence about a service that does not admit the caller, and the
   rigor-modes census row that counts the file's `…Since` constants (29, not 28) follow the same commit.
-- **Interfaces:** `reviewJobAdmitted` (`internal/cli/review.go:55`) is `true`, with its comment rewritten
+- **Interfaces:** `reviewJobAdmitted` (`internal/cli/review.go:58`) is `true`, with its comment rewritten
   to say **what made it true** — C3.9's merge, CSRW1's and CSRW2's, the owner's ruling of 2026-11-07 and
   the release the variant deploys in — rather than deleted: the next reader's question is why a constant
   that was `false` for a reason is now `true`, and the answer is not in the code. `checkReviewJobAdmitted`
@@ -1353,7 +1353,7 @@ later commit must remove is a change with its own red step, its own tests and it
 **purpose**, **CSR8** (merged, PR #1761) and **CSR9** — the check it exists for types the command, and
 the run it starts has
 to be placeable. **What it is, said so that no reader can take it for more:** the refusal it skips
-(`checkReviewJobAdmitted`, `internal/cli/review.go:234`) is a **convenience — failing early** — and
+(`checkReviewJobAdmitted`, `internal/cli/review.go:238`) is a **convenience — failing early** — and
 **not the security boundary**. The boundary is the credentials service, which still answers **401** to a
 review caller it does not admit (Global Constraint 6, C3.9). **The switch lets a launch start; it makes
 the service admit nothing.**
@@ -1518,7 +1518,7 @@ constant launches a run whose reviewer this task is what gives a model to reach.
     `internal/agent` is not touched by this task at all**, and no fourth auth name is invented:
     `GatewayOn` (`internal/runner/routing.go:158`) already answers true for `cascade`, so the predicate
     keeps its two inputs and the readers that share it — `validate`'s prices read
-    (`internal/cli/validate.go:1238`) — keep answering for a coding run, which is the only question a
+    (`internal/cli/validate.go:1251`) — keep answering for a coding run, which is the only question a
     repository's configuration can be asked: whether a run is the independent review job is the **task's
     mode** (`internal/cli/run.go:3411`, the launcher's own decision — the same fact `r.runClass()` reads)
     and never a file's own claim.
