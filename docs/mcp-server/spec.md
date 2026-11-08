@@ -1101,10 +1101,10 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   binary — the one M5b gates — owes this reading beside the two bounds above**; until it lands, a
   front door wired up without one admits nobody rather than everybody, which is the direction the
   gap fails in ([reconciliation.md](reconciliation.md) §4a, D933's amendment).
-- **The four read tools M8 builds are registered on no binary** (D936): `RegisterReadTools` is
-  called by nobody and `NewProjectRuns` is constructed nowhere, so `get_task_status`, `stream_logs`,
-  `get_result` and `list_tasks` are reachable by no client while the door is dormant, and
-  `TestNoBinaryLinksTheFrontDoorYet` still holds. **The wiring task that mounts this package on a
+- **The four read tools M8 builds are registered on no binary** (D936): nothing outside this
+  package's own tests calls `RegisterReadTools` or constructs `NewProjectRuns`, so
+  `get_task_status`, `stream_logs`, `get_result` and `list_tasks` are reachable by no client while
+  the door is dormant, and `TestNoBinaryLinksTheFrontDoorYet` still holds. **The wiring task that mounts this package on a
   binary — the one M5b gates — owes this beside the two bounds above and M7's reading of the
   published state**, and it is where the project's own repository slugs come from: the
   `FUGARO_COORDINATOR_REPOS` the installation already puts on the front door's own service

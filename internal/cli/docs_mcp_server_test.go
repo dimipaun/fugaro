@@ -429,7 +429,6 @@ func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
 		// built and registered on no binary, so the wiring that would serve
 		// them is named, and with it where the slugs it needs come from.
 		"The four read tools M8 builds are registered on no binary",
-		"`RegisterReadTools` is called by nobody and `NewProjectRuns` is constructed nowhere",
 		"`FUGARO_COORDINATOR_REPOS` the installation already puts on the front door's own service",
 		// And the two halves of the flow the review of this branch found
 		// promised: the grace window a lost rotation race is answered in, and
@@ -448,6 +447,19 @@ func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
 	} {
 		if !strings.Contains(spec, want) {
 			t.Errorf("%s does not state %q: the keyed hash and the MAC, the two bounds the open registration endpoint is accepted under, the reading of the published state the front door's lists come from, the four read tools that are registered on no binary, the grace window a lost rotation race is answered in and the launcher and operator lists the approve step would read an identity out of are all specified in this folder and built nowhere, so a document that dropped the caveat would read as a control the tree performs", mcpSpec, want)
+		}
+	}
+
+	// M8's exception is a claim about the code, and one the tests of the
+	// package it is about would otherwise falsify: they construct the reach and
+	// register the tools on it, which "called by nobody, constructed nowhere"
+	// stopped being true of. The clause names the tests as the only callers, and
+	// it is read in both documents that carry it -- the spec a reader meets
+	// first and the plan a task is written from -- because a claim about what
+	// the tree does is the one thing here that code can go and check.
+	for _, path := range []string{mcpSpec, mcpPlan} {
+		if !strings.Contains(flattenDoc(readDoc(t, path)), "nothing outside this package's own tests calls `RegisterReadTools` or constructs `NewProjectRuns`") {
+			t.Errorf("%s no longer says that nothing but this package's own tests calls `RegisterReadTools` or constructs `NewProjectRuns`: the read reach M8 adds is reach no binary has until the wiring task lands, and a sentence that stopped saying which callers exist would read as a reach something has", path)
 		}
 	}
 

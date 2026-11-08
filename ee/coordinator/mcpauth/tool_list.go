@@ -40,9 +40,14 @@ import (
 var listTasksArgsSchema = json.RawMessage(`{"type":"object","properties":{"repo":{"type":"string","description":"One of this project's repositories, as a slug; every one of them when absent"},"limit":{"type":"integer","minimum":1,"maximum":100,"description":"How many runs to answer, newest first (default 20)"},"since":{"type":"string","description":"Only runs minted at or after this RFC 3339 time, never earlier than the last 30 days (default: the last 30 days)"}},"additionalProperties":false}`)
 
 // listTasksArgs is what list_tasks reads out of a call's arguments.
+//
+// Limit is a pointer so that a limit the caller sent is told apart from one it
+// did not: the zero value of an int is what an absent field decodes to, and the
+// schema's own minimum for it is 1, so a call that sent 0 has sent a number
+// outside the range it was given rather than asked for the default.
 type listTasksArgs struct {
 	Repo  string `json:"repo"`
-	Limit int    `json:"limit"`
+	Limit *int   `json:"limit"`
 	Since string `json:"since"`
 }
 
@@ -69,11 +74,11 @@ func (p *ProjectRuns) listTasks(ctx context.Context, call Call) (any, error) {
 		slugs = []string{a.Repo}
 	}
 	limit := defaultListLimit
-	switch {
-	case a.Limit < 0 || a.Limit > maxListLimit:
-		return nil, fmt.Errorf("limit %d is outside 1..%d", a.Limit, maxListLimit)
-	case a.Limit > 0:
-		limit = a.Limit
+	if a.Limit != nil {
+		if *a.Limit < 1 || *a.Limit > maxListLimit {
+			return nil, fmt.Errorf("limit %d is outside 1..%d", *a.Limit, maxListLimit)
+		}
+		limit = *a.Limit
 	}
 	now := p.now().UTC()
 	since := now.Add(-coordinator.RunsWindow)
