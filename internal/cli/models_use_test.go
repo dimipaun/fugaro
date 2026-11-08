@@ -193,6 +193,24 @@ func TestModelsUseEditsOnlyTheRoleLine(t *testing.T) {
 	}
 }
 
+// TestModelsUseAsksNothing: switching a role's model is the repository's own
+// file, edited in the working tree, and it is written without a question
+// (D1540). No terminal and no --yes: the diff is printed, the sentence naming
+// the line is printed beside it, and the write lands.
+func TestModelsUseAsksNothing(t *testing.T) {
+	modelsUseHome(t)
+	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
+
+	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	if after := readFileString(t, path); !strings.Contains(after, "coder: deepseek/deepseek-v4-pro") {
+		t.Errorf("the switch did not land:\n%s", after)
+	}
+}
+
 // TestModelsUseInsertsAgentModelsWhenAbsent: a file that names no
 // agent.models gains the block, with the role inside it, rather than the
 // command failing or writing the key in the wrong place.

@@ -73,14 +73,56 @@ func workspaceMemberAddArgs(extra ...string) []string {
 		"--yes"}, extra...)
 }
 
-// workspaceAddArgs is the whole of one `workspace add`.
-func workspaceAddArgs(extra ...string) []string {
+// workspaceAddArgsNoYes is the whole of one `workspace add` without its --yes:
+// the same invocation a script drives and the one the tests that are about the
+// write asking nothing run.
+func workspaceAddArgsNoYes(extra ...string) []string {
 	return append([]string{"workspace", "add", "workspace-alpha",
 		"--firebase-project", "project-ws",
 		"--issuer", "https://securetoken.google.com/project-ws",
 		"--assertion-key", "marker-assertion-key",
-		"--service-account", "marker-workspace@project-ws.iam.gserviceaccount.com",
-		"--yes"}, extra...)
+		"--service-account", "marker-workspace@project-ws.iam.gserviceaccount.com"}, extra...)
+}
+
+// workspaceAddArgs is the whole of one `workspace add`.
+func workspaceAddArgs(extra ...string) []string {
+	return append(workspaceAddArgsNoYes(), append([]string{"--yes"}, extra...)...)
+}
+
+// TestWorkspaceAddAsksNothing and TestWorkspaceRmAsksNothing are the two
+// directions of D1540 on this family: the membership is written and taken back
+// with neither --yes nor a terminal, and what stands where the y/N was is the
+// sentence naming the key that goes in or comes out. A run that still asked
+// would sit at the question until the package's own deadline failed it.
+func TestWorkspaceAddAsksNothing(t *testing.T) {
+	_, path := workspaceWriteHome(t)
+
+	out, _, err := execute(t, workspaceAddArgsNoYes()...)
+	if err != nil {
+		t.Fatalf("workspace add: %v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	if after := readFileString(t, path); !strings.Contains(after, "workspace: workspace-alpha\n") {
+		t.Errorf("the membership was not written:\n%s", after)
+	}
+}
+
+// TestWorkspaceRmAsksNothing is the removal half: the key and the pin it
+// carries come out, and nothing is asked about them.
+func TestWorkspaceRmAsksNothing(t *testing.T) {
+	_, path := workspaceWriteHome(t)
+	if _, _, err := execute(t, workspaceAddArgs()...); err != nil {
+		t.Fatalf("workspace add: %v", err)
+	}
+
+	out, _, err := execute(t, "workspace", "rm", "workspace-alpha")
+	if err != nil {
+		t.Fatalf("workspace rm: %v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	if after := readFileString(t, path); strings.Contains(after, "workspace: workspace-alpha") {
+		t.Errorf("the membership is still in the config after the removal:\n%s", after)
+	}
 }
 
 // TestWorkspaceAddWritesOneKeyAndKeepsEveryOtherByte is the red step: the

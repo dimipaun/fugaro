@@ -542,6 +542,28 @@ func TestAccountsClearMark(t *testing.T) {
 	}
 }
 
+// TestAccountsClearAsksNothing is the same clear at a terminal (D1540): the
+// person's own shell is stdin, and the run does not stop at a question waiting
+// for a line — the mark is cleared while the terminal's own input is still
+// unread. `accounts clear` registers no --ask, so nothing puts the question
+// back either.
+func TestAccountsClearAsksNothing(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.appendConfig(t, claudeAccountsConfig)
+	since := time.Now().UTC().Add(-time.Minute).Truncate(time.Second).Format(time.RFC3339Nano)
+	f.db.Set(credsMarkPath("acme-personal"), map[string]any{"state": "broken", "since": since})
+
+	terminal(t, true)
+	out, _, err := executeStdin(t, "n\nno\n", "accounts", "clear", "acme-personal")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	if m, _ := f.db.Value(credsMarkPath("acme-personal")).(map[string]any); m["state"] != "available" {
+		t.Errorf("mark = %v, want the available mark the clear writes", m)
+	}
+}
+
 // TestAccountsClearOnlyNamedAccount: the clear writes one node — the named
 // account's — and never a second. The name must be one this installation has,
 // and there are three ways it can be: "default", a claude_accounts entry of

@@ -360,6 +360,31 @@ func TestAccountsRmSaysTheTokenIsNotRevokedAtTheProvider(t *testing.T) {
 	}
 }
 
+// TestAccountsRmAsksNothing is the removal with nobody to ask (D1540): the
+// declaration, the profile entry and the secret are named in one sentence and
+// then removed, with neither --yes nor a terminal — the invocation below is
+// the one that used to be refused for want of an answer.
+func TestAccountsRmAsksNothing(t *testing.T) {
+	r := newAddRig(t)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
+
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	if !strings.Contains(out, "remove claude_accounts.team-a") || !strings.Contains(out, "delete the secret "+id) {
+		t.Errorf("the sentence does not name both halves of the removal:\n%s", out)
+	}
+	if got := r.sm.Deleted(); !slices.Equal(got, []string{id}) {
+		t.Errorf("the secret deletes were %v, want %v", got, id)
+	}
+	if lc := r.addLocal(t); func() bool { _, ok := lc.ClaudeAccounts["team-a"]; return ok }() {
+		t.Errorf("claude_accounts.team-a is still declared after the removal")
+	}
+}
+
 // TestAccountsRmRefusesACodingAgentsSession is spec §4's last line: this
 // command deletes a credential, and a session the managed gate did not admit
 // is refused outright — --yes included — with nothing written and the secret
