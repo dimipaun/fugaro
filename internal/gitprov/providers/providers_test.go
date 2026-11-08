@@ -220,3 +220,101 @@ func TestGitHubReadsTheKeyWhenServiceOff(t *testing.T) {
 		t.Fatalf("provider %T is not a settable one", p)
 	}
 }
+
+// forwardPath is the runner's forwarder URL path (gateway.GitProxyPrefix,
+// B1.6), spelled here because a proxied adapter is handed the forwarder's
+// whole URL and never reads the route itself: the two spellings of it are held
+// together by the gateway's own contract test (TestGitForwardMirrorsCredsvc).
+const forwardPath = "/v1/bitbucket/proxy/"
+
+// proxiedForwarder is a stand-in for the runner's loopback forwarder
+// (gateway.GitForward, B1.6): it records the escaped paths it was asked for
+// and answers with h, so a test can assert where a proxied adapter's requests
+// went and with what path on them.
+func proxiedForwarder(t *testing.T, h http.HandlerFunc) (*httptest.Server, *[]string) {
+	t.Helper()
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.RequestURI())
+		h(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &paths
+}
+
+// TestProxiedBitbucketReadsNoToken: a proxied Bitbucket run's job holds no
+// Bitbucket token at all (G1 -- the flip B1.13 part two is what takes the
+// mount off the job), so the opener reads none: not the one the environment
+// still carries today, and not one it would have to be handed. The provider it
+// returns is a tokenless one, and the secrets it reports are none, so nothing
+// a run redacts or stores is a credential.
+func TestProxiedBitbucketReadsNoToken(t *testing.T) {
+	env := []string{
+		// The value the flip will take off the job, planted here with one a
+		// provider that read it would use: a proxied run must not.
+		EnvBitbucketToken + "=bb-token-1234",
+		EnvCredentialsServiceURL + "=https://creds.example",
+	}
+	p, secrets, err := Proxied(env, "http://127.0.0.1:1"+forwardPath, nil, nil)(ctx, gitprov.KindBitbucket, "acme/web")
+	if err != nil {
+		t.Fatalf("opening a proxied bitbucket provider: %v", err)
+	}
+	if _, ok := p.(*bitbucket.Provider); !ok {
+		t.Fatalf("provider %T, want *bitbucket.Provider", p)
+	}
+	if len(secrets) != 0 {
+		t.Errorf("the provider reported %d static secrets, want none: a proxied run reads no token", len(secrets))
+	}
+	a, err := p.GitAuth(ctx, 0)
+	if err != nil {
+		t.Fatalf("GitAuth: %v", err)
+	}
+	if a.Token != "" || a.Env["GH_TOKEN"] != "" {
+		t.Errorf("GitAuth = %+v, want no credential: the job holds none, and the service puts one on the wire", a)
+	}
+}
+
+// TestProxiedPagingThroughForwarder: the adapter keeps Bitbucket's own API
+// root as its BaseURL and the transport is the only thing that moves a request
+// (B1.7). That is what makes httpjson.Client.PagePath keep accepting the next
+// links Bitbucket answers with -- it compares a link's host and path prefix
+// against BaseURL -- while every request, the first page and the next one
+// alike, arrives at the forwarder with the API root's own "2.0" segment on it,
+// which is the segment the credentials service's classifier reads
+// (gitproxy.Classify, B1.3).
+func TestProxiedPagingThroughForwarder(t *testing.T) {
+	srv, paths := proxiedForwarder(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"is_private":true}`))
+	})
+	p, _, err := Proxied([]string{EnvCredentialsServiceURL + "=https://creds.example"}, srv.URL+forwardPath, nil, nil)(ctx, gitprov.KindBitbucket, "acme/web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Repository(ctx); err != nil {
+		t.Fatalf("Repository through the forwarder: %v", err)
+	}
+	// The next page's path, as PagePath hands it back to the adapter.
+	c := proxiedClient(srv.URL+forwardPath, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, bitbucket.DefaultBaseURL+"/repositories/acme/web/pullrequests?page=2", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if len(*paths) != 2 {
+		t.Fatalf("the forwarder was asked for %d paths, want 2", len(*paths))
+	}
+	want := []string{
+		forwardPath + "2.0/repositories/acme/web",
+		forwardPath + "2.0/repositories/acme/web/pullrequests?page=2",
+	}
+	for i, w := range want {
+		if got := (*paths)[i]; got != w {
+			t.Errorf("request %d reached the forwarder as %q, want %q", i, got, w)
+		}
+	}
+}

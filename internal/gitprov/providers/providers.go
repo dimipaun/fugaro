@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
@@ -133,6 +134,108 @@ func FromEnv(env []string, hc *http.Client, warn func(string)) gitprov.Opener {
 			return nil, nil, fmt.Errorf("unknown git provider %q (want %s or %s)", kind, gitprov.KindGitHub, gitprov.KindBitbucket)
 		}
 	}
+}
+
+// Proxied returns an Opener for a proxied Bitbucket run (B1.7, G1, G9): the
+// repository's published block admits it with proxy: true, the installation
+// has its credentials service on, and the job therefore holds no Bitbucket
+// token at all -- EnvBitbucketToken is not read, whatever the environment
+// carries, because after the flip (B1.13 part two) there is nothing there to
+// read and a run that reached for a token it was not given would be one the
+// platform meant to withhold.
+//
+// forwarder is the runner's loopback forwarder URL
+// (gateway.GitForward.URL: "http://127.0.0.1:<port>" plus the proxy route's
+// prefix). Every request the adapter makes is sent there instead of to
+// Bitbucket, and the adapter's own BaseURL stays Bitbucket's API root: the URL
+// a request is built against is what paging compares a next link to
+// (httpjson.Client.PagePath refuses one on another host), so the transport is
+// the only thing that moves it and the path it moves carries the API root's
+// own "2.0" segment, which is the segment the service's classifier reads.
+//
+// hc is the client the forwarder is called with; nil means the default one.
+// warn is FromEnv's.
+func Proxied(env []string, forwarder string, hc *http.Client, warn func(string)) gitprov.Opener {
+	vars := envVars(env)
+	return func(_ context.Context, kind, repo string) (gitprov.Provider, []string, error) {
+		if kind != gitprov.KindBitbucket {
+			return nil, nil, fmt.Errorf("unknown git provider %q (a proxied run reaches %s and nothing else)", kind, gitprov.KindBitbucket)
+		}
+		// Belt and braces: the caller decides proxied-ness from the published
+		// block AND this variable (G9), so an opener asked for a proxied
+		// provider without one has no service to forward to -- there is no
+		// in-job token to fall back to (G5, D143), and opening one anyway
+		// would be a run that fails at its first git command instead of here.
+		if vars[EnvCredentialsServiceURL] == "" {
+			return nil, nil, fmt.Errorf("%s is not set: a proxied run's Bitbucket requests are forwarded to the installation's credentials service, and this job names none", EnvCredentialsServiceURL)
+		}
+		owner, name, ok := gitprov.SplitRepo(repo)
+		if !ok {
+			return nil, nil, fmt.Errorf("repository %q must look like owner/name", repo)
+		}
+		// EnvBitbucketAPIURL is not read: the API root of a proxied run is the
+		// forwarder's, and the service decides the upstream (plan T2.8).
+		p, err := bitbucket.New(bitbucket.Options{
+			Workspace: owner, Slug: name, Proxied: true,
+			HTTP: proxiedClient(forwarder, hc), Warn: warn,
+		})
+		return p, nil, err
+	}
+}
+
+// proxiedClient is the client a proxied adapter makes its requests with: every
+// request is sent to the forwarder, and the adapter's own URL -- scheme, host,
+// path and query -- is what it was built against, with the forwarder's path
+// put in front of it.
+//
+// The rewrite is in the transport and not in BaseURL for one reason: paging.
+// A next link Bitbucket answers with is on api.bitbucket.org, and PagePath
+// accepts it only because the BaseURL the adapter compares it to is that same
+// host and path -- so the API root has to stay what Bitbucket says it is while
+// the wire it goes out on is the loopback one.
+func proxiedClient(forwarder string, hc *http.Client) *http.Client {
+	base := http.DefaultTransport
+	if hc != nil && hc.Transport != nil {
+		base = hc.Transport
+	}
+	c := &http.Client{Transport: forwardTransport{forwarder: forwarder, base: base}}
+	if hc != nil {
+		// The caller's own client, less its transport: its timeout and its
+		// redirect policy are its own, and this is the one field a proxied
+		// run has to replace.
+		cp := *hc
+		cp.Transport = c.Transport
+		c = &cp
+	}
+	return c
+}
+
+// forwardTransport sends every request to the forwarder. The forwarder is on
+// the loopback address, so no proxy from the environment is consulted for it
+// (net/http skips one for a loopback host) and no TLS is involved: what the
+// credentials service sees is the path the adapter built, unchanged, which is
+// what makes the two readings of it -- the adapter's and the service's
+// classifier's -- one reading (G13).
+type forwardTransport struct {
+	forwarder string // the forwarder's URL, ending in the proxy route's prefix
+	base      http.RoundTripper
+}
+
+func (t forwardTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	f, err := url.Parse(t.forwarder)
+	if err != nil || f.Host == "" {
+		return nil, fmt.Errorf("gitprov/providers: %q is not the forwarder's URL", t.forwarder)
+	}
+	u := *req.URL
+	u.Scheme, u.Host = f.Scheme, f.Host
+	// One slash, not two: the service reads what follows the route's prefix,
+	// and what it must read is the path the adapter built ("2.0/...").
+	u.Path = strings.TrimSuffix(f.Path, "/") + req.URL.Path
+	u.RawPath = ""
+	out := req.Clone(req.Context())
+	out.URL = &u
+	out.Host = ""
+	return t.base.RoundTrip(out)
 }
 
 func envVars(env []string) map[string]string {
