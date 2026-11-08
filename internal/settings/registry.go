@@ -794,6 +794,7 @@ var localRows = []Row{
 	loc("image_catalog.entries.*.source.repo", "none", "project", docImages),
 	loc("image_catalog.entries.*.source.path", "none", "project", docImages),
 	loc("image_catalog.entries.*.source.branch", "none", "project", docImages),
+	loc("image_catalog.entries.*.source.context", "none", "project", docImages),
 	loc("image_catalog.entries.*.source.inline", "none", "project", docImages),
 	loc("image_catalog.entries.*.source.image", "none", "project", docImages),
 	loc("image_catalog.entries.*.description", "none", "project", docImages),

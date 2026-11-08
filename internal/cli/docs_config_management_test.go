@@ -94,9 +94,11 @@ const (
 // The named figure moved with G0, which is what the audit's §5 says a figure in
 // a document does: the allowlist gained the wildcard blocks D1161 hands this
 // path and the two budget keys D1179 does, and the two documents whose argument
-// is made of this count carry the number the count produced.
+// is made of this count carry the number the count produced. The registry's own
+// figure moved with the catalog's `source.context` row, which the generic path
+// does not carry either.
 const (
-	cfmRegistryRows   = 374
+	cfmRegistryRows   = 375
 	cfmAllowlistNamed = 88
 )
 

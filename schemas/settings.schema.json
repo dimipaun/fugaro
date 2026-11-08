@@ -616,6 +616,9 @@
         "image_catalog.entries.*.source.branch": {
           "default": "unset = none"
         },
+        "image_catalog.entries.*.source.context": {
+          "default": "unset = none"
+        },
         "image_catalog.entries.*.source.inline": {
           "default": "unset = none"
         },
