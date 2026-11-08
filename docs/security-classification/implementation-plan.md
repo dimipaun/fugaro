@@ -1,6 +1,7 @@
 # Security classification: implementation plan
 
-**Status: plan only; nothing is implemented; no task approved.** Every task below is a proposal, every
+**Status: three of the tasks below are in the tree — SC1, SC4 and SC2, each with a landed note in its own
+block — and no decision is answered.** Every task below that has not landed is a proposal, every
 decision it is written against is **unanswered** ([reconciliation.md](reconciliation.md) §8, D1500–D1519,
 each with an empty owner's-answer cell), and the two slices this plan orders are a recommendation
 (**D1519**) rather than a schedule. This document adds no code, no schema, no config, no fixture and no
@@ -197,6 +198,10 @@ a level: slice 1 spans levels 0–2, slice 2 is level 3, slice 3 is levels 4–7
 - **Why SEC:** this is the floor of a security control: every later layer is measured against it.
 - **Reviewer tier:** security. **Owner-run:** no. **Depends on:** nothing. **Commit:** `feat(sensitivity):
 the security-pattern floor, the matcher and the union merge`.
+- **Note added 2026-11-08:** this task has **landed** — `e5a4605f`, #1916, under the commit line above —
+  and it is the plan's first task to do so; **SC4** landed over it (`0ee73e2e`, #1975) and **SC2** lands
+  with the change that adds this note. The red step, the two mutations, the named tests and the sizes
+  above are this plan's reading of 2026-11-07 and are left as what was written then.
 
 ### SC2. This folder's pin, and the census row (F17, F25). **size M**
 
@@ -282,6 +287,9 @@ the security-pattern floor, the matcher and the union merge`.
 - **Mutation (run, restore):** drop the "matched nothing" row; its case fails.
 - **Reviewer tier:** standard. **Owner-run:** no. **Depends on:** SC1.
   **Commit:** `cli: doctor says which security patterns are in force`.
+- **Note added 2026-11-08:** this task has **landed** — `0ee73e2e`, #1975, over SC1's floor — as
+  `internal/cli/doctor_security.go`'s `doctorSecurityListChecks`, with the ID `security-list` on the
+  security sweep; the plan's own text above is left as it was written.
 
 ### SC5. The CLI reference, and the release note (F13, F18). **size S**
 

@@ -3,8 +3,8 @@
 This file reads [spec.md](spec.md) — the owner's ask of 2026-11-07 — against the CLI, the runner, the
 policy stack and the plugin skills **as they are on this tree**, and says for each of the ask's seven
 question groups what already exists, what would have to be built, and what a design must decide. It
-takes no task approval: the tasks are [implementation-plan.md](implementation-plan.md), and the status
-line is unchanged — **plan only; nothing implemented; no task approved**.
+decides nothing: the tasks are [implementation-plan.md](implementation-plan.md), and the status line is
+[README.md](README.md)'s — **SC1, SC4 and SC2 are in the tree and no decision is answered**.
 
 **How this was read.** Every claim below was checked by reading the named file and symbol on this tree,
 not a summary of it, and by `git grep` against `origin/main` rather than from memory. **Citations name
@@ -403,11 +403,11 @@ The level-3 trigger has to be a **positive list**, which is exactly why the ask 
 
 ## 7. What this design does not do, and what it satisfies
 
-- **It changes no code, no schema, no config, no fixture and no workflow.** It writes nothing under
-  `schemas/`, `plugin/`, `console/`, `mobile/`, `ee/`, `deploy/` or `testdata/`, and no file outside
-  `docs/` and the one Go test that pins this folder
+- **Beyond the code the two landed tasks add, it changes no code, no schema, no config, no fixture and no
+  workflow.** It writes nothing under `schemas/`, `plugin/`, `console/`, `mobile/`, `ee/`, `deploy/` or
+  `testdata/`, and no file outside `docs/` and the one Go test that pins this folder
   (`internal/cli/docs_security_classification_test.go`, SC2). Every command, flag, field, key and table
-  below is a proposal.
+  below that has not landed is a proposal.
 - **It adds one pinning test, and the census moved once.** There is **no registry test over `docs/`** in
   `internal/cli` (`docs/bitbucket_credentials_test.go`, `docs_rigor_modes_test.go`,
   `docs_in_job_review_test.go` and `docs_backlog_test.go` all say so in their own comments), so a folder
@@ -427,7 +427,7 @@ The level-3 trigger has to be a **positive list**, which is exactly why the ask 
 
 Each row is a question the ask raises, **a recommendation**, the alternative, that alternative's cost,
 and **an empty owner's-answer cell** — the ask's own word is "Do not decide anything silently", and this
-folder's status is "no task approved", so the cell stays empty until the owner fills it. A row whose
+folder's status line records no answered decision, so the cell stays empty until the owner fills it. A row whose
 recommendation needs no decision is not here; these twenty are the ones that do.
 
 | # | Question | Recommendation (and why) | Alternative | Its cost | Owner's answer |

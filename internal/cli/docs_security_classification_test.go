@@ -9,14 +9,16 @@ package cli
 //
 // SC2 starts this file, and what it holds is what the folder claims about
 // itself rather than about the code it plans: the ask is the owner's words
-// verbatim, the twenty decisions D1500–D1519 are still recommendations with an
+// verbatim, the status line names what has landed and leaves the decisions
+// open, the twenty decisions D1500–D1519 are still recommendations with an
 // empty owner's-answer cell, the number block sits above every claim the folder
 // read, and every task names its files, its red step and its reviewer tier.
-// SC1's package has landed on the tree since the folder was written (it is the
-// plan's own first task), and this file neither reads nor repeats it -- the
+// SC1's and SC4's code has landed on the tree since the folder was written (the
+// plan's own first tasks), and this file pins none of its behavior -- the
 // engine's package is pinned by its own tests, and what would otherwise go
 // unchecked here is the folder: an ask reworded out of the owner's words, a
-// decision cell that quietly acquired an answer, a number taken beside one
+// status line still reading as the brief asked for it while the tree has moved,
+// a decision cell that quietly acquired an answer, a number taken beside one
 // already claimed, or a task that lost the files an agent picks it up by.
 
 import (
@@ -87,6 +89,47 @@ func TestDocsSecurityClassificationIsWritten(t *testing.T) {
 	} {
 		if !strings.Contains(index, want) {
 			t.Errorf("%s lacks %q: whose ask this is and who owns the spec are the two facts the rest of the folder is read against", secClassDir+"README.md", want)
+		}
+	}
+}
+
+// secClassStatusParagraph is the index's status line: the one paragraph that
+// opens with **Status:**, which the brief asked for and spec.md keeps in its
+// own words. It is the paragraph in the folder that goes stale on its own,
+// because it is a claim about the tree rather than about the ask.
+func secClassStatusParagraph(t *testing.T) string {
+	t.Helper()
+	raw := readDoc(t, secClassDir+"README.md")
+	for _, para := range strings.Split(raw, "\n\n") {
+		if strings.HasPrefix(strings.TrimSpace(para), "**Status:") {
+			return flattenDoc(para)
+		}
+	}
+	t.Fatalf("%s carries no paragraph opening with %q: the brief asks for a status line, and it is the paragraph a reader checks against the tree", secClassDir+"README.md", "**Status:")
+	return ""
+}
+
+// TestDocsSecurityClassificationStatusMatchesTheTree: the index's status line
+// is read against the tree, not against the brief. The brief's own words for
+// it -- "plan only; nothing implemented; no task approved" -- are kept where
+// they belong, inside spec.md (TestDocsSecurityClassificationSpecIsTheAskVerbatim),
+// and while the plan's tasks are landing the line may not still read that way:
+// SC1's package is in the tree, so a line that says nothing is implemented is a
+// folder contradicting the code it cites. What it must carry is the other half,
+// the one that does not move when a task lands -- that no decision is answered,
+// which is what the twenty cells in §8 are.
+func TestDocsSecurityClassificationStatusMatchesTheTree(t *testing.T) {
+	status := secClassStatusParagraph(t)
+	if _, err := os.Stat("../../internal/orchestrator/sensitivity/floor.go"); err == nil {
+		for _, stale := range []string{"plan only", "nothing implemented", "no task approved"} {
+			if strings.Contains(status, stale) {
+				t.Errorf("%s's status line still says %q while SC1's package is in the tree: the line is a claim about the tree, and the brief's own words for it are kept in spec.md", secClassDir+"README.md", stale)
+			}
+		}
+	}
+	for _, want := range []string{"SC1", "SC2", "empty owner's-answer cell"} {
+		if !strings.Contains(status, want) {
+			t.Errorf("%s's status line does not carry %q: it names what has landed and leaves the twenty decisions unanswered, and a line that drops either reads as a folder with nothing in the tree or one whose decisions are settled", secClassDir+"README.md", want)
 		}
 	}
 }
