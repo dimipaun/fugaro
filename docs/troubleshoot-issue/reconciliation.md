@@ -84,16 +84,19 @@ All answered by the owner on 2026-11-08 through `AskUserQuestion`; every answer 
 | **D1728** | Amend the diagnose plan's D1605 (F3) | `troubleshoot` still never files; the user-typed `fugaro issue submit` may, after a preview; T-DG8's report file is replaced by T-IS8's issue file | Keep D1605: drops `gh issue create` | **Amend D1605, 2026-11-08 (recommended).** |
 | **D1729** | The Issues section's home (F14) | Terminal-only after `runs digest` output; summaries allowed through `safetext` | Committed section by the CLI only: breaks parity and G2 | **Terminal-only, 2026-11-08 (recommended).** |
 
+| **D1730** | Local `dismiss` in an agent session (O3) | Refuse, same guard as upload | Allow and log: a hidden bug is easy to bury | **Refuse, 2026-11-08 (recommended).** |
+
 Spec owner recorded: Dimi Paun (asked, answered 2026-11-08).
 
 Resolutions that were not questions (one defensible answer): the lease and URL budget constants (F9, F16); `configuration` and `fixed_in_newer_release` have no saved class (F6); agent sessions never upload or file (F10); the store folder is `issues` under `UserDir(..., state)` and the shared prefix is the top-level `issues/` (D1727, F11).
 
 ## 3. Open tensions and open items for the owner
 
-- **O1 (amended after review).** D1720, D1721 and the D1605 amendment (D1728) changed after the independent review found premises the code or an earlier ruling contradicts; the owner re-ruled each on 2026-11-08 (answers above). Confirm the amended text.
+- **O1 (amended after review).** D1720, D1721 and the D1605 amendment (D1728) changed after the independent review found premises the code or an earlier ruling contradicts; the owner re-ruled each on 2026-11-08 (answers above). **CONFIRMED by the owner 2026-11-08** (all three).
 - **T1. This plan edits files the diagnose plan's T-DG8 also edits** (`internal/cli/root.go`, `docs/troubleshooting-for-agents.md`, `plugin/skills/working/SKILL.md`, `internal/settings/registry.go`). Not a contradiction of an answer; the two must not run in one level (shared-files table) and the second to land rebases.
 - **T2. D1721 against the spec's "one-line summary" in the report.** Followed as the owner answered (summaries stay in `list`); the spec text is amended.
-- **O2. The `fugaro issue add` question.** No command creates an issue by hand; the spec has none. Not added (no new functionality); say if wanted.
+- **O2 (answered 2026-11-08).** `fugaro issue add` is not added: the spec has none (recommended).
+- **O3 (answered 2026-11-08, D1730).** Local `dismiss` refuses in a coding agent's session (the `agentMarker` guard), in slice 1 as well, so a steered agent cannot bury a bug; a person dismisses.
 
 ## 4. UNVERIFIED
 
