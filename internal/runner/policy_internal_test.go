@@ -217,6 +217,35 @@ func TestPolicyKeyPathGovernance(t *testing.T) {
 	}
 }
 
+// TestPolicyKeyPathCraft: a craft key is reported under the agent.crafts block
+// of fugaro.yaml, which is where a craft's access is written, and not under
+// budget., where neither a craft nor a credential lives. The merge spells the
+// block's keys under crafts. (policy.CraftAccessKey, CraftCredentialKey,
+// CraftPoolKey), and both readers of the path name a line of the file — the
+// ignored-key warning a run logs and the problem `fugaro validate` annotates —
+// so a craft key left to the fall-through would send an operator to a block
+// that cannot carry it. The crafts are walked rather than spelled, the way the
+// tier loop above is: a craft added to internal/config cannot silently fall
+// through to budget.crafts.<craft>.access.
+func TestPolicyKeyPathCraft(t *testing.T) {
+	for _, key := range []string{
+		policy.CraftCredentialKey("openrouter-main"),
+		policy.CraftPoolKey("claude"),
+		policy.CraftPoolMembersKey("claude"),
+		policy.CraftPoolStrategyKey("claude"),
+	} {
+		if got, want := PolicyKeyPath(key), "agent."+key; got != want {
+			t.Errorf("PolicyKeyPath(%q) = %q, want %q", key, got, want)
+		}
+	}
+	for _, name := range config.CraftNames {
+		key := policy.CraftAccessKey(name)
+		if got, want := PolicyKeyPath(key), "agent."+key; got != want {
+			t.Errorf("PolicyKeyPath(%q) = %q, want %q", key, got, want)
+		}
+	}
+}
+
 // TestRunnerReadsReviewFloorFromNode is D722's job half, and the trust
 // boundary it closes (G1): the floor is read from the owner-only policy node
 // — the one object the launcher cannot write — and from nowhere else, so a
