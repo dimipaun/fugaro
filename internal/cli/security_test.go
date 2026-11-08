@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -433,5 +435,64 @@ func TestSecurityPathsSaysSoWhenTheBaseCannotBeRead(t *testing.T) {
 	}
 	if !strings.Contains(errOut, "fugaro.yaml") {
 		t.Errorf("stderr does not name what could not be read:\n%s", errOut)
+	}
+}
+
+// securityAnchoredYAML is securityNoKeyYAML with the anchor a project layer is
+// read for: `gcp_project:` beside `project:`. findLayer reads nothing at all
+// for a file that carries neither, so a fixture without them could not tell an
+// offline command from one that opens the project layer's bucket.
+var securityAnchoredYAML = "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: github, base_branch: main }\n" +
+	"workflows:\n  web: { commands: { build: sh b.sh, test: sh t.sh } }\n"
+
+// TestSecurityPathsOpensNoBucket is the document's own promise held to the
+// code: every read this command makes is offline (§6.23). The one place it
+// could have been broken is the base branch's own name, whose layer 1 a
+// launcher resolves through checkoutBaseBranch — and that read resolves the
+// checkout's file over the published project layer, which opens the project
+// layer's bucket (checkoutParse → findLayer) and writes the local layer cache.
+//
+// The fixture is exactly the shape that would have done it: an anchored
+// checkout (project: and gcp_project:), which is what findLayer needs before it
+// reads anything, and a selected project config whose runs_bucket is the
+// default name for its GCP project, so the layer is read from
+// gs://fugaro-runs-proj-1234 rather than skipped as another installation's.
+//
+// The two openers below are the seams TestMain's own guard uses (it panics on a
+// gs:// URL), overridden here so a failure names the rule rather than the URL:
+// layerBucketOpener for the project layer (checkoutParse → findLayer) and
+// sharedBucketOpener for the published project config a shared selection
+// fetches. The policy node is the third cloud read this could have made — the
+// launcher's own layer 3 — and it needs a cloudEnv, which no path here builds.
+func TestSecurityPathsOpensNoBucket(t *testing.T) {
+	path := isolateProjects(t, t.TempDir())
+	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\n" +
+		"user: someone@example.com\nruns_bucket: fugaro-runs-proj-1234\n" +
+		"repos:\n  acme/app: { provider: github, workflows: [web] }\n"
+	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	open, openShared := layerBucketOpener, sharedBucketOpener
+	layerBucketOpener = func(context.Context, string) (*blobx.Bucket, error) {
+		t.Fatal("fugaro security paths read the project layer's bucket: every read it makes is offline")
+		return nil, nil
+	}
+	sharedBucketOpener = func(context.Context, string) (*blobx.Bucket, error) {
+		t.Fatal("fugaro security paths read the runs bucket for a shared project config: every read it makes is offline")
+		return nil, nil
+	}
+	t.Cleanup(func() { layerBucketOpener, sharedBucketOpener = open, openShared })
+
+	securityCheckout(t, "acme/app", securityAnchoredYAML)
+
+	doc := securityDoc(t, "security", "paths")
+	if doc.Base != "main" {
+		t.Errorf("base = %q, want %q: the checkout's own file names it, and reading it costs no bucket", doc.Base, "main")
+	}
+	if doc.Project != "aurora" || doc.Error != "" {
+		t.Errorf("project = %q, error = %q, want the file at origin/main read out of the object database", doc.Project, doc.Error)
+	}
+	if doc.Security.Count != len(securityFloorRows()) {
+		t.Errorf("security.count = %d, want the floor's %d rows", doc.Security.Count, len(securityFloorRows()))
 	}
 }

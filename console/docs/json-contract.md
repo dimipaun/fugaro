@@ -2990,8 +2990,20 @@ checkout's **own object database** (`readFugaroYAMLAtRef`: git `cat-file`, never
 the network and never the working tree), and the base branch's *name* is resolved
 the way every launcher resolves it — the working tree's own `git.base_branch`,
 else the local config's, else main — because the ref is what the read needs
-before it can happen at all. **Nothing is fetched**: a ref this checkout does not
-hold is the `error` above rather than a guess at another document.
+before it can happen at all. That first layer is read out of the file's own text
+(`config.GitBaseBranchOf`) rather than through the launcher's
+`checkoutBaseBranch`, whose value comes from the file resolved over the published
+project layer — a resolution that opens the layer's bucket (`checkoutParse` →
+`findLayer`) and writes the local layer cache. Nothing is lost by it: a project
+layer cannot set `git.base_branch` at all (`config.LayerGit` carries `provider`
+and `pr` and nothing else), so the file's own text and the resolution name the
+same branch, and `fugaro models ls`'s own base-branch read makes the same offline
+choice. The layer this does **not** read is the published policy's `base_branch`
+(the launcher's layer 3): that one is a database read, so a project whose default
+lives only there reads as `main` here — the one case in which a run could be cut
+from a branch this document does not name. **Nothing is fetched**: a ref this
+checkout does not hold is the `error` above rather than a guess at another
+document.
 
 **A read that did not answer is not an exit, and it is not a silent floor
 either.** The one thing this slice reads at the ref is the repository's own
@@ -3011,11 +3023,15 @@ checked path is the path the caller typed.
 **Flags** (`newSecurityPathsCmd`): `--check PATH` (repeatable) and `--json`, and
 nothing else. It carries no cloud flags — no `--project`, no `--config` — because
 it reads one file at one ref of the checkout it runs in: it wants no project, no
-credentials and no network, so it runs anywhere a coding agent's session does. It
-is **not** on the console's spawn list, and that is D1514's deferral rather than
-an oversight: the console draws no screen from this document yet, and this
-section exists because §6 is where a document a console could read is written
-down.
+credentials and **no read of its own that leaves the machine**. That last one is
+a property of the code and not only of the flags, and it has a test of its own:
+`TestSecurityPathsOpensNoBucket` holds the project layer's opener
+(`layerBucketOpener`) and the runs bucket's (`sharedBucketOpener`) to a failure
+if either is reached, with an anchored checkout and a selected project config —
+the two things `findLayer` needs before it reads anything. It is **not** on the
+console's spawn list, and that is D1514's deferral rather than an oversight: the
+console draws no screen from this document yet, and this section exists because
+§6 is where a document a console could read is written down.
 
 **This slice is the floor alone** (D1504, D1519). No project key and no
 repository key exists yet, so every row's `source` is `floor` and there is one

@@ -4600,8 +4600,9 @@ has to touch to be reviewed as a security-sensitive change, one named row each.
 It is read at the base branch, so a change can never carry the list that governs
 its own review.
 
-Every read here is offline: it touches no bucket, no database and no host, and
-it reads a file at a ref only out of the checkout's own object database.
+Every read this command makes is offline: it opens no bucket, no database and no
+host, and it reads a file at a ref only out of the checkout's own object
+database.
 
 Usage: `fugaro security`
 
@@ -4629,7 +4630,11 @@ sensitive, never routine: an unknown path fails closed.
 
 The list is read at the base branch — the ref the next run from this checkout is
 cut from — and never from the working copy, so a change cannot carry the rule
-that governs its own review.
+that governs its own review. The ref's name is resolved from this checkout's own
+fugaro.yaml and the local config, and the published policy's base_branch is not
+consulted: it is a database read, and every read this command makes is offline.
+A project whose default base branch lives only in the published policy therefore
+reads as main here.
 
 Usage: `fugaro security paths`
 

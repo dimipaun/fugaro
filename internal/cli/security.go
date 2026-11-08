@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -28,6 +29,19 @@ import (
 // working tree — and the base branch's *name* is resolved the way every
 // launcher resolves it, from the working tree's file and the local config, as
 // modelsBaseBranch's own read does.
+//
+// Why that read costs no bucket. Every read here is the command's own and is
+// offline: the working tree's file for the base branch's name
+// (securityFileBaseBranch, which reads the text rather than resolving it over
+// the project layer, because that resolution opens the runs bucket), the local
+// config for the two layers below it (selectedProjectConfigReadOnly, the
+// side-effect-free selection the update check itself uses), and git's own
+// object database for the file at the ref. No bucket, no database, no
+// credential: the command runs where a coding agent's session does, with
+// nothing set up. The one layer it does not read is the published policy's
+// base_branch — a database read — so a project whose default lives only there
+// reads as main here, and that is the one case where a run could be cut from a
+// branch this document does not name.
 //
 // Why a path no row matches is still answered. `sensitivity.Match` answers the
 // level question and `sensitivity.Classify` the class one; this command asks
@@ -155,8 +169,9 @@ has to touch to be reviewed as a security-sensitive change, one named row each.
 It is read at the base branch, so a change can never carry the list that governs
 its own review.
 
-Every read here is offline: it touches no bucket, no database and no host, and
-it reads a file at a ref only out of the checkout's own object database.`,
+Every read this command makes is offline: it opens no bucket, no database and no
+host, and it reads a file at a ref only out of the checkout's own object
+database.`,
 	}
 	cmd.AddCommand(newSecurityPathsCmd())
 	return cmd
@@ -186,7 +201,11 @@ sensitive, never routine: an unknown path fails closed.
 
 The list is read at the base branch — the ref the next run from this checkout is
 cut from — and never from the working copy, so a change cannot carry the rule
-that governs its own review.`,
+that governs its own review. The ref's name is resolved from this checkout's own
+fugaro.yaml and the local config, and the published policy's base_branch is not
+consulted: it is a database read, and every read this command makes is offline.
+A project whose default base branch lives only in the published policy therefore
+reads as main here.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runSecurityPaths(cmd, o) },
 	}
@@ -283,13 +302,14 @@ func securityBaseProject(ctx context.Context, root, ref string) (string, string)
 // the one function every layer resolves through (config.EffectiveBaseBranch):
 // the checkout's working-tree file when it writes git.base_branch, else the
 // local config's repos.<r>.base_branch, else the project's own base_branch,
-// else main. It is modelsBaseBranch's own resolution for the same reason — the
-// published policy's base_branch is a cloud read and this command reaches
-// nothing — with one difference: the repository is named by its origin rather
-// than by a key of the local config, so it is looked up through RepoFor, the
-// one lookup localcfg offers for a repository named from outside.
+// else main. The published policy's base_branch is not consulted — reading it
+// is a database read, and this command reaches nothing — so a project whose
+// default lives only there reads as main here, exactly as it does in
+// modelsBaseBranch. The repository is named by its origin rather than by a key
+// of the local config, so it is looked up through RepoFor, the one lookup
+// localcfg offers for a repository named from outside.
 func securityBaseBranch(ctx context.Context, repo string) string {
-	file, fileSets := checkoutBaseBranch(ctx, repo)
+	file, fileSets := securityFileBaseBranch(ctx, repo)
 	repoBranch, projectBranch := "", ""
 	if lc := selectedProjectConfigReadOnly(ctx); lc != nil {
 		projectBranch = lc.BaseBranch
@@ -299,6 +319,38 @@ func securityBaseBranch(ctx context.Context, repo string) string {
 	}
 	base, _ := config.EffectiveBaseBranch(file, fileSets, repoBranch, projectBranch)
 	return base
+}
+
+// securityFileBaseBranch is layer 1 read without a layer: the base branch the
+// working directory's checkout of repo names, and whether its fugaro.yaml
+// writes git.base_branch at all — the same two answers checkoutBaseBranch
+// gives, out of the file's own text (config.GitBaseBranchOf) rather than out of
+// the file resolved over the project layer.
+//
+// checkoutBaseBranch cannot be used here, and this is the whole reason the
+// function exists: its value comes from checkoutConfig, which resolves the
+// file over the published project layer — a read of the runs bucket
+// (checkoutParse → findLayer, which opens gs://fugaro-runs-<gcp> and writes the
+// local layer cache). This command's contract is that it opens no bucket
+// (§6.23), and nothing is lost by reading the file instead: a project layer
+// cannot set git.base_branch at all (config.LayerGit carries provider and pr
+// and nothing else), so the resolution and the file's own text name the same
+// branch. modelsBaseBranch makes the same offline choice for the same reason,
+// with the parsed config it already holds.
+//
+// The file is the working tree's, as it is for a launcher resolving the ref of
+// a launch that has none yet: the list is read at the base branch, and the
+// branch's own name has to be answered before any ref can be read at all.
+func securityFileBaseBranch(ctx context.Context, repo string) (string, bool) {
+	root := checkoutRoot(ctx, repo)
+	if root == "" {
+		return "", false
+	}
+	data, err := readFugaroYAML(filepath.Join(root, "fugaro.yaml"))
+	if err != nil {
+		return "", false
+	}
+	return config.GitBaseBranchOf(data)
 }
 
 // writeSecurityPaths prints the document as the table a person reads: the list
