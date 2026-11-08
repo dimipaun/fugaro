@@ -256,14 +256,22 @@ func TestSecurityPathsCheckAnswersPerPath(t *testing.T) {
 }
 
 // TestSecurityPathsCheckFailsClosedOnAnUnplaceablePath: a path the reader
-// cannot place is sensitive, and no row is named for it (F22, D1512). The three
-// spellings here are the ones SC1's own table refuses — absolute, escaping, and
-// the empty string — and each of them means more than one path, so a list can
-// never answer `no` for one.
+// cannot place is sensitive, and no row is named for it (F22, D1512). Three of
+// the five spellings here are the ones SC1's own table refuses — `/etc/passwd`
+// is absolute, `docs/../website/src/x.md` escapes, and the empty string is no
+// path at all — and each of them means more than one path, so a list can never
+// answer `no` for one. The other two are `.` and `..`: the spellings that same
+// rule *accepts*, because path.Clean leaves a bare `.` and a bare `..` exactly
+// as they are, and that name no path in a checkout either (`.` is the
+// repository root as a directory reference and `..` is the tree above it). So
+// they are refused where this command composes the answer
+// (securityPlaceable) rather than by the matcher, and this test is what holds
+// that boundary: it is the pair a reader would otherwise be told the list says
+// nothing about, which is the one answer D1512 keeps out of this field.
 func TestSecurityPathsCheckFailsClosedOnAnUnplaceablePath(t *testing.T) {
 	securityCheckout(t, "acme/app", securityNoKeyYAML)
 
-	paths := []string{"/etc/passwd", "docs/../website/src/x.md", ""}
+	paths := []string{"/etc/passwd", "docs/../website/src/x.md", "", ".", ".."}
 	args := []string{"security", "paths"}
 	for _, p := range paths {
 		args = append(args, "--check", p)

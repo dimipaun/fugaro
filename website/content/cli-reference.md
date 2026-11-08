@@ -4648,8 +4648,9 @@ came from. With --check, each named path is answered against that list instead:
 whether the list treats it as security-sensitive, and the row that decided. The
 list is a positive one, so a path no row matches is answered not sensitive —
 except a path the reader cannot place at all (absolute, escaping, uncleaned,
-outside ASCII): that one is answered sensitive, never routine, because a
-spelling that means more than one path is one no list can speak about.
+outside ASCII, or naming no path in the checkout at all: . and ..): that one is
+answered sensitive, never routine, because a spelling that means more than one
+path, or none, is one no list can speak about.
 
 The list is read at the base branch — the ref the next run from this checkout is
 cut from — and never from the working copy, so a change cannot carry the rule

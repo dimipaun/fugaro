@@ -48,8 +48,8 @@ import (
 // escalates on a row of the list in force that matches its diff (SC6, F7), so
 // `sensitive` is true when a row of the list matched the path — and true when
 // the reader cannot place the path at all, which is the one case the list can
-// never speak about: absolute, escaping, uncleaned, outside ASCII. Nothing else
-// makes it true. `sensitivity.Classify` is *not* asked, and this is deliberate:
+// never speak about: absolute, escaping, uncleaned, outside ASCII, or naming no
+// path in the checkout at all (`.` and `..`). Nothing else makes it true. `sensitivity.Classify` is *not* asked, and this is deliberate:
 // its Sensitive is the complement of its routine trees, so asking it would
 // answer true for most of any repository (`internal/cli/registry.go` is in no
 // routine tree and on no floor row) and would tell the agent that a change
@@ -143,9 +143,10 @@ type securityPathAnswer struct {
 	Path string `json:"path"`
 	// Sensitive is the fail-closed answer: true when a row of the list in force
 	// matched the path, and true when the reader cannot place the path at all —
-	// not clean and repository-relative — because no list can speak about a
-	// spelling that means more than one path (F22, D1512). A placeable path no
-	// row matched is false, whatever the classifier calls the tree it sits in.
+	// a spelling that is not a clean repository-relative path, or one that names
+	// no path in a checkout (`.`, `..`) — because no list can speak about a
+	// spelling that means more than one path or none (F22, D1512). A placeable
+	// path no row matched is false, whatever the classifier calls its tree.
 	Sensitive bool `json:"sensitive"`
 	// Matched is the row that decided the answer, and null when no row did —
 	// which is a real answer and not a missing one: the list in force says
@@ -204,8 +205,9 @@ came from. With --check, each named path is answered against that list instead:
 whether the list treats it as security-sensitive, and the row that decided. The
 list is a positive one, so a path no row matches is answered not sensitive —
 except a path the reader cannot place at all (absolute, escaping, uncleaned,
-outside ASCII): that one is answered sensitive, never routine, because a
-spelling that means more than one path is one no list can speak about.
+outside ASCII, or naming no path in the checkout at all: . and ..): that one is
+answered sensitive, never routine, because a spelling that means more than one
+path, or none, is one no list can speak about.
 
 The list is read at the base branch — the ref the next run from this checkout is
 cut from — and never from the working copy, so a change cannot carry the rule
@@ -286,7 +288,22 @@ var securityProbeRow = sensitivity.Pattern{Name: "placeable", Match: "**", Categ
 // "clean and repository-relative" in this file is the copy that drifts from the
 // one the matcher and the classifier ask. The direction is the safe one — a path
 // the probe does not match is answered sensitive, never routine.
+//
+// `.` and `..` are the two spellings the matcher's own rule accepts and that
+// name no path in a checkout, and they are refused here rather than by that
+// rule: cleanRelative compares the path with path.Clean's answer, and
+// path.Clean leaves a bare `.` and a bare `..` exactly as they are, so both
+// pass it while every other spelling that holds a `.` or `..` component —
+// `./x`, `docs/..`, `a/./b` — is rewritten and refused. Neither names a file of
+// the repository (`.` is the repository root as a directory reference and `..`
+// is the tree above it), so a list can speak about neither, and answering
+// `sensitive: false` for them would be the one answer D1512 keeps out of this
+// field. Every spelling with a component to its name is left to the matcher:
+// `.gitignore` and `...` are ordinary file names and are placed.
 func securityPlaceable(path string) bool {
+	if path == "." || path == ".." {
+		return false
+	}
 	return len(sensitivity.Match([]string{path}, []sensitivity.Pattern{securityProbeRow})) > 0
 }
 

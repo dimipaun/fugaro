@@ -3075,10 +3075,17 @@ base-branch half no `config` verb reaches at all.
 is true when a row of the list in force matched the path — the list is a
 **positive** one, and this field answers what it says, not what it leaves out —
 and true when the reader cannot place the path at all: a spelling that is not a
-clean repository-relative path (`/etc/passwd`, `docs/../website/src/x.md`, the
-empty string, the three the plan's Check 370 names) means more than one path, and
-no list can speak about it. The two are told apart by `matched`: `sensitive:
-true` with `matched: null` is exactly that unplaceable case, and
+clean repository-relative path means more than one path, or names none inside
+the repository, and no list can speak about it. The spellings are the ones
+`TestSecurityPathsCheckFailsClosedOnAnUnplaceablePath` holds, drawn from
+`sensitivity`'s own table (`pattern_test.go`'s
+`TestUnplaceablePathMatchesNoRuleAndClassifiesSensitive`): `/etc/passwd` is
+absolute, `docs/../website/src/x.md` escapes, the empty string is no path at
+all, and a bare `.` and a bare `..` are the repository root as a directory
+reference and the tree above it — the pair the matcher's own rule *accepts*,
+since `path.Clean` leaves both exactly as they are, and that this command
+refuses where it composes the answer. The two are told apart by `matched`:
+`sensitive: true` with `matched: null` is exactly that unplaceable case, and
 `docs/pending-workflows/console-tests.yml` is `true` **with** the floor's
 `pending-workflows` row.
 
