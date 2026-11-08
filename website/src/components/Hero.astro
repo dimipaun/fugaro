@@ -101,18 +101,18 @@ const MAX_PARALLEL = 20
 }
 
 // The latest releases, for the one line above the headline (the owner's request of 2026-10-22,
-// carried here from PR #940): the CLI's newest published release from the changelog's own data
-// (release files held to the plugin's version) and the console's from its own notes held to its
-// package version (`src/lib/console-release.mjs`). Both are read at build time, so the line names
-// no version this file holds. The paths are passed because inside a build the modules are bundled
-// where their own defaults do not resolve (`src/pages/changelog.astro` says why).
+// carried here from PR #940): the CLI's newest release from the changelog's own data (the newest
+// release file — the drafts of the next release are not entries, `src/lib/changelog.mjs`) and the
+// console's from its own notes held to its package version (`src/lib/console-release.mjs`). Both
+// are read at build time, so the line names no version this file holds. The paths are passed
+// because inside a build the modules are bundled where their own defaults do not resolve
+// (`src/pages/changelog.astro` says why).
 const latestCli = buildChangelog({
   releasesDir: path.join(REPO_ROOT, 'docs', 'releases'),
-  pluginFile: path.join(REPO_ROOT, 'plugin', '.claude-plugin', 'plugin.json'),
   streamsFile: path.join(REPO_ROOT, 'docs', 'release-streams.yaml'),
-}).find((entry) => entry.released)
+})[0]
 if (latestCli === undefined) {
-  throw new Error('website/src/components/Hero.astro: no release file under docs/releases/ is at or below the version in plugin/.claude-plugin/plugin.json, and the latest-release line names the newest published one.')
+  throw new Error('website/src/components/Hero.astro: docs/releases/ holds no release file at or below the CLI stream’s current version, and the latest-release line names the newest release the changelog returns.')
 }
 const latestConsole = latestConsoleRelease({
   notesDir: path.join(REPO_ROOT, 'docs', 'releases', 'console'),
