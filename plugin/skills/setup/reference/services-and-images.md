@@ -25,7 +25,7 @@ If the tests use those services, `commands.test` starts them first with `fugaro-
 | Evidence | Setting |
 |---|---|
 | the catalog has an entry this workflow should run | `image_name:` with the entry's name: 1 to 40 of `a-z`, `0-9` and `-`, starting and ending with a letter or a digit |
-| the tests need what the base and the repository's `mise.toml` do not give them: a service, a browser, a system library | `needs:` with the tags, 1 to 32 of `a-z`, `0-9`, `.`, `_` and `-`, each starting with a letter or a digit: Fugaro picks the entry with the fewest tags that covers them all |
+| the tests need what the base and the repository's `mise.toml` do not give them: a service, a browser, a system library | `needs:` with the tags, each 1 to 64 of `a-z`, `0-9`, `.`, `_` and `-` and starting with a letter or a digit (a list holds up to 32 of them): Fugaro picks the entry with the fewest tags that covers them all |
 | neither | the project's **default** entry runs |
 | the workflow is `checkout: clone` | neither: the job runs the installation's base image and clones the source at start-up |
 

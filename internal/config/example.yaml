@@ -59,8 +59,9 @@ agent:
 workflows:
   web:                        # workflow name, chosen with `fugaro run --workflow`
     # image_name: web-runtime   # one entry of the project's image catalog, built and owned by the project
-    #                           # (fugaro image add; docs/project-image-catalog/README.md). Without it the job
-    #                           # runs the installation's base image; runtimes come from a mise.toml at the root
+    #                           # (fugaro image add; docs/project-image-catalog/README.md). A workflow that names
+    #                           # neither it nor `needs:` runs the entry the catalog marks as the project's
+    #                           # default; runtimes come from a mise.toml at the root
     # needs: [node]             # or the tags the job needs, for an entry chosen by tag instead of by name
     commands:
       build: npm run build
