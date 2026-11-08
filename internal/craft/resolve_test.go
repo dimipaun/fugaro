@@ -132,32 +132,37 @@ func TestResolveProvenanceNamesTheLayer(t *testing.T) {
 	}
 }
 
-// TestResolvePrimaryLayerNames: the three names a layer answers under are the
-// ones config's own resolution already uses for the repository and the project,
-// and the one the installation's config — which is no fugaro.yaml layer — is
-// named by here. A caller passing them gets the vocabulary of F16 and no
-// second spelling of "project".
-func TestResolvePrimaryLayerNames(t *testing.T) {
-	if SourceProject != config.SourceProject || SourceRepo != config.SourceRepo {
-		t.Errorf("the craft layers spell the project %q and the repository %q, want config's own %q and %q",
-			SourceProject, SourceRepo, config.SourceProject, config.SourceRepo)
-	}
-	if SourceLocal != "local" {
-		t.Errorf("the installation config's layer is named %q, want \"local\"", SourceLocal)
-	}
-	if got, want := InheritedFrom("coder"), "inherited from coder"; got != want {
-		t.Errorf("InheritedFrom(coder) is %q, want %q", got, want)
+// TestResolveLayerNames: the strings a caller prints are the ones config's own
+// resolution already answers for the repository and the project (a reader who
+// sees "project" in `fugaro craft ls` and in `fugaro config show` is reading
+// one vocabulary), this package's name for the installation's config — which is
+// no fugaro.yaml layer — and the two shapes of an inherited half, which is
+// F16's own wording.
+func TestResolveLayerNames(t *testing.T) {
+	for _, tc := range []struct{ got, want string }{
+		{SourceRepo, "repo"},
+		{SourceProject, "project"},
+		{SourceDefault, "default"},
+		{SourceLocal, "local"},
+		{InheritedFrom(config.CraftCoder), "inherited from coder"},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("a layer is named %q, want %q", tc.got, tc.want)
+		}
 	}
 }
 
 // TestResolveInheritsWithoutASetting: a craft turned on without settings of its
-// own is the craft it follows (spec §3), and one that follows a craft which
-// sets nothing keeps nothing.
+// own is the craft it follows, both halves (spec §3).
 func TestResolveInheritsWithoutASetting(t *testing.T) {
-	got, _ := Resolve([]Layer{{
-		Name:   config.SourceProject,
-		Crafts: config.Crafts{SeniorReview: config.Craft{Model: "claude-opus-4", Access: "claude-1"}},
+	got, ps := Resolve([]Layer{{
+		Name:        config.SourceProject,
+		Crafts:      config.Crafts{SeniorReview: config.Craft{Model: "claude-opus-4", Access: "claude-1"}},
+		Credentials: []config.Credential{{Name: "claude-1", Type: config.CredentialTypeClaudeOAuth}},
 	}}, false)
+	if len(ps) > 0 {
+		t.Fatalf("the senior review's access names a credential the same layer holds: %v", ps)
+	}
 	want := Effective{
 		Model: "claude-opus-4", ModelFrom: InheritedFrom(config.CraftSeniorReview),
 		Access: "claude-1", AccessFrom: InheritedFrom(config.CraftSeniorReview),
@@ -242,6 +247,11 @@ func TestResolveInertPool(t *testing.T) {
 		if got[tc.craft].Inert != tc.inert {
 			t.Errorf("%s: Inert is %v, want %v (%s)", tc.craft, got[tc.craft].Inert, tc.inert, tc.why)
 		}
+	}
+	// A lone Claude OAuth credential is what an installation has today, and the
+	// built-in vertex is no pool at all: neither is inert (D1624).
+	if inert("claude-1", layers, false) || inert(config.CredentialVertex, layers, false) {
+		t.Error("a single credential is inert: only a pool of two or more subscriptions is")
 	}
 	// The switch on: the same pools serve, so nothing is inert.
 	got, _ = Resolve(layers, true)

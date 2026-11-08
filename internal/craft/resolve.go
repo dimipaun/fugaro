@@ -81,12 +81,13 @@ type Effective struct {
 	Inert bool
 }
 
-// Resolve answers every craft (config.CraftNames) from the layers, in the order
-// this repository resolves a fugaro.yaml key in: the checkout's file, then the
-// installation's config, then the project's answer, narrowest first
-// (config.EffectiveBaseBranch). The first layer that sets a half of a craft
-// wins that half, and the two halves are answered apart from each other — a
-// craft may change only its model and keep the access it follows (spec §3).
+// Resolve answers every craft (config.CraftNames) from the layers, read in the
+// order they are given: narrowest first, which is the order this repository
+// resolves a key in — the checkout's file, the installation's config, the
+// project's answer (config.EffectiveBaseBranch). The first layer that sets a
+// half of a craft wins that half, and the two halves are answered apart from
+// each other: a craft may change only its model and keep the access it follows
+// (spec §3).
 //
 // A half no layer sets is the craft it follows (config.CraftParent): what a
 // craft that follows nobody leaves unset is the default credential for an
