@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -50,25 +49,6 @@ func hookDigestRegistry(t *testing.T) *gcpfake.Registry {
 		return &imagecheck.Registry{HTTP: &http.Client{}, Google: &http.Client{}, Endpoint: func(string) string { return reg.URL }}
 	}
 	return reg
-}
-
-// hookDigestRegistryUnavailable points the launcher's digest reads at a
-// registry whose every manifest read fails with a server error: the read
-// failure C4 calls a warning only. It is neither of the two failures the
-// warning treats specially — the tag being gone (a 404, ErrManifestUnknown,
-// named for the operator to fix) and the launcher's identity being refused (a
-// 401/403, which stays silent) — so it reaches the launcher as a warning.
-func hookDigestRegistryUnavailable(t *testing.T) {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	t.Cleanup(srv.Close)
-	old := checkRegistry
-	t.Cleanup(func() { checkRegistry = old })
-	checkRegistry = func() *imagecheck.Registry {
-		return &imagecheck.Registry{HTTP: srv.Client(), Google: srv.Client(), Endpoint: func(string) string { return srv.URL }}
-	}
 }
 
 // writeDigestBuildRecord writes the build record of slug's workflow as the
@@ -200,18 +180,21 @@ func TestRunDigestNoRecordYet(t *testing.T) {
 // cannot read (checkImageSince). A launch that trips none of them — this
 // fixture's, which carries no such field and resolves no repository recipe —
 // reaches the warning with the failure instead, which is what makes the record
-// half of the rule reachable here at all.
+// half of the rule reachable here at all. TestWarnImageDigestDriftSkips pins
+// that same branch at the warning's own level; what this case adds is the end
+// of the launch, which the direct call cannot show.
 func TestRunDigestReadFailureIsAWarningOnly(t *testing.T) {
 	cases := []struct {
 		name  string
-		setup func(t *testing.T, f *cloudFixture)
+		setup func(t *testing.T, f *cloudFixture, reg *gcpfake.Registry)
 		want  string
-		// reads is how many manifest requests the registry fake must have
-		// seen, or -1 when the case does not care.
+		// reads is how many calls the registry fake must have received: a
+		// refused one is still a call, so this says the launcher asked and
+		// how often.
 		reads int
 	}{{
 		name: "the build record cannot be read",
-		setup: func(t *testing.T, f *cloudFixture) {
+		setup: func(t *testing.T, f *cloudFixture, _ *gcpfake.Registry) {
 			// Over MaxReadBytes: a read failure that is not ErrNotExist, so
 			// what is tested is the failure rather than the record's absence.
 			writeBucketFile(t, f, imagecheck.RecordKey(appSlug, "web"), strings.Repeat("x", blobx.MaxReadBytes+1))
@@ -220,18 +203,22 @@ func TestRunDigestReadFailureIsAWarningOnly(t *testing.T) {
 		reads: 0,
 	}, {
 		name: "the registry cannot be read",
-		setup: func(t *testing.T, f *cloudFixture) {
-			hookDigestRegistryUnavailable(t)
+		setup: func(t *testing.T, f *cloudFixture, reg *gcpfake.Registry) {
+			// Every call answered 500: a read failure that is neither the tag
+			// being gone (a 404, named for the operator to fix) nor the
+			// launcher's identity being refused (a 401/403, which stays
+			// silent).
+			reg.Refuse(http.StatusInternalServerError, "INTERNAL", "", "the registry is down")
 			writeDigestBuildRecord(t, f, appSlug, "web", digestImage, recordDigest)
 		},
 		want:  "warning: the image digest of acme/app workflow web is not compared with its build record: reading " + digestImage + ":latest's manifest: HTTP 500",
-		reads: -1,
+		reads: 1,
 	}}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			f := newCloudFixture(t)
 			reg := hookDigestRegistry(t)
-			c.setup(t, f)
+			c.setup(t, f, reg)
 			_, warn, err := execute(t, "run", "--repo", "acme/app", "--run-id", wallRunID(t, time.Minute, "d5a1"), "A task")
 			if err != nil {
 				t.Fatal(err)
@@ -245,10 +232,8 @@ func TestRunDigestReadFailureIsAWarningOnly(t *testing.T) {
 			if n := len(f.run.Executions()); n != 1 {
 				t.Fatalf("%d executions, want 1: a read failure must never refuse the launch", n)
 			}
-			if c.reads >= 0 {
-				if n := len(reg.Accepts()); n != c.reads {
-					t.Fatalf("%d registry reads, want %d", n, c.reads)
-				}
+			if n := len(reg.Requests()); n != c.reads {
+				t.Fatalf("%d registry calls, want %d", n, c.reads)
 			}
 		})
 	}
