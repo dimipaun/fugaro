@@ -101,7 +101,7 @@ func TestLegacyUnmatchedReasonIsUnclassified(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := ClassOf(tc.rec); got != failure.Unclassified {
-				t.Errorf("ClassOf(%+v) is %q, want %q: an unmatched reason is never a guess and never a class read off the status, and a value this build does not know is the same answer", tc.rec, got, failure.Unclassified)
+				t.Errorf("ClassOf(%q, holding %q) is %q, want %q: an unmatched reason is never a guess and never a class read off the status, and a value this build does not know is the same answer", tc.rec.Reason, tc.rec.FailureClass, got, failure.Unclassified)
 			}
 		})
 	}

@@ -6,6 +6,7 @@
 package runview
 
 import (
+	"slices"
 	"strings"
 	"time"
 
@@ -339,10 +340,190 @@ func priced(p backend.Prices) bool {
 // rather than in internal/failure because it reads a *runstore.Record* and
 // failure may not import runstore (F21).
 func ClassOf(rec *runstore.Record) failure.Class {
-	if rec == nil {
+	if rec == nil || !failedStatus(rec.Status) {
 		return ""
 	}
-	return rec.FailureClass
+	if c := knownClass(rec.FailureClass); c != "" {
+		return c
+	}
+	// A halted record's class is its halt's family, read through this
+	// package's copy of the writer's own table. The block is asked for the
+	// halted status the writer asks it at: a run halted and then ended by
+	// something else (an infra_error, endRefused) carries the block and a
+	// class of its own, and the class describes that ending, not the halt.
+	if rec.Status == runstore.StatusHalted && rec.Halt != nil {
+		return haltClass(rec.Halt.Reason)
+	}
+	// A cancelled run is the one ending whose class the reason no longer
+	// carries: finalize writes the reason the run had already failed for and
+	// the class of the ending (design §4.2, "a run that was cancelled after a
+	// tests failure is cancelled / cancelled"), so reading the reason here
+	// would class it by a sentence the run was about to report.
+	if rec.Status == runstore.StatusCancelled {
+		return failure.Cancelled
+	}
+	return legacyClass(rec.Reason)
+}
+
+// failedStatus reports whether status is an ending a run did not succeed
+// under, which is the set a class is written for: a succeeded run, a run still
+// going and a row that never started carry none (design §3, D1464).
+func failedStatus(status runstore.Status) bool {
+	switch status {
+	case runstore.StatusFailed, runstore.StatusHalted, runstore.StatusInfraError, runstore.StatusCancelled:
+		return true
+	}
+	return false
+}
+
+// knownClass is the value a record holds, in the vocabulary this build knows:
+// a value outside it is *unclassified* rather than echoed, the answer the
+// vocabulary's own closure gives (failure.PropertiesOf), so a class a later
+// build wrote reads as "a cause this build cannot name" instead of reaching a
+// report as a row nobody defined (F27).
+func knownClass(c failure.Class) failure.Class {
+	if c == "" {
+		return ""
+	}
+	if _, ok := failure.PropertiesOf(c); !ok {
+		return failure.Unclassified
+	}
+	return c
+}
+
+// legacyClass reads a reason the runner wrote, through the fixed table below:
+// the reading an old record gets, and the one the row and the digest both
+// publish (design §5). An answer is never derived from the status, and a
+// sentence the table does not carry is unclassified rather than a guess.
+func legacyClass(reason string) failure.Class {
+	lower := strings.ToLower(reason)
+	// The agent's own message is looked for first, and the phrases below are
+	// looked for only inside this envelope: a result whose text says the
+	// provider refused the credential is a cause this table may name, while
+	// the same words in a sentence the runner wrote about something else are
+	// not (design §5's ordering rule).
+	if strings.Contains(lower, agentErrorPrefix) {
+		return stageErrorClass(lower)
+	}
+	for _, row := range legacyReasons {
+		if strings.Contains(lower, row.reason) {
+			return row.class
+		}
+	}
+	return failure.Unclassified
+}
+
+// agentErrorPrefix is the runner's own words for a stage whose result reported
+// an error (stageErrorReason, internal/runner): the one envelope a reason
+// carrying model output arrives in.
+const agentErrorPrefix = "the agent reported an error"
+
+// authRefusedPhrases and transportFailedPhrases are this reader's copy of the
+// runner's own tables (authRefusedPhrases, transportFailedPhrases, FC4's
+// classifier). They are copies for the import direction's reason — the runner
+// imports this package, so this package cannot import it (F21) — and the two
+// sides are held together by the runner's
+// TestStageErrorClassesAgreeWithTheReadersTable, which reads every phrase of
+// those lists through this table.
+var (
+	authRefusedPhrases     = []string{"the provider answered with status 403", `"error":{"type":"authentication_error"`}
+	transportFailedPhrases = []string{"stream closed before completion"}
+)
+
+// stageErrorClass names the cause inside a reason carrying the agent's own
+// message, over the text the reason may hold already folded to lowercase: the
+// closed vocabulary's answer, never a word of the message. A message no phrase
+// names — including one that says nothing at all — is stage_error_unexplained,
+// which is the class the runner writes for exactly that case (design §4.3).
+func stageErrorClass(lower string) failure.Class {
+	for _, p := range authRefusedPhrases {
+		if strings.Contains(lower, p) {
+			return failure.ProviderAuthRefused
+		}
+	}
+	for _, p := range transportFailedPhrases {
+		if strings.Contains(lower, p) {
+			return failure.TransportFailed
+		}
+	}
+	return failure.StageErrorUnexplained
+}
+
+// legacyReason is one row of the reader's table: a sentence the runner itself
+// writes, lowercased, and the class the site that writes it chooses.
+type legacyReason struct {
+	class  failure.Class
+	reason string
+}
+
+// legacyReasons is the fixed table a legacy record's reason is read through,
+// in the order the rows are tried. Every entry is a sentence of the runner's
+// own, written at the site named beside it, and the class is the one that site
+// writes today — so a record written before the field shipped and one written
+// after read the same class for the same fact (F34, D1455).
+//
+// The order is what tells two rows apart where one sentence carries both: a
+// review round that answered nothing carries the "review round <n>" prefix
+// every review refusal has, so its own longer sentence is tried first.
+var legacyReasons = []legacyReason{
+	// Decide's refusals (internal/runner/outcome.go), the four classes it
+	// chooses where it refuses.
+	{failure.ReviewUnread, "returned no parseable verdict after a retry"},
+	{failure.ReviewUnread, "no review verdict"},
+	{failure.ReviewNotConverged, "review round "},
+	{failure.ReviewNotConverged, "last shipped nothing: round "},
+	{failure.ReviewNotConverged, "the mode was raised to "},
+	// finalize's own two, and the sentence it writes instead of the first
+	// when it had to commit work the suite never saw.
+	{failure.UnverifiedFinalCommit, "no verified test run on the final commit"},
+	{failure.UnverifiedFinalCommit, "uncommitted changes were committed at finalize, after the last verified test run"},
+	{failure.TestsFailed, "tests failing on the final commit"},
+	{failure.NoCommits, "the agent made no commits"},
+	// config_invalid's own two examples (design §3): a configured maximum
+	// above the model's own, and a file the runner cannot read — which is the
+	// shape every configuration refusal takes, fugaro.yaml's own among them.
+	{failure.ConfigInvalid, "is above the model's maximum"},
+	{failure.ConfigInvalid, "is invalid: "},
+	// The OAuth account's spent allowance: stageErrorReason's own sentence for
+	// it, which carries no error envelope and is classed as the runner classes
+	// it (FC4, O6).
+	{failure.StageErrorUnexplained, "the oauth account's subscription usage limit was reached"},
+	// endUnchanged's reasons, the five shapes of "the pull request or the
+	// branch changed under the run" (internal/runner/followup.go, runner.go),
+	// which the writer classes branch_moved — and endRefused's, the same fact
+	// arriving as a push the host will never accept.
+	{failure.BranchMoved, "during the run; nothing was pushed"},
+	{failure.BranchMoved, "no longer exists on origin; nothing was pushed"},
+	{failure.BranchMoved, "during the run; nothing was overwritten"},
+	{failure.BranchMoved, "during the run; the branch was pushed"},
+	{failure.BranchMoved, "during finalize; the branch was pushed"},
+	{failure.BranchMoved, "github refused the push:"},
+}
+
+// haltClass is which family a halt's reason belongs to: this package's copy of
+// the runner's own switch (internal/runner/halt.go), which the reader cannot
+// call and may not share a function with — failure may not import runstore, so
+// the mapping has no home both sides can reach (F21, D1455).
+//
+// The copy is held to the original by the runner's
+// TestHaltClassesAgreeWithTheReadersTable, which walks the whole closed set of
+// reasons through both, so a reason renamed or moved to another family on one
+// side and not the other is red.
+func haltClass(reason runstore.HaltReason) failure.Class {
+	switch reason {
+	case runstore.HaltKillSwitch:
+		return failure.HaltedKillSwitch
+	case runstore.HaltRunCap, runstore.HaltRepoDailyCap, runstore.HaltGlobalDailyCap,
+		runstore.HaltNoCap, runstore.HaltTokenCap:
+		return failure.HaltedBudget
+	case runstore.HaltNoCredential, runstore.HaltCredsRulesDenied,
+		runstore.HaltBudgetUnavailable, runstore.HaltBudgetTokenExpired:
+		return failure.HaltedCredential
+	}
+	if slices.Contains(runstore.GovernanceHaltReasons(), reason) {
+		return failure.HaltedGovernance
+	}
+	return failure.Unclassified
 }
 
 // Join builds the row for in, pricing compute with prices.
