@@ -199,6 +199,16 @@ var patternCases = []struct {
 		keep: `","step":"terraform apply"}`,
 	},
 	{
+		name: "escaped token after the scheme word that is never closed",
+		in:   `{"message":"Authorization: Bearer \"` + fake(strings.Repeat("A1b2C3d4", 3)),
+		leak: strings.Repeat("A1b2C3d4", 3),
+	},
+	{
+		name: "escaped token after the scheme word closed by a bare quote",
+		in:   `{"message":"Authorization: Bearer \"` + fake(strings.Repeat("A1b2C3d4", 3)) + `","step":"terraform apply"}`,
+		leak: strings.Repeat("A1b2C3d4", 3),
+	},
+	{
 		name: "header over a nested object",
 		in: `{"authorization":{"token":"` + fake(strings.Repeat("A1b2C3d4", 3)) +
 			`"},"step":"terraform apply"}`,

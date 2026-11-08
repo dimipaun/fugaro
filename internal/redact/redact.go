@@ -189,7 +189,12 @@ var (
 	//     quote never arrives. Quoting a value is a spelling the two rules
 	//     above do not read — one wants the quote right after the name, the
 	//     other an escaped name — and this rule would otherwise stop at the
-	//     opening quote and leave the token between the two.
+	//     opening quote and leave the token between the two. A spelling whose
+	//     quotes are escaped takes the rest of the line once its closing is
+	//     gone: the escaped body steps over escapes, so where the closing
+	//     should be there may instead be a bare quote of a record cut in half
+	//     (`{"message":"Authorization: Bearer \"<token>`), and ending the value
+	//     there would leave the token standing after it.
 	//   - a bracketed value with no quote in it ends at its own bracket. That
 	//     covers a list a log printed (`authorization: [1, 2]`) and, since
 	//     the marker is bracketed too, the rule's own replacement, which is
@@ -206,7 +211,7 @@ var (
 	// quote — a quoted value is the form above, already redacted — and a
 	// leading backslash counts only when what follows it is not a quote, or
 	// this rule would eat the line from the escaped form's `\"[REDACTED]\"`.
-	authHeader = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api[_-]?key|private[_-]?token)"?\s*:\s*)(?:\[[^"\r\n]*?\]|[\[{][^\r\n]*|(?:bearer|basic)[ \t]+\\+"(?:\\.|[^"\\\r\n])*\\+"|(?:bearer|basic)[ \t]+"(?:\\.|[^"\\\r\n])*"?|(?:bearer|basic)[ \t]+'(?:\\.|[^'\\\r\n])*'?|'(?:\\.|[^'\\\r\n])*'?|(?:[^\s"'\\\r\n\[{]|\\[^\s"\r\n])[^"'\r\n]*)`)
+	authHeader = regexp.MustCompile(`(?i)\b("?(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-goog-api-key|api[_-]?key|private[_-]?token)"?\s*:\s*)(?:\[[^"\r\n]*?\]|[\[{][^\r\n]*|(?:bearer|basic)[ \t]+\\+"(?:\\.|[^"\\\r\n])*\\+"|(?:bearer|basic)[ \t]+\\+"[^\r\n]*|(?:bearer|basic)[ \t]+"(?:\\.|[^"\\\r\n])*"?|(?:bearer|basic)[ \t]+'(?:\\.|[^'\\\r\n])*'?|'(?:\\.|[^'\\\r\n])*'?|(?:[^\s"'\\\r\n\[{]|\\[^\s"\r\n])[^"'\r\n]*)`)
 
 	// authScheme is the same credential where no header name introduces it:
 	// a curl line or an error body prints `Bearer <token>` on its own. The
