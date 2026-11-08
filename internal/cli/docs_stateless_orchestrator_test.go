@@ -366,6 +366,14 @@ func TestDocsStatelessOrchestratorLongRunTriageIsFollowedThrough(t *testing.T) {
 		"CIUnknown",
 		"TestTriageFailsClosedWithoutAFindingsFile",
 		"TestTriageFailsClosedOnAnUnknownSeverity",
+		"TestTriageRecommendsOnlyWhenAnInputCannotBeRead",
+		"TestTriageNeverCancelsOnAnUnreadableFindingsFile",
+		"TestTriageBlocksTheMergeOnASensitiveChangedPath",
+		"TestTriageNeverMergesATruncatedPathSet",
+		"TestTriageReadsTheFindingsFileFromTheRunsArtifactNotTheCheckout",
+		"TestTriageRefusesAnUnknownSeverityWithoutCancelling",
+		"`sensitivity.Classify(record.ChangedFiles.Paths) == sensitivity.Routine`",
+		"`RecommendOnly`",
 		"TestTriageUsesThePathClassifierForSecurity",
 		"TestTriageCancelsThroughTheCancelPath",
 		"TestTriageIsWrittenToTheAuditLog",
@@ -380,6 +388,13 @@ func TestDocsStatelessOrchestratorLongRunTriageIsFollowedThrough(t *testing.T) {
 	for _, want := range []string{"U10", "split into sub-tasks", "the owner's ruling"} {
 		if !strings.Contains(rec, want) {
 			t.Errorf("%s: BF2's %q is gone", soReconciled, want)
+		}
+	}
+	// An input nobody could read is the recommend-only outcome, never a cancel,
+	// and the merge is gated on the whole diff, not only on the finding set.
+	for _, want := range []string{"the **recommend-only** outcome", "an input nobody read is not evidence that the run is bad", "**the whole changed-path set is `Routine`**"} {
+		if !strings.Contains(rec, want) {
+			t.Errorf("%s: the triage's fail-closed reading lost %q", soReconciled, want)
 		}
 	}
 	// The CI read is new code, not a read the tree already makes: D1244 must keep

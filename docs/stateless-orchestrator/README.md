@@ -38,14 +38,14 @@ All of D1220-D1243 were answered on 2026-11-04. Most are the recommendation; **t
   self-restart on a changed binary (it exits when the binary the unit names differs from the one it is running, so launchd or systemd starts the new
   one) and its start-up state migration stay as the plan has them.
 - **BF2, 2026-11-08: the long-run triage rule (D1244-D1247), all four the recommendation.** One task, **O14**, and it adds no ruling that is not a
-  recommendation; the two defaults it rests on are the owner's: **merge as-is with follow-ups** — a long run with commits, green CI, no critical
-  finding and none high in a security path is merged by code, and the findings it leaves become a follow-up task — and **a run that produced nothing
-  usable is split into follow-up sub-tasks** rather than re-run on the same spec. A **critical** finding, or a **high** one in a security path, stops
-  the run and asks the owner (a `waiting_on: person` decision); every triage is written to the orchestrator audit log under `<run>:triage` and printed
-  read-only by **`fugaro runs watch`**. The merge is automatic **only** on that evidence and the rule **fails closed** on anything missing or
-  ambiguous. It reads one input this repository does not have yet — **BF1's open-findings file** (U10) — so until BF1 lands the triage cancels
-  nothing, merges nothing and recommends only, and the threshold it fires on is the person's own local key (`orchestrator.triage_after`, default
-  `2h`, refused when it is not under the run's budget).
+  recommendation; the two defaults it rests on are the owner's: **merge as-is with follow-ups** — a long run whose whole diff is inside the routine trees,
+  with green CI, no critical finding and none high in a security path, is merged by code and the findings it leaves become a follow-up task — and **a run
+  that produced nothing usable is split into follow-up sub-tasks** rather than re-run on the same spec. A **readable critical** finding, or a **high** one
+  in a security path, stops the run and asks the owner (a `waiting_on: person` decision). Everything else **fails closed** into the fourth,
+  **recommend-only** outcome — BF1's file absent, `CIUnknown`, a truncated path set, a severity the triage does not know — which merges nothing, cancels
+  nothing and restarts nothing, and prints what it could not read. Every triage is written to the orchestrator audit log under `<run>:triage` and printed
+  read-only by **`fugaro runs watch`**; until BF1 lands that is every long run (U10), and the threshold it fires on is the person's own local key
+  (`orchestrator.triage_after`, default `2h`, refused when it is not under the run's budget).
 
 D1241 (the person's own credential writes the `orchestrator/` node), D1242 (the terminal Typed confirmation now, a paired-device channel later) and
 D1243 (the session-start print reads a local cache the daemon writes) are all the recommendation, and the gates the plan had put on them are lifted.
