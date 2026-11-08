@@ -178,7 +178,7 @@ func TestTheHostileGatesTypedRouteNamesTheReadersDoor(t *testing.T) {
 			t.Setenv("CLAUDECODE", "1")
 			out, errOut, err := executeStdin(t, "", door, "--repo", "--github-app-id", "42", "--yes", dir)
 			all := out + errOut + ErrorText(err)
-			if !strings.Contains(all, " "+door+" --repo and answer the question it asks about") {
+			if !strings.Contains(all, " "+door+" --repo, where the gate confirms") {
 				t.Errorf("the typed route does not name fugaro %s --repo, the door this run is:\n%s", door, all)
 			}
 			if strings.Contains(all, otherDoorName(door)+" --repo") {
