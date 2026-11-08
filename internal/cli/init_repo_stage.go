@@ -138,7 +138,7 @@ func (s *repositoryStage) authorize(ctx context.Context, env initflow.Env) error
 		return &initflow.NeedsYouError{Left: initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand,
 			Text: selfCommand() + " " + e.r.o.doorName() + " --github-app-id <id>"}}
 	}
-	id, err := e.r.prompt("GitHub App ID for "+pluginwire.Printable(s.tg.repo)+" (a number, not a secret; on the App's settings page)", anyStoredAppID(e.lc), func(v string) error {
+	id, err := e.r.prompt(valueSpec{what: "the GitHub App ID for " + pluginwire.Printable(s.tg.repo) + " (a number, not a secret; on the App's settings page)", flag: "--github-app-id"}, anyStoredAppID(e.lc), func(v string) error {
 		if !appIDRE.MatchString(v) {
 			return errors.New("a GitHub App ID is 1 to 20 digits")
 		}

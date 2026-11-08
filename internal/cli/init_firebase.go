@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -612,32 +611,32 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 }
 
 // confirmLocation is the Firestore database's own confirmation: its location
-// is permanent, so the person types the location itself, at a real terminal.
-// --non-interactive, --json, a pipe and a coding agent never confirm it, and
-// --yes confirms it only where the door owns the step (stepConfirmation,
-// stepClass): D12's answer of 2026-10-20 keeps the location Typed in `setup`,
-// the door that asks for it as a first-time question, and `update` — which
-// meets it as a step of a stage it owns — applies it under --yes. It is the
-// one of the four call sites D12 moves that moves in one door rather than
-// both. Where nothing can confirm it the step is the user's, with the
-// one-line route.
+// is permanent, so the note below is the whole of what a person reads before
+// it is created. The location is typed nowhere (T7, docs/no-prompt-policy):
+// what answers for the step is confirmNow — --ask's own question, --yes where
+// the class takes it, or the person at their own terminal, who reads the note
+// and is asked nothing. --non-interactive, --json, a pipe and a coding agent
+// still confirm it never, and the class is still D12's answer of 2026-10-20
+// (stepConfirmation, stepClass): the location is Typed in `setup`, the door
+// that asks for it as a first-time question, and YesOrTyped in `update`, which
+// meets it as a step of a stage it owns. Where nothing can confirm it the step
+// is the user's, with the one-line route.
 func (r *initRun) confirmLocation() error {
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s): the Firestore database is created in %s, and a database's location can NEVER be changed.\n", r.projectName, infra.FirestoreLocation)
 	switch r.stepConfirmation(r.stepClass()) {
 	case stepLeave:
-		lf := promptLeft(initflow.Firebase, "type "+infra.FirestoreLocation+" to confirm the Firestore database's permanent location when asked, after running", r.o.doorName(), "--firebase-project", quoteWord(r.o.firebaseProject()))
+		lf := promptLeft(initflow.Firebase, "run this in a terminal window, where the note about the Firestore database's permanent location can be read, after running", r.o.doorName(), "--firebase-project", quoteWord(r.o.firebaseProject()))
 		return &initflow.NeedsYouError{Left: lf}
 	case stepByYes:
 		fmt.Fprintln(r.w, "  confirmed by --yes")
 		return nil
 	}
-	fmt.Fprintf(r.w, "Type %s to create it there: ", infra.FirestoreLocation)
-	line, err := r.in.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return userErr("reading the confirmation: %v", err)
+	ok, err := r.confirmNow("create the Firestore database in " + infra.FirestoreLocation + ", a location that can never be changed?")
+	if err != nil {
+		return err
 	}
-	if strings.TrimSpace(line) != infra.FirestoreLocation {
-		return userErr("the location %s was not typed; the Firestore database was not created (nothing was written)", infra.FirestoreLocation)
+	if !ok {
+		return userErr("not confirmed (the Firestore database's location was not confirmed); the Firestore database was not created (nothing was written)")
 	}
 	r.noteIDETerminal()
 	return nil

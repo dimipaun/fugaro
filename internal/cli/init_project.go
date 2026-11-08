@@ -393,18 +393,20 @@ func (r *initRun) canType() bool {
 // canType is this stage's typed confirmation, asked of the run it is in.
 func (s *projectStage) canType() bool { return s.e.r.canType() }
 
-// typed shows banner and the prompt, and reports whether the line typed is
-// exactly want.
-func (s *projectStage) typed(banner, want, prompt string) (bool, error) {
+// confirm is this stage's confirmation: the banner naming what the step does
+// to the project, and then the run's own answer to it (confirmNow). Nothing is
+// typed under it (T7, docs/no-prompt-policy): a person at their own terminal
+// reads the banner and the step goes on, --yes stands in where --yes reaches,
+// --ask is the flag that puts the question back, and a session where nobody
+// can answer leaves the step for the user.
+func (s *projectStage) confirm(banner, question string) (bool, error) {
 	r := s.e.r
 	fmt.Fprintf(r.w, "⚠ CONFIRM: %s\n", banner)
-	fmt.Fprintf(r.w, "Type %s %s: ", want, prompt)
-	line, err := r.in.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return false, userErr("reading the confirmation: %v", err)
+	ok, err := r.confirmNow(question)
+	if err != nil {
+		return false, err
 	}
-	fmt.Fprintln(r.w)
-	if strings.TrimSpace(line) != want {
+	if !ok {
 		return false, nil
 	}
 	r.noteIDETerminal()
@@ -507,7 +509,7 @@ func (s *projectStage) credentialNote() string {
 
 func (s *projectStage) declined(what string) error {
 	return &initflow.NeedsYouError{Left: initflow.Left{Stage: initflow.Project, Kind: initflow.LeftPrompt,
-		Text: "not confirmed (" + what + " was not typed): rerun " + selfCommand() + " " + s.e.r.o.doorName() + " in your own terminal window and type it, nothing further was done"}}
+		Text: "not confirmed (" + what + " was not confirmed): rerun " + selfCommand() + " " + s.e.r.o.doorName() + " in your own terminal window, or pass --ask and answer the question, nothing further was done"}}
 }
 
 func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
@@ -539,10 +541,10 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 			name = s.id
 		}
 		s.billingHeadsUp()
-		ok, err := s.typed(fmt.Sprintf("this CREATES the Google Cloud project %q (display name %q) with %s, and adds Firebase to it, %s. "+
+		ok, err := s.confirm(fmt.Sprintf("this CREATES the Google Cloud project %q (display name %q) with %s, and adds Firebase to it, %s. "+
 			"The ID is global and permanent: nobody can reuse it, even after the project is deleted. It will be used for everything Fugaro runs. "+
-			"Billing is linked separately: this confirmation does not link it.",
-			s.id, name, parent, s.credentialNote()), s.id, "to create it")
+			"Billing is linked separately: this step does not link it.",
+			s.id, name, parent, s.credentialNote()), "create the project "+s.id+"?")
 		if err != nil {
 			return initflow.Outcome{}, err
 		}
@@ -564,7 +566,7 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 		fmt.Fprintf(r.w, "created project %s\n", s.id)
 		s.addFirebase = true
 	} else if s.addFirebase {
-		ok, err := s.typed(fmt.Sprintf("%s: it has no Firebase, and this ADDS Firebase to it (free; Firebase is how Fugaro keeps its budget and dashboard data), %s. Nothing else about the project changes.", resumeNote(s.id), s.credentialNote()), s.id, "to add Firebase to it")
+		ok, err := s.confirm(fmt.Sprintf("%s: it has no Firebase, and this ADDS Firebase to it (free; Firebase is how Fugaro keeps its budget and dashboard data), %s. Nothing else about the project changes.", resumeNote(s.id), s.credentialNote()), "add Firebase to project "+s.id+"?")
 		if err != nil {
 			return initflow.Outcome{}, err
 		}
@@ -589,8 +591,8 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 		if !created {
 			lead = resumeNote(s.id) + ": "
 		}
-		ok, err := s.typed(fmt.Sprintf("%sthis LINKS billing account %s to project %s. Everything Fugaro runs in the project (Cloud Run jobs, builds, storage, Firestore, Vertex AI calls) may incur charges on that account. "+
-			"It is not undone by deleting resources; unlink it with gcloud billing projects unlink %s.", lead, acct, s.id, quoteWord(s.id)), acct, "to link it")
+		ok, err := s.confirm(fmt.Sprintf("%sthis LINKS billing account %s to project %s. Everything Fugaro runs in the project (Cloud Run jobs, builds, storage, Firestore, Vertex AI calls) may incur charges on that account. "+
+			"It is not undone by deleting resources; unlink it with gcloud billing projects unlink %s.", lead, acct, s.id, quoteWord(s.id)), "link billing account "+acct+" to project "+s.id+"?")
 		if err != nil {
 			return initflow.Outcome{}, err
 		}

@@ -69,11 +69,12 @@ func (r *initRun) ctx() context.Context {
 }
 
 // runCovers reports whether the run's one confirmation covers an ordinary
-// step now, asking for it the first time. It is true only for a person at a
-// real terminal (initflow.CanConfirmRun: never --yes, --non-interactive,
-// --json, a pipe, --plan-only or a coding agent) who typed the project's
-// name, in a project Fugaro owns. A name that is not the project's is a
-// needs-you for this step and every one after it.
+// step now, taking it the first time. It is true only for a person at a real
+// terminal (initflow.CanConfirmRun: never --yes, --non-interactive, --json, a
+// pipe, --plan-only or a coding agent), in a project Fugaro owns; nothing is
+// typed for it (T7: the policy's confirmations are gone, and --ask is the flag
+// that puts the review's own question back), and a "no" is a needs-you for
+// this step and every one after it.
 //
 // In a managed project the confirmation is the gate's read of the two marks
 // and nothing is typed (the ruling of 2026-11-01): the review screen is still
@@ -106,7 +107,7 @@ func (r *initRun) runCovers() (bool, error) {
 		return false, nil
 	}
 	rv.screen(ctx, why)
-	ok, err := r.typed("Type " + r.projectName + " to apply all of the above: ")
+	ok, err := r.confirmNow("apply all of the steps above to GCP project " + r.gcpProject + "?")
 	if err != nil {
 		return false, err
 	}
@@ -118,14 +119,14 @@ func (r *initRun) runCovers() (bool, error) {
 	return true, nil
 }
 
-// declinedRun is the needs-you of a run whose one confirmation was not typed:
+// declinedRun is the needs-you of a run whose one confirmation was not given:
 // nothing is applied, here or in a later stage.
 func (r *initRun) declinedRun() error {
 	args := []string{r.o.doorName()}
 	if r.o.firebase != "" {
 		args = append(args, "--firebase-project", quoteWord(r.o.firebaseProject()))
 	}
-	fmt.Fprintln(r.w, "not confirmed (the project's name was not typed at the review); nothing was applied")
+	fmt.Fprintln(r.w, "not confirmed (the review's own question was answered no); nothing was applied")
 	return &initflow.NeedsYouError{Left: promptLeft(initflow.Installation, "type the project's name at the review to apply all of its steps", args...)}
 }
 

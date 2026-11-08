@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os/exec"
 	"strconv"
-	"strings"
 
 	"github.com/dimipaun/fugaro/internal/billing"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -209,7 +207,7 @@ func (r *initRun) askBilling(ctx context.Context) error {
 	if len(accounts) == 1 {
 		def = "1" // one account is the answer Enter takes
 	}
-	v, err := r.prompt(fmt.Sprintf("Billing account (a number, or %s to link none now)", billingNoAccount), def, func(s string) error {
+	v, err := r.prompt(valueSpec{what: "the billing account to link to " + pluginwire.Printable(project) + " (a number, or " + billingNoAccount + " to link none now)", flag: "--link-billing"}, def, func(s string) error {
 		if s == billingNoAccount {
 			return nil
 		}
@@ -283,24 +281,23 @@ func (r *initRun) billingAPIOff(ctx context.Context, opts billing.Options, err e
 		return nil, billing.SourceNone, err
 	}
 	// D3's first case: the API is off on the project this run is setting up, so
-	// this run may offer to turn it on there — behind a typed confirmation, the
-	// one the wizard's other state-changing steps ask for, naming the project
-	// and the API. --yes never covers it: a --yes run is a run that asked for no
+	// this run may offer to turn it on there — behind the note below, naming the
+	// project and the API, and the run's own answer to it (confirmNow): a person
+	// at their own terminal reads the note and the API is enabled, --ask is the
+	// flag that puts the question back, and a session where nobody can answer
+	// leaves the project exactly as it was and hands the operator the line to run
+	// by hand. --yes never covers it: a --yes run is a run that asked for no
 	// question, so asksBilling is false there and this is not reached at all.
 	//
-	// Nothing about the offer is taken for an answer: only the project's own ID
-	// typed on the line enables anything, and every other answer — Enter, a
-	// stray word, the end of input — leaves the project exactly as it was and
-	// hands the operator the line to run by hand.
+	// The project's ID is typed nowhere (T7, docs/no-prompt-policy): the note
+	// above is what the reader has before the API is turned on.
 	fmt.Fprintf(r.w, "⚠ CONFIRM: ENABLE the Cloud Billing API (%s) in GCP project %s, the project this run is setting up: it is disabled there, and it is what the billing accounts this run can link are listed with (free, and nothing fugaro does disables it again)\n",
 		billingAPIService, project)
-	fmt.Fprintf(r.w, "Type %s to enable it, or press Enter to link an account by hand instead: ", project)
-	line, rerr := r.in.ReadString('\n')
-	if rerr != nil && !errors.Is(rerr, io.EOF) {
-		return nil, billing.SourceNone, userErr("reading the confirmation: %v", rerr)
+	ok, rerr := r.confirmNow("enable the Cloud Billing API in GCP project " + project + "?")
+	if rerr != nil {
+		return nil, billing.SourceNone, rerr
 	}
-	fmt.Fprintln(r.w)
-	if strings.TrimSpace(line) != opts.Project {
+	if !ok {
 		r.billingEnableLeft(off)
 		return nil, billing.SourceNone, err
 	}

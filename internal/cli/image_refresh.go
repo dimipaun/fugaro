@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -71,10 +70,10 @@ type refreshOptions struct {
 	// in is the reader the calling run already reads stdin through, when a run
 	// drives this refresh rather than the fugaro image refresh command: the
 	// checkout stage of the converge (init_checkout_upgrade.go). A second
-	// bufio.Reader over the same stdin would lose whatever the first one has
-	// buffered — an interactive run's typed-ahead input, which is exactly what
-	// a build's confirmation reads. Nil for the command, which makes its own.
-	in *bufio.Reader
+	// reader over the same stdin would lose whatever the first one has
+	// buffered — an interactive run's typed-ahead input. Nil for the command,
+	// which makes its own.
+	in io.Reader
 	// out is the writer the calling run already prints through, when one drives
 	// this refresh: the checkout stage passes its own run's writer
 	// (init_checkout_upgrade.go). The refresh is a run of its own here

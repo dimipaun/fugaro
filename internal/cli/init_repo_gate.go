@@ -185,22 +185,15 @@ func (e *initEngine) asksOnboard(o originInfo) bool {
 	return err == nil && a == authAsk
 }
 
-// askOnboard asks the question and returns the answer Enter takes as true.
-// Anything but an answer — the input ended, or three unusable answers — is an
-// error, which is not the user saying no: the gate behind the question decides
-// what to do with it.
+// askOnboard asks the question and returns the answer the run carries. It is
+// the sanctioned confirmation (askConfirm), so without --ask nothing is read,
+// nothing is printed and the answer is yes — which is the default this
+// question always had — and with --ask the [y/N] is put back at a terminal a
+// person is at (asksOnboard is the guard that says one is). An answer of no is
+// the run's own, and the gate below it is not weakened either way: what the
+// question authorizes is nothing.
 func (e *initEngine) askOnboard(o originInfo) (bool, error) {
-	a, err := e.r.prompt(onboardLabel(o), onboardAnswerYes, func(v string) error {
-		switch strings.ToLower(v) {
-		case onboardAnswerYes, onboardAnswerNo:
-			return nil
-		}
-		return fmt.Errorf("answer %s or %s", onboardAnswerYes, onboardAnswerNo)
-	})
-	if err != nil {
-		return false, err
-	}
-	return strings.EqualFold(a, onboardAnswerYes), nil
+	return askConfirm(e.r.cmd, onboardLabel(o))
 }
 
 // notOnboardingDetail is what the repository stage says when the answer was
@@ -310,7 +303,7 @@ func onboardLeft(o originInfo, door string) initflow.Left {
 	if o.standardHost() && !o.Rewritten && agentMarker(os.Getenv, processTerminal()) == "" {
 		return initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand, Text: selfCommand() + " " + door + " --onboard-repo " + quoteWord(o.Repo)}
 	}
-	return initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftConsole, Text: "in your own terminal window, or in a fresh clone of the real remote, type " + pluginwire.Printable(o.typed()) + " at the prompt of", Commands: []string{selfCommand() + " " + door}}
+	return initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftConsole, Text: "in your own terminal window, or in a fresh clone of the real remote, answer the question about " + pluginwire.Printable(o.typed()) + " at the prompt of", Commands: []string{selfCommand() + " " + door}}
 }
 
 // unknownDetail says why the stage waits for the user. optIn is the clause
@@ -384,8 +377,12 @@ func unknownDetailNotEnrolled(project string, o originInfo, door string) string 
 		"'s yet, and " + selfCommand() + " " + door + " does not enrol one by asking: " + selfCommand() + " " + setupDoor.name + " does, in the checkout (it asks whether to onboard it)"
 }
 
-// confirmRepo asks, in the terminal, for the repository typed: the one
-// answer that opts it in. Anything else leaves it out.
+// confirmRepo is the one answer that opts a repository in: the note below, and
+// then the run's own confirmation (confirmNow). Nothing is typed under it (T7,
+// docs/no-prompt-policy): a person at their own terminal reads the note and the
+// repository is onboarded, --yes and the gate's own admission stand in where
+// they reach, --ask is the flag that puts the question back, and a session
+// where nobody can answer leaves the repository out.
 func (e *initEngine) confirmRepo(root string, o originInfo) (bool, error) {
 	r := e.r
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): this checkout's repository is not one of the project's yet.\n", pluginwire.Printable(r.projectName), pluginwire.Printable(r.gcpProject))
@@ -394,9 +391,11 @@ func (e *initEngine) confirmRepo(root string, o originInfo) (bool, error) {
 		fmt.Fprintf(r.w, "  the origin URL is rewritten by git config: the checkout says %s, git resolves it to %s. A checkout can ship its own .git/config: prefer a fresh clone of the real remote.\n", pluginwire.Printable(o.Raw), pluginwire.Printable(o.Effective))
 	}
 	fmt.Fprintln(r.w, "  Wiring and onboarding it writes to the checkout and creates cloud resources in this project, and the repository's fugaro.yaml can start a Cloud Build. Do it only for a repository you trust and mean to onboard.")
-	fmt.Fprintf(r.w, "Type %s to onboard it: ", pluginwire.Printable(o.typed()))
-	line, _ := r.in.ReadString('\n') // an ended input is a no
-	if strings.TrimSpace(line) != o.typed() {
+	ok, err := r.confirmNow("onboard the repository " + pluginwire.Printable(o.typed()) + "?")
+	if err != nil {
+		return false, err
+	}
+	if !ok {
 		return false, nil
 	}
 	if e.authorized == nil {
@@ -432,9 +431,9 @@ func (r *initRun) gateRepo(ctx context.Context, root string, lc *localcfg.Config
 		} else if ok {
 			return nil
 		}
-		return userErr("not confirmed (%s was not typed); nothing was changed", pluginwire.Printable(oi.typed()))
+		return userErr("not confirmed (the repository %s was not onboarded); nothing was changed", pluginwire.Printable(oi.typed()))
 	}
-	how := "in your own terminal window, not through a coding agent or a pipe, run " + selfCommand() + " " + e.r.o.doorName() + " --repo and type " + pluginwire.Printable(oi.typed()) + " at the prompt"
+	how := "in your own terminal window, not through a coding agent or a pipe, run " + selfCommand() + " " + e.r.o.doorName() + " --repo and answer the question it asks about " + pluginwire.Printable(oi.typed())
 	if lf := onboardLeft(oi, e.r.o.doorName()); lf.Kind == initflow.LeftCommand {
 		how = "pass --onboard-repo " + quoteWord(oi.Repo) + ", or " + how
 	}

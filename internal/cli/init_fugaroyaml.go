@@ -227,16 +227,21 @@ func (r *initRun) writeAnchor(a *anchorEdit, env initflow.Env, planOnly bool) (b
 		fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
 	case env.Yes:
 		fmt.Fprintln(r.w, "  confirmed by --yes")
-	case env.Interactive:
-		fmt.Fprintf(r.w, "Write this to %s? [y/N]: ", a.path)
-		line, _ := r.in.ReadString('\n') // an ended input is a no
-		if ans := strings.ToLower(strings.TrimSpace(line)); ans != "y" && ans != "yes" {
+	case !env.Interactive:
+		fmt.Fprint(r.w, addLine)
+		return false, nil
+	default:
+		// A person at the terminal is asked nothing (T7): the y/N they used
+		// to type is gone, --ask is the flag that puts the question back, and
+		// the diff above is what they read.
+		ok, err := r.confirmNow("write this to " + a.path + "?")
+		if err != nil {
+			return false, err
+		}
+		if !ok {
 			fmt.Fprint(r.w, addLine)
 			return false, nil
 		}
-	default:
-		fmt.Fprint(r.w, addLine)
-		return false, nil
 	}
 	if err := writeFileAtomic(a.path, a.out); err != nil {
 		return false, err

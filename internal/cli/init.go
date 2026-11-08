@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"bytes"
 	"cmp"
 	"context"
@@ -514,7 +513,12 @@ type initRun struct {
 	cmd *cobra.Command
 	o   *initOptions
 	w   io.Writer // the human-readable account: stdout, or stderr with --json
-	in  *bufio.Reader
+	// in is the run's own input, which the value entry reads through
+	// (valueentry.go's readValue, which asks the command for the same reader)
+	// and which a value question left over from an earlier shape of this file
+	// still holds. Nothing here reads a *confirmation* from it: the policy's
+	// confirmations are gone (docs/no-prompt-policy, T7).
+	in io.Reader
 	// rep is the run's account when the converge is its shape (CL5b): one line
 	// per stage, the closing line, and the log a failure sends the user to. It
 	// is built for the converge and left nil for the runs that do not go
@@ -710,7 +714,7 @@ func newInitRun(cmd *cobra.Command, o *initOptions) *initRun {
 	if o.asJSON {
 		r.w = runWriter{r: r, out: cmd.ErrOrStderr()}
 	}
-	r.in = bufio.NewReader(answerReader{r: r, in: cmd.InOrStdin()})
+	r.in = cmd.InOrStdin()
 	return r
 }
 
@@ -768,24 +772,6 @@ func (r *initRun) asking(f func() error) error {
 		}
 	}()
 	return f()
-}
-
-// answerReader is stdin behind the same rule: the answer to a prompt was
-// typed on a line of its own, and the line in flight comes back the moment it
-// arrives, so a stage that prompts in the middle of its work is still one a
-// person watches to the end. A run with no reporter, and a read that is not a
-// prompt, put back nothing.
-type answerReader struct {
-	r  *initRun
-	in io.Reader
-}
-
-func (a answerReader) Read(p []byte) (int, error) {
-	n, err := a.in.Read(p)
-	if n > 0 && a.r.rep != nil {
-		a.r.rep.Resume()
-	}
-	return n, err
 }
 
 func runInit(r *initRun) error {
@@ -992,33 +978,31 @@ func (r *initRun) creation() string {
 	return ""
 }
 
-// confirmResumedMark is the typed confirmation a resumed creation is marked
-// managed behind. fugaro_created=true says an earlier run of fugaro setup
-// created the project, but it is a label anyone with
-// resourcemanager.projects.update can set, so it is never enough on its own:
-// the person running setup types the project's ID at their own terminal, the
-// bar fugaro managed flag keeps (canType: a real terminal, no --json, no
-// --non-interactive, no coding agent's session; --yes never stands in for it).
-// Where it cannot be asked, or is not typed, nothing is marked and the run
-// says how to mark it.
+// confirmResumedMark is the confirmation a resumed creation is marked managed
+// behind. fugaro_created=true says an earlier run of fugaro setup created the
+// project, but it is a label anyone with resourcemanager.projects.update can
+// set, so it is never enough on its own: the run must be one a person is at,
+// the bar fugaro managed flag keeps (canType: a real terminal, no --json, no
+// --non-interactive, no coding agent's session; --yes never stands in for it),
+// and the banner above the mark is what that reader reads. Nothing is typed:
+// the policy's confirmations are gone (T7), and --ask is the flag that puts the
+// question back. Where no person is at the terminal, nothing is marked and the
+// run says how to mark it.
 func (r *initRun) confirmResumedMark() bool {
 	id := r.gcpProject
-	later := fmt.Sprintf("project %s carries %s=%s (an earlier run of fugaro setup created it) and this run finished its setup, but it is not marked as managed: marking it takes its ID typed at your own terminal. Rerun fugaro setup there, or run fugaro managed flag %s --budget N --budget-currency CCC",
+	later := fmt.Sprintf("project %s carries %s=%s (an earlier run of fugaro setup created it) and this run finished its setup, but it is not marked as managed: marking it takes a run a person is at, at your own terminal. Rerun fugaro setup there, or run fugaro managed flag %s --budget N --budget-currency CCC",
 		id, infra.CreatedLabelKey, infra.CreatedLabelValue, id)
 	if !r.canType() {
 		r.warn(later)
 		return false
 	}
-	fmt.Fprintf(r.w, "⚠ CONFIRM: this MARKS project %s as Fugaro-managed (gs://fugaro-runs-%s/%s and the label %s=%s): its applies then stop asking for the typed confirmation, and the deterministic gate, the inventory and the owner's delete list stand in for it. It carries %s=%s, which says fugaro setup created it.\n",
+	fmt.Fprintf(r.w, "⚠ CONFIRM: this MARKS project %s as Fugaro-managed (gs://fugaro-runs-%s/%s and the label %s=%s): its applies then need no confirmation at all, and the deterministic gate, the inventory and the owner's delete list stand in for one. It carries %s=%s, which says fugaro setup created it.\n",
 		id, id, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, infra.CreatedLabelKey, infra.CreatedLabelValue)
-	fmt.Fprintf(r.w, "Type %s to mark it: ", id)
-	line, err := r.in.ReadString('\n')
-	fmt.Fprintln(r.w)
-	if (err != nil && !errors.Is(err, io.EOF)) || strings.TrimSpace(line) != id {
+	ok, err := r.confirmNow("mark project " + id + " as Fugaro-managed?")
+	if err != nil || !ok {
 		r.warn(later)
 		return false
 	}
-	r.noteIDETerminal()
 	return true
 }
 
@@ -1914,9 +1898,10 @@ func (r *initRun) noteIDETerminal() {
 }
 
 // confirm shows the ⚠ CONFIRM banner for what, and returns nil once it is
-// confirmed: by --yes, or by the project's name typed at a terminal. Without a
-// terminal and without --yes it refuses; undone says what that leaves. A
-// coding agent's session confirms nothing, --yes included.
+// confirmed (confirmNow: --yes, or a person at their own terminal, or the y/N
+// --ask puts back). Without a terminal and without --yes it refuses; undone
+// says what that leaves. A coding agent's session confirms nothing, --yes
+// included.
 func (r *initRun) confirm(what, undone string) error {
 	ok, err := r.ask(what)
 	if err != nil {
@@ -1926,6 +1911,40 @@ func (r *initRun) confirm(what, undone string) error {
 		return r.notConfirmed(undone)
 	}
 	return nil
+}
+
+// confirmNow is the confirmation a step of this run asks now, and it asks
+// nothing: the policy removes the confirmations a person had to type
+// (docs/no-prompt-policy, D1540 and T7), and what answers for the step is what
+// the run already carries. --ask is the one sanctioned exemption (T1,
+// managed_ask.go), and it is the only arm that reads: it puts the step's own
+// [y/N] back at an owner terminal and refuses where nobody can answer it.
+//
+// The other three arms are the answer a step that used to ask gets, in the
+// order that keeps the two ways of running told apart:
+//
+//   - --yes stands in, exactly as it always did, and --plan-only never does.
+//   - a coding agent's session is refused before anything is printed: the
+//     marker is the whole of what keeps an agent out of a write, and it is the
+//     same refusal the confirmations gave (initflow.AgentError).
+//   - nobody at the terminal — a pipe, --json, --non-interactive — leaves the
+//     step for the user, as it did before. Removing a prompt is not the same
+//     as applying a step nobody asked for: the run was not given a word for it
+//     and there is no prompt left to take one, so the step is the user's.
+//
+// question is what --ask asks, and it must carry its own "?": askConfirm
+// prints it as it is given and adds the [y/N] itself.
+func (r *initRun) confirmNow(question string) (bool, error) {
+	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
+		return false, &initflow.AgentError{Marker: m}
+	}
+	if r.o.ask {
+		return askConfirm(r.cmd, question)
+	}
+	if r.o.yes && !r.o.planOnly {
+		return true, nil
+	}
+	return r.canType(), nil
 }
 
 // notConfirmed is the refusal of a step that was not confirmed.
@@ -1972,49 +1991,35 @@ func (r *initRun) ask(what string) (bool, error) {
 	return ok, err
 }
 
-// askBanner is ask's question, asked between the pause and the resume.
+// askBanner is ask's question, asked between the pause and the resume. The
+// banner is a note now, not a prompt: what answers for the step is the reader
+// of it (confirmNow), and the only arm that reads is --ask's, which asks the
+// step's own [y/N] through the one sanctioned confirmation helper.
 func (r *initRun) askBanner(what string) (bool, error) {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		return false, &initflow.AgentError{Marker: m}
 	}
+	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 	if r.refresh.asksNothing(r.conditions()) {
-		fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 		fmt.Fprintf(r.w, "  %s\n", initflow.GateOrdinary())
 		return true, nil
 	}
-	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
-	if r.o.yes && !r.o.planOnly {
-		fmt.Fprintln(r.w, "  confirmed by --yes")
-		return true, nil
+	ok, err := r.confirmNow(what + "?")
+	if err != nil {
+		return false, err
 	}
-	if r.o.nonInteractive || !stdinIsTerminal(r.cmd.InOrStdin()) {
+	if !ok {
 		return false, nil
 	}
-	return r.typed("Type " + r.projectName + " to apply to GCP project " + r.gcpProject + ": ")
-}
-
-// typed reads one line at the terminal after prompt and reports whether it is
-// the project's name.
-func (r *initRun) typed(prompt string) (bool, error) {
-	fmt.Fprint(r.w, prompt)
-	// A blank line is never an answer, but a stray newline is common right
-	// after a hidden paste (a pasted secret plus Enter leaves one in the
-	// terminal's input): skip up to three of them instead of failing a
-	// confirmation the person is typing correctly. Only the exact project
-	// name confirms.
-	for blanks := 0; ; blanks++ {
-		line, err := r.in.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return false, userErr("reading the confirmation: %v", err)
-		}
-		if answer := strings.TrimSpace(line); answer != "" || err != nil || blanks >= 3 {
-			if answer == r.projectName {
-				r.noteIDETerminal()
-				return true, nil
-			}
-			return false, nil
-		}
+	switch {
+	case r.o.ask:
+		// askConfirm printed the question and the answer's own line.
+	case r.o.yes && !r.o.planOnly:
+		fmt.Fprintln(r.w, "  confirmed by --yes")
+	case r.gateStandsIn():
+		fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
 	}
+	return true, nil
 }
 
 // stepClass is the confirmation class of the one money-or-permanent step this
@@ -2095,10 +2100,10 @@ func neverConfirmsBuild(agent bool) string {
 }
 
 // askClass is the confirmation of a step that is money or permanent, of the
-// class: the project's name typed at a real terminal, or --yes for a YesOrTyped
-// step. It shows the banner, and reachable says whether it could be asked at
+// class. It shows the banner, and reachable says whether it could be asked at
 // all; when it could not, nothing was asked and the caller leaves the step for
-// the user.
+// the user. What answers for it is confirmNow: nothing a person types, --yes
+// where the class takes it, and the y/N --ask puts back.
 func (r *initRun) askClass(class initflow.ConfirmClass, what string) (confirmed, reachable bool, err error) {
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 	switch r.stepConfirmation(class) {
@@ -2108,13 +2113,12 @@ func (r *initRun) askClass(class initflow.ConfirmClass, what string) (confirmed,
 		fmt.Fprintln(r.w, "  confirmed by --yes")
 		return true, true, nil
 	}
-	ok, err := r.typed("Type " + r.projectName + " to confirm: ")
+	ok, err := r.confirmNow(what + "?")
 	return ok, true, err
 }
 
-// askTyped is askClass for a step that stays Typed in both front doors: the
-// project's name typed at a real terminal, never --yes, --non-interactive,
-// --json, a pipe or a coding agent.
+// askTyped is askClass for a step that stays Typed in both front doors: never
+// --yes, --non-interactive, --json, a pipe or a coding agent.
 func (r *initRun) askTyped(what string) (confirmed, reachable bool, err error) {
 	return r.askClass(initflow.Typed, what)
 }

@@ -234,14 +234,21 @@ func (s *pluginStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		fmt.Fprintf(r.w, "  %s\n", initflow.GateOrdinary())
 	case env.Yes:
 		fmt.Fprintln(r.w, "  confirmed by --yes")
-	case env.Interactive:
-		fmt.Fprintf(r.w, "Write this to %s? [y/N]: ", ch.Path)
-		line, _ := r.in.ReadString('\n') // an ended input is a no
-		if a := strings.ToLower(strings.TrimSpace(line)); a != "y" && a != "yes" {
+	default:
+		// A person at the terminal is asked nothing (T7): the y/N they used
+		// to type is gone, and --ask is the flag that puts the question back.
+		// A run nobody is at keeps leaving the step for the user, which is the
+		// arm this default always was.
+		if !env.Interactive {
 			return initflow.Outcome{}, &initflow.NeedsYouError{Left: s.Left()}
 		}
-	default:
-		return initflow.Outcome{}, &initflow.NeedsYouError{Left: s.Left()}
+		ok, err := r.confirmNow("write this to " + ch.Path + "?")
+		if err != nil {
+			return initflow.Outcome{}, err
+		}
+		if !ok {
+			return initflow.Outcome{}, &initflow.NeedsYouError{Left: s.Left()}
+		}
 	}
 	if err := ch.Apply(); err != nil {
 		return initflow.Outcome{}, err

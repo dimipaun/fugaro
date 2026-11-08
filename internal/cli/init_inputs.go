@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -370,39 +369,41 @@ func noAnswer(format string, args ...any) error {
 	return &noAnswerError{msg: e.Error(), user: e}
 }
 
-// prompt asks label with def as the suggestion and returns the validated
-// answer. Three unusable answers, or the end of input, refuse the run. It is
-// promptChoice with no second suggestion, and the questions that offer one
-// answer are unchanged by it.
-func (r *initRun) prompt(label, def string, valid func(string) error) (string, error) {
-	return r.promptChoice(label, def, "", "", valid)
+// prompt asks for the value spec names, with def as the suggestion, and returns
+// the validated answer. It is promptChoice with no second suggestion, and the
+// questions that offer one answer are unchanged by it.
+func (r *initRun) prompt(spec valueSpec, def string, valid func(string) error) (string, error) {
+	return r.promptChoice(spec, def, "", "", valid)
 }
 
-// promptChoice is prompt with a second suggestion: def is what Enter takes,
-// and alt — offered after it, with the one line saying why, when it is neither
+// promptChoice is prompt with a second suggestion: def is what Enter takes, and
+// alt — offered after it, with the one line saying why, when it is neither
 // empty nor def itself — is an answer a person may type instead. Only the GCP
 // project's ID is asked this way (D4): a project to create, or the project the
-// machine is already working in, are both reasonable answers and only the
+// machine is already running in, are both reasonable answers and only the
 // person knows which one they mean.
-func (r *initRun) promptChoice(label, def, alt, why string, valid func(string) error) (string, error) {
+//
+// The value itself comes through the one value-entry helper (readValue, D1540):
+// at a terminal it is read, beside no terminal it is refused at once naming the
+// flag or the variable that supplies it, and neither is a confirmation — so
+// what the helper reads here is a value and never a yes or a no. The suggestion
+// is printed above the read, the way the wizard has always offered it, and an
+// empty line takes it: the entry has no default of its own, and a value that
+// cannot be defaulted is refused rather than guessed (a run with no terminal
+// gets the refusal, never the suggestion in the person's place). A value the
+// caller's own rule refuses is asked again, three attempts in all, and a
+// question that runs out of attempts is noAnswer — a run that stopped at a
+// question, not a refusal.
+func (r *initRun) promptChoice(spec valueSpec, def, alt, why string, valid func(string) error) (string, error) {
+	if line := suggestionLine(spec.what, def, alt, why); line != "" {
+		fmt.Fprintf(r.w, "%s\n", line)
+	}
 	for range 3 {
-		second := ""
-		if alt != "" && alt != def {
-			second = fmt.Sprintf(" (or %s: %s)", pluginwire.Printable(alt), why)
+		b, err := readValue(r.cmd, spec)
+		if err != nil {
+			return "", err
 		}
-		if def != "" {
-			fmt.Fprintf(r.w, "%s [%s]%s: ", label, def, second)
-		} else {
-			fmt.Fprintf(r.w, "%s%s: ", label, second)
-		}
-		line, err := r.in.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return "", userErr("reading the answer: %v", err)
-		}
-		v := cmp.Or(strings.TrimSpace(line), def)
-		if errors.Is(err, io.EOF) && strings.TrimSpace(line) == "" {
-			return "", noAnswer("no answer for %q (the input ended)", label)
-		}
+		v := cmp.Or(strings.TrimSpace(string(b)), def)
 		if v == "" {
 			fmt.Fprintln(r.w, "  a value is needed")
 			continue
@@ -413,5 +414,25 @@ func (r *initRun) promptChoice(label, def, alt, why string, valid func(string) e
 		}
 		return v, nil
 	}
-	return "", noAnswer("no usable answer for %q after 3 tries", label)
+	return "", noAnswer("no usable answer for %q after 3 tries", spec.what)
+}
+
+// suggestionLine is what the wizard shows above a value entry: the question's
+// own name, the answer Enter takes, and the second answer with the one line
+// saying why — the line the prompt printed before the value entry read the
+// value itself (promptChoice). It is empty where the question has neither a
+// suggestion nor a second one, so a question with nothing to offer prints only
+// the entry's own "Type …: ".
+func suggestionLine(what, def, alt, why string) string {
+	second := ""
+	if alt != "" && alt != def {
+		second = fmt.Sprintf(" (or %s: %s)", pluginwire.Printable(alt), why)
+	}
+	switch {
+	case def != "":
+		return fmt.Sprintf("%s [%s]%s", what, def, second)
+	case second != "":
+		return what + ":" + second
+	}
+	return ""
 }
