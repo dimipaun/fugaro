@@ -293,9 +293,10 @@ func TestEnsureReplacesATreeOfAnotherVersionWithoutACommit(t *testing.T) {
 	}
 }
 
-// TestAFailedFetchLeavesTheTreeReadOnly: the fetch widens the tree so git can
-// write into it, and every way out has to narrow it again — a run that could
-// not fetch must not leave the agent a tree it can write to (D1602).
+// TestAFailedFetchLeavesTheTreeReadOnly: the fetch runs in a repository of its
+// own and the tree is replaced only once it has succeeded, so a run that could
+// not fetch leaves the tree it found — read-only, and still the tree of the
+// version last served — rather than a half-written one (D1602).
 func TestAFailedFetchLeavesTheTreeReadOnly(t *testing.T) {
 	r := newRemote(t, "v1.0.0", "v1.1.0")
 	o := options(t, r, "v1.0.0", r.commit["v1.0.0"])
@@ -314,6 +315,9 @@ func TestAFailedFetchLeavesTheTreeReadOnly(t *testing.T) {
 	}
 	if fi.Mode().Perm()&0o200 != 0 {
 		t.Fatalf("the tree was left writable: %v", fi.Mode())
+	}
+	if got := read(t, filepath.Join(dir, "VERSION")); got != "v1.0.0\n" {
+		t.Fatalf("a failed fetch left the tree holding %q, not the version last served", got)
 	}
 }
 
@@ -511,6 +515,68 @@ func TestAPlantedHookNeverRuns(t *testing.T) {
 	}
 }
 
+// plantSmudgeFilter makes the git configuration at dir one that runs a command
+// on the next checkout: a filter, and an attributes file applying it to every
+// path. Nothing in dir need be a repository of its own; a .git/config and a
+// .git/info/attributes are read by git wherever it runs, and this package
+// leaves the cache directory writable by anything running as this user.
+func plantSmudgeFilter(t *testing.T, dir, marker string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, ".git", "info"), cacheDirMode); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := os.OpenFile(filepath.Join(dir, ".git", "config"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintf(cfg, "\n[filter \"x\"]\n\tsmudge = touch %s && cat\n", marker); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".git", "info", "attributes"), []byte("* filter=x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestAPlantedFilterNeverRuns: git runs commands named by the configuration of
+// the repository it runs in, and a smudge filter is one of them (the comment
+// on entryPath names this vector). Everything under the cache directory is
+// writable by anything running as this user, so a filter planted in the tree's
+// own config, and one planted in the directory a fetch stages in, must not run
+// when the next version is fetched: the fetch happens in a repository this
+// package initialises itself, and the tree is replaced rather than fetched
+// into.
+func TestAPlantedFilterNeverRuns(t *testing.T) {
+	r := newRemote(t, "v1.0.0", "v1.1.0")
+	o := options(t, r, "v1.0.0", r.commit["v1.0.0"])
+	dir, _, err := Ensure(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "filter-ran")
+	if err := chmodTree(dir, true); err != nil {
+		t.Fatal(err)
+	}
+	plantSmudgeFilter(t, dir, marker)
+	if err := chmodTree(dir, false); err != nil {
+		t.Fatal(err)
+	}
+	plantSmudgeFilter(t, filepath.Join(cacheRootOf(t, o), stageName), marker)
+
+	o.Version, o.Commit = "v1.1.0", r.commit["v1.1.0"]
+	if _, _, err := Ensure(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(marker); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("a filter the cache held ran: %v", err)
+	}
+	if got := read(t, filepath.Join(dir, "VERSION")); got != "v1.1.0\n" {
+		t.Fatalf("the tree holds %q", got)
+	}
+}
+
 func TestTheTreeIsReadOnly(t *testing.T) {
 	r := newRemote(t, "v1.0.0")
 	o := options(t, r, "v1.0.0", r.commit["v1.0.0"])
@@ -672,6 +738,44 @@ func TestATreeSymlinkIsNotFollowed(t *testing.T) {
 	}
 }
 
+// gitPlants put at a tree's ".git" a name that points at another repository
+// of this person's rather than at this cache's own: a link, a "gitdir:" file
+// and a commondir file all do, and a check that only asks whether the name is
+// there answers yes to every one of them.
+var gitPlants = map[string]func(t *testing.T, tree, gitdir string){
+	"a link": func(t *testing.T, tree, gitdir string) {
+		if err := os.Symlink(gitdir, filepath.Join(tree, ".git")); err != nil {
+			t.Fatal(err)
+		}
+	},
+	"a gitdir file": func(t *testing.T, tree, gitdir string) {
+		if err := os.WriteFile(filepath.Join(tree, ".git"), []byte("gitdir: "+gitdir+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	},
+	"a commondir file": func(t *testing.T, tree, gitdir string) {
+		if err := os.MkdirAll(filepath.Join(tree, ".git"), cacheDirMode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(tree, ".git", "commondir"), []byte(gitdir+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	},
+}
+
+// anotherRepository is a repository of this person's own, with a commit in it:
+// what a ".git" planted at the tree's name points at, and what must be left
+// exactly as it was.
+func anotherRepository(t *testing.T) string {
+	t.Helper()
+	mine := t.TempDir()
+	testutil.Git(t, mine, "init", "--quiet", "-b", "main")
+	testutil.WriteFiles(t, mine, map[string]string{"notes": "mine\n"})
+	testutil.Git(t, mine, "add", "-A")
+	testutil.Git(t, mine, "commit", "--quiet", "-m", "mine")
+	return mine
+}
+
 // TestATreeWhoseGitIsSomewhereElseIsRebuilt is the same attack one level
 // deeper: git writes into whatever ".git" names, and a link, a "gitdir:" file
 // and a commondir file name another repository of the user's just as well as
@@ -679,35 +783,10 @@ func TestATreeSymlinkIsNotFollowed(t *testing.T) {
 // its own HEAD, and the cache gets a tree of its own instead.
 func TestATreeWhoseGitIsSomewhereElseIsRebuilt(t *testing.T) {
 	r := newRemote(t, "v1.0.0")
-	plants := map[string]func(t *testing.T, tree, gitdir string){
-		"a link": func(t *testing.T, tree, gitdir string) {
-			if err := os.Symlink(gitdir, filepath.Join(tree, ".git")); err != nil {
-				t.Fatal(err)
-			}
-		},
-		"a gitdir file": func(t *testing.T, tree, gitdir string) {
-			if err := os.WriteFile(filepath.Join(tree, ".git"), []byte("gitdir: "+gitdir+"\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-		},
-		"a commondir file": func(t *testing.T, tree, gitdir string) {
-			if err := os.MkdirAll(filepath.Join(tree, ".git"), cacheDirMode); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(tree, ".git", "commondir"), []byte(gitdir+"\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-		},
-	}
-	for name, plant := range plants {
+	for name, plant := range gitPlants {
 		t.Run(name, func(t *testing.T) {
 			o := options(t, r, "v1.0.0", r.commit["v1.0.0"])
-			// Another repository of this person's, with its own work in it.
-			mine := t.TempDir()
-			testutil.Git(t, mine, "init", "--quiet", "-b", "main")
-			testutil.WriteFiles(t, mine, map[string]string{"notes": "mine\n"})
-			testutil.Git(t, mine, "add", "-A")
-			testutil.Git(t, mine, "commit", "--quiet", "-m", "mine")
+			mine := anotherRepository(t)
 			head := read(t, filepath.Join(mine, ".git", "HEAD"))
 			before := treeNames(t, mine)
 
@@ -1014,6 +1093,98 @@ func TestChangesSinceWritesNewerReleases(t *testing.T) {
 	}
 	if fi.Mode().Perm()&0o222 != 0 {
 		t.Fatalf(".git/config is writable: %v", fi.Mode())
+	}
+}
+
+// plantUploadpack makes the git configuration at dir one whose fetch runs a
+// command of its own: a remote's uploadpack is the program git runs to speak
+// to the source, and it is read from the same configuration a filter is.
+func plantUploadpack(t *testing.T, dir, marker string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), cacheDirMode); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := os.OpenFile(filepath.Join(dir, ".git", "config"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintf(cfg, "\n[remote \"origin\"]\n\tuploadpack = touch %s && git-upload-pack\n", marker); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestChangesSinceRunsNoPlantedCommand: the fetch ChangesSince makes is the
+// other place git runs a command the cache's configuration names (an
+// uploadpack here, an sshCommand with an ssh URL, the same class), and the
+// tree's configuration is written by whatever runs as this user. The history
+// is fetched in a repository this call initialises itself, so neither the
+// tree's configuration nor the one in the staging directory it uses is read.
+func TestChangesSinceRunsNoPlantedCommand(t *testing.T) {
+	r := newRemote(t, "v1.0.0", "v1.1.0")
+	o := options(t, r, "v1.0.0", r.commit["v1.0.0"])
+	dir, _, err := Ensure(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "uploadpack-ran")
+	if err := chmodTree(dir, true); err != nil {
+		t.Fatal(err)
+	}
+	plantUploadpack(t, dir, marker)
+	if err := chmodTree(dir, false); err != nil {
+		t.Fatal(err)
+	}
+	plantUploadpack(t, filepath.Join(cacheRootOf(t, o), stageName), marker)
+
+	dest := filepath.Join(t.TempDir(), "changes.txt")
+	if err := ChangesSince(context.Background(), o, dir, dest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(marker); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("a command the cache held ran: %v", err)
+	}
+	if got := read(t, dest); !strings.Contains(got, "release v1.1.0") {
+		t.Fatalf("the changes file was not written from the remote:\n%s", got)
+	}
+}
+
+// TestChangesSinceLeavesAnotherRepositoryAlone: the tree's ".git" can name a
+// repository of the person's rather than this cache's, and a changes file is
+// read with git. A tree that is not this cache's repository gets the answer a
+// tree without history gets, and the repository named is left alone: a fetch
+// there would make it shallow and write its tags.
+func TestChangesSinceLeavesAnotherRepositoryAlone(t *testing.T) {
+	r := newRemote(t, "v1.0.0", "v1.1.0")
+	for name, plant := range gitPlants {
+		t.Run(name, func(t *testing.T) {
+			o := options(t, r, "v1.0.0", r.commit["v1.0.0"])
+			mine := anotherRepository(t)
+			head := read(t, filepath.Join(mine, ".git", "HEAD"))
+			before := treeNames(t, mine)
+
+			tree := filepath.Join(cacheRootOf(t, o), treeName)
+			if err := os.MkdirAll(tree, cacheDirMode); err != nil {
+				t.Fatal(err)
+			}
+			plant(t, tree, filepath.Join(mine, ".git"))
+
+			dest := filepath.Join(t.TempDir(), "changes.txt")
+			if err := ChangesSince(context.Background(), o, tree, dest); err != nil {
+				t.Fatal(err)
+			}
+			if got := read(t, dest); !strings.Contains(got, "carries no history") {
+				t.Errorf("the changes file is not the one a tree without history gets:\n%s", got)
+			}
+			if after := read(t, filepath.Join(mine, ".git", "HEAD")); after != head {
+				t.Fatalf("the repository the tree's .git named was rewritten: %q became %q", head, after)
+			}
+			if after := treeNames(t, mine); !slices.Equal(before, after) {
+				t.Fatalf("the repository the tree's .git named was written into: %v became %v", before, after)
+			}
+		})
 	}
 }
 

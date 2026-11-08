@@ -54,11 +54,11 @@ const (
 	// recordName and treeName are the two names inside the cache directory.
 	recordName = "record.json"
 	treeName   = "tree"
-	// unpackName is where an archive is unpacked before it replaces the
-	// tree. It is fixed rather than random because the directory holding it
-	// is this user's own and 0700, and it is removed and recreated, never
-	// reused.
-	unpackName = ".unpack"
+	// stageName is where the next tree is built — an archive unpacked, or a
+	// fetch — before it replaces the tree. It is fixed rather than random
+	// because the directory holding it is this user's own and 0700, and it is
+	// removed and recreated, never reused.
+	stageName = ".stage"
 
 	// maxArchive is what one archive may unpack to. The repository's source
 	// is a few tens of megabytes; an archive that unpacks to more is not
@@ -258,16 +258,18 @@ func newestTag(ctx context.Context, o Options) (string, error) {
 	return "", fmt.Errorf("%s publishes no release tag", o.SourceURL)
 }
 
-// isRepository reports whether the tree at dir holds a repository git may be
-// run in, rather than a name that leads to one somewhere else. git follows
-// ".git" wherever it points, and a link, a "gitdir:" file, and a commondir
-// file inside a real directory all make it read and write another
+// isRepository reports whether the tree at dir holds a repository of this
+// package's own, rather than a name that leads to one somewhere else. git
+// follows ".git" wherever it points, and a link, a "gitdir:" file, and a
+// commondir file inside a real directory all make it read and write another
 // repository's refs and object store — the HEAD of a working copy of the
-// person's, say — while the call looks like a cache being filled. Only a
-// plain directory, of the kind this package's own "git init" makes, answers
-// yes; anything else is a tree to rebuild. A plain directory there is this
-// package's own: the only other writer of a tree is the tarball transport, and
-// entryPath refuses an archive that names .git at all.
+// person's, say — while the call looks like a cache being read. Only a plain
+// directory, of the kind this package's own "git init" makes, answers yes: the
+// tarball transport is the only other writer of a tree, and entryPath refuses
+// an archive that names .git at all, so a plain one found there is this
+// package's own. ChangesSince asks, before it reads a history: a "gitdir:"
+// file here would have had it log another repository's releases as this
+// source's, and fetch into it.
 func isRepository(dir string) bool {
 	at := filepath.Join(dir, ".git")
 	fi, err := os.Lstat(at)
@@ -280,68 +282,71 @@ func isRepository(dir string) bool {
 	return true
 }
 
+// stageRepo makes, in the cache directory, a repository of this call's own:
+// git init, and a remote naming the source. Every call that fetches or checks
+// out runs in one of these rather than in the tree the cache holds: git
+// executes the configuration of the repository it runs in — a filter on a
+// checkout, a remote's uploadpack, an sshCommand — and the tree sits under a
+// directory anything running as this user can write. The caller removes what
+// it returns; a fetch that replaces the tree renames it into place.
+func stageRepo(ctx context.Context, o Options, root string) (string, error) {
+	stage := filepath.Join(root, stageName)
+	// Whatever is at the stage's name was not written by this call, and a
+	// repository git init finds keeps its own configuration: it is removed
+	// rather than initialised into.
+	if err := os.RemoveAll(stage); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(stage, cacheDirMode); err != nil {
+		return "", err
+	}
+	if _, err := o.Run(ctx, stage, gitArgs("init", "--quiet")...); err != nil {
+		return "", err
+	}
+	url := o.SourceURL + ".git"
+	if _, err := o.Run(ctx, stage, gitArgs("remote", "add", "origin", url)...); err != nil {
+		return "", err
+	}
+	return stage, nil
+}
+
 // gitTree fetches ref into the tree and checks it out detached. The commit
 // HEAD ends at is what the Record keeps, and for a build that carries a
 // commit it must be that commit: the tree is only ever read, so a wrong one
 // misleads a diagnosis rather than running anything, but a wrong answer is
 // still the wrong answer (D1610).
+//
+// The fetch runs in a repository this call initialises itself, and the tree
+// is replaced by it only once it has succeeded, whatever is at the tree's
+// name now — a directory, a link or a file decides nothing, it is removed.
+// A fetch that fails therefore leaves the tree as it was, and one that
+// succeeds leaves a tree whose configuration is this package's own.
 func gitTree(ctx context.Context, o Options, root string, w want) (string, error) {
-	dir := filepath.Join(root, treeName)
-	fi, err := os.Lstat(dir)
-	switch {
-	case err == nil && fi.IsDir():
-		// A tree from an earlier run is read-only; git writes into it. Every
-		// way out of this function widens it back only for the length of the
-		// fetch: a fetch that fails, or a HEAD that is not the commit asked
-		// for, must not leave the agent a tree it can write to.
-		if err := chmodTree(dir, true); err != nil {
-			return "", err
-		}
-		defer func() { _ = chmodTree(dir, false) }()
-	case err == nil:
-		// A link or a file at the tree's name decides nothing: it is removed
-		// rather than followed into whatever it names.
-		if err := removeTree(dir); err != nil {
-			return "", err
-		}
-	case !errors.Is(err, fs.ErrNotExist):
+	stage, err := stageRepo(ctx, o, root)
+	if err != nil {
 		return "", err
 	}
-	if !isRepository(dir) {
-		// A tree that is not this cache's own repository — one from the
-		// tarball transport, or one whose .git names a repository somewhere
-		// else — is replaced rather than fetched into: git would init, fetch
-		// and detach the HEAD of whatever that name points at, which is
-		// another repository's history, not a cache.
-		if err := removeTree(dir); err != nil {
-			return "", err
-		}
-	}
-	if err := os.MkdirAll(dir, cacheDirMode); err != nil {
-		return "", err
-	}
-	if _, err := o.Run(ctx, dir, gitArgs("init", "--quiet")...); err != nil {
-		return "", err
-	}
-	url := o.SourceURL + ".git"
-	if _, err := o.Run(ctx, dir, gitArgs("remote", "set-url", "origin", url)...); err != nil {
-		if _, err := o.Run(ctx, dir, gitArgs("remote", "add", "origin", url)...); err != nil {
-			return "", err
-		}
-	}
-	if _, err := o.Run(ctx, dir, gitArgs("fetch", "--quiet", "--depth", "1", "--force", "origin", w.ref)...); err != nil {
+	defer os.RemoveAll(stage)
+	if _, err := o.Run(ctx, stage, gitArgs("fetch", "--quiet", "--depth", "1", "--force", "origin", w.ref)...); err != nil {
 		return "", fmt.Errorf("fetching %s: %w", w.ref, err)
 	}
-	if _, err := o.Run(ctx, dir, gitArgs("checkout", "--quiet", "--detach", "--force", "FETCH_HEAD")...); err != nil {
+	if _, err := o.Run(ctx, stage, gitArgs("checkout", "--quiet", "--detach", "--force", "FETCH_HEAD")...); err != nil {
 		return "", err
 	}
-	out, err := o.Run(ctx, dir, gitArgs("rev-parse", "HEAD")...)
+	out, err := o.Run(ctx, stage, gitArgs("rev-parse", "HEAD")...)
 	if err != nil {
 		return "", err
 	}
 	head := strings.TrimSpace(string(out))
 	if w.Commit != "" && head != w.Commit {
 		return "", fmt.Errorf("the source of %s is at commit %s, not the %s this fugaro was built from", w.ref, head, w.Commit)
+	}
+	dir := filepath.Join(root, treeName)
+	if err := removeTree(dir); err != nil {
+		return "", err
+	}
+	if err := os.Rename(stage, dir); err != nil {
+		return "", err
 	}
 	if err := chmodTree(dir, false); err != nil {
 		return "", err
@@ -361,7 +366,7 @@ func tarTree(ctx context.Context, o Options, root string, w want) (string, error
 		return "", fmt.Errorf("downloading %s: %w", url, err)
 	}
 	defer body.Close()
-	stage := filepath.Join(root, unpackName)
+	stage := filepath.Join(root, stageName)
 	if err := os.RemoveAll(stage); err != nil {
 		return "", err
 	}
@@ -708,16 +713,23 @@ func resolvesOutside(rt *os.Root, name string) (bool, error) {
 // question was asked.
 func ChangesSince(ctx context.Context, o Options, dir, dest string) error {
 	o = o.withDefaults()
-	if _, err := os.Lstat(filepath.Join(dir, ".git")); err != nil {
+	if !isRepository(dir) {
+		// No history of this source is here: a tree from the tarball
+		// transport, or one whose ".git" names a repository somewhere else —
+		// a log read there would report another repository's releases as this
+		// source's, and a fetch would write into it.
 		return os.WriteFile(dest, []byte(tarballNote(o.Version)), recordFileMod)
 	}
 	tag, err := pluginwire.Tag(o.Version)
 	tagged := err == nil
-	// The fetch writes into the tree, which is left read-only.
-	if err := chmodTree(dir, true); err != nil {
+	// The history is fetched and read in a repository this call initialises
+	// itself, the way gitTree does, and the tree is not written to at all. dir
+	// is the tree Ensure returned, so the cache directory is its parent.
+	stage, err := stageRepo(ctx, o, filepath.Dir(dir))
+	if err != nil {
 		return err
 	}
-	defer func() { _ = chmodTree(dir, false) }()
+	defer os.RemoveAll(stage)
 	// The history since the installed release is fetched by excluding that
 	// release by name on the remote, and that exclusion fails the whole fetch
 	// when the name is not there -- a version cut in main between two
@@ -727,7 +739,7 @@ func ChangesSince(ctx context.Context, o Options, dir, dest string) error {
 	// the diagnosis with no changes file at all, so what the remote carries
 	// decides the fetch and, for a version that is not one of its releases,
 	// whether it is anchored to one (D1611).
-	remote := remoteTags(ctx, o, dir)
+	remote := remoteTags(ctx, o, stage)
 	tagged = tagged && slices.Contains(remote, tag)
 	args := []string{"fetch", "--quiet", "--force", "--tags"}
 	if tagged && remote[0] != tag {
@@ -737,10 +749,10 @@ func ChangesSince(ctx context.Context, o Options, dir, dest string) error {
 	} else {
 		args = append(args, "--depth", "1")
 	}
-	if _, err := o.Run(ctx, dir, gitArgs(append(args, "origin")...)...); err != nil {
+	if _, err := o.Run(ctx, stage, gitArgs(append(args, "origin")...)...); err != nil {
 		return fmt.Errorf("fetching the release tags: %w", err)
 	}
-	out, err := o.Run(ctx, dir, gitArgs("tag", "--list", "v*", "--sort=-v:refname")...)
+	out, err := o.Run(ctx, stage, gitArgs("tag", "--list", "v*", "--sort=-v:refname")...)
 	if err != nil {
 		return err
 	}
@@ -758,7 +770,7 @@ func ChangesSince(ctx context.Context, o Options, dir, dest string) error {
 		if tagged {
 			span = tag + ".." + t
 		}
-		log, err := o.Run(ctx, dir, gitArgs("log", "--format=%h %s", span)...)
+		log, err := o.Run(ctx, stage, gitArgs("log", "--format=%h %s", span)...)
 		if err != nil {
 			return fmt.Errorf("reading the log of %s: %w", t, err)
 		}
@@ -918,8 +930,9 @@ func checkCacheDir(dir string) error {
 // chmodTree makes every directory and file under dir writable, or takes the
 // write bit off every one of them again. The tree is left read-only because
 // nothing — the agent included — has any business writing into the source it
-// is reading (F5, D1602); Fugaro widens it only for the git commands that
-// have to write there, and narrows it again before returning.
+// is reading (F5, D1602). No git call here writes into a served tree, a fetch
+// running in a repository of the call's own (stageRepo), so the only widening
+// is removeTree's, on the way to deleting one.
 //
 // A directory is 0755 or 0555, and a file keeps everything it had but the
 // write bits, so a script's execute bit survives the round trip and the tree
