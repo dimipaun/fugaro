@@ -50,13 +50,20 @@ RUN --mount=type=cache,id=fugaro-mise,target=/home/fugaro/.cache/mise,uid=1000,g
 
 # tflint's google plugin, fetched here where the build has network, so the
 # `tflint --chdir=deploy/terraform/gcp --init` a run of .claude/rules/
-# terraform.md asks for finds it installed already and makes no GitHub API
-# call (that call is what CI's own step passes it a token for). The directory
-# is under fugaro's home and TFLINT_PLUGIN_DIR names it: a run reads a catalog
-# image's ENV (docs/base-image.md), and tflint reads the variable, so the two
-# agree without a run having to set anything.
+# terraform.md asks for usually finds it installed already. Best effort on
+# purpose: --init asks the GitHub API for the plugin's release, an anonymous
+# caller gets 60 requests an hour from an address Cloud Build's shared egress
+# can already be past (the limit ci.yml's own step passes a token to avoid),
+# and a refused call must not fail the whole catalog build -- fugaro update's
+# rebuild of it included -- over a plugin cache. That build bakes no plugin,
+# and a run's own --init downloads it then.
+#
+# The directory is under fugaro's home and TFLINT_PLUGIN_DIR names it: a run
+# reads a catalog image's ENV (docs/base-image.md), and tflint reads the
+# variable, so the two agree without a run having to set anything.
 ENV TFLINT_PLUGIN_DIR=/home/fugaro/.tflint.d/plugins
-RUN tflint --chdir=deploy/terraform/gcp --init
+RUN tflint --chdir=deploy/terraform/gcp --init \
+ || echo "tflint --init fetched no plugin; the image carries none and a run's own --init will" >&2
 
 # The workflow's image.setup verbatim (fugaro.yaml): bake the module cache and
 # a warm build cache into the image, so a run's verify step does not pay for
