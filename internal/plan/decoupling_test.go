@@ -131,34 +131,45 @@ func TestGraphV3RefusesWhatItDoesNotKnow(t *testing.T) {
 }
 
 // TestV2DocumentWithAV3FieldIsRefused: the third schema's fields in a document
-// written to the second: refused, not read with the fields quietly dropped. The
-// same rule as a stream in a v1 document, and it holds for every key the schema
-// adds wherever it sits.
+// written to one of the two older schemas: refused, not read with the fields
+// quietly dropped. The same rule as a stream in a v1 document, and it holds for
+// every key the schema adds wherever it sits — a node's field as much as the
+// document's own.
 func TestV2DocumentWithAV3FieldIsRefused(t *testing.T) {
-	const v2Node = `{"schema_version": 2, "plan": "p.md", "nodes": [
-		{"id": "a", "title": "x", %s "footprint": {"prediction": true, "paths": []}}], "edges": []}`
-	const v2Doc = `{"schema_version": 2, "plan": "p.md", "nodes": [], "edges": [], %s}`
+	node := func(version int, fields string) string {
+		return fmt.Sprintf(`{"schema_version": %d, "plan": "p.md", "nodes": [
+		{"id": "a", "title": "x", %s "footprint": {"prediction": true, "paths": []}}], "edges": []}`, version, fields)
+	}
+	doc := func(version int, fields string) string {
+		return fmt.Sprintf(`{"schema_version": %d, "plan": "p.md", "nodes": [], "edges": [], %s}`, version, fields)
+	}
 	for _, tc := range []struct {
-		name string
-		body string
-		key  string
+		name    string
+		body    string
+		key     string
+		version int
 	}{
-		{"a kind", fmt.Sprintf(v2Node, `"kind": "contract",`), "kind"},
-		{"a size", fmt.Sprintf(v2Node, `"size": 2,`), "size"},
-		{"a stub list", fmt.Sprintf(v2Node, `"stubs": ["internal/x.go"],`), "stubs"},
-		{"a decoupling record", fmt.Sprintf(v2Doc, `"decoupling": []`), "decoupling"},
-		{"a change request", fmt.Sprintf(v2Doc, `"contract_changes": []`), "contract_changes"},
+		{"a kind in a v2 document", node(2, `"kind": "contract",`), "kind", 2},
+		{"a size in a v2 document", node(2, `"size": 2,`), "size", 2},
+		{"a stub list in a v2 document", node(2, `"stubs": ["internal/x.go"],`), "stubs", 2},
+		{"a decoupling record in a v2 document", doc(2, `"decoupling": []`), "decoupling", 2},
+		{"a change request in a v2 document", doc(2, `"contract_changes": []`), "contract_changes", 2},
+		{"a kind in a v1 document", node(1, `"kind": "contract",`), "kind", 1},
+		{"a change request in a v1 document", doc(1, `"contract_changes": []`), "contract_changes", 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			refused(t, tc.body, "schema version 2 and carries", tc.key, "schema version 3 field")
+			refused(t, tc.body, fmt.Sprintf("schema version %d and carries", tc.version), tc.key, "schema version 3 field")
 		})
 	}
-	// The same two documents without the fields, so the table above refuses the
+	// The same documents without the fields, so the table above refuses the
 	// field and not the shape.
-	if _, err := Parse("graph.json", []byte(fmt.Sprintf(v2Node, ""))); err != nil {
+	if _, err := Parse("graph.json", []byte(node(2, ""))); err != nil {
 		t.Fatalf("a v2 document was refused: %v", err)
 	}
-	if _, err := Parse("graph.json", []byte(fmt.Sprintf(v2Doc, `"stream": "cli"`))); err != nil {
+	if _, err := Parse("graph.json", []byte(node(1, ""))); err != nil {
+		t.Fatalf("a v1 document was refused: %v", err)
+	}
+	if _, err := Parse("graph.json", []byte(doc(2, `"stream": "cli"`))); err != nil {
 		t.Fatalf("a v2 document naming its stream was refused: %v", err)
 	}
 }
