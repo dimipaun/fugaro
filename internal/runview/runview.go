@@ -348,10 +348,13 @@ func priced(p backend.Prices) bool {
 //
 // The reading is a reading: it never writes the record back, so the bytes the
 // store handed over are the bytes the next reader gets, and the answer is
-// published on the row alone. It is exported because the digest calls it too
-// (design §5, D1454: "the digest reads the same function"), and it lives here
-// rather than in internal/failure because it reads a *runstore.Record* and
-// failure may not import runstore (F21).
+// published on the row alone. It is exported on D1454's decision: design §5's
+// "the digest reads the same function" is the recommendation the digest's own
+// read will follow, and that read is FC7's, not built -- so today the callers
+// outside this package are tests (the runner's agreement walks) and nothing in
+// a plain build names it. It lives here rather than in internal/failure because
+// it reads a *runstore.Record* and failure may not import runstore (F21:
+// runstore imports failure, so the import back is a cycle).
 func ClassOf(rec *runstore.Record) failure.Class {
 	if rec == nil || !failedStatus(rec.Status) {
 		return ""
@@ -408,9 +411,10 @@ func knownClass(c failure.Class) failure.Class {
 }
 
 // legacyClass reads a reason the runner wrote, through the fixed table below:
-// the reading an old record gets, and the one the row and the digest both
-// publish (design §5). An answer is never derived from the status, and a
-// sentence the table does not carry is unclassified rather than a guess.
+// the reading an old record gets, which the row publishes now and the digest's
+// own read will publish when FC7 builds it (design §5). An answer is never
+// derived from the status, and a sentence the table does not carry is
+// unclassified rather than a guess.
 func legacyClass(reason string) failure.Class {
 	lower := strings.ToLower(reason)
 	// The agent's own message is looked for first, and the phrases below are

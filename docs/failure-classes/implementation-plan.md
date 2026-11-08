@@ -334,9 +334,13 @@ standard, with the Docs run in the same pull request. **SEC:** no. **Owner-run:*
   when the field is present (every legacy row is `unclassified`), and the Docs run fails on the
   contract before the row is added.
 - **Mutation to hold it:** write the derived class back onto the record → the bytes test fails;
-  unexport `ClassOf` → `internal/digest` does not compile, which is the proof D1454's recommendation
-  is the only placement that works; move a reason's family in `haltClass` alone →
-  `TestHaltClassesAgreeWithTheReadersTable` fails.
+  unexport `ClassOf` → `internal/runview`'s own tests and `internal/runner`'s two agreement walks do
+  not compile, while `go build ./...` stays green — the digest that design §5's "the digest reads the
+  same function" names is FC7's and is not built, so the export stands on D1454's decision and its
+  only callers outside the package today are tests; move `ClassOf` into `internal/failure` → that
+  package does not compile, `import cycle not allowed` (`runstore` imports `failure`), which is the
+  proof F21 and D1454 leave `internal/runview` as the only placement that works; move a reason's
+  family in `haltClass` alone → `TestHaltClassesAgreeWithTheReadersTable` fails.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/runview -run 'Legacy|RowCarries|RunsLs' -count=1`
   then `GOFLAGS=-p=2 go test ./internal/runner -run 'HaltClasses' -count=1 -timeout 40m`, then
   `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|RunsLs' -count=1 -timeout 40m`.

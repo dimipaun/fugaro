@@ -13,8 +13,10 @@ classes a record written before the field shipped, and the row's own key (§5) �
 which is what every statement §1 counted writes its ending through now, `haltClass` over the closed
 halt reasons, the class `Decide`, `finalize`, `shadowFinalize` and the configuration refusals
 return beside the reason they already did, `stageFailureClass`, which names the cause inside a
-stage's own error result, and `runview.ClassOf`, which is the one function the row and the digest
-read a record's class through.
+stage's own error result, and `runview.ClassOf`, the one function the row reads a legacy record's
+class through — exported on D1454's decision so the digest's own read (§5, "the digest reads the
+same function") can call the same one when FC7 builds it; today the only callers outside that
+package are tests.
 **FC6–FC8 are not started.** What is written here was read against `main` on 2026-11-05, and the
 line citations are taken from that tree.
 

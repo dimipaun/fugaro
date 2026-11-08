@@ -1409,6 +1409,15 @@ describe('every wire string is classified', () => {
     // reason for keeping hex digests as written (`src/source/redact.ts:409`).
     expect(wireTextClass('pushed_head')).toBeUndefined()
     expect(NON_TEXT_STRING_KEYS).toContain('pushed_head')
+    // FC5's `failure_class` is the kind of value `status` and `derived` above
+    // are: a name from the CLI's closed vocabulary (`internal/failure`), written
+    // by the runner beside the terminal status and, for a record written before
+    // the field shipped, derived by the CLI's own reader (`runview.ClassOf`,
+    // contract section 5). No screen draws it yet -- the Failures table that
+    // switches on it is FC8's -- and the screen that does compares it or names
+    // it from its own table rather than drawing text a job wrote.
+    expect(wireTextClass('failure_class')).toBeUndefined()
+    expect(NON_TEXT_STRING_KEYS).toContain('failure_class')
     // The two lists do not overlap, and neither is empty: a key in both would
     // be a key whose class is two answers.
     for (const key of NON_TEXT_STRING_KEYS) expect(wireTextClass(key), key).toBeUndefined()

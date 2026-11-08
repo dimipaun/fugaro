@@ -404,6 +404,13 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   // CLI writes from its own one-entry table, the same kind of value `status`
   // and `outcome` are. It is not drawn from free text and never sanitized.
   'derived',
+  // `failure_class` is why a run did not end `succeeded`, and it is an enum of
+  // the same kind: a name from `internal/failure`'s closed vocabulary, written
+  // by the runner and read here (or, for a record written before the field
+  // shipped, derived by the CLI's own reader -- `runview.ClassOf`, contract
+  // section 5). A screen that draws it compares it or names it from its own
+  // table, so it is not text and carries no class.
+  'failure_class',
   'outcome',
   'auth',
   'deadline',
@@ -1213,8 +1220,8 @@ export const FINISHED_KEYS = [
  * one. It is accepted and not read — no screen draws a run's class yet, the
  * Failures table that switches on it being FC8's — and it carries no entry in
  * `WIRE_TEXT_CLASSES` because its value is a name of the CLI's own vocabulary
- * and not text a job wrote: the screen that reads it takes it through
- * `NON_TEXT_STRING_KEYS`, as `status` and `derived` are.
+ * and not text a job wrote: it is in `NON_TEXT_STRING_KEYS`, as `status` and
+ * `derived` are, so the screen that reads it takes it through that list.
  */
 export const RECORD_KEYS = [
   'run',
