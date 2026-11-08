@@ -260,17 +260,23 @@ type taskStatus struct {
 }
 
 // statusOf is one run's record as the tools answer it. Every string the run
-// wrote is made safe here, once, rather than at each site that answers it.
+// wrote is made safe here, once, rather than at each site that answers it —
+// and bounded here too, which the record's own text needs on both sides: the
+// record is written with no size bound of its own and read up to
+// runstore.MaxRecordBytes, while one list_tasks call answers up to maxListLimit
+// rows, so each field is capped at safetext.FieldMax runes the way every other
+// quantity these tools answer with is (maxPatchBytes, maxLogLines by
+// maxLogLineRunes, maxLogTranscripts, ChangedFiles.Bounded).
 func statusOf(slug, runID string, rec *runstore.Record) taskStatus {
 	st := taskStatus{
 		RunID:        runID,
 		Repo:         slug,
-		Status:       safetext.OneLine(string(rec.Status)),
-		Stage:        safetext.OneLine(rec.Stage),
-		Outcome:      safetext.OneLine(string(rec.Outcome)),
-		Reason:       safetext.OneLine(rec.Reason),
-		FailureClass: safetext.OneLine(string(rec.FailureClass)),
-		Branch:       safetext.OneLine(rec.Branch),
+		Status:       safetext.Field(string(rec.Status)),
+		Stage:        safetext.Field(rec.Stage),
+		Outcome:      safetext.Field(string(rec.Outcome)),
+		Reason:       safetext.Field(rec.Reason),
+		FailureClass: safetext.Field(string(rec.FailureClass)),
+		Branch:       safetext.Field(rec.Branch),
 		CostUSD:      rec.CostUSD,
 	}
 	if !rec.StartedAt.IsZero() {
@@ -280,7 +286,7 @@ func statusOf(slug, runID string, rec *runstore.Record) taskStatus {
 		st.FinishedAt = rec.FinishedAt.UTC().Format(time.RFC3339)
 	}
 	if rec.PR != nil {
-		st.PR = &runstore.PRRef{Number: rec.PR.Number, URL: safetext.OneLine(rec.PR.URL)}
+		st.PR = &runstore.PRRef{Number: rec.PR.Number, URL: safetext.Field(rec.PR.URL)}
 	}
 	return st
 }

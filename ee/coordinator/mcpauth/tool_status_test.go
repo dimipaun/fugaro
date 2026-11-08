@@ -13,9 +13,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -482,6 +484,58 @@ func TestARecordsOwnFieldsAreRedactedInEveryAnswer(t *testing.T) {
 	if !strings.Contains(status.Reason, "a reason the run wrote:") || !strings.Contains(res.Patch, "a diff line the run wrote") ||
 		!strings.Contains(res.ChangedFiles[0], "internal/x") || !strings.Contains(rows[0].Branch, "fugaro/the-run") {
 		t.Errorf("the answers lost the run's own text with the characters: %+v / %+v / %v", status, res, rows)
+	}
+}
+
+// TestARecordsOwnTextIsBoundedInEveryAnswer: a record is written with no size
+// bound of its own, is read up to runstore.MaxRecordBytes, and list_tasks
+// answers up to maxListLimit rows of it, so a field of the record would
+// otherwise let one call carry the read cap's worth of text per row. Each one
+// is cut at safetext.FieldMax runes — the bound a value a run wrote is shown
+// at everywhere else in this program — and the head of it is still answered,
+// because a bound that answered nothing would be a bound that hid the run.
+func TestARecordsOwnTextIsBoundedInEveryAnswer(t *testing.T) {
+	f := newRunsFixture(t)
+	long := strings.Repeat("a run's own words ", 4000)
+	f.seedRun(testSlug, testRunID, &runstore.Record{
+		Status: runstore.StatusFailed,
+		Stage:  long,
+		Reason: long,
+		Branch: long,
+		PR:     &runstore.PRRef{Number: 9, URL: "https://example.invalid/" + long},
+	}, nil)
+
+	var status taskStatus
+	statusText := f.answer("get_task_status", `{"run_id":"`+testRunID+`"}`, &status)
+	var rows []taskStatus
+	listText := f.answer("list_tasks", `{}`, &rows)
+	if len(rows) != 1 || status.PR == nil || rows[0].PR == nil {
+		t.Fatalf("get_task_status answered %+v and list_tasks %d row(s); want the one run's own record, pull request and all", status, len(rows))
+	}
+	if n := utf8.RuneCountInString(long); n <= safetext.FieldMax {
+		t.Fatalf("the fixture's own reason is %d runes; want one over safetext.FieldMax (%d) for the cut to be the thing under test", n, safetext.FieldMax)
+	}
+	for what, got := range map[string]string{
+		"the record's stage":       status.Stage,
+		"the record's reason":      status.Reason,
+		"the record's branch":      status.Branch,
+		"the record's PR URL":      status.PR.URL,
+		"the listing's own stage":  rows[0].Stage,
+		"the listing's own reason": rows[0].Reason,
+		"the listing's own branch": rows[0].Branch,
+		"the listing's own PR URL": rows[0].PR.URL,
+	} {
+		if n := utf8.RuneCountInString(got); n > safetext.FieldMax {
+			t.Errorf("%s reached an answer %d runes long; want a record's own field cut at safetext.FieldMax (%d)", what, n, safetext.FieldMax)
+		}
+		if !strings.Contains(got, "a run's own words") || !strings.HasSuffix(got, "…") {
+			t.Errorf("%s reached an answer as %q; want the head of the run's own text, marked as the cut it is", what, got)
+		}
+	}
+	for tool, text := range map[string]string{"get_task_status": statusText, "list_tasks": listText} {
+		if len(text) > 8<<10 {
+			t.Errorf("%s answered %d bytes for one run's record; want one call's answer bounded by the fields' own cut and not by the text the run wrote", tool, len(text))
+		}
 	}
 }
 
