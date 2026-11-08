@@ -351,7 +351,8 @@
             "stage": { "$ref": "#/$defs/duration" },
             "verify": { "$ref": "#/$defs/duration" },
             "render": { "$ref": "#/$defs/duration" },
-            "finalize_reserve": { "$ref": "#/$defs/duration" }
+            "finalize_reserve": { "$ref": "#/$defs/duration" },
+            "review_budget_pct": { "type": "integer", "minimum": 0, "maximum": 100 }
           }
         },
         "inputs": {

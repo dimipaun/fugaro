@@ -506,7 +506,8 @@
             "stage": { "$ref": "#/$defs/duration" },
             "verify": { "$ref": "#/$defs/duration" },
             "render": { "$ref": "#/$defs/duration", "description": "Bounds the render step alone; absent means min(verify, total - finalize_reserve). The run's own deadline caps it further (docs/design/artifact-runs.md §3)." },
-            "finalize_reserve": { "$ref": "#/$defs/duration" }
+            "finalize_reserve": { "$ref": "#/$defs/duration" },
+            "review_budget_pct": { "type": "integer", "minimum": 0, "maximum": 100, "description": "The share of the total budget, in percent, the review and fix rounds may spend; absent or 0 means 80 (config.DefaultReviewBudgetPct). Past it the loop starts no further round and the run finalizes with the last round's findings still open rather than failing." }
           }
         },
         "inputs": {

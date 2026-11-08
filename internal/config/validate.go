@@ -330,6 +330,9 @@ func Validate(c *Config) []Problem {
 				add(p+".timeouts."+d.name, "must be positive")
 			}
 		}
+		if t.ReviewBudgetPct < 0 || t.ReviewBudgetPct > MaxReviewBudgetPct {
+			add(p+".timeouts.review_budget_pct", "must be a percentage from 1 to 100, or 0 for the default (80)")
+		}
 		if t.FinalizeReserve.Duration >= t.Total.Duration {
 			add(p+".timeouts.finalize_reserve", "must be shorter than timeouts.total")
 		}

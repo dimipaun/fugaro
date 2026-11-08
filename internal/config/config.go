@@ -1030,7 +1030,29 @@ type Timeouts struct {
 	// further.
 	Render          Duration `yaml:"render"`
 	FinalizeReserve Duration `yaml:"finalize_reserve"`
+	// ReviewBudgetPct is the share of the total budget, in percent, the
+	// review and fix rounds may spend: past it the loop starts no further
+	// round and the run finalizes with the last round's findings still open
+	// rather than failing (BF1). It is a share of Total and not a duration
+	// because that is what the owner asked for — a repository that shortens
+	// its total should not have to re-time this beside it. Unset (0) means
+	// DefaultReviewBudgetPct, applied in applyDefaults.
+	ReviewBudgetPct int `yaml:"review_budget_pct"`
 }
+
+// The bounds of a workflow's review_budget_pct, and its default: most of the
+// budget goes to the review and fix rounds, and the rest is left for the
+// implement stage's own work and the run's finalize.
+const (
+	// DefaultReviewBudgetPct is the share the rounds may spend when the file
+	// names none: 80% of timeouts.total.
+	DefaultReviewBudgetPct = 80
+	// MaxReviewBudgetPct is the ceiling a file may ask for. 100 is allowed
+	// and is the switch that turns the stop off: the threshold is then never
+	// reached before the run's own finalize reserve, which ends the rounds
+	// exactly as it did before this key existed.
+	MaxReviewBudgetPct = 100
+)
 
 // The ceilings and defaults of a workflow's inputs: block (design
 // artifact-runs.md §4, P6). MaxFiles, MaxBytes (per file) and MaxTotalBytes

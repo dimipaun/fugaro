@@ -898,6 +898,11 @@ func validateProfile(p string, pr Profile) []Problem {
 			add(p+".timeouts."+d.name, "must be positive")
 		}
 	}
+	// 0 is unset here too: a profile names no percentage and the workflow's
+	// own value, or the default, decides.
+	if t.ReviewBudgetPct < 0 || t.ReviewBudgetPct > MaxReviewBudgetPct {
+		add(p+".timeouts.review_budget_pct", "must be a percentage from 1 to 100, or 0 for the workflow's own")
+	}
 	ps = append(ps, validateInputs(p+".inputs", pr.Inputs)...)
 	r := pr.Rebuild
 	if r.Check == "" {

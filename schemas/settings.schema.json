@@ -970,6 +970,9 @@
         "layer.profiles.*.timeouts.render": {
           "default": "unset = the workflow's own"
         },
+        "layer.profiles.*.timeouts.review_budget_pct": {
+          "default": "unset = the workflow's own"
+        },
         "layer.profiles.*.timeouts.stage": {
           "default": "unset = the workflow's own"
         },
@@ -1317,6 +1320,9 @@
         },
         "workflows.*.timeouts.render": {
           "default": "unset = what verify gets"
+        },
+        "workflows.*.timeouts.review_budget_pct": {
+          "default": "unset = 80"
         },
         "workflows.*.timeouts.stage": {
           "default": "unset = 60m, or the total when it is shorter"

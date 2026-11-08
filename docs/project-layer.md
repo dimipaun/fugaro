@@ -235,6 +235,7 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `workflows.*.timeouts.verify` | profile, repo |  |
 | `workflows.*.timeouts.render` | profile, repo |  |
 | `workflows.*.timeouts.finalize_reserve` | profile, repo |  |
+| `workflows.*.timeouts.review_budget_pct` | profile, repo |  |
 | `workflows.*.rebuild.check` | profile, repo |  |
 | `workflows.*.rebuild.max_age` | profile, repo |  |
 | `workflows.*.rebuild.lockfiles` | profile, repo |  |

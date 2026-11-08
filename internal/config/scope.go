@@ -143,6 +143,7 @@ var Scopes = []ScopeRow{
 	{Key: "workflows.*.timeouts.verify", In: InProfile | InRepo},
 	{Key: "workflows.*.timeouts.render", In: InProfile | InRepo},
 	{Key: "workflows.*.timeouts.finalize_reserve", In: InProfile | InRepo},
+	{Key: "workflows.*.timeouts.review_budget_pct", In: InProfile | InRepo},
 	{Key: "workflows.*.rebuild.check", In: InProfile | InRepo},
 	{Key: "workflows.*.rebuild.max_age", In: InProfile | InRepo},
 	{Key: "workflows.*.rebuild.lockfiles", In: InProfile | InRepo},

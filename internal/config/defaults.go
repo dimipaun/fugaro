@@ -304,6 +304,9 @@ func applyDefaults(c *Config) {
 		}
 		w.Rebuild = w.Rebuild.Defaults()
 		t := &w.Timeouts
+		if t.ReviewBudgetPct == 0 {
+			t.ReviewBudgetPct = DefaultReviewBudgetPct
+		}
 		if t.Total.Duration == 0 {
 			t.Total.Duration = 3 * time.Hour
 		}
