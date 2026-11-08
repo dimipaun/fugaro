@@ -123,11 +123,16 @@ func writeData(b *strings.Builder, text string, neutralize func(string) string) 
 // findingHeader is one finding's header line: the index and key a verdict must
 // name it by, and what the mode's table read of it — the reviewer's score, or
 // the words "unscored", which is what makes the table block the finding and
-// the floor hold it. The file is a path the reviewer wrote, so it goes through
-// safetext and the whole line through the neutralizer.
+// the floor hold it. The key and the file are the two values here the reader
+// did not write: the file is a path the reviewer typed, and the key is only
+// held to being non-empty (Decode), so each goes through safetext.OneLine —
+// neither has an escape of its own in a line, and a newline either carried
+// would open a line of its own inside the block — and the whole line through
+// the neutralizer.
 func findingHeader(f Finding, neutralize func(string) string) string {
+	key := safetext.OneLine(f.Key)
 	if !f.Score.Scored() {
-		return neutralize(fmt.Sprintf("[%d] %s — unscored, so the mode's table blocks it", f.Index, f.Key))
+		return neutralize(fmt.Sprintf("[%d] %s — unscored, so the mode's table blocks it", f.Index, key))
 	}
 	parts := []string{
 		string(f.Score.Class),
@@ -138,7 +143,7 @@ func findingHeader(f Finding, neutralize func(string) string) string {
 	if f.File != "" {
 		parts = append(parts, safetext.OneLine(f.File))
 	}
-	return neutralize(fmt.Sprintf("[%d] %s — %s", f.Index, f.Key, strings.Join(parts, ", ")))
+	return neutralize(fmt.Sprintf("[%d] %s — %s", f.Index, key, strings.Join(parts, ", ")))
 }
 
 // persona is the mode's persona text. A mode with no file gets Pro's, which is
