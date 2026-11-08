@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/logtail"
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -59,8 +60,15 @@ const (
 // Diagnosis is what diagnose gathers about one run. Every string in it
 // that comes from the run is redacted.
 type Diagnosis struct {
-	Project      string           `json:"project"` // the Fugaro project
-	Row          runview.Row      `json:"row"`
+	Project string      `json:"project"` // the Fugaro project
+	Row     runview.Row `json:"row"`
+	// FailureClass is why the run did not end succeeded, as one value of the
+	// closed vocabulary of docs/design/failure-classes.md §3 — the same value
+	// the row carries, on the diagnosis's own shape because diagnose is the
+	// command a person runs to be told why, and D1460 is that a reader of this
+	// document is never sent into the row for it. It is absent for a run that
+	// did not fail: a succeeded run has no cause to name.
+	FailureClass failure.Class    `json:"failure_class,omitempty"`
 	Halt         *runstore.Halt   `json:"halt,omitempty"`     // why a halted run was halted
 	Verify       []verify.Record  `json:"verify,omitempty"`   // result.json's verify records
 	Failed       []string         `json:"failed,omitempty"`   // the last test record's failed tests
@@ -241,7 +249,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 	}
 	d := &Diagnosis{Row: rows[0], ReportPath: s.Prefix() + "report.md"}
 	d.DraftNote = draftNote(d.Row, time.Now())
-	d.Row.Reason = red(d.Row.Reason)
+	d.Row.Reason, d.FailureClass = red(d.Row.Reason), d.Row.FailureClass
 	if h := d.Row.Halt; h != nil {
 		c := *h
 		c.Detail = red(c.Detail)
