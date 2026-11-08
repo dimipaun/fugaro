@@ -933,8 +933,8 @@ or one workspace's (--workspace <name>), recording who and when. --repo with
 no value means the repository this checkout belongs to, as it does for set.
 Asks you to type the project's name (or pass --yes): runs start again. A
 workspace is named by its own name alone and takes neither of the other
-scopes; resuming one asks nothing and is refused in a coding agent's session,
-as a raise is (D1542).
+scopes; resuming one asks nothing and is refused in a coding agent's session
+as the raise it is (D1542).
 
 Usage: `fugaro budget resume (--all | --repo [owner/name] | --workspace <name>) [--reason TEXT]`
 

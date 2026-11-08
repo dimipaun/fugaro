@@ -111,16 +111,20 @@ func runBudgetKillWorkspace(cmd *cobra.Command, o *budgetKillOptions, kill bool)
 				// every raise form").
 				return nil
 			}
-			// A resume is that raise: this scope's form of it is the one T3's
-			// list did not have when it was written, because the scope is new
-			// — so it is fenced here, in the same words and on the same
-			// question every other raise form is fenced on (agentMarker, the
-			// one classification the package's agent refusals ask). The
-			// refusal carries the exact command its owner runs themselves,
-			// because a session that reads only the refusal has to be able to
-			// act on it. When T3's own helper (raiseOwnerOnly, budget.go)
-			// reaches this branch this becomes its call, with the fence in one
-			// place.
+			// A resume is that raise. This scope is the one raise form on
+			// this branch that is fenced on the agent marker (agentMarker,
+			// the one classification the package's agent refusals ask): the
+			// scope is new, so T3's list did not have it when it was written,
+			// and the raise forms that were here before it — `budget resume
+			// --all`, `budget set --global` — still confirm with the typed
+			// project name or --yes, which a coding agent's session may pass.
+			// The fence below is this scope's own; T3's helper
+			// (raiseOwnerOnly, budget.go) replaces it when main's side
+			// reaches this branch, so that rule lives in one place.
+			//
+			// The refusal carries the exact command its owner runs
+			// themselves, because a session that reads only the refusal has
+			// to be able to act on it.
 			if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
 				return userErr("resuming %s is the owner's own step: %s; nothing was changed. Run this yourself at your own terminal: fugaro budget resume --workspace %s", what, initflow.AgentRefusal(m), lc.Name)
 			}

@@ -1398,8 +1398,8 @@ func newBudgetKillCmd(kill bool) *cobra.Command {
 			"no value means the repository this checkout belongs to, as it does for set.\n"+
 			"Asks you to type the project's name (or pass --yes): runs start again. A\n"+
 			"workspace is named by its own name alone and takes neither of the other\n"+
-			"scopes; resuming one asks nothing and is refused in a coding agent's session,\n"+
-			"as a raise is (D1542)."
+			"scopes; resuming one asks nothing and is refused in a coding agent's session\n"+
+			"as the raise it is (D1542)."
 	if kill {
 		use, short, long = "kill (--all | --repo [owner/name] | --workspace <name>) [--reason TEXT]", "Halt every run of the project, of one repository or of one workspace (budget admins)",
 			"Set the project's kill switch (--all), one repository's (--repo [owner/name]) or\n"+

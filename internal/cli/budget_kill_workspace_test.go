@@ -129,9 +129,13 @@ func TestWorkspaceKillStopsAMemberRunInFlight(t *testing.T) {
 // and a raise is the one form a coding agent's session may not make — a limit
 // the session it bounds can lift is not a limit (D1542, the fence T3 of
 // docs/no-prompt-policy/implementation-plan.md puts on every raise form: "List
-// and fence every raise form ... budget resume"). The kill is the other
-// direction, and it stays open to the session: halting spend is the safe way
-// round, so a kill asks nothing and is fenced by nothing.
+// and fence every raise form ... budget resume"). This scope is where this
+// branch fences it itself: the raise forms older than the scope — budget resume
+// --all, budget set --global — confirm with the typed project name or --yes,
+// which a coding agent's session may pass, so the help here claims the fence of
+// this scope only. The kill is the other direction, and it stays open to the
+// session: halting spend is the safe way round, so a kill asks nothing and is
+// fenced by nothing.
 func TestWorkspaceResumeRefusesInAnAgentSession(t *testing.T) {
 	h := newWSUpdateHome(t, wsOwnerTable)
 	db := h.project(t, "workspace-alpha").db
@@ -159,6 +163,21 @@ func TestWorkspaceResumeRefusesInAnAgentSession(t *testing.T) {
 	}
 	if on, _ := wsKillStop(t, db, "workspace-alpha"); !on {
 		t.Error("the refused resume lifted the workspace's stop: the raise happened without being made")
+	}
+
+	// And the flag that stands in for the typed name elsewhere does not stand
+	// in for the owner here: the help this branch publishes says the session is
+	// refused, and a version of that sentence that a --yes could pass would be
+	// the claim this package is not allowed to make.
+	_, _, err = execute(t, "budget", "resume", "--workspace", "workspace-alpha", "--yes")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("budget resume --workspace --yes in a coding agent's session: %v, want the owner-only refusal", err)
+	}
+	if !strings.Contains(err.Error(), "CLAUDECODE") {
+		t.Errorf("the refusal with --yes does not name the session:\n%v", err)
+	}
+	if on, _ := wsKillStop(t, db, "workspace-alpha"); !on {
+		t.Error("the refused resume with --yes lifted the workspace's stop")
 	}
 }
 
