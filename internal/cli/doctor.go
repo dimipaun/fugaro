@@ -2129,6 +2129,13 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	}
 	checks := doctorRulesSkew(ctx, db, lc)
 	checks = append(checks, doctorCredsBroken(ctx, db)...)
+	// D1548's line, on the client every check above already reads through:
+	// whether the mode lets an image build over a cap through, which is the
+	// question the caps' own job (the unattended builds) makes worth asking
+	// here.
+	if c := doctorBuildBudgetCheck(ctx, db); c != nil {
+		checks = append(checks, *c)
+	}
 	// The node is read through projectpolicy.Read, the reader a run uses
 	// (design §5(3)), not with a plain Get: with no marker, or one below
 	// PolicyRulesVersion, no run reads the policy however the node is written, and a
