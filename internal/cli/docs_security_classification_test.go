@@ -189,7 +189,7 @@ func TestDocsSecurityClassificationDecisionsAreUnanswered(t *testing.T) {
 		}
 		cells := strings.Split(strings.Trim(strings.TrimSpace(line), "|"), "|")
 		if len(cells) < 6 {
-			t.Errorf("%s: the row %q has %d cells, want at least 6 (`# | Question | Recommendation (and why) | Alternative | Its cost | Owner's answer`)", path, strings.TrimSpace(line[:40]), len(cells))
+			t.Errorf("%s: the row %q has %d cells, want at least 6 (`# | Question | Recommendation (and why) | Alternative | Its cost | Owner's answer`)", path, strings.TrimSpace(line[:min(len(line), 40)]), len(cells))
 			continue
 		}
 		if answer := strings.TrimSpace(cells[len(cells)-1]); answer != "*(empty)*" {
