@@ -176,6 +176,10 @@ const DOCUMENT_SELECTORS = new Map([
 // each group's own control to know what opens it.
 const ELEMENT_SELECTORS = new Map([
   ['[data-consent]', (el) => el.attrs.has('data-consent')],
+  // The settings panel's switches (the owner's request of 2026-11-08): `site.js` reads them off
+  // the panel rather than the document, and each one names the decision it writes in its own
+  // attribute value.
+  ['[data-consent-switch]', (el) => el.attrs.has('data-consent-switch')],
   ['summary', (el) => el.name === 'summary'],
   // The two sliders' own hooks, read inside the block the script finds each by — both pages'
   // sliders are one component since 2026-10-21, so both carry the same four: the track the
@@ -627,6 +631,31 @@ export function runPage(html, { dist = DIST, script = null, storage = {}, readab
     /** Press Escape, which is how a banner is dismissed. */
     escape() {
       for (const handler of windowListeners.get('keydown') ?? []) handler({ type: 'keydown', key: 'Escape' })
+    },
+    /** The third control, the panel it opens, and the switches the panel draws. */
+    settingsButton: () => byId.get('consent-banner-settings-button') ?? null,
+    panel: () => byId.get('consent-banner-settings') ?? null,
+    switches() {
+      const panel = byId.get('consent-banner-settings')
+      return panel ? panel.querySelectorAll('[data-consent-switch]') : []
+    },
+    /** Open the panel the way a visitor does: the third control's own press, not a call in. */
+    openSettings() {
+      const button = byId.get('consent-banner-settings-button')
+      assert.ok(button, 'the page carries no Cookie Settings control to press')
+      button.fire('click', { type: 'click' })
+    },
+    /** Press one of the panel's own controls: Save my choices, or Back. */
+    pressSettings(id) {
+      const control = byId.get(id)
+      assert.ok(control, `the panel carries no ${id} control`)
+      control.fire('click', { type: 'click' })
+    },
+    /** Turn one switch on or off, which is the browser's own toggle of a checkbox. */
+    setSwitch(name, on) {
+      const box = this.switches().find((el) => el.attrs.get('data-consent-switch') === name)
+      assert.ok(box, `the panel carries no ${name} switch`)
+      box.checked = Boolean(on)
     },
   }
 }
@@ -1640,7 +1669,11 @@ test('the banner is labelled, its two choices are equal, and it is reachable by 
     // What is measured, in the banner, and where the statement lives.
     const bannerText = textOf(banner)
     assert.match(bannerText, /Google Analytics/i, `${page.rel}: the banner does not name the tool it asks about`)
-    assert.match(bannerText, /identifiers/i, `${page.rel}: the banner does not say that the tool sets identifiers (D93)`)
+    // D93 requires the bar to say what the tool does to the visitor's browser. The owner's own
+    // copy (2026-11-08, PR #1971) says it as "access and store data on your device" rather than
+    // in D93's word "identifiers"; the privacy page states the identifiers, and this is the
+    // sentence in the bar.
+    assert.match(bannerText, /store data on your device/i, `${page.rel}: the banner does not say that the tool accesses and stores data on the visitor's device (D93)`)
     assert.ok(find(banner, 'a')?.attrs.get('href') === PRIVACY_PATH, `${page.rel}: the banner does not link ${PRIVACY_PATH}`)
 
     // A keyboard user meets it before the page content: after the skip link, before <main>.
@@ -1696,13 +1729,21 @@ test('the banner is labelled, its two choices are equal, and it is reachable by 
 test('the banner asks one question about everything the site may load, and names no vendor that is not loaded', () => {
   // The owner's ruling of 2026-10-29, on the finding that the privacy page's bar writes a
   // refusal into `fugaro:marketing-consent` while its words asked about analytics alone: the bar
-  // is worded for measurement as a whole — cookies, Google Analytics, and the marketing trackers
-  // and the booking widget the campaign pages carry — on every page. The owner's feedback of
-  // 2026-10-30 cut it to two sentences, and left this rule standing: a vendor is NAMED only while
-  // the site is configured to load it, and the rest are described as the class they are.
-  // `site.yaml` ships both vendor ids empty (R3) and a loader with no id fetches nothing, so
-  // naming them would be a sentence the artifact does not keep. The pair is read in both
-  // directions, so supplying an id brings the name back with it.
+  // is worded for measurement as a whole — cookies, Google Analytics, and the campaign pages'
+  // trackers and widget — on every page. The owner's feedback of 2026-10-30 cut it to two
+  // sentences, and left this rule standing: a vendor is NAMED only while the site is configured
+  // to load it, and the rest are described as the class they are. `site.yaml` ships both vendor
+  // ids empty (R3) and a loader with no id fetches nothing, so naming them would be a sentence
+  // the artifact does not keep. The pair is read in both directions, so supplying an id brings
+  // the name back with it.
+  //
+  // Where each half of the rule lives since the owner's copy of 2026-11-08 (PR #1971) and the
+  // Cookie Settings panel of the same day: the bar's own paragraph states the measurement in
+  // class terms ("personalize, measure and deliver ads and content") on every page, and the
+  // three vendors are named one by one in the settings panel's Marketing switch — which is drawn
+  // only where the bar carries the campaign decision's key, the four campaign pages and the
+  // privacy page, because those are the pages where the question is asked or withdrawn. A page
+  // that carries no key names none of them, and the naming is still held in both directions.
   const facts = siteFacts()
   const campaignVendors = [
     ['Meta', facts.marketing.metaPixelID],
@@ -1719,18 +1760,29 @@ test('the banner asks one question about everything the site may load, and names
         `${page.rel}: the banner does not name ${named}, so a choice made in it does not cover everything the site may load (the owner's ruling of 2026-10-29)`,
       )
     }
-    assert.match(text, /marketing trackers/i, `${page.rel}: the banner no longer describes the campaign pages' measurement, so a choice in it does not cover what those pages load`)
+    assert.match(text, /measure and deliver ads/i, `${page.rel}: the banner no longer describes the campaign pages' measurement, so a choice in it does not cover what those pages load`)
+    assert.match(text, /until you accept/i, `${page.rel}: the banner does not say the load waits for the choice`)
+
+    // The vendors, where the question is asked: the panel's Marketing switch, named by the bar's
+    // own key. Its sentence is the one that tells a visitor what turning it on loads, so the
+    // three names and the "nothing yet" promise are read off it rather than off the paragraph.
+    const panel = findAll(banner, (el) => el.attrs.get('id') === 'consent-banner-settings')[0]
+    assert.ok(panel, `${page.rel} carries no settings panel for the vendor names below to be read from`)
+    const asksCampaign = banner.attrs.has('data-marketing-consent-key')
+    const panelText = textOf(panel)
     for (const [vendor, configured] of campaignVendors) {
-      const names = text.includes(vendor)
+      const names = panelText.includes(vendor)
       assert.equal(
         names,
-        configured.length > 0,
-        configured.length > 0
-          ? `${page.rel}: the banner does not name ${vendor}, which the site is configured to load, so a choice made in it does not cover everything the site may load`
-          : `${page.rel}: the banner names ${vendor}, and nothing in this repository supplies the value that would load it: a loader with no id fetches nothing, and the wording has to stay true while that is so (the owner's feedback of 2026-10-30)`,
+        asksCampaign && configured.length > 0,
+        asksCampaign && configured.length > 0
+          ? `${page.rel}: the panel does not name ${vendor}, which the site is configured to load, so a switch turned on there does not say what it loads`
+          : `${page.rel}: the panel names ${vendor}, and either this page carries no campaign key or nothing in this repository supplies the value that would load it: a loader with no id fetches nothing, and the wording has to stay true while that is so (the owner's feedback of 2026-10-30)`,
       )
     }
-    assert.match(text, /until you accept/i, `${page.rel}: the banner does not say the load waits for the choice`)
+    if (asksCampaign) {
+      assert.match(panelText, /until this is on/i, `${page.rel}: the panel's switch does not say the load waits for it to be turned on`)
+    }
   }
 
   // The bar the finding was about. The privacy page is the one page whose bar carries the
@@ -1751,6 +1803,245 @@ test('the banner asks one question about everything the site may load, and names
     /leaves the campaign question where it stands/i,
     'the privacy statement no longer says the bar\'s accept is the analytics question alone, so a reader who accepted there could think the campaign trackers were agreed to',
   )
+})
+
+// ---- the Cookie Settings panel (the owner's request of 2026-11-08) -----------------------
+//
+// The third control beside the pair, and the panel it opens in the banner's own flow: one
+// switch per decision this bar stores, each off in the markup, and two controls — Save my
+// choices, which writes exactly what the switches say, and Back, which decides nothing. The
+// cases below hold the three things the owner asked for that a reading of the markup cannot:
+// that nothing is loaded or stored before a choice, that each switch is what loads that one
+// question's origins and nothing else, and that a withdrawal made here is the withdrawal the
+// pair makes — the same keys, the same cookie deletion, the same refusal when storage is
+// refused. Everything is read off the artifact the site ships and the gate it runs.
+
+/** The pages that carry the campaign decision's key: the four campaign pages and the privacy page. */
+const CAMPAIGN_KEYED = ['save/index.html', 'control/index.html', 'scale/index.html', 'crew/index.html', 'privacy/index.html']
+
+test('the third control is one of the bar\'s own buttons, the panel it opens is in the bar, and no box is ticked before the visitor ticks it', () => {
+  const page = SHIPPED_HOME
+  const doc = parse(page)
+  const banner = findAll(doc, (el) => el.attrs.get('id') === 'consent-banner')[0]
+  assert.ok(banner, 'the homepage carries no consent banner')
+
+  const button = findAll(banner, (el) => el.attrs.get('id') === 'consent-banner-settings-button')[0]
+  assert.ok(button, 'the banner carries no Cookie Settings control (the owner\'s request of 2026-11-08)')
+  assert.equal(button.name, 'button', `the Cookie Settings control is a <${button.name}>: it is a control, and it must be as reachable as the pair`)
+  assert.equal(button.attrs.get('type'), 'button', 'the Cookie Settings control carries no type="button", so it would submit whatever form it is ever put in')
+  assert.ok(
+    (button.attrs.get('class') ?? '').split(/\s+/).includes('consent-banner__button'),
+    'the Cookie Settings control does not carry the pair\'s shared class, so nothing gives it the pair\'s box',
+  )
+  // It decides nothing by itself, so it is not one of the pair: the pair's own wiring reads
+  // `[data-consent]`, and a third control in it would be a third answer to one question.
+  assert.ok(!button.attrs.has('data-consent'), 'the Cookie Settings control carries a decision of its own, so the pair is no longer two')
+  assert.match(textOf(button), /cookie settings/i, 'the third control is not named Cookie Settings')
+  // The panel is the control's own: the two attributes tie them together, and a panel that
+  // opened without them would be a control a screen reader cannot follow.
+  assert.equal(button.attrs.get('aria-expanded'), 'false', 'the Cookie Settings control does not say, in the markup, that its panel is closed')
+  assert.equal(
+    button.attrs.get('aria-controls'),
+    'consent-banner-settings',
+    `the Cookie Settings control does not point at the panel: aria-controls is "${button.attrs.get('aria-controls')}"`,
+  )
+  assert.ok(!button.attrs.has('autofocus') && !button.attrs.has('tabindex'), 'the Cookie Settings control is nudged: it takes focus on load or carries a tabindex')
+
+  const panel = findAll(banner, (el) => el.attrs.get('id') === 'consent-banner-settings')[0]
+  assert.ok(panel, 'the banner carries no settings panel for the third control to open')
+  assert.ok(panel.attrs.has('hidden'), 'the settings panel is drawn before the visitor opens it: the bar must not change what a reader sees until they ask')
+  assert.equal(panel.name, 'fieldset', `the panel is a <${panel.name}>: the switches are a labelled group, and a <form> is a thing the site claims not to have`)
+  const legend = find(panel, 'legend')
+  assert.ok(legend, 'the panel carries no legend, so the group of switches is unnamed')
+  assert.match(textOf(legend), /cookie settings/i, 'the panel\'s legend does not name the group it labels')
+
+  // The switches, and the promise that none of them is pre-ticked. The `checked` attribute is
+  // what a browser draws a box from, and the panel is drawn with none of them. This page's bar
+  // carries the site's key and no campaign key (`alwaysOffer` is false on the homepage), so it
+  // draws one switch: a decision this bar cannot write is not a switch the panel offers.
+  const switches = findAll(panel, (el) => el.attrs.has('data-consent-switch'))
+  assert.deepEqual(
+    switches.map((el) => el.attrs.get('data-consent-switch')),
+    ['analytics'],
+    'the homepage\'s panel does not draw exactly the decisions its bar can write: one switch per key, and this bar carries the analytics key alone',
+  )
+  for (const box of switches) {
+    assert.equal(box.name, 'input', `a consent switch is a <${box.name}>, not the platform's own control`)
+    assert.equal(box.attrs.get('type'), 'checkbox', `a consent switch is a <input type="${box.attrs.get('type')}">, and only a checkbox is a switch`)
+    assert.equal(box.attrs.get('role'), 'switch', 'a consent switch does not carry role="switch"')
+    assert.ok(!box.attrs.has('checked'), `the ${box.attrs.get('data-consent-switch')} switch is pre-ticked: the panel is drawn with no box ticked, and no decision is taken before the visitor takes one`)
+    assert.ok(!box.attrs.has('disabled'), 'a consent switch is disabled, so a visitor cannot answer the question it asks')
+    // A labelled control: the label is the panel's own `<label for="…">` on the box's id, which
+    // is what `a11y.mjs` requires of every form control the site ships.
+    const id = box.attrs.get('id')
+    assert.ok(id, 'a consent switch carries no id, so nothing can label it')
+    const label = findAll(panel, (el) => el.name === 'label' && el.attrs.get('for') === id)[0]
+    assert.ok(label, `the ${box.attrs.get('data-consent-switch')} switch has no <label for="${id}">, so it has no accessible name`)
+  }
+
+  // The two controls in the panel, and what each one is.
+  const save = findAll(panel, (el) => el.attrs.get('id') === 'consent-banner-save')[0]
+  assert.ok(save, 'the panel carries no Save my choices control')
+  assert.equal(save.name, 'button', 'Save my choices is not a native button')
+  assert.equal(save.attrs.get('type'), 'button', 'Save my choices carries no type="button"')
+  assert.match(textOf(save), /save/i, 'Save my choices is not named as a save')
+  const back = findAll(panel, (el) => el.attrs.get('id') === 'consent-banner-back')[0]
+  assert.ok(back, 'the panel carries no Back control')
+  assert.equal(back.name, 'button', 'Back is not a native button')
+  assert.equal(back.attrs.get('type'), 'button', 'Back carries no type="button"')
+  assert.match(textOf(back), /back/i, 'Back is not named as a way back')
+
+  // The panel's markup carries no script and names no fetched host, which is the same promise
+  // the rest of the banner makes: `origins.mjs` holds the host half over the whole artifact,
+  // and this is the script half over the panel itself.
+  for (const el of walk(panel)) {
+    assert.notEqual(el.name, 'script', 'the settings panel carries a script: the panel is markup, and the gate that reacts to a stored decision is the site\'s one script file')
+  }
+})
+
+test('the panel loads and stores nothing before the visitor chooses, and Escape in it is the bar\'s refusal', () => {
+  const page = runPage(SHIPPED_HOME)
+  // The page's own files are its own — the favicon, the stylesheets, the one script — and what
+  // must not be there before a choice is a request to ANOTHER origin.
+  assert.deepEqual(
+    page.requests.filter((url) => /^[a-z]+:|^\/\//i.test(String(url))),
+    [],
+    'the page asks another origin for something before the visitor has chosen',
+  )
+  assert.deepEqual(Object.keys(page.store), [], 'the page stored a decision before the visitor made one')
+  assert.deepEqual(page.cookies, [], 'the page wrote a cookie before the visitor chose')
+
+  // Opening the panel is not a choice: it reads what the browser holds into the switches and
+  // loads nothing, because nothing has been granted.
+  page.openSettings()
+  assert.equal(page.panel().hidden, false, 'the third control did not open the panel')
+  assert.equal(page.settingsButton().attrs.get('aria-expanded'), 'true', 'the control does not say its panel is open')
+  assert.deepEqual(page.analyticsRequests(), [], 'opening the settings panel loaded the analytics tag')
+  assert.deepEqual(campaignRequests(page), [], 'opening the settings panel loaded one of the campaign\'s vendors')
+  assert.deepEqual(Object.keys(page.store), [], 'opening the settings panel stored a decision')
+
+  // Focus moves into the panel, and Escape is the bar's own refusal — the whole banner goes,
+  // the refusal is written, and nothing is loaded.
+  assert.equal(page.activeElement(), page.switches()[0], 'opening the panel left focus outside it: the reader is put where the new controls are')
+  page.escape()
+  assert.equal(page.store[CONSENT_KEY], 'denied', 'Escape in the panel is not a refusal: the bar and the panel are one thing')
+  assert.deepEqual(page.analyticsRequests(), [], 'the refusal Escape wrote loaded the analytics tag')
+  assert.equal(page.banner.hidden, true, 'Escape in the panel did not put the banner away')
+})
+
+test('Back closes the panel and decides nothing, and focus goes back to the control that opened it', () => {
+  const page = runPage(SHIPPED_HOME)
+  page.openSettings()
+  page.pressSettings('consent-banner-back')
+  assert.equal(page.panel().hidden, true, 'Back did not put the panel away')
+  assert.equal(page.settingsButton().attrs.get('aria-expanded'), 'false', 'Back left the control saying its panel is open')
+  assert.deepEqual(Object.keys(page.store), [], 'Back stored a decision: it is a way out of the panel, not a way to answer')
+  assert.deepEqual(page.analyticsRequests(), [], 'Back loaded the analytics tag')
+  assert.equal(page.activeElement(), page.settingsButton(), 'Back left focus in the panel it just closed')
+  assert.equal(page.banner.hidden, false, 'Back put the whole banner away: only a decision does that')
+})
+
+test('Save with every switch off stores the refusals it draws and loads nothing', () => {
+  // The homepage's bar carries the site's question alone, so its panel draws one switch.
+  const home = runPage(SHIPPED_HOME)
+  assert.equal(home.banner.hidden, false, 'the banner is not offered on a first visit')
+  home.openSettings()
+  home.pressSettings('consent-banner-save')
+  assert.equal(home.store[CONSENT_KEY], 'denied', 'saving with the analytics switch off did not write the refusal it draws')
+  assert.deepEqual(home.analyticsRequests(), [], 'saving with the switch off loaded the analytics tag')
+
+  // The privacy page's bar carries both keys, so its panel draws both switches — and a save
+  // there writes both refusals, which is the whole of the withdrawal it offers.
+  const privacy = runPage(pageOf(SHIPPED, 'privacy/index.html'))
+  assert.equal(privacy.banner.hidden, false, 'the privacy page does not offer the choice again')
+  privacy.openSettings()
+  assert.deepEqual(
+    privacy.switches().map((box) => box.attrs.get('data-consent-switch')),
+    ['analytics', 'marketing'],
+    'the privacy page\'s panel does not draw one switch per decision its bar carries: it carries both keys, and the campaign bar is gone by the time a visitor withdraws',
+  )
+  privacy.pressSettings('consent-banner-save')
+  assert.equal(privacy.store[CONSENT_KEY], 'denied', 'the analytics switch off did not write the refusal it draws')
+  assert.equal(privacy.store[MARKETING_CONSENT_KEY], 'denied', 'the marketing switch off did not write the refusal it draws')
+  assert.deepEqual(privacy.analyticsRequests(), [], 'saving two refusals on the privacy page loaded the analytics tag')
+  assert.deepEqual(campaignRequests(privacy), [], 'saving two refusals on the privacy page loaded a campaign vendor')
+})
+
+test('Save with the analytics switch on loads the analytics origin alone, and Save with the campaign switch on loads the campaign\'s three on the page they were built for', () => {
+  const home = runPage(SHIPPED_HOME)
+  home.openSettings()
+  home.setSwitch('analytics', true)
+  home.pressSettings('consent-banner-save')
+  assert.equal(home.store[CONSENT_KEY], 'granted', 'the analytics switch on was not stored as the grant it draws')
+  assert.equal(home.analyticsRequests().length, 1, 'the analytics switch on loaded the tag some number of times other than one')
+  assert.deepEqual(campaignRequests(home), [], 'the analytics switch on loaded a campaign vendor: the campaign question is its own switch')
+  assert.equal(home.banner.hidden, true, 'saving a choice did not put the banner away')
+
+  // The campaign switch, on one of the four pages the configuration was built for, with the
+  // analytics switch left off: the two questions are answered separately, and each loads its own.
+  const campaign = runPage(pageOf(SHIPPED, CAMPAIGN_PAGE), { location: CAMPAIGN_LOCATION })
+  campaign.openSettings()
+  campaign.setSwitch('marketing', true)
+  campaign.pressSettings('consent-banner-save')
+  assert.equal(campaign.store[MARKETING_CONSENT_KEY], 'granted', 'the campaign switch on was not stored as the grant it draws')
+  assert.equal(campaign.store[CONSENT_KEY], 'denied', 'the analytics switch was left off and was not stored as the refusal it draws')
+  assert.deepEqual(campaign.analyticsRequests(), [], 'the campaign switch on loaded the analytics tag: the two questions are two switches')
+  assert.equal(campaignRequests(campaign).length, 3, 'the campaign switch on did not load the three vendors the campaign page carries')
+})
+
+test('the panel shows the answers the browser holds, which is what makes a withdrawal there a withdrawal', () => {
+  const page = runPage(pageOf(SHIPPED, 'privacy/index.html'), {
+    storage: { [CONSENT_KEY]: 'granted', [MARKETING_CONSENT_KEY]: 'granted' },
+    cookies: ['_fbp=planted-by-the-pixel; path=/'],
+  })
+  page.openSettings()
+  const shown = page.switches().map((box) => [box.attrs.get('data-consent-switch'), box.checked])
+  assert.deepEqual(
+    shown,
+    [['analytics', true], ['marketing', true]],
+    'the panel did not show the two grants the browser holds, so a visitor cannot see what they answered',
+  )
+
+  // Turning one off and saving is the withdrawal the pair makes: the decision is rewritten, and
+  // the cookies the tags set while the visitor had accepted are deleted.
+  page.setSwitch('marketing', false)
+  page.pressSettings('consent-banner-save')
+  assert.equal(page.store[MARKETING_CONSENT_KEY], 'denied', 'turning the campaign switch off and saving did not withdraw the campaign answer')
+  assert.equal(page.store[CONSENT_KEY], 'granted', 'saving withdrew the answer the visitor left switched on')
+  assert.ok(
+    page.cookies.some((raw) => /^_fbp=/.test(raw) && /expires=Thu, 01 Jan 1970/.test(raw)),
+    'the withdrawal did not run the campaign cookie deletion: the pixel\'s own cookie was left in the browser',
+  )
+  assert.ok(!page.held().includes('_fbp'), 'the campaign cookie the withdrawal deleted is still in the jar')
+
+  // No decision at all is a switch off, which is what the gate means by it: a missing answer
+  // loads nothing, and the panel has to say so rather than showing a box ticked.
+  const fresh = runPage(pageOf(SHIPPED, 'privacy/index.html'))
+  fresh.openSettings()
+  assert.deepEqual(
+    fresh.switches().map((box) => box.checked),
+    [false, false],
+    'the panel does not read "no decision" as a switch off: a missing answer loads nothing',
+  )
+})
+
+test('a browser that refuses the write keeps the panel, says so, and honours the refusal it could not store', () => {
+  const page = runPage(SHIPPED_HOME, { writable: false })
+  page.openSettings()
+  page.setSwitch('analytics', false)
+  page.pressSettings('consent-banner-save')
+  assert.equal(page.banner.hidden, false, 'a choice that could not be kept put the banner away: the visitor has to be asked again rather than answered for')
+  assert.equal(page.status.hidden, false, 'a choice that could not be kept did not say so in the status line')
+  assert.deepEqual(page.analyticsRequests(), [], 'a grant that could not be kept loaded the analytics tag: nothing is loaded on a promise the next page would not remember')
+
+  // The grant is the other way round: a switch turned on with storage refused loads nothing,
+  // because the next page would not remember it.
+  const granted = runPage(SHIPPED_HOME, { writable: false })
+  granted.openSettings()
+  granted.setSwitch('analytics', true)
+  granted.pressSettings('consent-banner-save')
+  assert.deepEqual(granted.analyticsRequests(), [], 'a grant the browser refused to store loaded the analytics tag anyway')
+  assert.equal(granted.status.hidden, false, 'the grant that could not be kept did not say so')
 })
 
 test('the shipped scripts never take the keyboard: no preventDefault, no stopPropagation, no focus trap', () => {
@@ -2012,6 +2303,30 @@ test('the claims the privacy page makes about the site are held to the artifact'
       if (el.name === 'textarea' && page.rel === 'index.html' && el.attrs.get('id') === 'hero-task') {
         assert.ok(!el.attrs.has('name') && !el.attrs.has('form'), `${page.rel}: the hero's task field carries a name or a form, so it is shaped to be submitted`)
         for (let up = el.parent; up; up = up.parent) assert.notEqual(up.name, 'form', `${page.rel}: the hero's task field sits in a <form>`)
+        continue
+      }
+      // The consent banner's own settings panel (the owner's request of 2026-11-08) is the one
+      // other control the site carries: one checkbox per measurement decision, which a visitor
+      // toggles and nothing submits. The privacy page's claim is about what the site asks a
+      // reader FOR, and a consent switch is the visitor telling the site what NOT to do — so it
+      // is not a field the page collects through. It carries no `name` and sits in no `<form>`
+      // (the panel is a `<fieldset>`, a grouping rather than a form), and it is held to the
+      // banner rather than to any page: an `<input>` anywhere else is still the claim broken.
+      if (el.name === 'input') {
+        let panel = null
+        for (let up = el.parent; up; up = up.parent) {
+          if (up.attrs?.get('id') === 'consent-banner-settings') {
+            panel = up
+            break
+          }
+        }
+        assert.ok(
+          panel,
+          `${page.rel} carries an <input> outside the consent banner's settings panel: the privacy page says the site asks for nothing and has no form, and this is that claim held to the built pages`,
+        )
+        assert.ok(!el.attrs.has('name') && !el.attrs.has('form'), `${page.rel}: a consent switch carries a name or a form, so it is shaped to be submitted`)
+        assert.equal(panel.name, 'fieldset', `${page.rel}: the settings panel is a <${panel.name}>, so a consent switch sits in a control that can be submitted`)
+        assert.equal(el.attrs.get('type'), 'checkbox', `${page.rel}: a consent switch is a <input type="${el.attrs.get('type')}">, and only a checkbox is a switch`)
         continue
       }
       assert.ok(

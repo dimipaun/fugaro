@@ -844,6 +844,21 @@
   var INSTALL_ID = 'campaign-install'
   var CHAT_ID = 'campaign-whatsapp'
 
+  // The settings panel (the owner's request of 2026-11-08): the third control's own panel,
+  // where a visitor answers each question on its own instead of both at once. The ids are the
+  // markup's, and the switches are found by the decision each one writes — the same two keys
+  // the pair writes — so the panel and the pair cannot come to answer different questions.
+  var SETTINGS_ID = 'consent-banner-settings'
+  var SETTINGS_BUTTON_ID = 'consent-banner-settings-button'
+  var SAVE_ID = 'consent-banner-save'
+  var BACK_ID = 'consent-banner-back'
+  var SWITCH_ATTR = 'data-consent-switch'
+  // What a switch's own attribute says, and the banner attribute the decision is stored under:
+  // the site's key and the campaign's, which is the pair `choose` writes below. A switch whose
+  // name is not here writes nothing, and a decision this bar has no key for has no switch to
+  // draw — the panel writes only what it draws.
+  var SWITCH_KEYS = { analytics: SITE_KEY_ATTR, marketing: MARKETING_KEY_ATTR }
+
   // The decision, as the browser stored it, or null when there is none to read. Storage the
   // browser refuses is not a decision: an unreadable answer is no answer rather than a guess,
   // and the gate needs a readable `granted` before it fetches anything.
@@ -1460,6 +1475,101 @@
       announce(siteDecision, campaignDecision)
     }
 
+    // The settings panel (the owner's request of 2026-11-08): the third control opens it in the
+    // banner's own flow, and it decides nothing that `choose` does not. Save writes the same two
+    // keys the pair writes, through the same `keep`, and the gates below react to the same
+    // `announce` — so a withdrawal made here is the withdrawal the pair makes, the cookie
+    // deletion included, and a browser that refuses the write is told the same thing. Escape is
+    // the bar's own refusal (the handler below), because the panel is part of the bar rather
+    // than a dialog over it: there is no modal, no focus trap, and no second way to refuse.
+    function settings() {
+      var button = document.getElementById(SETTINGS_BUTTON_ID)
+      var panel = document.getElementById(SETTINGS_ID)
+      if (!button || !panel) return
+
+      // The switches this bar carries, in the order the markup draws them. A decision the bar
+      // has no key for — the campaign's, on every page but the four campaign pages and the
+      // privacy page — is a question this page does not ask, so it is not a switch here.
+      var boxes = []
+      var found = panel.querySelectorAll('[' + SWITCH_ATTR + ']')
+      for (var i = 0; i < found.length; i++) {
+        var attribute = SWITCH_KEYS[found[i].getAttribute(SWITCH_ATTR)]
+        if (attribute && banner.getAttribute(attribute) !== null) {
+          boxes.push({ box: found[i], attribute: attribute })
+        }
+      }
+
+      // What the browser holds, into the switches. The panel is drawn with no box ticked (a
+      // pre-ticked box is the dark pattern this banner does not have), so every opening reads
+      // the two decisions in — which is also what lets the privacy page's panel show a visitor
+      // the answers they gave, and what makes turning one off a withdrawal of that answer.
+      function show() {
+        for (var i = 0; i < boxes.length; i++) {
+          boxes[i].box.checked = read(banner, boxes[i].attribute) === GRANTED
+        }
+        panel.hidden = false
+        button.setAttribute('aria-expanded', 'true')
+      }
+
+      function put() {
+        panel.hidden = true
+        button.setAttribute('aria-expanded', 'false')
+      }
+
+      // Focus goes into the panel when it opens and back to the control that opened it when it
+      // closes: the panel is not a dialog and traps nothing, but a reader who opened it is put
+      // where the new controls are rather than left behind on a control whose panel appeared
+      // somewhere below. A bar with no switch at all focuses the panel itself, which is the
+      // only thing there is to read.
+      function open() {
+        show()
+        var first = boxes.length > 0 ? boxes[0].box : panel
+        if (first.focus) first.focus()
+      }
+
+      function close() {
+        put()
+        if (button.focus) button.focus()
+      }
+
+      // Save: exactly what the switches say, one decision per question this bar asked. Each
+      // answer goes through `keep`, and a write that was refused is treated as `choose` treats
+      // it — a refusal is honoured whether or not it could be filed, a grant is not honoured
+      // until it is — so nothing is loaded on a promise the next page would not remember, and
+      // a visitor who has just said no is not measured because the note could not be written.
+      // Anything unkept keeps the banner with the status line rather than dismissing.
+      function save() {
+        if (closing) return
+        var decisions = {}
+        var kept = true
+        for (var i = 0; i < boxes.length; i++) {
+          var decision = boxes[i].box.checked ? GRANTED : DENIED
+          var filed = keep(banner, boxes[i].attribute, decision)
+          if (!filed) kept = false
+          decisions[boxes[i].attribute] = filed || decision === DENIED ? decision : null
+        }
+        if (!kept) {
+          if (status) status.hidden = false
+          announce(decisions[SITE_KEY_ATTR], decisions[MARKETING_KEY_ATTR])
+          return
+        }
+        put()
+        dismiss()
+        announce(decisions[SITE_KEY_ATTR], decisions[MARKETING_KEY_ATTR])
+      }
+
+      button.addEventListener('click', function () {
+        if (panel.hidden) open()
+        else close()
+      })
+
+      var saveButton = document.getElementById(SAVE_ID)
+      if (saveButton) saveButton.addEventListener('click', save)
+
+      var backButton = document.getElementById(BACK_ID)
+      if (backButton) backButton.addEventListener('click', close)
+    }
+
     var controls = banner.querySelectorAll('[data-consent]')
     for (var i = 0; i < controls.length; i++) {
       ;(function (control) {
@@ -1468,6 +1578,8 @@
         })
       })(controls[i])
     }
+
+    settings()
 
     // Escape dismisses, and a dismissal is a refusal: the gate fetches nothing until
     // something stores `granted`, so ignoring the banner measures nothing either.
