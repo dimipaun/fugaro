@@ -627,6 +627,69 @@ func TestARetryThatCannotBeBuiltIsNotARetry(t *testing.T) {
 	}
 }
 
+// A call the client gave up on is not retried: the cancellation is what ends
+// the wait between the attempts, so no second request is made and the first
+// attempt's own answer -- the 503 it relayed -- is what the call settles as.
+// The same guard covers a Close and a halt, which cancel the run's calls the
+// same way.
+func TestAClientThatWentAwayIsNotRetried(t *testing.T) {
+	// Long enough that only the cancellation can end the wait while this test
+	// is watching; a retry that sat out the delay instead would settle at 15s,
+	// after waitFor's own 10.
+	old := upstreamRetryDelay
+	upstreamRetryDelay = 15 * time.Second
+	t.Cleanup(func() { upstreamRetryDelay = old })
+	h := newHarness(t, anthropicfake.Error(http.StatusServiceUnavailable, "api_error", "busy"))
+	body := msg(sonnet, 1000, `"stream":true`)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		resp, err := http.DefaultClient.Do(h.request(ctx, "/v1/messages", body))
+		if err == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+		}
+		done <- err
+	}()
+	waitFor(t, "the first attempt to reach the upstream", func() bool { return h.fake.Count() == 1 })
+	time.Sleep(50 * time.Millisecond) // the 503 is on its way back, so the gateway is about to wait
+	cancel()
+	waitFor(t, "the cancelled call to settle", func() bool { return len(h.logs.calls(t)) == 1 })
+	if err := <-done; err == nil {
+		t.Errorf("the cancelled call answered without an error")
+	}
+	if n := h.fake.Count(); n != 1 {
+		t.Errorf("the upstream saw %d requests, want 1: the call was cancelled while the retry waited", n)
+	}
+	noRetryLine(t, h.logs)
+	rep := h.gw.EndStage()
+	if rep.Calls != 1 || rep.Used != 0 {
+		t.Errorf("the stage recorded %d calls using %d, want 1 call charged nothing: the upstream answered the first attempt", rep.Calls, rep.Used)
+	}
+	if call := h.logs.lastCall(t); call["settled"] != "zero" || num(call["status"]) != http.StatusServiceUnavailable {
+		t.Errorf("log %v, want the first attempt's own 503 settled zero", call)
+	}
+}
+
+// The wait between the attempts is ended by the cancellation and not by the
+// clock: a call whose client went away, whose run was closed or that a halt
+// cut short waits for nothing and is never sent again.
+func TestTheRetryWaitEndsOnCancellation(t *testing.T) {
+	old := upstreamRetryDelay
+	upstreamRetryDelay = 10 * time.Second // only the cancellation can end this
+	t.Cleanup(func() { upstreamRetryDelay = old })
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(20*time.Millisecond, cancel)
+	start := time.Now()
+	if sleepUpstreamRetry(ctx) {
+		t.Errorf("the wait reported a retry to make after the call was cancelled")
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("the wait took %s to notice the cancellation, want it ended at once", d)
+	}
+}
+
 // The retry line, and every other line the call writes, carries the call and
 // no credential: not the provider's key, not the run's own gateway token and
 // not one byte of the request. The same call is pinned on a provider route,
