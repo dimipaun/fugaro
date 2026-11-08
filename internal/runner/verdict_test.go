@@ -124,10 +124,11 @@ func TestVerdictWithAStringScoreFailsClosedAndNamesTheField(t *testing.T) {
 // integers bounded to the 1–5 scale D1 answered, and a closed class.
 func TestVerdictSchemaCarriesTheScore(t *testing.T) {
 	type prop struct {
-		Type    string   `json:"type"`
-		Minimum *int     `json:"minimum"`
-		Maximum *int     `json:"maximum"`
-		Enum    []string `json:"enum"`
+		Type      string   `json:"type"`
+		Minimum   *int     `json:"minimum"`
+		Maximum   *int     `json:"maximum"`
+		MinLength *int     `json:"minLength"`
+		Enum      []string `json:"enum"`
 	}
 	var schema struct {
 		Properties struct {
@@ -169,5 +170,11 @@ func TestVerdictSchemaCarriesTheScore(t *testing.T) {
 	// a summary is the only thing a finding must carry.
 	if len(item.Required) != 1 || item.Required[0] != "summary" {
 		t.Errorf("the finding item requires %v, want summary alone", item.Required)
+	}
+	// And it must be a sentence: a needs_owner finding with an empty summary
+	// is a decision the owner is asked to settle with nothing to read, and the
+	// model is the one reader this schema constrains.
+	if p := item.Properties["summary"]; p.MinLength == nil || *p.MinLength != 1 {
+		t.Errorf("summary = %+v, want a string of at least one character", p)
 	}
 }
