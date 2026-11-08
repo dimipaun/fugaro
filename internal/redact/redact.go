@@ -132,6 +132,7 @@ func patternPass(s string) string {
 	s = signedParam.ReplaceAllString(s, "$1$2="+redacted)
 	s = connString.ReplaceAllString(s, "$1:"+redacted+"@")
 	s = passwordValue.ReplaceAllString(s, "$1$2$3$4$5"+redacted)
+	s = passwordWord.ReplaceAllString(s, "$1$2$3$4$5"+redacted)
 	s = passwordCamel.ReplaceAllString(s, "$1$2$3$4$5"+redacted)
 	s = passwordFlag.ReplaceAllString(s, "$1 $2"+redacted)
 	for _, re := range tokenShapes {
@@ -291,16 +292,40 @@ var (
 	// value needs four bytes, the floor the exact pass uses and for its
 	// reason: a shorter one is not a credential, and replacing it mangles the
 	// text around it.
-	passwordValue = regexp.MustCompile(`(?i)(^|(?-i:[^a-z]))(pass(?:word|phrase|wd)?s?|pwd|secret(?:[_-]?(?:access[_-])?key)?)(\\*["']?)(\s*[:=]\s*)((?:\\+)?["'])?([^\s"',;&\\]{4,})`)
+	//
+	// A quoted value is read to its closing quote and an unquoted one stops at
+	// the first `&`, `,` or `;` — a sentence and a query string both put one
+	// there (`Pwd=…;Database=app`, `password=…&user=app`), so an unquoted value
+	// with one early is left alone rather than redacted past it, while a
+	// quoted one holds whatever it was written with (`"my long pass phrase"`,
+	// `"ab,cdefgh12"`). What an unquoted value after a colon costs is the
+	// sentence that reads the same way: `password: required field missing`
+	// loses its `required` exactly as `smtpPassword: hunter2 rejected` loses
+	// its password, and no rule that reads neither the word nor the value can
+	// tell the two apart. The field's name and the rest of the line still say
+	// what happened, which is the cheaper of the two mistakes to make.
+	passwordValue = regexp.MustCompile(`(?i)(^|(?-i:[^a-z]))(pass(?:word|phrase|wd)s?|pwd|secret(?:[_-]?(?:access[_-])?key))(\\*["']?)(\s*[:=]\s*)(?:((?:\\+)?["'])([^"'\n]{4,})|([^\s"',;&\\]{4,}))`)
+
+	// passwordWord is the same credential under a bare `pass` or `secret`,
+	// which is an English word as readily as a name: `--- PASS:
+	// TestRunnerFinalize` and `the secret: rotated by the operator` are a test
+	// report and a sentence, and redacting what follows the colon would take
+	// the test's name with it. An `=` writes a name and a colon is also a
+	// sentence's punctuation, so the bare word is claimed only where the sign
+	// is the one an assignment uses — `PASS=…`, `JWT_SECRET=…`, `client_secret=…`
+	// — and a name with more to it than the word (`password`, `passwd`,
+	// `secret_key`) is passwordValue above, which reads either sign.
+	passwordWord = regexp.MustCompile(`(?i)(^|(?-i:[^a-z]))(pass|secret)(\\*["']?)(\s*=\s*)(?:((?:\\+)?["'])([^"'\n]{4,})|([^\s"',;&\\]{4,}))`)
 
 	// passwordCamel is the same name written inside another word, which is how
 	// a record, a config or a keyword connection string spells a field:
 	// `dbPassword`, `{"apiSecretKey":"…"}`, `smtpPassword:`. What tells it from
 	// English is the capital of the name's first letter — no word of a sentence
-	// carries one in its middle — so this rule reads the name case by case and
-	// lets anything precede it, where passwordValue above, whose name may be
-	// written in lower case, has to keep its boundary.
-	passwordCamel = regexp.MustCompile(`(^|[A-Za-z0-9_]*)(Pass(?:word|Phrase|Wd)?s?|Pwd|Secret(?:[_-]?(?:Access[_-])?Key)?)(\\*["']?)(\s*[:=]\s*)((?:\\+)?["'])?([^\s"',;&\\]{4,})`)
+	// carries one in its middle — so this rule reads the name case by case. The
+	// word it runs into is part of the rule: a name standing on its own is
+	// passwordValue's to read, and reading it here as well would claim the
+	// `Pass:` a test report opens a line with.
+	passwordCamel = regexp.MustCompile(`([A-Za-z0-9_]+)(Pass(?:word|Phrase|Wd)?s?|Pwd|Secret(?:[_-]?(?:Access[_-])?Key)?)(\\*["']?)(\s*[:=]\s*)(?:((?:\\+)?["'])([^"'\n]{4,})|([^\s"',;&\\]{4,}))`)
 
 	// passwordFlag is the same credential on a command line, where the value
 	// follows the flag after a space rather than a sign
@@ -309,7 +334,7 @@ var (
 	// This is the one spelling of it with nothing between the name and the
 	// value to read by, so the dashes before the name are what keeps a
 	// sentence out of the rule.
-	passwordFlag = regexp.MustCompile(`(?i)(-{1,2}(?:pass(?:word|phrase|wd)?s?|pwd|secret(?:[_-]?(?:access[_-])?key)?))\s+(["']?)([^\s"',;&\\]{4,})`)
+	passwordFlag = regexp.MustCompile(`(?i)(-{1,2}(?:pass(?:word|phrase|wd)?s?|pwd|secret(?:[_-]?(?:access[_-])?key)?))\s+(?:((?:\\+)?["'])([^"'\n]{4,})|([^\s"',;&\\]{4,}))`)
 
 	// keyBlock is a PEM private key, terminated or not: an unterminated block
 	// is still a key, so an END that never comes redacts to the end of the

@@ -422,6 +422,51 @@ var patternCases = []struct {
 		leak: "pa" + ":" + strings.Repeat("Qw3", 5),
 		keep: "db.example.com:5432/app refused",
 	},
+	{
+		name: "password with a comma inside quotes",
+		in:   `{"password":"` + fake("ab,", "cdefgh12") + `"}`,
+		leak: fake("ab,", "cdefgh12"),
+	},
+	{
+		name: "password with a semicolon inside quotes",
+		in:   `{"password":"` + fake("Xy;", "9kLmnop") + `"}`,
+		leak: fake("Xy;", "9kLmnop"),
+	},
+	{
+		name: "password of several words inside quotes",
+		in:   `PASSWORD="` + fake("my long ", "pass phrase") + `"`,
+		leak: fake("my long ", "pass phrase"),
+	},
+	{
+		name: "password of several words on a command line",
+		in:   `--password "` + fake("my long ", "pass phrase") + `" --user someone failed`,
+		leak: fake("my long ", "pass phrase"),
+		keep: "--user someone failed",
+	},
+	{
+		name: "bare password name in an environment dump",
+		in:   "PASS=" + fake(strings.Repeat("Qw3", 5)) + " psql: connection refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "psql: connection refused",
+	},
+	{
+		name: "bare secret name in an environment dump",
+		in:   "JWT_SECRET=" + fake(strings.Repeat("Qw3", 5)) + " the token is refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "the token is refused",
+	},
+	{
+		name: "password field of a struct dump",
+		in:   "{User:app Password:" + fake(strings.Repeat("Qw3", 5)) + " Host:db} refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "Host:db} refused",
+	},
+	{
+		name: "password field after a colon with text after it",
+		in:   "smtpPassword: " + fake(strings.Repeat("Qw3", 5)) + " rejected by the server",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "rejected by the server",
+	},
 }
 
 // TestRedactCorpus: a shape the exact pass cannot name is still a credential,
@@ -630,6 +675,9 @@ func TestRedactPassesLeaveCleanTextAlone(t *testing.T) {
 		"the secret: it was rotated by the operator",
 		"compass: north, and bypass the cache to surpass it",
 		"a Compass: north, and the Surpass: 3 points",
+		"--- PASS: TestRunnerFinalize (0.00s)",
+		"Pass: TestRunnerFinalize (0.00s)",
+		"the secret: rotated by the operator",
 		"see https://api.example.com:8080/v1/runs for the endpoint",
 	} {
 		if got := Text(s, []string{"a-secret-value"}); got != s {
