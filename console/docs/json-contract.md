@@ -1318,7 +1318,7 @@ one entry of `nodes`:
 | `footprint` | object | never | never | the expected paths, below |
 | `kind` | string | **yes** | never | what this node is: `task` (the default, and every node of a v1 or v2 artifact), `contract`, `integration` or `contract_change`. A **schema-3** field, and a value outside those four is **refused**. A `contract` node carries the stubs and the literal files the graph holds every other task against; an `integration` node is the one that depends on both sides of a broken edge |
 | `size` | number | **yes** | **yes** | the task's weight relative to the others, greater than `0`; absent or null means `1`. A **schema-3** field, and the figure the accepted/refused comparison of a break is weighed with rather than a task count. `0` or a negative number is **refused** |
-| `stubs` | array of strings | **yes** | never | the whole files a `contract` node leaves for its dependents to compile against, each a literal repository-relative path — never a glob, never absolute, never with a `..` element, and each one named **literally** in that node's own `footprint.paths`. A **schema-3** field, on a `contract` node and nowhere else; anything else is **refused** |
+| `stubs` | array of strings | **yes** | never | the whole files a `contract` node leaves for its dependents to compile against, each a literal repository-relative path — never a glob, never absolute, never with a `..` element, never carrying a character that does not print, and each one named **literally** in that node's own `footprint.paths`. A **schema-3** field, on a `contract` node and nowhere else; anything else is **refused** |
 | `level` | number | never | never | the longest chain of dependencies *ending* at this task: `0` for a task that waits on nothing, otherwise one more than the deepest task it waits for |
 | `done` | bool | never | never | the task is in the `--done` set the read was given. **A fact the caller stated, not one the CLI derived**: a finished run is not the same claim as a done task (see below) |
 | `ready` | bool | never | never | the task is not done and **every task it needs is done**. This is the field a launch may act on (design F7) |
@@ -1393,7 +1393,11 @@ glob or that the contract's own footprint does not name, a `contract` node whose
 footprint names no literal file, a `decoupling` entry whose integration node does
 not depend on both sides of the edge it records, an edge that is recorded as
 broken and is still in `edges`, a `contract_change` naming a node that is not
-there, and a footprint that covers a merged contract's file from outside the
+there, a **path that does not print** — a newline, a control character or a
+format character such as U+202E, in a footprint path or in a stub, because a
+footprint path is a name the instructions of a later run end up carrying (D1812)
+and a field that reads as one thing to a person while carrying another is not a
+name — and a footprint that covers a merged contract's file from outside the
 contract and the change requests against it — **however that path is spelled**,
 because `./internal/contract/types.go`, `internal//contract/types.go` and
 `internal/dep/../contract/types.go` all name the one file, and a rule that read

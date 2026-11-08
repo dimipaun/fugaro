@@ -10,6 +10,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/dimipaun/fugaro/internal/streams"
 )
@@ -358,7 +359,7 @@ func validateSchema3(path string, doc Document) error {
 		}
 		for _, stub := range n.Stubs {
 			if !literalRepoPath(stub) {
-				return refuse(path, "node %q names the stub %q; a stub is a literal repository-relative path — never a glob, never absolute and never with a parent element", n.ID, stub)
+				return refuse(path, "node %q names the stub %q; a stub is a literal repository-relative path — never a glob, never absolute, never with a parent element and never carrying a character that does not print", n.ID, stub)
 			}
 			if !slices.Contains(n.Footprint.Paths, stub) {
 				return refuse(path, "node %q names the stub %q and its footprint does not name that file; a stub is a file the contract names, and a glob over it never stands in for one", n.ID, stub)
@@ -376,6 +377,9 @@ func validateSchema3(path string, doc Document) error {
 	// — the more specific sentence — rather than as a footprint.
 	for _, n := range doc.Nodes {
 		for _, pattern := range n.Footprint.Paths {
+			if !printsAsRepoPath(pattern) {
+				return refuse(path, "node %q has the footprint path %q; a footprint path is a name read as written, so one carrying a character that prints nothing — a newline, a control character or a format character such as U+202E — is refused rather than carried into the instructions a run is given", n.ID, pattern)
+			}
 			if strings.ContainsRune(pattern, '\\') {
 				return refuse(path, "node %q has the footprint path %q; a backslash is a glob escape rather than a separator, so a footprint that spells a path with one is refused instead of read as the file it happens to match", n.ID, pattern)
 			}
@@ -488,9 +492,37 @@ func carriesEdge(doc Document, task, needs string) bool {
 	return false
 }
 
+// printsAsRepoPath reports whether every rune of a footprint path is one that
+// prints and no element of it is whitespace and nothing else. The graph is
+// untrusted plan text that a run's instructions end up naming (D1812), so a
+// path is a name and not a place to hide a sentence: a newline, a control
+// character or a format character such as U+202E would let the text of a
+// footprint read as one thing to a person and another to whatever reads it
+// next. Nothing here is dropped quietly — a path that fails this is a refusal.
+//
+// An empty element is left to literalRepoPath, which refuses it: a doubled
+// slash is a respelling of one path, and refusing it here would take it out of
+// the contract-file rule's sight rather than let that rule read it as the file
+// it names.
+func printsAsRepoPath(p string) bool {
+	for _, r := range p {
+		if !unicode.IsPrint(r) || unicode.Is(unicode.Cf, r) {
+			return false
+		}
+	}
+	for _, part := range strings.Split(p, "/") {
+		if part != "" && strings.TrimSpace(part) == "" {
+			return false
+		}
+	}
+	return true
+}
+
 // literalPaths is a footprint's paths that name one file rather than a pattern,
 // which is the set a contract's files and its stubs come from: they are whole
-// files the planner named, and a glob never admits one.
+// files the planner named, and a glob never admits one. A path that fails to
+// print is refused before this is asked, so the only thing dropped here is a
+// pattern a contract node meant as one.
 func literalPaths(f Footprint) []string {
 	var out []string
 	for _, p := range f.Paths {
@@ -501,12 +533,16 @@ func literalPaths(f Footprint) []string {
 	return out
 }
 
-// literalRepoPath reports whether p is a literal repository-relative path: no
-// glob metacharacter, no parent element, no absolute path and no empty
-// component. It is the only shape a stub may have (F9): a stub that could be a
-// pattern is a stub the integration task cannot be asked to have deleted.
+// literalRepoPath reports whether p is a literal repository-relative path: it
+// prints, no glob metacharacter, no parent element, no absolute path and no
+// empty component. It is the only shape a stub may have (F9): a stub that could
+// be a pattern is a stub the integration task cannot be asked to have deleted,
+// and a stub that does not print is not a name a run can be told to delete.
 func literalRepoPath(p string) bool {
-	if p == "" || strings.HasPrefix(p, "/") || strings.ContainsRune(p, '\\') {
+	if !printsAsRepoPath(p) {
+		return false
+	}
+	if strings.HasPrefix(p, "/") || strings.ContainsRune(p, '\\') {
 		return false
 	}
 	if strings.ContainsAny(p, "*?[]{}") {
