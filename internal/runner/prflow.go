@@ -654,11 +654,17 @@ func (r *run) levelsPart() string {
 // what was let through is the whole round or nothing, and a line naming the
 // findings a mode would have tolerated in a round it blocked would be
 // claiming an answer Decide never gave (D7, F4). A first-line review never
-// decides (seniorReview), so it tolerates nothing whatever its counts say. A
+// decides (seniorReview), so it tolerates nothing whatever its counts say —
+// with the stop's own exception, which is the one moment readiness reads a
+// cheap round: where the loop stopped before an outer level could start, that
+// round is the deciding one (firstLineStop, item 6b), the policy is its split,
+// and the ruling files its findings on the body exactly as it files a senior
+// round's. The tier alone cannot tell the two apart, which is why the
+// exception is asked for by the stop (acceptsAtStop) and not by the tier. A
 // run that never reaches Decide tolerates nothing either, which is why the
 // running section asks with the zero policy.
 func toleratedPart(pol FindingsPolicy, last runstore.ReviewSummary) string {
-	if last.Tier == runstore.TierFirst || !pol.tolerates(&last) {
+	if !pol.tolerates(&last) || (last.Tier == runstore.TierFirst && !pol.acceptsAtStop(&last)) {
 		return ""
 	}
 	labels := make([]string, 0, len(pol.Tolerated))

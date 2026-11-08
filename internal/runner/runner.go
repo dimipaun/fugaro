@@ -499,9 +499,17 @@ type run struct {
 	// runstore.StopTimeThreshold when the fraction of the run's time budget
 	// elapsed before another round. It is the one input readiness reads to
 	// widen a mode's split to its at-the-stop row (findingsPolicyOf), and the
-	// value the record's accepted block and the run's reason carry, so a run
-	// that ships clears it: a later round that ships must not leave a stale
-	// stop widening the split. Written between stages only.
+	// value the record's accepted block and the run's reason carry. Written
+	// between stages only.
+	//
+	// Nothing clears it and nothing has to: every write is on a path that ends
+	// the plan's review rounds, so no round runs after it and no later ship can
+	// leave a stale stop widening a split. The time half is written where the
+	// loop answers stopNow and returns out of the loop it asked in
+	// (firstLineStop), and the rounds half where the plan's own last review
+	// step ends at its cap without shipping (seniorLoop, adversarialLoop,
+	// firstLine) — the one write that returns true is that last step's, and the
+	// step after it is finalize's, which starts no review at all.
 	stopAt string
 	// ckpt is the checkpoint pushes' state (checkpoint.go).
 	ckpt checkpointState
@@ -3444,6 +3452,40 @@ func seniorReview(rs []runstore.ReviewSummary) *runstore.ReviewSummary {
 		}
 	}
 	return nil
+}
+
+// acceptedRound is the review a record's accepted block was written from
+// (runstore.AcceptedFindings.Round): the last review carrying that round that
+// decided, and the last cheap one where every review of that round is the cheap
+// loop's.
+//
+// The tier is what tells the two apart because the record carries nothing else
+// that does: the levels number their rounds from 1 of their own, so a cheap
+// round and an outer one can carry the same number (a bounce's cheap loop after
+// level 2's round 2), and only the deciding one is a round the stop can have
+// accepted. Where no outer level left a round at all — the stop that ended the
+// run before level 2 could start, which is the case this exists for — the cheap
+// round is the deciding one and the only review carrying that number.
+//
+// It is the report's reader (report.go toleratedSection), which has the record
+// and not the run: a run reads the same round through firstLineStop's lastSenior
+// and decidingReview.
+func acceptedRound(rs []runstore.ReviewSummary, round int) *runstore.ReviewSummary {
+	var cheap, deciding *runstore.ReviewSummary
+	for i := range rs {
+		if rs[i].Round != round {
+			continue
+		}
+		if rs[i].Tier == runstore.TierFirst {
+			cheap = &rs[i]
+			continue
+		}
+		deciding = &rs[i]
+	}
+	if deciding != nil {
+		return deciding
+	}
+	return cheap
 }
 
 // recoveredError is an agent error stage left to its caller, having

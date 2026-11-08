@@ -305,6 +305,16 @@ func toleratedSection(rec *runstore.Record) string {
 	// blocked on the rest. The comparison is against the record's own total
 	// rather than the rows, which the cap can shorten.
 	last := seniorReview(rec.Reviews)
+	if ac := rec.Accepted; ac != nil {
+		// Which round the block is the split of is the accepted block's own
+		// fact, and it is the only reader that can be right here: the round the
+		// stop ended on is level 1's where the stop cut every outer level before
+		// it started (firstLineStop, item 6b), and seniorReview skips exactly
+		// that round — the block would be dropped, or compared against an outer
+		// level's older round, and a run the ruling merges as-is would file
+		// nothing.
+		last = acceptedRound(rec.Reviews, ac.Round)
+	}
 	if last == nil || tf.Total != last.Findings {
 		return ""
 	}

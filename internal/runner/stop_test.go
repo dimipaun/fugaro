@@ -297,3 +297,61 @@ func TestStopReadsTheRoundTheRunStoppedAtAndNotTheLevelItNeverReached(t *testing
 		})
 	}
 }
+
+// TestStopFilesTheCheapRoundsAcceptance is the filing half of the ruling (item
+// 3) at the one stop both surfaces used to drop: a run whose stop reads the
+// cheap loop's round, because the time threshold crossed before the level above
+// it could start (firstLineStop, item 6b). The pull request's status line and
+// the report's table are the two readers the ruling names, and neither asked
+// the stop's own question — the body skipped every first-line round as one that
+// decides nothing, and the report compared against the last round an outer
+// level left, which here is nil. A run the ruling merges as-is filed nothing at
+// either, on the very round the record had already accepted.
+//
+// Mutation: the body half alone (prflow.go toleratedPart's tier check without
+// acceptsAtStop) leaves the line saying "1 finding" and no more, and the report
+// half alone (report.go toleratedSection reading seniorReview) drops the
+// section; each assertion below fails on its own.
+func TestStopFilesTheCheapRoundsAcceptance(t *testing.T) {
+	cfg := modeCfg(t, "startup", 1, "  first_line_review: on\n  review_stop_fraction: 0.05\n")
+	// Above Startup's floor and below the override, as the 6b test's finding:
+	// what makes the run ready is the stop and nothing else.
+	blocking := reviewScored("changes", map[string]any{
+		"summary": "unbounded retry loop in the fetch path", "likelihood": 3, "impact": 3, "fix_cost": 2, "class": "correctness",
+	})
+	clk := newClock()
+	s := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature"}
+	h := newHarness(t, cfg, s)
+	h.deps.Now = clk.Now
+	rec, err := h.run(t, afterStep(clk, implement("feature")), afterStep(clk, blocking))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review_first") {
+		t.Fatalf("stages = %v, want the cheap round the stop ended the loop on", got)
+	}
+	if ac := rec.Accepted; ac == nil || ac.Round != 1 || ac.At != runstore.StopTimeThreshold {
+		t.Fatalf("the record's accepted block = %+v, want the cheap loop's round and the half that ended the run", ac)
+	}
+	pr := onlyPR(t, h.provider)
+	if !strings.Contains(pr.Body, ", accepted at startup (time threshold) (medium)") {
+		t.Errorf("the status section does not file the round the stop read as accepted:\n%s", pr.Body)
+	}
+	raw, err := h.bucket.ReadAll(context.Background(), h.store.Prefix()+"report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+	for _, want := range []string{
+		"#### Accepted at the stop",
+		"The run's review ended at the stop rule's time threshold and the mode startup accepts these findings at the stop: they are left for a follow-up rather than fixed.",
+		"| medium | 3 | 3 | 2 | correctness | startup | `unbounded retry loop in the fetch path` |",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the run's report lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "#### Tolerated") {
+		t.Errorf("the run's report files the stop's findings under the tolerance heading, which says a review let them go:\n%s", got)
+	}
+}
