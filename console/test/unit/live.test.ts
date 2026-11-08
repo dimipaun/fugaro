@@ -500,22 +500,23 @@ describe('the row model', () => {
     expect(queued.requestedBy).toBe('redacted@example.invalid')
   })
 
-  it('draws the design’s seven columns, and the fields the table has no column for leave the row', () => {
+  it('draws the design’s columns, and the fields the table has no column for leave the row', () => {
     // **Console redesign step 2b: the row is a table row now.** The design's
     // runs table has RUN, TASK, PIPELINE, CODER / REVIEWER, COST, ELAPSED and
-    // STATUS, and the fields the flex row used to draw beside the title --
-    // who started the run, the requester, the recipe, the workflow, the verify
-    // word -- have no column. They stay in the **model** (`LiveRunRow`), so a
-    // later step that wants one has the document's value to draw; what this
-    // test holds is that no cell is drawn for them, which is the half a reader
-    // of the screen would otherwise have to guess.
+    // STATUS, and the fields the flex row used to draw beside the title -- the
+    // requester, the recipe, the workflow, the verify word -- have no column.
+    // They stay in the **model** (`LiveRunRow`), so a later step that wants one
+    // has the document's value to draw; what this test holds is that no cell is
+    // drawn for them, which is the half a reader of the screen would otherwise
+    // have to guess. **The Started-by cell is not one of them any more**: it is
+    // the `BY` column the live tab now follows `watch` in (D1704, `draws the BY
+    // cell` below).
     const frame = theLastFrame()
     const dropped = [
       'live-run-verify',
       'live-run-recipe',
       'live-run-workflow',
       'live-run-requester',
-      'live-run-started-by',
     ]
     const runs = frame.runs.map((run) =>
       run.run === QUEUED_RUN ? { ...run, launchedBy: 'dana.person+fugaro@example.com' } : run,
@@ -535,10 +536,10 @@ describe('the row model', () => {
 
   it('draws one cell per column, in the design’s order, and the id cell is the door', () => {
     // The row's shape, asserted cell by cell: `entry.ts`'s `wireRuns` reads the
-    // text of `.live-run-id` off the row it is bound to and opens Run detail
-    // with it, so the id has to be a cell of the row **and** carry the run's own
-    // drawn text. A row that drew the id somewhere else, or drew the raw wire
-    // value into an attribute, would leave the door matching nothing.
+    // `data-run-id` of `.live-run-id` off the row it is bound to and opens Run
+    // detail with it, so the id has to be a cell of the row **and** carry the
+    // whole run id the door opens -- never the drawn ending, which is a display
+    // and not an identifier the CLI accepts.
     const tree = renderLive(factory, modelOf(theLastFrame()), 'light')
     const rows = all(tree, 'live-run')
     expect(rows.length).toBeGreaterThan(0)
@@ -546,10 +547,11 @@ describe('the row model', () => {
       expect(row.tag).toBe('tr')
       expect(row.getAttribute('data-queued')).not.toBeNull()
       const cells = row.childNodes().filter((child) => child.tag === 'td')
-      expect(cells).toHaveLength(7)
+      expect(cells).toHaveLength(8)
       const id = one(row, 'live-run-id')
       expect(id.tag).toBe('td')
       expect(id.textContent).not.toBe('')
+      expect(id.getAttribute('data-run-id')).not.toBeNull()
       // The door reads this cell and nothing else on the row.
       expect(all(row, 'live-run-id')).toHaveLength(1)
       expect(texts(row, 'live-run-stage')).toHaveLength(1)
@@ -557,7 +559,7 @@ describe('the row model', () => {
       expect(texts(row, 'live-run-spend')).toHaveLength(1)
       expect(texts(row, 'live-run-age')).toHaveLength(1)
     }
-    // The seven `td`s and the `th` row are the same columns: a heading with no
+    // The eight `td`s and the `th` row are the same columns: a heading with no
     // cell under it is a column the reader looks for and does not find.
     expect(texts(tree, 'live-table-head')).toEqual([
       'RUN',
@@ -566,8 +568,81 @@ describe('the row model', () => {
       'CODER / REVIEWER',
       'COST',
       'ELAPSED',
+      'BY',
       'STATUS',
     ])
+  })
+
+  it('shows the short ID, and keeps the whole id on the cell’s door', () => {
+    // **Spec part 1: the RUN column shows the last four characters.** They are
+    // what a person types back into the CLI (`internal/task/shortid.go`'s
+    // `ShortRun`, and the console's half of the same rule in
+    // `src/shared/shortid.ts`), and the cell is still the door -- so the whole
+    // id travels with it in `data-run-id`, which is what `wireRuns` reads.
+    const tree = renderLive(factory, modelOf(theLastFrame()), 'light')
+    expect(texts(tree, 'live-run-id')).toEqual(['aa01', 'aa03'])
+    expect(all(tree, 'live-run-id').map((cell) => cell.getAttribute('data-run-id'))).toEqual([
+      OAUTH_RUN,
+      QUEUED_RUN,
+    ])
+  })
+
+  it('extends a colliding pair to the shortest ending that tells them apart', () => {
+    // **Spec part 3 (reconciliation F1, F15): two runs printed together that
+    // share their last four characters are shown with as many extra characters
+    // as it takes to tell them apart, and no more.** The extension runs through
+    // the dash, because a run id's tail past the four hex digits is the start
+    // time -- so the two ids below, which differ at the sixth character, are
+    // `8-3bb2` and `1-3bb2`: the same pair `internal/task/shortid.go`'s red step
+    // names.
+    const frame = theLastFrame()
+    const older = { ...theRun(frame, OAUTH_RUN), run: '20261108-115248-3bb2' }
+    const newer = { ...theRun(frame, QUEUED_RUN), run: '20261107-010101-3bb2' }
+    const model = buildLiveModel({ ...frame, runs: [older, newer] }, new BurnHistory())
+    expect(texts(renderLive(factory, model, 'light'), 'live-run-id')).toEqual(['8-3bb2', '1-3bb2'])
+    // The two cells still carry their own whole ids, which is what the doors
+    // open: neither ending is an id any command would take.
+    expect(
+      all(renderLive(factory, model, 'light'), 'live-run-id').map((cell) => cell.getAttribute('data-run-id')),
+    ).toEqual(['20261108-115248-3bb2', '20261107-010101-3bb2'])
+  })
+
+  it('orders a repository’s rows by start time, and then by id', () => {
+    // `watch`'s own order (`internal/watch/build.go`'s `sortRuns`: `StartedAt`,
+    // then the run id), which is what the live tab follows (D1704). **The frame
+    // carries no start stamp** -- `JSONRun` has `age_seconds` and no
+    // `started_at` -- so the age is the start time read backwards: every row of
+    // one document is aged against the same `now`, so the earliest start is the
+    // largest age. Rows that began in the same second are told apart by their
+    // ids, which is the tie `sortRuns` keeps.
+    const frame = theLastFrame()
+    const base = theRun(frame, OAUTH_RUN)
+    const runs = [
+      { ...base, run: '20261015-121500-aa03', ageSeconds: measured(100) },
+      { ...base, run: '20261015-121200-aa02', ageSeconds: measured(300) },
+      { ...base, run: '20261015-121000-aa01', ageSeconds: measured(100) },
+    ]
+    const model = buildLiveModel({ ...frame, runs }, new BurnHistory())
+    expect(model.repos[0]?.runs.map((row) => row.run)).toEqual([
+      '20261015-121200-aa02',
+      '20261015-121000-aa01',
+      '20261015-121500-aa03',
+    ])
+  })
+
+  it('draws the BY cell, in watch’s own short form', () => {
+    // `watch`'s runs table has a `BY` column (`internal/watch/plain.go`'s
+    // `launcherText`, from the record's `launched_by`), and the live tab follows
+    // it (D1704). The value is drawn through `shared/launcher.ts` -- the part
+    // before an address's first `@`, which is the CLI's own
+    // `runview.LauncherShort` -- and a row whose record carries no launcher
+    // draws **no element at all**, never another person's name.
+    const frame = theLastFrame()
+    const runs = frame.runs.map((run) => ({ ...run, launchedBy: 'dana.person+fugaro@example.com' }))
+    const tree = renderLive(factory, buildLiveModel({ ...frame, runs }, new BurnHistory()), 'light')
+    expect(texts(tree, 'live-run-started-by')).toEqual(['dana.person+fugaro', 'dana.person+fugaro'])
+    const without = renderLive(factory, modelOf(theLastFrame()), 'light')
+    expect(all(without, 'live-run-started-by')).toEqual([])
   })
 
   it('takes a run\'s rigor from the join by id, and draws no chip without one', () => {
