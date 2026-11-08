@@ -144,6 +144,9 @@ function theRun(frame: LiveDocument, slug: string): RunView {
 
 const OAUTH_RUN = '20261015-120000-aa01'
 const QUEUED_RUN = '20261015-120400-aa03'
+/** their endings, which is what the RUN cell draws (`shortRun`) */
+const OAUTH_ENDING = 'aa01'
+const QUEUED_ENDING = 'aa03'
 const AT_CAP = '2026-10-15T12:04:21Z'
 
 // ---------------------------------------------------------------------------
@@ -580,7 +583,7 @@ describe('the row model', () => {
     // `src/shared/shortid.ts`), and the cell is still the door -- so the whole
     // id travels with it in `data-run-id`, which is what `wireRuns` reads.
     const tree = renderLive(factory, modelOf(theLastFrame()), 'light')
-    expect(texts(tree, 'live-run-id')).toEqual(['aa01', 'aa03'])
+    expect(texts(tree, 'live-run-id')).toEqual([OAUTH_ENDING, QUEUED_ENDING])
     expect(all(tree, 'live-run-id').map((cell) => cell.getAttribute('data-run-id'))).toEqual([
       OAUTH_RUN,
       QUEUED_RUN,
@@ -1606,7 +1609,7 @@ describe('the rendered screen', () => {
 
   it('renders the fixture\'s queued run, with its spend drawn as n/a', () => {
     const tree = renderLive(factory, modelOf(theLastFrame()), 'dark')
-    expect(texts(tree, 'live-run-id')).toContain(QUEUED_RUN)
+    expect(texts(tree, 'live-run-id')).toContain(QUEUED_ENDING)
     const queued = all(tree, 'live-run').filter(
       (row) => row.getAttribute('data-queued') === 'true',
     )

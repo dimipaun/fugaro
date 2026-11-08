@@ -54,9 +54,11 @@ import {
   unavailable,
 } from '../../shared/availability'
 import type { Reading, Sample } from '../../shared/availability'
+import { launcherCell } from '../../shared/launcher'
 import { rigorModeWord } from '../../shared/rigor'
 import type { RigorView } from '../../shared/rigor'
-import { sanitizeText } from '../../shared/sanitize'
+import { isMarkerText, sanitizeText } from '../../shared/sanitize'
+import { displayRuns, shortRun } from '../../shared/shortid'
 import type { BurnView, FinishedView, KillView, LiveDocument, RunView, TotalsView } from '../../shared/schema'
 import { putReading, putText } from '../app'
 import type { ElementLike } from '../app'
@@ -604,6 +606,13 @@ export function burnReading(burn: BurnView): Reading {
 /** LiveRunRow is one run as the screen draws it. */
 export interface LiveRunRow {
   readonly run: string
+  /** the repository the run is spending against. **It is the slug and not the
+   * display name** (`LiveRepoRow.repo` is that), because it is what tells two
+   * runs apart when they share a run ID: the ending the RUN cell draws grows
+   * only until it is unique among the rows drawn together, and two repositories
+   * cannot be told apart by any suffix of an ID they both carry
+   * (`shared/shortid.ts`). */
+  readonly slug: string
   readonly title: string
   readonly stage: string
   readonly round: string
@@ -616,9 +625,10 @@ export interface LiveRunRow {
   readonly workflow: string | null
   readonly requestedBy: string | null
   /** the run's whole recorded launcher (`launched_by`), `null` when the record
-   * carries none. **The runs table has no column for it** (console redesign,
-   * step 2b): the value is the record's, and `shared/launcher.ts` is still the
-   * module that shortens it, so a step that wants the column back has both. */
+   * carries none. The runs table's BY column draws it, shortened by
+   * `shared/launcher.ts` -- the CLI's own `LauncherShort`, which is what
+   * `watch`'s BY column prints (D1704) -- and a row whose record carries none
+   * draws the column's cell and no value in it. */
   readonly launchedBy: string | null
   readonly spend: Reading
   readonly age: Reading
@@ -813,6 +823,7 @@ function rowOf(run: RunView, rigor: ReadonlyMap<string, RigorView>): LiveRunRow 
   const age = run.ageSeconds.value
   return {
     run: run.run,
+    slug: run.slug,
     title: run.title,
     stage: run.stage,
     round: run.round,
@@ -832,6 +843,31 @@ function rowOf(run: RunView, rigor: ReadonlyMap<string, RigorView>): LiveRunRow 
     contradiction: contradiction(run.health, age),
     rigor: rigor.get(run.run) ?? null,
   }
+}
+
+/**
+ * byStartThenId is `watch`'s own order for a repository's runs (`sortRuns` in
+ * `internal/watch/build.go`: `StartedAt`, then the run id), which the live tab
+ * follows (D1704).
+ *
+ * **The age is the start time read backwards.** `JSONRun` carries no start
+ * stamp, and every row of one frame is measured against the same `now`, so the
+ * run that began first is exactly the run that is older: the comparison is
+ * descending on `age`, which is ascending on the start. A row whose age the
+ * document does not carry goes **last** -- the console does not know when it
+ * began, and a fact it does not have may not push a run to the top of a list --
+ * and two runs whose ages agree are told apart by their ids, which is the tie
+ * `sortRuns` keeps.
+ *
+ * `age` is a `Reading` and not a number (`age_seconds` is nullable on this
+ * wire), so the value is read off it here rather than sorted as a string.
+ */
+function byStartThenId(a: LiveRunRow, b: LiveRunRow): number {
+  const left = a.age.value ?? Number.NEGATIVE_INFINITY
+  const right = b.age.value ?? Number.NEGATIVE_INFINITY
+  if (left !== right) return right - left
+  if (a.run === b.run) return 0
+  return a.run < b.run ? -1 : 1
 }
 
 // ---------------------------------------------------------------------------
@@ -1082,7 +1118,15 @@ export function buildLiveModel(
   // both read off these, so the panel counts exactly the runs the screen draws:
   // a run the console could not place under a repository is in `orphans` and is
   // still a run that is spending.
-  const runRows = document.runs.map((run) => ({ slug: run.slug, row: rowOf(run, rigor) }))
+  //
+  // The rows are ordered here and not in the drawing: the order is `watch`'s
+  // (`sortRuns` in `internal/watch/build.go`: earliest start first, then the run
+  // id) and the live tab follows it (D1704), so a list drawn from this model --
+  // a repository's table, the orphans, a test reading `model.repos[0].runs` --
+  // is in the one order the CLI would print. `sort` is stable in this language
+  // and `sort.SliceStable` is what the Go side uses, so two rows that agree on
+  // both keys keep the order the feed sent them in.
+  const runRows = document.runs.map((run) => rowOf(run, rigor)).sort(byStartThenId)
 
   const repos: LiveRepoRow[] = document.repos.map((repo) => {
     const burn = burnReading(repo.burn)
@@ -1126,12 +1170,12 @@ export function buildLiveModel(
       burnFast: repo.burn.fast,
       spark: sparkline(history, repo.slug, at),
       kill: repo.kill,
-      runs: runRows.filter((entry) => entry.slug === repo.slug).map((entry) => entry.row),
+      runs: runRows.filter((row) => row.slug === repo.slug),
     }
   })
 
   const known = new Set(document.repos.map((repo) => repo.slug))
-  const orphans = runRows.filter((entry) => !known.has(entry.slug)).map((entry) => entry.row)
+  const orphans = runRows.filter((row) => !known.has(row.slug))
 
   // The fleet's counts, over the rows above. A queued run has no lease and so is
   // not active; `lost` is the flag `healthFlag` draws for the document's own
@@ -1141,10 +1185,10 @@ export function buildLiveModel(
   let active = 0
   let queued = 0
   let heartbeatLost = false
-  for (const entry of runRows) {
-    if (entry.row.queued) queued += 1
+  for (const row of runRows) {
+    if (row.queued) queued += 1
     else active += 1
-    if (entry.row.flags.some((flag) => flag.name === 'lost')) heartbeatLost = true
+    if (row.flags.some((flag) => flag.name === 'lost')) heartbeatLost = true
   }
 
   // The review list is the document's own order -- `ReadyForReview` sorts it
@@ -1400,6 +1444,60 @@ function putActor(element: ScreenElement, raw: string, field: string): void {
 }
 
 /**
+ * putRunId draws a run's **ending** into a cell and keeps the whole run ID on
+ * that cell as `data-run-id`, which is the row's door: `entry.ts`'s `wireRuns`
+ * opens Run detail from the attribute and never from the drawn text.
+ *
+ * **The two are not the same string, and that is the point** (D1707). What a
+ * person reads and types back into the CLI is four characters (`task.ShortRun`,
+ * `shared/shortid.ts`); what a command is given has to be the whole ID, because
+ * the CLI takes four or more characters as an ending to resolve and a longer one
+ * could still match two runs. So the ending is drawn and the ID travels beside
+ * it, out of reach of a click that copies text.
+ *
+ * **One sanitizer answer decides both writes.** The ID goes through the `runId`
+ * class -- the class `schema.ts` declares for `runs[].run` and `ready[].run`,
+ * whose grammar is the CLI's own run-ID shape -- and the ending is drawn only
+ * from an ID that class accepted, so the characters on screen are a cut of a
+ * string this console would draw whole. A refusal draws the console's `n/a` with
+ * its reason and writes **no attribute at all**: a cell whose ID could not be
+ * drawn is not a door to whatever the mark happens to be.
+ *
+ * A marker the recorder wrote (`[redacted]`) is drawn whole rather than cut to
+ * its last four characters: the ID is not the CLI's own shape, the class keeps
+ * the marker for that reason, and `ted]` is a string no reader asked for.
+ */
+function putRunId(element: ScreenElement, raw: string, ending: string, field: string): void {
+  const id = sanitizeText(raw, 'runId', field)
+  if (!id.ok || isMarkerText(id.text)) {
+    putText(element, raw, 'runId', field)
+    return
+  }
+  element.setAttribute('data-run-id', id.text)
+  literal(element, ending)
+}
+
+/**
+ * runEndings is the ending to draw for each row of **one table**, in the order
+ * given.
+ *
+ * The list is the group and the group is what is drawn together
+ * (`shared/shortid.ts`'s `displayRuns`, spec part 3, F15): an ending grows only
+ * until it tells its run apart from the other rows handed in, so a caller passes
+ * one repository's runs, the orphan runs or the review inbox, and a run drawn
+ * alone keeps its plain four characters. The repository is passed beside the ID
+ * for the case no suffix can separate -- the same ID under two repositories.
+ *
+ * The caller walks the answer by position, because `displayRuns`'s answer is
+ * aligned with the refs it was given; the run's own `shortRun` is the fallback a
+ * row the rule answered nothing for is drawn with, which is what that row shows
+ * drawn alone.
+ */
+function runEndings(rows: readonly { readonly slug: string; readonly run: string }[]): readonly string[] {
+  return displayRuns(rows.map((row) => ({ slug: row.slug, runId: row.run })))
+}
+
+/**
  * pipelineCell draws the PIPELINE column: the five segments, then the run's own
  * line under them.
  *
@@ -1510,14 +1608,20 @@ function statusCell(factory: ScreenFactory, row: LiveRunRow, state: RunState): S
 /**
  * runRow draws one run of a repository, as one row of its table.
  *
- * **Seven columns, and the row is the door.** The RUN cell carries
- * `live-run-id`, which is what `entry.ts`'s `wireRuns` reads to open Run detail
- * -- the cell's own drawn text and nothing else, so a run id the sanitizer
- * refused opens nothing. The rest is the design's table: the title (with the
+ * **Eight columns, and the row is the door.** The RUN cell carries
+ * `live-run-id` with `data-run-id` on it, which is what `entry.ts`'s `wireRuns`
+ * opens Run detail from -- the attribute, so a run ID the sanitizer refused
+ * opens nothing and the four characters a person reads are never handed to a
+ * command (`putRunId`). The rest is the design's table: the title (with the
  * rigor chip beside it), the pipeline, the two models the feed recorded, the
- * spend, the age as a duration, and the state with its flags.
+ * spend, the age as a duration, the BY cell `watch` prints a launcher in
+ * (D1704), and the state with its flags.
+ *
+ * `ending` is the cell's own text, and `runTable` computed it over **the rows of
+ * this table**: the collision rule is a property of the display, and a row drawn
+ * on its own shows its plain four characters.
  */
-function runRow(factory: ScreenFactory, row: LiveRunRow): ScreenElement {
+function runRow(factory: ScreenFactory, row: LiveRunRow, ending: string): ScreenElement {
   const state = runStateOf(row)
   const classes = ['live-run']
   if (row.queued) classes.push('live-run-queued')
@@ -1528,7 +1632,7 @@ function runRow(factory: ScreenFactory, row: LiveRunRow): ScreenElement {
   element.setAttribute('data-tone', row.tone)
   element.setAttribute('data-queued', row.queued ? 'true' : 'false')
 
-  textCell(element, factory, 'td', row.run, 'runId', 'runs[].run', 'live-run-id')
+  putRunId(cell(element, factory, 'td', 'live-run-id'), row.run, ending, 'runs[].run')
 
   const task = textCell(element, factory, 'td', row.title, 'sentence', 'runs[].title', 'live-run-title')
   if (row.rigor !== null) modeChip(task, factory, row.rigor)
@@ -1545,7 +1649,34 @@ function runRow(factory: ScreenFactory, row: LiveRunRow): ScreenElement {
   // measurement rather than the answer.
   numberCell(element, factory, 'td', row.age, 'duration', 'live-run-age')
 
+  element.append(byCell(factory, row))
+
   element.append(statusCell(factory, row, state))
+  return element
+}
+
+/**
+ * byCell draws the BY column: who started the run, in `watch`'s own short form
+ * (`internal/watch/plain.go`'s `launcherText`, which is
+ * `runview.LauncherShort`; D1704).
+ *
+ * **The cell is always there and the value is not.** The table is a rectangle,
+ * so a row whose record carries no launcher still draws the column's `td` -- but
+ * it draws **no element inside it**, which is the rule `shared/launcher.ts`
+ * states: an empty cell is the truth about a launcher nobody recorded, where a
+ * `dash` would be a mark the reader has to look up, and a cell naming nobody
+ * would be worse than both. The short form goes through `putText` in the `label`
+ * class -- the one key this console draws in a class other than the one its wire
+ * field declares, which `shared/launcher.ts`'s header argues -- so an invisible
+ * character, a bidi override or a credential shape in a launcher is handled by
+ * the sanitizer like every other cell's text.
+ */
+function byCell(factory: ScreenFactory, row: LiveRunRow): ScreenElement {
+  const element = make(factory, 'td', 'live-run-by')
+  const launcher = launcherCell(row.launchedBy)
+  if (launcher !== null) {
+    putText(cell(element, factory, 'span', 'live-run-started-by'), launcher, 'label', 'runs[].launched_by')
+  }
   return element
 }
 
@@ -1562,7 +1693,11 @@ const RUN_ROUND_WORD = 'round'
  * colour-only state the design forbids. */
 const RUN_PIP = '●'
 
-/** runTableHead draws the table's seven column headings. */
+/** runTableHead draws the table's eight column headings: the design's seven,
+ * plus the BY column the live tab follows `watch` in (D1704). It sits where
+ * `watch` prints it -- after the elapsed time and before the run's state, which
+ * is the same order as `RUN TITLE STAGE ROUND AGE SPENT BY FLAGS` -- so a reader
+ * moving between the two tables finds the columns in one order. */
 function runTableHead(factory: ScreenFactory): ScreenElement {
   const head = make(factory, 'thead')
   const row = cell(head, factory, 'tr')
@@ -1572,6 +1707,7 @@ function runTableHead(factory: ScreenFactory): ScreenElement {
   literal(cell(row, factory, 'th', 'live-table-head'), 'CODER / REVIEWER')
   literal(cell(row, factory, 'th', 'live-table-head'), 'COST')
   literal(cell(row, factory, 'th', 'live-table-head'), 'ELAPSED')
+  literal(cell(row, factory, 'th', 'live-table-head'), 'BY')
   literal(cell(row, factory, 'th', 'live-table-head'), 'STATUS')
   return head
 }
@@ -1587,12 +1723,19 @@ function runTableHead(factory: ScreenFactory): ScreenElement {
  * A repository with no run draws the headings and no row: an empty table says
  * "this project has nothing running", which is a fact, where a table that
  * vanished would be a fact the reader has to infer.
+ *
+ * **The endings are computed here, over this table's rows** (`runEndings`): the
+ * collision rule is a property of what is printed together (F15), so a
+ * repository's rows are one group and the orphan table is another.
  */
 function runTable(factory: ScreenFactory, rows: readonly LiveRunRow[]): ScreenElement {
   const table = make(factory, 'table', 'live-table')
   table.append(runTableHead(factory))
   const body = cell(table, factory, 'tbody')
-  for (const row of rows) body.append(runRow(factory, row))
+  const endings = runEndings(rows)
+  rows.forEach((row, at) => {
+    body.append(runRow(factory, row, endings[at] ?? shortRun(row.run)))
+  })
   return table
 }
 
@@ -2248,7 +2391,12 @@ function reviewSection(factory: LiveFactory, model: LiveModel): ScreenElement {
   literal(heading, `${LIVE_REVIEW_TITLE} (${formatReading(measured(model.reviewCount), 'count')})`)
 
   const list = cell(element, factory, 'ol', 'live-review-list')
-  for (const row of model.review) list.append(reviewRow(factory, row))
+  // The endings are computed over the whole inbox: it is one list, drawn as one,
+  // and its rows come from different repositories (`runEndings`).
+  const endings = runEndings(model.review.map((row) => ({ slug: row.repo, run: row.run })))
+  model.review.forEach((row, at) => {
+    list.append(reviewRow(factory, row, endings[at] ?? shortRun(row.run)))
+  })
   if (model.reviewCount === 0) {
     // **One sentence, and `queued_note` is not what picks it.** An absent note
     // covers both "the bucket was read and nothing is waiting" and "the bucket
@@ -2286,13 +2434,13 @@ function reviewSection(factory: LiveFactory, model: LiveModel): ScreenElement {
 }
 
 /** reviewRow draws one finished run: its repository, its pull request as facts,
- * its title, its age and its id. The id is drawn (and goes through `putText`
- * with the `runId` class) because the row is a door to Run detail: the entry
- * wires a row to `diagnose RUN` by reading this cell's text, exactly as
- * `wireRuns` reads a live row's -- and a run id the sanitizer refused is drawn
- * as the unavailable mark, which matches no run in the model and so opens
+ * its title, its age and its id. The id is because the row is a door to Run
+ * detail, and it is drawn the way a live row's is (`putRunId`): the short ending
+ * on screen, the whole run ID on the cell as the attribute the entry wires to
+ * `diagnose RUN`. A run ID the sanitizer refused is drawn as the unavailable
+ * mark, carries no attribute, matches no run in the model and so opens
  * nothing. */
-function reviewRow(factory: ScreenFactory, row: LiveReviewRow): ScreenElement {
+function reviewRow(factory: ScreenFactory, row: LiveReviewRow, ending: string): ScreenElement {
   const element = make(factory, 'li', 'live-review-row')
   // `repoDisplayName` falls back to the slash-free slug when the host's config
   // does not name the repository, as `repoBlock` says: the slash decides the
@@ -2308,7 +2456,7 @@ function reviewRow(factory: ScreenFactory, row: LiveReviewRow): ScreenElement {
   }
   textCell(element, factory, 'span', row.title, 'sentence', 'ready[].title', 'live-review-run-title')
   numberCell(element, factory, 'span', row.age, 'seconds', 'live-review-age')
-  textCell(element, factory, 'span', row.run, 'runId', 'ready[].run', 'live-review-run-id')
+  putRunId(cell(element, factory, 'span', 'live-review-run-id'), row.run, ending, 'ready[].run')
   return element
 }
 
