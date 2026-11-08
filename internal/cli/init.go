@@ -313,6 +313,43 @@ const retiredFirebaseFlag = "firebase"
 // it from here.
 const retiredCredentialsFlag = "provision-credentials"
 
+// managedFlaggingSentence is the tail of --managed's help about a project that
+// already exists. It describes the FLAG, and that is what makes it one sentence
+// for both doors: --managed records a budget in the creation fact of a project
+// the run creates (markCreated), so the flag itself reaches no project that
+// already exists — on setup by D73's answer and the wizard's own rule, and on
+// update because that door creates nothing.
+//
+// The update branch that used to stand here said update's other half — the
+// self-flag of D1553 — and it was dead text: --managed is declared on the
+// update door, HIDDEN from its help and refused by name at runtime (update.go's
+// foreign list), so no line of its help is rendered on that door. What a user
+// reads about the update door flagging an installation is --budget's own help
+// (budgetFlagHelp), which is where the sentence belongs, because --budget is
+// what triggers that write.
+const managedFlaggingSentence = "and --managed never flags one: it records the budget of a project the run creates"
+
+// budgetFlagHelp is --budget's help, and on `fugaro update` it carries the one
+// thing that door does with the budget besides recording it: given the trio
+// once, the run flags an installation that is not managed as managed, in the
+// same command (D1553, update_selfflag.go), and that write is what takes the
+// installation's typed confirmation away — so the flag that triggers it says
+// so, before the run, rather than only in the run's own output.
+//
+// It is a function of the door for the reason the sentences beside it are: the
+// help of a flag on the door the reader is running must be true of that door.
+// `--managed` cannot be where the update door says this — it is declared there,
+// hidden and refused by name (see managedFlaggingSentence) — and on `fugaro
+// setup` the trio is only the budget the installation records, because setup
+// flags nothing it did not create.
+func budgetFlagHelp(d convergeDoor) string {
+	help := "a monthly budget on the project, in whole units of --budget-currency"
+	if d.name != updateDoor.name {
+		return help
+	}
+	return help + ". On an installation that is not managed, giving " + d.name + " the budget once — --budget, --budget-currency and --billing-account together — flags that installation as managed in the same run: it writes gs://fugaro-runs-<gcp-project>/fugaro/managed.json and the fugaro_managed=true label on the project itself, and from the next run on that project's applies no longer stop for the typed confirmation. The run prints what it writes before it writes it, and the write is refused inside a coding agent's session and inside a Fugaro run's process"
+}
+
 func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	o.door = d.name
 	cmd := &cobra.Command{
@@ -413,7 +450,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so --yes covers it in either door and a terminal without --yes types the project's name (a pipe, --json, --non-interactive and a coding agent's session confirm nothing)")
 	f.StringArrayVar(&o.launchers, "launcher", nil, "an IAM member who launches and watches runs (repeatable; default: the local config's, and for a new config you, the authenticated user)")
 	f.StringArrayVar(&o.operators, "operator", nil, "an IAM member who onboards repositories (repeatable; default: the local config's, and for a new config you, the authenticated user)")
-	f.Int64Var(&o.budget, "budget", 0, "a monthly budget on the project, in whole units of --budget-currency")
+	f.Int64Var(&o.budget, "budget", 0, budgetFlagHelp(d))
 	f.StringVar(&o.budgetCurrency, "budget-currency", "", "the budget's currency, such as USD")
 	f.StringVar(&o.billingAccount, "billing-account", "", "the billing account the budget is on")
 	f.StringVar(&o.alertEmail, "alert-email", "", "where failed image checks and rebuilds are reported (default: the local config's)")
@@ -425,7 +462,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, after you type its ID at a terminal (never with --yes, --non-interactive or --json). A first run of "+d.name+" always creates its project, so the flag only says so explicitly. Fugaro only starts fresh: an ID that already exists is refused, unless an earlier run of "+d.name+" created it (the resume). Billing is not linked unless --link-billing is also given; without it "+d.name+" prints the one gcloud command that links it")
 	f.StringVar(&o.displayName, "display-name", "", "on a first run, which creates the project: its display name (default: its ID)")
 	f.StringVar(&o.parent, "parent", "", "on a first run, which creates the project: organizations/<number> or folders/<number> to create it under (default: no parent; an organization is never guessed)")
-	f.BoolVar(&o.managed, "managed", false, "on a first run, which creates the project: record its monthly budget in the creation fact. Every project "+d.name+" creates is Fugaro-managed (its runs bucket's creation fact and the fugaro_managed label); --managed is what records the budget amount the managed apply needs. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: the project's creation still types its ID, and the installation's ordinary steps share the run's one review. Flagging a project that already exists as managed is fugaro managed flag's, run by the owner at a terminal, and never "+d.name+"'s")
+	f.BoolVar(&o.managed, "managed", false, "on a first run, which creates the project: record its monthly budget in the creation fact. Every project "+d.name+" creates is Fugaro-managed (its runs bucket's creation fact and the fugaro_managed label); --managed is what records the budget amount the managed apply needs. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: the project's creation still types its ID, and the installation's ordinary steps share the run's one review. Flagging a project that already exists as managed is fugaro managed flag's, run by the owner at a terminal, "+managedFlaggingSentence)
 	f.StringVar(&o.linkBilling, "link-billing", "", "on a first run, which creates the project: link this billing account (an ID such as 0123AB-4567CD-89EF01) to the project, after you type the account's ID at a terminal. This may incur charges on that account; never with --yes. It never changes a project's existing billing link")
 	f.BoolVar(&o.planOnly, "plan-only", false, "stop after showing the plan (never takes --yes: it creates nothing on a flag's word)")
 	f.BoolVar(&o.printVars, "print-vars", false, "print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates)")

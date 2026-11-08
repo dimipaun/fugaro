@@ -26,8 +26,12 @@
  *      the source of an entry, and the page renders the three newest of them: a reader who
  *      wants the rest is sent to GitHub's releases page, which is where every one of them is
  *      stated with its date — and which is also where the console's releases are, beside them.
- *      Every release file still needs its summary line whether or not the page shows it
- *      (F15, D1647), which is why the check below runs over the whole directory.
+ *      Every release still needs its summary line whether or not the page shows it (F15,
+ *      D1647), which is why the check below runs over every release the generator returned
+ *      rather than over the three the page renders. **The generator's entries are the release
+ *      files**: a file above the CLI stream's current version is the next release's notes,
+ *      written ahead of its release, so the generator leaves it out and this page never asks it
+ *      for anything (`src/lib/changelog.mjs`).
  *   5. **The two streams beside the CLI are one line each** (D1641, D1644): the desktop
  *      console's latest release, and the phone app's when it has one. Both are read from the
  *      notes directories and package manifests of those streams (`src/lib/console-release.mjs`,
@@ -59,10 +63,11 @@ import { latestConsoleRelease } from '../lib/console-release.mjs'
 import { latestMobileRelease } from '../lib/mobile-release.mjs'
 import { loadMobileReleaseSummaries, loadReleaseSummaries, loadSite, REPO_ROOT } from '../content.ts'
 
-// The releases, read from docs/releases/ at build time (W0.6): newest first, each entry
-// the file's own tag, bullets and operator steps, and its `released` flag from the plugin's
-// own version (the owner's brief of 2026-10-19) — never from the checkout's tags, which a
-// deploy build does not carry.
+// The releases, read from docs/releases/ at build time (W0.6): newest first, each entry the
+// file's own tag, bullets and operator steps. The files above the CLI stream's `current`
+// version are drafts of the next release and are not among them (`src/lib/changelog.mjs`,
+// which takes that version from a file rather than from the checkout's tags — a deploy build
+// carries none).
 //
 // **Why the two files are passed rather than defaulted.** The generator finds the repository
 // by walking up from its own file, which is right when it is loaded from `website/src/lib/`
@@ -71,11 +76,11 @@ import { loadMobileReleaseSummaries, loadReleaseSummaries, loadSite, REPO_ROOT }
 // directory it looks for is `website/docs/releases/`, which does not exist.
 // `website/src/content.ts` solves exactly this problem for the site's facts
 // (`findSiteRoot`, W1.3) and exports the repository root it found, so the page passes the
-// directory of release files and the plugin manifest the generator should read, and the
+// directory of release files and the streams catalogue the generator should read, and the
 // generator itself is left as W0.6 wrote it.
 const releasesDir = path.join(REPO_ROOT, 'docs', 'releases')
-const pluginFile = path.join(REPO_ROOT, 'plugin', '.claude-plugin', 'plugin.json')
-const entries = buildChangelog({ releasesDir, pluginFile })
+const streamsFile = path.join(REPO_ROOT, 'docs', 'release-streams.yaml')
+const entries = buildChangelog({ releasesDir, streamsFile })
 
 // The end-user summaries below each release's heading: the per-release lines the owner's
 // brief of 2026-10-19 asked for, read from the site's own data through the content pipeline
@@ -83,12 +88,13 @@ const entries = buildChangelog({ releasesDir, pluginFile })
 // and stops the build when a release has none.
 const summaries = loadReleaseSummaries()
 
-// **Every release file needs its line, and not only the ones below the cut** (F15, D1647).
+// **Every release needs its line, and not only the ones below the cut** (F15, D1647).
 // The page renders the three newest releases and links the rest to GitHub, so a check that ran
-// over the rendered entries alone would let an older release file lose its line without saying
+// over the rendered entries alone would let an older release lose its line without saying
 // so — and the line is the one thing that file has on this site. So the check runs here, over
-// every entry the generator returned, before the cut below. The component holds the rendered
-// entries to the same rule while it renders them.
+// every entry the generator returned, before the cut below: the generator returns the release
+// files, and nothing else (the drafts above the CLI's current version are not among them). The
+// component holds the rendered entries to the same rule while it renders them.
 for (const entry of entries) {
   if (summaries[entry.tag] === undefined) {
     throw new Error(
@@ -98,7 +104,7 @@ for (const entry of entries) {
 }
 
 // The three newest releases, which is what the page renders (D1640). The generator still
-// returns every release file, because the home page's hero reads the newest published entry
+// returns every release file, because the home page's hero reads the newest release
 // out of the same call (F10) — the cut is this page's, and it is a cut rather than a filter:
 // the older entries are on GitHub, and the link under them says where (D1648).
 const SHOWN = 3

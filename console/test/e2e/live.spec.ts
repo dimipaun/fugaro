@@ -448,7 +448,7 @@ test.describe('the Live screen', () => {
     await mount(theLastFrame(), 'light')
     const drawn = await screen(page)
 
-    expect(drawn.runs).toContain('20261015-120400-aa03')
+    expect(drawn.runs).toContain('aa03')
     expect(drawn.queued).toContain('true')
     expect(drawn.stages).toContain('queued')
     // A queued run's spend is `null` on the wire, so the screen draws the

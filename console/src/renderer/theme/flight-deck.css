@@ -770,10 +770,11 @@ table.live-table tr.live-run {
   border-bottom: var(--rule-width) solid var(--line-subtle);
 }
 
-/* The run id is the row's door (`entry.ts`'s `wireRuns` reads this cell's drawn
- * text), so it is drawn as one: mono, the way an id is compared, and underlined,
- * which is the whole mark -- there is no second channel for it, and nothing on
- * this screen navigates from a pointer alone. */
+/* The run id is the row's door (`entry.ts`'s `wireRuns` reads this cell's
+ * `data-run-id`, not the short id the cell draws), so it is drawn as one: mono,
+ * the way an id is compared, and underlined, which is the whole mark -- there is
+ * no second channel for it, and nothing on this screen navigates from a pointer
+ * alone. */
 table.live-table td.live-run-id {
   font-family: var(--font-mono);
   color: var(--live-text);

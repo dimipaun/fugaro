@@ -81,6 +81,15 @@ func TestRegistryDefaultsMatchApplyDefaults(t *testing.T) {
 		"max_parallel":       func() string { return strconv.Itoa(local.MaxParallel) },
 		"build.machine_type": func() string { return local.Build.MachineType },
 		"local.version":      func() string { return strconv.Itoa(local.Version) },
+		// The Issues section's two thresholds (T-IS15): the minimal local
+		// file writes neither, so each reader reads the loader's own answer
+		// back out through the accessor — the value a run gets.
+		"issues.nudge_after_days": func() string {
+			return strconv.Itoa((&localcfg.Config{}).NudgeAfterDays())
+		},
+		"issues.nudge_recurrence": func() string {
+			return strconv.Itoa((&localcfg.Config{}).NudgeRecurrence())
+		},
 		// The two schedules (R13): a layer that states nothing reads as
 		// paused, which is the default the rows claim and the direction that
 		// never starts a job by omission.
