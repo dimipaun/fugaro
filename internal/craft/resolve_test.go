@@ -263,11 +263,11 @@ func TestResolveInertPool(t *testing.T) {
 }
 
 // TestResolveUnknownAccessRefused: an access that names no credential and no
-// pool any layer holds is a problem of the resolver's — the layers are merged
-// before an access is resolved, so no single layer can answer whether a name
-// exists (D1621) — and it is reported once, on the craft that wrote it, not
-// again on each craft that inherits it. The built-in vertex exists without any
-// layer writing it.
+// pool any layer holds is a problem of the resolver's — a repository's file
+// naming what the owner created in another layer is the ordinary case (D1628),
+// so whether a name exists is answered once the layers are together — and it is
+// reported once, on the craft that wrote it, not again on each craft that
+// inherits it. The built-in vertex exists without any layer writing it.
 func TestResolveUnknownAccessRefused(t *testing.T) {
 	layers := []Layer{{
 		Name:   config.SourceRepo,

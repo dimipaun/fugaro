@@ -38,8 +38,10 @@ func InheritedFrom(craft string) string { return "inherited from " + craft }
 //
 // Credentials and Pools are here although a layer may hold neither — a
 // repository's fugaro.yaml names credentials and pools it cannot see — because
-// an access is resolved against every layer at once: whether a name exists is a
-// fact of all of them, and no single layer can answer it (D1621).
+// an access is resolved against every layer at once: credentials and pools are
+// created where the owner writes them and a repository's file only selects
+// among them (F12, D1628), so a layer naming one it cannot see is the ordinary
+// case and whether a name exists is a fact of all of them together.
 type Layer struct {
 	// Name is what Effective.ModelFrom and Effective.AccessFrom say for a half
 	// this layer set: config.SourceRepo, SourceLocal or config.SourceProject.
