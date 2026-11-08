@@ -376,7 +376,7 @@ be held to it) or **Open** (the design leaves it to the owner).
 - **F12 — the plugin's lint**: `plugin/skills_lint_test.go` resolves every command and flag a skill
   names against the cobra tree; `resolveSkillCommand`, the helper that does it, is
   `plugin/skillcli_test.go:41`, and `plugin/routing_skill_test.go:122` and
-  `plugin/setup_skill_test.go:670` are two of its callers.
+  `plugin/setup_skill_test.go:688` are two of its callers.
 
 ### Gap
 
@@ -397,7 +397,7 @@ be held to it) or **Open** (the design leaves it to the owner).
   whichever the tree says by then". The tree has both: D326 (`:302`) is the rule's *idea*, and
   `docs/periodic-reviews/` is where the rule *list* is written down
   (`docs/periodic-reviews/spec.md:114`, `implementation-plan.md:266`, `:279`, the skill's own list in
-  `plugin/skills/working/reference/periodic-reviews.md:54`, which names the four patterns and what each
+  `plugin/skills/working/reference/periodic-reviews.md:56`, which names the five patterns and what each
   one means). → **D1463**.
 - **F25 — this folder's copy is falsified by FC2.** `TestDocsFailureClassCensusMatchesTheRunner`
   (`internal/cli/docs_pr_state_test.go:329`) fatals on `statements == 0`, which is exactly the state

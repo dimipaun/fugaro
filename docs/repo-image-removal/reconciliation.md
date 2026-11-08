@@ -108,7 +108,7 @@ code. A `:line` is a **declaration** line at `777b902d`; the symbol is what to s
 - **F16: Exists. Exactly two writers touch a workflow's image keys today, and neither is `fugaro
   config init`.** `internal/cli/image_promote.go:179` (`setWorkflowImageName`) removes `image:` and
   `dockerfile:` and writes `image_name`; the **setup skill** writes the keys by hand
-  (`plugin/skills/setup/SKILL.md:84`, `:91`). `internal/cli/config_init.go:21` (`minimalFugaroYAML`)
+  (`plugin/skills/setup/SKILL.md:82`, `:89`). `internal/cli/config_init.go:21` (`minimalFugaroYAML`)
   writes `version`, `project`, `gcp_project` and at most `git.base_branch` and `profile` — **no image
   key at all**, so the brief's "`config init`" is not a writer to remove.
 
@@ -434,7 +434,7 @@ its `Recommendation` and both costs, so the answer and the price of the other re
 
 - **D1205 (the setup skill and the plugin) — default-by-owner: not objected, 2026-11-04.** No answer came back on this one, so the design's recommendation stands as the default — on the reason the recommendation itself gives below, which is the reason a reader should re-check before building it.
   Recommendation: the skill writes a **catalog entry** instead of the removed keys
-  (`plugin/skills/setup/SKILL.md:84`, `:91`), its reference documents carry the new examples, and the
+  (`plugin/skills/setup/SKILL.md:82`, `:89`), its reference documents carry the new examples, and the
   two tests that pin them are the task's red step (`plugin/setup_skill_test.go:154`,
   `plugin/skills_lint_test.go:789`).
   Cost of the alternative: leaving the skill teaching `image:`/`dockerfile:` makes it the one writer in
