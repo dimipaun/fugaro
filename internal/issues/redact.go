@@ -8,12 +8,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/redact"
 )
 
-// scrubMarker is what a removed word leaves behind, spelled the way every
-// other pass spells it — redact's own marker, which is unexported — so a
-// reader of a post sees one word for what was taken out of its text,
-// whichever pass took it.
-const scrubMarker = "[REDACTED]"
-
 // Redact is the gate every piece of an issue passes before it is written down
 // or sent anywhere: the values this machine holds and the shapes nobody has to
 // hold to know they are a credential, and then the two things only an issue
@@ -58,7 +52,7 @@ func Scrub(text string, names []string) string {
 	}
 	sort.Slice(longest, func(i, j int) bool { return len(longest[i]) > len(longest[j]) })
 	for _, name := range longest {
-		text = regexp.MustCompile(`(?i)`+regexp.QuoteMeta(name)).ReplaceAllLiteralString(text, scrubMarker)
+		text = regexp.MustCompile(`(?i)`+regexp.QuoteMeta(name)).ReplaceAllLiteralString(text, redactedValue)
 	}
 	return text
 }

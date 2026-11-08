@@ -132,6 +132,7 @@ func patternPass(s string) string {
 	s = signedParam.ReplaceAllString(s, "$1$2="+redacted)
 	s = connString.ReplaceAllString(s, "$1:"+redacted+"@")
 	s = dsnString.ReplaceAllString(s, "$1"+redacted+"$3")
+	s = passwordEscaped.ReplaceAllString(s, "$1$2$3$4$5$6$9"+redacted+"$8")
 	s = redactPasswords(s)
 	s = redactPasswords(s)
 	for _, re := range tokenShapes {
@@ -140,43 +141,66 @@ func patternPass(s string) string {
 	return s
 }
 
+// markerHeld is what a marker becomes while the rules below read the text: a
+// NUL and a SOH, the NUL being a byte no unquoted value may open on (see
+// passwordValueTail). A marker stands where a value stood, and a value is what
+// these rules would otherwise read it as — the bracket is a value's byte like
+// any other — whose right-hand end they then have to guess at, and the field
+// after it pays: the branch that reads a value to the delimiter before the next
+// field's name takes that name into the match, the scan resumes past it, and
+// the credential written in that field is never read at all. That second
+// application is exactly what reads such a credential, so a marker it cannot
+// read is what makes it work — and a value opening with the marker's own
+// bracket stays a value the rules read like any other.
+const markerHeld = "\x00\x01"
+
 // redactPasswords applies the five rules that read a credential by the name
 // introducing it, each with the replacement that writes its own groups back
 // around the marker. The caller runs it twice: the value of a field stops at
 // the delimiter before the next field's name only where a name follows, and
 // that name is part of the match (see passwordValueTail), so the scan resumes
-// after it. The second application is what reads a credential written in that
-// field — `?token=…&password=…` — with the name the first one put back in
+// after it — and the second application is what reads a credential written in
+// that field — `?token=…&password=…` — with the name the first one put back in
 // place. Running the rules again over text they have already read changes
-// nothing: what they match is the marker in a value's place, which they write
-// back as the marker.
+// nothing: the marker they wrote is held aside (markerHeld), so what they see
+// is what they saw, and a value they rewrite they rewrite as the marker.
 func redactPasswords(s string) string {
+	s = strings.ReplaceAll(s, redacted, markerHeld)
 	s = passwordValue.ReplaceAllString(s, "$1$2$3$4$5$8$11$13"+redacted+"$7$10$16")
 	s = passwordWord.ReplaceAllString(s, "$1$2$3$4$5$8$11$13"+redacted+"$7$10$16")
 	s = passwordColon.ReplaceAllString(s, "$1$2$3$4$5$6$7$8$11$14$16"+redacted+"$10$13$19")
 	s = passwordCamel.ReplaceAllString(s, "$1$2$3$4$5$8$11$13"+redacted+"$7$10$16")
 	s = passwordFlag.ReplaceAllString(s, "$1 $2$5$8$10"+redacted+"$4$7$13")
-	return s
+	return strings.ReplaceAll(s, markerHeld, redacted)
 }
 
 // passwordValueTail is how each password rule reads the value, written once
-// because five rules read it the same way. A quoted value is read to a closing
-// quote of its own kind: that is what lets it hold the other kind
-// (`{"password":"ab'cd"}`) and, escaped, its own (`{"password":"ab\"cd"}`),
-// where a class that stopped at either quote read three bytes and gave up,
-// leaving a value of four bytes or more half redacted — a leak of the half it
-// did not reach. The class reads an escaped quote as one character, so the
-// value runs past it to the quote that really closes it.
+// because five rules read it the same way. A quoted value is read from a bare
+// quote to the bare quote that closes it: that is what lets it hold the other
+// kind (`{"password":"ab'cd"}`) and, escaped, its own
+// (`{"password":"ab\"cd"}`), where a class that stopped at either quote read
+// three bytes and gave up, leaving a value of four bytes or more half redacted
+// — a leak of the half it did not reach. The class reads an escaped quote as
+// one character, so the value runs past it to the quote that really closes it.
+//
+// The opener is bare, and the closer with it, because the two have to be the
+// same spelling: a value opened by a backslash is a value inside a record that
+// has itself been escaped, where the `\"` after it is the record's own
+// delimiter rather than an escape, and a branch that paired that opener with a
+// bare closer read the whole rest of the line — the fields after the
+// credential, which are the diagnosis — into the value. Such a record is
+// passwordEscaped below, and a quote reached through a backslash is no opener
+// here at all.
 //
 // The closing quote is required, and the two branches after the quoted pair
 // read the value that never closes: a truncated excerpt still holds a
 // credential, so a value running to the end of its line is one too. They are
 // one branch per quote kind rather than one for both, because a value cut off
-// after the *other* kind of quote is still an unterminated value — `{\"password\":\"ab'cdefgh12`,
-// a transcript's field cut before its closing quote — and a class that stopped
-// at either kind read two bytes and gave up. Each of the two reads its own
-// kind's quote only as an escape, so a bare quote of that kind still ends it
-// and a value that does close is the pair's to read.
+// after the *other* kind of quote is still an unterminated value —
+// `{"password":"ab'cdefgh12`, a field cut before its closing quote, which a
+// class that stopped at either kind read as two bytes before giving up. Each
+// of the two reads its own kind's quote only as an escape, so a bare quote of
+// that kind still ends it and a value that does close is the pair's to read.
 //
 // The unquoted value is read to whitespace and no further, because a password
 // may hold anything else: `,`, `\` and either quote are ordinary bytes of one
@@ -218,30 +242,34 @@ func redactPasswords(s string) string {
 //   - a backslash directly before a quote, because that is how a transcript
 //     escapes one: the escaped header above leaves `…\":\"[REDACTED]\"…` in
 //     its place, and a value read from that backslash crosses the escaped
-//     quotes and takes the record's fields with it.
-//   - the bracket the marker opens with. A rule that has already run — the
-//     escaped header above, or this rule itself on its second application —
-//     leaves the marker where the value was, and the marker is a value of the
-//     shape these rules read: in an escaped record, where every quote of the
-//     record is escaped, a marker read as a value runs to the closing quote of
-//     the record outside it and takes the fields after it as well, which is how
-//     a record stops being one. And the second application would read the
-//     marker in a value's place and take the field after it, the way the first
-//     application took the name of the field before it. The bracket costs one
-//     spelling of a credential: a value whose first byte is `[` is the one
-//     these rules leave alone.
+//     quotes and takes the record's fields with it. Reading a record the way
+//     its own escaping writes it is passwordEscaped's work below.
+//   - the NUL the marker is held as while these rules run (markerHeld). A
+//     marker left to be read as a value would take the name of the field after
+//     it, because that is what the right-hand end of an unquoted value is found
+//     by. The marker's bracket is deliberately not the exclusion: a value may
+//     open with one (`PGPASSWORD=[hunter2x`) and is read like any other.
+//
+// A value may hold either quote, and the byte after it is what says which
+// reading it belongs to: a quote the text continues past as a value's byte is
+// the value's own (`PGPASSWORD=abcd"efgh1234`, `PGPASSWORD=it's-a-secret-value`),
+// while a quote followed by a byte that can open the next field or close the
+// record around it — a space, a `,`, a `;`, an `&`, a brace — is the
+// surrounding record's, and the value ends before it
+// (`{"message":"invalid token: abc123","type":"auth"}` keeps its second
+// field, where a value read to whitespace alone took it).
 //
 // The quotes and the value are groups because a replacement puts the quotes
 // back around the marker and drops what stood between them — the opener before
 // it and the closer after — so the tail's groups are numbered from whatever
 // the rule's own prefix captures, and each rule's replacement names them from
 // there.
-const passwordValueTail = `(?:((?:\\+)?")` + `((?:\\"|[^\["\n])(?:\\"|[^"\n]){3,})` + `(")` +
-	`|((?:\\+)?')` + `((?:\\'|[^\['\n])(?:\\'|[^'\n]){3,})` + `(')` +
-	`|((?:\\+)?")((?:\\"|[^\["\n])(?:\\"|[^"\n]){3,})(?m:$)` +
-	`|((?:\\+)?')((?:\\'|[^\['\n])(?:\\'|[^'\n]){3,})(?m:$)` +
-	`|((?:[^\s"';&\\[]|\\[^"])[^\s;&]{3,})([;&][A-Za-z_][A-Za-z0-9_\-]*=)` +
-	`|((?:[^\s"';&\\[]|\\[^"])[^\s]{3,}))`
+const passwordValueTail = `(?:(")((?:\\"|[^"\n]){4,})(")` +
+	`|(')((?:\\'|[^'\n]){4,})(')` +
+	`|(")((?:\\"|[^"\n]){4,})(?m:$)` +
+	`|(')((?:\\'|[^'\n]){4,})(?m:$)` +
+	`|((?:[^\s"';&\x00\\]|\\[^"])(?:[^\s;&"']|"[^\s,;&}\])]|'[^\s,;&}\])]){3,})([;&][A-Za-z_][A-Za-z0-9_\-]*=)` +
+	`|((?:[^\s"';&\x00\\]|\\[^"])(?:[^\s"']|"[^\s,;&}\])]|'[^\s,;&}\])]){3,}))`
 
 var (
 	// authHeaderEscaped is the same header one encoding further in: a JSON
@@ -387,6 +415,39 @@ var (
 	// it is what the rule matched.
 	dsnString = regexp.MustCompile(`\b([A-Za-z0-9_.\-]+:)([^\s"@]+)(@(?:tcp|unix|udp)\()`)
 
+	// passwordEscaped is the same credential inside a record that has itself
+	// been escaped — a JSON object carried inside a JSON string, a provider's
+	// error body, a transcript field — where every quote of the inner object
+	// is doubled with a backslash: `{\"password\":\"…\",\"step\":\"terraform
+	// apply\"}`. The escaping decides where the value ends, because a quote
+	// reached through a backslash is the inner record's own delimiter rather
+	// than an escape, and that is why it is a rule of its own rather than a
+	// branch of passwordValueTail above, as authHeaderEscaped is a rule of its
+	// own rather than an optional backslash on the headers below it: the tail
+	// pairs a bare opener with a bare closer, and reads nothing where the
+	// opener is the record's escaping. A record's field read the other way —
+	// from the bare quote a doubled opener holds — runs to the last quote of
+	// the line and takes the fields after the credential with it, which is how
+	// a record stops being one.
+	//
+	// A value may hold anything but the `\"` closing it: a backslash escapes
+	// the byte after it unless that byte is a quote, which is the record's own,
+	// while a doubled backslash is one escaped character and is stepped over
+	// whole. The second alternative reads the value that never closes — the
+	// transcript realising it holds a credential only after cutting the line —
+	// and stops at the `\"` just the same: a value that does close is the first
+	// alternative's to read, and one that closes below the floor
+	// (`{\"password\":\"abc\"}`) is not a credential to guess at, so the record
+	// keeps its fields either way.
+	//
+	// The name is the one a record writes: the lower-case spellings of
+	// passwordValue above, which a JSON body and an environment dump share, and
+	// the same words run into a capital before them (`dbPassword`), which is
+	// passwordCamel's spelling in plain text. What stands before the name is
+	// the record's escaped quote where a field's name starts the record or
+	// follows another, and the boundary below it as everywhere else.
+	passwordEscaped = regexp.MustCompile(`(?i)(^|(?-i:[^a-z]))(\\*["']?)(pass(?:word|phrase|wd)s?|pwd|secret(?:[_-]?(?:access[_-])?key)?|token|api[_-]?key|access[_-]?key|auth[_-]?token|(?-i:[A-Za-z0-9_]*?(?:Pass(?:word|Phrase|Wd)?s?|Pwd|Secret(?:[_-]?(?:Access[_-])?Key)?|Token|Key)))(\\*["']?)(\s*[:=]\s*)(?:(\\+")((?:[^"\\]|\\[^"]){4,})(\\+")|(\\+")((?:[^"\\]|\\[^"]){4,})(?m:$))`)
+
 	// passwordValue is the credential a name introduces with a sign, wherever
 	// that is written: an environment dump (`PGPASSWORD=…`, `SENTRY_AUTH_TOKEN=…`,
 	// `DD_API_KEY=…`), a config or a record (`{"db_password":"…"}`), the field of
@@ -424,12 +485,14 @@ var (
 	// reason: a shorter one is not a credential, and replacing it mangles the
 	// text around it.
 	//
-	// A quoted value is read to its closing quote and an unquoted one stops at
-	// whitespace, with `&` and `;` read as the end of a value only where the
-	// name of a field follows one — a sentence and a query string both put one
-	// there (`Pwd=…;Database=app`, `password=…&user=app`), while a password
-	// holds either as readily as any other byte. What an unquoted
-	// value after a colon costs is the sentence that reads the same way:
+	// A quoted value is read to the quote that closes it, and an unquoted one
+	// stops at whitespace, at the quote closing the record around it
+	// (`{"message":"invalid token: abc123","type":"auth"}` keeps its second
+	// field) and at `&` or `;` where the name of a field follows one — a
+	// sentence and a query string both put one there (`Pwd=…;Database=app`,
+	// `password=…&user=app`), while a password holds either as readily as any
+	// other byte. What an unquoted value after a colon costs is the sentence
+	// that reads the same way:
 	// `password: required field missing` loses its `required` exactly as
 	// `smtpPassword: hunter2 rejected` loses its password, and no rule that
 	// reads neither the word nor the value can tell the two apart. The field's

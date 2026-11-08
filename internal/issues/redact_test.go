@@ -14,6 +14,7 @@ var corpus = []struct {
 	name string
 	in   string
 	leak string
+	keep string
 }{
 	{
 		name: "api key",
@@ -77,6 +78,26 @@ var corpus = []struct {
 		leak: "it's-a-" + strings.Repeat("Qw3", 3),
 	},
 	{
+		name: "password field of an escaped record",
+		in: `{\"password\":\"` + strings.Repeat("Qw3", 5) +
+			`\",\"step\":\"terraform apply\"}`,
+		leak: strings.Repeat("Qw3", 5),
+		keep: `\",\"step\":\"terraform apply\"}`,
+	},
+	{
+		name: "password field inside a string value",
+		in: `{"message":"invalid token: ` + strings.Repeat("Qw3", 5) +
+			`","type":"auth"}`,
+		leak: strings.Repeat("Qw3", 5),
+		keep: `","type":"auth"}`,
+	},
+	{
+		name: "password beginning with a bracket",
+		in:   "PGPASSWORD=[" + strings.Repeat("Qw3", 5) + " psql: connection refused",
+		leak: "[" + strings.Repeat("Qw3", 5),
+		keep: "psql: connection refused",
+	},
+	{
 		name: "address git invents with no identity set",
 		in: "fatal: unable to auto-detect email address (got '" +
 			"someone" + "@" + "someone-ThinkPad" + ".(none)" + "')",
@@ -93,8 +114,11 @@ func TestRedactCorpus(t *testing.T) {
 			if strings.Contains(got, tc.leak) {
 				t.Errorf("Redact(%q) = %q: %q survived", tc.in, got, tc.leak)
 			}
-			if !strings.Contains(got, scrubMarker) {
+			if !strings.Contains(got, redactedValue) {
 				t.Errorf("Redact(%q) = %q: nothing was redacted", tc.in, got)
+			}
+			if tc.keep != "" && !strings.Contains(got, tc.keep) {
+				t.Errorf("Redact(%q) = %q: the gate ate %q as well", tc.in, got, tc.keep)
 			}
 		})
 	}
@@ -166,7 +190,7 @@ func TestScrubNames(t *testing.T) {
 
 	t.Run("a name inside another one goes with it", func(t *testing.T) {
 		got := Scrub("acme-widgets failed", []string{"acme", "acme-widgets"})
-		if got != scrubMarker+" failed" {
+		if got != redactedValue+" failed" {
 			t.Errorf("Scrub = %q, want the whole name gone", got)
 		}
 	})

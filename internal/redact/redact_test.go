@@ -347,6 +347,34 @@ var patternCases = []struct {
 		name: "password escaped inside a json string",
 		in:   `{"content":"{\"password\":\"` + fake(strings.Repeat("Qw3", 5)) + `\"}"}`,
 		leak: strings.Repeat("Qw3", 5),
+		keep: `\"}"}`,
+	},
+	{
+		name: "password field of an escaped json record",
+		in: `{\"password\":\"` + fake(strings.Repeat("Qw3", 5)) +
+			`\",\"step\":\"terraform apply\"}`,
+		leak: strings.Repeat("Qw3", 5),
+		keep: `\",\"step\":\"terraform apply\"}`,
+	},
+	{
+		name: "password field inside a json string value",
+		in: `{"message":"invalid token: ` + fake(strings.Repeat("Qw3", 5)) +
+			`","type":"auth"}`,
+		leak: strings.Repeat("Qw3", 5),
+		keep: `","type":"auth"}`,
+	},
+	{
+		name: "password beginning with a bracket",
+		in:   "PGPASSWORD=" + fake("[", strings.Repeat("Qw3", 5)) + " psql: connection refused",
+		leak: fake("[", strings.Repeat("Qw3", 5)),
+		keep: "psql: connection refused",
+	},
+	{
+		name: "password beginning with a bracket in a record",
+		in: `{"password":"` + fake("[", strings.Repeat("Qw3", 5)) +
+			`","step":"terraform apply"}`,
+		leak: fake("[", strings.Repeat("Qw3", 5)),
+		keep: `","step":"terraform apply"}`,
 	},
 	{
 		name: "password on a command line",
@@ -769,6 +797,56 @@ func TestRedactKeepsAnEscapedRecordReadable(t *testing.T) {
 	if rec["authorization"] != "[REDACTED]" {
 		t.Errorf("authorization = %q, want the marker", rec["authorization"])
 	}
+}
+
+// TestRedactKeepsAPasswordRecordReadable: the same two records read by the name
+// of the field rather than by a scheme word. A record's fields are the
+// diagnosis, and a password rule that read a value past the quote closing it —
+// the quote of the field in a plain record, the `\"` of one in an escaped
+// record — would take the fields after the credential and leave a text that is
+// no longer a record at all.
+func TestRedactKeepsAPasswordRecordReadable(t *testing.T) {
+	value := fake(strings.Repeat("Qw3", 5))
+	check := func(t *testing.T, got string) {
+		t.Helper()
+		if strings.Contains(got, value) {
+			t.Errorf("Text = %q: the value survived", got)
+		}
+		var rec map[string]string
+		if err := json.Unmarshal([]byte(got), &rec); err != nil {
+			t.Fatalf("Text = %q, which is no longer a JSON record: %v", got, err)
+		}
+		for field, want := range map[string]string{
+			"severity": "ERROR",
+			"message":  "quota exceeded for project foo",
+			"step":     "terraform apply",
+		} {
+			if rec[field] != want {
+				t.Errorf("Text lost %s: %#v", field, rec)
+			}
+		}
+		if rec["token"] != "[REDACTED]" {
+			t.Errorf("token = %q, want the marker", rec["token"])
+		}
+	}
+	inner := `{"severity":"ERROR","token":"` + value +
+		`","message":"quota exceeded for project foo","step":"terraform apply"}`
+
+	t.Run("plain", func(t *testing.T) {
+		check(t, Text(inner, nil))
+	})
+
+	t.Run("escaped", func(t *testing.T) {
+		got := Text(`{"type":"result","content":`+strconv.Quote(inner)+`}`, nil)
+		if strings.Contains(got, value) {
+			t.Fatalf("Text = %q: the value survived the escaping", got)
+		}
+		var outer struct{ Content string }
+		if err := json.Unmarshal([]byte(got), &outer); err != nil {
+			t.Fatalf("Text = %q, which is no longer a JSON record: %v", got, err)
+		}
+		check(t, outer.Content)
+	})
 }
 
 // TestRedactReportIsIdempotentWhenAMaskBites: this is the shape that made the
