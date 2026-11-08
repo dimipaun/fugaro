@@ -11,7 +11,7 @@ Owner answers that shaped the plan: D1700 refuse and list on a non-terminal (an 
 - **A field never changes meaning:** nothing in any `--json` shape, the run record, `task.json`, the PR marker, the branch name or `filed_in` changes (D1705). Docs are tested: change a doc, run `go test ./internal/cli/ -run Docs`; website content changes run `npm run check` in `website/`.
 - `.claude/rules/console.md` for `console/**`; `.claude/rules/mobile.md` is not touched (the mobile app and `shared/` are out of scope: UNVERIFIED that it shows run IDs; a one-line grep at SR12).
 - Never edit `.github/workflows/`. The plugin tests (`plugin/`) check every command and flag a skill names; a skill change is in the same PR as the CLI change.
-- Review routing by changed paths: `internal/runner/prompts.go`, `plugin/skills/**` are **security-tier** (`opus + mandatory independent review`); the rest is standard.
+- Review routing by changed paths: `internal/runner/prompts.go`, `plugin/skills/**` are **security-tier** (`opus + mandatory independent review`): prompts and plugin skills by path (SR7), and the tasks that edit a runner write path (SR6) or resolve the target of a destructive command (SR3, SR14). The rest is standard.
 
 ## Global constraints and review focus
 
@@ -57,16 +57,16 @@ Owner answers that shaped the plan: D1700 refuse and list on a non-terminal (an 
 - **Red step:** the tests fail until the package has the function; the window test seeds a run 8 days old and asserts `ErrNotFound`.
 - **Reviewer tier:** standard.
 
-### SR3. `locateRun` accepts an ending, with the pick list or the refusal
+### SR3. `resolveRun`: an ending to a run, with the pick list or the refusal
 
 - **Files:** `internal/cli/cloud.go`, `internal/cli/cloud_test.go` (or the file the existing `locateRun` tests live in).
-- **Interfaces:** consumes SR2, `stdinIsTerminal` and `agentMarker`. `locateRun`'s signature gains an options value (input and output streams, `--json`, whether the lookup is active-only) because it has none of them today; its five callers' edits are SR14's. Produces: on a terminal (stdin and stdout terminals, no `--json`, empty `agentMarker`) a numbered list showing repository, title, status, start time and the `task.DisplayRuns` ending; anywhere else a user error listing the same candidates; the "no run ending ... among the active runs and the last 7 days; pass the full ID" sentence (D1709); the active feed read from the budget database (one new read per lookup), each active match confirmed as a valid run ID with a `task.json` in the bucket, and a stderr line when the feed could not be read. A full ID or `<slug>/<run-id>` behaves as today. `cancel` calls it active-only (D1710).
+- **Interfaces:** consumes SR2, `stdinIsTerminal` and `agentMarker`. `locateRun` is left exactly as it is (it keeps serving `run --retry`, which stays full-ID); SR3 adds `resolveRun(ctx, env, ref, opts)` beside it, with options for the input and output streams, `--json` and whether the lookup is active-only, because `locateRun` has none of them. Nothing calls `resolveRun` until SR14, so the build is whole at L2. Produces: on a terminal (stdin and stdout terminals, no `--json`, empty `agentMarker`) a numbered list showing repository, title, status, start time and the `task.DisplayRuns` ending; anywhere else a user error listing the same candidates; the "no run ending ... among the active runs and the last 7 days; pass the full ID" sentence (D1709); the active feed read from the budget database (one new read per lookup), each active match confirmed as a valid run ID with a `task.json` in the bucket, and a stderr line when the feed could not be read. A full ID or `<slug>/<run-id>` behaves as `locateRun` does.
 - **Schema/rules/config change:** none.
-- **Tests:** `TestLocateRunEnding`, `TestLocateRunAmbiguousNonTerminalRefuses`, `TestLocateRunAmbiguousTerminalPicks`, `TestLocateRunAgentMarkerRefuses`, `TestLocateRunJSONRefuses`, `TestLocateRunPlantedActiveMatchIgnored`, `TestLocateRunFeedUnreadable`.
-- **Command:** `go test ./internal/cli/ -run 'TestLocateRun' -count=1`
+- **Tests:** `TestResolveRunEnding`, `TestResolveRunAmbiguousNonTerminalRefuses`, `TestResolveRunAmbiguousTerminalPicks`, `TestResolveRunAgentMarkerRefuses`, `TestResolveRunJSONRefuses`, `TestResolveRunPlantedActiveMatchIgnored`, `TestResolveRunFeedUnreadable`, `TestLocateRunStillRefusesAnEnding`.
+- **Command:** `go test ./internal/cli/ -run 'TestResolveRun|TestLocateRun' -count=1`
 - **Depends on:** SR2.
-- **Commit:** `cli: locateRun takes the last four or more characters of a run ID`
-- **Red step:** `TestLocateRunAmbiguousNonTerminalRefuses` seeds two runs with one ending and asserts the error lists both and none is returned; it fails against the current `locateRun` (rejects the ending as malformed).
+- **Commit:** `cli: resolveRun takes the last four or more characters of a run ID`
+- **Red step:** `TestResolveRunAmbiguousNonTerminalRefuses` seeds two runs with one ending and asserts the error lists both and none is returned; it fails until `resolveRun` exists.
 - **Reviewer tier:** `opus + mandatory independent review` with a mutation check: it resolves the target of a destructive command from a bucket the job account can write.
 
 ### SR4. `watch` plain and TUI on the one rule
@@ -95,11 +95,11 @@ Owner answers that shaped the plan: D1700 refuse and list on a non-terminal (an 
 
 ### SR6. Agent-written text from code: the PR text, the report, the digest
 
-- **Files:** `internal/runner/prflow.go`, `internal/runner/report.go`, `internal/runner/reviewmode.go` (the second `### Fugaro run` heading), `internal/runner/runner.go` (`Opened by Fugaro run`), `internal/digest/render.go`, `internal/cli/runs_digest.go` (the caller that shortens), and their tests.
-- **Interfaces:** consumes SR1. The title fallback, the status line (`Run \`3bb2\` ... \`fugaro diagnose 3bb2\``), the report headings, the PR opening line and the digest report's run table (collisions extended over the rows printed, shortened by the caller so `digestSubmitRuns`'s `run-N` rows are untouched) show the short ID. The branch, `ReportMarker`, the commit trailer, `filed_in` and the digest JSON keep the full ID (D1705).
+- **Files:** `internal/runner/prflow.go`, `internal/runner/report.go`, `internal/runner/reviewmode.go` (the second `### Fugaro run` heading), `internal/runner/runner.go` (`Opened by Fugaro run`), `internal/digest/render.go` (`markdownCore` shortens; `RunsTable`'s submit use is pinned), and their tests.
+- **Interfaces:** consumes SR1. The title fallback, the status line (`Run \`3bb2\` ... \`fugaro diagnose 3bb2\``), the report headings, the PR opening line and the digest report's run table (collisions extended over the rows printed, shortened in `markdownCore` so `digestSubmitRuns`'s `run-N` rows are untouched) show the short ID. The branch, `ReportMarker`, the commit trailer, `filed_in` and the digest JSON keep the full ID (D1705).
 - **Schema/rules/config change:** none.
 - **Tests:** `TestStatusLineShortID`, `TestReportHeadingShortID`, `TestMarkerKeepsFullID`, `TestDigestRunTableShortID`, `TestDigestSubmitRunsUnchanged`, `TestOpenedByLineShortID`.
-- **Command:** `go test ./internal/runner/ -run 'TestStatusLine|TestReportHeading|TestMarker' -count=1 && go test ./internal/digest/ ./internal/cli/ -run 'ShortID|TestDigestSubmitRunsUnchanged' -count=1`
+- **Command:** `go test ./internal/runner/ -run 'TestStatusLine|TestReportHeading|TestMarker|TestOpenedByLineShortID' -count=1 && go test ./internal/digest/ ./internal/cli/ -run 'ShortID|TestDigestSubmitRunsUnchanged' -count=1`
 - **Depends on:** SR3 (the hint `fugaro diagnose <short>` must work where the text ships).
 - **Commit:** `runner, digest: written text names runs by their short ID`
 - **Red step:** the status-line test asserts the 15-digit stamp is absent and fails today.
@@ -107,7 +107,7 @@ Owner answers that shaped the plan: D1700 refuse and list on a non-terminal (an 
 
 ### SR7. The agent rule: the job prompts and the plugin skills
 
-- **Files:** `internal/runner/prompts.go`, `internal/runner/prompts_test.go`, `plugin/skills/working/SKILL.md`, `plugin/skills/working/reference/launch.md`, `followup.md`, `logs.md`, `status.md`, `diagnose.md`, `plugin/skills/parallelism/SKILL.md`, the plugin tests that read them.
+- **Files:** `internal/runner/prompts.go`, `internal/runner/prompts_test.go`, `plugin/skills/working/SKILL.md`, `plugin/skills/working/reference/launch.md`, `followup.md`, `logs.md`, `status.md`, `diagnose.md`, `periodic-reviews.md`, `plugin/skills/parallelism/SKILL.md`, the plugin tests that read them.
 - **Interfaces:** consumes SR3 (a skill that says "pass the short ID" ships only with the CLI that accepts it). Adds to the standing instructions: "Refer to runs only by their short ID, the last 4 characters of the run ID; refer to plan tasks by their plan name. Pass the short ID to `logs`, `cancel`, `diagnose` and `artifacts` (the commands that accept it; `run --retry`, `--review-run`, `review show` and `--run-id` take full IDs), and never print the full run ID in anything you write for a person." The skills' text: tell the user a run by its short ID, keep `--json` full IDs for commands.
 - **Schema/rules/config change:** none (prompt text).
 - **Tests:** `TestPromptsCarryShortIDRule`, the plugin tests (`go test ./plugin/... -count=1`), `-run Docs` for any pinned sentence.
@@ -120,7 +120,7 @@ Owner answers that shaped the plan: D1700 refuse and list on a non-terminal (an 
 ### SR8. The console helper
 
 - **Files:** `console/src/shared/shortid.ts` (new), `console/test/unit/shortid.test.ts` (new).
-- **Interfaces:** produces `shortRun(id)` and `displayRuns(ids)` with SR1's rule (same table of cases as SR1's tests, so a drift fails both).
+- **Interfaces:** produces `shortRun(id)` and `displayRuns(refs)` over `{slug, runId}` pairs with SR1's rule; its cases are a copy of SR1's table, and SR10's Go test fails if the two tables differ.
 - **Schema/rules/config change:** none.
 - **Tests:** `shortid.test.ts` (the cases of `TestShortRun`, `TestDisplayRunsCollision`, `TestDisplayRunsCrossesTheDash`).
 - **Command:** `cd console && npm run test:unit -- --maxWorkers=2 shortid`
@@ -131,7 +131,7 @@ Owner answers that shaped the plan: D1700 refuse and list on a non-terminal (an 
 
 ### SR9. The live tab: short IDs, ordering, wording, BY
 
-- **Files:** `console/src/renderer/screens/live.ts`, `console/src/renderer/entry.ts` (the door and the copy action, the only writer of `entry.ts` in the plan), `console/test/unit/live.test.ts`, `console/test/unit/entry-wiring.test.ts`, `console/test/e2e/entry.spec.ts` (both read the `live-run-id` text today).
+- **Files:** `console/src/renderer/screens/live.ts`, `console/src/renderer/entry.ts` (the door, the only writer of `entry.ts` in the plan), `console/test/unit/live.test.ts`, `console/test/unit/entry-wiring.test.ts`, `console/test/e2e/entry.spec.ts`, `console/test/e2e/live.spec.ts` (all read the `live-run-id` text today).
 - **Interfaces:** consumes SR8. The RUN cell draws the short ID (extended over the repository's rows); `data-run-id` carries the full ID from the sanitized field; `wireRuns` and the review row read the attribute; rows are ordered by start time, then ID; the state wording is `watch`'s; a BY cell shows the launcher (`watch --json`'s launcher field; UNVERIFIED name, read at SR9's start). The table's pipeline, models and rigor chip stay (D1704).
 - **Schema/rules/config change:** none; `console/src/shared/schema.ts` already lists the CLI's strings and is not edited (a field not retyped).
 - **Tests:** `live.test.ts`: `shows the short ID`, `a colliding pair is extended`, `the door opens the full ID`, `orders by start then id`, `draws the BY cell`.
@@ -148,7 +148,8 @@ Owner answers that shaped the plan: D1700 refuse and list on a non-terminal (an 
 - **Interfaces:** consumes SR8, SR9 (the door attribute). List views draw the short ID with the attribute pattern; the details of a run and the confirm dialog keep the full ID; `graph.ts`'s `slice(-4)` and `model.ts`'s `RUN_SUFFIX_RE` move onto the helper. `internal/watch/console_parity_test.go` regenerates the fixtures from `watch`'s own renderer over fixed inputs and fails when the checked-in console copy differs (so a change to `watch` fails until the console fixtures are re-recorded), and asserts `shortid_cases.json` equals `internal/task/testdata/shortid_cases.json` (SR8's cases and SR1's cannot drift). The parity test feeds `watch --json` fixtures recorded from SR4's tree to the live model and asserts the row order, the short IDs and the status words equal what SR4's golden shows.
 - **Schema/rules/config change:** none.
 - **Tests:** `coordinator.test.ts` and `graph` cases re-pinned; `live-parity.test.ts`: `rows follow watch's order`, `status words follow watch`, `short IDs follow watch`.
-- **Command:** `cd console && npm run typecheck && npm run test:unit -- --maxWorkers=2 'live-parity|coordinator|graph'`
+- **Owner-only:** the coordinator and graph screenshots under `console/test/e2e/__screenshots__/` change; re-recording is the owner's.
+- **Command:** `cd console && npm run typecheck && npm run test:unit -- --maxWorkers=2 'live-parity|coordinator|graph'` and `go test ./internal/watch/ -run Parity -count=1`
 - **Depends on:** SR9, SR4 (fixtures).
 - **Commit:** `console: list views use short run IDs; the live tab is pinned to watch`
 - **Red step:** the parity test fails against SR9's tree wherever the console's order or wording differs from `watch`'s fixtures.
@@ -156,15 +157,15 @@ Owner answers that shaped the plan: D1700 refuse and list on a non-terminal (an 
 
 ### SR14. The other CLI printers and the command help
 
-- **Files:** `internal/cli/cancel.go`, `logs.go`, `diagnose.go`, `artifacts.go`, `run.go` (the launch output and the print sites a sweep finds; `retrySpec` is untouched), `followup.go`, and their tests.
-- **Interfaces:** consumes SR1 and SR3. Human messages print `task.ShortRun` (the `cancel` messages, the launch output, notes and errors that name a run); `--json` unchanged. `cancel` prints the resolved `<slug>/<full run ID>` and title before it acts (D1710). The `RUN` argument help of `logs`, `cancel`, `diagnose`, `artifacts` reads "a run ID, `<repo-slug>/<run-id>`, or the last four or more characters of a run ID"; `run --retry`'s help says it takes a full ID. `artifacts --repo` resolves an ending within that repository (it checked the shape with `runstore.RunTime` before).
+- **Files:** `internal/cli/cancel.go`, `logs.go`, `diagnose.go`, `artifacts.go`, `run.go` (the launch output and the print sites a sweep finds; `retrySpec` is untouched and keeps calling `locateRun`), `followup.go`, and their tests.
+- **Interfaces:** consumes SR1 and SR3. `logs`, `cancel`, `diagnose` and `artifacts` switch from `locateRun` to `resolveRun` (`cancel` active-only, D1710). Human messages print `task.ShortRun` (the `cancel` messages, the launch output, notes and errors that name a run); `--json` unchanged. `cancel` prints the resolved `<slug>/<full run ID>` and title before it acts (D1710). The `RUN` argument help of `logs`, `cancel`, `diagnose`, `artifacts` reads "a run ID, `<repo-slug>/<run-id>`, or the last four or more characters of a run ID"; `run --retry`'s help says it takes a full ID. `artifacts --repo` resolves an ending within that repository (it checked the shape with `runstore.RunTime` before).
 - **Schema/rules/config change:** none.
-- **Tests:** `TestCancelPrintsResolvedRun`, `TestCancelEndingNeverGuesses` (two runs, one ending: nothing cancelled), `TestCancelActiveOnly`, `TestArtifactsRepoEnding`, `TestLaunchOutputShortID`, plus `-run Docs`.
-- **Command:** `go test ./internal/cli/ -run 'TestCancel|TestArtifactsRepoEnding|TestLaunchOutputShortID|Docs' -count=1`
+- **Tests:** `TestCancelPrintsResolvedRun`, `TestCancelEndingNeverGuesses` (two runs, one ending: nothing cancelled), `TestCancelActiveOnly`, `TestArtifactsRepoEnding`, `TestLaunchOutputShortID`, `TestRetryEndingRefused`, `TestReviewRunEndingRefused`, `TestReviewShowEndingRefused`, `TestRunIDFlagKeepsFullID` (D1705's input side), plus `-run Docs`.
+- **Command:** `go test ./internal/cli/ -run 'TestCancel|TestArtifactsRepoEnding|TestLaunchOutputShortID|TestRetryEndingRefused|TestReviewRunEndingRefused|TestReviewShowEndingRefused|TestRunIDFlagKeepsFullID|Docs' -count=1`
 - **Depends on:** SR3.
 - **Commit:** `cli: run commands print short IDs and say they take an ending`
 - **Red step:** `TestCancelEndingNeverGuesses` fails until `cancel` goes through the new lookup.
-- **Reviewer tier:** standard, with a mutation check on the cancel tests.
+- **Reviewer tier:** `opus + mandatory independent review` with a mutation check on the cancel tests (a destructive command).
 
 ### SR11. The sweep: no full run ID in human output
 
@@ -192,7 +193,7 @@ Owner answers that shaped the plan: D1700 refuse and list on a non-terminal (an 
 
 ### SR13. OWNER-RUN checks 440 and 441
 
-- **Check 440 (live; owner-run).** On the dev installation, start two runs and note their IDs; the owner types `fugaro logs <last 4 of one>`, `fugaro cancel <ending shared by two>` (expect the pick list on a terminal, the refusal when piped: `fugaro cancel <ending> < /dev/null | cat`), `fugaro cancel abc` (expect "at least four characters"); `fugaro cancel <ending of a finished run>` (expect "no active run"), and `fugaro diagnose <short of an 8-day-old run>` (expect "pass the full ID"). It measures the resolution latency over the last 7 days (the UNVERIFIED cost in F5). No agent performs any step.
+- **Check 440 (live; owner-run).** On the dev installation, launch two runs with `--run-id` values chosen to share their last four characters (so the collision is certain) and note their IDs; the owner types `fugaro logs <last 4 of one>`, `fugaro cancel <ending shared by two>` (expect the pick list on a terminal, the refusal when piped: `fugaro cancel <ending> < /dev/null | cat`), `fugaro cancel abc` (expect "at least four characters"); `fugaro cancel <ending of a finished run>` (expect "no active run"), and `fugaro diagnose <short of an 8-day-old run>` (expect "pass the full ID"). It measures the resolution latency over the last 7 days (the UNVERIFIED cost in F5). No agent performs any step.
 - **Check 441 (owner-run, visual).** Open the console live tab beside `fugaro watch` and compare IDs, ordering and wording. The owner also re-records the live screenshots (SR9). No agent performs any step.
 - **Depends on:** SR3 and SR9 released.
 
@@ -226,12 +227,12 @@ Edges (from "Depends on"): SR2←SR1; SR3←SR2; SR4←SR1; SR5←SR1; SR6←SR3
 | `internal/cli/{cancel,logs,diagnose,artifacts,run,followup}.go` | SR14 | L3 |
 | `internal/watch/console_parity_test.go`, `console/test/fixtures/*` | SR10 | L2 |
 | `console/src/renderer/screens/{coordinator,degraded,graph}.ts`, `graph/model.ts`, `confirm.ts` | SR10 | L2 |
-| `internal/runner/{prflow,report,reviewmode,runner}.go`, `internal/digest/render.go`, `internal/cli/runs_digest.go` | SR6 | L3 |
+| `internal/runner/{prflow,report,reviewmode,runner}.go`, `internal/digest/render.go` | SR6 | L3 |
 | `internal/runner/prompts.go`, `plugin/skills/**` | SR7 | L3 |
 | `internal/cli/shortid_sweep_test.go` | SR11 | L4 |
 | `docs/**`, `website/content/cli-reference.md` | SR12 | L5 |
 
-`internal/runner/` holds SR6 (`prflow.go`, `report.go`, `reviewmode.go`, `runner.go`) and SR7 (`prompts.go`) in one level: different files, and their test files differ too; `internal/cli/` holds SR6 (`runs_digest.go`) and SR14 (the command files) in L3: different files; a change to either task's Files re-checks this table. SR5 edits `internal/cli/runs.go` at L1 and SR3 `internal/cli/cloud.go` at L2: different files, and different levels.
+`internal/runner/` holds SR6 (`prflow.go`, `report.go`, `reviewmode.go`, `runner.go`) and SR7 (`prompts.go`) in one level: different files, and their test files differ too; a change to either task's Files re-checks this table. SR5 edits `internal/cli/runs.go` at L1 and SR3 `internal/cli/cloud.go` at L2: different files, and different levels.
 
 ## Checks
 
