@@ -231,6 +231,14 @@
         }
       }
     },
+    "planning": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "What the planning pass does before a run starts writing (docs/contract-first-decoupling). A preference and not a bound: the project layer's defaults.planning may set the same key, and the narrowest layer that sets it wins, so a repository may turn the pass back on where its project turned it off. There is no per-area and no per-task value, because a per-task value could only raise what the mode already decided. A runner older than the block refuses it, which is why fugaro update gates it (F7).",
+      "properties": {
+        "decoupling": { "type": "boolean", "description": "The dependency-breaking pass: the planner asks of every edge whether the dependent needs the other side's interface or its behaviour, and breaks the ones that need only the interface behind a contract task. Absent or true: the pass runs, as it does when nothing sets it. false: the plan is drawn with the task's own work and no pass." }
+      }
+    },
     "workflows": {
       "type": "object",
       "minProperties": 1,

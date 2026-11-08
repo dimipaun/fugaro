@@ -67,6 +67,12 @@ type Config struct {
 	// pointer with no json name would write a null key into every file
 	// that writes none, moving the hash of a file that did not change.
 	Rigor *Rigor `yaml:"rigor,omitempty" json:"rigor,omitempty"`
+	// Planning is the repository's planning: block (docs/contract-first-decoupling,
+	// D1813). The json tag is what keeps a block no loader filled out of the
+	// resolved config's hash, as Rigor's is: SHA256 marshals this struct
+	// (resolve.go), and a pointer with no json name would write a null key
+	// into every file that writes none.
+	Planning *Planning `yaml:"planning,omitempty" json:"planning,omitempty"`
 
 	// Layer is the project layer Resolve resolved this config over, nil
 	// for none. It is never part of the file or of SHA256: a consumer that
@@ -115,6 +121,28 @@ type Config struct {
 	// of the file or of SHA256.
 	RepoLevelsNoneModelSet bool `yaml:"-" json:"-"`
 }
+
+// Planning is fugaro.yaml's planning: block and the project layer's
+// defaults.planning (docs/contract-first-decoupling, D1813): what the
+// planning pass the user's own agent follows may do before a task graph is
+// launched. Both layers may set its keys, and the narrowest one that does
+// wins — these are preferences, not bounds.
+type Planning struct {
+	// Decoupling turns the dependency-breaking pass on or off. On, the
+	// planning skill asks of each dependency edge whether a contract task
+	// could break it and writes the contract, integration and change nodes
+	// into the graph artifact; off, it plans the edge as it always did. Unset
+	// means on (applyDefaults); the pass adds no spend path of its own — its
+	// tasks are ordinary tasks under the same caps and the same go-ahead rule
+	// (D1820) — so the switch is a preference and not a budget.
+	Decoupling *bool `yaml:"decoupling"`
+}
+
+// DecouplingOn reports whether the pass runs for this repository: true unless
+// a layer set planning.decoupling false. It is nil-safe in both hops, so a
+// caller holding no planning: block — and no config at all — reads the
+// default rather than a blank.
+func (p *Planning) DecouplingOn() bool { return p == nil || p.Decoupling == nil || *p.Decoupling }
 
 // Rigor is fugaro.yaml's rigor: block and the project layer's defaults.rigor
 // (D20): the mode a repository runs at when nothing narrower decides, and

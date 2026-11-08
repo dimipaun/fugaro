@@ -98,9 +98,12 @@ const (
 // T-IS15 of docs/troubleshoot-issue/, whose two local-only nudge thresholds the
 // generic path does not carry: they are the config file's own keys, and a key
 // added to the registry and not to the allowlist widens the gap the audit is
-// about rather than narrowing it.
+// about rather than narrowing it. planning.decoupling moved it a third time
+// (docs/contract-first-decoupling, CD6): the key brings its project-layer row
+// too, and both are carried — the repository's by name, the layer's through
+// layer.defaults. — so the carried figure moves with the row count.
 const (
-	cfmRegistryRows   = 376
+	cfmRegistryRows   = 378
 	cfmAllowlistNamed = 88
 )
 

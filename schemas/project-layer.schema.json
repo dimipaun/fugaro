@@ -87,6 +87,14 @@
               "items": { "$ref": "#/$defs/rigorArea" }
             }
           }
+        },
+        "planning": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "What the planning pass does for every repository of this project (docs/contract-first-decoupling). The same key may be set in a repository's own planning: block, where it replaces the project's value: the pass's switch is a preference and not a bound, so a repository may turn it back on where the project turned it off. A runner older than the block refuses the layer, which is why fugaro update gates it (F7).",
+          "properties": {
+            "decoupling": { "type": "boolean", "description": "The dependency-breaking pass, for every repository of the project that sets no planning.decoupling of its own: true runs the pass, false leaves it out." }
+          }
         }
       }
     },

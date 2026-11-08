@@ -283,6 +283,11 @@ var yamlMeta = map[string]Row{
 		Doc:     "docs/rigor-modes/spec.md",
 	},
 	"rigor.areas": {Owner: "rigor", Merge: Union, Default: unset("no area rules"), Doc: "docs/rigor-modes/spec.md"},
+
+	// The planning pass's switch (docs/contract-first-decoupling, D1813). It
+	// is a preference rather than a bound, so the ordinary rule decides it:
+	// the narrowest layer that sets it wins.
+	"planning.decoupling": {Default: value("true", "config.DefaultPlanningDecoupling")},
 }
 
 // buildRows is the table, assembled from the three documents' own sources: the
@@ -520,6 +525,10 @@ var layerRows = []Row{
 	layerRow("defaults.rigor.areas.*.name", "none", "rigor", docRigor),
 	layerRow("defaults.rigor.areas.*.match", "none", "rigor", docRigor),
 	layerRow("defaults.rigor.areas.*.mode", "none", "rigor", docRigor),
+	// The planning pass's switch, read the way defaults.git.pr.early_draft
+	// above is: a layer that states nothing leaves it as the fugaro.yaml row
+	// says (docs/contract-first-decoupling, D1813).
+	layerRow("defaults.planning.decoupling", "true", "settings set", docLayer),
 
 	layerRow("profiles.*.description", "none", "settings set", docLayer),
 	layerRow("profiles.*.base", "none; the key was removed in 0.7.0", "settings set", config.MigrationDoc),

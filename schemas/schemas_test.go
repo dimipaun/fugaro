@@ -4795,6 +4795,67 @@ settings:
 	}
 }
 
+// TestSettingsSchemaCoversPlanningKey: planning.decoupling is the switch the
+// parallelism skill reads before it runs the dependency-breaking pass at all
+// (docs/contract-first-decoupling, D1813), and it is one key in three schemas
+// — a repository's planning: block, the project layer's defaults.planning, and
+// the DEFAULT column $defs.keyDefaults is. TestSettingsSchema holds every
+// registry key to the third of them; what is checked here is the key itself in
+// all three, so a block added to the Go types and to the registry but not to
+// the documents is red rather than a corpus gap.
+func TestSettingsSchemaCoversPlanningKey(t *testing.T) {
+	repo := compile(t, "fugaro.schema.json")
+	const repoHead = "version: 1\nproject: acme\ngit: { provider: github }\nworkflows:\n  default:\n    commands: { build: make, test: make test }\n"
+	if err := repo.Validate(yamlInstance(t, []byte(repoHead+"planning:\n  decoupling: false\n"))); err != nil {
+		t.Errorf("fugaro.schema.json refuses a repository's planning.decoupling: %v", err)
+	}
+	// The block is closed and the value is a boolean: a misspelt key or a
+	// string is what an operator writes by accident, and the decoder's
+	// KnownFields would be the only thing left refusing it.
+	for _, bad := range []string{
+		repoHead + "planning:\n  decoupling: \"false\"\n",
+		repoHead + "planning:\n  decouplng: false\n",
+	} {
+		if err := repo.Validate(yamlInstance(t, []byte(bad))); err == nil {
+			t.Errorf("fugaro.schema.json accepts %q", bad)
+		}
+	}
+	for _, tc := range []struct {
+		file string
+		path []string
+	}{
+		{"fugaro.schema.json", []string{"properties", "planning", "properties", "decoupling"}},
+		{"project-layer.schema.json", []string{"properties", "defaults", "properties", "planning", "properties", "decoupling"}},
+	} {
+		data, err := os.ReadFile(tc.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := nodeOf(t, doc, tc.path...)["type"].(string); got != "boolean" {
+			t.Errorf("%s %v: type = %q, want boolean", tc.file, tc.path, got)
+		}
+	}
+	data, err := os.ReadFile("settings.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	entry := nodeOf(t, doc, "$defs", "keyDefaults", "properties", "planning.decoupling")
+	if got, _ := entry["default"].(string); got != "true" {
+		t.Errorf("settings.schema.json: the default is %q, and a repository that writes no planning: block has the pass on", got)
+	}
+	if got, _ := entry["$comment"].(string); got != "config.DefaultPlanningDecoupling" {
+		t.Errorf("settings.schema.json: the $comment is %q, and the registry's constant is %q", got, "config.DefaultPlanningDecoupling")
+	}
+}
+
 // TestSettingsConsoleFixture: console/test/fixtures/settings.json is the answer
 // the console's hermetic CLI stub gives `fugaro settings --json`, and the e2e
 // spec that drives a setting's edit draws it as the CLI's own read (the
