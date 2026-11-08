@@ -236,6 +236,46 @@ func TestAccessNodeZeroGrantWriteLeavesTheAbsentState(t *testing.T) {
 	}
 }
 
+// TestAccessNodeReadHaltsOnAnUnreadableNode: a node that is present and cannot
+// be read is an error the caller halts on, never an empty Node. It is the other
+// half of the rule the test above pins, and the half that fails closed: the
+// absent node and the unreadable one are reported the same way only if the
+// reader drops the error, and then a caller deciding whether the last admin may
+// be removed (F23) would be judging an installation whose roster it never read.
+//
+// The first three documents are the ones Decode refuses — a role outside the
+// closed set, a field the reader does not know, and a field name written in a
+// second spelling, which encoding/json would otherwise read as the field it
+// matches — and the fourth is the database's own refusal, which is not a
+// document at all.
+func TestAccessNodeReadHaltsOnAnUnreadableNode(t *testing.T) {
+	ctx := context.Background()
+	one := func(entry map[string]any) func(*gcpfake.RTDB) {
+		return func(f *gcpfake.RTDB) {
+			f.Set(PathNode, map[string]any{"grants": []any{entry}})
+		}
+	}
+	for name, seed := range map[string]func(*gcpfake.RTDB){
+		"a role outside the closed set": one(map[string]any{
+			"user": alice, "role": "administrator", "scope": "project",
+		}),
+		"a field the reader does not know": one(map[string]any{
+			"user": alice, "role": "viewer", "scope": "project", "extra": float64(1),
+		}),
+		"a field name in a second spelling": one(map[string]any{
+			"user": alice, "role": "viewer", "scope": "project", "Role": "admin",
+		}),
+		"a read the rules deny": func(f *gcpfake.RTDB) { f.DenyRead(PathNode) },
+	} {
+		f, db := accessDB(t)
+		seed(f)
+		n, err := Read(ctx, db)
+		if err == nil {
+			t.Errorf("%s: Read = %+v with no error, want the error the caller halts on: a node that is there and unreadable is not an absent node, and a caller that read it as one would act on a roster it never read", name, n)
+		}
+	}
+}
+
 // foldAsTheDatabaseKeeps returns what the Realtime Database keeps of a written
 // value: a list is an object with numeric keys there, so an empty list is an
 // empty object and is pruned whole, and an object left with no member is gone
