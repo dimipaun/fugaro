@@ -252,17 +252,20 @@ func (e *cloudEnv) repoProvider(repo string, co *config.Config) string {
 // targets, and the launch's gate on the Claude credential that job holds (plan
 // task 3, design §4.4 rows 4 to 6).
 //
-// The account is the run's own credential's, and only a run whose credential is
-// an OAuth account has one: a named account is selected by a workflow whose
-// agent.auth is oauth, and by nothing else (claudeAccountAllowed, run.go,
-// before any launch), while every other run — api-key, Vertex, fake — has no
-// Claude account to place and targets the profile's no-account job, which is
-// the job every profile keeps whatever it serves (D9). The account axis is
-// therefore spelled the way the job's own name spells it: a named account is
-// that account, and the default account and no selection at all are both the
-// empty account, which is the profile's no-account job (projectJobAccount).
+// The account is the run's own credential's, and only two kinds of run have
+// one: a named Claude account, selected by a workflow whose agent.auth is oauth
+// and by nothing else (claudeAccountAllowed, run.go, before any launch), and
+// the axis's one value that is not a Claude account at all — the project's own
+// Anthropic API key (config.AnthropicKeyAccount), which is the account of its
+// job for the api-key workflow D1417 pairs it with. Every other run — Vertex,
+// cascade, fake — has no account to place and targets the profile's no-account
+// job, which is the job every profile keeps whatever it serves (D9). The
+// account axis is therefore spelled the way the job's own name spells it: a
+// named account is that account, and the default account and no selection at
+// all are both the empty account, which is the profile's no-account job
+// (projectJobAccount).
 //
-// Two rules then decide whether that job may serve this run:
+// Three rules then decide whether that job may serve this run:
 //
 //   - an OAuth run may only target a job of the account it selects, so a
 //     selection the profile serves no job for is refused (checkProjectJobAccount).
@@ -279,18 +282,24 @@ func (e *cloudEnv) repoProvider(repo string, co *config.Config) string {
 //     not of the run's selection, because on the no-account job it is the
 //     profile's `default` entry that decides which token the run holds (D5),
 //     whatever the run's own credential is.
+//   - the project's own API key is that job's account for an api-key run and
+//     for no other run, whatever the task's oauth_token says
+//     (claudeAccountAllowed admits it for api-key, and for "" — a pre-check
+//     with no document to read an auth from — and leaves the judgement to
+//     here). A run whose own workflow resolves any other auth is refused
+//     rather than placed on the profile's no-account job: it would start on a
+//     job its own credential does not name, which the runner halts on.
 func projectJobAccountFor(p *projectpolicy.Policy, profile string, pr projectpolicy.Profile, auth, selected, provider, repo string) (string, error) {
 	// The account is the run's own credential's: a named account is only ever
 	// selected by a workflow whose agent.auth is oauth (claudeAccountAllowed,
-	// run.go, before any launch), and the default account and no selection at
-	// all are both the empty account — the profile's no-account job
-	// (projectJobAccount). Every other kind of run has no Claude account to
+	// run.go, before any launch), the project's own API key only by one whose
+	// agent.auth is api-key (the arm below), and the default account and no
+	// selection at all are both the empty account — the profile's no-account
+	// job (projectJobAccount). Every other kind of run has no Claude account to
 	// place and targets that same no-account job, whatever its task.json or a
 	// stale selection says.
 	account := ""
 	switch {
-	case auth == "oauth":
-		account = projectJobAccount(selected)
 	case auth == "api-key" && selected == config.AnthropicKeyAccount:
 		// The axis's one value that is not a Claude account (D1417, D1422): it
 		// names the project's own Anthropic API key, and a profile that lists it
@@ -305,6 +314,35 @@ func projectJobAccountFor(p *projectpolicy.Policy, profile string, pr projectpol
 		// survives claudeAccountAllowed under, which is the auth D1417 pairs the
 		// key with.
 		account = selected
+	case selected == config.AnthropicKeyAccount:
+		// The same value under every other auth, and the arm that makes
+		// claudeAccountAllowed's promise true: it admits the sentinel for
+		// api-key, and for "" — the pre-check callers that resolve with no
+		// document to read an auth from (a stored task repeated or retried) —
+		// and it is this function that re-judges it at the launch that can read
+		// one. Without this arm the sentinel falls to the no-account job below
+		// and the run starts on it carrying an account its own configuration
+		// does not use: a vertex or cascade run has no Claude account to place,
+		// and the sentinel is no account under any auth but the one D1417 pairs
+		// the key with, so the launch would take the claim, mint the budget
+		// token and start Cloud Run on a job the run's own credential does not
+		// name — and, on a profile whose no-account job mounts the default
+		// account's token, hold a token the run never asked for.
+		//
+		// The refusal is not checkProjectJobAccount's: that one's move — add
+		// the value to profiles.<p>.claude_accounts and publish again — is the
+		// move for a job the profile does not serve, and it cannot answer this
+		// one, where the value is refused for the auth the run's own workflow
+		// names however the profile's list is written (and is false besides for
+		// a profile that already lists the sentinel: its job is deployed).
+		authText := "could not be read"
+		if auth != "" {
+			authText = fmt.Sprintf("is %q", auth)
+		}
+		return "", userErr("this run's own credential is %s, the project's own Anthropic API key, and that key is a job's account only for a run whose own workflow reads it (agent.auth: api-key, D1417): the account axis is spelled from the run's own credential, and this run's agent.auth %s, so the key is no account this run can be placed by — the job it names is not the job this run's own credential names, and the run would start on a job its own configuration does not read. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Launch the run without the key, which is where the account its own workflow names is resolved, or, if this repository is meant to run on the project's key, set agent.auth: api-key in its fugaro.yaml — the auth whose job and review variant the key names",
+			config.AnthropicKeyAccount, authText)
+	case auth == "oauth":
+		account = projectJobAccount(selected)
 	}
 	// The job that account names, and the token it holds. Both are the
 	// profile's own claude_accounts list, read by the two functions the

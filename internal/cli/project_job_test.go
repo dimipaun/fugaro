@@ -1481,6 +1481,139 @@ func TestProjectJobSentinelRefusedOnAMixedRun(t *testing.T) {
 	}
 }
 
+// TestProjectJobSentinelRefusedWhenTheRunIsNotAnAPIKeyRun is the axis's own
+// rule: the sentinel is the run's own account under agent.auth: api-key and
+// under no other auth, and projectJobAccountFor is where that is judged at the
+// launch — claudeAccountAllowed admits the name for api-key and for "", the
+// pre-check callers that resolve with no document to read an auth from (a
+// stored task repeated or retried), and says so in as many words.
+//
+// The two subtests are its two halves. The first walks the whole axis — the
+// empty auth included, which is the pre-check's — and asserts the sentinel's
+// own job for api-key and a refusal for every other value, so an auth added to
+// config.AgentAuths is judged here without anyone remembering to add it. The
+// second is the launch those two resolutions can disagree in: the project layer
+// in force when the retry is resolved says api-key (the pre-check admits the
+// sentinel), while the layer the task carries — the one the earlier run was
+// launched with, and the layer the launch re-resolves the credential over
+// (projectJobAgentAuth) — says something else. Vertex and oauth are both
+// walked, because they are not the same row arriving: a vertex run has no
+// account arm at all, while oauth has one this arm has to come before. Without
+// the arm the launch takes the claim, mints the budget token and starts Cloud
+// Run on the profile's no-account job, carrying the sentinel as its own
+// account: a run placed on a job its own credential never named.
+//
+// Mutation (run, restore): drop the `selected == config.AnthropicKeyAccount`
+// arm of projectJobAccountFor — the sentinel is placed on the no-account job
+// with no error both in the table (the vertex and cascade rows) and end to end
+// (the launch is admitted, and the assertions below fail on the claim, the
+// executions, the jobs.run call and the budget token).
+func TestProjectJobSentinelRefusedWhenTheRunIsNotAnAPIKeyRun(t *testing.T) {
+	p, found, err := projectpolicy.Decode([]byte(projectJobSentinelPolicy))
+	if err != nil || !found {
+		t.Fatalf("the test's own policy document is not one Decode accepts: %v", err)
+	}
+	t.Run("the axis, over every auth", func(t *testing.T) {
+		pr := p.Profiles["standard"]
+		for _, auth := range append([]string{""}, config.AgentAuths...) {
+			got, err := projectJobAccountFor(p, "standard", pr, auth, config.AnthropicKeyAccount, "github", "acme/app")
+			if auth == "api-key" {
+				// The one auth D1417 pairs the key with, and the row that keeps
+				// this test from passing by refusing everything: the sentinel's
+				// own job, which is the job the profile deploys by listing it.
+				if err != nil {
+					t.Fatalf("an api-key run naming the project's own key: %v", err)
+				}
+				if got != config.AnthropicKeyAccount {
+					t.Errorf("an api-key run naming the project's own key was placed with the account %q, want %q", got, config.AnthropicKeyAccount)
+				}
+				continue
+			}
+			if err == nil {
+				t.Errorf("a run whose auth is %q named the project's own key and was placed on the job of the account %q", auth, got)
+				continue
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("a run whose auth is %q naming the project's own key: %v, want a refusal", auth, err)
+			}
+			// The refusal names the value, the one auth it is a job's account
+			// for, and that nothing ran — and the auth it read, which an empty
+			// one reports as unread rather than interpolating nothing.
+			want := []string{config.AnthropicKeyAccount, "api-key", "no account this run can be placed by", "Nothing was launched"}
+			if auth == "" {
+				want = append(want, "could not be read")
+			} else {
+				want = append(want, fmt.Sprintf("%q", auth))
+			}
+			for _, w := range want {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("the refusal for the auth %q does not name %q: %v", auth, w, err)
+				}
+			}
+		}
+	})
+	t.Run("the launch, where the two resolutions disagree", func(t *testing.T) {
+		for _, auth := range []string{"vertex", "oauth"} {
+			t.Run(auth, func(t *testing.T) {
+				f := newProjectJobFixture(t)
+				isolateCache(t)
+				// The layer this command resolves now — the pre-check reads the
+				// sentinel against it — while the repository document itself
+				// names no auth of its own.
+				publishedLayer(t, f.cloudFixture, testProjectLayer)
+				projectJobCheckoutYAMLAt(t, projectJobAnchoredRepoYAML, projectJobAnchoredRepoYAML)
+
+				// The layer the earlier run carried: the one the launch
+				// re-resolves the credential over, and so the auth the axis is
+				// asked with.
+				layer := "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n  agent: { auth: " + auth + " }\n"
+				ctx := context.Background()
+				b, err := blob.OpenBucket(ctx, f.bucket)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer b.Close()
+				spec := &task.Spec{Version: 1, RunID: "20261021-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web",
+					Task: "x", RequestedBy: "someone@example.com", OAuthToken: config.AnthropicKeyAccount,
+					ProjectLayer: &task.ProjectLayer{YAML: layer, SHA256: config.LayerSum([]byte(layer))}}
+				if err := runstore.Open(b, appSlug, spec.RunID).CreateTask(ctx, spec); err != nil {
+					t.Fatal(err)
+				}
+
+				claimed := false
+				launchHooks.beforeClaim = func() { claimed = true }
+				t.Cleanup(func() { launchHooks.beforeClaim = nil })
+
+				_, _, err = execute(t, "run", "--retry", spec.RunID)
+				if err == nil {
+					t.Errorf("a retry whose launch resolves a %s credential was admitted with the project's own key as its account", auth)
+				} else {
+					if ExitCode(err) != ExitUserError {
+						t.Errorf("a retry whose launch resolves a %s credential: %v, want a refusal", auth, err)
+					}
+					for _, want := range []string{config.AnthropicKeyAccount, "no account this run can be placed by", fmt.Sprintf("%q", auth), "Nothing was launched"} {
+						if !strings.Contains(err.Error(), want) {
+							t.Errorf("the refusal does not name %q: %v", want, err)
+						}
+					}
+				}
+				if claimed {
+					t.Error("the refusal came after the launch claim")
+				}
+				if n := len(f.run.Executions()); n != 0 {
+					t.Errorf("%d executions, want none", n)
+				}
+				if calls := f.run.RunRequests(); len(calls) != 0 {
+					t.Errorf("the refused launch made %d jobs.run calls (%+v), want none", len(calls), calls)
+				}
+				if tok := readToken(t, f.cloudFixture, spec.RunID); tok != "" {
+					t.Errorf("the refused launch minted a budget token: %s", tok)
+				}
+			})
+		}
+	})
+}
+
 // TestProjectJobSentinelRefusedOnAPerRepositoryJob: the same name on a
 // repository that runs on a job of its own. A per-repository job's name is
 // derived from the account segment (gcp.WorkflowVariant), and no installation
