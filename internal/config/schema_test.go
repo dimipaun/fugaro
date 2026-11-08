@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestCatalogSchemaAcceptsTheNewKeys pins that fugaro.schema.json and the
 // strict decoder agree about a workflow's catalog reference: image_name:
@@ -48,6 +51,78 @@ func TestCatalogSchemaAcceptsTheNewKeys(t *testing.T) {
 		{"a dockerfile and an empty name", "    dockerfile: .fugaro/web.Dockerfile\n    image_name: \"\"\n", true},
 		{"an empty needs alone", "    needs: []\n", true},
 		{"an empty name alone", "    image_name: \"\"\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			text := head + tc.body
+			_, ps := Parse([]byte(text))
+			if got := len(ps) == 0; got != tc.ok {
+				t.Fatalf("the decoder accepted = %v, want %v (problems: %v)", got, tc.ok, ps)
+			}
+			if got := abSchemaAccepts(t, sch, text); got != tc.ok {
+				t.Errorf("fugaro.schema.json accepted = %v, want %v: the schema and the decoder disagree", got, tc.ok)
+			}
+		})
+	}
+}
+
+// TestSecurityKeySchemaAgreesWithTheDecoder is TestCatalogSchemaAcceptsTheNewKeys'
+// shape for SC7's block (D1501, D1502, D1503): one table of files, each read by
+// the decoder a run uses and by fugaro.schema.json, the two surfaces a
+// repository's CI and an editor see. A case they disagree about is a red check
+// nobody can reproduce — a file the published schema calls valid and the run
+// refuses, or worse the other way round: a pattern the schema blesses and the
+// matcher can never fire.
+//
+// The cases are the ones both surfaces can judge. Three of the decoder's
+// refusals are not expressible in JSON Schema and are named in $defs.
+// securityPattern's own description instead: a glob doublestar itself cannot
+// read, a glob holding an alternation, and a name repeated inside one list —
+// each of them a case a schema without a matcher cannot see, and each of them
+// refused by sensitivity.Pattern.Validate and the row's own index before a run
+// ever reads the file.
+func TestSecurityKeySchemaAgreesWithTheDecoder(t *testing.T) {
+	sch := compileABSchema(t, "fugaro.schema.json")
+	const head = minimalRepo + `git: { provider: github }
+workflows:
+  app: { commands: { build: sh build.sh, test: sh test.sh } }
+`
+	for _, tc := range []struct {
+		name string
+		body string
+		ok   bool
+	}{
+		{"nothing set", "", true},
+		{"one row", "security:\n  patterns:\n    - { name: payments, match: \"payments/**\", category: credentials }\n", true},
+		{"all seven categories", "security:\n  patterns:\n    - { name: a, match: \"a/**\", category: credentials }\n    - { name: b, match: \"b/**\", category: guards }\n    - { name: c, match: \"c/**\", category: targets }\n    - { name: d, match: \"d/**\", category: infrastructure }\n    - { name: e, match: \"e/**\", category: prompts }\n    - { name: f, match: \"f/**\", category: CI }\n    - { name: g, match: \"g/**\", category: artifacts }\n", true},
+		// D1506's inheritance, as a file writes it: the key present and
+		// empty is a layer that adds nothing, and the floor is what a run
+		// then has. Neither spelling may be refused, or a repository could
+		// not say "the project's list is the whole of mine".
+		{"an empty block", "security: {}\n", true},
+		{"an empty list", "security:\n  patterns: []\n", true},
+		// A row whose tree does not exist yet (D1503): the schema cannot
+		// know the tree, and the decoder must not refuse it either.
+		{"a tree that does not exist", "security:\n  patterns:\n    - { name: search, match: \"internal/search/**\", category: guards }\n", true},
+		{"an unknown category", "security:\n  patterns:\n    - { name: deploy, match: \"deploy/**\", category: deployment }\n", false},
+		{"a category in the wrong case", "security:\n  patterns:\n    - { name: deploy, match: \"deploy/**\", category: Credentials }\n", false},
+		{"a row with no category", "security:\n  patterns:\n    - { name: deploy, match: \"deploy/**\" }\n", false},
+		{"a row with no name", "security:\n  patterns:\n    - { match: \"deploy/**\", category: targets }\n", false},
+		{"a row with an empty name", "security:\n  patterns:\n    - { name: \"\", match: \"deploy/**\", category: targets }\n", false},
+		{"a name with a slash", "security:\n  patterns:\n    - { name: a/b, match: \"deploy/**\", category: targets }\n", false},
+		{"a name over 40 characters", "security:\n  patterns:\n    - { name: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, match: \"deploy/**\", category: targets }\n", false},
+		{"an empty match", "security:\n  patterns:\n    - { name: deploy, match: \"\", category: targets }\n", false},
+		{"a match of *", "security:\n  patterns:\n    - { name: all, match: \"*\", category: targets }\n", false},
+		{"a match of **", "security:\n  patterns:\n    - { name: all, match: \"**\", category: targets }\n", false},
+		{"an absolute match", "security:\n  patterns:\n    - { name: etc, match: \"/etc/**\", category: targets }\n", false},
+		{"a match with a .. component", "security:\n  patterns:\n    - { name: out, match: \"../secrets/**\", category: targets }\n", false},
+		{"a match over 200 characters", "security:\n  patterns:\n    - { name: deep, match: \"" + strings.Repeat("d/", 100) + "**\", category: targets }\n", false},
+		{"an unknown key of the block", "security:\n  severity: high\n", false},
+		// always_level_3 is the project layer's member (D1517) and not this
+		// file's: a repository that could write it would be saying "every
+		// change of mine is security-sensitive", which is the whole-repository
+		// answer the project owns.
+		{"always_level_3", "security:\n  always_level_3: true\n", false},
+		{"an unknown key of a row", "security:\n  patterns:\n    - { name: deploy, match: \"deploy/**\", category: targets, mode: pro }\n", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			text := head + tc.body
