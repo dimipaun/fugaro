@@ -540,8 +540,8 @@ func longScope(n int) string {
 	return prefix + strings.Repeat("a", n-len(prefix))
 }
 
-// overByteCapNode is the document that pins the one gap between the schema and
-// the reader: MaxGrants grants whose scopes each sit exactly at
+// overByteCapNode is the first of the two documents that pin the gaps between
+// the schema and the reader: MaxGrants grants whose scopes each sit exactly at
 // projectpolicy.MaxPatternLen, which is the largest document the schema's own
 // bounds let a node reach. Every entry of it is one the schema accepts; the
 // document is over MaxNodeBytes, so the reader refuses it. It is built from
@@ -563,6 +563,24 @@ func overByteCapNode(t *testing.T) string {
 	return string(raw)
 }
 
+// duplicateNameNodes are the second gap: a name written twice, at the node's own
+// level and inside a grant. The schema cannot refuse either, because validation
+// runs over a parsed document and a parser keeps one member for a name it reads
+// twice — the last spelling wins — while Decode walks the raw bytes and refuses
+// the repetition (refuseOtherSpellings, the round-5 finding). additionalProperties
+// cannot stand in for it: the doubled name is one the schema knows.
+//
+// A stored node cannot hold this shape — a Realtime Database node keys its
+// children by name, so the two spellings are one child, and a document with a
+// name twice can only come from a hand-written file, which is exactly what this
+// schema is the aid in front of. The gap is worth pinning all the same: the
+// schema is what a person checks such a file against, and a file it passes that
+// the reader then refuses is the failure this corpus exists for.
+var duplicateNameNodes = []string{
+	`{"grants":[{"user":"user:alice@example.com","role":"viewer","scope":"project","role":"admin"}]}`,
+	`{"grants":[],"grants":[]}`,
+}
+
 // TestAccessNodeSchemaAndReaderAgree: the schema in schemas/ is the aid a person
 // validates a hand-written node against, and internal/access.Decode is the
 // authority that reads it. The two are held together here in the one direction
@@ -570,12 +588,19 @@ func overByteCapNode(t *testing.T) string {
 // accepts — because the other way round is how a node that passes the schema
 // goes on to halt every CLI read of it (the review finding on this change).
 //
-// One bound is out of reach and is pinned by name instead: the reader's byte cap
-// is on the serialized document, which no keyword of this schema counts, so a
-// node the schema accepts can still be over MaxNodeBytes. overByteCapNode below
-// is that node — every entry in it is one the schema accepts, and the document
-// as a whole is over the cap — so the gap is a case in this corpus rather than
-// something a later review rediscovers.
+// Two things are out of reach and are pinned by name instead, so that the claim
+// this test makes is "everything the schema accepts, except these two":
+//
+//   - the reader's byte cap is on the serialized document, which no keyword of
+//     this schema counts, so a node the schema accepts can still be over
+//     MaxNodeBytes (overByteCapNode below);
+//   - a name written twice, which no JSON Schema can see: validation runs over
+//     a parsed document, where a repeated name has already collapsed to one
+//     member, while the reader walks the raw bytes and refuses the repetition
+//     (duplicateNameNodes below).
+//
+// Both are cases in this corpus rather than something a later review
+// rediscovers.
 //
 // The schema is deliberately stricter than the reader in the spelling it
 // requires: it spells the canonical form Encode stores, while Decode folds a
@@ -670,23 +695,36 @@ func TestAccessNodeSchemaAndReaderAgree(t *testing.T) {
 		}
 	}
 
-	// The one gap the schema cannot close, and the reason this test states its
-	// claim as "everything the schema accepts, except the byte cap". A JSON
-	// Schema counts members and string lengths, never the serialized document,
-	// so the document below — MaxGrants grants, each scope at
-	// projectpolicy.MaxPatternLen, every entry one the schema accepts — passes
-	// the schema and is over MaxNodeBytes. The reader refuses it, which is the
-	// fail-closed answer and the only one available to it; the byte cap is the
-	// reader's, and a schema cannot make the two agree about it. The one keyword
-	// that could is maxItems, and it cannot here: 256 grants of a 255-character
-	// scope are about 80 KiB while 256 short ones are about 17 KiB, so any count
-	// low enough to bound the bytes refuses documents Encode writes.
+	// The first of the two gaps the schema cannot close. A JSON Schema counts
+	// members and string lengths, never the serialized document, so the document
+	// below — MaxGrants grants, each scope at projectpolicy.MaxPatternLen, every
+	// entry one the schema accepts — passes the schema and is over MaxNodeBytes.
+	// The reader refuses it, which is the fail-closed answer and the only one
+	// available to it; the byte cap is the reader's, and a schema cannot make the
+	// two agree about it. The one keyword that could is maxItems, and it cannot
+	// here: 256 grants of a 255-character scope are about 80 KiB while 256 short
+	// ones are about 17 KiB, so any count low enough to bound the bytes refuses
+	// documents Encode writes.
 	over := overByteCapNode(t)
 	if !schemaAccepts(t, sch, over) {
-		t.Errorf("the schema refused the %d-byte document of %d grants: the one gap between it and the reader is not the byte cap", len(over), MaxGrants)
+		t.Errorf("the schema refused the %d-byte document of %d grants: the first gap between it and the reader is not the byte cap", len(over), MaxGrants)
 	}
 	if _, err := Decode([]byte(over)); err == nil || !strings.Contains(err.Error(), "bytes; at most") {
 		t.Errorf("Decode of the %d-byte document = %v, want the byte cap's own refusal", len(over), err)
+	}
+
+	// The second gap: a name written twice is invisible to the schema and
+	// refused by the reader, which is why the claim above names two exceptions
+	// and not one. The refusal is pinned to the repetition's own error, so a
+	// reader that refused these documents for some other reason would not pass
+	// as agreement.
+	for _, doc := range duplicateNameNodes {
+		if !schemaAccepts(t, sch, doc) {
+			t.Errorf("the schema refused %s: the second gap between it and the reader is the repetition it cannot see", doc)
+		}
+		if _, err := Decode([]byte(doc)); err == nil || !strings.Contains(err.Error(), "twice") {
+			t.Errorf("Decode of %s = %v, want the refusal of a name written twice", doc, err)
+		}
 	}
 
 	// Documents the schema refuses and the reader folds and accepts, because

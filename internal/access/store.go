@@ -22,9 +22,19 @@ import (
 // (F28). config/admin carries `.read: false` and `.write: false`, which the
 // Realtime Database rules cascade to every child, so no client token — a run's,
 // a phone's, a signed-in user's — reaches this node. The CLI reaches it over
-// IAM, which bypasses the rules, and only an IAM
-// roles/firebasedatabase.admin holder may write it (F22, D1592). The fence
-// binds client tokens only, and D1585 says so in the open: a person holding
+// IAM, which bypasses the rules, and what may write it there is the database's
+// one write permission, firebasedatabase.instances.update, rather than a role:
+// Realtime Database IAM has no path scope, so a binding is per instance and
+// that permission writes any node of it. roles/firebasedatabase.admin carries
+// it for the implicit admins (F22, D1592 — an explicit admin@project derives
+// none of it), and the credentials service's account carries it too, through
+// the two-permission role fugaro update creates on every installation and
+// binds to that account alone (D6, SECURITY.md). So the write is not confined
+// to the admins the design names: the roster is protected by IAM bindings, not
+// by this node's path, and the same holds for the coordinator's writer and the
+// history account, which hold admin and can write all of /config
+// (deploy/terraform/gcp/modules/firebase/iam.tf). The fence binds client
+// tokens only, and D1585 says so in the open: a person holding
 // roles/firebasedatabase.viewer reads the node over IAM whatever the rules say,
 // which is why the roster is not a secret from the project's own members.
 const PathNode = "config/admin/access"
