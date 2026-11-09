@@ -47,7 +47,9 @@ var abbreviationRE = regexp.MustCompile(`\b(?:e\.g\.|i\.e\.)`)
 // carries, and it is put back before anything is reported.
 const heldPeriod = "\x00"
 
-// flagWordRE is one flag of a command path a code span spells.
+// flagWordRE is one flag of a command path a code span spells, without the
+// value a flag may be written with: `--retry` in `--retry=<run>` as much as in
+// `--retry <run>`.
 var flagWordRE = regexp.MustCompile(`^--[a-z][a-z0-9-]*$`)
 
 // runFlagHelpRE matches a flag's own help naming a run as the value the flag
@@ -99,8 +101,15 @@ func sentences(text string) []string {
 // commandIn returns the command a code span names — the words after `fugaro`,
 // or the span's own, stopping at the first word that is not a command — and ""
 // for a span that names none: a placeholder (`<repo-slug>/<run-id>`), a flag
-// (`--run-id`, which flagIn reads instead), a record's field (`run`) or another
-// document (`working`).
+// (`--run-id`, which flagWords reads instead), a record's field (`run`) or
+// another document (`working`).
+//
+// A flag written before the command is stepped over, because a span spells a
+// whole command line and a global flag may come first: `fugaro --json cancel`
+// names `cancel`. After the command the path has begun, and there a flag ends
+// it like any other argument does (`fugaro run --pr N --retry <run>` names
+// `run`) — which is also what keeps a flag's value from being read as a word of
+// the command: the words past the flag are never looked at.
 func commandIn(span string) string {
 	words := strings.Fields(span)
 	if len(words) > 0 && words[0] == "fugaro" {
@@ -108,6 +117,12 @@ func commandIn(span string) string {
 	}
 	var path []string
 	for _, w := range words {
+		if strings.HasPrefix(w, "-") {
+			if len(path) > 0 {
+				break
+			}
+			continue
+		}
 		if !commandWordRE.MatchString(w) {
 			break
 		}
@@ -145,16 +160,24 @@ func runArgLeaves(c *cobra.Command) []*cobra.Command {
 	return out
 }
 
-// flagIn returns the flag a code span names, "" for a span that names none: the
-// first word that is a flag, so that a span writing `fugaro run --retry` and one
-// writing `--retry` alone name the same flag.
-func flagIn(span string) string {
+// flagWords returns every flag a code span names, in the order the span writes
+// them, and nil for a span that names none. Every flag, not the first alone: a
+// span spells a command line with its arguments — `fugaro run --pr N --retry
+// <run>` — and the run-taking flag may be any of them, so reading only the
+// first would drop the claim as quietly as reading none. A value written onto
+// the flag is cut from the word, so that `--retry=<run>` names `--retry` the
+// way the spaced form does.
+func flagWords(span string) []string {
+	var out []string
 	for _, w := range strings.Fields(span) {
+		if i := strings.IndexByte(w, '='); i >= 0 {
+			w = w[:i]
+		}
 		if flagWordRE.MatchString(w) {
-			return w
+			out = append(out, w)
 		}
 	}
-	return ""
+	return out
 }
 
 // flagClaims returns the commands whose flag of this name takes a run, as
@@ -179,16 +202,27 @@ func flagClaims(root *cobra.Command, flag string) []string {
 // field, another document, or a flag that takes something else, `--json` being
 // the one the texts carry.
 //
-// A span is read for both, and what each finds is claimed: one span writes
-// `fugaro cancel --json`, which names the command as surely as `fugaro cancel`
-// does, and a flag that takes no run — `--json`, in that same span — must not
-// be what silences it. Reading the flag alone would drop the claim, and a
-// dropped claim is the one thing this guard promises never to do: the text is
-// reported, or checked, never skipped.
+// A span is read for all of it, and everything any part of it names is claimed:
+// one span writes `fugaro cancel --json`, which names the command as surely as
+// `fugaro cancel` does, and a flag that takes no run — `--json`, in that same
+// span — must not be what silences it; another writes `fugaro run --pr N
+// --retry <run>`, where the run-taking flag is the span's second one. Reading
+// part of a span alone would drop the claim, and a dropped claim is the one
+// thing this guard promises never to do: the text is reported, or checked,
+// never skipped.
 func claimNames(root *cobra.Command, span string) []string {
 	var out []string
-	if flag := flagIn(span); flag != "" {
-		out = flagClaims(root, flag)
+	seen := map[string]bool{}
+	add := func(names ...string) {
+		for _, n := range names {
+			if !seen[n] {
+				seen[n] = true
+				out = append(out, n)
+			}
+		}
+	}
+	for _, flag := range flagWords(span) {
+		add(flagClaims(root, flag)...)
 	}
 	name := commandIn(span)
 	if name == "" {
@@ -198,7 +232,8 @@ func claimNames(root *cobra.Command, span string) []string {
 	if err != nil || cmd == nil || cmd == root || len(runArgLeaves(cmd)) == 0 {
 		return out
 	}
-	return append(out, name)
+	add(name)
+	return out
 }
 
 // splitFlagClaim splits a "cmd --flag" claim, and reports false for a claim
@@ -223,6 +258,15 @@ func splitFlagClaim(name string) (cmdPath, flag string, ok bool) {
 // short form alone that resolves to something taking a run, a command or a
 // flag; a span naming something else is no claim either way, because a flag
 // that takes no run is not a claim about the form a run is given.
+//
+// A sentence that names no command and ends in a colon is the third thing this
+// scan cannot read: "Pass the short ID to these:" and, on the line below,
+// "`fugaro cancel`" make one claim a person reads at once and this scan reads
+// as two sentences, neither of them naming both halves. A sentence is not
+// joined to the lines under it — a scan that guessed which lines belong
+// together would guess wrong about prose as ordinary as "the forms, in order:"
+// — so the sentence the colon makes a promise in is reported instead, and the
+// text is written with its command in the sentence that names the form.
 func shortFormClaims(root *cobra.Command, text string) (claims, unreadable []string) {
 	seen := map[string]bool{}
 	report := func(sentence string) {
@@ -237,16 +281,21 @@ func shortFormClaims(root *cobra.Command, text string) (claims, unreadable []str
 		}
 		negated := negationRE.MatchString(sentence)
 		full := len(fullFormRE.FindAllStringIndex(sentence, -1)) > 0
+		named := false
 		for _, span := range codeSpanRE.FindAllStringSubmatchIndex(sentence, -1) {
 			names := claimNames(root, sentence[span[2]:span[3]])
 			if len(names) == 0 {
 				continue
 			}
+			named = true
 			if negated || full {
 				report(sentence)
 				continue
 			}
 			claims = append(claims, names...)
+		}
+		if !named && strings.HasSuffix(strings.TrimSpace(sentence), ":") {
+			report(sentence)
 		}
 	}
 	return claims, unreadable
@@ -369,10 +418,26 @@ func TestShortIDRuleNamesOnlyCommandsThatTakeOne(t *testing.T) {
 		{"Pass the short ID to `fugaro cancel --json`", []string{"cancel"}, nil},
 		{"`fugaro logs --json` takes the short ID", []string{"logs"}, nil},
 
+		// A span spells a whole command line, and the flag that takes the run
+		// is not always its first word nor its own: `--pr` carries a pull
+		// request number, and the value may be written onto the flag.
+		{"Give `fugaro run --pr N --retry <run>` the short ID", []string{"run --retry"}, nil},
+		{"Pass the short ID to `fugaro run --retry=<run>`", []string{"run --retry"}, nil},
+		{"Give `fugaro --json cancel` the short ID", []string{"cancel"}, nil},
+		{"`fugaro runs ls --pr N --json` takes the short ID", nil, nil},
+
 		// A flag that takes no run claims nothing, whatever the sentence says
 		// about it: `--json` carries both forms without being given either.
 		{"`--json` prints the short ID", nil, nil},
 		{"`fugaro runs ls --group-by` takes the short ID", nil, nil},
+
+		// The form a markdown list writes its claim in: the sentence that says
+		// what follows names no command, and the command is on the line after
+		// it. The introducing sentence is reported, so the text fails rather
+		// than passing with the claim unread; the colon inside a sentence that
+		// does name its command is nothing to report.
+		{"Pass the short ID to these:\n- `fugaro cancel`", nil, []string{"Pass the short ID to these:"}},
+		{"The rule is simple: give `fugaro logs` the short ID", []string{"logs"}, nil},
 	} {
 		short, unreadable := shortFormClaims(root, c.text)
 		if !slices.Equal(short, c.short) || !slices.Equal(unreadable, c.unreadable) {
@@ -391,7 +456,7 @@ func TestShortIDRuleNamesOnlyCommandsThatTakeOne(t *testing.T) {
 	for path, text := range shortIDRuleTexts(t) {
 		claims, unreadable := shortFormClaims(root, text)
 		for _, sentence := range unreadable {
-			t.Errorf("%s carries a sentence this guard cannot read -- it names a command beside both the short and the full form, or it negates something: %q -- one form per sentence, and no negation in a sentence that names a command, or word the claim so this guard can check it", path, sentence)
+			t.Errorf("%s carries a sentence this guard cannot read -- it names a command beside both the short and the full form, it negates something, or it ends in a colon with the command on the line below: %q -- one form per sentence, no negation in a sentence that names a command, and the command in the sentence that names the form, so this guard can check it", path, sentence)
 		}
 		for _, name := range claims {
 			if cmdPath, flag, ok := splitFlagClaim(name); ok {
