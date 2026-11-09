@@ -91,9 +91,11 @@ func runFolders(t *testing.T) (source, evidence string) {
 //
 //   - it reads --tools and refuses a command the allow-list does not cover;
 //   - it reads its --settings payload and refuses a read the payload names,
-//     with the ~ of a rule expanded through its own HOME, and it refuses
-//     nothing at all when --dangerously-skip-permissions is present, which is
-//     what that flag means for a permission check of any kind;
+//     resolving a rule the way the client resolves one — "//x" absolute, "~/x"
+//     through its own HOME, a single leading slash beside the settings it was
+//     given — and it refuses nothing at all when --dangerously-skip-permissions
+//     is present, which is what that flag means for a permission check of any
+//     kind;
 //   - it ends the way the client ends when a cap stopped the run.
 //
 // The prompt is a line-oriented script so that one child covers every case:
@@ -135,16 +137,25 @@ fi
 want=$(printf '%s\n' "$prompt" | sed -n 's/^READ: //p' | head -1)
 if [ -n "$want" ]; then
   denied=0
-  rules=$(printf '%s' "$settings" | sed 's/.*"deny":\[//; s/\].*//' | tr ',' '\n' | sed -n 's/^"Read(\(.*\))"$/\1/p')
+  rules=$(printf '%s' "$settings" | grep -o '"Read([^")]*)"' | sed 's/^"Read(//; s/)"$//')
   oldifs=$IFS
   # The rules are patterns themselves, so the list must not be globbed on its
-  # way into the loop: an unquoted /proc/** would expand to that directory's
+  # way into the loop: an unquoted //proc/** would expand to that directory's
   # own contents and the rule would never be seen.
   set -f
   IFS='
 '
   for rule in $rules; do
-    case "$rule" in "~/"*) rule="$HOME/${rule#"~/"}" ;; esac
+    # Where a rule starts is what the client reads first, and the three forms
+    # are not the two they look like: "//x" is the absolute /x, "~/x" is the
+    # home (expanded through this child's own HOME), and a single leading
+    # slash is a path beside the settings the rule was read from — which for
+    # this argv, a payload handed over inline, is the working directory.
+    case "$rule" in
+      "//"*) rule="${rule#/}" ;;
+      "~/"*) rule="$HOME/${rule#"~/"}" ;;
+      /*) rule="$(pwd -P)$rule" ;;
+    esac
     case "$want" in $rule) denied=1 ;; esac
   done
   IFS=$oldifs
@@ -355,13 +366,13 @@ func TestRunArgsIsTheReadOnlyContract(t *testing.T) {
 		"~/.ssh/**", "~/.aws/**", "~/.config/gcloud/**", "~/AppData/Roaming/gcloud/**",
 		"~/.claude/**", "~/.claude.json", "~/.claude.json.backup",
 		"~/.config/fugaro/**", "~/AppData/Roaming/fugaro/**",
-		"~/.config/gh/**", "~/AppData/Roaming/GitHub CLI/**",
+		"~/.config/git/**", "~/.config/gh/**", "~/AppData/Roaming/GitHub CLI/**",
 		"~/.config/rclone/**", "~/AppData/Roaming/rclone/**",
 		"~/.docker/**", "~/.terraform.d/**", "~/AppData/Roaming/terraform.d/**",
 		"~/.terraformrc", "~/terraform.rc",
 		"~/.kube/**", "~/.gnupg/**", "~/AppData/Roaming/gnupg/**",
 		"~/.git-credentials", "~/.gitconfig", "~/.netrc", "~/_netrc", "~/.npmrc",
-		"~/.pgpass", "~/.pypirc", "~/AppData/Roaming/pip/**", "/proc/**",
+		"~/.pgpass", "~/.pypirc", "~/AppData/Roaming/pip/**", "//proc/**",
 	} {
 		for _, tool := range []string{"Read", "Grep", "Glob"} {
 			wantDeny = append(wantDeny, tool+"("+path+")")
@@ -621,34 +632,59 @@ func TestRunStartsTheChildInTheSourceTree(t *testing.T) {
 }
 
 // TestRunDeniesAStoreTheEnvironmentMoved: the payload names the stores where
-// this machine keeps them, and some of them are not under the home. The
+// this machine keeps them, and most of them are not under the home. The
 // environment here moves each store somewhere outside HOME, so a rule that
 // only ever resolved ~ would leave every one of these files readable — and the
 // fake child refuses them, which says the rule it matched was the resolved one.
+//
+// A row's name is part of its own temporary directory, and the runner refuses
+// to write a rule for a path no rule can carry, so a row named with a
+// parenthesis would fail here rather than pass quietly: that refusal is in
+// TestRunRulePathsAreSpelledTheWayTheClientReadsThem, by name.
 func TestRunDeniesAStoreTheEnvironmentMoved(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		// env is the variable, and store the file under the directory it names.
+		// env is the variable, and store the file it decides: under the
+		// directory the variable holds, or — for a variable that names the
+		// file itself — in the test's own directory under that name.
 		env, store string
+		// whole is a variable whose value is the store rather than a directory
+		// holding it, and list one holding a path list, whose every element is
+		// a store of its own.
+		whole, list bool
 		// process is the one row that sets the variable in this process's own
 		// environment and leaves the request with none, which is the case Run
 		// resolves from os.Environ: a request that names no environment is not
 		// one where no store has moved.
 		process bool
 	}{
-		{"$XDG_CONFIG_HOME/gh", "XDG_CONFIG_HOME", filepath.Join("gh", "hosts.yml"), true},
-		{"$XDG_CONFIG_HOME/fugaro", "XDG_CONFIG_HOME", filepath.Join("fugaro", "projects", "aurora.yaml"), false},
-		{"$XDG_CONFIG_HOME/rclone", "XDG_CONFIG_HOME", filepath.Join("rclone", "rclone.conf"), false},
-		{"$GH_CONFIG_DIR", "GH_CONFIG_DIR", "hosts.yml", false},
+		{"$XDG_CONFIG_HOME/gh", "XDG_CONFIG_HOME", filepath.Join("gh", "hosts.yml"), false, false, true},
+		{"$XDG_CONFIG_HOME/fugaro", "XDG_CONFIG_HOME", filepath.Join("fugaro", "projects", "aurora.yaml"), false, false, false},
+		{"$XDG_CONFIG_HOME/rclone", "XDG_CONFIG_HOME", filepath.Join("rclone", "rclone.conf"), false, false, false},
+		{"$XDG_CONFIG_HOME/git", "XDG_CONFIG_HOME", filepath.Join("git", "credentials"), false, false, false},
+		{"$GH_CONFIG_DIR", "GH_CONFIG_DIR", "hosts.yml", false, false, false},
 		// The Windows rules are the default spelling of APPDATA, so a set
 		// APPDATA is one more directory the payload has to follow.
-		{"$APPDATA/fugaro", "APPDATA", filepath.Join("fugaro", "projects", "aurora.yaml"), false},
-		{"$APPDATA/GitHub CLI", "APPDATA", filepath.Join("GitHub CLI", "hosts.yml"), false},
-		{"$APPDATA/gcloud", "APPDATA", filepath.Join("gcloud", "application_default_credentials.json"), false},
-		{"$APPDATA/rclone", "APPDATA", filepath.Join("rclone", "rclone.conf"), false},
+		{"$APPDATA/fugaro", "APPDATA", filepath.Join("fugaro", "projects", "aurora.yaml"), false, false, false},
+		{"$APPDATA/GitHub CLI", "APPDATA", filepath.Join("GitHub CLI", "hosts.yml"), false, false, false},
+		{"$APPDATA/gcloud", "APPDATA", filepath.Join("gcloud", "application_default_credentials.json"), false, false, false},
+		{"$APPDATA/rclone", "APPDATA", filepath.Join("rclone", "rclone.conf"), false, false, false},
 		// gcloud reads no XDG variable at all (internal/cli/adcpath.go, F29),
 		// which is why its own variable is the one resolved for it.
-		{"$CLOUDSDK_CONFIG", "CLOUDSDK_CONFIG", "application_default_credentials.json", false},
+		{"$CLOUDSDK_CONFIG", "CLOUDSDK_CONFIG", "application_default_credentials.json", false, false, false},
+		// The stores whose own variable moves them: the client's own
+		// configuration, Docker's, GnuPG's home, and the files an
+		// infrastructure or package tool keeps a token in.
+		{"$CLAUDE_CONFIG_DIR", "CLAUDE_CONFIG_DIR", ".credentials.json", false, false, false},
+		{"$DOCKER_CONFIG", "DOCKER_CONFIG", "config.json", false, false, false},
+		{"$GNUPGHOME", "GNUPGHOME", "secring.gpg", false, false, false},
+		{"$AWS_SHARED_CREDENTIALS_FILE", "AWS_SHARED_CREDENTIALS_FILE", "aws-credentials", true, false, false},
+		{"$AWS_CONFIG_FILE", "AWS_CONFIG_FILE", "aws-config", true, false, false},
+		{"$TF_CLI_CONFIG_FILE", "TF_CLI_CONFIG_FILE", "terraformrc", true, false, false},
+		{"$NETRC", "NETRC", "netrc", true, false, false},
+		{"$NPM_CONFIG_USERCONFIG", "NPM_CONFIG_USERCONFIG", "npmrc", true, false, false},
+		{"$PGPASSFILE", "PGPASSFILE", "pgpass", true, false, false},
+		{"$KUBECONFIG, two files", "KUBECONFIG", "", false, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newRunSetup(t)
@@ -656,18 +692,33 @@ func TestRunDeniesAStoreTheEnvironmentMoved(t *testing.T) {
 			if home := os.Getenv("HOME"); home != "" && strings.HasPrefix(dir, home+string(os.PathSeparator)) {
 				t.Fatalf("the moved directory %s is under HOME, so a rule that resolved ~ could be the one that denied it", dir)
 			}
+			var moved []string
+			switch {
+			case tc.list:
+				moved = []string{filepath.Join(dir, "one.conf"), filepath.Join(dir, "two.conf")}
+			default:
+				moved = []string{filepath.Join(dir, tc.store)}
+			}
+			value := dir
+			switch {
+			case tc.list:
+				value = strings.Join(moved, string(os.PathListSeparator))
+			case tc.whole:
+				value = moved[0]
+			}
 			if tc.process {
-				t.Setenv(tc.env, dir)
+				t.Setenv(tc.env, value)
 				s.req.ParentEnv = nil
 			} else {
-				s.req.ParentEnv = append(s.req.ParentEnv, tc.env+"="+dir)
+				s.req.ParentEnv = append(s.req.ParentEnv, tc.env+"="+value)
 			}
-			moved := filepath.Join(dir, tc.store)
-			if err := os.MkdirAll(filepath.Dir(moved), 0o700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(moved, []byte(s.value), 0o600); err != nil {
-				t.Fatal(err)
+			for _, m := range moved {
+				if err := os.MkdirAll(filepath.Dir(m), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(m, []byte(s.value), 0o600); err != nil {
+					t.Fatal(err)
+				}
 			}
 			block := answer(t, fence(s.nonce, "outcome: bug\nsignature: update config invalid\nbody"))
 			if _, err := s.run(t, "READ: "+filepath.Join(s.req.EvidenceDir, "log.txt"), block); err != nil {
@@ -676,17 +727,64 @@ func TestRunDeniesAStoreTheEnvironmentMoved(t *testing.T) {
 			if did := s.did(t); !strings.Contains(did, "read:a step failed") {
 				t.Errorf("the child could not read a file no rule names, so a denial below proves nothing: %q", did)
 			}
-			if _, err := s.run(t, "READ: "+moved, block); err != nil {
-				t.Fatal(err)
-			}
-			did := s.did(t)
-			if !strings.Contains(did, "denied "+moved) {
-				t.Errorf("%s moved the store to %s and the child read it: the payload names the default directory alone", tc.env, moved)
-			}
-			if strings.Contains(did, s.value) {
-				t.Errorf("the child read a store %s moved: %q", tc.env, did)
+			for _, m := range moved {
+				if _, err := s.run(t, "READ: "+m, block); err != nil {
+					t.Fatal(err)
+				}
+				did := s.did(t)
+				if !strings.Contains(did, "denied "+m) {
+					t.Errorf("%s moved the store to %s and the child read it: the payload names the default location alone", tc.env, m)
+				}
+				if strings.Contains(did, s.value) {
+					t.Errorf("the child read a store %s moved: %q", tc.env, did)
+				}
 			}
 		})
+	}
+}
+
+// TestRunRulePathsAreSpelledTheWayTheClientReadsThem: a rule path is a glob
+// whose first characters decide where it starts, and only a double slash means
+// the filesystem root. The client's own parser turns "//x" into the absolute
+// /x, a single leading slash into a path beside the settings file (its own
+// built-in /proc rule is written Read(//proc/**)), and a home-relative path
+// into the child's own home; a Windows path is spelled the way the client
+// spells one in a rule, the drive letter lowercased under a leading slash.
+// The payload can therefore be wrong in a way that looks right — every rule
+// absolute-looking and none of them absolute — which is what this pins, with
+// the stores and paths no rule can name left to the defaults instead.
+//
+// The Windows spellings here are the ones the caller on Windows produces
+// (filepath.ToSlash), which is what makes the drive rule testable from a
+// Linux checkout, the way internal/cli's gcloud rule takes its goos as a
+// parameter for the same reason.
+func TestRunRulePathsAreSpelledTheWayTheClientReadsThem(t *testing.T) {
+	for _, tc := range []struct {
+		in, want string
+		ok       bool
+	}{
+		{in: "/proc", want: "//proc", ok: true},
+		{in: "/proc/", want: "//proc", ok: true},
+		{in: "/home/ada/.config/gh", want: "//home/ada/.config/gh", ok: true},
+		{in: "/home/ada/AppData/Roaming/GitHub CLI", want: "//home/ada/AppData/Roaming/GitHub CLI", ok: true},
+		{in: "C:/Users/ada/AppData/Roaming", want: "//c/Users/ada/AppData/Roaming", ok: true},
+		{in: "c:/Users/ada", want: "//c/Users/ada", ok: true},
+		{in: "~/ada", ok: false},
+		{in: "ada/git", ok: false},
+		{in: "", ok: false},
+		{in: "//server/share/ada", ok: false},
+		{in: "C:ada", ok: false},
+		{in: "/home/ada(b)/x", ok: false},
+		{in: "/home/ada/*/x", ok: false},
+		{in: "/home/ada/[0-9]/x", ok: false},
+		{in: "/home/ada/{a,b}/x", ok: false},
+		{in: "/home/ada\\b/x", ok: false},
+		{in: "/home/ada/\x07x", ok: false},
+	} {
+		got, ok := childRulePath(tc.in)
+		if ok != tc.ok || got != tc.want {
+			t.Errorf("childRulePath(%q) = %q, %v; want %q, %v", tc.in, got, ok, tc.want, tc.ok)
+		}
 	}
 }
 

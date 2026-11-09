@@ -145,12 +145,12 @@ func (s *syncWriter) do(f func()) {
 // with it. It is the set a log steering the agent would go for first: the SSH,
 // cloud, Claude, GitHub and Fugaro configuration, the files a package manager
 // or an infrastructure tool keeps a token or a cluster credential in, and
-// /proc, whose environ entries hold every secret this process deliberately
+// //proc, whose environ entries hold every secret this process deliberately
 // kept out of the child's environment.
 //
-// These are the stores where the machine keeps them by default, and five of
+// These are the stores where the machine keeps them by default, and most of
 // them move: childStoresByVar names the variable that decides each of those
-// directories, so the payload for one diagnosis is this list plus a rule for
+// paths, so the payload for one diagnosis is this list plus a rule for
 // wherever the store actually is (childDenyRules). Without that, a machine
 // with $XDG_CONFIG_HOME set keeps gh's hosts.yml under it and the log, which
 // this process writes and which carries real paths, names a store no rule
@@ -165,6 +165,7 @@ var childReadDeny = []string{
 	"~/.claude.json.backup",
 	"~/.config/fugaro/**",
 	"~/AppData/Roaming/fugaro/**",
+	"~/.config/git/**",
 	"~/.config/gh/**",
 	"~/AppData/Roaming/GitHub CLI/**",
 	"~/.config/rclone/**",
@@ -185,7 +186,7 @@ var childReadDeny = []string{
 	"~/.pgpass",
 	"~/.pypirc",
 	"~/AppData/Roaming/pip/**",
-	"/proc/**",
+	"//proc/**",
 }
 
 // childSettings is the --settings payload, as a JSON document: the two things
@@ -205,32 +206,112 @@ var childSettings = struct {
 	} `json:"permissions"`
 }{}
 
-// childStoresByVar are the stores childReadDeny names whose directory a
-// variable decides rather than the home alone, as that variable and the
-// directory under it ("" is the variable's own value). The variable is
-// resolved against the environment this diagnosis is composed from, which is
-// the child's own: what the payload has to name is where the store is on the
-// machine the child is reading, and a store the log can name by its real path
-// is a store the ~/.config rule above does not reach.
+// childStoresByVar are the stores childReadDeny names whose path a variable
+// decides rather than the home alone, as that variable, the directory or file
+// under it ("" is the variable's own value) and whether it names a directory
+// whose whole tree is denied. The variable is resolved against the environment
+// this diagnosis is composed from, which is the child's own: what the payload
+// has to name is where the store is on the machine the child is reading, and a
+// store the log can name by its real path is a store the ~ rule above does not
+// reach.
 //
 // Each name is the store's own variable, not Fugaro's: gh reads GH_CONFIG_DIR
 // before the XDG directory, gcloud reads CLOUDSDK_CONFIG and no XDG variable
-// at all (internal/cli/adcpath.go, F29), and Fugaro and rclone follow the XDG
-// config home. APPDATA is the same story on Windows, where it is what the
+// at all (internal/cli/adcpath.go, F29), and Fugaro, rclone and git follow the
+// XDG config home. APPDATA is the same story on Windows, where it is what the
 // ~/AppData/Roaming rules above stand in for: they name the default, and a
-// roaming profile that is redirected elsewhere moves the whole set with it.
-// A variable that is unset, relative or not a path leaves the rule above as
-// the answer.
-var childStoresByVar = []struct{ env, sub string }{
-	{"XDG_CONFIG_HOME", "fugaro"},
-	{"XDG_CONFIG_HOME", "gh"},
-	{"XDG_CONFIG_HOME", "rclone"},
-	{"APPDATA", "fugaro"},
-	{"APPDATA", "GitHub CLI"},
-	{"APPDATA", "gcloud"},
-	{"APPDATA", "rclone"},
-	{"GH_CONFIG_DIR", ""},
-	{"CLOUDSDK_CONFIG", ""},
+// roaming profile that is redirected elsewhere moves the whole set with it. A
+// variable that is unset, relative or not a path leaves the rule above as the
+// answer.
+//
+// A directory is denied as its whole tree, a path list store by store, and a
+// single file by name, because /** does not match the file it is written
+// after.
+type childStore struct {
+	env, sub string
+	dir      bool
+	list     bool
+}
+
+var childStoresByVar = []childStore{
+	{"XDG_CONFIG_HOME", "fugaro", true, false},
+	{"XDG_CONFIG_HOME", "git", true, false},
+	{"XDG_CONFIG_HOME", "gh", true, false},
+	{"XDG_CONFIG_HOME", "rclone", true, false},
+	{"APPDATA", "fugaro", true, false},
+	{"APPDATA", "GitHub CLI", true, false},
+	{"APPDATA", "gcloud", true, false},
+	{"APPDATA", "rclone", true, false},
+	{"GH_CONFIG_DIR", "", true, false},
+	{"CLOUDSDK_CONFIG", "", true, false},
+	{"CLAUDE_CONFIG_DIR", "", true, false},
+	{"DOCKER_CONFIG", "", true, false},
+	{"GNUPGHOME", "", true, false},
+	{"AWS_SHARED_CREDENTIALS_FILE", "", false, false},
+	{"AWS_CONFIG_FILE", "", false, false},
+	{"TF_CLI_CONFIG_FILE", "", false, false},
+	{"NETRC", "", false, false},
+	{"NPM_CONFIG_USERCONFIG", "", false, false},
+	{"PGPASSFILE", "", false, false},
+	// KUBECONFIG is a list of files, and the separator is the platform's,
+	// which is what the program reading the variable uses.
+	{"KUBECONFIG", "", false, true},
+}
+
+// childRulePath is the rule spelling of a path, as the client's permission
+// syntax takes it (U2, F16). A rule path is a glob whose first characters say
+// where it starts, and only a double slash means the filesystem root: the
+// client's own parser turns "//x" into the absolute /x and a single leading
+// slash into a path beside the settings file, and its own built-in rule for
+// /proc is written Read(//proc/**). A home-relative path is the one exception
+// and is spelled "~/..." (childReadDeny), which reaches the child's own home
+// on either platform. A Windows path is spelled the way the client spells one
+// in a rule — C:\Users\ada as //c/Users/ada — which is also how it spells the
+// path it matches the rule against.
+//
+// ok is false for a path no rule can name: a UNC share, which the client
+// refuses to scope, or one holding a character the glob syntax reserves or a
+// control character, which would either not parse as a rule or match
+// something other than itself. One bad rule risks the whole payload with it,
+// so the caller falls back to the default rules for such a store instead of
+// writing it out.
+func childRulePath(path string) (string, bool) {
+	p := filepath.ToSlash(path)
+	if strings.HasPrefix(p, "//") {
+		return "", false
+	}
+	p = filepath.Clean(p)
+	if len(p) >= 3 && p[1] == ':' && p[2] == '/' && (p[0] >= 'a' && p[0] <= 'z' || p[0] >= 'A' && p[0] <= 'Z') {
+		p = "/" + strings.ToLower(p[:1]) + p[2:]
+	}
+	if !strings.HasPrefix(p, "/") {
+		return "", false
+	}
+	if strings.ContainsAny(p, `()[]{}*?!#\`) || strings.IndexFunc(p, func(r rune) bool { return r < 0x20 }) >= 0 {
+		return "", false
+	}
+	return "/" + p, true
+}
+
+// childStorePaths are the paths one row of childStoresByVar names on this
+// machine's environment, an absolute path per store and nothing for a
+// variable that is unset or names no path of its own.
+func childStorePaths(parent []string, store childStore) []string {
+	values := []string{envValue(parent, store.env)}
+	if store.list {
+		values = filepath.SplitList(values[0])
+	}
+	var paths []string
+	for _, value := range values {
+		if !filepath.IsAbs(value) {
+			continue
+		}
+		if store.sub != "" {
+			value = filepath.Join(value, store.sub)
+		}
+		paths = append(paths, value)
+	}
+	return paths
 }
 
 // childDenyRules is the payload's deny list for one diagnosis: childReadDeny,
@@ -239,20 +320,16 @@ var childStoresByVar = []struct{ env, sub string }{
 func childDenyRules(parent []string) []string {
 	rules := slices.Clone(childReadDeny)
 	for _, store := range childStoresByVar {
-		dir := envValue(parent, store.env)
-		if !filepath.IsAbs(dir) {
-			continue
+		for _, path := range childStorePaths(parent, store) {
+			rule, ok := childRulePath(path)
+			if !ok {
+				continue
+			}
+			if store.dir {
+				rule += "/**"
+			}
+			rules = append(rules, rule)
 		}
-		// A parenthesis would not survive the rule syntax, and one rule the
-		// client cannot read risks the whole payload with it, so a directory
-		// that holds one is left to the rules above rather than written out.
-		if strings.ContainsAny(dir, "()") || strings.IndexFunc(dir, func(r rune) bool { return r < 0x20 }) >= 0 {
-			continue
-		}
-		if store.sub != "" {
-			dir = filepath.Join(dir, store.sub)
-		}
-		rules = append(rules, filepath.ToSlash(dir)+"/**")
 	}
 	return rules
 }
