@@ -301,7 +301,7 @@ describe('the distribution list', () => {
 describe('the query is a spawn like any other', () => {
   it('hands wsl.exe the child’s allow-list and nothing else', async () => {
     // SECURITY-SENSITIVE: the credential boundary's near side. The environment
-    // built for a query is `childEnvironment`'s -- the same eleven keys the CLI
+    // built for a query is `childEnvironment`'s -- the same keys the CLI
     // gets -- plus exactly one key the console writes itself, `WSL_UTF8`, which
     // asks `wsl.exe` for UTF-8 and carries nothing from the operator's
     // environment (T-F2). So a query is not a hole in the allow-list: the

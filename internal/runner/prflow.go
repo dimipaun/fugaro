@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
@@ -400,7 +401,7 @@ func (r *run) earlyPRText() (string, string) {
 	title, body := r.rawPRText()
 	title = scrubDescription(title)
 	if title == "" {
-		title = "Fugaro run " + inlineText(r.rec.RunID) // the agent title was only markers
+		title = "Fugaro run " + inlineText(task.ShortRun(r.rec.RunID)) // the agent title was only markers
 	}
 	body = scrubDescription(body)
 	if runes := []rune(title); len(runes) > maxTitleRunes {
@@ -821,13 +822,19 @@ func (r *run) sectionLines(head string, parts ...string) string {
 		}
 	}
 	line := strings.Join(kept, " · ")
-	id := inlineText(r.rec.RunID)
+	// The section names the run by its short ID, the form spec.md §1 settles on
+	// (D1701). The command it tells a reader to paste names the run exactly:
+	// the CLI resolves an ending only once a lookup accepts one (resolveRun,
+	// wired at SR14), and a hint that refuses its own argument is worse than a
+	// longer line -- a full run ID is what every version of the CLI takes.
+	id := inlineText(task.ShortRun(r.rec.RunID))
 	out := line + "\n"
 	out += r.ownerPart()
 	if r.rec.DraftFallback {
 		out += "This host has no draft pull requests: this is a normal pull request marked [DRAFT], so reviews may already have been requested.\n"
 	}
-	return out + fmt.Sprintf("Run `%s` (a stale time here means the run died: `fugaro diagnose %s`)", id, id)
+	return out + fmt.Sprintf("Run `%s` (a stale time here means the run died: `fugaro diagnose %s`)",
+		id, inlineText(r.rec.RunID))
 }
 
 // ownerWaiting reports whether the run ended waiting on the owner's decisions

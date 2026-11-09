@@ -1914,6 +1914,16 @@ export const PROJECTS_ACCOUNT_KEYS_CLASS = 'projects-account-keys-section'
 export const PROJECTS_RETIREMENTS_CLASS = 'projects-retirements-section'
 export const PROJECTS_CREDENTIALS_SERVICE_CLASS = 'projects-credentials-service-section'
 
+/** PROJECTS_LICENCE_CLASS is the host the licence key is drawn into (the
+ * subscriptions plan's S2.7): the eighth sibling of `projects-body`, drawn for
+ * `PROJECTS_MODELS_CLASS`'s reason. Its read is the one this tab makes that
+ * spawns no child at all -- `licence.read` is the console's own store
+ * (`src/main/licence-store.ts`) -- so the panel is a section of this tab for the
+ * same reason the others are, and not because it reads a command: an operator
+ * looks for the key their installation runs under where their installations
+ * are. */
+export const PROJECTS_LICENCE_CLASS = 'projects-licence-section'
+
 /** DrawnProjectsFrame is the screen with nothing in it: the root, the section a
  * read fills, and the slot the entry's busy mark goes in. Every later section is
  * a `host`/`slot` pair of its own, drawn the same way -- `models` and `settings`
@@ -1937,6 +1947,8 @@ export interface DrawnProjectsFrame {
   readonly retirementsSlot: ScreenElement
   readonly credentialsService: ScreenElement
   readonly credentialsServiceSlot: ScreenElement
+  readonly licence: ScreenElement
+  readonly licenceSlot: ScreenElement
 }
 
 /**
@@ -1982,6 +1994,11 @@ export function renderProjectsFrame(factory: ScreenFactory, theme: ProjectsTheme
   const retirementsSlot = cell(retirements, factory, 'div', BUSY_SLOT_CLASS)
   const credentialsService = make(factory, 'div', PROJECTS_CREDENTIALS_SERVICE_CLASS)
   const credentialsServiceSlot = cell(credentialsService, factory, 'div', BUSY_SLOT_CLASS)
+  // The licence key (S2.7), the last of them: it reads no command -- the
+  // console keeps the key itself -- and it is a section of this tab because the
+  // key belongs to an installation, which is what this tab is about.
+  const licence = make(factory, 'div', PROJECTS_LICENCE_CLASS)
+  const licenceSlot = cell(licence, factory, 'div', BUSY_SLOT_CLASS)
   root.append(body)
   root.append(models)
   root.append(settings)
@@ -1989,6 +2006,7 @@ export function renderProjectsFrame(factory: ScreenFactory, theme: ProjectsTheme
   root.append(accountKeys)
   root.append(retirements)
   root.append(credentialsService)
+  root.append(licence)
   return {
     root,
     body,
@@ -2005,6 +2023,8 @@ export function renderProjectsFrame(factory: ScreenFactory, theme: ProjectsTheme
     retirementsSlot,
     credentialsService,
     credentialsServiceSlot,
+    licence,
+    licenceSlot,
   }
 }
 

@@ -1,4 +1,4 @@
-### Fugaro run `20260926-221530-abcd`
+### Fugaro run `abcd`
 
 **Outcome:** ready for review
 

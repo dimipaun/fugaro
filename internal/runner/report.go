@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // LogTail is the end of the output that explains a draft PR (design §4.5).
@@ -65,7 +66,10 @@ func FollowUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 // shown as a line after the outcome.
 func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *FollowUpSection, notes []string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "### Fugaro run `%s`\n\n", rec.RunID)
+	// The heading names the run by its short ID, the form spec.md §1 settles on
+	// (D1701); the marker that closes the report keeps the full ID, which is
+	// what a follow-up reads back (D1705).
+	fmt.Fprintf(&b, "### Fugaro run `%s`\n\n", task.ShortRun(rec.RunID))
 	if rec.Status == runstore.StatusHalted && rec.Halt != nil {
 		b.WriteString(haltLines(rec))
 		b.WriteString(ownerSection(rec))
@@ -438,7 +442,10 @@ func fence(s string) string {
 func followUpSection(fu *FollowUpSection, reason string) string {
 	var b strings.Builder
 	b.WriteString("#### Follow-up\n\n")
-	fmt.Fprintf(&b, "- **Previous run:** `%s`\n", fu.PreviousRun)
+	// The run this follow-up continued is named by its short ID like every
+	// other run a person reads about here; which run it is stays whole in the
+	// record's own `previous_run` (D1705).
+	fmt.Fprintf(&b, "- **Previous run:** `%s`\n", task.ShortRun(fu.PreviousRun))
 	if fu.Session != "" {
 		fmt.Fprintf(&b, "- **Session:** %s", fu.Session)
 		if fu.SessionNote != "" {
