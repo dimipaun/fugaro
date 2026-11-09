@@ -228,10 +228,11 @@ func TestNewIssueURLCutsLongBody(t *testing.T) {
 		}
 	})
 
-	t.Run("a long body is cut and names the command", func(t *testing.T) {
-		i := issueLocal()
-		i.Summary = strings.Repeat("the update stops half way. ", 2000)
-		p := BuildPost(i, nil)
+	// linkBody is the fallback link's body as a reader's browser would send it,
+	// with the assertions every cut shares: inside the budget, and ending in the
+	// command that prints the rest.
+	linkBody := func(t *testing.T, p Post) string {
+		t.Helper()
 		link := NewIssueURL(p)
 		if !strings.HasPrefix(link, prefix) {
 			t.Fatalf("link = %q, want it to start with %q", link, prefix)
@@ -251,6 +252,24 @@ func TestNewIssueURLCutsLongBody(t *testing.T) {
 		if !strings.HasSuffix(strings.TrimSpace(body), tail) {
 			t.Errorf("the cut body does not end with the command that prints the rest:\n%q", body)
 		}
+		return body
+	}
+
+	t.Run("a long body of lines is cut at a line boundary", func(t *testing.T) {
+		i := issueLocal()
+		i.Summary = strings.Repeat("the update stops half way\n", 1000)
+		p := BuildPost(i, nil)
+		body := linkBody(t, p)
+		cut := strings.TrimSuffix(body, "\n\nFull text: `fugaro issue show "+p.Ref+"`\n")
+		if cut == "" {
+			t.Fatal("the link carries nothing of the post")
+		}
+		if !strings.HasPrefix(p.Body, cut) {
+			t.Errorf("the link's body is not the post's own text:\n%q", cut)
+		}
+		if p.Body[len(cut)] != '\n' {
+			t.Errorf("the cut is not at a line boundary: the post goes on with %q", p.Body[len(cut):][:20])
+		}
 		// A path would name this machine's user in a public post, and would be
 		// of no use to the reader anyway (D1722). The reference a body with no
 		// number is named by is the local ID, and that carries no separator:
@@ -263,6 +282,26 @@ func TestNewIssueURLCutsLongBody(t *testing.T) {
 			if strings.Contains(body, path) {
 				t.Errorf("the link carries the local path %q", path)
 			}
+		}
+	})
+
+	// One line longer than the whole allowance, which is the shape a paragraph
+	// summary or a pasted URL has: there is no line boundary to retreat to
+	// before the budget runs out. The cut stays mid-line, because the other
+	// answer — the last boundary before it — hands the person a link with the
+	// header and the pointer in it and none of the finding, which is the one
+	// thing the fallback exists to carry.
+	t.Run("a body of one long line still carries the finding", func(t *testing.T) {
+		i := issueLocal()
+		i.Summary = strings.Repeat("the update stops half way. ", 2000)
+		p := BuildPost(i, nil)
+		body := linkBody(t, p)
+		if got := len(url.QueryEscape(body)); got < newIssueURLBudget/2 {
+			t.Errorf("the link carries %d of the %d byte allowance, most of it given up for a line boundary:\n%q",
+				got, newIssueURLBudget, body)
+		}
+		if !strings.Contains(body, "the update stops half way. the update") {
+			t.Errorf("the link does not carry the finding:\n%q", body)
 		}
 	})
 }

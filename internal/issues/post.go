@@ -239,11 +239,20 @@ func NewIssueURL(p Post) string {
 }
 
 // cutForURL is the longest prefix of body that fits the budget once tail is
-// appended and the whole of it is percent-encoded, cut back to a line
-// boundary so the person reads whole lines. Escaping is monotonic in the
-// length of its input, so the largest prefix that fits is found by bisection
-// rather than by cutting and re-encoding one line at a time: a body of a few
-// bytes and one of many kilobytes take the same handful of passes.
+// appended and the whole of it is percent-encoded. Escaping is monotonic in
+// the length of its input, so the largest prefix that fits is found by
+// bisection rather than by cutting and re-encoding one line at a time: a body
+// of a few bytes and one of many kilobytes take the same handful of passes.
+//
+// That cut then backs off to the last line boundary in it — a person reads
+// whole lines — but only while the boundary keeps at least half of what fit.
+// A link carries a finding and not a text, and a body whose content line is
+// longer than the whole allowance (a summary written as one paragraph, a pasted
+// URL with no space in it) has no interior boundary to retreat to: backing off
+// to the one before it hands the person a link holding a header and a pointer
+// and none of the finding. Half is where tidiness stops being worth the budget;
+// below it the cut stays mid-line, and the tail names the command that prints
+// the rest either way.
 func cutForURL(body, tail string) string {
 	fits := func(n int) bool {
 		return len(url.QueryEscape(body[:n]+tail)) <= newIssueURLBudget
@@ -260,7 +269,7 @@ func cutForURL(body, tail string) string {
 			hi = mid - 1
 		}
 	}
-	if at := strings.LastIndexByte(body[:lo], '\n'); at >= 0 {
+	if at := strings.LastIndexByte(body[:lo], '\n'); at >= lo/2 {
 		lo = at
 	}
 	return body[:lo]

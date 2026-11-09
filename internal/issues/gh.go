@@ -38,9 +38,11 @@ const GHRepo = "github.com/" + updatecheck.Repo
 // inside claimLease, and long enough for a slow connection and a large body.
 const ghTimeout = 5 * time.Minute
 
-// ghStatusTimeout bounds `gh auth status`, a question about this machine that
-// must answer at once: it reads the person's own configuration and asks
-// nothing, so a wait here is a wait on a hung process, not on a network.
+// ghStatusTimeout bounds `gh auth status`. It is an API call — it validates the
+// token against GitHub, which is why docs/release.md and scripts/retry.sh treat
+// its failure as a dropped connection and retry it — so this bound holds a slow
+// network and not only a hung process. It stays short because the answer
+// decides one line of output: the fallback link is what a no prints.
 const ghStatusTimeout = 15 * time.Second
 
 // GHRunner runs gh with args and returns what it wrote to stdout. It is the
@@ -133,8 +135,14 @@ func (g GH) Installed() bool {
 
 // LoggedIn reports whether gh has an account to file with. `gh auth status`
 // exits non-zero when it has none, and its answer is not read here: what it
-// prints can hold a token's name and a host, and the caller needs only the
-// yes or no — the person is told to run `gh auth login` when it is no.
+// prints can hold a token's name and a host, and the caller needs only the yes
+// or no.
+//
+// A no is two things and not one: no account, and an API this call could not
+// reach — gh reports a dropped connection the same way, which is why
+// scripts/retry.sh retries this command on any failure — and they are told
+// apart by the caller, which decides what a no prints. Telling a person whose
+// network just blipped to run `gh auth login` is the one wrong answer here.
 func (g GH) LoggedIn(ctx context.Context) bool {
 	ctx, cancel := context.WithTimeout(ctx, ghStatusTimeout)
 	defer cancel()
