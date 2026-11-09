@@ -2234,7 +2234,11 @@ func (c *Config) validate() error {
 	// (config.ValidCatalogName, the rule an entry's name and a workflow's
 	// image_name are held to).
 	for _, repo := range slices.Sorted(maps.Keys(c.ImageMap)) {
-		at := "image_map." + repo
+		// The key is this file's own text, and one that failed the check above
+		// is exactly a key that may carry anything: it is escaped into the
+		// field path, the way workflow_secrets' names are, so a control or
+		// bidi character reaches the operator as \uXXXX and not as itself.
+		at := "image_map." + pluginwire.Printable(repo)
 		if canon, err := task.CanonicalRepo(repo); err != nil || canon != repo {
 			bad("%s: an image_map key is a repository name, as acme/app: it is the name a job's own repository is looked up by, and one in another case is a key no lookup reaches", at)
 		}

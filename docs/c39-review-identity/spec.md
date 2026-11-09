@@ -874,7 +874,7 @@ is *another command*. This slice's reading of it, stated because a reviewer must
   older than the field refuses the node** — `fugaro run` (`internal/cli/launch_budget.go:156`), publishing
   and the update's own policy stage (`internal/cli/project_cmd.go:499`), the readers `policy show`,
   `project show` and `repos ls` (`refuseUnknownPolicyKeys`, `project_cmd.go:2848`) and the migration
-  (`init_policy_migrate.go:578`) — because the operator is the one who can fix a misspelling
+  (`init_policy_migrate.go:595`) — because the operator is the one who can fix a misspelling
   (`internal/projectpolicy/policy.go:262`). So **once a verifier is published, every teammate on an older
   CLI cannot launch until they upgrade**, which is why its publisher **omits the key when the list is
   empty** — empty meaning the effective list of §5.4, this config's own when it states one and the node's

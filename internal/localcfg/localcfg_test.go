@@ -2087,6 +2087,21 @@ func TestLocalConfigImageMapHeldToTheNodesRule(t *testing.T) {
 	if _, err := Parse([]byte(sample + "image_map: {}\n")); err != nil {
 		t.Errorf("a written empty map was refused: %v", err)
 	}
+	// The key of that refusal is this file's own text, and the check it failed
+	// is exactly the one a key of any character fails: it is printed escaped,
+	// the way every other name this loader refuses is, so a direction mark
+	// cannot reorder the line it appears on.
+	const bidi = "\u202e" // RIGHT-TO-LEFT OVERRIDE
+	_, err := Parse([]byte(sample + "image_map:\n  \"acme/" + bidi + "app\": universal\n"))
+	if err == nil {
+		t.Fatal("a key carrying a direction mark was accepted")
+	}
+	if strings.Contains(err.Error(), bidi) {
+		t.Errorf("the refusal prints the key's direction mark raw: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), `image_map.acme/\u202eapp`) {
+		t.Errorf("the refusal does not name the key escaped: %q", err.Error())
+	}
 }
 
 // TestLocalConfigImageMapKeepsThePublishedOneWhenSilent: the keep rule the

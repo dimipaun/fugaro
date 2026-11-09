@@ -426,7 +426,7 @@ the estimator must do so it stays survivable.
 
 ```
 local config: build.machine_type   (default E2_HIGHCPU_8; internal/localcfg/localcfg.go:1624)
-              build.region, else region                     (:1174-1176, :2442-2446 BuildRegion)
+              build.region, else region                     (:1174-1176, :2446-2450 BuildRegion)
         │
         ├─ internal/cli/image.go:310 → cloudBuildSpec(…, lc.Build.MachineType, …) → :456, the spec at :460
         ├─ internal/cli/image_build_catalog.go:361

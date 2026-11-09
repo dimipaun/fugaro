@@ -614,7 +614,7 @@ land as **one pull request**, for the reason C3.9g1 gives for g2 being one chang
   (`internal/cli/launch_budget.go:156`), publishing and the update's own policy stage
   (`internal/cli/project_cmd.go:499`), `policy show`, `project show` and `repos ls`
   (`refuseUnknownPolicyKeys`, `project_cmd.go:2848`) and the migration (`refuseMigrationUnknownKeys`,
-  `internal/cli/init_policy_migrate.go:578`) — because the operator is the one who can fix a misspelling
+  `internal/cli/init_policy_migrate.go:595`) — because the operator is the one who can fix a misspelling
   (`internal/projectpolicy/policy.go:262`: "the runner logs them … the CLI refuses them"). **So once a
   verifier is published, every teammate on an older CLI cannot launch until they upgrade.** **What that
   older reader is, in a test, is said rather than implied**: `knownTopLevelKeys` holds this key today

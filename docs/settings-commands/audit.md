@@ -143,7 +143,7 @@ Sources: `internal/projectpolicy/paths.go:19-22`; members at `policy.go:130-253`
 | `allow_repos` | the node itself | `project repos ls` (**no `--json`**), `project show --json` | `project repos add|rm` (project_enroll.go:92, :109), `project sync` (:757); seeded by `policy publish --seed-repos` | not refused (only `--github-app-key` is, project_enroll.go:778) | closed (json missing) |
 | `credentials.{fallback,wait_threshold,backoff.{initial,cap},stop_after_exhaustion_per_window,concurrency_per_token}` | **the node only**: "the node is the only place the block exists" (project_cmd.go:819-832). Defaults at policy.go:416-419 | `project policy show` (project_cmd.go:1715) | **none: Firebase console hand edit** | – | **H, highest risk** |
 | `clone_urls.<canonical>` | **the node only**: "no command of this release writes one" (project_cmd.go:662-669, :815-818) | `project policy show` | **none: Firebase console hand edit** | – | M (rare, but a typo silently clones from the wrong host until the node is read) |
-| `version` | `update` migrates in place (init_policy_migrate.go) | doctor | `update` | refused in an agent session (init_policy_migrate.go:459) | closed |
+| `version` | `update` migrates in place (init_policy_migrate.go) | doctor | `update` | refused in an agent session (init_policy_migrate.go:476) | closed |
 
 ### 1.6 Realtime Database budget and runtime nodes
 
