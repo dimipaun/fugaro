@@ -262,12 +262,16 @@ func retryHintLines(local []issues.Issue, rows []issues.SharedRow, version strin
 // that printed it would hand the reader the injection with `You can retry: `
 // in front of it, on a line whose whole purpose is to be pasted.
 //
-// Every word after the name walks down this build's own tree until one is not
-// a subcommand — a flag, or an argument such as a task or a checkout path — and
-// a word that a command WITH subcommands does not answer to refuses the whole
-// line: `fugaro frobnicate` is not a command of this build, and neither is
-// `fugaro issue frobnicate`, so an offer naming one would send the reader to a
-// command that answers "unknown command" (D1614, F28).
+// Every word after the name is read by this build's own tree (root.Find),
+// which is what makes the check agree with the line: cobra strips the flags the
+// way the parser that will run the pasted line strips them, so a flag before a
+// subcommand — `fugaro -v issue show …` — cannot stop the check at the flag.
+// Two things refuse the line (D1614, F28), and both are the same defect: the
+// reader would be sent to a command that answers "unknown command". The walk
+// itself returns one for a word the root cannot place (`fugaro frobnicate`);
+// the other is a word left over at a command with subcommands
+// (`fugaro issue frobnicate`, and `fugaro -v issue frobnicate` once the flag is
+// read as the flag it is), which cobra does not report at all.
 //
 // What comes back is the record's own text through safetext, which is that
 // same text unchanged once every byte of it has passed the check: it is a
@@ -277,21 +281,49 @@ func retryCommand(command string, root *cobra.Command) (string, bool) {
 	if len(words) == 0 || words[0] != root.Name() || !retryWordsInert(words) {
 		return "", false
 	}
-	cur := root
-	for _, word := range words[1:] {
-		if strings.HasPrefix(word, "-") {
-			break
-		}
-		next, _, err := cur.Find([]string{word})
-		if err != nil || next == cur {
-			if cur.HasSubCommands() {
-				return "", false
-			}
-			break
-		}
-		cur = next
+	found, rest, err := root.Find(words[1:])
+	if err != nil {
+		return "", false
+	}
+	if found.HasSubCommands() && retryUnknownWord(rest, found) {
+		return "", false
 	}
 	return safetext.OneLine(command), true
+}
+
+// retryUnknownWord reports whether the words the tree walk could not place
+// still hold one cobra would read as an unknown subcommand: a word that is
+// neither a flag nor a flag's own value. It is the half of the check Find
+// cannot make itself, because cobra only answers "unknown command" for the
+// root (legacyArgs): `fugaro issue frobnicate` reaches `issue` with
+// `frobnicate` unplaced and no error at all.
+//
+// A flag's value is what the flag's own declaration says it is, which is how
+// cobra reads the line too: `--repo [REDACTED]` is one flag and its argument,
+// while a boolean (`-v`) and a `--flag=value` pair take no word after them.
+func retryUnknownWord(words []string, cmd *cobra.Command) bool {
+	flags := cmd.Flags()
+	for len(words) > 0 {
+		word := words[0]
+		words = words[1:]
+		if !strings.HasPrefix(word, "-") {
+			return true
+		}
+		var takesValue bool
+		switch {
+		case strings.Contains(word, "="):
+		case strings.HasPrefix(word, "--"):
+			f := flags.Lookup(word[2:])
+			takesValue = f != nil && f.NoOptDefVal == ""
+		case len(word) == 2:
+			f := flags.ShorthandLookup(word[1:])
+			takesValue = f != nil && f.NoOptDefVal == ""
+		}
+		if takesValue && len(words) > 0 {
+			words = words[1:]
+		}
+	}
+	return false
 }
 
 // retryRedacted is the word the record carries where a value it may not keep

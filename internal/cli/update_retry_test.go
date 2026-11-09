@@ -269,7 +269,9 @@ func TestUpdateRetryDevVersionPrintsNothing(t *testing.T) {
 // this build's own tree has (D1614, F28). A command run from a path is one
 // whose first word the record redacted, and a word no command answers to is not
 // a command at all: neither is offered, while the fugaro commands are — with
-// the arguments and flags the record kept, which are the person's own.
+// the arguments and flags the record kept, which are the person's own. A flag
+// is not a subcommand and hides nothing: the words after it are checked like
+// any other, so `fugaro -v frobnicate` is the unknown command it always was.
 //
 // The line is also a line a person pastes, and the record it comes from is a
 // file on this machine that a coding agent running as the user can write
@@ -290,6 +292,14 @@ func TestUpdateRetryPrintsOnlyFugaroCommands(t *testing.T) {
 		{"[REDACTED] update", ""},
 		{"fugaro frobnicate", ""},
 		{"fugaro issue frobnicate", ""},
+		// A flag before the subcommand is read the way the parser that runs
+		// the pasted line reads it: it neither stops the check at the flag
+		// nor vouches for the word after it.
+		{"fugaro -v frobnicate", ""},
+		{"fugaro --verbose issue frobnicate", ""},
+		{"fugaro -v issue frobnicate", ""},
+		{"fugaro -v update", "You can retry: fugaro -v update"},
+		{"fugaro -v issue show [REDACTED]", "You can retry: fugaro -v issue show [REDACTED]"},
 		{"sh -c [REDACTED]", ""},
 		{"", ""},
 		// A stored command a shell runs as two.
