@@ -222,7 +222,8 @@ var childSettings = struct {
 // ~/AppData/Roaming rules above stand in for: they name the default, and a
 // roaming profile that is redirected elsewhere moves the whole set with it. A
 // variable that is unset, relative or not a path leaves the rule above as the
-// answer.
+// answer, and one holding a path no rule can carry refuses the diagnosis
+// rather than leave the store open (childDenyRules).
 //
 // A directory is denied as its whole tree, a path list store by store, and a
 // single file by name, because /** does not match the file it is written
@@ -269,12 +270,13 @@ var childStoresByVar = []childStore{
 // in a rule — C:\Users\ada as //c/Users/ada — which is also how it spells the
 // path it matches the rule against.
 //
-// ok is false for a path no rule can name: a UNC share, which the client
-// refuses to scope, or one holding a character the glob syntax reserves or a
-// control character, which would either not parse as a rule or match
-// something other than itself. One bad rule risks the whole payload with it,
-// so the caller falls back to the default rules for such a store instead of
-// writing it out.
+// ok is false for a path no rule can name: a UNC share, which the client's
+// rule syntax has no form for, or one holding a character the glob syntax
+// reserves or a control character, which would either not parse as a rule or
+// match something other than itself. One bad rule risks the whole payload with
+// it, so the caller writes no such rule — and because the default rules name
+// where a store sits on a machine that did not move it, it refuses the whole
+// diagnosis rather than run one with that store open (childDenyRules).
 func childRulePath(path string) (string, bool) {
 	p := filepath.ToSlash(path)
 	if strings.HasPrefix(p, "//") {
@@ -307,7 +309,13 @@ func childStorePaths(parent []string, store childStore) []string {
 			continue
 		}
 		if store.sub != "" {
-			value = filepath.Join(value, store.sub)
+			// Joined by hand rather than with filepath.Join, which cleans: it
+			// would collapse a share's leading "//" into one slash, and the
+			// path would then read as an absolute one on this machine — a rule
+			// naming the wrong place rather than no rule at all, which is the
+			// one answer the caller must not get (childRulePath refuses a
+			// share by that "//", before anything can clean it).
+			value = strings.TrimRight(filepath.ToSlash(value), "/") + "/" + store.sub
 		}
 		paths = append(paths, value)
 	}
@@ -317,13 +325,23 @@ func childStorePaths(parent []string, store childStore) []string {
 // childDenyRules is the payload's deny list for one diagnosis: childReadDeny,
 // plus a rule for every store a variable has moved. Order is fixed, so the
 // payload is the same for the same environment and a test can pin it whole.
-func childDenyRules(parent []string) []string {
+//
+// A store a variable has moved to a path no rule can name is an error and not
+// a rule left out. The default rules name where such a store sits on a machine
+// that did not move it, so dropping the rule would run the diagnosis with the
+// store readable — and a store no rule names is exactly what a read steered by
+// the log, which holds real paths, goes for. Nothing here can widen the rule
+// instead: the nearest ancestor a rule can name is the wrong place entirely
+// (a Windows profile on a share has no nameable base at all) and denying a
+// directory above it would deny the source tree with it. So the diagnosis is
+// refused, naming the store, and the person decides what to do about it.
+func childDenyRules(parent []string) ([]string, error) {
 	rules := slices.Clone(childReadDeny)
 	for _, store := range childStoresByVar {
 		for _, path := range childStorePaths(parent, store) {
 			rule, ok := childRulePath(path)
 			if !ok {
-				continue
+				return nil, fmt.Errorf("%s names %s, and no deny rule can name that path: a rule is a glob over the filesystem, and the client's syntax has no form for a UNC share or for a path holding a character it reserves. This diagnosis is refused rather than run with that store open, because the rules name only where such a store sits on a machine that did not move it, and the log this child reads carries real paths", store.env, path)
 			}
 			if store.dir {
 				rule += "/**"
@@ -331,17 +349,22 @@ func childDenyRules(parent []string) []string {
 			rules = append(rules, rule)
 		}
 	}
-	return rules
+	return rules, nil
 }
 
 // childSettingsJSON is childSettings rendered for one diagnosis, from the
 // environment that diagnosis is composed from (childDenyRules). Order is the
 // struct's and the rules' own, so the same environment gives the same command
-// line, which is what lets a test pin it whole.
-func childSettingsJSON(parent []string) string {
+// line, which is what lets a test pin it whole. The error is childDenyRules':
+// a store this payload cannot name is a store the child would read.
+func childSettingsJSON(parent []string) (string, error) {
+	rules, err := childDenyRules(parent)
+	if err != nil {
+		return "", err
+	}
 	s := childSettings
 	s.DisableAllHooks = true
-	for _, path := range childDenyRules(parent) {
+	for _, path := range rules {
 		for _, tool := range childFileTools {
 			s.Permissions.Deny = append(s.Permissions.Deny, tool+"("+path+")")
 		}
@@ -352,7 +375,7 @@ func childSettingsJSON(parent []string) string {
 		// here is a bug in this package and not something a person can reach.
 		panic("diagnoseagent: the child's settings payload: " + err.Error())
 	}
-	return string(b)
+	return string(b), nil
 }
 
 // childEnvAllowList is what the child inherits from the person's environment:
@@ -460,19 +483,26 @@ type Diagnosis struct {
 	CostUSD float64
 }
 
-// Args returns the client command line of one diagnosis. The prompt goes on
-// stdin, as it does for a run's own stages; everything a stage's argv would
-// carry that lets an agent act — --dangerously-skip-permissions, a permission
-// mode, a settings source of the machine's, an MCP configuration — is absent
-// on purpose, and the value of --tools is what says so.
-func Args(req Request) []string { return argsFor(req, req.ParentEnv) }
+// Args returns the client command line of one diagnosis, and an error when the
+// deny payload cannot be written for the environment the request names: a
+// store a variable has moved to a path no rule can name is refused rather than
+// left out (childDenyRules). The prompt goes on stdin, as it does for a run's
+// own stages; everything a stage's argv would carry that lets an agent act —
+// --dangerously-skip-permissions, a permission mode, a settings source of the
+// machine's, an MCP configuration — is absent on purpose, and the value of
+// --tools is what says so.
+func Args(req Request) ([]string, error) { return argsFor(req, req.ParentEnv) }
 
 // argsFor is Args with the environment the child's own is composed from passed
 // in, so that the payload's deny rules and the child's environment come from
 // one resolution of it: Run resolves them together, and Args with a nil
 // ParentEnv is a request that names no environment at all, which is what the
 // rules that are home-relative alone are for.
-func argsFor(req Request, parent []string) []string {
+func argsFor(req Request, parent []string) ([]string, error) {
+	settings, err := childSettingsJSON(parent)
+	if err != nil {
+		return nil, err
+	}
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
@@ -493,7 +523,7 @@ func argsFor(req Request, parent []string) []string {
 		// answer, written under the person's home. A diagnosis is one question
 		// asked once, and nothing it reads belongs in a store on their disk.
 		"--no-session-persistence",
-		"--settings", childSettingsJSON(parent),
+		"--settings", settings,
 		"--add-dir", req.EvidenceDir,
 	}
 	if req.Model != "" {
@@ -502,7 +532,7 @@ func argsFor(req Request, parent []string) []string {
 	cap := req.Cap.withDefaults()
 	return append(args,
 		"--max-turns", strconv.Itoa(cap.Turns),
-		"--max-budget-usd", cap.budgetArg())
+		"--max-budget-usd", cap.budgetArg()), nil
 }
 
 // budgetArg is the dollar cap as the client's flag takes it and as the
@@ -545,9 +575,15 @@ func Run(ctx context.Context, req Request) (Diagnosis, error) {
 	if parent == nil {
 		parent = os.Environ()
 	}
+	// The argv is built before the child starts, and a store the payload cannot
+	// name ends the diagnosis here rather than at the first read of it.
+	args, err := argsFor(req, parent)
+	if err != nil {
+		return Diagnosis{}, err
+	}
 	code, runErr := procgroup.Run(ctx, procgroup.Cmd{
 		Name:   bin,
-		Args:   argsFor(req, parent),
+		Args:   args,
 		Dir:    req.SourceDir,
 		Env:    childEnvironment(parent, req.Handle),
 		Stdin:  strings.NewReader(req.Prompt),

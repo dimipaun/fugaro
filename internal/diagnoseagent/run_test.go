@@ -25,16 +25,19 @@ import (
 //
 // There is one model of the client here, and it is run.go's: its file tools
 // are not confined to the working directory and the --add-dir folders, so the
-// deny payload is the whole of what closes a path (F16). Whether the pinned
-// client confines them is U2, still unverified, and the fake deliberately does
-// not model a confinement the argv does not ask for and run.go does not
-// promise: it refuses a read because the payload names it, and for no other
-// reason. What the argv does say about the two folders is pinned where it
-// belongs — the contract case counts the --add-dir values and
-// TestRunStartsTheChildInTheSourceTree pins the working directory. Either way
-// a mutation is behavioural rather than structural: add Bash to the allow-list,
-// or empty the deny payload, and the fake child *does the thing* — the sentinel
-// appears, or the file nobody may read is read.
+// deny payload is the whole of what closes a path (F16). U2 asked whether the
+// pinned client confines them, and reading that client answered no: --restricted
+// is what asks for that confinement and this argv does not pass it
+// (docs/diagnose-agent/reconciliation.md). The fake therefore models no
+// confinement the argv does not ask for: it refuses a read because the payload
+// names it, and for no other reason. Reading a binary is not a test, so nothing
+// here pins the client's own behaviour — what these cases pin is the payload
+// and the argv this package builds. What the argv does say about the two
+// folders is pinned where it belongs — the contract case counts the --add-dir
+// values and TestRunStartsTheChildInTheSourceTree pins the working directory.
+// Either way a mutation is behavioural rather than structural: add Bash to the
+// allow-list, or empty the deny payload, and the fake child *does the thing* —
+// the sentinel appears, or the file nobody may read is read.
 
 func TestMain(m *testing.M) {
 	cleanup, err := testutil.PrepareFakeCommands()
@@ -279,7 +282,7 @@ func fence(nonce, body string) string {
 func runArgv(t *testing.T) (args []string, evidence string) {
 	t.Helper()
 	source, evidence := runFolders(t)
-	args = Args(Request{
+	args, err := Args(Request{
 		Handle:      runHandle(t, runValue(t, "argv")),
 		Prompt:      "prompt",
 		Nonce:       NewNonce(),
@@ -288,6 +291,9 @@ func runArgv(t *testing.T) (args []string, evidence string) {
 		SourceDir:   source,
 		EvidenceDir: evidence,
 	})
+	if err != nil {
+		t.Fatalf("a request that names no environment of its own has no store to follow, so Args cannot fail here: %v", err)
+	}
 	return args, evidence
 }
 
@@ -409,10 +415,13 @@ func TestRunArgsIsTheReadOnlyContract(t *testing.T) {
 // must not accept.
 func TestRunArgsAlwaysCarriesACap(t *testing.T) {
 	source, evidence := runFolders(t)
-	args := Args(Request{
+	args, err := Args(Request{
 		Handle: runHandle(t, runValue(t, "nocap")), Prompt: "prompt", Nonce: NewNonce(),
 		SourceDir: source, EvidenceDir: evidence,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got, _ := runFlag(args, "--max-turns"); got != "30" {
 		t.Errorf("--max-turns is %q, want DefaultCap's 30", got)
 	}
@@ -422,10 +431,13 @@ func TestRunArgsAlwaysCarriesACap(t *testing.T) {
 	// The cap the client is given is the cap the post-run check compares
 	// against, whatever its size: a cap below a cent written to two decimals
 	// is "0.00" to the client, which is not the bound this run was promised.
-	args = Args(Request{
+	args, err = Args(Request{
 		Handle: runHandle(t, runValue(t, "cents")), Prompt: "prompt", Nonce: NewNonce(),
 		Cap: Cap{Turns: 5, USD: 0.001}, SourceDir: source, EvidenceDir: evidence,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got, _ := runFlag(args, "--max-budget-usd"); got != "0.001" {
 		t.Errorf("--max-budget-usd is %q for a cap of 0.001, want the cap itself", got)
 	}
@@ -743,6 +755,46 @@ func TestRunDeniesAStoreTheEnvironmentMoved(t *testing.T) {
 	}
 }
 
+// TestRunRefusesAStoreNoRuleCanName: a store a variable has moved to a path no
+// rule can name ends the diagnosis instead of leaving the payload one rule
+// short. Leaving it out would be silent in the worst way: the default rules
+// name where such a store sits on a machine that did not move it, so the run
+// would look protected and read a log holding real paths with that store open
+// — on Windows, a profile redirected to a share is the base of every APPDATA
+// row at once, so four of them go missing together. The names here are the
+// three shapes childRulePath refuses: a share, a reserved character and a
+// control character, the last two of which a person's own directory name can
+// carry. The fake child records itself in a file, so "the child never started"
+// is a fact here and not an inference from the error's text.
+func TestRunRefusesAStoreNoRuleCanName(t *testing.T) {
+	for _, tc := range []struct{ name, env, value string }{
+		{"a share a roaming profile moved to", "APPDATA", "//server/share/profiles/ada/AppData/Roaming"},
+		{"a reserved character", "GNUPGHOME", "/home/ada (keys)/gnupg"},
+		{"a control character", "DOCKER_CONFIG", "/home/ada/\x07docker"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newRunSetup(t)
+			s.req.ParentEnv = append(s.req.ParentEnv, tc.env+"="+tc.value)
+			block := answer(t, fence(s.nonce, "outcome: bug\nsignature: update config invalid\nbody"))
+			_, err := s.run(t, block)
+			if err == nil {
+				t.Fatalf("%s names %s, which no rule can name, and the diagnosis ran: the payload is a store short, and the child reads a log that holds real paths", tc.env, tc.value)
+			}
+			if !strings.Contains(err.Error(), tc.env) || !strings.Contains(err.Error(), tc.value) {
+				t.Errorf("the refusal has to name the variable and the path it cannot deny (%s, %s), so a person can move the store or unset the variable: %v", tc.env, tc.value, err)
+			}
+			// The command line is refused too: a caller that builds its own
+			// argv must not be handed a payload that is a rule short.
+			if _, err := Args(s.req); err == nil {
+				t.Errorf("Args built a command line whose payload cannot name %s, so a caller building its own argv gets a rule short of the contract", tc.env)
+			}
+			if _, statErr := os.Stat(s.record); statErr == nil {
+				t.Errorf("the child was started although the payload could not name %s: %s", tc.env, s.did(t))
+			}
+		})
+	}
+}
+
 // TestRunRulePathsAreSpelledTheWayTheClientReadsThem: a rule path is a glob
 // whose first characters decide where it starts, and only a double slash means
 // the filesystem root. The client's own parser turns "//x" into the absolute
@@ -751,8 +803,10 @@ func TestRunDeniesAStoreTheEnvironmentMoved(t *testing.T) {
 // into the child's own home; a Windows path is spelled the way the client
 // spells one in a rule, the drive letter lowercased under a leading slash.
 // The payload can therefore be wrong in a way that looks right — every rule
-// absolute-looking and none of them absolute — which is what this pins, with
-// the stores and paths no rule can name left to the defaults instead.
+// absolute-looking and none of them absolute — which is what this pins. It is
+// also the answer the caller reads for a path no rule can carry: no rule at
+// all, and the diagnosis refused rather than run a store short
+// (TestRunRefusesAStoreNoRuleCanName).
 //
 // The Windows spellings here are the ones the caller on Windows produces
 // (filepath.ToSlash), which is what makes the drive rule testable from a
