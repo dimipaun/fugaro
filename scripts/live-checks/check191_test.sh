@@ -40,10 +40,18 @@ expect_status() { # status want what
 }
 
 # One run id base for the whole test file, so a case that asserts on a run id and
-# the run the check launches cannot disagree. It starts with today's UTC date
-# because the check refuses a base that does not: the service reads a run's
-# outcome under the day the RUN ID names.
-run_base="$(date -u +%Y%m%d)-010101-chk191test"
+# the run the check launches cannot disagree. It carries today's UTC date and a
+# time, which is the only shape the check accepts (and the only shape `fugaro
+# run` accepts once the check's own four hex characters are on the end): the
+# service reads a run's outcome under the day the RUN ID names.
+run_base="$(date -u +%Y%m%d)-010101"
+
+# rid_of DIR KIND: the id the check launched that run under, read out of what the
+# fake `fugaro run` was given — the id is the check's to build, so a case reads
+# it rather than spelling it.
+rid_of() {
+  sed -n "s/^\([^	]*\)	$2	.*/\1/p" "$1/state/runs" | head -n 1
+}
 
 # --------------------------------------------------------------------- fakes
 # The fakes keep their state in ONE directory, so what the check launches is what
@@ -120,6 +128,16 @@ run)
     echo "fugaro run: no --run-id" >&2
     exit 1
   }
+  # The CLI's own rule, internal/task's runIDRE and Spec.Validate: a run id the
+  # real `fugaro run` refuses is a run this check never launches, so the fake
+  # refuses it too and a test can never pass over an id the CLI would reject.
+  case "$rid" in
+  [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+  *)
+    echo "fugaro run: --run-id '$rid' is not the shape a run id takes (^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}\$)" >&2
+    exit 1
+    ;;
+  esac
   kind=work
   if has --recipe "$@"; then kind=review; fi
   task=$(flag --task-file "$@")
@@ -223,6 +241,7 @@ with open(os.path.join(LOG, "gcloud.calls"), "a") as fh:
 ALLOWED = {
     ("auth", "print-access-token"): (),
     ("run", "jobs", "list"): ("--project", "--region", "--format"),
+    ("secrets", "list"): ("--project", "--format"),
     ("secrets", "get-iam-policy"): ("--project", "--format"),
     ("logging", "read"): ("--project", "--freshness", "--limit", "--format"),
 }
@@ -266,9 +285,19 @@ elif sub == ("run", "jobs", "list"):
         sys.stderr.write("ERROR: (gcloud) this check reads us-east5 only\n")
         sys.exit(1)
     sys.stdout.write(state("jobs.json", "[]\n"))
+elif sub == ("secrets", "list"):
+    sys.stdout.write(state("secrets.json", "[]\n"))
 elif sub == ("secrets", "get-iam-policy"):
-    if "bitbucket-token" not in args:
-        sys.stderr.write("ERROR: (gcloud) this check reads bitbucket-token only\n")
+    # The policy is answered for the containers the list fixture holds and no
+    # other: a check that asked about a name the installation never created
+    # (the logical name instead of the derived ID, say) gets a NOT_FOUND here,
+    # which is what Secret Manager answers it with.
+    listed = json.loads(state("secrets.json", "[]\n"))
+    ids = [s.get("name", "").rsplit("/", 1)[-1] for s in listed
+           if isinstance(s, dict)]
+    if not [a for a in args if a in ids]:
+        sys.stderr.write("ERROR: (gcloud) NOT_FOUND: no secret named %s\n"
+                         % " ".join(a for a in args if not a.startswith("--")))
         sys.exit(1)
     sys.stdout.write(state("secret-policy.json", '{"bindings":[]}\n'))
 elif sub == ("logging", "read"):
@@ -300,6 +329,34 @@ elif sub == ("logging", "read"):
     sys.stdout.write(json.dumps(out) + "\n")
 GCLOUD_EOF
   chmod +x "$1/bin/gcloud"
+}
+
+# The fake `git` answers one question — the origin remote of a directory the test
+# has declared as a checkout — and refuses every other, the way git refuses a
+# directory that is not a repository. The check's flip-mode guard is the only
+# caller.
+write_fake_git() { # dir
+  mkdir -p "$1/bin"
+  cat >"$1/bin/git" <<'GIT_EOF'
+#!/usr/bin/env python3
+"""A stand-in for `git`, for scripts/live-checks/check191.sh's test only."""
+import os, sys
+
+STATE = os.environ["FAKE_GIT_STATE"]
+args = sys.argv[1:]
+with open(os.path.join(os.environ["FAKE_LOG_DIR"], "git.calls"), "a") as fh:
+    fh.write("git " + " ".join(args) + "\n")
+if args[:1] != ["-C"] or args[2:4] != ["remote", "get-url"]:
+    sys.stderr.write("git: this fake answers '-C DIR remote get-url NAME' only\n")
+    sys.exit(2)
+directory = args[1].strip("/").replace("/", "_") or "_root"
+path = os.path.join(STATE, "origins", directory)
+if not os.path.exists(path):
+    sys.stderr.write("fatal: not a git repository (or any of the parent directories): .git\n")
+    sys.exit(128)
+sys.stdout.write(open(path).read().strip() + "\n")
+GIT_EOF
+  chmod +x "$1/bin/git"
 }
 
 write_fake_curl() { # dir
@@ -372,6 +429,7 @@ run_check() { # run_check DIR SCRIPT ENV... -- ARGS...
   : >"$dir/logs/gcloud.calls"
   : >"$dir/logs/fugaro.calls"
   : >"$dir/logs/curl.calls"
+  : >"$dir/logs/git.calls"
   cat >"$dir/home/.config/fugaro/projects/fugaro.yaml" <<'CFG_EOF'
 budget:
   rtdb_url: https://fugaro-dev-default-rtdb.firebaseio.com
@@ -381,9 +439,11 @@ CFG_EOF
     PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
     FAKE_LOG_DIR="$dir/logs" FAKE_GCLOUD_STATE="$dir/state" \
     FAKE_FUGARO_STATE="$dir/state" FAKE_CURL_STATE="$dir/state" \
+    FAKE_GIT_STATE="$dir/state" \
     CHECK191_REPO=workspace-a/repo-a CHECK191_OTHER_REPO=workspace-a/repo-b \
     CHECK191_PLAIN_REPO=workspace-a/plain CHECK191_OTHER_PR=4 \
     CHECK191_RUN_ID="$run_base" CHECK191_WAIT_SECONDS=0 CHECK191_POLL_SECONDS=0 \
+    CHECK191_CHECKOUT="$dir/checkout" \
     ${args[@]+"${args[@]}"} \
     bash "$checked" ${cli[@]+"${cli[@]}"} >"$dir/out" 2>"$dir/err" || status=$?
   out=$(cat "$dir/out")
@@ -392,10 +452,14 @@ CFG_EOF
 }
 
 prepare() { # dir
-  mkdir -p "$1/home" "$1/tmp" "$1/state"
+  mkdir -p "$1/home" "$1/tmp" "$1/state" "$1/checkout" "$1/state/origins"
   write_fake_fugaro "$1"
   write_fake_gcloud "$1"
   write_fake_curl "$1"
+  write_fake_git "$1"
+  # The checkout the flip's doctor row is read in: the sandbox repository's own,
+  # which is what the check's guard resolves before anything is launched.
+  printf 'https://bitbucket.org/workspace-a/repo-a.git\n' >"$1/state/origins/$(printf '%s' "$1/checkout" | sed 's|^/||; s|/|_|g')"
   # The published node: the sandbox repository is admitted with proxy: true.
   cat >"$1/state/project-policy.json" <<'POLICY_EOF'
 {"project":"fugaro","policy":{"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true}}}
@@ -405,7 +469,10 @@ POLICY_EOF
 DOCTOR_EOF
   # The repository's jobs, as `gcloud run jobs list --format=json` answers them:
   # the v1 Job shape, whose service account and container env are at
-  # spec.template.spec.template.spec.
+  # spec.template.spec.template.spec. The mount names the DERIVED Secret Manager
+  # ID — gcp.ProjectSecretID("fugaro", "bitbucket-token") — never the logical
+  # name bitbucket-token, which is what a job that mounts the token actually
+  # carries (deploy/terraform/gcp/modules/workflow/job.tf's job_mounts).
   cat >"$1/state/jobs.json" <<'JOBS_EOF'
 [{"metadata":{"name":"fugaro-workspace-a-repo-a-web-0123456789ab"},
   "spec":{"template":{"spec":{"template":{"spec":{
@@ -418,8 +485,17 @@ DOCTOR_EOF
     "serviceAccountName":"fugaro-b-2@fugaro-dev.iam.gserviceaccount.com",
     "containers":[{"image":"example.invalid/base:0.15.0","env":[
       {"name":"FUGARO_REMOTE","value":"https://bitbucket.org/workspace-a/plain.git"},
-      {"name":"FUGARO_BITBUCKET_TOKEN","valueSource":{"secretKeyRef":{"secret":"bitbucket-token","version":"latest"}}}]}]}}}}}}]
+      {"name":"FUGARO_BITBUCKET_TOKEN","valueSource":{"secretKeyRef":{"secret":"fugaro-project-fugaro-bitbucket-token-d874a0dfd2bd0854","version":"latest"}}}]}]}}}}}}]
 JOBS_EOF
+  # The token's own container, as `gcloud secrets list --format=json` answers it:
+  # the project-wide one, labelled with the logical name it holds — which is the
+  # only handle on a name whose ID is derived.
+  cat >"$1/state/secrets.json" <<'SECRETS_EOF'
+[{"name":"projects/fugaro-dev/secrets/fugaro-project-fugaro-bitbucket-token-d874a0dfd2bd0854",
+  "labels":{"fugaro":"managed","fugaro_project":"fugaro","fugaro_secret":"bitbucket-token"}},
+ {"name":"projects/fugaro-dev/secrets/fugaro-project-fugaro-creds-bundle-3f1c2b4a5d6e7f80",
+  "labels":{"fugaro":"managed","fugaro_project":"fugaro","fugaro_secret":"creds-bundle"}}]
+SECRETS_EOF
   # The secret's own IAM policy: after the flip no job account holds a role on it.
   cat >"$1/state/secret-policy.json" <<'IAM_EOF'
 {"bindings":[{"role":"roles/secretmanager.secretAccessor","members":["serviceAccount:fugaro-credentials@fugaro-dev.iam.gserviceaccount.com"]}]}
@@ -459,7 +535,8 @@ test_the_plan_prints_for_the_flip() {
   expect_contains "$out" "CHECK 192 RESULT" "after-flip dry run: the block is Check 192's"
   expect_contains "$out" "FACT mount: INFO — planned" "after-flip dry run: the mount row is planned"
   expect_contains "$out" "FACT accessor: INFO — planned" "after-flip dry run: the accessor row is planned"
-  expect_contains "$err" "gcloud secrets get-iam-policy bitbucket-token" "after-flip dry run: the accessor read is printed"
+  expect_contains "$err" "gcloud secrets list --project=fugaro-dev" "after-flip dry run: the accessor read is printed"
+  expect_contains "$err" "labelled fugaro_secret=bitbucket-token" "after-flip dry run: the plan says which container the accessor is read from"
   expect_absent "$(cat "$dir/logs/gcloud.calls")" "gcloud" "after-flip dry run: nothing was read"
   if [ -d "$scratch" ]; then fail "after-flip dry run: the scratch directory survived"; fi
 }
@@ -507,9 +584,40 @@ test_repo_guard() {
 test_the_run_id_must_name_today() {
   local dir=$work/ridday
   prepare "$dir"
-  run_check "$dir" "$script" CHECK191_RUN_ID=20200101-000000-chk191 CHECK191_DRY_RUN=1
+  run_check "$dir" "$script" CHECK191_RUN_ID=20200101-000000 CHECK191_DRY_RUN=1
   expect_status "$status" 1 "run id of another day"
-  expect_contains "$err" "today's UTC date" "run id of another day: the stop says why"
+  expect_contains "$err" "today's UTC date and a time" "run id of another day: the stop says why"
+}
+
+# The default base and the shape rule have to be the same one: the check builds
+# every run id as <base>-<4 hex>, and `fugaro run` refuses anything but
+# ^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$. A base that is today's date but not a time is
+# refused — and the run the check would launch under it never reaches the CLI.
+test_the_run_id_base_must_be_todays_date_and_a_time() {
+  local dir=$work/ridshape
+  prepare "$dir"
+  run_check "$dir" "$script" "CHECK191_RUN_ID=$(date -u +%Y%m%d)-0101" CHECK191_DRY_RUN=1
+  expect_status "$status" 1 "a base that is not a time"
+  expect_contains "$err" "YYYYMMDD-HHMMSS" "a base that is not a time: the stop names the shape"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a base that is not a time: nothing is launched"
+}
+
+# The fake `fugaro run` carries the CLI's own run-id rule, and this is what says
+# so: a test that passed over an id `fugaro run` would refuse would be a test of
+# nothing, and the way to notice is to ask the fake directly.
+test_the_fake_run_refuses_an_id_the_cli_would_refuse() {
+  local dir=$work/badrid
+  prepare "$dir"
+  mkdir -p "$dir/logs"
+  : >"$dir/logs/fugaro.calls"
+  printf 'a probe\n' >"$dir/task.md"
+  if env PATH="$dir/bin:$PATH" FAKE_LOG_DIR="$dir/logs" FAKE_FUGARO_STATE="$dir/state" \
+    "$dir/bin/fugaro" run --repo workspace-a/repo-a --run-id "$run_base-work" \
+    --task-file "$dir/task.md" >"$dir/out" 2>"$dir/err"; then
+    fail "the fake fugaro run accepted '$run_base-work': the test could pass over a run id the CLI refuses"
+  fi
+  expect_contains "$(cat "$dir/err")" "not the shape a run id takes" "the fake refuses a run id the CLI would"
+  if [ -s "$dir/state/runs" ]; then fail "the fake recorded a run it had refused"; fi
 }
 
 test_happy_path() {
@@ -539,16 +647,16 @@ test_happy_path() {
   # The three runs, each launched with the id this check built for it, the
   # review one as a review-only run.
   calls=$(cat "$dir/logs/fugaro.calls")
-  expect_contains "$calls" "--run-id $run_base-work" "happy path: the working run"
-  expect_contains "$calls" "--run-id $run_base-review" "happy path: the review run"
+  expect_contains "$calls" "--run-id $(rid_of "$dir" work)" "happy path: the working run"
+  expect_contains "$calls" "--run-id $(rid_of "$dir" review)" "happy path: the review run"
   expect_contains "$calls" "--recipe review-only" "happy path: the review run is a review-only run"
-  expect_contains "$calls" "--run-id $run_base-ended" "happy path: the probe"
+  expect_contains "$calls" "--run-id $(rid_of "$dir" ended)" "happy path: the probe"
   # The working run is a REAL run: its task asks for the one commit, the push
   # and the pull request the row reads. A task that asked for no change would
   # leave the runner failing the run ("the agent made no commits") and pushing a
   # draft anyway, so a row that read `pushed=yes` alone would pass over a probe
   # that measured a failure instead of the proxy.
-  expect_contains "$(cat "$dir/state/tasks/$run_base-work.md")" \
+  expect_contains "$(cat "$dir/state/tasks/$(rid_of "$dir" work).md")" \
     "commit it, push your branch and open the pull request" \
     "happy path: the working run's task asks for a real run"
   expect_contains "$out" "opened pull request #41" "happy path: the run-outcome row carries the pull request"
@@ -606,7 +714,7 @@ test_an_outcome_that_cannot_be_written_stops_the_check() {
   run_check "$dir" "$script" FAKE_CURL_MODE=outcome-refused
   expect_status "$status" 2 "an outcome that could not be written"
   expect_contains "$out" "FACT ended-identity: FAIL" "an unwritable outcome: the fact"
-  expect_absent "$(cat "$dir/logs/fugaro.calls")" "--run-id $run_base-ended" "an unwritable outcome: no probe was launched"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "--run-id $run_base-0003" "an unwritable outcome: no probe was launched"
   expect_contains "$out" "FACT scratch-removed: PASS" "an unwritable outcome: the scratch directory is still restored"
 }
 
@@ -627,16 +735,22 @@ test_after_flip_happy_path() {
     "CHECK 192 RESULT END (exit 0)"; do
     expect_contains "$out" "$want" "after-flip: $want"
   done
-  expect_contains "$out" "FACT mount: PASS — 1 job of workspace-a/repo-a carries FUGARO_REMOTE and none mounts bitbucket-token" \
+  expect_contains "$out" "FACT mount: PASS — 1 job of workspace-a/repo-a carries FUGARO_REMOTE and none mounts the Bitbucket token" \
     "after-flip: the mount row counts the repository's jobs"
-  expect_contains "$(cat "$dir/logs/fugaro.calls")" "--run-id $run_base-plain" "after-flip: the plain repository's run"
+  # The accessor row names the DERIVED container it read the policy of, which is
+  # the one the jobs mounted before the flip.
+  expect_contains "$out" "FACT accessor: PASS — no job account of workspace-a/repo-a holds a role on the Bitbucket token's container(s) (fugaro-project-fugaro-bitbucket-token-d874a0dfd2bd0854)" \
+    "after-flip: the accessor row names the container it read"
+  expect_contains "$out" "FACT plain-repo: PASS" "after-flip: the plain row"
+  expect_contains "$out" "fugaro-project-fugaro-bitbucket-token-d874a0dfd2bd0854" "after-flip: the mount the plain repository still holds is named by its derived ID"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "--run-id $(rid_of "$dir" plain)" "after-flip: the plain repository's run"
   # Both of the flip's runs are real runs: their tasks ask for the one commit,
   # the push and the pull request their rows read, for the same reason the
   # working run's task does.
-  expect_contains "$(cat "$dir/state/tasks/$run_base-flip.md")" \
+  expect_contains "$(cat "$dir/state/tasks/$(rid_of "$dir" flip).md")" \
     "commit it, push your branch and open the pull request" \
     "after-flip: the proxied repository's run is a real run"
-  expect_contains "$(cat "$dir/state/tasks/$run_base-plain.md")" \
+  expect_contains "$(cat "$dir/state/tasks/$(rid_of "$dir" plain).md")" \
     "commit it, push your branch and open the pull request" \
     "after-flip: the plain repository's run is a real run"
   expect_contains "$out" "opened pull request #42" "after-flip: the proxied repository's row carries its pull request"
@@ -654,7 +768,9 @@ jobs = json.load(open(path))
 spec = jobs[0]["spec"]["template"]["spec"]["template"]["spec"]
 spec["containers"][0]["env"].append(
     {"name": "FUGARO_BITBUCKET_TOKEN",
-     "valueSource": {"secretKeyRef": {"secret": "bitbucket-token", "version": "latest"}}})
+     "valueSource": {"secretKeyRef":
+                     {"secret": "fugaro-project-fugaro-bitbucket-token-d874a0dfd2bd0854",
+                      "version": "latest"}}})
 open(path, "w").write(json.dumps(jobs))
 PY
   run_check "$dir" "$script" -- --after-flip
@@ -700,7 +816,51 @@ PY
   run_check "$dir" "$script" -- --after-flip
   expect_status "$status" 1 "a plain repository without its mount"
   expect_contains "$out" "FACT plain-repo: FAIL" "a plain repository without its mount: the fact"
-  expect_absent "$(cat "$dir/logs/fugaro.calls")" "--run-id $run_base-plain" "a plain repository without its mount: no run was launched in it"
+  # The id the plain run would have been launched under: <base>-<4 hex>, the
+  # check's own derivation for that label.
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "--run-id $run_base-0005" "a plain repository without its mount: no run was launched in it"
+}
+
+# doctor resolves the repository it answers about from the WORKING DIRECTORY: it
+# has no --repo, and its --dir is the plugin wiring's. A doctor run from
+# anywhere but the proxied repository's checkout therefore prints no
+# bitbucket-direct line at all, which reads as a finding about the flip when it
+# is a finding about where the owner was standing — so the check stops before it
+# launches two runs rather than failing that row 80 minutes later.
+test_the_flip_needs_the_repositorys_own_checkout() {
+  local dir=$work/checkout other notgit
+  prepare "$dir"
+  other=$dir/other-checkout
+  mkdir -p "$other"
+  printf 'git@bitbucket.org:workspace-a/repo-b.git\n' >"$dir/state/origins/$(printf '%s' "$other" | sed 's|^/||; s|/|_|g')"
+  run_check "$dir" "$script" CHECK191_CHECKOUT="$other" -- --after-flip
+  expect_status "$status" 1 "a checkout of another repository"
+  expect_contains "$err" "is a checkout of workspace-a/repo-b" "a checkout of another repository: the stop names what it found"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a checkout of another repository: no run was launched"
+  if [ -d "$scratch" ]; then fail "a checkout of another repository: the scratch directory survived"; fi
+  # A directory that is not a checkout at all is the other way in, and the stop
+  # says so rather than reading doctor's silence as a flip that did not happen.
+  notgit=$dir/not-a-checkout
+  mkdir -p "$notgit"
+  run_check "$dir" "$script" CHECK191_CHECKOUT="$notgit" -- --after-flip
+  expect_status "$status" 1 "a directory that is not a checkout"
+  expect_contains "$err" "not a checkout with an origin remote" "a directory that is not a checkout: the stop says why"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a directory that is not a checkout: no run was launched"
+}
+
+# The accessor row is read from the container(s) the installation labels
+# fugaro_secret=bitbucket-token. When there is none, the row cannot be read at
+# all: it is reported (FAIL, never a PASS nobody took) and the check ends as one
+# that could not measure, which is what exit 2 is for.
+test_after_flip_no_labelled_container_is_unmeasured() {
+  local dir=$work/nocontainer
+  prepare "$dir"
+  printf '[]\n' >"$dir/state/secrets.json"
+  run_check "$dir" "$script" -- --after-flip
+  expect_status "$status" 2 "no container carrying the label"
+  expect_contains "$out" "FACT accessor: FAIL" "no container carrying the label: the row is reported"
+  expect_contains "$out" "CHECK 192 RESULT END (exit 2)" "no container carrying the label: the check could not measure"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "gcloud secrets list --project=fugaro-dev" "no container carrying the label: the listing is what was read"
 }
 
 # Sharding, so a Go test could run these side by side: CHECK_TEST_SHARD="i/n"
@@ -725,6 +885,8 @@ t test_project_guard
 t test_the_project_guard_is_what_stops_a_foreign_installation
 t test_repo_guard
 t test_the_run_id_must_name_today
+t test_the_run_id_base_must_be_todays_date_and_a_time
+t test_the_fake_run_refuses_an_id_the_cli_would_refuse
 t test_happy_path
 t test_a_run_that_did_not_succeed_is_a_failure
 t test_a_forbidden_attempt_that_was_not_audited_is_a_failure
@@ -736,6 +898,8 @@ t test_after_flip_a_job_that_still_mounts_the_token_is_a_failure
 t test_after_flip_an_account_that_still_has_the_accessor_is_a_failure
 t test_after_flip_a_doctor_finding_is_a_failure
 t test_after_flip_a_plain_repository_that_lost_its_mount_is_a_failure
+t test_the_flip_needs_the_repositorys_own_checkout
+t test_after_flip_no_labelled_container_is_unmeasured
 
 if [ "$failures" -ne 0 ]; then
   echo "check191_test.sh: $failures failure(s)" >&2

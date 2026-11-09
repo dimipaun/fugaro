@@ -29,10 +29,13 @@
 #             ... --help             this text
 # Needs:      bash, mktemp, python3 (the reader), curl, gcloud (authenticated as
 #             an owner of the installation: it reads the audit log through Cloud
-#             Logging, the job list, the secret's IAM policy and mints the
-#             access token the outcome node is written with), fugaro (the
-#             release under test, installed here and configured for the
-#             installation, with `fugaro doctor --project fugaro` working).
+#             Logging, the job list, the secrets carrying the Bitbucket token's
+#             label and their IAM policies, and mints the access token the
+#             outcome node is written with), fugaro (the release under test,
+#             installed here and configured for the installation, with `fugaro
+#             doctor --project fugaro` working), and git for --after-flip (the
+#             repository's origin remote, to check you are standing in the
+#             checkout doctor reads).
 # Where:      the fugaro-dev installation ONLY, and sandbox Bitbucket
 #             repositories only: the project and the region are hard-coded in
 #             this file (never `gcloud config get-value project`), and a
@@ -40,7 +43,11 @@
 #             The installation must have its credentials service on and the
 #             sandbox repository published with `proxy: true` — Check 191 stops
 #             if either is not so, because the fact it measures is a REFUSAL,
-#             and only the service can refuse a call it is answering.
+#             and only the service can refuse a call it is answering. Check 192
+#             must be run from the proxied repository's own checkout (or with
+#             CHECK191_CHECKOUT naming it): doctor resolves the repository it is
+#             run in from the working directory, so the same command run
+#             anywhere else is never about this repository.
 # Creates:    Check 191: three throwaway runs in the sandbox repository (a
 #             working run, a review-only run, and a probe launched after its
 #             outcome was written by hand) and ONE Realtime Database node,
@@ -87,12 +94,14 @@
 #
 # Knobs (all CHECK191_*): REPO, OTHER_REPO, PLAIN_REPO (the sandbox
 # repositories), OTHER_PR (the number of an open pull request in OTHER_REPO that
-# the run tries to update), RUN_ID (the base the runs' ids are built from: it
-# must start with today's UTC date, which is the day the service reads a run's
-# outcome under), WAIT_SECONDS and POLL_SECONDS (how long a run is waited for),
-# LOG_WAIT_SECONDS and LOG_POLL_SECONDS and LOG_AGE and LOG_LIMIT (the audit
-# read, retried while Cloud Logging catches up), CONFIG (the installation's
-# local config, read for the budget's rtdb_url), DRY_RUN, KEEP_SCRATCH.
+# the run tries to update), RUN_ID (the base the runs' ids are built from:
+# YYYYMMDD-HHMMSS, today's UTC date and the time, which is the day the service
+# reads a run's outcome under), CHECKOUT (the proxied repository's own checkout,
+# for --after-flip: the directory doctor must be run in; defaults to $PWD),
+# WAIT_SECONDS and POLL_SECONDS (how long a run is waited for), LOG_WAIT_SECONDS
+# and LOG_POLL_SECONDS and LOG_AGE and LOG_LIMIT (the audit read, retried while
+# Cloud Logging catches up), CONFIG (the installation's local config, read for
+# the budget's rtdb_url), DRY_RUN, KEEP_SCRATCH.
 set -Eeuo pipefail
 
 # No xtrace, whatever the shell it was started from had: the commands below
@@ -154,6 +163,9 @@ need_tools() {
   need curl
   need gcloud
   need fugaro
+  if [ "$MODE" = flip ]; then
+    need git "Check 192 reads the origin remote of the checkout doctor is run in, which is how it knows that checkout is this repository's"
+  fi
 }
 
 # ------------------------------------------------------------- scratch + trap
@@ -391,6 +403,18 @@ def jobs_of(path, repo):
         yield name, spec, e
 
 
+def bitbucket_mount(e):
+    """The Secret Manager secret a job mounts the Bitbucket token from, or ""
+    when it mounts none. The env name is what binds the mount — the CLI spells
+    the variable FUGARO_BITBUCKET_TOKEN (config.ReservedSecrets) — and the
+    secret it points at is the DERIVED Secret Manager ID
+    (deploy/terraform/gcp/modules/workflow/job.tf's job_mounts mounts
+    var.secrets[env.value]), never the logical name bitbucket-token, so nothing
+    here compares a name the deployment never writes."""
+    src = (e.get("FUGARO_BITBUCKET_TOKEN") or {}).get("valueSource") or {}
+    return (src.get("secretKeyRef") or {}).get("secret") or ""
+
+
 cmd = sys.argv[1]
 if cmd == "policy":
     block = ((load(sys.argv[2]) or {}).get("policy") or {}).get("bitbucket_token") or {}
@@ -431,17 +455,36 @@ elif cmd == "jobs":
     repo = sys.argv[3]
     total = mounts = 0
     accounts = set()
+    mounted = set()
     for name, spec, e in jobs_of(sys.argv[2], repo):
         total += 1
         accounts.add(spec.get("serviceAccountName") or "")
-        src = (e.get("FUGARO_BITBUCKET_TOKEN") or {}).get("valueSource") or {}
-        if (src.get("secretKeyRef") or {}).get("secret") == "bitbucket-token":
+        secret = bitbucket_mount(e)
+        if secret:
             mounts += 1
+            mounted.add(secret)
         print("job=%s" % word(name, 80))
     print("jobs=%d" % total)
     print("mounts=%d" % mounts)
+    for secret in sorted(mounted):
+        print("mounted=%s" % word(secret, 200))
     for a in sorted(x for x in accounts if x):
         print("account=%s" % word(a, 200))
+elif cmd == "secrets":
+    # Every container of the installation that holds the logical name
+    # bitbucket-token: the project-wide one and each repository's own, which the
+    # two modules label fugaro_secret=<the logical name>
+    # (deploy/terraform/gcp/modules/installation/secrets.tf and
+    # modules/repo/secrets.tf). A container's ID is derived from the name, so
+    # the label is the only handle a reader outside the Go code has.
+    for sec in load(sys.argv[2]) or []:
+        if not isinstance(sec, dict):
+            continue
+        if (sec.get("labels") or {}).get("fugaro_secret") != "bitbucket-token":
+            continue
+        name = (sec.get("name") or "").rsplit("/", 1)[-1]
+        if name:
+            print("secret=%s" % word(name, 200))
 elif cmd == "accessor":
     for b in (load(sys.argv[2]) or {}).get("bindings") or []:
         if not isinstance(b, dict):
@@ -494,16 +537,19 @@ guard_project() {
 }
 
 # guard_inputs: the repositories, the pull request number and the run ids, held
-# to the two things this check must never be pointed at — the owner's own
-# workspace, and a day that is not today, which is the day the service reads a
-# run's outcome under (it scans today+1 down to the launch day, and the launch
-# day is the run id's own UTC day).
+# to the things this check must never be pointed at — the owner's own workspace,
+# and a base the CLI's own run-id rule cannot carry: a run whose id `fugaro run`
+# refuses is a run this check never launches, and a base whose day is not today
+# is one whose ended-run probe is written where the service never looks (it
+# scans today+1 down to the launch day, and the launch day is the run id's own
+# UTC day).
 guard_inputs() {
   [ -n "$REPO" ] || stop "CHECK191_REPO must name the sandbox repository this check runs in (<workspace>/<repository>)"
   guard_one_repo "$REPO" CHECK191_REPO
   if [ "$MODE" = flip ]; then
     [ -n "$PLAIN_REPO" ] || stop "CHECK191_PLAIN_REPO must name a Bitbucket repository of this installation that the published policy does NOT admit with proxy: true (<workspace>/<repository>): the flip's other half is that such a repository is left as it was"
     guard_one_repo "$PLAIN_REPO" CHECK191_PLAIN_REPO
+    guard_checkout
   else
     [ -n "$OTHER_REPO" ] || stop "CHECK191_OTHER_REPO must name a SECOND sandbox repository of the installation (<workspace>/<repository>): one of the refusals is a call to another repository, and it cannot be made against this one"
     guard_one_repo "$OTHER_REPO" CHECK191_OTHER_REPO
@@ -512,9 +558,45 @@ guard_inputs() {
     esac
   fi
   case "$RUN_BASE" in
-  "$(date -u +%Y%m%d)"-*) ;;
-  *) stop "CHECK191_RUN_ID must start with today's UTC date (YYYYMMDD-, today is $(date -u +%Y%m%d)): the service reads a run's outcome under the day the RUN ID names, so a run id of another day is one whose ended-run probe would be written where the service never looks" ;;
+  "$(date -u +%Y%m%d)"-[0-9][0-9][0-9][0-9][0-9][0-9]) ;;
+  *) stop "CHECK191_RUN_ID must be today's UTC date and a time (YYYYMMDD-HHMMSS, today is $(date -u +%Y%m%d)) and it is '${RUN_BASE}': the runs' ids are built from it as <base>-<4 hex>, which is the only shape 'fugaro run' admits, and the day it names is the day the service reads a run's outcome under, so a base of another day is one whose ended-run probe would be written where the service never looks" ;;
   esac
+}
+
+# guard_checkout: the directory Check 192's doctor row is read in. doctor
+# resolves the checkout it is run in from the WORKING DIRECTORY — it has no
+# --repo, and its --dir is the plugin wiring's alone — so a doctor run from
+# anywhere but the proxied repository's own checkout answers about no repository
+# at all and prints no bitbucket-direct line, which reads as a finding about the
+# flip when it is a finding about where the owner was standing. That is worth a
+# stop before two runs are launched.
+guard_checkout() {
+  local got
+  [ -n "$CHECKOUT" ] || stop "CHECK191_CHECKOUT must name the proxied repository's checkout directory and it is empty"
+  if [ ! -d "$CHECKOUT" ]; then
+    stop "CHECK191_CHECKOUT names '${CHECKOUT}' and that is not a directory: the flip's doctor row is read from ${REPO}'s own checkout, which is where the repository was applied from"
+  fi
+  if ! got=$(origin_of "$CHECKOUT"); then
+    stop "CHECK191_CHECKOUT ('${CHECKOUT}') is not a checkout with an origin remote (git -C '${CHECKOUT}' remote get-url origin failed or printed nothing): Check 192 reads doctor's bitbucket-direct row for ${REPO}, and doctor only emits it where it can resolve the checkout it is run in. Run this check from ${REPO}'s checkout, or name it with CHECK191_CHECKOUT"
+  fi
+  [ "$got" = "$REPO" ] || stop "CHECK191_CHECKOUT ('${CHECKOUT}') is a checkout of ${got} and this check's proxied repository is ${REPO}: doctor reads the checkout it is run in, so Check 192 must be run from ${REPO}'s own checkout (or name it with CHECK191_CHECKOUT), or its doctor row would be read about another repository"
+}
+
+# origin_of: the owner/name the checkout at DIR was cloned from. It mirrors what
+# doctor resolves (internal/cli's originRepo) closely enough to answer "is this
+# the same repository", which is all the guard above asks: both the https and
+# the ssh spelling of a remote, with or without the trailing .git.
+origin_of() {
+  local url
+  url=$(git -C "$1" remote get-url origin 2>/dev/null) || return 1
+  [ -n "$url" ] || return 1
+  url=${url%.git}
+  case "$url" in
+  *://*) url=${url#*://}; url=${url#*@}; url=${url#*/} ;;
+  *:*) url=${url#*:} ;;
+  esac
+  [ -n "$url" ] || return 1
+  printf '%s' "$url"
 }
 
 guard_one_repo() { # guard_one_repo REPO KNOB
@@ -535,6 +617,23 @@ guard_one_repo() { # guard_one_repo REPO KNOB
 # launch is an in-flight row, which is a FAIL no run earned. A failure to launch
 # or to read the row is not printed as a row: it sets LAUNCH_ERR, which the
 # caller's fact says.
+#
+# run_id LABEL: the id the LABEL run is launched under. `fugaro run` admits one
+# shape and only one (task.ValidRunID: ^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$), so the
+# base — today's UTC date and a time — is followed by four hex characters, one
+# value per label, which is what tells this check's runs apart in the listing
+# and in the audit log.
+run_id() {
+  case "$1" in
+  work) printf '%s-0001' "$RUN_BASE" ;;
+  review) printf '%s-0002' "$RUN_BASE" ;;
+  ended) printf '%s-0003' "$RUN_BASE" ;;
+  flip) printf '%s-0004' "$RUN_BASE" ;;
+  plain) printf '%s-0005' "$RUN_BASE" ;;
+  *) die "Check 191 has no run id for the label '$1'" ;;
+  esac
+}
+
 launch_into() {
   local repo=$1 label=$2 rid=$3 task=$4 rc=0 waited=0 row=""
   shift 4
@@ -643,7 +742,8 @@ step_policy() {
 }
 
 step_work_run() {
-  local task=$SCRATCH/task-work.md rid=$RUN_BASE-work row status pushed pr
+  local task=$SCRATCH/task-work.md row status pushed pr rid
+  rid=$(run_id work)
   cat >"$task" <<TASK_EOF
 You are a probe for Fugaro's Check 191, run by this repository's owner.
 
@@ -706,7 +806,7 @@ step_refusals() {
     seen=$(audit_class_count "$classes" "$cls")
     need=$(audit_class_need "$cls")
     if [ -z "$said" ]; then
-      fact "$key" FAIL "the working run reported NO line for the ${name} attempt: its task asked for one 'CHK191 attempt=${name} refused=... answer=...' line per attempt, so the attempt was never made or never printed. Run 'fugaro logs ${RUN_BASE}-work' and read what the agent did"
+      fact "$key" FAIL "the working run reported NO line for the ${name} attempt: its task asked for one 'CHK191 attempt=${name} refused=... answer=...' line per attempt, so the attempt was never made or never printed. Run 'fugaro logs $(run_id work)' and read what the agent did"
       continue
     fi
     if [ "${said%% *}" != refused=yes ]; then
@@ -722,7 +822,8 @@ step_refusals() {
 }
 
 step_review_run() {
-  local task=$SCRATCH/task-review.md rid=$RUN_BASE-review row said classes
+  local task=$SCRATCH/task-review.md row said classes rid
+  rid=$(run_id review)
   cat >"$task" <<'TASK_EOF'
 You are a probe for Fugaro's Check 191, run by this repository's owner. This run
 is review-only: it must not write anything.
@@ -763,7 +864,8 @@ TASK_EOF
 # hand-write of exactly the node a run's own end writes), because the whole
 # point is that no call of the run's own can put it in that state.
 step_ended_identity() {
-  local task=$SCRATCH/task-ended.md rid=$RUN_BASE-ended slug day at got row reason halt pushed pr
+  local task=$SCRATCH/task-ended.md slug day at got row reason halt pushed pr rid
+  rid=$(run_id ended)
   day=$(( $(date -u +%s) / 86400 ))
   slug=$(field_of run "$(row_of work)")
   slug=${slug%%/*}
@@ -822,9 +924,9 @@ TASK_EOF
 run_191() {
   step_policy
   step_work_run
-  run_log "work" "$RUN_BASE-work"
-  audit_read "$RUN_BASE-work" "$SCRATCH/audit-work.json"
-  reader audit "$SCRATCH/audit-work.json" "$RUN_BASE-work" | sed -n 's/^class=//p' >"$SCRATCH/classes-work"
+  run_log "work" "$(run_id work)"
+  audit_read "$(run_id work)" "$SCRATCH/audit-work.json"
+  reader audit "$SCRATCH/audit-work.json" "$(run_id work)" | sed -n 's/^class=//p' >"$SCRATCH/classes-work"
   step_refusals
   step_review_run
   step_ended_identity
@@ -845,48 +947,70 @@ step_jobs() {
   fi
   fact jobs PASS "$n job(s) of ${REPO} in the installation's job list"
   if [ "${mounts:-0}" -ne 0 ]; then
-    fact mount FAIL "$n job$([ "$n" = 1 ] || printf 's') of ${REPO} carries FUGARO_REMOTE and ${mounts} of them still MOUNTS bitbucket-token on the container (FUGARO_BITBUCKET_TOKEN from Secret Manager): after the flip no job of a proxied repository mounts it, and a job that still does is one whose runs hold the credential the flip exists to take out. Run 'fugaro update' for ${REPO} and this check again"
+    fact mount FAIL "$n job$([ "$n" = 1 ] || printf 's') of ${REPO} carries FUGARO_REMOTE and ${mounts} of them still MOUNTS the Bitbucket token on the container (FUGARO_BITBUCKET_TOKEN from Secret Manager: $(reader jobs "$file" "$REPO" | sed -n 's/^mounted=//p' | tr '\n' ' ')): after the flip no job of a proxied repository mounts it, and a job that still does is one whose runs hold the credential the flip exists to take out. Run 'fugaro update' for ${REPO} and this check again"
     return 0
   fi
-  fact mount PASS "$n job$([ "$n" = 1 ] || printf 's') of ${REPO} carries FUGARO_REMOTE and none mounts bitbucket-token"
+  fact mount PASS "$n job$([ "$n" = 1 ] || printf 's') of ${REPO} carries FUGARO_REMOTE and none mounts the Bitbucket token"
 }
 
+# step_accessor: the other half of the mount row — the credential is not merely
+# unmounted, it is out of the account's reach. The container it lives in is
+# found by the label the installation itself writes on it (fugaro_secret, set to
+# the logical name by both secret modules in deploy/terraform), never by
+# spelling the derived Secret Manager ID here: a second copy of gcp's
+# derivation in this file would be a copy that can drift.
 step_accessor() {
-  local file=$SCRATCH/secret-policy.json members accounts sa bad=""
+  local listed=$SCRATCH/secrets.json file members accounts sa bad="" ids id n=0
   accounts=$(reader jobs "$SCRATCH/jobs.json" "$REPO" | sed -n 's/^account=//p')
-  gcloud secrets get-iam-policy bitbucket-token --project="$P" --format=json >"$file" 2>"$SCRATCH/iam.err" || {
-    fact accessor FAIL "gcloud secrets get-iam-policy bitbucket-token exited non-zero: $(last_line "$(cat "$SCRATCH/iam.err")"). Nothing about the accessor is settled by it"
+  gcloud secrets list --project="$P" --format=json >"$listed" 2>"$SCRATCH/secrets.err" || {
+    fact accessor FAIL "gcloud secrets list exited non-zero: $(last_line "$(cat "$SCRATCH/secrets.err")"). Nothing about the accessor is settled by it"
     return 0
   }
-  members=$(reader accessor "$file")
-  for sa in $accounts; do
-    if printf '%s\n' "$members" | grep -q "^member=serviceAccount:${sa}\$"; then bad="${bad} ${sa}"; fi
-  done
-  if [ -n "$bad" ]; then
-    fact accessor FAIL "the job account(s)${bad} of ${REPO} still hold a role on the bitbucket-token secret (gcloud secrets get-iam-policy bitbucket-token): after the flip the credential is the credentials service's and the job accounts must not be able to read it, or the flip has not taken the credential away — it has only stopped mounting it. Run 'fugaro update' and this check again"
+  ids=$(reader secrets "$listed" | sed -n 's/^secret=//p')
+  if [ -z "$ids" ]; then
+    unmeasured accessor "no Secret Manager secret of ${P} carries the label fugaro_secret=bitbucket-token, so there is no container whose IAM policy could be read: the token this row is about is kept by 'fugaro creds set bitbucket-token' in the credentials service's own bundle, and a repository that stored it in a container of its own would have one. Read 'gcloud secrets list --project=${P}' yourself, and if the repository's jobs ever mounted a bitbucket-token container it is that container's policy this row is about"
     return 0
   fi
-  fact accessor PASS "no job account of ${REPO} holds a role on the bitbucket-token secret"
+  for id in $ids; do
+    file="$SCRATCH/secret-policy-$n.json"
+    n=$((n + 1))
+    gcloud secrets get-iam-policy "$id" --project="$P" --format=json >"$file" 2>"$SCRATCH/iam.err" || {
+      fact accessor FAIL "gcloud secrets get-iam-policy ${id} exited non-zero: $(last_line "$(cat "$SCRATCH/iam.err")"). Nothing about the accessor is settled by it"
+      return 0
+    }
+    members=$(reader accessor "$file")
+    for sa in $accounts; do
+      if printf '%s\n' "$members" | grep -q "^member=serviceAccount:${sa}\$"; then
+        case " $bad " in *" $sa "*) ;; *) bad="${bad} ${sa}" ;; esac
+      fi
+    done
+  done
+  if [ -n "$bad" ]; then
+    fact accessor FAIL "the job account(s)${bad} of ${REPO} still hold a role on the container(s) of the Bitbucket token ($(printf '%s' "$ids" | tr '\n' ' ')): after the flip the credential is the credentials service's and the job accounts must not be able to read it, or the flip has not taken the credential away — it has only stopped mounting it. Run 'fugaro update' and this check again"
+    return 0
+  fi
+  fact accessor PASS "no job account of ${REPO} holds a role on the Bitbucket token's container(s) ($(printf '%s' "$ids" | tr '\n' ' '))"
 }
 
 step_doctor() {
   local doc=$SCRATCH/doctor.json ok problem
-  fugaro doctor --project fugaro --json >"$doc" 2>"$SCRATCH/doctor.err" || true
+  (cd "$CHECKOUT" && fugaro doctor --project fugaro --json) >"$doc" 2>"$SCRATCH/doctor.err" || true
   ok=$(reader doctor "$doc" | sed -n 's/^ok=//p')
   problem=$(reader doctor "$doc" | sed -n 's/^problem=//p')
   case "$ok" in
-  yes) fact doctor PASS "fugaro doctor reports bitbucket-direct clean for ${REPO} (ok=true)" ;;
+  yes) fact doctor PASS "fugaro doctor, run in ${CHECKOUT} (${REPO}'s own checkout), reports bitbucket-direct clean for ${REPO} (ok=true)" ;;
   no)
-    fact doctor FAIL "fugaro doctor reports bitbucket-direct NOT clean for ${REPO}: ${problem:-the report carried no problem word}. doctor reads the same two things the rows above read (a proxied repository whose jobs still mount the secret, or still reach it), so this row and those are one reading — run 'fugaro doctor --project fugaro' yourself and read the finding"
+    fact doctor FAIL "fugaro doctor, run in ${CHECKOUT} (${REPO}'s own checkout), reports bitbucket-direct NOT clean for ${REPO}: ${problem:-the report carried no problem word}. doctor reads the same two things the rows above read (a proxied repository whose jobs still mount the secret), so this row and those are one reading — run 'fugaro doctor --project fugaro' from that checkout yourself and read the finding"
     ;;
   *)
-    fact doctor FAIL "fugaro doctor --json printed no bitbucket-direct check at all: the flip's own doctor row is what the owner reads after the flip, so its absence is the finding. Run 'fugaro doctor --project fugaro' yourself"
+    fact doctor FAIL "fugaro doctor --json, run in ${CHECKOUT}, printed no bitbucket-direct check at all: doctor emits it only where it can resolve the checkout it is run in (a parseable origin remote and a valid fugaro.yaml), and CHECK191_CHECKOUT was checked to be ${REPO}'s — so this is the repository's own fugaro.yaml, not the directory, and the flip's doctor row is what the owner reads after the flip. Run 'fugaro doctor --project fugaro' from that checkout yourself"
     ;;
   esac
 }
 
 step_flip_run() {
-  local task=$SCRATCH/task-flip.md rid=$RUN_BASE-flip row status pushed pr
+  local task=$SCRATCH/task-flip.md row status pushed pr rid
+  rid=$(run_id flip)
   cat >"$task" <<TASK_EOF
 You are a probe for Fugaro's Check 192, run by this repository's owner, after
 the flip: this repository's job no longer mounts a Bitbucket token, and the
@@ -913,7 +1037,8 @@ TASK_EOF
 # step_plain_run: the other half of the flip — a NON-proxied Bitbucket
 # repository of the same installation still mounts its token and still runs.
 step_plain_run() {
-  local file=$SCRATCH/jobs-plain.json n mounts task=$SCRATCH/task-plain.md rid=$RUN_BASE-plain row status pushed pr
+  local file=$SCRATCH/jobs-plain.json n mounts task=$SCRATCH/task-plain.md row status pushed pr rid
+  rid=$(run_id plain)
   gcloud run jobs list --project="$P" --region="$L" --format=json >"$file" 2>"$SCRATCH/jobs-plain.err" || true
   n=$(reader jobs "$file" "$PLAIN_REPO" | sed -n 's/^jobs=//p')
   mounts=$(reader jobs "$file" "$PLAIN_REPO" | sed -n 's/^mounts=//p')
@@ -922,7 +1047,7 @@ step_plain_run() {
     return 0
   fi
   if [ "${mounts:-0}" -lt 1 ]; then
-    fact plain-repo FAIL "${n} job(s) of ${PLAIN_REPO} carry FUGARO_REMOTE and NONE of them mounts bitbucket-token: a repository the policy does not admit with proxy: true must keep its token MOUNTED — the flip is per-repository, and a plain repository that lost its mount is a repository whose runs cannot reach Bitbucket at all. Read 'gcloud run jobs list' for ${PLAIN_REPO} yourself"
+    fact plain-repo FAIL "${n} job(s) of ${PLAIN_REPO} carry FUGARO_REMOTE and NONE of them mounts the Bitbucket token (FUGARO_BITBUCKET_TOKEN from Secret Manager): a repository the policy does not admit with proxy: true must keep its token MOUNTED — the flip is per-repository, and a plain repository that lost its mount is a repository whose runs cannot reach Bitbucket at all. Read 'gcloud run jobs list' for ${PLAIN_REPO} yourself"
     return 0
   fi
   cat >"$task" <<TASK_EOF
@@ -944,7 +1069,7 @@ TASK_EOF
     fact plain-repo FAIL "the run in ${PLAIN_REPO} (the non-proxied repository, whose job still mounts its token) ended status=${status:-unread} pushed=${pushed:-unread} pr=${pr:-unread}: the flip must not disturb it, and a run there must still reach Bitbucket with the token its own job mounts. Read that run's log (fugaro runs ls --repo ${PLAIN_REPO}, then fugaro logs) before anything else"
     return 0
   fi
-  fact plain-repo PASS "${n} job$([ "$n" = 1 ] || printf 's') of ${PLAIN_REPO} still mount bitbucket-token and a run in it still pushed and opened pull request #${pr}: the flip is per-repository, and the repository the policy does not proxy is untouched"
+  fact plain-repo PASS "${n} job$([ "$n" = 1 ] || printf 's') of ${PLAIN_REPO} still mounts the Bitbucket token ($(reader jobs "$file" "$PLAIN_REPO" | sed -n 's/^mounted=//p' | tr '\n' ' ')) and a run in it still pushed and opened pull request #${pr}: the flip is per-repository, and the repository the policy does not proxy is untouched"
 }
 
 run_192() {
@@ -965,19 +1090,19 @@ plan() {
   say "CHECK ${CHECK} plan (dry run: nothing below is run, and no row in the block was measured)"
   say "  [no network, already read] the guards: fugaro doctor --project fugaro and fugaro version"
   if [ "$MODE" = flip ]; then
-    say "  [network, read] gcloud run jobs list --project=${P} --region=${L} --format=json — the jobs of ${REPO} and of ${PLAIN_REPO}, and whether they mount bitbucket-token"
-    say "  [network, read] gcloud secrets get-iam-policy bitbucket-token --project=${P} --format=json — the accessor on the secret"
-    say "  [network, read] fugaro doctor --project fugaro --json — bitbucket-direct for ${REPO}"
-    say "  [network, runs] two throwaway runs (${RUN_BASE}-flip in ${REPO} through the credentials service, ${RUN_BASE}-plain in ${PLAIN_REPO} with its mounted token), each committing one line, pushing its branch and opening its pull request, and each waited for to a final status"
+    say "  [network, read] gcloud run jobs list --project=${P} --region=${L} --format=json — the jobs of ${REPO} and of ${PLAIN_REPO}, and whether they mount the Bitbucket token"
+    say "  [network, read] gcloud secrets list --project=${P} --format=json, then gcloud secrets get-iam-policy <the container(s) labelled fugaro_secret=bitbucket-token> --project=${P} --format=json — the accessor on the credential"
+    say "  [network, read] fugaro doctor --project fugaro --json, run IN ${CHECKOUT} (${REPO}'s own checkout: doctor has no --repo and resolves the checkout it is run in from the working directory) — bitbucket-direct for ${REPO}"
+    say "  [network, runs] two throwaway runs ($(run_id flip) in ${REPO} through the credentials service, $(run_id plain) in ${PLAIN_REPO} with its mounted token), each committing one line, pushing its branch and opening its pull request, and each waited for to a final status"
     for key in jobs mount accessor run-still-works doctor plain-repo; do
       fact "$key" INFO "planned: a real run reads this row; --dry-run did not"
     done
   else
     say "  [network, read] fugaro project policy show --project fugaro --json — whether ${REPO} is admitted with proxy: true"
-    say "  [network, runs] fugaro run --repo ${REPO} --run-id ${RUN_BASE}-work — the throwaway run itself, whose task commits one line, pushes it and opens its pull request through the service, THEN makes the seven attempts and prints one line per attempt"
+    say "  [network, runs] fugaro run --repo ${REPO} --run-id $(run_id work) — the throwaway run itself, whose task commits one line, pushes it and opens its pull request through the service, THEN makes the seven attempts and prints one line per attempt"
     say "  [network, read] gcloud logging read (service fugaro-credentials, jsonPayload.run) — the service's own audit lines for each run"
-    say "  [network, runs] fugaro run --repo ${REPO} --recipe review-only --run-id ${RUN_BASE}-review — a review-only run, whose push must be refused"
-    say "  [network, write+delete] ONE Realtime Database node, outcomes/<day>/<slug>/${RUN_BASE}-ended.json, written by you with your own credentials and deleted again by the restore, and one run (${RUN_BASE}-ended) launched with that outcome already written"
+    say "  [network, runs] fugaro run --repo ${REPO} --recipe review-only --run-id $(run_id review) — a review-only run, whose push must be refused"
+    say "  [network, write+delete] ONE Realtime Database node, outcomes/<day>/<slug>/$(run_id ended).json, written by you with your own credentials and deleted again by the restore, and one run ($(run_id ended)) launched with that outcome already written"
     for row in "${ATTEMPTS[@]}"; do
       IFS='|' read -r name key _ <<<"$row"
       fact "$key" INFO "planned: a real run measures the ${name} attempt; --dry-run did not"
@@ -1061,7 +1186,8 @@ REPO=${CHECK191_REPO:-}
 OTHER_REPO=${CHECK191_OTHER_REPO:-}
 PLAIN_REPO=${CHECK191_PLAIN_REPO:-}
 OTHER_PR=${CHECK191_OTHER_PR:-}
-RUN_BASE=${CHECK191_RUN_ID:-chk191-$(date -u +%Y%m%d-%H%M%S)}
+RUN_BASE=${CHECK191_RUN_ID:-$(date -u +%Y%m%d-%H%M%S)}
+CHECKOUT=${CHECK191_CHECKOUT:-$PWD}
 WAIT_SECONDS=${CHECK191_WAIT_SECONDS:-2400}
 POLL_SECONDS=${CHECK191_POLL_SECONDS:-20}
 LOG_WAIT_SECONDS=${CHECK191_LOG_WAIT_SECONDS:-60}
