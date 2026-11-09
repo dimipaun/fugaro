@@ -86,16 +86,16 @@ one with no child.
 named ("one key of one document", `console/src/main/ipc.ts:1115`), so it is the console's
 configuration change and not its own bookkeeping.
 
-`licence.save` and `licence.read` are the Licence section's two operations (the subscriptions plan's
-S2.7; [licence-key.md](../licensing/licence-key.md), "Storage and hand-off (F41)"), and they are the
-first two rows of that table that **spawn nothing at all** (`command: null`, no flag, not on
-`SPAWN_COMMANDS`): the key is not a child's argument, so the console keeps it in a file of its own
-(`licence.json`, 0600 in a 0700 directory, one entry per installation) and hands it to every child
-afterwards **in the environment and never in an argv**. That write is the console's third, and
-**neither operation is
-gated by the licence state in any mode** — on no reduced view, refused at no state — which is what the
-sentence above about the key screen means now that the screen exists: an expired installation is
-exactly the one whose operator has to be able to reach the box that takes a renewal.
+`licence.save` and `licence.read` are the licence section's two operations (the subscriptions plan's
+S2.7; [licence-key.md](../licensing/licence-key.md), "Storage and hand-off (F41)"), and they are two
+of the eleven rows of that table that **spawn nothing at all** (`command: null`, no flag, not on
+`SPAWN_COMMANDS`) — the first two of the eleven that keep a **credential**: the key is not a child's
+argument, so the console keeps it in a file of its own (`licence.json`, 0600 in a 0700 directory, one
+entry per installation) and hands it to every child afterwards **in the environment and never in an
+argv**. That write is the console's third, and **neither operation is gated by the licence state in
+any mode** — on no reduced view, refused at no state — which is what the sentence above about the key
+screen means now that the screen exists: an expired installation is exactly the one whose operator
+has to be able to reach the box that takes a renewal.
 
 The plan's F20 counted **fifteen read operations, and no launch or cancel**
 ([reconciliation.md](../subscriptions/reconciliation.md)): that was the tree of 2026-10-27. The
