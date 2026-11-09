@@ -1562,27 +1562,28 @@ export const CONSOLE_OPERATIONS = [
   // and they are two of the eleven rows on this table that **spawn nothing at
   // all** -- the first two of those that keep a **credential**: the console
   // keeps the key in its own store (`src/main/licence-store.ts`), so a paste is
-  // a verify and a write of a file this process owns rather than a child's argv. `command: null` is that fact, and it is also why neither row
-  // carries a flag -- there is no argv for a flag to be part of -- and why
-  // neither is on `SPAWN_COMMANDS` (`src/main/spawn.ts`).
+  // a verify and a write of a file this process owns rather than a child's argv.
+  // `command: null` is that fact, and it is also why neither row carries a flag
+  // -- there is no argv for a flag to be part of -- and why neither is on
+  // `SPAWN_COMMANDS` (`src/main/spawn.ts`).
   //
   // **Neither carries the key back to the renderer, and that is rule 8's own
   // reason.** `licence.read` answers what the *verifier* sees: the claims and
   // the state (`valid`, `grace`, `expired`), or the sentence that refuses the
   // key. The one door the key text leaves this process by is the child's
-  // environment (`licenceKeyFor`, `src/main/index.ts`), which is S2.1's hand-off
-  // and not a document's to hold: a reply carrying the key would be a key in a
-  // renderer, and a screen that held one would draw it.
+  // environment (`licenceKeyFor`, `src/main/index.ts`), which is S2.1's
+  // hand-off and not a document's to hold: a reply carrying the key would be a
+  // key in a renderer, and a screen that held one would draw it.
   //
-  // **Neither names an installation.** The active one is main-process state, for
-  // `installation.current`'s reason exactly: the store answers for the
+  // **Neither names an installation.** The active one is main-process state,
+  // for `installation.current`'s reason exactly: the store answers for the
   // installation this console is driving, so a renderer can neither paste a key
   // for nor read the key of an installation other than that one.
   //
-  // **The screen that draws them is never gated** (`docs/design/lapse-read-only.md`):
-  // a lapsed installation is the one state in which the operator has to be able
-  // to reach the box that takes a renewal, so these two are not on a reduced
-  // view and answer in every mode.
+  // **The screen that draws them is never gated**
+  // (`docs/design/lapse-read-only.md`): a lapsed installation is the one state
+  // in which the operator has to be able to reach the box that takes a renewal,
+  // so these two are not on a reduced view and answer in every mode.
   {
     name: 'licence.read',
     method: 'readLicence',

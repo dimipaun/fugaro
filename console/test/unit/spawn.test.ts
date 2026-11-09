@@ -3770,10 +3770,11 @@ describe('the WSL resolution path', () => {
     // through so any other addition still fails.
     const platformKeys = process.platform === 'darwin' ? ['__CF_USER_TEXT_ENCODING'] : []
 
-    // The near side: what `wsl.exe` was handed. The eleven this route carries,
-    // plus the two keys this route writes itself -- `WSLENV` empty (T-E2) and `WSL_UTF8=1` (T-F2,
-    // and on the CLI's own call since the review of `#981`) -- and nothing else,
-    // sentinels included.
+    // The near side: what `wsl.exe` was handed. The `CHILD_ENV_KEYS` this route
+    // carries -- the twelve less the licence key -- plus the two keys this route
+    // writes itself: `WSLENV` empty (T-E2) and `WSL_UTF8=1` (T-F2, and on the
+    // CLI's own call since the review of `#981`). And nothing else, sentinels
+    // included.
     const hop = only(arrangement.wsl.reports().filter((report) => report.kind === 'spawn'))
     expect(hop.envKeys.filter((key) => !platformKeys.includes(key)).sort()).toEqual(
       [...CHILD_KEYS_WITHOUT_A_KEY, WSLENV_KEY, WSL_UTF8_VAR].sort(),
