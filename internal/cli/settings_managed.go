@@ -145,18 +145,23 @@ func settingsWriteOwnTerminal(cmd *cobra.Command) bool {
 // made on? a person at their own terminal, or the flag that puts the question
 // back) and a read made anywhere else is one this write does not need.
 //
-// A widening is the class the terminal term does not cover: the gate refuses
-// every one of them (settingsOwnerOnlyRule, D1026), and a coding agent's session
-// is refused at the fence whatever --yes says, so a read of the marks at the
-// owner's own terminal would take away the one door a widening has (D1552,
-// D1555) and leave every ceiling of a managed project unwidenable.
+// ownerOnly is the class the terminal term does not cover: the step the gate
+// refuses outright, whose door D1552 and D1555 name as the owner's own terminal
+// and no session. It is `settings set`'s `typed` (settingsOwnerOnlyRule refuses
+// every such edit, D1026) and `accounts add`'s declaration this command's own
+// rules refuse (accountsAddOwnerOnly: D868's widening, D1026's token). Reading
+// the marks for one of those at that terminal is what takes the door away: the
+// gate answers the person standing there with the refusal it keeps for a
+// session, so the step is written only by the flag that answers for it and
+// never by the terminal the two decisions name. Skipping the read opens nothing
+// to a session, which is refused at the fence whatever --yes says.
 //
 // --ask reads the marks whatever the class is: the flag's question is decided
 // where the marks are (askDecide), so the read it needs is the one this
 // function answers for, and a widening a managed project's gate refuses to the
 // flag is the refusal the flag met before this row existed.
-func settingsGateReads(cmd *cobra.Command, yes, ask, typed bool) bool {
-	return (settingsWriteOwnTerminal(cmd) && !yes && !typed) || ask
+func settingsGateReads(cmd *cobra.Command, yes, ask, ownerOnly bool) bool {
+	return (settingsWriteOwnTerminal(cmd) && !yes && !ownerOnly) || ask
 }
 
 // settingsGateAsks reports whether one edit is one made on the owner's own

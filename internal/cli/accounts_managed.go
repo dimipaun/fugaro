@@ -64,6 +64,15 @@ import (
 // client that cannot be built and a budget database that cannot be opened all
 // leave the zero Managed behind, which is this command's own behaviour exactly
 // as it was before this row landed.
+//
+// The one class the owner's own terminal is NOT read for is the one the gate
+// refuses: a widening and a token entry are the owner's own step
+// (accountsAddOwnerOnly), and there the gate's answer IS the refusal it keeps
+// for a session — so reading the marks would leave the declaration written only
+// by --yes and never by the terminal D1552 and D1555 name as its door. It is
+// the same term `settings set` holds its typed edit in (settingsGateReads),
+// which is why the two commands cannot come to read the marks for a step the
+// owner is the only one who may make.
 
 // accountsAddTypedEdit is whether any edit this command makes is a Typed class
 // one, and the answer is no: a widening is REFUSED rather than typed
@@ -72,7 +81,7 @@ import (
 // to the owner's own word.
 //
 // Why it is named rather than written as a literal at the call below. The value
-// reaches settingsGateReads's terminal term and settingsGateAsks, whose answer
+// reaches settingsGateAsks's class term, whose answer
 // for a coding agent's session is "read the marks" for every document that is
 // not repository-scoped, or for a typed edit — and this command's document is
 // the project layer, so the parameter
@@ -80,6 +89,10 @@ import (
 // typed edit has to answer it: a command that grows one (a rotation, say)
 // changes a line that says what the answer means, instead of a `false` a reader
 // would have to look up.
+//
+// The terminal term of settingsGateReads is answered by this command's rules and
+// not by this constant: a step is the owner's own here when a rule refuses it
+// (accountsAddOwnerOnly), whatever its class is.
 const accountsAddTypedEdit = false
 
 // accountsAddGate is the whole of this command's call of the gate: read, judge,
@@ -95,12 +108,21 @@ const accountsAddTypedEdit = false
 // document applied are one artifact and not two that happened to agree.
 func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, o accountsAddOptions, name, profile string, beyond []string, doc []byte) (initflow.Managed, managedGate, error) {
 	marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
+	// The rules this command's document is judged by, read here rather than
+	// beside the admit below because one of their answers decides whether the
+	// gate is read at all: a rule that refuses this step is a rule saying the
+	// owner is the only one who may make it, and the gate's answer to such a
+	// step at the owner's own terminal is a refusal the terminal may not be
+	// given (accountsAddOwnerOnly). The two lists are the verdict below and the
+	// record's rules as well, so the document judged, the door the step has and
+	// the record of it are one reading of one document.
+	applied, refused := accountsAddRules(name, profile, beyond, o.claude)
 	// The read is made where this command would ask, and --ask is one more
 	// such place: the flag has to speak about the marks in every session that
 	// passes it (a refusal in a managed project's agent session, a sentence
 	// everywhere else), so it forces the read even where the declaration
 	// itself would have asked nothing (a session with no terminal at all).
-	if !settingsGateAsks(marker, settingsGateReads(cmd, o.yes, o.ask, accountsAddTypedEdit), settingsDocLocal, accountsAddTypedEdit) {
+	if !settingsGateAsks(marker, settingsGateReads(cmd, o.yes, o.ask, accountsAddOwnerOnly(refused)), settingsDocLocal, accountsAddTypedEdit) {
 		return initflow.Managed{}, managedGate{}, nil
 	}
 	clients, err := newInitClients(ctx, lc)
