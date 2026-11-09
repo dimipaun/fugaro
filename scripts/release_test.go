@@ -2705,3 +2705,76 @@ func TestRetryTagPushAfterATransientFailure(t *testing.T) {
 		t.Errorf("tag v0.12.0 (%s) does not point at main (%s)", tagSHA, mainSHA)
 	}
 }
+
+// TestReleaseGateAcceptsAPatchOnItsMaintenanceBranch: a hotfix is a patch
+// release of a line that was released from main, cut from that line's own
+// maintenance branch so it carries the fix and nothing merged since. The gate
+// accepts such a commit only when every condition holds, and refuses each
+// other shape by the same "not on main" refusal: a commit on main is accepted
+// as before, and nothing else is.
+func TestReleaseGateAcceptsAPatchOnItsMaintenanceBranch(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks())
+	git := func(args ...string) string { return strings.TrimSpace(testutil.Git(t, r.local, args...)) }
+
+	// v1.2.0 is released from main; release/1.2 is cut from it and takes one fix.
+	git("tag", "-a", "v1.2.0", "-m", "v1.2.0")
+	git("push", "--quiet", "origin", "v1.2.0")
+	git("checkout", "--quiet", "-b", "release/1.2", "v1.2.0")
+	git("commit", "--quiet", "--allow-empty", "-m", "the fix")
+	fix := git("rev-parse", "HEAD")
+	git("push", "--quiet", "origin", "release/1.2")
+
+	// A commit on a branch that is not the line's own, cut from the same tag.
+	git("checkout", "--quiet", "-b", "scratch", "v1.2.0")
+	git("commit", "--quiet", "--allow-empty", "-m", "unrelated work")
+	scratch := git("rev-parse", "HEAD")
+	git("push", "--quiet", "origin", "scratch")
+
+	// A line whose first release was never on main: v1.4.0 exists only on its branch.
+	git("checkout", "--quiet", "-b", "release/1.4", "main")
+	git("commit", "--quiet", "--allow-empty", "-m", "a minor that never went through main")
+	git("tag", "-a", "v1.4.0", "-m", "v1.4.0")
+	git("commit", "--quiet", "--allow-empty", "-m", "its fix")
+	other := git("rev-parse", "HEAD")
+	git("push", "--quiet", "origin", "release/1.4", "v1.4.0")
+
+	// An unrelated history named like the line: release/1.6 shares nothing with v1.6.0.
+	git("checkout", "--quiet", "main")
+	git("tag", "-a", "v1.6.0", "-m", "v1.6.0")
+	git("push", "--quiet", "origin", "v1.6.0")
+	git("checkout", "--quiet", "--orphan", "release/1.6")
+	git("rm", "--quiet", "-rf", ".")
+	git("commit", "--quiet", "--allow-empty", "-m", "an unrelated root")
+	orphan := git("rev-parse", "HEAD")
+	git("push", "--quiet", "origin", "release/1.6")
+	git("checkout", "--quiet", "main")
+
+	accepted := runGate(t, r, g, fix, "v1.2.1")
+	accepted.requireSuccess(t)
+	if !strings.Contains(accepted.out, "maintenance branch release/1.2") || !strings.Contains(accepted.out, "gate passed for v1.2.1") {
+		t.Errorf("the gate did not say it took the maintenance path:\n%s", accepted.out)
+	}
+	// A commit on main is accepted exactly as before.
+	runGate(t, r, g, git("rev-parse", "main"), "v1.2.1").requireSuccess(t)
+
+	for name, tc := range map[string]struct{ sha, tag string }{
+		"a patch of another line":                              {fix, "v1.3.1"},
+		"the line's own first release (Z of 0)":                {fix, "v1.2.0"},
+		"a commit on a branch that is not the line's":          {scratch, "v1.2.1"},
+		"a line whose vX.Y.0 is not on main":                   {other, "v1.4.1"},
+		"an unrelated history named like the line":             {orphan, "v1.6.1"},
+		"the app's mobile tag":                                 {fix, "mobile-v1.2.1"},
+		"a line with no maintenance branch at all":             {fix, "v1.8.1"},
+		"a patch tag on a commit on neither main nor a branch": {strings.Repeat("0", 40), "v1.2.1"},
+	} {
+		res := runGate(t, r, g, tc.sha, tc.tag)
+		if res.err == nil {
+			t.Errorf("%s: the gate accepted %s at %s", name, tc.tag, tc.sha)
+			continue
+		}
+		if !strings.Contains(res.out, "is not on main") {
+			t.Errorf("%s: refused for the wrong reason:\n%s", name, res.out)
+		}
+	}
+}
