@@ -68,6 +68,11 @@ func init() {
 		"runs[].branch", "runs[].outcome", "runs[].created", "runs[].cost", "runs[].cost.route_by", "runs[].cost.reported_usd",
 		"runs[].terminal", "runs[].settled", "runs[].base_branch", "runs[].stale_draft", "runs[].draft_fallback", "runs[].pr_status_at",
 		"runs[].launched_by", "runs[].failure_class")
+	// The working skill's status reference sends a reader to --group-by and
+	// names the block it adds, so the block's own key is held to lsDoc's --
+	// beside the rows, never instead of them, and only when a grouping was
+	// asked for.
+	add("runs ls", lsDoc{}, "groups")
 	add("diagnose", Diagnosis{}, "row", "row.pr_url", "row.reason", "row.cost.route_by", "row.cost.reported_usd",
 		"row.base_branch",
 		"row.project_layer", "row.project_layer.sha256", "row.project_layer.generation", "row.project_layer.applied", "row.config_sha256",
