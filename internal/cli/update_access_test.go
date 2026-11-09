@@ -139,6 +139,76 @@ func TestUpdateMigratesListsToAccessNode(t *testing.T) {
 	}
 }
 
+// TestAnAgentSessionWritesNoGrantsNode: the roles step runs before the loop's
+// first confirmation (init_stages.go's converge calls syncAccess), so a
+// migration written there would be a cloud write of a converge that no
+// confirmation stands in front of — and a coding agent's session writes nothing.
+// The migration is no exception: it is computed in the step and written by the
+// installation root, past the confirmation and the gate (landSeed), and the
+// root's own writes refuse the session anyway (refuseAgentAccess). The node is
+// left absent, the run answers with the session's own refusal instead of the
+// migration's line, and the installation is left for the person's next `fugaro
+// update`.
+//
+// Mutation (the migration's write in the step, as it was): the node is there
+// when the session stops, and this fails.
+func TestAnAgentSessionWritesNoGrantsNode(t *testing.T) {
+	operators := []string{"user:ops@example.com"}
+	admins := []string{"user:root@example.com"}
+	r, db := accessRig(t, operators, admins, operators, admins)
+	t.Setenv(agentMarkers[0], "1")
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	all := accessOut(out, errOut, err)
+	if got := db.Value(accesslib.PathNode); got != nil {
+		t.Errorf("a coding agent's session migrated the roles into the grants node: %v\n%s", got, all)
+	}
+	if err == nil {
+		t.Fatalf("the roles step wrote nothing and still reported a converged run:\n%s", all)
+	}
+	if !strings.Contains(all, agentMarkers[0]+" is set") || !strings.Contains(all, "your own terminal window") {
+		t.Errorf("the refusal is not the session's own:\n%s", all)
+	}
+	if strings.Contains(all, "migrated the installation's member lists into the grants node") {
+		t.Errorf("the run says it migrated a node it never wrote:\n%s", all)
+	}
+	if n := len(r.ran(t, "apply")); n != 0 {
+		t.Errorf("terraform applied %d time(s) in an agent session: %q", n, r.calls(t))
+	}
+}
+
+// TestADeclinedRunMigratesNoNode: the migration is the other write the roles
+// step computes and the installation root lands (landSeed), and it belongs to
+// the run's apply for the same reason the flags' fold does — a run whose
+// confirmation is declined has changed nothing, so an installation at the
+// previous shape whose plan the user declined keeps its roles in the file and
+// its node absent, and the next `fugaro update` migrates it.
+//
+// Mutation (the migration's write in the step, as it was): the node is written
+// before the confirmation and this fails.
+func TestADeclinedRunMigratesNoNode(t *testing.T) {
+	operators := []string{"user:ops@example.com"}
+	admins := []string{"user:root@example.com"}
+	r, db := accessRig(t, operators, admins, operators, admins)
+	// The plan has changes, so the run reaches its confirmation instead of
+	// reporting an installation that already matches.
+	updating(t, r)
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
+	all := accessOut(out, errOut, err)
+	if err == nil || !strings.Contains(all, "not confirmed") {
+		t.Fatalf("a run whose confirmation was declined did not stop: %v\n%s", err, all)
+	}
+	if calls := subcommands(r.calls(t)); slices.Contains(calls, "apply") {
+		t.Errorf("a declined run applied the installation: %q\n%s", calls, all)
+	}
+	if got := db.Value(accesslib.PathNode); got != nil {
+		t.Errorf("a declined run migrated the installation's roles into the grants node: %v\n%s", got, all)
+	}
+	if strings.Contains(all, "migrated the installation's member lists into the grants node") {
+		t.Errorf("the run says it migrated a node it never wrote:\n%s", all)
+	}
+}
+
 // TestLegacyMemberFormsKeepTheirGrants: a `group:`, `domain:` or
 // `serviceAccount:` member is an IAM member the grant model cannot hold — the
 // CLI cannot read a caller's groups, so the node cannot rank it — and it stays
@@ -203,7 +273,10 @@ func TestLegacyMemberFormsKeepTheirGrants(t *testing.T) {
 // makes the migration a step an operator can run on a working installation.
 //
 // The plan itself is the module's, which the fake terraform cannot compute, so
-// what this pins is the pair of variables the plan is a function of.
+// what this pins is the pair of variables the plan is a function of. The empty
+// plan is also the path where the node is landed without a confirmation to
+// stand behind (init.go's "No changes" branch): the migration is the one change
+// of a run whose apply has nothing to do, and it is written there.
 func TestPlanIsEmptyForAPureRename(t *testing.T) {
 	operators := []string{"user:ops@example.com", "user:second@example.com"}
 	admins := []string{"user:root@example.com"}
@@ -258,8 +331,16 @@ func projectGrant(user string, role accesslib.Role) accesslib.Grant {
 // roles/firebasedatabase.admin reaches it at all — the project's implicit
 // admins (owners, editors, budget admins, F22/D1592), not every operator. The
 // migration is therefore best-effort for exactly that caller: the refusal is
-// said out loud, the two lists stay this machine's for this run, and the one
-// command the user runs is not the command that failed (accessNeedsAdmin).
+// said out loud, the node stays absent for a project Owner's next update, and
+// the one command the user runs is not the command that failed
+// (accessNeedsAdmin).
+//
+// What the write costs when it is refused is the record and not the roles: the
+// step derived this run's lists from the migration's own computation, which is
+// the installation's outputs, so the apply carries the installation's roster
+// either way — and so does the file, which follows the derive. A stale copy of
+// the lists on this machine is what the derive exists to override, so the run
+// that cannot write the node is still not the run that applies the copy.
 //
 // The alternative is a livelock: `fugaro update` refused by a write only another
 // door the same user runs can grant, which is the refusal the roles step's own
@@ -279,16 +360,16 @@ func TestAMigrationTheCallerCannotWriteIsNotAFailure(t *testing.T) {
 	}
 	for _, w := range []string{
 		"roles/firebasedatabase.admin",
-		"the operators and admins stay this machine's lists",
+		"the operators and admins this run applies are the installation's own lists",
 		"a project Owner runs fugaro update once",
 	} {
 		if !strings.Contains(all, w) {
 			t.Errorf("the run does not say %q, so an operator whose roles stayed put is told nothing:\n%s", w, all)
 		}
 	}
-	// The lists this run applies are the file's: the step derived nothing from
-	// a node that is not there, and the installation is applied exactly as the
-	// previous shape applied it.
+	// The lists this run applies are the installation's: the migration was
+	// computed from its outputs either way, and the write that was refused is
+	// the node's, not the roster's.
 	v := r.tfvars(t)
 	wantLaunchers := []string{"user:ops@example.com", "user:root@example.com"}
 	if got := members(v["launchers"]); !slices.Equal(got, wantLaunchers) {
@@ -301,8 +382,10 @@ func TestAMigrationTheCallerCannotWriteIsNotAFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the local config the run wrote does not load: %v\n%s", err, all)
 	}
-	if got := lc.Terraform.Operators; !slices.Equal(got, operators) {
-		t.Errorf("the local config's operators are %v, want %v:\n%s", got, operators, all)
+	// The file follows the derive: the admin operates too, so the operator list
+	// is the two of them even though this machine's copy named the one.
+	if got, want := lc.Terraform.Operators, []string{"user:ops@example.com", "user:root@example.com"}; !slices.Equal(got, want) {
+		t.Errorf("the local config's operators are %v, want %v:\n%s", got, want, all)
 	}
 	if got := lc.Terraform.Admins; !slices.Equal(got, admins) {
 		t.Errorf("the local config's admins are %v, want %v:\n%s", got, admins, all)

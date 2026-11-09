@@ -7,6 +7,7 @@ import (
 	"os"
 	"slices"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
@@ -66,6 +67,15 @@ type initEngine struct {
 	// lists its own apply carries (F29a, deriveAccessAgain), which is why the
 	// client outlives the step that made it.
 	accessDB *rtdb.Client
+
+	// accessSeed is the migration's node as the roles step computed it, waiting
+	// for the installation root to write it (update_access.go, landSeed): the
+	// step runs before the loop's first stage, the run's confirmation and the
+	// guard, so the write is the root's, past all three. It is nil when this run
+	// migrates nothing — the node is there, --plan-only, a first run with no
+	// list to hold, outputs that could not be read — and it is cleared by the
+	// write, so a root that runs twice lands it once.
+	accessSeed *accesslib.Node
 }
 
 // environment runs the environment check once (it prints the local

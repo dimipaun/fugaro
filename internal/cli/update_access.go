@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
@@ -26,14 +28,16 @@ import (
 //     the step MIGRATES. It reads the lists the installation itself carries —
 //     its Terraform outputs, never the file on this machine, which may be one
 //     admin's stale copy — turns each `user:` member into a grant (operators at
-//     project scope, admins at project scope) and writes the node conditionally
-//     on the ETag it read (F23). A copy that disagrees with the installation is
-//     said out loud and not obeyed (accessStale): the migration is the one step
-//     of `fugaro update` that may not be refused, because the refusal's own way
-//     out is the command being refused (the livelock the plan's "refuses on
-//     drift" would have been), and the roster written is the installation's
-//     either way — a member the stale copy named and the installation does not
-//     loses the role in this run's apply, which accessDropped says.
+//     project scope, admins at project scope) and leaves the node for the
+//     installation root to write, conditionally on the ETag it read (F23, and
+//     the deferral's reason is below). A copy that disagrees with the
+//     installation is said out loud and not obeyed (accessStale): the migration
+//     is the one step of `fugaro update` that may not be refused, because the
+//     refusal's own way out is the command being refused (the livelock the plan's
+//     "refuses on drift" would have been), and the roster written is the
+//     installation's either way — a member the stale copy named and the
+//     installation does not loses the role in this run's apply, which
+//     accessDropped says.
 //   - the node is PRESENT: the step DERIVES. The two lists are read off the
 //     node's project-scope grants, and the spec builders get them, so an
 //     installation whose roles the commands changed converges its IAM to what
@@ -54,9 +58,15 @@ import (
 // The one thing the derive cannot do by itself is take a change: a list named on
 // the command line would be applied once and reverted by the next converge, so
 // the run's own --operator/--admin lands in the node too (foldFlagLists), which
-// is the same write `fugaro user`'s own door makes (user.go). That write is the
-// installation root's and not this step's (landFlagLists): this step runs before
-// the run's confirmation and before the guard, and a run that is declined or
+// is the same write `fugaro user`'s own door makes (user.go).
+//
+// Neither write is made by this step. Both are computed here — the migration's
+// node and the folded one, which is what the specs this run builds need —
+// and written by the installation root, once the run is past its confirmation
+// and about to apply (landSeed, landFlagLists). This step runs before the
+// loop's first stage and before the confirmation and the guard, so a write here
+// would have landed in a run the user declines, or in a coding agent's session,
+// which applies nothing at all (refuseAgentAccess): a run that is declined or
 // refused may not have changed the installation's roles on its way to applying
 // nothing.
 
@@ -71,8 +81,10 @@ import (
 // the policy stage hold, budgetDBUnadopted), and a migration whose write the
 // caller's own IAM refuses (only the implicit admins hold the database write,
 // F22/D1592) leaves the node absent for a project Owner's next update rather
-// than stopping the one command the user runs. Everything else is the run's own
-// error: a node that cannot be read is not a node that grants nothing.
+// than stopping the one command the user runs. The last of the three is the
+// landing's own (landSeed), not this step's, because this step computes the
+// migration and writes nothing. Everything else is the run's own error: a node
+// that cannot be read is not a node that grants nothing.
 func (e *initEngine) syncAccess(ctx context.Context) error {
 	lc := e.lc
 	if lc == nil || lc.Budget == nil || lc.Budget.RTDBURL == "" {
@@ -117,17 +129,17 @@ func (e *initEngine) syncAccess(ctx context.Context) error {
 			// them.
 			return nil
 		}
-		if node, err = e.migrateAccess(ctx, db, node); err != nil {
+		if node, err = e.migrateAccess(ctx, node); err != nil {
 			return err
 		}
 		if !node.Found {
-			// Nothing was written: the lists hold no grant at all (a node of no
-			// grants IS no node, WriteIfMatch, and the cloud grants such an
-			// installation has are the legacy members'), or the write was
-			// refused with the reason already printed (accessNeedsAdmin). Either
-			// way there is nothing to derive from and the two lists stay the
-			// file's for this run, which is the state the installation was in
-			// before the step ran.
+			// There is nothing to migrate: the lists the installation carries
+			// name no grant at all (a node of no grants IS no node, WriteIfMatch,
+			// and the cloud grants such an installation has are the legacy
+			// members'), or the installation's own outputs could not be read and
+			// that is said (accessNoOutputs). Either way there is nothing to
+			// derive from and the two lists stay the file's for this run, which
+			// is the state the installation was in before the step ran.
 			return nil
 		}
 	}
@@ -218,16 +230,18 @@ func addedTo(lists [][]string, held []string) []string {
 	return sortedMembers(out)
 }
 
-// landFlagLists writes this run's own --operator/--admin into the grants node.
+// landFlagLists writes the roles step's two computed nodes: the migration's
+// (landSeed) and then this run's own --operator/--admin folded into it.
 //
 // It is called by the installation root on the two paths that lead to an apply,
 // and nowhere else: after the confirmation (or after the gate that stands in for
 // it) and before the plan is applied, and again where the plan was empty, so
-// that naming a list is still a change written where the roles live. Nothing
-// before that point writes: a run the user declined, one the guard refused, one
-// whose state bucket is not there, and a preview (--plan-only) all leave the
-// node as it is, and the change they never applied is not recorded as one that
-// happened.
+// that naming a list is still a change written where the roles live, and so that
+// an installation at the previous shape records its roster. Nothing before that
+// point writes: a run the user declined, one the guard refused, one whose state
+// bucket is not there, a preview (--plan-only), and a coding agent's session all
+// leave the node as it is, and the change they never applied is not recorded as
+// one that happened.
 //
 // The direction matters where the two can disagree: the node is written before
 // the apply, not after. A write that failed after a successful apply would leave
@@ -242,7 +256,16 @@ func addedTo(lists [][]string, held []string) []string {
 // cannot be written may not look applied. It stops before anything is applied,
 // so the node and GCP then hold the same roster.
 func (e *initEngine) landFlagLists(ctx context.Context) error {
-	if e.accessDB == nil || (!e.r.o.operatorsChanged && !e.r.o.adminsChanged) {
+	if e.accessDB == nil {
+		return nil
+	}
+	// The migration's write comes first: it is the node the fold below folds
+	// into, and a fold that read the node before it would land the flags on a
+	// roster that misses every member the migration brought.
+	if err := e.landSeed(ctx); err != nil {
+		return err
+	}
+	if !e.r.o.operatorsChanged && !e.r.o.adminsChanged {
 		return nil
 	}
 	node, err := accesslib.Read(ctx, e.accessDB)
@@ -251,11 +274,12 @@ func (e *initEngine) landFlagLists(ctx context.Context) error {
 	}
 	if !node.Found {
 		// There is no node to fold into, and this run may not make one out of
-		// its own flags alone: the roles step has already said what happened to
-		// the node (it could not be written, or there was nothing to hold), the
-		// roster this run applies is the installation's, and a node written from
-		// the flags alone would be every other member's revocation on the next
-		// converge — the fold replaces a role's whole project-scope list.
+		// its own flags alone: the write above has said what happened to the
+		// migration's (refused by the caller's IAM, accessNeedsAdmin, or there
+		// was nothing to hold), the roster this run applies is the installation's,
+		// and a node written from the flags alone would be every other member's
+		// revocation on the next converge — the fold replaces a role's whole
+		// project-scope list.
 		return nil
 	}
 	_, err = e.foldFlagLists(ctx, e.accessDB, node)
@@ -282,7 +306,13 @@ const accessNoBackend = "this installation has no Firebase budget backend, so it
 // node (config/admin carries `.write: false`, so only a caller holding the
 // database write reaches it at all), and the account running this update is not
 // one of the installation's implicit admins.
-const accessNeedsAdmin = "this run could not write the grants node, which needs roles/firebasedatabase.admin — held by the project's owners, editors and budget admins: the operators and admins stay this machine's lists, and a project Owner runs fugaro update once to migrate them into the node"
+//
+// What it costs is smaller than it looks, and the sentence says which lists the
+// run used rather than claiming the file's: the step derived them from the
+// migration's own computation, which is the installation's outputs, so the
+// apply carries the installation's roster either way — the node is the record
+// that is missing, and the next update by an owner writes it.
+const accessNeedsAdmin = "this run could not write the grants node, which needs roles/firebasedatabase.admin — held by the project's owners, editors and budget admins: the operators and admins this run applies are the installation's own lists, and a project Owner runs fugaro update once to migrate them into the node"
 
 // accessFlagsNeedAdmin is the refusal a run's own --operator/--admin gets when
 // it cannot be landed: unlike the migration, this one is not a step the run may
@@ -307,10 +337,12 @@ const accessNoOutputs = "the installation's own outputs could not be read, so it
 // file sees what happened rather than finding it gone.
 const accessStale = "this machine's %s is not what the installation's own outputs list, so this run migrates the installation's: the config lists %s, the installation lists %s"
 
-// migrateAccess writes the grants node for an installation that has none, from
-// the lists the INSTALLATION carries, and returns the node as it now is. A node
-// that is not Found and holds no grants means nothing was written: the lists
-// hold no grant to hold, or the write was refused with the reason printed.
+// migrateAccess computes the grants node for an installation that has none, from
+// the lists the INSTALLATION carries, and returns the node as it would be. The
+// write is not made here but by the installation root, past the run's
+// confirmation (landSeed); what this step needs the node for is the SPEC its
+// stages build, and for that the computation is the whole of it. A node that is
+// not Found means there is nothing to write: the lists hold no grant to hold.
 //
 // The lists are read from the installation root's outputs (r.installationOutputs)
 // and not from the local config, and the difference is the whole point: the
@@ -325,9 +357,9 @@ const accessStale = "this machine's %s is not what the installation's own output
 // migrate: the run's own lists are the flags the operator typed, which the
 // installation stage applies and the config records, and the node is written by
 // the next converge, when the outputs hold them.
-func (e *initEngine) migrateAccess(ctx context.Context, db *rtdb.Client, node accesslib.Node) (accesslib.Node, error) {
+func (e *initEngine) migrateAccess(ctx context.Context, node accesslib.Node) (accesslib.Node, error) {
 	if e.firstRun() {
-		return e.seedAccess(ctx, db, node, e.runList(accesslib.RoleOperator), e.runList(accesslib.RoleAdmin))
+		return e.seedNode(node, e.runList(accesslib.RoleOperator), e.runList(accesslib.RoleAdmin))
 	}
 	// The state bucket the outputs live in is the one this run applies to (the
 	// flag, the config's, else the default), resolved the way every other
@@ -355,55 +387,97 @@ func (e *initEngine) migrateAccess(ctx context.Context, db *rtdb.Client, node ac
 			e.r.warn(fmt.Sprintf(accessStale, l.what, safetext.FieldListLine(l.local), safetext.FieldListLine(l.remote)))
 		}
 	}
-	return e.seedAccess(ctx, db, node, outs.Launchers, outs.Operators)
+	return e.seedNode(node, outs.Launchers, outs.Operators)
 }
 
-// seedAccess turns two IAM member lists into grants and writes them, printing
-// the roster it wrote so the migration is a thing the operator can see rather
-// than a silent rewrite of who may do what.
-func (e *initEngine) seedAccess(ctx context.Context, db *rtdb.Client, node accesslib.Node, operators, admins []string) (accesslib.Node, error) {
+// seedNode turns two IAM member lists into the node a migration would write, and
+// records it for the landing (e.accessSeed) rather than writing it.
+//
+// The node is what this run derives its lists from and what landSeed writes, and
+// the ETag it carries is the one the step read the node with: the write is
+// conditional on it (F23), so a node another machine wrote in the meantime is
+// not overwritten from a list read before that.
+//
+// A node of no grants is not a node at all (WriteIfMatch): an installation whose
+// lists name only legacy members holds nothing the node can rank, and there is
+// then nothing to write.
+func (e *initEngine) seedNode(node accesslib.Node, operators, admins []string) (accesslib.Node, error) {
 	grants, err := migrationGrants(operators, admins)
 	if err != nil {
 		return accesslib.Node{}, userErr("%v", err)
 	}
 	if len(grants) == 0 {
-		// Nothing to hold: an empty grants list is not a node (WriteIfMatch),
-		// and the installation's own forms are legacy members the lists carry.
 		return accesslib.Node{}, nil
 	}
-	err = accesslib.WriteIfMatch(ctx, db, grants, node.ETag)
+	seed := accesslib.Node{Found: true, Grants: grants, ETag: node.ETag}
+	e.accessSeed = &seed
+	return seed, nil
+}
+
+// landSeed writes the migration's node, if this run computed one, and is the
+// only place that write is made.
+//
+// The roles step runs before the loop's first stage, before the run's
+// confirmation and before the guard that may refuse the plan, so a write there
+// would have changed the installation's roles in a run the user declines — and
+// in a coding agent's session, which applies nothing at all and stops at its
+// first stage (refuseAgentAccess). This runs from the installation root, past
+// all three and just before the apply (landFlagLists), so the roles this run
+// applies and the node agree, and a run that stops earlier has written neither.
+//
+// It is best-effort in the one state the step's own doc names: a caller whose
+// IAM refuses the write (accessNeedsAdmin). Nothing this run applies depends on
+// the write landing — the lists were derived from the seed in the step — and the
+// node another machine wrote in the meantime is left standing (accessNodeMoved):
+// the next converge derives from it, which is what F23's conditional write is
+// for.
+func (e *initEngine) landSeed(ctx context.Context) error {
+	seed := e.accessSeed
+	if seed == nil {
+		return nil
+	}
+	e.accessSeed = nil
+	if err := e.refuseAgentAccess(); err != nil {
+		return err
+	}
+	err := accesslib.WriteIfMatch(ctx, e.accessDB, seed.Grants, seed.ETag)
 	switch {
+	case err == nil:
+		// The roster is printed where it lands, so the migration is a thing the
+		// operator can see rather than a silent rewrite of who may do what.
+		e.r.noteAccess(accessMigrated(seed.Grants))
+		return nil
 	case errors.Is(err, rtdb.ErrPrecondition):
-		// Someone else wrote the node between this read and this write: a
-		// grant or a revoke from another machine, which judged against its own
-		// read. The node is theirs now and this run may not overwrite it from a
-		// list it read before that; re-read, and derive from what is there.
-		again, rerr := accesslib.Read(ctx, db)
-		if rerr != nil {
-			return accesslib.Node{}, remote(rerr)
-		}
-		if !again.Found {
-			return accesslib.Node{}, userErr("the grants node was written and removed by another run while this one migrated it: run %s again", selfCommand()+" update")
-		}
 		e.r.warn(accessNodeMoved)
-		return again, nil
+		return nil
 	case errors.Is(err, rtdb.ErrPermission):
 		e.r.warn(accessNeedsAdmin)
-		return accesslib.Node{}, nil
-	case err != nil:
-		return accesslib.Node{}, remote(err)
+		return nil
+	default:
+		return remote(err)
 	}
-	e.r.noteAccess(accessMigrated(grants))
-	// The ETag is the one this run read before writing, so the first writer
-	// after this point is answered by a re-read (foldFlagLists). It is left as
-	// it is rather than read back for the sake of one round trip: the node's
-	// content below is exactly what was written, and the ETag of a write this
-	// process made is a value nothing here judges with.
-	return accesslib.Node{Found: true, Grants: grants, ETag: node.ETag}, nil
+}
+
+// refuseAgentAccess is the check both of this file's writes to the grants node
+// make before they are attempted: a coding agent's session writes no node.
+//
+// Every other write of the converge is behind a confirmation that session
+// refuses (init_review.go's askOrdinary and askPlanned), while this step runs
+// before the loop (init_stages.go's syncAccess) and the fold can follow a plan
+// with nothing in it — so without this check the session would change who the
+// installation's operators and admins are, and only then stop at the first
+// stage's AgentError. The refusal is the session's own, and it is not a drift
+// refusal: the session applies nothing at all, and the installation's next
+// `fugaro update`, run by the person, migrates the lists as it would have here.
+func (e *initEngine) refuseAgentAccess() error {
+	if m := agentMarker(os.Getenv, e.r.stdinTerminal()); m != "" {
+		return &initflow.AgentError{Marker: m}
+	}
+	return nil
 }
 
 // accessNodeMoved is what a run says when another writer got to the node first.
-const accessNodeMoved = "another run wrote the grants node while this one was migrating it: the roles this run uses are the node's, as it now stands"
+const accessNodeMoved = "another run wrote the grants node while this one was migrating it: this run's migration was not written and the node that landed is theirs, so the next fugaro update derives the roles from it"
 
 // accessMigrated is the migration's own line: the roster it wrote, so an
 // operator sees the roles move from a file to the installation.
@@ -602,10 +676,11 @@ func grantKeys(grants []accesslib.Grant) []string {
 // the spec's lists). So the file ends the run holding what the node says —
 // D1585's "the local lists become derived" — and a file that says otherwise
 // (a hand edit, a machine that has not converged) is corrected rather than
-// obeyed. The node this reads is the one the roles step ended with, after the
-// migration and after the run's own flags landed; the installation root derives
-// again for its own apply (deriveAccessAgain), later, and that later one is what
-// the tfvars hold (F29a).
+// obeyed. The node this reads is the one the roles step computed — the
+// migration's, with the run's own flags folded in — and not the one in the cloud
+// yet: both writes are the installation root's and land later (landSeed,
+// landFlagLists). The root derives again for its own apply (deriveAccessAgain),
+// later, and that later one is what the tfvars hold (F29a).
 //
 // The legacy members are the ones carried forward: a `group:` or `domain:`
 // member is in no grant and would otherwise fall out of the installation on the
@@ -663,11 +738,13 @@ func (e *initEngine) deriveAccess(node accesslib.Node) {
 // re-granted (or dropped) by a list that judged an older node. The read here is
 // taken as late as the run can take one — the tfvars prepared from these lists
 // are what the plan that holds the lock reads — and `ok` is false when there is
-// no node to read, which leaves the lists the file's.
+// no node to read, which leaves the spec's lists: the file's, or, in a run that
+// migrates, the roster the roles step computed from the installation's own
+// outputs, which is what the migration will write a moment later (landSeed).
 //
-// It derives and never writes: landing a change is the roles step's own job
-// (the migration, and foldFlagLists for the run's flags), and a step that wrote
-// the node from the apply path could overwrite a grant another machine made
+// It derives and never writes: landing a change is the installation root's job
+// (landSeed and foldFlagLists, both called from the root's own apply path), and
+// a read that wrote the node here could overwrite a grant another machine made
 // while this run planned.
 func (e *initEngine) deriveAccessAgain(ctx context.Context) (operators, admins []string, ok bool, err error) {
 	if e.accessDB == nil {
