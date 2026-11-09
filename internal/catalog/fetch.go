@@ -334,6 +334,10 @@ func credentialShaped(name string) bool {
 // token is passed (https://TOKEN@host), so any userinfo is refused and the two
 // are not told apart.
 //
+// The whole definition is read and not only its instructions: a comment is
+// copied into the bucket with the rest of the text, so a URL written into one
+// is refused like any other.
+//
 // The userinfo may carry no '/' and no whitespace, so the match cannot run out
 // of the URL's own authority section, and an '@' after the first '/' (an email
 // in a comment, a path) is not userinfo. The scp-like clone form
