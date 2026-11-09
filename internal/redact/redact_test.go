@@ -357,6 +357,19 @@ var patternCases = []struct {
 		keep: `\",\"step\":\"terraform apply\"}`,
 	},
 	{
+		name: "password holding an escaped quote in an escaped json record",
+		in: `{\"password\":\"` + fake(strings.Repeat("Qw3", 5)) + `\\\"` +
+			fake(strings.Repeat("Qw3", 5)) + `\",\"step\":\"terraform apply\"}`,
+		leak: strings.Repeat("Qw3", 5),
+		keep: `\",\"step\":\"terraform apply\"}`,
+	},
+	{
+		name: "password holding an escaped quote where the record stops",
+		in: `{\"password\":\"` + fake(strings.Repeat("Qw3", 5)) + `\\\"` +
+			fake(strings.Repeat("Qw3", 5)),
+		leak: strings.Repeat("Qw3", 5),
+	},
+	{
 		name: "camel case password field of an escaped json record",
 		in: `{\"dbPassword\":\"` + fake(strings.Repeat("Qw3", 5)) +
 			`\",\"step\":\"terraform apply\"}`,
@@ -1058,6 +1071,34 @@ func TestRedactKeepsAPasswordRecordReadable(t *testing.T) {
 		}
 		check(t, outer.Content)
 	})
+
+	// The value holds bytes the escaping has to be read twice for: a quote of
+	// its own, which the inner record writes as `\"` and the escaping around
+	// that record doubles into three backslashes — the value's quote and the
+	// backslash escaping it — and a backslash at the end of it, which arrives
+	// as five backslashes before the quote closing the field. Read as that
+	// closing `\"`, the value's own quote leaves the tail of the credential in
+	// the text and the record stops parsing; read the other way round, the
+	// closing one is the quote the field really ends at, and which of the two
+	// a `\"` is is what the byte after it tells.
+	for _, tc := range []struct{ name, value string }{
+		{"a quote in the value", value + `\"` + value},
+		{"a backslash ending the value", value + `\\`},
+	} {
+		t.Run("escaped with "+tc.name, func(t *testing.T) {
+			inner := `{"severity":"ERROR","token":"` + tc.value +
+				`","message":"quota exceeded for project foo","step":"terraform apply"}`
+			got := Text(`{"type":"result","content":`+strconv.Quote(inner)+`}`, nil)
+			if strings.Contains(got, value) {
+				t.Fatalf("Text = %q: the value survived the escaping", got)
+			}
+			var outer struct{ Content string }
+			if err := json.Unmarshal([]byte(got), &outer); err != nil {
+				t.Fatalf("Text = %q, which is no longer a JSON record: %v", got, err)
+			}
+			check(t, outer.Content)
+		})
+	}
 }
 
 // TestRedactReportIsIdempotentWhenAMaskBites: this is the shape that made the

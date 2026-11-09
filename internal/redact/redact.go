@@ -133,7 +133,7 @@ func patternPass(s string) string {
 	s = connString.ReplaceAllString(s, "$1:"+redacted+"@")
 	s = connStringCut.ReplaceAllString(s, "$1:"+redacted)
 	s = dsnString.ReplaceAllString(s, "$1"+redacted+"$3")
-	s = passwordEscaped.ReplaceAllString(s, "$1$2$3$4$5$6$9"+redacted+"$8")
+	s = passwordEscaped.ReplaceAllString(s, "$1$2$3$4$5$6$10"+redacted+"$8$9")
 	s = redactPasswords(s)
 	s = redactPasswords(s)
 	for _, re := range tokenShapes {
@@ -516,6 +516,17 @@ var (
 	// it is what the rule matched.
 	dsnString = regexp.MustCompile(`\b([A-Za-z0-9_.\-]+:)([^\s"@]+)(@(?:tcp|unix|udp)\()`)
 
+	// passwordEscapedValue is the value of a field of a record that has itself
+	// been escaped, read at the level the escaping leaves it at: a byte of the
+	// value is a plain byte, or the byte a backslash introduces (`\\` and `\"`
+	// are one byte each there), or the three backslashes and the quote a value
+	// holding a quote of its own arrives as — the value's quote and the
+	// backslash escaping it, written one encoding further in. That reading is
+	// tried first, so the `\"` the value's own quote ends in is not taken for
+	// the record's closing one; telling the closing one from a byte the value
+	// could have gone on with is what the guard in the rule below is for.
+	passwordEscapedValue = `(?:\\\\\\"|\\[^"]|[^"\\])`
+
 	// passwordEscaped is the same credential inside a record that has itself
 	// been escaped — a JSON object carried inside a JSON string, a provider's
 	// error body, a transcript field — where every quote of the inner object
@@ -531,15 +542,20 @@ var (
 	// the line and takes the fields after the credential with it, which is how
 	// a record stops being one.
 	//
-	// A value may hold anything but the `\"` closing it: a backslash escapes
-	// the byte after it unless that byte is a quote, which is the record's own,
-	// while a doubled backslash is one escaped character and is stepped over
-	// whole. The second alternative reads the value that never closes — the
-	// transcript realising it holds a credential only after cutting the line —
-	// and stops at the `\"` just the same: a value that does close is the first
-	// alternative's to read, and one that closes below the floor
-	// (`{\"password\":\"abc\"}`) is not a credential to guess at, so the record
-	// keeps its fields either way.
+	// A value is read through the escaping the record arrived in: a backslash
+	// escapes the byte after it, a doubled backslash is one escaped character
+	// and is stepped over whole, and a value holding a quote of its own arrives
+	// as three backslashes and a quote, which is that character rather than the
+	// `\"` closing the field. What tells a closing `\"` from a byte of the
+	// value is the byte after it: a field of a record ends at a separator, at a
+	// brace or at the end of the text, so a `\"` with the rest of a word after
+	// it is no closing one, and the rule reads on to the one the record ends
+	// the field with. The second alternative reads the value that never closes
+	// — the transcript realising it holds a credential only after cutting the
+	// line — and stops at the `\"` just the same: a value that does close is
+	// the first alternative's to read, and one that closes below the floor
+	// (`{\"password\":\"abc\"}`) is not a credential to guess at, so the
+	// record keeps its fields either way.
 	//
 	// The name is the one a record writes: the lower-case spellings of
 	// passwordValue above, which a JSON body and an environment dump share, and
@@ -547,7 +563,7 @@ var (
 	// passwordCamel's spelling in plain text. What stands before the name is
 	// the record's escaped quote where a field's name starts the record or
 	// follows another, and the boundary below it as everywhere else.
-	passwordEscaped = regexp.MustCompile(`(?i)(^|(?-i:[^a-z]))(\\*["']?)(pass(?:word|phrase|wd)s?|pwd|secret(?:[_-]?(?:access[_-])?key)?|token|api[_-]?key|access[_-]?key|auth[_-]?token|(?-i:[A-Za-z0-9_]*?(?:Pass(?:word|Phrase|Wd)?s?|Pwd|Secret(?:[_-]?(?:Access[_-])?Key)?|Token|Key)))(\\*["']?)(\s*[:=]\s*)(?:(\\+")((?:[^"\\]|\\[^"]){4,})(\\+")|(\\+")((?:[^"\\]|\\[^"]){4,})(?m:$))`)
+	passwordEscaped = regexp.MustCompile(`(?i)(^|(?-i:[^a-z]))(\\*["']?)(pass(?:word|phrase|wd)s?|pwd|secret(?:[_-]?(?:access[_-])?key)?|token|api[_-]?key|access[_-]?key|auth[_-]?token|(?-i:[A-Za-z0-9_]*?(?:Pass(?:word|Phrase|Wd)?s?|Pwd|Secret(?:[_-]?(?:Access[_-])?Key)?|Token|Key)))(\\*["']?)(\s*[:=]\s*)(?:(\\+")(` + passwordEscapedValue + `{4,})(\\+")([^A-Za-z0-9_]|\z)|(\\+")(` + passwordEscapedValue + `{4,})(?m:$))`)
 
 	// passwordValue is the credential a name introduces with a sign, wherever
 	// that is written: an environment dump (`PGPASSWORD=…`, `SENTRY_AUTH_TOKEN=…`,
