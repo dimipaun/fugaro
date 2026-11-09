@@ -6,7 +6,7 @@ prerequisite before any binary links the front door (the owner's ruling of 2026-
 except the reading of the installation's published state its lists come from, which no task of this
 plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
 half and not started; M8 is built except the wiring that would serve its four read tools, which is
-the task M5b gates; M9 and M11 are not started; this folder approves no task.** The design is
+the task M5b gates; M9 is not started, and the launch-override fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of 2026-11-09); this folder approves no task.** The design is
 [spec.md](spec.md), the findings and the fifteen decisions are
 [reconciliation.md](reconciliation.md). **All fifteen were answered on 2026-11-04** — **every one of
 them the recommendation**, with the owner's own detail written into M3, M5, M6 and M9 — and this
@@ -38,13 +38,13 @@ from being wired into a binary is **M5b**, the paired device M-a asks for.
 | D921 | The OAuth library | **`zitadel/oidc` — the recommendation**, with the licence a gate the owner answered himself on 2026-11-07: he read the branch's own [licence-table.md](licence-table.md) and cleared the dependency set — **"Cleared: all permissive"** — recorded in [licence-gate.md](licence-gate.md), so **the check is met and M5 waits on the licence no longer**; counsel was never asked | **M5's shape changes** (the endpoints stay; who implements them does not), and `go.mod` gains a different dependency. |
 | D922 | Where the token records live | **The separate `mcpauth` subtree, `.read: false` and `.write: false`, written by the coordinator's own account only** — the recommendation (**restated the same day**: the first answer made it readable by any signed-in person) | **M3 changes** by taking `coordinator/`'s `.read: "USER"` for the new node, and its red step inverts from the denial to the admission. |
 | D923 | How the person signs in | **The installation's own custom-token flow, with a PAIRED DEVICE approving and the coordinator never minting a token** — the recommendation, mechanism named; the ID token is consumed at `/oauth/authorize` only, and only exact `user:` list entries are read | **M6 changes** (the verifier moves to the authorize endpoint), **M7 gains the `user:`-only rule**, and a decision already taken once (`docs/mobile-auth` D221) is reopened. |
-| D924 | How the spend limit is enforced | **A field of its own, tighter-of-two, counted across the whole token family** — the recommendation, with **its channel moved on 2026-11-09**: the ruling that fences the launch override puts the limit in the run's own task rather than in the execution's environment (the task is unsigned, `docs/design/bucket-iam.md:412`) ([reconciliation.md](reconciliation.md) §4a, the ruling of 2026-11-09) | **M9 loses its core change** and gains the launcher-side arithmetic instead, and **M2 gains the family counter** that makes rotation a lifetime mechanism rather than a budget one. |
+| D924 | How the spend limit is enforced | **A field of its own, tighter-of-two, counted across the whole token family** — the recommendation, with **its channel moved on 2026-11-09 and restored the same day**: the fence ruling put the limit in the run's own task, and the owner's later ruling of the same day declined the fence and gave the front door the launcher's permissions, so **the limit travels on the execution override its original answer named** ([reconciliation.md](reconciliation.md) §4a, both rulings of 2026-11-09) | **M9 loses its core change** and gains the launcher-side arithmetic instead, and **M2 gains the family counter** that makes rotation a lifetime mechanism rather than a budget one. |
 | D925, D926 | Hotfix as a flag; the window's shape | **Flag beside the window; an empty window refused at mint** — the recommendation | **M1 changes**, and M9's refusal message changes. |
 | D927 | The v1 scopes | **`tasks:read`, `tasks:write` only** — the recommendation | **M7 and M10 gain a scope**, and the console's blocked write (F30) gains a route. |
 | D928 | Who owns the redirect allowlist | **The project's configuration**, with registration refusing a non-loopback URI off the allowlist, the consent page naming the redirect host, and the flow CSRF-bound — the recommendation, tightened | **M5 and M9 gain a configuration field** and the project-format version question that comes with it, and M5's registration, consent and authorize tests go with them. |
 | D929 | What an unattended caller is | **A pre-registered confidential client** — the recommendation | **M5 and M9 gain a key-exchange endpoint**, and the owner's own non-goal is reopened. |
 | D930 | Lifetimes and rotation | **Short-lived access tokens, rotating refresh, one-delete revocation** — the recommendation | **M2 and M10 change**; a long-lived-token design deletes most of M2. |
-| D931 | How a run is started, and the coordinator's own tools | **`internal/backend`, one new grant, both tool sets on one endpoint, and a single launch path**: the tool is `spawn_task`, and concurrency, rate, idempotency and the kill switch all go through `fugaro run`'s own pre-launch code — the recommendation, tightened | **M9 changes** (the sweep instead of a direct launch), and the tool-naming decision moves into M7. **Its one new grant is M11's diff**, and the fence around it is decided and unbuilt (2026-11-09): **M9 waits on M11**. |
+| D931 | How a run is started, and the coordinator's own tools | **`internal/backend`, one new grant, both tool sets on one endpoint, and a single launch path**: the tool is `spawn_task`, and concurrency, rate, idempotency and the kill switch all go through `fugaro run`'s own pre-launch code — the recommendation, tightened | **M9 changes** (the sweep instead of a direct launch), and the tool-naming decision moves into M7. **Its one new grant is M9's own diff** — the front door takes the launcher's permissions, `run.jobs.runWithOverrides` included, because the fence the design first put around it is **declined for v1** (the owner's ruling of 2026-11-09, later the same day: the risk accepted and to be revisited). |
 | D932 | Where `stream_logs` reads | **The run's own artefacts** — the recommendation | **M8 and M4 change**: one more grant, able to read every log line in the project. |
 | D933 | Who a person is | **The project's launcher and operator lists**, read for exact `user:` entries only — the recommendation | **M7 and M10 change**, and a permission model that does not exist yet has to be designed. |
 | D934 | Whether the front door is on by default | **OFF until the owner turns it on** — the recommendation | **M4 gains the switch** and the live checklist gains a state; the other reading puts a public write endpoint on installations that asked only for a read-only view. |
@@ -200,41 +200,36 @@ while the front door still needs `signJwt` to mint the run's token, which the ro
 which is why minting has to move out of the public service before the tool can be built (the second
 of the four requirements below). The first slice keeps that sentence true by not
 needing `spawn_task` at all. **What a later `spawn_task` design item has to answer** is written in
-[reconciliation.md](reconciliation.md) §4b and in §7 below; the four requirements are: no
-`runWithOverrides` (use `run.jobs.run` with per-run input under a bucket prefix only the coordinator
-writes — with the per-launch data itself on the run's task, since the account can set no override, and
-with the identity the launch binding M11 carries); run-token minting moved out of the public service;
-an argument allowlist (no
+[reconciliation.md](reconciliation.md) §4b and in §7 below; the four requirements are: **no
+`runWithOverrides` — considered and declined for v1** (the owner's ruling of 2026-11-09 gave the front
+door the launcher's permissions, overrides included, and the split launcher role and its launch binding
+are declined with the fence — §2 and M11's note in §3); run-token minting moved out of the public
+service; an argument allowlist (no
 `--no-budget-check` at `internal/cli/run.go:335`, no `--token` at `internal/cli/run.go:322`, no
 free-form `--run-id` at `internal/cli/run.go:313`); and `mode = max(requested, the token's minimum)` always.
 
 ## 2. The edges, the levels and the critical path
 
-**Sixteen task-to-task edges**, and nothing else forces the shape: "A ← B" reads "A waits for B", and
+**Fourteen task-to-task edges**, and nothing else forces the shape: "A ← B" reads "A waits for B", and
 the gates that are not tasks — the SECURITY review, D928 and D921's licence — are named beside the
 task each one holds. **§8's store answer was one of
 them and is not any more**: the owner gave it on 2026-11-05, so M2 and M4 wait on nothing but the
-tasks and the review below. **Check 0's fence is no longer one of them either**: the owner decided its
-mechanism on 2026-11-09 and it is a task of this plan — **M11** ([reconciliation.md](reconciliation.md)
-§6, check 0) — so what gates M9 is a task being built rather than an owner answer. **And that ruling's
-own premise is back with the owner as D937** (§4b of the same file): the run's identity travels as the
-`FUGARO_RUN` override, which a `run.jobs.run`-only account cannot set, so **M11 carries the runner and
-backend half that replaces it and M9 waits on both the build and the answer**.
+tasks and the review below. **Check 0's fence was one of them for part of 2026-11-09 and is not one
+either**: the owner first made its mechanism a task of this plan (**M11**), and **later the same day
+declined the fence and gave the front door the launcher's permissions**, so **M11 is removed as a task,
+M9 waits on M4 and M7 alone, and nothing gates the launch path on an answer or a build that does not
+exist** ([reconciliation.md](reconciliation.md) §6, check 0, and M11's note in §3).
 
 **M1** ← nothing. **M2** ← M1. **M3** ← nothing: it is a rules file and
 its tests, and it can land first. **M4** ← the SECURITY review of [spec.md](spec.md) §8. **M5** ← M2, M4, D928, and D921's licence (the owner cleared it on 2026-11-07). **M5b** ← M4, M5 (it spends the
 ID token the approve step verifies and binds the approval to the flow that token names; **the owner
 ruled on 2026-11-07 that it is a task of its own and a hard prerequisite before any binary links the
 front door**). **M6** ← M4, M5 (it wires a
-verifier into the server M5 mounts). **M7** ← M2, M5. **M8** ← M7. **M9** ← M4, M7, and **M11**, the
-split launcher role the owner ruled on 2026-11-09 ([reconciliation.md](reconciliation.md) §6, check 0)
-and which is **not built** (and on **D937**, the premise that ruling assumed away). **M10** ← M5, M7.
-**M11** ← M4 (the split launcher role of check 0 grants the fence role on each project job to the front
-door's own account, so it waits on the account, the service, the install's TF tree and nothing else;
-the jobs it grants it on are M4's tree's too, and no task of this plan carries them), **and D937** for
-its shippability — the identity half it carries is the reason the split role can start a run at all.
+verifier into the server M5 mounts). **M7** ← M2, M5. **M8** ← M7. **M9** ← M4, M7, and **D924** — the launch
+grant D931 asks for is this task's own diff, because the fence that would have split it is **declined**
+([reconciliation.md](reconciliation.md) §6, check 0). **M10** ← M5, M7.
 
-Four dependencies force that shape and nothing else does:
+Three dependencies force that shape and nothing else does:
 
 1. **M4 before M5.** The endpoints have nowhere to run until the coordinator has a service and an
    account of its own — and, since D935, nowhere to keep a record until the store and its one grant
@@ -243,16 +238,6 @@ Four dependencies force that shape and nothing else does:
 2. **M2 before M5.** The token endpoint's whole job is to mint a record M2 defines.
 3. **M1 before everything that reads a limit**, because "only narrows" is the one property every
    other task assumes.
-4. **M11 before M9.** The task that starts a run is the one the fence exists for, and the fence is the
-   launcher's grant rather than a runner-side check: M9 may build its launch path only against an
-   account that holds `run.jobs.run` and cannot override a template, and that account's grant is
-   M11's diff. **It is the account side that puts M11 after M4**, and the job side that puts the
-   grant in another module: the jobs live in `module "project"`, which the installation module cannot
-   name. **And D937 belongs to the same edge**: with the identity on the override, the account the
-   grant creates could start executions that can find no run — a fence that pays for launches it
-   cannot use — so the identity change M11 carries is part of what M9 waits for. The dependency runs
-   one way only — **nothing in the first slice waits on M11**, which
-   is why it sits beside M2 at L1 rather than in the deferred slice's own level.
 
 ### Levels
 
@@ -263,7 +248,7 @@ registry end up four levels apart.
 | Level | Tasks | What holds a task out of an earlier level |
 | --- | --- | --- |
 | **L0** | M1, M3, M4 | nothing. M4's one remaining gate (the review) stands in front of the level rather than in it |
-| **L1** | M2, M11 | M2: `token.go` is M1's file, and D935's answer decides `store_bucket.go`. M11: `coordinator.tf`, `cover.go` and `SECURITY.md` are M4's files, and the account and the service it names are M4's |
+| **L1** | M2 | M2: `token.go` is M1's file, and D935's answer decides `store_bucket.go` |
 | **L2** | M5 | M2's store, M4's service, and D921's licence — met, cleared by the owner on 2026-11-07 |
 | **L3** | M7, M5b | M7: `server.go` and `service.go` are M5's; M5b: `authorize.go` is M5's, and the approval it binds is the one M5's approve step takes today |
 | **L4** | M6, M8 | M6: `server.go`, which M5 and M7 both write; M8: `tools.go`, M7's |
@@ -273,10 +258,7 @@ registry end up four levels apart.
 **Critical path:** the review → **M4 → M5 → M7 → M8 → M9 → M10**, six levels to the
 last task, with **M1 → M2 → M5** joining it at M5. **Off it:** M3 entirely (it can land at any point,
 and it is the one task that shares no file with any other), **M5b** — it gates the wiring rather than
-any task of this plan, so nothing from M6 on waits on it — **M11**, which waits on M4 (and, to ship,
-on D937) and is
-built whenever the launcher's grant is wanted (before M9, and long before M9's level, which is why it
-lengthens no path), and M6, which takes the last of
+any task of this plan, so nothing from M6 on waits on it — and M6, which takes the last of
 `server.go`'s three slots so that M7 does not have to.
 
 **Sequential by necessity**, and not by preference: **M7 → M8 → M9 → M10** are four writers of one
@@ -284,12 +266,11 @@ registry (`ee/coordinator/mcpauth/tools.go`), which is the file that decides wha
 a planner who wants them in parallel is asking for four conflicts in the one file the whole front door
 answers through. **M5 → M7 → M6** are the three writers of `server.go`, and M6 is off the critical
 path, which is why it takes the third slot rather than the second. **M4 → M5 → M7** are the three
-writers of the service's own entry point (`ee/coordinator/service.go`), and **M4 → M11** are the two
-writers of `coordinator.tf` and of `cover.go` — M4 creates the service and the
-account, M11 ends the account's own "one grant" comment and adds its principal kind and permission pin
-to the cover — which is why M11 takes L1 rather than M4's own
-level. **The grant itself is not one of those rows**: it is written in `module "project"`, which no
-first-slice task touches at all.
+writers of the service's own entry point (`ee/coordinator/service.go`), and **M4 → M9** are the two
+writers of `coordinator.tf` — M4 creates the service and the
+account, and M9 ends the account's own "one grant" comment and adds the launcher's grant on each
+project job — which is why the two are levels apart. **The grant itself is not a first-slice row**: it
+is written in `module "project"`, which no first-slice task touches at all.
 **M9** waits for a release
 window in which `internal/runner/spend.go` has no other writer (§4), which no level can schedule.
 
@@ -307,20 +288,18 @@ M6 ────────────┘
 
 deferred slice:
 
-M7 ──▶ M9 ──▶ M10 (its spawn half)
-M4 ──▶ M11 ──┘
+M4 ──▶ M9 ──▶ M10 (its spawn half)
+M7 ──┘
 ```
 
-**The deferred slice is two tasks plus one half-task, and it is cut on purpose.** **M9 leaves the
-first slice**, and with it the parts of M10 that name a spawned or cancelled run; **M11 leaves it
-too by never having been in it** — the split launcher role is the fence the task that starts a run
-needs, and the first slice starts none — so nothing in the
-first slice starts a run, holds the launch grant or changes `internal/runner`. That is D936's whole
+**The deferred slice is one task plus one half-task, and it is cut on purpose.** **M9 leaves the
+first slice**, and with it the parts of M10 that name a spawned or cancelled run; **no other task is
+in it** — the split launcher role the design first put beside M9 is declined (M11, §3) — so nothing in
+the first slice starts a run, holds the launch grant or changes `internal/runner`. That is D936's whole
 point: the first slice **answers strangers and reads** — the authorization server, the tool registry
 and the four read tools — and the sentence "the coordinator mints nothing" stays true while it does.
-**Of §2's levels, L5 is the deferred slice's, M11 at L1 is the fence that slice needs and the first
-slice does not, and L6 loses its spawn half; every other row and every other edge above stands as
-written.**
+**Of §2's levels, L5 is the deferred slice's and L6 loses its spawn half; every other row and every
+other edge above stands as written.**
 
 
 ## 3. The tasks
@@ -334,8 +313,8 @@ is asked here for every task that changes who may reach what.
 starts until it has been read and its findings answered, and its scope is §8, every **SEC**-marked
 task below (the five whose marker says **mandatory** are M3, M4, M5, M7 and M9) and the two new
 privileges this design asks for — **the privilege as the design states it, and not the task that
-builds it**: the launch grant the front door needs (the task is **M11**, written after that review
-ran and carrying its own independent reading below) and M4's single binding on the store the
+builds it**: the launch grant the front door needs (**M9**'s diff, and its marker is one of the five
+mandatory) and M4's single binding on the store the
 `mcpauth` records moved to. **D921's licence** is the second
 ([reconciliation.md](reconciliation.md) §6, the first owner check): it gates **M5** specifically,
 because M5 is the task that takes the dependency, and a licence that turns out to be unusable sends
@@ -349,10 +328,9 @@ owner's answers to them are [reconciliation.md](reconciliation.md) §4a, every d
 is written to them, and **a task starts only when the finding that names it is answered in the task
 it builds** — which is what §3 says of each task below. Its scope was §8, every SEC-marked task (the
 five whose marker says **mandatory** are **M3, M4, M5, M7 and M9**, **with M9 keeping the marker in
-the deferred slice**), and the two new privileges the design asks for. **Two SEC-marked tasks are
-outside it because they did not exist when it ran** — **M5b** (the owner's ruling of 2026-11-07) and
-**M11** (the ruling of 2026-11-09) — **and each carries its own independent SECURITY reading when it
-is built**, which is what §3 says of each of the two. **D921's licence** is the half
+the deferred slice**), and the two new privileges the design asks for. **One SEC-marked task is
+outside it because it did not exist when it ran** — **M5b** (the owner's ruling of 2026-11-07) — **and
+it carries its own independent SECURITY reading when it is built**, which is what §3 says of it. **D921's licence** is the half
 of the second gate that no review could settle: it was answered **UNCONFIRMED**, and **the owner met
 it himself on 2026-11-07** by reading [licence-table.md](licence-table.md) and clearing the
 dependency set — "Cleared: all permissive", with [licence-gate.md](licence-gate.md) the gate file
@@ -561,7 +539,8 @@ half, `mcpauth_store.tf` with the bucket and its one grant, is not started.**
   `ee/coordinator/service.go`.
 - **Interface:** a `google_cloud_run_v2_service` for the coordinator with `allUsers` invoker (D920),
   its own service account, no model credential mounted, and the launch role of M9 **deliberately
-  absent** — the comment at `coordinator.tf:377` says so, and the task that adds it is M11. **And the store of D935, which is this task's because this is the task that writes IAM.**
+  absent** — the comment at `coordinator.tf:377` says so, and the task that adds it is **M9** itself
+  (the fence that would have split the role into one of its own is declined, §3). **And the store of D935, which is this task's because this is the task that writes IAM.**
   The store is **a bucket of its own — `fugaro-mcpauth-<gcp-project>`, a function of the
   project alone, the convention the runs bucket and both state buckets already follow
   (`internal/managed/statebucket.go:75`)** — with uniform bucket-level access and public access
@@ -723,9 +702,10 @@ That run creates, in the installation's GCP project:
   acquires neither the store nor the grant. **And no operator action repairs it**: a bucket that
   already exists under that name fails the apply rather than being adopted (§3, M4), which is the
   refusal the operator reads and not a name to edit by hand;
-- the launch grant on the project's own job — **the split launcher role M11 adds and M9 uses**, the one
-  new privilege this design asks for, and a role that carries `run.jobs.run` and never
-  `run.jobs.runWithOverrides`;
+- the launch grant on the project's own job — **the launcher's own role, bound to the front door's
+  account** (M9's diff), the one new privilege this design asks for, and a role that carries
+  `run.jobs.run` **and** `run.jobs.runWithOverrides` (the fence that would have split it is declined,
+  §3);
 - the front door's own configuration: the redirect allowlist of D928 and the switch of D934.
 
 An installation that opted into the coordinator for its read-only view acquires **none** of it: the
@@ -997,49 +977,34 @@ this task still owes is its own rerun against M-a and H1 rather than that step.
 **Out of the first slice (D936).** The first slice is **the authorization server plus the read
 tools**, and **M9 leaves the first slice**: it is the task that starts a run from the front door, and
 it needs two privileges the front door does not hold — `signJwt` and write on the runs bucket — plus
-**the launcher's `run.jobs.run`, which M11 grants it and which never carries
-`run.jobs.runWithOverrides`** (the owner's ruling of 2026-11-09, [reconciliation.md](reconciliation.md)
-§6 check 0). **M11's grant answers the override half of that and nothing else**: `signJwt` stays a
-privilege the front door would hold, so the minting moves out of the public service (the second of
-the four requirements §1 names) before this task can be built — the role narrows what a launch may set, not what the
-public service may sign. **What a later `spawn_task` design item has to answer is written in §1 and §7 below**,
-and **nothing in the
+**the launcher's own grant, `run.jobs.run` and `run.jobs.runWithOverrides`**, which is this task's
+diff (the owner's ruling of 2026-11-09, later the same day: the fence that would have split that role
+is **declined**, [reconciliation.md](reconciliation.md) §6 check 0 and M11's note in §3). `signJwt`
+stays a privilege the front door would hold, so the minting moves out of the public service (the
+second of the four requirements §1 names) before this task can be built. **What a later `spawn_task`
+design item has to answer is written in §1 and §7 below**, and **nothing in the
 first slice starts a run, holds the launch grant or changes `internal/runner`**. The task is written
 here, unchanged, as the plan for when it is designed and the owner approves it.
 
-- **Files (14):** `ee/coordinator/mcpauth/tool_spawn.go`, `tool_spawn_test.go`,
+- **Files (12):** `ee/coordinator/mcpauth/tool_spawn.go`, `tool_spawn_test.go`,
   `ee/coordinator/mcpauth/tool_cancel.go`, `tool_cancel_test.go`,
   `ee/coordinator/mcpauth/launch.go`, `launch_test.go`, `internal/runner/spend.go`,
-  `internal/runner/spend_test.go`, and the **task-format skew** the two new
-  `task.Spec` fields need — `internal/task/task.go`, `internal/task/task_test.go`,
-  `internal/cli/recipes_skew.go`, `internal/cli/recipes_skew_test.go`,
-  `internal/cli/run.go`, `docs/release.md`.
-- **The two new task fields ship with a skew gate, and the plan names it (2026-11-09).** Moving
-  D924's channel into the run's own task means `internal/task/task.go`'s `Spec` gains the
-  ceiling and the marker, and `task.Parse` decodes with `DisallowUnknownFields`, so **every new
-  field of that struct ships with the four artifacts this repository's skew pattern has**:
-  the constant in `internal/cli/recipes_skew.go` (the release that ships the fields, as
-  `planTaskSince` and `compressionSince` do), the launch gate at `internal/cli/run.go` judged by
-  `checkImageSince` against the job image's build record `base_ref` — the launch path is shared,
-  so the front door's `launch.go` gets it by going through `fugaro run`'s own pre-launch code and
-  not a second time of its own — `internal/cli/recipes_skew_test.go`'s `…SinceHasAReleaseBullet`
-  row, and the `docs/release.md` "Before you tag" bullet. **Both failure modes are named there**:
-  a runner built from an older release **refuses the whole task at bootstrap** (the unknown field,
-  which is a launch that dies after it was paid for), and a coordinator built from an older
-  release **writes no ceiling at all**, so the run silently resolves the job's own cap and the
-  token's limit is dropped — which is why **every job image a launch carrying the ceiling can reach
-  has to be at that release before any launch carries one, and `fugaro update` is what takes them
-  there**: the rebuild is update's own step, behind its own confirmation, so the release's
-  `### For operators` reads the one line the repository's rule allows — run `fugaro update` — and a
-  launch that meets an older image is refused with the release and that command named, rather than an
-  ordering an operator has to sequence.
+  `internal/runner/spend_test.go`, **the launch grant** —
+  `deploy/terraform/gcp/modules/installation/coordinator.tf` (comments only: the account's "one
+  grant" comment at `:301-320` and the "deliberately absent" comment at `:377` both describe a state
+  this task ends), `deploy/terraform/gcp/modules/project/iam.tf` (the one job-scoped binding of the
+  launcher's own role to the front door's account, beside the launcher grant at `:7-14`) and
+  `deploy/terraform/gcp/modules/project/iam_test.go` (new: the binding's own text-level test) — and
+  `SECURITY.md`. **`internal/infra/tf/cover.go` needs no change**: the front door's account is a
+  service account M4's module creates, and the cover's existing acceptance of a `fugaroJobRunner`
+  grant to such an account is exactly the grant this task wants — it is the row the declined fence
+  would have narrowed to a role of its own.
 - **Interface:** **`spawn_task`** (D931's answer of 2026-11-04 — the owner's name for the
   `submit_task` of the spec §0) starts the project's own job through `internal/backend` with the
-  token's spend limit and the marker that a launch carries one written into **the run's own task in the
-  runs bucket** (D924, whose channel the ruling of 2026-11-09 moved, and M11's grant, which is why the
-  task is the only channel there is: the account that launches holds no `runWithOverrides`, so nothing
-  it starts can reach the container's environment); the run's ceiling
-  becomes the tighter of that and the job's own. **It starts it through one launch path and no
+  token's spend limit and the marker that a launch carries one written into **the execution's own
+  environment** (D924's answer of 2026-11-04, restored on 2026-11-09 when the fence was declined: a
+  variable of its own on the execution override, `internal/backend/backend.go:124-144`); the run's
+  ceiling becomes the tighter of that and the job's own. **It starts it through one launch path and no
   other**, which is the whole of D931's second half: the same **launch claim** in the runs bucket
   (`internal/runstore/launch.go:112`, `ClaimKey`, `ClaimTTL` at `:117`) so one submit is one run and
   a repeat answers about the run in flight, the same **budget pre-check** of kill switches, caps and
@@ -1047,40 +1012,37 @@ here, unchanged, as the plan for when it is designed and the owner approves it.
   `internal/cli/launch_budget.go:302` is the CLI's own call to), and the front door's own
   **concurrency and rate** limits enforced at that same point. `launch.go` is the one file that
   reaches the job, and a second route to `internal/backend` in any later task is a finding rather
-  than a convenience. **It sends no execution override at all, and that is a change this task carries
-  rather than inherits.** `fugaro run`'s own pre-launch code puts **three** per-launch values there
-  today, all of them overrides on a shared project job: the run's identity (`FUGARO_RUN`,
-  `internal/backend/gcp/run.go:173`) — because the job's name says nothing about which run it is — the
-  budget token's seal key when the launch mints (`FUGARO_BUDGET_TOKEN`, a *secret* override, the sealed
-  token itself going into the runs bucket, `internal/cli/run.go:3956`,
-  `internal/cli/launch_budget.go:708`, `internal/backend/backend.go:136`), and the review-job marker
-  (`FUGARO_REVIEW_JOB=1`, `internal/cli/run.go:3977`). **The front door's account can set none of
-  them**, and this task's own channel — the task — carries the ceiling and the marker of D924 and
-  nothing else. So: the identity moves to the **launch binding** M11 builds (the run named by the
-  execution Cloud Run injects itself, `internal/backend/platform.go:69`), with M11's bounded poll and its
-  orphan refusal; and **the seal key and the review-job marker have no named channel yet** — they are
-  the third part of the question §4b's **D937** puts back to the owner, because a launch that carries a
-  minted budget token and cannot hand the run the one thing that opens it is a paid-for run that dies
-  at bootstrap, and a marker that rides no override is a review job the front door cannot ask for. Its **own ceiling and marker reach the run through the task**, which is the
-  point of the move, and **the task is input and not authenticated input**: the front door holds the
-  runs-bucket write, so a compromised coordinator can still choose the task's `repo`, `prompt`,
-  `workflow` and `recipe` — the fence bounds the override surface and not the content, and what
-  bounds the content is this task's argument allowlist and its budget pre-check. `cancel_task` writes
-  the marker `fugaro cancel` writes.
+  than a convenience. **It launches with the launcher's own grant, and that is the accepted v1 risk
+  stated plainly.** The front door's account holds `run.jobs.run` **and** `run.jobs.runWithOverrides`
+  on each project job — the owner's ruling of 2026-11-09, later the same day — so this launch carries
+  exactly what `fugaro run` carries today: the run's identity (`FUGARO_RUN`,
+  `internal/backend/gcp/run.go:173`), the budget token's seal key when the launch mints
+  (`FUGARO_BUDGET_TOKEN`, a *secret* override, the sealed token itself going into the runs bucket,
+  `internal/cli/run.go:3956`, `internal/cli/launch_budget.go:708`, `internal/backend/backend.go:136`)
+  and the review-job marker (`FUGARO_REVIEW_JOB=1`, `internal/cli/run.go:3977`). **A compromised front
+  door can therefore change what a run does, not only narrow its ceiling**, which is what the owner
+  accepted for v1 and asked to have revisited ([reconciliation.md](reconciliation.md) §4a, "The
+  owner's ruling of 2026-11-09, later the same day"; the fence that would have bounded it is declined,
+  M11 in §3, and the revisit is §7 and §6 check 9 there). **What still bounds the launch is not the
+  grant but the two controls beside it**: the argument allowlist (no `--no-budget-check`, no
+  `--token`, no free-form `--run-id`), which keeps the launch from being a way around the pre-launch
+  checks, and the budget pre-check and the kill switch. **And the task is input and not authenticated
+  input**: the front door holds the runs-bucket write, so a compromised coordinator can choose the
+  task's `repo`, `prompt`, `workflow` and `recipe` — with the fence declined there is no override
+  surface left closed either, and §8 of [spec.md](spec.md) says so beside the requirement.
+  `cancel_task` writes the marker `fugaro cancel` writes.
 - **Red step:** `TestTokenCeilingOnlyNarrowsTheRunsOwn` in `internal/runner/spend_test.go` — a run
-  whose task carries a token ceiling **above** the job's own resolves to the job's own, and
-  one below resolves to the token's. It fails before the field exists.
+  whose environment carries a token ceiling **above** the job's own resolves to the job's own, and
+  one below resolves to the token's. It fails before the variable is read.
 - **Tests:** `TestTokenCeilingOnlyNarrowsTheRunsOwn`,
   `TestSpawnRefusesAModeOutsideTheTokensWindow`, `TestSpawnRefusesHotfixWithoutTheFlag`,
   `TestSpawnedRunCarriesTheTokenCeiling`, `TestSpawnNeverMountsACredential`,
   `TestSpawnTakesTheLaunchClaim` (a second submit of the same task answers about the run already in
   flight rather than starting a second), `TestSpawnRunsTheBudgetPrecheck` (a kill switch that refuses
-  `fugaro run` refuses `spawn_task`), `TestCancelOfAnotherProjectsRunIsRefused`,
-  `TestSpawnSendsNoOverride` (the request carries no `ContainerOverrides` at all — the assertion the
-  identity change exists for, and the one a later edit that reached back for `FUGARO_RUN` would fail),
-  `TestTheRunnerFindsItsRunByExecution` (the binding resolves `<slug>/<run-id>` from the execution the
-  platform injects, and a binding that never arrives is a named bootstrap refusal rather than a run
-  that reads the wrong task).
+  `fugaro run` refuses `spawn_task`), `TestCancelOfAnotherProjectsRunIsRefused`, and
+  `TestTheFrontDoorCanStartARun` (the module writes the job-scoped grant of the launcher's role to the
+  front door's account and to no second member — the assertion a later edit that narrowed the grant
+  without a decision would fail).
 - **A finding this task must close, and it is not optional for the task that spends money (2026-11-05).**
   **`tighterSpend` in `ee/coordinator/mcpauth/limits.go` treats `+Inf` as a value and not as a
   non-number** (`ee/coordinator/mcpauth/limits.go:298`): the helper reads a spend limit as unset when
@@ -1097,16 +1059,13 @@ here, unchanged, as the plan for when it is designed and the owner approves it.
   earlier task that fixes it in `limits.go` takes M9's finding with it, and either way the fix lands
   **with a test**, because an unbounded ceiling is the one failure this design cannot see in a log.
 - **SEC:** **yes, mandatory.** It is the one task that spends money, and the launch path it builds is
-  the one M11's grant makes reachable.
-- **Depends on:** M4 (the store it writes its records into), M7, D924, and **M11** — the split launcher
-  role of [reconciliation.md](reconciliation.md) §6 (check 0), the owner's ruling of 2026-11-09, which
-  is **decided and NOT BUILT**. M11's diff is the one that grants the front door's account
-  `run.jobs.run` and never `run.jobs.runWithOverrides`, so the privilege this task's launch path uses
-  is M11's to add, and **M9 waits on M11 being built and on D937 being answered rather than on the
-  decision alone** — §8 of [spec.md](spec.md) says what an unfenced environment means until it is,
-  and §4b of [reconciliation.md](reconciliation.md) records that the ruling's own premise (that the
-  fence costs the runner nothing) is withdrawn, because the run's identity is the override M11's
-  account cannot set.
+  the one the front door's own grant makes reachable — with the fence declined, that grant is the
+  launcher's whole one.
+- **Depends on:** M4 (the account the launch grant names, and the store it writes its records into),
+  M7, and **D924**. **The launch grant is this task's own diff**: the front door's account is bound,
+  on each project job, to the launcher's own role, because the owner's ruling of 2026-11-09 gives the
+  coordinator the full launch path for v1 and the split role the design first put here is **declined**
+  ([reconciliation.md](reconciliation.md) §6 check 0; §2).
 - **Hand-off:** `internal/runner/spend.go` is a core file and **every release's** runner work has
   other writers on it — the 0.15.0 window that made this a hand-off has shipped, and the property it
   named has not gone away. This task belongs to a release where the file has no other writer, and its
@@ -1151,208 +1110,46 @@ here, unchanged, as the plan for when it is designed and the owner approves it.
   so **the Cloud Logging line is the durable copy** and the per-identity record is the readable
   view — `TestTheLoggingLineIsTheDurableCopy` is the row that says so.
 
-### M11 — The split launcher role: the fence around the launch grant
+### M11 — considered and declined: the split launcher role (the owner's ruling of 2026-11-09)
 
-**The owner's ruling of 2026-11-09 answered the question §6 check 0 left open — how the runner reads
-configuration an execution override cannot set — and this is the task that builds the answer**
-([reconciliation.md](reconciliation.md) §6 check 0 and §4a, "The owner's ruling of 2026-11-09"). It is
-what `coordinator.tf:377` deliberately leaves absent: the front door's account gains the permission to
-**start an execution** and never the permission to rewrite one.
+**This task existed for part of one day and is kept here as the record of a decision taken and
+reversed**, so a later reader finds the mechanism priced rather than lost. **It is not a task of this
+plan**: nothing depends on it, it is in no level, on no edge, on no path and in no row of §4, and it
+is **not renumbered** — the number keeps the meaning the ruling gave it, and the note below is what it
+now means.
 
-**It is not in the first slice**, and it is not in the deferred slice's own level either: it waits on
-M4 (and, to ship, on **D937**, §4b of [reconciliation.md](reconciliation.md)) and it is built whenever
-the launcher's grant is wanted, which is before M9 rather than on the
-path to it (§2, L1). **Nothing in the first slice waits on it** — the first slice starts no run — so a
-planner who takes only the first slice takes no part of this task.
+**What it was.** The owner's first ruling of 2026-11-09 answered the question §6 check 0 left open —
+how the runner reads configuration an execution override cannot set — with **a split launcher role**: a
+second custom role of the installation carrying **`run.jobs.run` alone**, bound on every project job to
+the front door's own account and to nobody else, so a caller of the front door could start an execution
+and never rewrite the job's template, its environment or its arguments. The per-launch data (D924's
+token ceiling and the marker that a launch carries one) moved to the run's own task, and the run's
+identity moved out of the `FUGARO_RUN` override to a **launch binding** keyed by the execution Cloud
+Run injects itself (`internal/backend/platform.go:69`'s `ExecutionFromEnv`), with a bounded poll, a
+named refusal for a binding that never lands and an orphan an operator has to be able to see.
 
-- **Files (29):** `deploy/terraform/gcp/modules/installation/iam.tf` (the new custom role, whose
-  permissions are exactly `run.jobs.run`, beside `google_project_iam_custom_role.job_runner` at
-  `:26-33`), `deploy/terraform/gcp/modules/installation/variables.tf` (the **closed**
-  `names.role_ids` object at `:61-66` gains the key — an object left open would let a plan name a role
-  nothing creates), `deploy/terraform/gcp/modules/installation/coordinator.tf` (**comments only**: the
-  account's "one grant" comment at `:301-320` and the "deliberately absent" comment at `:377` both
-  describe a state this task ends), `deploy/terraform/gcp/modules/project/iam.tf` (the one job-scoped
-  binding, beside the launcher grant at `:7-14`), `deploy/terraform/gcp/modules/project/variables.tf`
-  (the two inputs the binding reads, nullable and defaulting to no grant, so `module "project_review"`
-  and every existing caller plan nothing new), `deploy/terraform/gcp/roots/installation/main.tf` (the
-  two strings it passes to `module "project"`, beside `job_runner_role` at `:77`),
-  `deploy/terraform/gcp/roots/installation/variables.tf` (the root's own copy of the closed
-  `names.role_ids` object at `:30-35`), `internal/infra/spec.go` (`RoleIDs` at `:313`, its default at
-  `:825-828`, and the "is this project's own role" check at `:614`), `internal/infra/tfvars.go`
-  (`InstallationRoleIDs` at `:1168` and the names block at `:1225`), `internal/infra/tf/cover.go` (a
-  principal kind of its own for the front door's account, the role in `FugaroRoles` and in
-  `RolePermissions`, and the one `grantRules` row that accepts it),
-  `deploy/terraform/gcp/modules/installation/iam_test.go` (new: the role's own text-level test),
-  `deploy/terraform/gcp/modules/project/iam_test.go` (new: the binding's own text-level test),
-  `deploy/terraform/gcp/roots/installation/tests/project_job.tftest.hcl` (the binding asserted at plan
-  level, where the launcher's grant already is), `deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl`
-  (the pin at `:81` **stays five names** — the role is created only under the front door's own opt-in,
-  which this file's installation does not have, and the root builds the two strings from its own
-  variables rather than the module publishing a sixth name — and the task adds a module-level run with
-  the opt-in set, asserting the fence role exists and carries `run.jobs.run` alone),
-  `internal/infra/front_door_fence_test.go` (new: the convergence test and the spelling pin),
-  `internal/infra/testdata/installation-*.tfvars.json` (**regenerated, never hand-edited**: the
-  seven fixtures that carry `names.role_ids` — `installation-budget`, `installation-credentials`,
-  `installation-accounts`, `installation-budget-job`, `installation-coordinator`,
-  `installation-catalog` and `installation-catalog-added`, from which `repo_root*` differs by using
-  `RepoRoleIDs` and is untouched — are byte-for-byte goldens compared by `internal/infra/firebase_test.go:29`'s
-  `checkGolden`, and the new key invalidates each one; the task runs the suite with `-update`, which
-  is where "rerun with `-update` to rewrite" in that failure message points, and **never edits them
-  by hand**, because the bytes are the assertion), **the runner and backend half the fence cannot
-  work without** — `internal/backend/gcp/run.go` and `internal/backend/gcp/run_test.go` (a **second launch shape
-  beside the one `fugaro run` sends**: the fence account's start carries no `ContainerOverrides` at
-  all, while the launcher's own launch keeps every override it sends today — `FUGARO_RUN` at `:173`,
-  `internal/cli/run.go:3956`'s seal key and `:3977`'s review-job marker — because `fugaro run` still
-  holds `run.jobs.runWithOverrides` and **nothing about it changes**; both shapes are tested), `internal/cli/exec.go` and
-  `internal/cli/exec_test.go` (resolve `<slug>/<run-id>` from the launch binding instead of
-  `FUGARO_RUN`, `:60`), `internal/runstore/launch.go` and `internal/runstore/launch_test.go` (the
-  binding and its key, beside the claim at `:112`), `internal/gcpfake/run.go` and
-  `internal/gcpfake/run_test.go` (the fake's project-job rule **widens rather than inverts**: a shared
-  project job's execution must carry the identity **or** have a launch binding in its bucket — a
-  launcher's launch satisfies it with `FUGARO_RUN`, the fence account's with the binding — and one with
-  neither is refused as `:973` refuses it today, so no CLI launch changes), **its own
-  task-image skew** — `internal/cli/recipes_skew.go`, `internal/cli/recipes_skew_test.go`,
-  `internal/cli/run.go` and `docs/release.md`, the four artifacts M9's list names: the identity change
-  lives in the **container's** entrypoint (`internal/cli/exec.go` runs inside the job image), so a job
-  image built from an older release resolves no run at all and its execution dies after it was paid for
-  — the constant says the release whose images read the binding, and the images reach it through
-  `fugaro update`, whose own step rebuilds the job images **behind its own confirmation**: the ordering
-  is inside that one command and not a sequence an operator runs, so the release notes' `### For
-  operators` carries only the line the repository's rule allows (run `fugaro update`, and take the
-  rebuild it asks for) while a launch that meets an older image is refused with that release named —
-  the same one line M9's ceiling needs and for the same reason — and `SECURITY.md`.
-- **Interface:** a **second custom role of the installation, created with the front door's own
-  opt-in** — where `fugaroJobRunner` carries
-  `run.jobs.run` **and** `run.jobs.runWithOverrides` (`deploy/terraform/gcp/modules/installation/iam.tf:30`,
-  pinned by `internal/infra/tf/cover.go:793`), this one carries **`run.jobs.run` alone** — and it is
-  bound **on every project job**, one job-scoped grant per entry of `var.project_jobs`, to
-  `google_service_account.mcp_server` — the front door's own account — and **to nobody else**. **The
-  grant is written where the job is and not where the account is, and that is the correction this
-  task's own file list carries**: the jobs come from `module "project"`, one per `(profile, provider,
-  account)` (`deploy/terraform/gcp/roots/installation/main.tf:67`), the installation module is handed
-  no job and no map
-  of them — `module "installation"` takes no `project_jobs`
-  (`deploy/terraform/gcp/roots/installation/main.tf:26`) — and the account it
-  creates (`coordinator.tf:320`) cannot be named by a resource that module does not have, so
-  `deploy/terraform/gcp/modules/project/iam.tf:7`'s launcher grant is the shape and the fence grant
-  is written beside it. **The root
-  passes the two strings in the same `module "project"` call as `job_runner_role`**
-  (`deploy/terraform/gcp/roots/installation/main.tf:77`), **and `outputs.tf` is not touched by this
-  task at all** — the module publishes the same five names (`:46-56`) and
-  `deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl`'s pin at `:81` holds the same
-  five, because the root knows the opt-in itself and a module
-  output naming a role the module did not create would be a claim about a resource that is not there —
-  and **the comment at
-  `coordinator.tf:377` that promises the grant is "added here" is rewritten by this task** rather than
-  followed. **The role and the member travel as two known spellings** —
-  `projects/<project>/roles/<id>` and `serviceAccount:fugaro-mcp@<project>.iam.gserviceaccount.com`,
-  **built by the root from the same two values the module creates them from** (`var.project` with
-  `var.names.role_ids.<new>`, and `var.mcp_server.account_id` with `var.project` — which is why no new
-  module output is needed and no account attribute is read back) — **because that is what `cover.go`
-  reads**: its principal kinds are matched against a member's literal spelling (`isCoordinatorMember`,
-  `isVerifierMember`, `isCatalogCheckMember` and `isDeployerMember`, `:734-763` — `isCredentialsMember`
-  at `:726` has the same shape and sits just outside it), a grant naming an attribute that is unknown until apply could
-  not be classified at all, and `for_each` over a set that is unknown at plan is refused by Terraform
-  itself. **`fugaroJobRunner` is left exactly as it is**: every launcher, every operator and the
-  history rollover keep both permissions, so nothing about
-  `fugaro run` or the scheduler's override call changes, and the fence is a split rather than a
-  narrowing. **The split is what makes the two questions one:** the account that starts the execution
-  cannot rewrite the template, so a compromised coordinator has no environment to be fenced from, and
-  the per-launch data of D924 and the marker that a launch carries one reach the run through its own
-  task instead (M9's Interface). **And the fence is not free for the runner, which is the correction
-  this task carries (2026-11-09)**: the run's identity reaches the container only as the `FUGARO_RUN`
-  override (`internal/backend/gcp/run.go:172-178`, read back at `internal/cli/exec.go:60`), so an
-  account holding `run.jobs.run` alone cannot start a working run until that identity moves out of the
-  override too. **It moves to a launch binding keyed by the execution**: Cloud Run injects
-  `CLOUD_RUN_EXECUTION` into the container itself, read by `internal/backend/platform.go:69`'s
-  `ExecutionFromEnv` with no override involved, so the launcher writes the binding into the runs
-  bucket named by the execution after `jobs.run` returns, and the container resolves its run from it
-  at bootstrap. **The race is designed rather than discovered**: the execution starts as soon as the
-  call returns, so the runner can reach the bucket before the binding lands — it polls for a bounded
-  window, in the shape of `internal/runstore/launch.go:117`'s `ClaimTTL` — and a binding that never
-  arrives is a named refusal; a launcher that dies between the start and the write leaves an execution
-  that was **paid for** and belongs to no run, which `fugaro ls` and `fugaro doctor` must show rather
-  than hide. `internal/runner` itself is unchanged — the runner is handed the store it already reads
-  its task from — and **the fence and this half ship together**: nothing may grant the split role
-  before the identity is out of the override, because the grant without it produces executions that
-  start and cannot find their run. **`cover.go` is edited on purpose and never widened**: the front
-  door's account becomes a principal kind of its own — the pattern Credentials, Coordinator, Verifier
-  and CatalogCheck already follow, so that a plan granting it anything is refused until a row names
-  that exact grant — and **the kind is read before the `toAccounts` default, which is what ends the
-  hole**: today the account is a service account a module creates, so an account row accepts every
-  grant of `fugaroJobRunner` to it, overrides included, and after this task that grant is refused. The
-  new role joins `FugaroRoles` and `RolePermissions` with exactly `run.jobs.run`, and exactly one
-  `grantRules` row accepts it, on `google_cloud_run_v2_job_iam_member`, for that kind alone — so a
-  later tool that needs to read an execution asks for a row of its own rather than widening this role,
-  which is the line `RolePermissions` exists to catch. **It adds no operator step, no new flag and no
-  second command**: the role and its grants are
-  Terraform the same `fugaro update --firebase-project <id> --mcp-server` applies, behind the front
-  door's own opt-in — the role is created under the same switch as the account and the service, so an
-  installation that never passed the flag plans neither and **the golden plans, which pin an
-  installation that did not opt in, do not move** (and are regenerated by
-  `scripts/gen-golden-plans.sh` rather than edited if one does) — and the release that
-  ships it carries the one line the repository's rule requires in the release notes'
-  `### For operators` section — that the grant arrives with the front door and nothing has to be run
-  for it.
-- **Red step:** `TestTheFrontDoorCanStartAndCannotOverride` — the binding module's own text-level test
-  (`modules/project/iam_test.go`, the shape `coordinator_service_test.go` already has in the
-  installation module) fails against the current Terraform because no such grant exists, and it asserts
-  the three things that matter: the module writes a job-scoped grant of the fence role whose member is
-  exactly `serviceAccount:fugaro-mcp@<project>.iam.gserviceaccount.com` and **no second member**, the
-  fence role's permission list is exactly `run.jobs.run` (read from `modules/installation/iam.tf`
-  through the same text-level read), and **no grant any file of the two modules writes names the front
-  door's account with a role that carries `run.jobs.runWithOverrides`** — the assertion a later edit
-  that reached for the launcher's existing role would fail.
-- **Tests:** `TestTheFrontDoorCanStartAndCannotOverride`,
-  `TestFugaroJobRunnerKeepsBothPermissions` (the fence is a split and not a narrowing: the role every
-  launcher holds is unchanged, byte for byte, in the module and in `cover.go`'s pin),
-  `TestTheFenceRoleCarriesNoOverridePermission` (the new role's permissions, read from the module and
-  against `RolePermissions`, are `run.jobs.run` and nothing else — **the one line a later edit is most
-  likely to add back**), `TestTheFrontDoorAccountIsItsOwnPrincipalKind`
-  (`internal/infra/tf/cover_grants_test.go`, where the grant tables are already tested: `cover.go`
-  refuses every grant to the front door's account that a row does not name on purpose, the one row
-  that accepts the new role accepts no other principal kind, and **a plan granting the account
-  `fugaroJobRunner` — the pre-fix hole — is refused**), `TestTheSplitRoleIsCreatedAndNeverAdopted`
-  (the role is created by this installation and never taken over: the `role_id` the tfvars carry is the
-  one the module creates, which is `spec.go`'s check of each role id's project), the two plan-level
-  assertions `project_job.tftest.hcl` gains (the grant's role, member and count, and that a
-  `project_review` entry gets none), and `TestTheFenceConvergesOnUpdate` — **the convergence test the
-  repository requires of a migration**: an installation at the previous version, updated with the front
-  door's opt-in, ends with exactly the role and its grants and the store's resources beside them, an
-  installation without the flag ends with neither, and the run's own task carries the ceiling and the
-  marker while **the fence account's** launch carries no override at all, **and the run still finds its own task
-  — resolved from the execution the platform injects, which is the half that makes the first
-  claim true rather than empty**; `TestTheFrontDoorLaunchCarriesNoOverride` (`internal/backend/gcp/run_test.go`:
-  the fence account's request has no `ContainerOverrides` while `fugaro run`'s own still carries all
-  three, and the fake's twin: a project-job execution with neither the identity override nor a launch
-  binding is refused, and one the launcher started with the binding is resolved); and
-  `TestAnExecutionWithNoBindingIsARefusalAndNotASilentRun` (a binding that never lands is a named
-  bootstrap failure inside the bounded window, never a run that reads another run's task).
-- **A finding this task must close, and it is not optional for an IAM grant on a public service.** The
-  front door's account is public-facing: the service is reachable by everyone on the network
-  (spec.md §8), so the review's question is **whether the split can be undone by a later edit without
-  anyone noticing** — the answer is that the permission set, the grant's member and the fact that the
-  grant lives on the job the front door may start rather than on the account are each a plan-level
-  assertion rather than prose (`TestTheFenceRoleCarriesNoOverridePermission`,
-  `TestTheFrontDoorCanStartAndCannotOverride`), and **whether one role can be given a permission the
-  other has without the review screen saying so** — the answer is `RolePermissions`, which pins both
-  roles by ID and fails when a module's list and the table differ.
-- **SEC:** **yes** — it changes who may start what, and it is the fence the whole launch half rests on.
-  **It is not one of the five whose marker says mandatory**, because that marker is a property of the
-  review that has already run: the independent SECURITY review of 2026-11-04 read §8 and M3, M4, M5,
-  M7 and M9, and **M11 did not exist then**. **Its diff therefore carries its own independent SECURITY
-  reading when it is built**, on the same terms.
-- **Reviewer tier:** **opus, with the independent security review mandatory** — it is a new privilege
-  on a public service, and the fence is the one thing that makes M9's launch path safe to build.
-- **Depends on:** **M4** — the front door's account is the member every grant of the role names, the
-  service is the thing it runs as, and the install's own TF tree is where the two new strings are
-  threaded from; D920's answer of 2026-11-04 (the public endpoint, the
-  recommendation), because the privilege is granted to the account behind a public port; and **D937**
-  ([reconciliation.md](reconciliation.md) §4b), which is the premise of the ruling of 2026-11-09 put
-  back to the owner — **the goal stands, the claim that the fence costs the runner nothing does not**,
-  and this task builds the launch binding that replaces the `FUGARO_RUN` override. **Until D937 is
-  answered this task is buildable but not shippable**: it is the fence and the identity change
-  together or neither.
+**Why it is declined.** Later the same day the owner **superseded that ruling**
+([reconciliation.md](reconciliation.md) §4a, "The owner's ruling of 2026-11-09, later the same day"):
+the phone and the other remote clients need the **full launch path**, and the per-launch data that path
+carries — the run's identity, the budget token's seal key and the review-job marker — travels as
+execution overrides a start-only account cannot set, so **no fence the owner could see keeps that
+functionality**. **The front door is given the launcher's permissions, `run.jobs.runWithOverrides`
+included**, and the risk is **accepted for v1 and to be revisited**.
+
+**What that removed from the plan.** M11's two edges (M9 ← M11, M11 ← M4), its **L1** row, its place
+off the critical path and its four shared-files rows are all gone (§2, §4); the launch grant it was to
+write is **M9's own diff**; the two `task.Spec` fields and the skew gate M9 carried are gone with the
+task channel, so D924's ceiling rides the execution override again; and the widening of
+`internal/gcpfake/run.go:973`'s project-job rule — the medium finding that existed only to let a fenced
+launch carry no `FUGARO_RUN` override — is **out of scope**, because every launch carries the identity
+override again.
+
+**What stays, if the owner revisits it.** The mechanism, its race and its files are kept in
+[reconciliation.md](reconciliation.md) §4a and §4b (D937), and the four requirements it answered are
+the shape a revisit starts from: the start-only role, the job-scoped binding, the ceiling and the
+marker on the run's task, and the launch binding keyed by the execution. **The revisit is an owner
+check** ([reconciliation.md](reconciliation.md) §6 check 9), and **§7 carries it as this plan's open
+item**.
 
 ## 4. The shared-files table
 
@@ -1364,10 +1161,9 @@ a planner who finds two tasks in the same row in one release serialises them.
 **The deferred slice changes this table rather than adding to it (D936)**: M9 is in rows it shares
 with M1, M2, M7 and M10, so a planner who takes the first slice alone takes none of them, and what
 leaves the first slice is M9's own work and the half of M10's that names a spawned or cancelled run.
-**M11's rows are in the first slice's files and in no first-slice task** — it shares
-`coordinator.tf`, `cover.go` and `SECURITY.md` with M4 alone — so a planner who takes
-the first slice alone takes none of M11 either, and the one row M9 and M11 both stand in is
-`SECURITY.md`'s, where they are levels apart.
+**M11's rows are gone with the task**, which is declined (§3): `coordinator.tf` is M4's and M9's,
+`SECURITY.md`'s row is M4's, M9's and M10's, and `cover.go` is M4's alone again — so the table is
+shorter by two writers and one whole row, and nothing it lists is unowned.
 
 | File | Writers (level) | What each does to it |
 | --- | --- | --- |
@@ -1377,35 +1173,30 @@ the first slice alone takes none of M11 either, and the one row M9 and M11 both 
 | `ee/coordinator/mcpauth/server.go` | M5 (L2), M7 (L3), M6 (L4) | M5 mounts the five endpoints; M7 adds the resource handler; M6 adds the authorize endpoint's verifier, off the critical path and therefore in the last of the three slots |
 | `ee/coordinator/mcpauth/tools.go` | M7 (L3), M8 (L4), M9 (L5), M10 (L6) | the registry: each of the three tool tasks registers into it |
 | `ee/coordinator/service.go` | M4 (L0), M5 (L2), M7 (L3) | M4 creates the service's entry point; M5 and M7 mount handlers on it |
-| `deploy/terraform/gcp/modules/installation/coordinator.tf` | M4 (L0), M11 (L1) | M4 creates the service and the account; M11 rewrites the two comments (`:301-320`, `:377`) that describe the account's reach and the absent grant — **the grant itself is not written here**, because the job it goes on is not a resource of this module |
-| `internal/infra/tf/cover.go` | M4 (L0), M11 (L1) | M4 adds the store's two resource types to the cover; M11 adds the front door's principal kind, the new role in `FugaroRoles` and `RolePermissions`, and the one `grantRules` row that accepts it |
+| `deploy/terraform/gcp/modules/installation/coordinator.tf` | M4 (L0), M9 (L5) | M4 creates the service and the account; M9 rewrites the two comments (`:301-320`, `:377`) that describe the account's reach and the absent grant — **the grant itself is not written here**, because the job it goes on is not a resource of this module |
+| `internal/infra/tf/cover.go` | M4 (L0) | M4 adds the store's two resource types to the cover; **the declined M11 would have added the front door's principal kind and a role of its own, and nothing replaces it** — the account is a service account M4's module creates, so the cover accepts the launcher's grant to it as it does for every launcher |
 | `internal/runner/spend.go` | M9 (L5) alone, but **shared with every other runner task in its release** | the ceiling read out of the run's own task and its merge; see §5 — which is why the release slot is chosen for the file's other writers, not only for this work |
-| `internal/cli/recipes_skew.go`, `internal/cli/run.go`, `docs/release.md` | M11 (L1), M9 (L5) | the two skew constants and the two gates: M11's names the release whose **images** resolve their run from the execution (its identity half), M9's the release whose **runner** reads the ceiling off the task; different levels because each writes a constant of its own and the second reads the first's file before writing, and one bullet each in the release notes' `### For operators` — an image behind either release is a launch that dies after it was paid for |
-| `SECURITY.md` | M4 (L0), M11 (L1), M9 (L5), M10 (L6) | a public endpoint, the store and the single grant that keeps it private, the split launcher role and the grants it carries, the ceiling a run resolves to and how it reaches it, and what the audit does not record — **the repository's standing rule is that a security-relevant change updates it in the same PR** |
+| `SECURITY.md` | M4 (L0), M9 (L5), M10 (L6) | a public endpoint, the store and the single grant that keeps it private, the launch grant the front door holds and the accepted v1 risk it carries, the ceiling a run resolves to and how it reaches it, and what the audit does not record — **the repository's standing rule is that a security-relevant change updates it in the same PR** |
 
 | `ee/coordinator/mcpauth/authorize.go` | M5 (L2), M5b (L3), M6 (L4) | M5 defines the authorize and approve steps; M5b takes the approval onto the paired device and spends the ID token there; M6 verifies the ID token the approve step carries |
 
 **Files deliberately not in this table**, because one writer is not a shared file and a row for one
 would read as a conflict: `deploy/terraform/gcp/modules/installation/mcpauth_store.tf` is M4's alone,
-and so is `deploy/terraform/gcp/modules/installation/outputs.tf` — M11 adds no module output (the root
-builds the fence role's name and the account's member from its own variables), so M4 is its only
-writer.
+and so is `deploy/terraform/gcp/modules/installation/outputs.tf` — the declined M11 would have added
+no module output (the root builds the fence role's name and the account's member from its own
+variables), and nothing replaces it, so M4 is its only writer.
 
-**The wiring M11 threads the fence through is M11's alone** — the role's definition
-(`modules/installation/iam.tf`), the closed `names.role_ids` object that names it
-(`modules/installation/variables.tf`, `roots/installation/variables.tf`), the grant and its two
-inputs (`modules/project/iam.tf`, `modules/project/variables.tf`), the two strings and the wiring that
-carry them (`roots/installation/main.tf`), the plan-level assertions
-(`roots/installation/tests/project_job.tftest.hcl`), the role id in the installer's own two files
-(`internal/infra/tfvars.go`, `internal/infra/spec.go`), its own tests
-(`internal/infra/front_door_fence_test.go`, the two `iam_test.go` files, the
-`internal/infra/testdata/installation-*.tfvars.json` goldens the new key regenerates, and **the identity
-half the fence cannot work without** — `internal/backend/gcp/run.go`, `internal/cli/exec.go`,
-`internal/runstore/launch.go`, `internal/gcpfake/run.go` and their tests, none of which any other task
-of this plan writes) — **so a planner
-who takes the
-first slice takes none of it**, and the only rows M11 stands in are the four above, all of them M4's or
-a later task's. `ee/coordinator/mcpauth/store_bucket.go` is M2's alone,
+**The wiring the declined M11 would have threaded the fence through is nobody's** — the second custom
+role (`modules/installation/iam.tf`), the closed `names.role_ids` object that would name it
+(`modules/installation/variables.tf`, `roots/installation/variables.tf`), the launch binding and its
+poll (`internal/runstore/launch.go`, `internal/cli/exec.go`), the second launch shape
+(`internal/backend/gcp/run.go`), the fake's widened project-job rule
+(`internal/gcpfake/run.go`), the installer's role id (`internal/infra/tfvars.go`,
+`internal/infra/spec.go`), its tests (`internal/infra/front_door_fence_test.go`, the
+`internal/infra/testdata/installation-*.tfvars.json` goldens a new key would regenerate) — **and the
+whole list stays in §3's M11 note, so a revisit picks it up rather than reconstructing it**. M9's own
+grant writes only the job-scoped binding in `modules/project/iam.tf` and the two comments in
+`coordinator.tf`, which are the two rows above. `ee/coordinator/mcpauth/store_bucket.go` is M2's alone,
 and `internal/budget/rules/*` is M3's alone — the last one being the reason M3 can land at any point
 in the schedule rather than at a level.
 
@@ -1425,19 +1216,18 @@ Why the implementation is **0.21.0 or later**, and not the next minor:
    exist yet. A release cannot carry an MCP endpoint on a service the same release is still
    designing.
 2. **The work is big and security-heavy, and the owner's own instruction of 2026-11-04 is that it
-   takes a slot of its own for that reason.** Twelve tasks, **eleven of them SEC-marked and five of
-   those
-   mandatory**, a public endpoint, a new service account, **a new store with one IAM binding on it**
-   (M4, D935) and **one new privilege** (the launch grant M11 adds and M9 uses), behind an independent
-   review whose first
-   finding (F32) has already moved where the token records live. A window that is not already carrying
-   another feature of this shape is the only one it fits in whole.
+   takes a slot of its own for that reason.** Eleven tasks, **ten of them SEC-marked and five of
+   those mandatory**, a public endpoint, a new service account, **a new store with one IAM binding on
+   it** (M4, D935) and **one new privilege** — the launch grant M9 adds, the launcher's whole role,
+   `run.jobs.runWithOverrides` included — behind an independent review whose first finding (F32) has
+   already moved where the token records live. A window that is not already carrying another feature
+   of this shape is the only one it fits in whole.
 3. **M9 is a core change to a contention-prone file.** `internal/runner/spend.go` is core, and every
    runner task in whatever release carries M9 shares it (§4). Landing it in a full window means
    either a declared single writer is overridden or two changes are serialised by hand; neither is
    worth it for a feature whose first dependency is unbuilt.
 4. **The update has to carry it, and the update is now gated.** The repository's standing rule is
-   that a release ships no operator step beyond `fugaro update`, and M4's service and M11's grant are
+   that a release ships no operator step beyond `fugaro update`, and M4's service and M9's grant are
    both Terraform that the update applies. Since this folder was written, **managed mode landed** and
    the gate covers `fugaro update` itself (`internal/cli/managed_gate.go`,
    `docs/managed-agent-converge/README.md`:20), so the migration this task carries — with the
@@ -1512,6 +1302,16 @@ here is small enough to pull forward.
   keeps the shape and the four requirements the deferral decided; **how a run is started from outside
   the CLI is not this plan's to write**, and it is not a task here until it is designed and the owner
   approves it. Anything that starts a run from the front door before then is a finding.
+- **The revisit of the declined launch-override fence — this plan's open item, and it is the owner's.**
+  The ruling of 2026-11-09 declines the fence for v1 and asks for **fortification to be revisited
+  later by other means** ([reconciliation.md](reconciliation.md) §4a, "The owner's ruling of
+  2026-11-09, later the same day"): the requirement of 2026-11-04 — that the runner read nothing a
+  caller could override except an allowlist — **stands unmet**, and the front door holds the
+  launcher's permissions, overrides included, so a compromised coordinator can change what a run does.
+  **What is owed is the owner's decision on the means and the moment**, and it is a decision rather
+  than a live reading: the mechanism is priced and kept in §3's M11 note and in
+  [reconciliation.md](reconciliation.md) §4a and §4b, so a revisit is an edit rather than a rewrite,
+  and [reconciliation.md](reconciliation.md) §6 check 9 carries the same entry as an owner check.
 - **The workspaces exchange.** `docs/workspaces` (a parallel run's amendment, merged as **#1711**)
   requires a **member-bound assertion and an exchange at `/oauth/authorize` that keeps the
   paired-device approval**, so its exchange and M5's authorize step meet at one endpoint; **this plan
