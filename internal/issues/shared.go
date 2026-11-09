@@ -837,12 +837,15 @@ func Release(ctx context.Context, b *blobx.Bucket, c *Claimed) error {
 	return c.finish(ctx, b, func(*sharedRecord) error { return nil })
 }
 
-// RecordSubmitted files the issue: the URL and `submitted` are written with the
-// claim cleared, in the one write conditioned on still holding it (F22). A
-// record that is decided (Status.decided) is final (F9): the issue is on
-// GitHub, and nothing but the resolver's own transition out of `submitted`
-// (SetResolved, SetClosed) rewrites it.
-func RecordSubmitted(ctx context.Context, b *blobx.Bucket, c *Claimed, url string) error {
+// RecordSubmitted files the issue: the URL, `submitted` and when it was filed
+// are written with the claim cleared, in the one write conditioned on still
+// holding it (F22). A record that is decided (Status.decided) is final (F9):
+// the issue is on GitHub, and nothing but the resolver's own transition out of
+// `submitted` (SetResolved, SetClosed) rewrites it.
+//
+// now is the caller's clock: the instant the issue reached the store's
+// `submitted`, which is what a reader shows as the date it was filed (D1781).
+func RecordSubmitted(ctx context.Context, b *blobx.Bucket, c *Claimed, url string, now time.Time) error {
 	if !projectIssueURL(url) {
 		return fmt.Errorf("issues: %q is not an issue URL of %s", url, updatecheck.Repo)
 	}
@@ -851,6 +854,7 @@ func RecordSubmitted(ctx context.Context, b *blobx.Bucket, c *Claimed, url strin
 			return fmt.Errorf("issues: shared issue %d is %q and is decided", c.Number, rec.Issue.Status)
 		}
 		rec.Issue.Status, rec.Issue.URL, rec.Issue.Uploaded = StatusSubmitted, url, true
+		rec.Issue.SubmittedAt = stamp(now)
 		return rec.setRecord()
 	})
 }
@@ -884,8 +888,12 @@ func (c *Claimed) finish(ctx context.Context, b *blobx.Bucket, change func(*shar
 // never reopens an issue — one that was filed or fixed stays that way and a
 // later hit is an occurrence (F21). Setting an issue aside again is the one
 // write that lands on a dismissed record, and it is a no-op: burying a fix the
-// resolver recorded is not this call's to do.
-func SetSharedStatus(ctx context.Context, b *blobx.Bucket, number int, status Status) error {
+// resolver recorded is not this call's to do — and the no-op keeps the date the
+// issue was set aside, so a second dismissal does not move it.
+//
+// now is the caller's clock, and the instant the record stamps is the moment it
+// was set aside (D1781).
+func SetSharedStatus(ctx context.Context, b *blobx.Bucket, number int, status Status, now time.Time) error {
 	if status != StatusDismissed {
 		return fmt.Errorf("issues: the shared store sets a dismissal, not %q", status)
 	}
@@ -901,6 +909,7 @@ func SetSharedStatus(ctx context.Context, b *blobx.Bucket, number int, status St
 			return fmt.Errorf("issues: shared issue %d is %q and is decided", number, rec.Issue.Status)
 		}
 		rec.Issue.Status = status
+		rec.Issue.DismissedAt = stamp(now)
 		if err := rec.setRecord(); err != nil {
 			return err
 		}
@@ -931,26 +940,32 @@ func SetSharedStatus(ctx context.Context, b *blobx.Bucket, number int, status St
 // answers as the no-op it is rather than writing the copy it read over the
 // first one's (F18). A caller that read the issue before the first machine
 // resolved it passes a generation the record has left, and still gets that
-// no-op: the issue is where this call was going.
-func SetResolved(ctx context.Context, b *blobx.Bucket, number int, release string, gen int64) error {
+// no-op: the issue is where this call was going — and the no-op keeps the date
+// the issue was fixed, so it does not move either.
+//
+// now is the caller's clock: the instant the issue was marked fixed (D1781).
+func SetResolved(ctx context.Context, b *blobx.Bucket, number int, release string, gen int64, now time.Time) error {
 	canonical, ok := updatecheck.CanonicalRelease(release)
 	if !ok {
 		return fmt.Errorf("issues: %q is not the release that fixed issue %d, want X.Y.Z", release, number)
 	}
 	return transitionSubmitted(ctx, b, number, gen, StatusResolved, func(rec *sharedRecord) {
 		rec.Issue.ResolvedIn = canonical
+		rec.Issue.ResolvedAt = stamp(now)
 	})
 }
 
 // SetClosed sets a filed issue aside with the reason GitHub gave, which fixes
 // nothing: an issue closed as not planned or as a duplicate leaves the
-// recurring list without a retry hint (F9, D1752).
-func SetClosed(ctx context.Context, b *blobx.Bucket, number int, reason ClosedAs, gen int64) error {
+// recurring list without a retry hint (F9, D1752). now is the caller's clock,
+// and the instant it stamps is when the issue was set aside (D1781).
+func SetClosed(ctx context.Context, b *blobx.Bucket, number int, reason ClosedAs, gen int64, now time.Time) error {
 	if reason != ClosedNotPlanned && reason != ClosedDuplicate {
 		return fmt.Errorf("issues: %q is not a way an issue closed, want %q or %q", reason, ClosedNotPlanned, ClosedDuplicate)
 	}
 	return transitionSubmitted(ctx, b, number, gen, StatusDismissed, func(rec *sharedRecord) {
 		rec.Issue.ClosedAs = reason
+		rec.Issue.DismissedAt = stamp(now)
 	})
 }
 
