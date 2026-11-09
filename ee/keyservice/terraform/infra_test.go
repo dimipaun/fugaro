@@ -195,12 +195,28 @@ func TestTheSigningKeyIsNonExportable(t *testing.T) {
 // member spelled google_service_account.intake.member.
 func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 	src := tfSource(t, servicesMainTF)
-	grants := 0
+
+	// Every block in the tree that reaches a KMS key at all is one of the two
+	// the design names: the custom role itself (keyring/) and the one grant of
+	// it (services/). A count of grants of one resource TYPE would miss a
+	// second holder written another way — the same role granted with
+	// google_project_iam_member, or a predefined roles/cloudkms role handed to
+	// the intake — so the sweep is over the blocks' own text rather than over a
+	// resource name.
 	for _, rel := range tfFiles(t) {
-		grants += strings.Count(tfSource(t, rel), `resource "google_kms_key_ring_iam_member"`)
-	}
-	if grants != 1 {
-		t.Errorf("this tree declares %d KMS key-ring grants, want exactly 1: the signer role is granted in one place, so that a reader of the plan sees every identity that can mint a licence key", grants)
+		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
+			// A block grants something only if it names a role; without that,
+			// it is the API-enable, which mentions cloudkms.googleapis.com and
+			// hands nobody anything.
+			if !strings.Contains(block, "role") || (!strings.Contains(block, "cloudkms") && !strings.Contains(block, "signer_role")) {
+				continue
+			}
+			sanctioned := strings.Contains(block, `resource "google_project_iam_custom_role" "signer"`) ||
+				strings.Contains(block, `resource "google_kms_key_ring_iam_member" "minter_signs"`)
+			if !sanctioned {
+				t.Errorf("%s reaches a KMS key outside the signer role and its one grant:\n%s\nthe signer role is granted in one place, to one account, so that a reader of the plan sees every identity that can mint a licence key (Check 174)", rel, strings.TrimSpace(block))
+			}
+		}
 	}
 
 	grant := tfBlock(t, src, `resource "google_kms_key_ring_iam_member" "minter_signs"`)
@@ -234,15 +250,33 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 }
 
 // TestTheMinterHasNoPublicInvoker: the minter is not reachable from the
-// internet, and the intake is the one caller it has. The public binding is
-// asserted here rather than left to the design's prose, because a plan whose
-// allUsers member sat on the minter's service would read as a service that
-// anyone may invoke — Check 174 again, from the network's side.
+// internet, and the intake is the one caller it has. Three things decide that,
+// and all three are asserted here rather than left to the design's prose: the
+// minter's service REQUIRES IAM — with the flag true Cloud Run serves every
+// caller the network delivers, which would leave the grants below as decoration
+// and a minter that anyone may invoke — no binding anywhere hands the internet
+// an invoker but the intake's own public one, and the minter's only invoker is
+// the intake's account. Check 174 again, from the network's side.
 func TestTheMinterHasNoPublicInvoker(t *testing.T) {
 	src := tfSource(t, servicesMainTF)
-	if n := strings.Count(src, `member   = "allUsers"`); n != 1 {
-		t.Errorf("%s grants allUsers %d times, want exactly 1: the intake is the one public surface, and every other binding hands the internet an invoker it should not have", servicesMainTF, n)
+
+	minter := tfBlock(t, src, `resource "google_cloud_run_v2_service" "minter"`)
+	if !strings.Contains(minter, "invoker_iam_disabled = false") {
+		t.Errorf("%s's minter service does not require IAM: the flag has to be stated false, because a service that stopped checking IAM answers every caller and the one invoker grant this file writes would be the only thing between the internet and the signer (Check 174)", servicesMainTF)
 	}
+
+	public := 0
+	for _, rel := range tfFiles(t) {
+		f := tfSource(t, rel)
+		if strings.Contains(f, "allAuthenticatedUsers") {
+			t.Errorf("%s grants allAuthenticatedUsers: any Google account is not the intake's caller, and a signed-in stranger reaching the minter would sign with the key ring", rel)
+		}
+		public += strings.Count(f, `member   = "allUsers"`)
+	}
+	if public != 1 {
+		t.Errorf("this tree grants allUsers %d times, want exactly 1: the intake is the one public surface, and every other binding hands the internet an invoker it should not have", public)
+	}
+
 	publicBlock := tfBlock(t, src, `resource "google_cloud_run_v2_service_iam_member" "intake_public"`)
 	if !strings.Contains(publicBlock, "google_cloud_run_v2_service.intake.") {
 		t.Errorf("%s's allUsers binding is not on the intake service", servicesMainTF)
