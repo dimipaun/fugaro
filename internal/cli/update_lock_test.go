@@ -310,3 +310,36 @@ func TestTheWorkdirLockIsOnlyTheConverges(t *testing.T) {
 		t.Errorf("fugaro doctor read the lock file:\n%s", text)
 	}
 }
+
+// TestTheAccountsConvergeTakesTheWorkdirLock: `fugaro accounts add` and
+// `accounts rm` converge in-process through the same Installation and
+// Repository stages `fugaro update` runs, so they rebuild the same two workdirs
+// — the installation's, and the running checkout's, both through
+// PrepareWorkdir — and they are refused by the same lock. A door that prepared
+// them outside it would leave the failure the lock exists for reachable
+// through it, which is the whole of what this pins: the sentence, the exit
+// code, and that the refused run reached terraform nowhere.
+func TestTheAccountsConvergeTakesTheWorkdirLock(t *testing.T) {
+	r := newAddRig(t)
+	lock, err := infra.LockWorkdirs(os.Getenv, initProject, "fugaro update")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Release() }()
+
+	before := len(r.calls(t))
+	out, errOut, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--yes")
+	if err == nil {
+		t.Fatalf("the accounts converge ran while a converge held the workdirs:\n%s%s", out, errOut)
+	}
+	if got := ExitCode(err); got != ExitUserError {
+		t.Errorf("the accounts converge exited %d, want %d: %v", got, ExitUserError, err)
+	}
+	refusal := fmt.Sprintf("another fugaro accounts add is running on this machine for project %s (pid %d), wait for it to finish, then rerun", initProject, os.Getpid())
+	if got := err.Error(); got != refusal {
+		t.Errorf("the refusal is\n  %s\nwant\n  %s", got, refusal)
+	}
+	if got := len(r.calls(t)); got != before {
+		t.Errorf("the refused accounts converge ran terraform: %q", r.calls(t)[before:])
+	}
+}
