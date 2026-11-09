@@ -183,8 +183,10 @@ func countPairs(edges []Edge) int {
 //
 // The rewrite is a product of two sides that both come from the file — every
 // edge onto an integration node against every task behind the node it names —
-// so the edges are counted as they are built and the graph is refused past
-// maxBeforeEdges, the way the contract-file rule counts its own pairs (F10).
+// and finding those tasks is the other half of its cost, one walk of the graph
+// under the node per edge that asks. The edges built and the nodes walked are
+// both counted, as they are built, against maxBeforeEdges, and the graph is
+// refused past it the way the contract-file rule counts its own pairs (F10).
 func beforePath(path string, doc Document) (PathMeasure, error) {
 	kinds := make(map[string]string, len(doc.Nodes))
 	for _, n := range doc.Nodes {
@@ -213,16 +215,23 @@ func beforePath(path string, doc Document) (PathMeasure, error) {
 	// kept between waits, because a document can state a chain of integrations
 	// whose work grows with the chain, and holding every one of them would be
 	// the product of two artifact-sized figures that the bound below exists to
-	// refuse to build.
+	// refuse to build. Not keeping it makes the walk the other half of the
+	// rewrite's cost — one walk per edge that asks — so the nodes walked are
+	// counted against that same bound, below.
 	//
 	// A node of the pass that is not an integration, behind one, is work the
 	// before graph has no task to put it on: what a contract or a change request
 	// stands for is the pass's own, and no plan before the pass held it.
+	walked := 0
 	runsOf := func(id string) ([]string, error) {
 		seen := map[string]bool{id: true}
 		queue := []string{id}
 		var ran []string
 		for len(queue) > 0 {
+			walked++
+			if walked > maxBeforeEdges {
+				return nil, refuse(path, "the graph's edges onto integration nodes ask for more than %d nodes walked behind them; the before graph finds the tasks an integration node runs by walking the graph under it, and a graph whose rewrite walks further than this is refused rather than read slowly", maxBeforeEdges)
+			}
 			next := queue[0]
 			queue = queue[1:]
 			for _, dep := range deps[next] {
@@ -305,11 +314,16 @@ func beforePath(path string, doc Document) (PathMeasure, error) {
 // node — a 541 KB file of that shape was measured allocating 2.4 GB — and the
 // read is local: a console spawns it, so the process a product that size would
 // take the memory of is the one the person who asked for a graph is looking at.
-// beforePath counts the rewrite's edges as it builds them and refuses the graph
-// past the bound. The recorded `was` edges restored beside them are not part of
-// that count: they are one per break, the artifact's own list rather than a
-// product of two of its figures, and the cap the artifact arrived in bounds
-// them already. A plan an operator wrote does not come near either bound: the
+// beforePath counts both figures the rewrite has as it builds them — the edges
+// it adds and the nodes it walks to find the tasks behind an integration — and
+// refuses the graph past the bound. The count covers the walk because the walk
+// is where a document can multiply without adding a single edge: a long chain of
+// integration nodes under one that a hundred tasks wait on is a hundred walks of
+// the chain, and every one of them ends in the same one task. The recorded `was`
+// edges restored beside them are not part of that count: they are one per break,
+// the artifact's own list rather than a product of two of its figures, and the
+// cap the artifact arrived in bounds them already. A plan an operator wrote does
+// not come near the bound: the
 // before graph is the plan that stood before the pass, so it is the size of a
 // plan rather than of a product.
 const maxBeforeEdges = 1 << 18

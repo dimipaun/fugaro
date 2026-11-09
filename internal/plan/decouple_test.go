@@ -967,6 +967,60 @@ func TestBeforeGraphEdgesAreBounded(t *testing.T) {
 	}
 }
 
+// TestBeforeGraphWalksAreBounded: the before graph finds the tasks an
+// integration node runs by walking the graph under it, once per edge that asks,
+// and that is the half of the rewrite's cost a document can multiply without
+// adding an edge: a chain of integration nodes under the one a task waits on is
+// a walk of the whole chain per waiter, and every one of those walks ends in the
+// same single task. The nodes walked are counted against the same bound the
+// edges are, so a graph that reaches it is refused with the figure named rather
+// than read slowly; one under it is measured.
+func TestBeforeGraphWalksAreBounded(t *testing.T) {
+	// build is a break over the contract C1 whose integration node I0001 runs
+	// both sides, one task T at the end of a chain of `chain` integration nodes
+	// under I0001, and `waiters` tasks that wait on I0001. The before graph asks
+	// for one edge per waiter and walks the chain once per waiter.
+	build := func(chain, waiters int) string {
+		var b strings.Builder
+		b.WriteString(`{"schema_version":3,"plan":"p.md","nodes":[` +
+			`{"id":"A","title":"one side","footprint":{"prediction":true,"paths":["internal/a/**"]}},` +
+			`{"id":"B","title":"the other side","footprint":{"prediction":true,"paths":["internal/b/**"]}},` +
+			`{"id":"T","title":"the work at the end of the chain","footprint":{"prediction":true,"paths":["internal/t/**"]}},` +
+			`{"id":"C1","title":"the contract","kind":"contract","footprint":{"prediction":true,"paths":["internal/contract/types.go"]}}`)
+		for i := 1; i <= chain; i++ {
+			fmt.Fprintf(&b, `,{"id":"I%04d","title":"an integration in the chain","kind":"integration","footprint":{"prediction":true,"paths":["internal/i%04d/**"]}}`, i, i)
+		}
+		for i := 0; i < waiters; i++ {
+			fmt.Fprintf(&b, `,{"id":"W%04d","title":"a task that waits on the first integration","footprint":{"prediction":true,"paths":["internal/w%04d/**"]}}`, i, i)
+		}
+		b.WriteString(`],"edges":[{"task":"B","needs":"C1","reason":"B is built against the contract"},` +
+			`{"task":"I0001","needs":"A","reason":"the integration runs both sides"},` +
+			`{"task":"I0001","needs":"B","reason":"the integration runs both sides"},`)
+		for i := 1; i < chain; i++ {
+			fmt.Fprintf(&b, `{"task":"I%04d","needs":"I%04d","reason":"the chain waits on itself"},`, i, i+1)
+		}
+		fmt.Fprintf(&b, `{"task":"I%04d","needs":"T","reason":"the end of the chain runs the work"}`, chain)
+		for i := 0; i < waiters; i++ {
+			fmt.Fprintf(&b, `,{"task":"W%04d","needs":"I0001","reason":"W waits for both sides to be re-joined"}`, i)
+		}
+		b.WriteString(`],"decoupling":[{"contract":"C1","was":{"task":"B","needs":"A"},"integration":"I0001","reason":"B needed A's interface only"}]}`)
+		return b.String()
+	}
+	// Under the bound: 400 walks of a twenty-node chain, and 20 rewritten edges.
+	small := parseDoc(t, build(20, 20))
+	if _, err := Analyze("graph.json", small, nil); err != nil {
+		t.Fatalf("a before graph under the bound was refused: %v", err)
+	}
+	// Past it: 280,000 walks from a file of a couple of hundred kilobytes, and
+	// the same 400 edges the other case asks for — the count that bounds the
+	// edges alone sees nothing here.
+	if _, err := Analyze("graph.json", parseDoc(t, build(700, 400)), nil); err == nil {
+		t.Fatal("the read walked a before graph past the bound")
+	} else if !strings.Contains(err.Error(), "more than 262144 nodes walked") {
+		t.Errorf("Analyze's error = %v, want the bound named", err)
+	}
+}
+
 // TestStubsPresentIsRefusedWithNoCheckout: the other half of "the tree is the
 // checkout the plan is read in" — a working directory with no checkout above it
 // has no tree to resolve a stub against, and a read that fell back on the
