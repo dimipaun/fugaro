@@ -436,8 +436,9 @@ first wins, and the checkpoint report is the core plumbing that reads `runstore.
 - **`ee/register` panics on any setter error, and only `ee/register` may call a `Set*`**
   (`internal/eeboundary/seam_test.go`'s `TestOnlyEERegisterSetsTheSeams` scans the module for
   `SetLaunchDeclarer`, `RegisterCommand`, `SetSections`, `SetGovernance`, `SetStage`,
-  `SetEditionEE` and `SetHandoff` outside `ee/register`'s non-test files, with a planted tree for
-  the red step).
+  `SetEditionEE`, `SetHandoff` and `SetSubscriptionLimit` — the last one the lapse limit RS9 of
+  [docs/roles-scopes](../roles-scopes/implementation-plan.md) adds, which the Subscription surfaces
+  ask through — outside `ee/register`'s non-test files, with a planted tree for the red step).
 - **A seam that switches behaviour *off* is test-only**: the `SetCore()`-style seams live in an
   `export_test.go` beside the hook, never in production code, so no core caller can turn governance
   off in a tagged binary. `export_test.go` is compiled only into that package's own tests.
