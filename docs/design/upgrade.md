@@ -27,8 +27,9 @@ Each PATH (the default is `.`) is a checkout, and each is processed on its own. 
 1. **pin**: what `fugaro update-skills` does. The plugin's marketplace and enablement are merged into `.claude/settings.json`, pinned to this binary's tag. The diff is shown, and the command never commits. A fork's marketplace moves only with `--allow-fork`, and a file that is not valid JSON is never rewritten. One rule is new: a pin **newer** than this binary is never moved down. Instead, that checkout stops and the output names `brew upgrade`. This matters because `update-skills` itself does lower such a pin today, even though its own fix text says it never does.
 2. **plugin**: the plugin is installed or updated in Claude Code through the `claude` CLI on `PATH`:
    - It reads `claude plugin marketplace list --json` and `claude plugin list --json`.
-   - It adds the marketplace if it is missing, otherwise it updates it.
-   - It installs the plugin at user scope if nothing applies to this checkout. Otherwise it updates each install that applies (user scope, or project or local scope recorded for this checkout), at that install's own scope.
+   - It adds the marketplace if it is missing; when it is there at another ref that is not newer, it declares the name again at this release's tag (`dimipaun/fugaro#vX.Y.Z`, which is Claude Code's own syntax for a source, so what the marketplace serves is this binary's plugin and not whatever the repository's default branch carries — on a patch release cut from `release/X.Y` that is the version `main` was last bumped to, the 0.21.1 failure of 2026-11-09). Claude Code refuses an add of a name it has already declared from a different source, and the ref is part of the source — every fugaro marketplace a release before this one declared, with no ref, is one — so the step clears the user-scope declaration first (`claude plugin marketplace remove fugaro --scope user`, the route claude's own refusal names) and never touches the scopes a checkout commits. Claude Code's removal takes every install of that marketplace with it, at every scope (its own warning says add the marketplace back and reinstall the plugin) — but only when the removal leaves the name undeclared, which a checkout whose own committed settings declare the marketplace (every wired one) does not. Which machine this is cannot be read before the clear, so that path installs the plugin at user scope *and* updates each stale install at its own scope: the install is what puts the plugin back on a machine the clear emptied (an install of one that is already there does not move it: claude answers "already installed" and names update as the call that re-records the version), and the update of one the clear did take finds nothing to update, which is printed rather than failing the step (see Safety). That clear may itself be refused, for a name claude has not declared there: there is nothing to clear then, so the failure is printed and the step goes on to the add, which is what decides. If claude refuses the add for a source declared for the name in settings fugaro does not own (an organization's, say) — claude's own message is what says so, and it is the only add failure the step reads that way — the plugin cannot be had on that machine: the step says exactly that, with the slash commands that do it by hand, and the checkout's other steps are not stopped for it. Any other failure of the add fails the step, and the declaration the clear removed is declared again first (see Safety).
+   - It updates the marketplace whenever the name is on the machine — at this release's tag, at a newer one, or at the tag it has just been declared at. A ref a newer `fugaro` wrote is never lowered (U10), and the newer plugin that comes back from it is a note, not a failure.
+   - It installs the plugin at user scope if nothing applies to this checkout or a clear is in the plan, and updates each install that applies and is behind (user scope, or project or local scope recorded for this checkout) at that install's own scope. On the cleared path both happen, and either one's failure is printed and carried on from — which of them the clear left anything to do is not knowable before it runs, and on the machine the clear emptied the install is what applies — with the check after the calls, below, deciding.
    - When everything is current, it makes no change call.
 
    It then lists the installs again and compares the result with this binary. The output says that running Claude Code sessions must be restarted to apply it. Without `claude` on `PATH`, the step prints the slash commands to type in Claude Code instead.
@@ -104,19 +105,19 @@ The paths whose gate was `checkDBProject` rather than the mark are **PRE-EXISTIN
 
 ## Safety
 
-- **The `claude` calls.** Every argv is one of seven fixed lists, or the marketplace add, whose one variable word is the marketplace repository: `dimipaun/fugaro`, or a fork that the checkout's pin names, passed only with `--allow-fork` and only after it matches a GitHub `owner/name` pattern that cannot start with `-`.
+- **The `claude` calls.** Every argv is one of eight fixed lists, or the marketplace add, whose one variable word is the marketplace source: `dimipaun/fugaro#vX.Y.Z`, or a fork that the checkout's pin names, passed only with `--allow-fork`. The repository is checked against a GitHub `owner/name` pattern that cannot start with `-`, and the ref against the strict release tag this binary's own version makes, so neither a branch name nor a word of the user's choosing reaches the command line.
 
   An allowlist (`claudeplugin.Allowed`) rejects anything else before anything is executed. There is no shell, and stdin is the null device, so a prompt reads end of file and refuses. The command never passes `-y`, `--accept-command` or `--dangerously-skip-permissions`. Each call has a timeout: 30 s for a list, 3 min for a change.
 - **Finding `claude`.** It is found with `exec.LookPath`, and a relative result (for example from a `.` entry in `PATH`) is refused. The resolved absolute path is printed before the first change.
 - **Output.** At most 40 lines of `claude`'s output are printed, each one passed through `pluginwire.Printable`.
-- **The marketplace already on the machine.** A `fugaro` marketplace on this machine that names another source is never replaced. The checkout stops and the output names `/plugin marketplace remove fugaro`.
+- **The marketplace already on the machine.** A `fugaro` marketplace on this machine that names another repository (or is not a GitHub one) is never replaced. The checkout stops and the output names `/plugin marketplace remove fugaro`. A marketplace from **our** repository at another ref is the one thing the step does declare again, and the clear that takes is the one the bullet below puts back.
+- **What a stopped step leaves behind.** The declaration the add is refused by is cleared first, and claude's removal takes every install of the marketplace with it, so nothing after that clear may cost the user their marketplace or their plugin: before the step reports a failure — the add's, any later call's, or the check after the calls' — it declares the old source again and installs the plugin from it (the pair, in that order — an install with no marketplace to come from would fail), and the install is at user scope, which is where fugaro installs the plugin and never a scope the checkout commits. Both are best effort, and the output says so when one fails: once this release's tag is declared, claude refuses the name at the source it had, and the install from the declaration that stands is what puts the plugin back. Only claude's own refusal of the declaration — its message says the name is declared for it from a different source, and the clear fugaro ran did not change that — is reported and carried on from. Every other failure of the add (a clone that failed, a network that is down) fails the step.
 - **Writes by Claude Code itself.** If a `claude` call changes `.claude/settings.json`, the step says so and asks the user to review it with `git diff`.
 - **Credentials.** `--check` and `--local` need no credentials and make no cloud call. The tests pin this with a credentials path that does not exist, and with a build-record reader that fails the test if anything calls it.
 
 ## Non-goals
 
 - Upgrading the binary.
-- Pinning Claude Code's own marketplace to the tag: `claude plugin marketplace add` takes no ref, so it follows `dimipaun/fugaro`'s default branch. The release PR bumps the plugin version there before the tag, so it equals the latest release.
 - `--json` (refresh has none either).
 - Teammates' cloud steps.
 - Changing `update-skills` or the `fugaro image refresh` hints that name a single workflow.
@@ -126,7 +127,7 @@ The paths whose gate was `checkDBProject` rather than the mark are **PRE-EXISTIN
 
 The plan lists U1 to U18. The ones that shape the behaviour:
 - install at user scope, and update every install at its own scope (U2);
-- the marketplace follows the default branch, and a plugin newer than the binary after the update is a note, not a failure (U3);
+- the marketplace is declared at this release's tag, so what it serves is this binary's plugin, and a plugin newer than the binary after the update is a note, not a failure (U3);
 - `--check` reads local files only (U6);
 - in an agent's session the command exits 0 (U7);
 - a terminal is refused up front without `--yes` (U8);
@@ -142,7 +143,7 @@ Release **0.5.2**, with `refresh --yes`. One PR holds Tasks 1 to 11 of the plan.
 The first upgrade *into* 0.5.2 needs the CLI command, because the 0.5.1 plugin has no `upgrade` skill. From then on, `/fugaro:upgrade` covers the local half.
 
 What has not been verified live:
-- the change calls of `claude plugin` (only `marketplace list --json` was run inside a session, on 2026-10-08);
+- the change calls of `claude plugin` end to end (only `marketplace list --json` was run inside a session, on 2026-10-08; on 2026-11-09 the 2.1.283 binary was run against a stub `git` and a fresh config directory, which is where the refusal of an add of a name declared at another source, the clear that answers it, and the `ref` the add writes into the settings and the marketplace registry were read from — a clone from the real repository has still not run);
 - whether `claude plugin update --scope project` rewrites the committed settings file.
 
 `docs/gcp-live-checklist.md` gets Check 31 for both.

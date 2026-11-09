@@ -146,9 +146,14 @@ func newConvergeRigYAML(t *testing.T, node map[string]any, yaml string) *converg
 	putWorkflowRecordFrom("app", convergePrev, pinnedRef("base", convergePrev))
 	putWorkflowRecordFrom("api", convergePrev, pinnedRef("base", convergePrev))
 
+	// The marketplace an installation one release old has on the machine is the
+	// unpinned one a previous fugaro declared, so the plugin step clears it and
+	// declares it at this release's tag: the clear takes the older install with
+	// it (claude's own record of the removal), and the install that follows the
+	// pinned add is the one that leaves this release's version.
 	f := testutil.NewClaudePluginFake(t, ourMarket, userInstall(convergePrev))
-	f.On(t, "plugins", userInstall(convergeRelease), argsUpdMarket...)
-	f.On(t, "plugins", userInstall(convergeRelease), argsUpdUser...)
+	f.On(t, "plugins", "[]", argsRemove...)
+	f.On(t, "plugins", userInstall(convergeRelease), argsInstall...)
 	useFakeClaude(t, f)
 
 	seedAppSecret(t, r.initRig, "github-app-key")
