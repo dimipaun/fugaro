@@ -417,30 +417,47 @@ func (w *Workspace) readPeople(cfg WorkspaceConfig) error {
 // header or a query parameter names the member: the verified account does, and
 // the configured spelling of it is what the answer carries.
 //
-// The token check is the shared one every class of caller gets — the signature
-// against Google's certificates, Google as the issuer, this service's audience
-// and the token's own window (callerClaims, checkCallerAudience,
-// checkCallerToken) — and the two lists are the deployment's classes. A caller
-// on neither is refused with one message for both, which is what stops the
-// refusal from enumerating the workspace's members.
+// The class is resolved BEFORE the token's audience is checked, because the
+// audiences are the class's and not the deployment's. A member's job mints an
+// ID token for this service's URL; one of the workspace owner's people cannot,
+// because `gcloud auth print-identity-token --audiences` is refused for a user
+// account — so a person's token carries gcloud's own client id and nothing else
+// (GcloudAudience, the owner's ruling of 2026-11-04, and the same asymmetry the
+// installation's own person class has). Holding this class to this service's
+// URL alone would leave it with no reachable caller at all, which is exactly the
+// class the workspace-wide routes are written for. The other direction is held
+// too: a member's job is not offered gcloud's audience, so a token a person
+// could mint cannot be presented as a member's.
+//
+// The rest of the token check is the shared one every class of caller gets —
+// the signature against Google's certificates, Google as the issuer and the
+// token's own window (callerClaims, checkCallerToken) — and the two lists are
+// the deployment's classes. A caller on neither is refused with one message for
+// both, which is what stops the refusal from enumerating the workspace's
+// members.
 func (w *Workspace) Caller(ctx context.Context, jobToken string) (WorkspaceCaller, error) {
 	now := w.now()
 	claims, folded, err := w.front.callerClaims(ctx, jobToken)
 	if err != nil {
 		return WorkspaceCaller{}, err
 	}
-	if err := checkCallerAudience(claims, w.audience); err != nil {
+	person, isPerson := w.ownerPeople[folded]
+	member, isMember := w.byAccount[folded]
+	if !isPerson && !isMember {
+		return WorkspaceCaller{}, fmt.Errorf("%w: the caller is not one of the workspace's member job service accounts, and it is not one of the workspace owner's people", ErrUnverifiedJob)
+	}
+	auds := []string{w.audience}
+	if isPerson {
+		auds = append(auds, GcloudAudience)
+	}
+	if err := checkCallerAudience(claims, auds...); err != nil {
 		return WorkspaceCaller{}, err
 	}
 	if err := checkCallerToken(claims, now); err != nil {
 		return WorkspaceCaller{}, err
 	}
-	if person, ok := w.ownerPeople[folded]; ok {
+	if isPerson {
 		return WorkspaceCaller{Class: ClassWorkspaceOwner, Account: person}, nil
-	}
-	member, ok := w.byAccount[folded]
-	if !ok {
-		return WorkspaceCaller{}, fmt.Errorf("%w: the caller is not one of the workspace's member job service accounts, and it is not one of the workspace owner's people", ErrUnverifiedJob)
 	}
 	url, err := workspaceDatabase(member.FirebaseProject)
 	if err != nil {

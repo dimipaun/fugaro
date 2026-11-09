@@ -371,6 +371,43 @@ func TestWorkspaceServiceRefusesACallerTokenThatIsNotCurrent(t *testing.T) {
 	}
 }
 
+// TestWorkspaceServiceAdmitsTheOwnerOnGcloudsAudience: one of the workspace
+// owner's people is the only caller a workspace-wide route exists for, and a
+// person cannot mint a token for this service's URL at all —
+// `gcloud auth print-identity-token --audiences` is refused for a user account
+// — so a person's ID token carries gcloud's own client id and nothing else
+// (GcloudAudience, the same asymmetry the installation's own person class has).
+// A front door holding this class to the service's URL alone would leave the
+// class with no reachable caller: it would exist and admit nobody, and every
+// workspace-wide route would be dead.
+//
+// The other direction is held beside it: gcloud's audience is the person's and
+// is not offered to a member's job, so the widening stops at the class it is
+// for and a token a person can mint is not a member's job's token.
+func TestWorkspaceServiceAdmitsTheOwnerOnGcloudsAudience(t *testing.T) {
+	f := newWSFixture(t)
+	ctx := context.Background()
+	gcloud := func(c map[string]any) { c["aud"] = GcloudAudience }
+	owner, err := f.ws.Caller(ctx, f.ownerToken(gcloud))
+	if err != nil {
+		t.Fatalf("Caller for one of the workspace owner's people on gcloud's audience: %v", err)
+	}
+	if owner.Class != ClassWorkspaceOwner || owner.Account != wsOwner {
+		t.Errorf("the caller resolved to %+v, want the workspace owner's own person", owner)
+	}
+	if err := f.ws.WorkspaceWide(owner); err != nil {
+		t.Errorf("WorkspaceWide for the owner's person on gcloud's audience = %v, want it admitted: the class is admitted nowhere else", err)
+	}
+	if _, err := f.ws.Caller(ctx, f.jobToken(wsAccountA, gcloud)); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("Caller for a member's job on gcloud's audience = %v, want ErrUnverifiedJob: that audience is the person class's alone", err)
+	}
+	// And the person's token is still held to the class's list: an address that
+	// is nobody's, on the same audience, is refused.
+	if _, err := f.ws.Caller(ctx, f.jobToken(wsMemberPerson, gcloud)); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("Caller for an address on neither list = %v, want ErrUnverifiedJob", err)
+	}
+}
+
 // TestWorkspaceServiceAnswersTheConfiguredSpellingOfAnAccount: what a caller is
 // answered with is the address the OPERATOR configured, not the one the token
 // presented. The fold is what matches them, and two spellings that fold together
