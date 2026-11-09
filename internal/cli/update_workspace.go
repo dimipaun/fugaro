@@ -200,6 +200,25 @@ func workspaceMember(lc *localcfg.Config) bool {
 	return lc != nil && (lc.Workspace != "" || !lc.WorkspacePin.IsZero())
 }
 
+// workspaceOwnFirebase is whether a read of Firebase project fp is a read of a
+// workspace's own project: the config running the read declares the owner's
+// half (workspaceDeclared) AND fp is the installation's own GCP project, which
+// is the project a workspace's own is named after.
+//
+// The second half is the project the check is made against, and the carve-out
+// that reads this (refusePublicSignUp, on the Identity Platform step) is about
+// that project and not about the config: the pin admits the workspace's own
+// sign-in there, so a read landing anywhere else has to be refused as any other
+// installation's would be. The state where the two come apart is a split
+// installation — budget.firebase_project naming another project than
+// gcp_project, which workspaceSplitFirebase refuses a stage after this step, and
+// which the Firebase step itself refuses before it when the flag names that
+// other project — but the step asks it here rather than leaving it to them, so
+// what it accepts does not depend on a check made elsewhere.
+func workspaceOwnFirebase(lc *localcfg.Config, fp string) bool {
+	return lc != nil && lc.GCPProject != "" && fp == lc.GCPProject && workspaceDeclared(lc)
+}
+
 // workspaceRecordOf builds the record this installation publishes. It answers
 // nil for a config that is not a workspace's own — one that declares no member
 // table and no cap, which is every member's config and every project in no

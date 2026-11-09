@@ -1138,13 +1138,15 @@ func TestIdentityPlatformAlreadyEnabledRaceIsOK(t *testing.T) {
 // field through unchanged — and a matcher written against the bare form would
 // pass here and refuse the pin's own provider in the cloud
 // (workspaceSignInPath; scripts/live-checks/check361.sh strips the last path
-// segment for the same reason).
-func idpPath(field, id string) string { return "projects/" + fpID + "/" + field + "/" + id }
+// segment for the same reason). The project is the caller's, because the entry
+// names the project it belongs to and a test that reads a project other than
+// the installation's has to say which.
+func idpPath(fp, field, id string) string { return "projects/" + fp + "/" + field + "/" + id }
 
 // idpEntry is one enabled IdP of that shape, as `SetIdentityPlatformConfig`
 // takes it.
-func idpEntry(field, id string) map[string]any {
-	return map[string]any{"name": idpPath(field, id), "enabled": true}
+func idpEntry(fp, field, id string) map[string]any {
+	return map[string]any{"name": idpPath(fp, field, id), "enabled": true}
 }
 
 func TestIdentityPlatformRefusesPublicSignUp(t *testing.T) {
@@ -1152,7 +1154,7 @@ func TestIdentityPlatformRefusesPublicSignUp(t *testing.T) {
 		"email":     {"signIn": map[string]any{"email": map[string]any{"enabled": true}}},
 		"anonymous": {"signIn": map[string]any{"anonymous": map[string]any{"enabled": true}}},
 		"phone":     {"signIn": map[string]any{"phoneNumber": map[string]any{"enabled": true}}},
-		"idp":       {"defaultSupportedIdpConfigs": []any{idpEntry("defaultSupportedIdpConfigs", "google.com")}},
+		"idp":       {"defaultSupportedIdpConfigs": []any{idpEntry(fpID, "defaultSupportedIdpConfigs", "google.com")}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newFBRig(t)
@@ -1209,7 +1211,7 @@ func TestIdentityPlatformAllowsTheWorkspacesOwnSignIn(t *testing.T) {
 			}
 			r.idt.SetIdentityPlatformConfig(map[string]any{
 				"signIn":                     map[string]any{"email": map[string]any{"enabled": true}},
-				"defaultSupportedIdpConfigs": []any{idpEntry("defaultSupportedIdpConfigs", "google.com")},
+				"defaultSupportedIdpConfigs": []any{idpEntry(fpID, "defaultSupportedIdpConfigs", "google.com")},
 			})
 			cmd := NewRootCmd()
 			cmd.SetOut(io.Discard)
@@ -1238,6 +1240,61 @@ func TestIdentityPlatformAllowsTheWorkspacesOwnSignIn(t *testing.T) {
 	}
 }
 
+// TestIdentityPlatformRefusesASplitInstallationsPublicSignUp: the carve-out is
+// the project's and not the config's. A config can declare a workspace's own
+// half while the Firebase project read is another project's — a split
+// installation, `budget.firebase_project` naming a project that is not
+// `gcp_project` — and the pin's providers must not be admitted there: the
+// project whose sign-in the pin describes is the workspace's own, and this read
+// is of a project that is not it, so its public sign-up is refused exactly as
+// any other installation's is, with the project that has it named.
+//
+// The state is refused twice before this step in a real run (the Firebase step
+// refuses a config whose budget.firebase_project is not the project it reads,
+// and workspaceSplitFirebase refuses the split a stage later, with the flag that
+// names the other project refused before any cloud call). This pins the step's
+// own answer anyway: what it accepts is decided where the read is made, and not
+// by a check made somewhere else.
+func TestIdentityPlatformRefusesASplitInstallationsPublicSignUp(t *testing.T) {
+	const other = "aurora-fp"
+	r := newFBRigFor(t, other)
+	b, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	split := string(b) + wsOwnerTable + wsOwnerCap +
+		"budget: { rtdb_url: " + r.db.URL + ", firebase_project: " + other + " }\n"
+	if err := os.WriteFile(r.cfg, []byte(split), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lc.GCPProject == other || lc.Budget == nil || lc.Budget.FirebaseProject != other {
+		t.Fatalf("the rig is not a split installation: gcp_project %s, budget %+v", lc.GCPProject, lc.Budget)
+	}
+	r.idt.SetIdentityPlatformConfig(map[string]any{
+		"signIn":                     map[string]any{"email": map[string]any{"enabled": true}},
+		"defaultSupportedIdpConfigs": []any{idpEntry(other, "defaultSupportedIdpConfigs", "google.com")},
+	})
+	cmd := NewRootCmd()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetIn(strings.NewReader(""))
+	run := newInitRun(cmd, &initOptions{door: setupDoor.name})
+	_, err = run.identityPlatform(context.Background(), lc, other)
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "public sign-up") {
+		t.Fatalf("a split installation's providers = %v, want the refusal", err)
+	}
+	if !strings.Contains(err.Error(), other) || strings.Contains(err.Error(), "workspace's own Firebase project") {
+		t.Errorf("the refusal is not the one every other installation's project gets: %v", err)
+	}
+	if !strings.Contains(err.Error(), "google.com") || !strings.Contains(err.Error(), "email") {
+		t.Errorf("the refusal does not name the paths it found: %v", err)
+	}
+}
+
 // TestIdentityPlatformRefusesAWorkspacesOffPinProvider: the workspace's own
 // project is admitted for the paths spec §3's pin carries and for nothing else.
 // The exemption is not "a workspace may carry any provider": an anonymous
@@ -1262,24 +1319,24 @@ func TestIdentityPlatformRefusesAWorkspacesOffPinProvider(t *testing.T) {
 		},
 		"a second IdP beside the pinned one": {
 			cfg: map[string]any{"defaultSupportedIdpConfigs": []any{
-				idpEntry("defaultSupportedIdpConfigs", "google.com"),
-				idpEntry("defaultSupportedIdpConfigs", "microsoft.com"),
+				idpEntry(fpID, "defaultSupportedIdpConfigs", "google.com"),
+				idpEntry(fpID, "defaultSupportedIdpConfigs", "microsoft.com"),
 			}},
-			off: "defaultSupportedIdpConfigs " + idpPath("defaultSupportedIdpConfigs", "microsoft.com") + " enabled",
+			off: "defaultSupportedIdpConfigs " + idpPath(fpID, "defaultSupportedIdpConfigs", "microsoft.com") + " enabled",
 		},
 		"an OAuth IdP": {
-			cfg: map[string]any{"oauthIdpConfigs": []any{idpEntry("oauthIdpConfigs", "github.com")}},
-			off: "oauthIdpConfigs " + idpPath("oauthIdpConfigs", "github.com") + " enabled",
+			cfg: map[string]any{"oauthIdpConfigs": []any{idpEntry(fpID, "oauthIdpConfigs", "github.com")}},
+			off: "oauthIdpConfigs " + idpPath(fpID, "oauthIdpConfigs", "github.com") + " enabled",
 		},
 		"the pinned set with email and an off-pin provider": {
 			cfg: map[string]any{
 				"signIn": map[string]any{"email": map[string]any{"enabled": true}},
 				"defaultSupportedIdpConfigs": []any{
-					idpEntry("defaultSupportedIdpConfigs", "google.com"),
-					idpEntry("defaultSupportedIdpConfigs", "apple.com"),
+					idpEntry(fpID, "defaultSupportedIdpConfigs", "google.com"),
+					idpEntry(fpID, "defaultSupportedIdpConfigs", "apple.com"),
 				},
 			},
-			off: "defaultSupportedIdpConfigs " + idpPath("defaultSupportedIdpConfigs", "apple.com") + " enabled",
+			off: "defaultSupportedIdpConfigs " + idpPath(fpID, "defaultSupportedIdpConfigs", "apple.com") + " enabled",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

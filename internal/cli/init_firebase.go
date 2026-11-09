@@ -697,15 +697,19 @@ func (r *initRun) firestoreStep(ctx context.Context, lc *localcfg.Config, fp str
 type idpStep struct {
 	c       *infra.IdentityPlatform
 	missing bool
-	// workspace is whether this run's own config declares a workspace of its
-	// own, which is the one project whose sign-in paths the owner enables: the
+	// workspace is whether the project THIS step reads is a workspace's own,
+	// which is the one project whose sign-in paths the owner enables: the
 	// pinned ones pass and an off-pin one is refused (refusePublicSignUp).
+	// A config declaring a workspace of its own is not enough for it: the read
+	// has to be of the installation's own project as well, which is what
+	// workspaceOwnFirebase reads, because the carve-out is about the project
+	// the check is made against and not about the config.
 	workspace bool
 }
 
 // identityPlatform reads the Firebase project's Identity Platform
 // configuration (read-only). One that exists is never changed, and is refused
-// when it enables a public sign-up path — unless this installation is a
+// when it enables a public sign-up path — unless the project read here is a
 // workspace's own and the path is one the workspace's pin carries
 // (refusePublicSignUp, and workspaceSignInPath for the pinned entries).
 func (r *initRun) identityPlatform(ctx context.Context, lc *localcfg.Config, fp string) (*idpStep, error) {
@@ -719,7 +723,8 @@ func (r *initRun) identityPlatform(ctx context.Context, lc *localcfg.Config, fp 
 	} else if lc.Endpoints.IdentityToolkit == "" {
 		return nil, userErr("endpoints: no_auth is set but the identity_toolkit endpoint is not")
 	}
-	s := &idpStep{c: &infra.IdentityPlatform{Endpoint: lc.Endpoints.IdentityToolkit, Project: fp, HTTP: hc}, workspace: workspaceDeclared(lc)}
+	s := &idpStep{c: &infra.IdentityPlatform{Endpoint: lc.Endpoints.IdentityToolkit, Project: fp, HTTP: hc},
+		workspace: workspaceOwnFirebase(lc, fp)}
 	raw, exists, err := s.c.Config(ctx)
 	if err != nil {
 		return nil, remote(err)
@@ -753,10 +758,12 @@ func (s *idpStep) initialize(ctx context.Context) error {
 // enables a public sign-up path: the web API key is public, so only custom
 // tokens signed by our signer may work.
 //
-// A workspace's OWN project is the one exception to that refusal, and it is the
-// config's own owner half that marks it (workspaceDeclared) — a config that
-// carries the member's half as well is a member's, because the two halves
-// contradict each other and the narrow one decides. The workspace's sign-in is
+// A workspace's OWN project is the one exception to that refusal, and what
+// marks it is the read being of that project (workspaceOwnFirebase): the
+// installation's own config declaring the owner's half, and fp being the
+// project the workspace's own is named after. A config that carries the
+// member's half as well is a member's, because the two halves contradict each
+// other and the narrow one decides. The workspace's sign-in is
 // the owner's own Firebase project's, and the workspace's spec pins WHICH paths
 // that project has on — email/password and google.com in, every other one out
 // (docs/workspaces/spec.md §3) — so the owner enables providers here on purpose,
