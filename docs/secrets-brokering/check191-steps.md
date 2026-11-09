@@ -49,9 +49,11 @@ neither deletes nor closes them, and the block names each one.
   `--after-flip`, `CHECK191_PLAIN_REPO` (one the published policy does **not** proxy). Plus
   `CHECK191_OTHER_PR`: the number of an **open** pull request in `CHECK191_OTHER_REPO` that is not
   this run's, for the other-pull-request and merge attempts.
-- `bash`, `mktemp`, `python3`, `curl`, `gcloud` and `fugaro` on PATH. `gcloud` must be authenticated
-  as an account that may read Cloud Logging for the installation, read the job list, read
-  `bitbucket-token`'s IAM policy, and **write and delete one node in the installation's Realtime
+- `bash`, `mktemp`, `python3`, `curl`, `gcloud` and `fugaro` on PATH, and `git` for `--after-flip`
+  (the checkout's origin remote, so the check knows the directory it is about to read doctor in is
+  this repository's). `gcloud` must be authenticated as an account that may read Cloud Logging for
+  the installation, read the job list, list the installation's secrets and read the IAM policy of the
+  one holding `bitbucket-token`, and **write and delete one node in the installation's Realtime
   Database** (Check 95 step 3 in the register is the same write): the ended-run row is set up by
   hand, as you, with `gcloud auth print-access-token` and `curl`, because no call of a run's own can
   put its identity in that state. The URL is read out of the installation's own
@@ -74,10 +76,11 @@ neither deletes nor closes them, and the block names each one.
    ```
 
 2. **The run itself** — the same command without `--dry-run`. The run's ids are built from
-   `CHECK191_RUN_ID` (default `chk191-<UTC date>-<time>`), and a base that does **not** start with
-   today's UTC date is refused: the service reads a run's outcome under the day its **run id** names,
-   so a run id of another day is one whose ended-run probe would be written where the service never
-   looks.
+   `CHECK191_RUN_ID`, which must be today's UTC date and a time (`YYYYMMDD-HHMMSS`; the default is
+   now). Each run's id adds four hex characters of its own, because `fugaro run` admits one shape and
+   only one (`^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$`), and the base's day is the day the service reads a
+   run's outcome under: a run id of another day is one whose ended-run probe would be written where
+   the service never looks. A base outside that shape is refused before anything is launched.
 
    ```sh
    CHECK191_REPO=<workspace>/<proxied sandbox repo> \
@@ -93,9 +96,17 @@ neither deletes nor closes them, and the block names each one.
 ## Check 192 — the steps, after the flip
 
 The flip (the plan's B1.13 part two, D500) turns the proxy from a per-repository publish into the
-repository's jobs **giving up the token**: the job no longer mounts `bitbucket-token` and its account
-holds no accessor on it. Check 192 reads that, and reads the other half — a repository the policy does
-**not** proxy keeps its mount and keeps working.
+repository's jobs **giving up the token**: the job no longer mounts the Bitbucket token and its
+account holds no accessor on it. Check 192 reads that, and reads the other half — a repository the
+policy does **not** proxy keeps its mount and keeps working.
+
+**Run it from the proxied repository's own checkout** (the directory `fugaro update --repo` was run
+in), or name that directory with `CHECK191_CHECKOUT`. One of its rows is `fugaro doctor`'s
+`bitbucket-direct` line, and doctor has no `--repo`: it resolves the repository it answers about from
+the **working directory**, and prints no `bitbucket-direct` line at all anywhere else — which would
+read as a finding about the flip when it is a finding about where you were standing. The check
+resolves the checkout's own origin remote and **stops before it launches anything** if it is not this
+repository's, so that mistake costs a second rather than two runs.
 
 1. **The dry run:**
 
@@ -115,6 +126,13 @@ holds no accessor on it. Check 192 reads that, and reads the other half — a re
 
 ## What the block reads
 
+Check 192's `mount` reads whether any job of the repository carries `FUGARO_BITBUCKET_TOKEN` as a
+Secret Manager reference — the DERIVED container ID, never the logical name — and `accessor` reads
+the IAM policy of every secret the installation labels `fugaro_secret=bitbucket-token` (there is one
+project-wide container, and a repository that stored the token itself has its own). No job account of
+the repository may appear in any of them. If no secret carries that label the row was not measured:
+it reads `FAIL` and the check ends `2`, because there was no policy to read.
+
 Check 191: `proxied` (the published policy admits the repository with `proxy: true`), `run-launch` and
 `run-outcome` (the working run reached a final status, succeeded, and the service served its push and
 its pull request — the branch and the number the check leaves for you), the seven refusal rows
@@ -130,8 +148,9 @@ not a pass: the audit line is the other half of the reading.
 
 **Exit codes.** `0` is every criterion that was measured holding. `1` is a measured criterion that did
 not hold, or a guard that stopped the check before it ran. `2` is the check not being able to
-**measure** — a tool is missing, or the ended-run probe could not be set up (the node could not be
-written, or did not read back). A key the run never reached reads `FAIL — not reached`.
+**measure** — a tool is missing, the ended-run probe could not be set up (the node could not be
+written, or did not read back), or no secret carries the label the accessor row is read from. A key
+the run never reached reads `FAIL — not reached`.
 
 ## If it stops before the end
 
@@ -143,6 +162,17 @@ that stopped it before it could run) or `2` (it could not measure). The stops wo
   disagrees with the checkout's `project:`, or doctor itself failed. Nothing was created.
 - **`this shell is tracing`** — the check was started with `bash -x`. Run it without `-x`: it prints
   its own block, and a trace is not needed to report a failure.
+- **`is a checkout of <another repository>`**, or **`is not a checkout with an origin remote`**
+  (Check 192, before anything is created) — `CHECK191_CHECKOUT` (the working directory, unless you set
+  it) is not the proxied repository's own checkout, and its `doctor` row would be read about another
+  repository or about none. `cd` into `${REPO}`'s checkout, or set `CHECK191_CHECKOUT` to it.
+- **`CHECK191_RUN_ID must be today's UTC date and a time`** — the run id base is not
+  `YYYYMMDD-HHMMSS` (or is another day's): the runs' ids are built from it as `<base>-<4 hex>`, which
+  is the only shape `fugaro run` admits. Fix the knob, or unset it and take the default.
+- **The accessor row could not be read** (`accessor: FAIL`, exit `2`, Check 192) — no secret of the
+  installation carries the label `fugaro_secret=bitbucket-token`, so there was no IAM policy to read.
+  Read `gcloud secrets list --project=fugaro-dev` yourself: a repository that stored the token in a
+  container of its own has one, and that container's policy is what this row is about.
 - **A repository the policy does not proxy, when Check 191 needs one that is** (`proxied: FAIL`) — the
   published policy does not admit `CHECK191_REPO`, or admits it without `proxy: true`. Publish the
   sandbox repository, or run this check as `--after-flip` if the flip has already happened.

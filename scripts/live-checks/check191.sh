@@ -80,8 +80,9 @@
 #             (CHECK 192 RESULT under --after-flip), then ... RESULT END (exit
 #             N). Exit 0: every criterion that was measured held. 1: a measured
 #             criterion did not hold, or a guard stopped the check before it
-#             could run. 2: the check could not measure — a tool is missing or
-#             the ended-run probe could not be set up. In the block, a key the
+#             could run. 2: the check could not measure — a tool is missing, the
+#             ended-run probe could not be set up, or no container carries the
+#             label the accessor row is read from. In the block, a key the
 #             run never reached reads `FAIL — not reached`, which is a row that
 #             was NOT measured.
 #
@@ -137,8 +138,10 @@ fact() { # fact KEY PASS|FAIL|INFO "detail"
 # check's own setup rather than the proxy. The row still reads FAIL in the
 # block (it is not a pass and must not be read as one), but it does not by
 # itself make the verdict "a criterion did not hold": the check ends as one
-# that could not measure (exit 2), which is what its own contract says of the
-# ended-run probe that could not be set up.
+# that could not measure (exit 2), which is what its own contract says of a row
+# that needed the installation's own state and did not find it — the ended-run
+# probe's outcome node that could not be written, and the token's container that
+# no label names.
 UNMEASURED_KEYS=""
 unmeasured() { # unmeasured KEY "detail"
   fact "$1" FAIL "$2"
