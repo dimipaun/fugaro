@@ -162,15 +162,18 @@ func countPairs(edges []Edge) int {
 // the integration node is the task that runs them together.
 //
 // A dependency the plan had before the pass is never dropped for want of a
-// place to put it, and the two nodes the pass added that a task can wait on are
-// each refused when the document gives the wait nowhere to stand. A task waits
-// on a contract because the pass moved its edge there, and the record says where
-// that edge stood before: the entry whose `was` names the task, whose restored
-// edge stands in for this one, so a consumer no entry names has no place to
-// stand. A task waits on an integration because it waited on what the
-// integration runs, so an integration that runs no task at all is the same
-// absence. Either way, a gain measured without that dependency is a gain the
-// plan did not get — such a document is refused rather than read.
+// place to put it, and a wait the document gives nowhere to stand is refused
+// rather than measured with one of the plan's own dependencies missing: a gain
+// computed without it is a gain the plan did not get.
+//
+// A task waits on a contract because the pass moved its edge there, and the
+// record says where that edge stood before: the entry whose `was` names the
+// task, whose restored edge stands in for this one, so a consumer no entry
+// names is refused. A task waits on an integration because it waited on what
+// the integration runs — every task behind that node, through whatever
+// integration nodes it waits on — so an integration with no task behind it is
+// refused, and so is one whose wait stands on a contract or a change request,
+// which is work no plan before the pass held.
 //
 // What is dropped is the pass's own scaffolding, each edge removed with the
 // node it hangs from: the work a contract, an integration or a change request
@@ -179,29 +182,67 @@ func countPairs(edges []Edge) int {
 // pass had already merged — one no plan before the pass could hold.
 //
 // The rewrite is a product of two sides that both come from the file — every
-// edge onto an integration node against every dependency that node has — so the
-// edges are counted as they are built and the graph is refused past
+// edge onto an integration node against every task behind the node it names —
+// so the edges are counted as they are built and the graph is refused past
 // maxBeforeEdges, the way the contract-file rule counts its own pairs (F10).
 func beforePath(path string, doc Document) (PathMeasure, error) {
 	kinds := make(map[string]string, len(doc.Nodes))
 	for _, n := range doc.Nodes {
 		kinds[n.ID] = kindOf(n)
 	}
-	// What each integration node waits for, and which tasks the record moved
-	// onto each contract, both read in the document's own order so the before
-	// graph below is a function of the file rather than of a map walk.
-	waited := map[string][]string{}
-	for _, e := range doc.Edges {
-		if kinds[e.Task] == KindIntegration && kinds[e.Needs] == KindTask {
-			waited[e.Task] = append(waited[e.Task], e.Needs)
-		}
-	}
+	// Which tasks the record moved onto each contract, and what each
+	// integration node runs, both read in the document's own order so the
+	// before graph below is a function of the file rather than of a map walk.
 	consumers := map[string]map[string]bool{}
 	for _, d := range doc.Decoupling {
 		if consumers[d.Contract] == nil {
 			consumers[d.Contract] = map[string]bool{}
 		}
 		consumers[d.Contract][d.Was.Task] = true
+	}
+	deps := map[string][]string{}
+	for _, e := range doc.Edges {
+		deps[e.Task] = append(deps[e.Task], e.Needs)
+	}
+	// What an integration node runs: the tasks it waits for itself, and through
+	// every integration node it waits on, theirs — a task that waited on an
+	// integration waited on the whole of the work behind it, however many hops
+	// away, so one hop of the graph is not the answer. The walk is from the
+	// entry, each node under it reached once, so a diamond in a chain is one
+	// walk rather than one per path and a cycle could not spin it; it is not
+	// kept between waits, because a document can state a chain of integrations
+	// whose work grows with the chain, and holding every one of them would be
+	// the product of two artifact-sized figures that the bound below exists to
+	// refuse to build.
+	//
+	// A node of the pass that is not an integration, behind one, is work the
+	// before graph has no task to put it on: what a contract or a change request
+	// stands for is the pass's own, and no plan before the pass held it.
+	runsOf := func(id string) ([]string, error) {
+		seen := map[string]bool{id: true}
+		queue := []string{id}
+		var ran []string
+		for len(queue) > 0 {
+			next := queue[0]
+			queue = queue[1:]
+			for _, dep := range deps[next] {
+				if seen[dep] {
+					continue
+				}
+				switch kinds[dep] {
+				case KindTask:
+					seen[dep] = true
+					ran = append(ran, dep)
+				case KindIntegration:
+					seen[dep] = true
+					queue = append(queue, dep)
+				case KindContract, KindContractChange:
+					return nil, refuse(path, "the integration node %q waits on the %s %q, and the wait of a task on that integration has to stand on what the integration runs; no task of the plan before the pass stands behind the %s, so the wait is refused rather than dropped",
+						next, kinds[dep], dep, kinds[dep])
+				}
+			}
+		}
+		return ran, nil
 	}
 
 	nodes := make([]Node, 0, len(doc.Nodes))
@@ -218,15 +259,19 @@ func beforePath(path string, doc Document) (PathMeasure, error) {
 		case kinds[e.Task] == KindTask && kinds[e.Needs] == KindIntegration:
 			// A task that waited on the integration node waited on what the
 			// integration runs, so the wait is put there. An integration node
-			// that runs no task at all — a chained integration, or one no
-			// decoupling entry covers — states nothing the wait can stand on,
-			// so the document is refused rather than read with one of the
-			// plan's own dependencies left out of it.
-			if len(waited[e.Needs]) == 0 {
+			// that runs no task at all — one no decoupling entry covers, or one
+			// that waits only on integrations that run none either — states
+			// nothing the wait can stand on, so the document is refused rather
+			// than read with one of the plan's own dependencies left out of it.
+			ran, err := runsOf(e.Needs)
+			if err != nil {
+				return PathMeasure{}, err
+			}
+			if len(ran) == 0 {
 				return PathMeasure{}, refuse(path, "the graph has %s waiting on the integration node %q, and that node waits on no task; the before graph rewrites a wait on an integration onto the tasks the integration runs, and a wait with none to stand on is refused rather than dropped",
 					e.Task, e.Needs)
 			}
-			for _, dep := range waited[e.Needs] {
+			for _, dep := range ran {
 				edges = append(edges, Edge{Task: e.Task, Needs: dep, Reason: e.Reason})
 			}
 		case kinds[e.Task] == KindTask && kinds[e.Needs] == KindContract:
@@ -236,7 +281,7 @@ func beforePath(path string, doc Document) (PathMeasure, error) {
 			}
 		}
 		if len(edges) > maxBeforeEdges {
-			return PathMeasure{}, refuse(path, "the graph's edges onto integration nodes ask for more than %d edges in the before graph, one per dependency each of them has; a graph that large is refused rather than read slowly", maxBeforeEdges)
+			return PathMeasure{}, refuse(path, "the graph's edges onto integration nodes ask for more than %d edges in the before graph, one per task each of them runs; a graph that large is refused rather than read slowly", maxBeforeEdges)
 		}
 	}
 	for _, d := range doc.Decoupling {
