@@ -870,16 +870,16 @@ func TestRunsDigestPrintsIssuesSectionOnTerminal(t *testing.T) {
 }
 
 // TestRunsDigestFileUnchangedByIssues is D1729's other half: the section is
-// printed to the terminal and written nowhere, so a report and an index
+// printed to a person's terminal and written nowhere, so a report and an index
 // regenerated with issues in the project are byte for byte the ones the same
-// run wrote without them.
+// run wrote without them, and a run whose output is not a terminal prints no
+// section at all.
 func TestRunsDigestFileUnchangedByIssues(t *testing.T) {
 	digestCheckout(t)
 	f := newCloudFixture(t)
 	dir := t.TempDir()
 	digestClock(t, "2026-10-27")
 	seedDigestRun(t, f, "20261025-120000-abcd", time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC), "acme/app")
-	bothTerminals(t)
 	args := []string{"runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir}
 
 	if _, errOut, err := execute(t, args...); err != nil {
@@ -896,9 +896,22 @@ func TestRunsDigestFileUnchangedByIssues(t *testing.T) {
 	}
 	seedDigestIssue(t, f, "run-20261025120000-48213", "the review stage starts twice",
 		time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC))
+	// The section is a person's terminal's own, and the harness's streams here
+	// are buffers: this run is a caller reading the output -- a redirect, a CI
+	// step, the console's pipe -- and prints none of the section. The run right
+	// after it is the same command, the same project and the same issue with
+	// only the terminal given, so neither assertion passes for another reason.
 	out, errOut, err := execute(t, args...)
 	if err != nil {
 		t.Fatalf("runs digest with an issue in the project: %v (%s)", err, errOut)
+	}
+	if strings.Contains(out, "## Issues") {
+		t.Errorf("a run whose output is not a terminal printed the Issues section:\n%s", out)
+	}
+	bothTerminals(t)
+	out, errOut, err = execute(t, args...)
+	if err != nil {
+		t.Fatalf("runs digest on a terminal with an issue in the project: %v (%s)", err, errOut)
 	}
 	if !strings.Contains(out, "## Issues") {
 		t.Errorf("the run with an issue printed no Issues section, so this test proves nothing:\n%s", out)
