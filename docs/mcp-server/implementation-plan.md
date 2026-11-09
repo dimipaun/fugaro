@@ -1,13 +1,13 @@
 # The hosted MCP server: implementation plan
 
-**Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
-prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
-except the reading of the installation's published state its lists come from, which no task of this
-plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
-half and not started; M8 is built except the wiring that would serve its four read tools, which is
-the task M5b gates; M9 is not started; this folder approves no task.** The design is
-[spec.md](spec.md), the findings and the fifteen decisions are
+**Status: design answered by the owner 2026-11-04; M1, M2, M3, M4, M6 and M10 are built and merged
+on `main`; the front door M4 creates is OFF on every installation until a release writes the flag
+that turns it on, `fugaro update --mcp-server` (D934); M5 is built except the paired device M-a asks
+for, which is M5b and is a hard prerequisite before any binary links the front door (the owner's
+ruling of 2026-11-07); M7 is built except the reading of the installation's published state its
+lists come from, which no task of this plan carries; M8 is built except the wiring that would serve
+its four read tools, which is the task M5b gates; M9 is not started; this folder approves no task.**
+The design is [spec.md](spec.md), the findings and the fifteen decisions are
 [reconciliation.md](reconciliation.md). **All fifteen were answered on 2026-11-04** — **every one of
 them the recommendation**, with the owner's own detail written into M3, M5, M6 and M9 — and this
 plan is written to those answers: the "Answered" column below is what the tasks build, and the last
@@ -20,9 +20,9 @@ hold `roles/firebasedatabase.admin`, so the rules cannot keep them out. They mov
 IAM names only the front door's own account (`mcp_server`), and §1's last subsection records the
 answer, M2, M3, M4, M5 and M10 are written to it, and §8 is the three candidates for that store —
 **and the answer of the same day that picked the bucket**, which closes the Open item that section
-carried: **nothing waits on it any more, and no task names a store it is not written to.** **This plan
-approves no task, and two things gate the whole plan:** the
-independent SECURITY review of [spec.md](spec.md) §8 (which the coordinator runs), and D921's licence
+carried: **nothing waits on it any more, and no task names a store it is not written to.** **This
+plan approves no task, and two things gate the whole plan:** the independent SECURITY review of
+[spec.md](spec.md) §8 (which the coordinator runs), and D921's licence
 ([reconciliation.md](reconciliation.md) §6, checks 1 and 7). **The second gate is met**: the owner
 read [licence-table.md](licence-table.md) on 2026-11-07 and cleared the dependency set — "Cleared:
 all permissive" — recorded in [licence-gate.md](licence-gate.md), the gate file the check describes,
@@ -159,15 +159,18 @@ is unchanged, and **M1's spend-type finding is M9's to close**, which is where t
 2026-11-05 found the same defect from the other end
 (`ee/coordinator/mcpauth/limits.go:298`) — and **M4 and M6 were cancelled** and were to be rerun from
 this amended plan, because M4's draft predates the D934 and M-e answers and M6's predates M-a and H1.
-**Where the tree has gone since**: **M1 (#1713), M2 (#1767), M3 (#1715), M6 (#1714) and M4's first
-half (#1716) are merged on `main`** — M4's half being the account, the front door service and its
+**Where the tree has gone since**: **M1 (#1713), M2 (#1767), M3 (#1715), M6 (#1714) and M4 are
+merged on `main`** — M4's first half (#1716) being the account, the front door service and its
 public invoker binding (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`,
-`:527`) — **M5 is built apart from the paired device M-a asks for, which is M5b below and is not
+`:527`), and its store half being the bucket the records live in and the one binding that names the
+front door's account (`deploy/terraform/gcp/modules/installation/mcpauth_store.tf`) — **M5 is built
+apart from the paired device M-a asks for, which is M5b below and is not
 built, M7 is built apart from the reading of the installation's published state its lists come from,
-which no task below carries, M10 is built apart from the store's own bucket and its one grant, which
-are M4's store half below and are not started, **M8 is built apart from the wiring that would serve
+which no task below carries, **M8 is built apart from the wiring that would serve
 its four read tools**, which is the wiring task M5b gates and no task below carries, **and M9 is not
-started**. **What each built task
+started**. **The front door M4 builds is OFF on every installation**: the flag that turns it on,
+`fugaro update --mcp-server`, is the release's own and no released command writes it yet, which is
+D934's answer and not a half-built task. **What each built task
 still owes is named in its own section below**
 ([reconciliation.md](reconciliation.md) §4a, "What has happened since").
 
@@ -488,10 +491,16 @@ Terraform file rather than any interface any other task builds against.
 ### M4 — The coordinator's public service, its own account, its grants and the store (D935)
 **Cancelled on 2026-11-04 and to be rerun from this amended plan**: its draft predates the D934 and
 M-e answers — the meaning of "off" and the collision with the installer's own cover rule — and the
-store D935 moves the records into, which this task creates as a bucket of its own. **Its first half
-landed as #1716** — the account, the front door service and its public invoker binding
-(`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`, `:527`) — and **its store
-half, `mcpauth_store.tf` with the bucket and its one grant, is not started.**
+store D935 moves the records into, which this task creates as a bucket of its own. **Both halves have
+landed**: its first half as #1716 — the account, the front door service and its public invoker
+binding (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`, `:527`) — and
+**its store half as `mcpauth_store.tf` with the bucket and its one grant**, the bucket
+`fugaro-mcpauth-<gcp-project>` and the single `objectAdmin` binding for
+`google_service_account.mcp_server`, published as the installation's own
+`mcpauth_store_bucket` output. **The flag that turns the front door on is still not written**: no
+released `fugaro update` carries `--mcp-server`, so the task is built and every installation keeps
+the front door OFF (D934) — the release that turns it on adds the flag, and the operator section
+below is what that release's notes carry.
 
 - **The amendment's findings (2026-11-04). The review's findings were H3, M-e and D934's cover
   collision; all three are answered above**: the account holds no `firebasedatabase.admin` over

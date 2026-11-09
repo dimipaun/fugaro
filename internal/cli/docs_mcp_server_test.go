@@ -95,9 +95,16 @@ const (
 	// which of the plan's tasks are built and which are not, and the fact that
 	// the folder itself approves nothing -- and a file that dropped it would
 	// read as a design somebody may build from, which is the one thing this
-	// folder is not. The built half is the five tasks merged on `main` since
+	// folder is not. The built half is the six tasks merged on `main` since
 	// the answers: a status line that still said "nothing implemented" would be
-	// the folder's one load-bearing false claim. M5's clause is "M5 is built"
+	// the folder's one load-bearing false claim. M4's clause is the newest and
+	// the one with a state of its own: the front door is built whole now -- the
+	// account, the service, its public invoker binding and the store its records
+	// live in -- and it is still OFF on every installation, because the flag
+	// that turns it on is the release's own and no released command writes
+	// `fugaro update --mcp-server` yet, which is D934's answer rather than a
+	// half-built task. A line that said only "M4 is built" would read as a front
+	// door an owner can turn on today. M5's clause is "M5 is built"
 	// and not "M5 is built in this pull request": the line outlives the pull
 	// request, and a phrase that named one would be false on `main` the day it
 	// merged. The clause carries its own exception -- the paired device M-a
@@ -117,16 +124,19 @@ const (
 	// plan implements it over that state, so a line saying M7 were built whole
 	// would claim a control the tree does not perform. The exception is
 	// disclosed in full in §11 of the spec and its own section of the plan,
-	// which the disclosure test below pins. M10's clause has the same shape
-	// again: the audit, the record and the revocation are built, and the store
-	// they are at rest in is M2's bucket-backed one, whose bucket and single
-	// grant in an installation are M4's store half — not started — so a line
-	// saying M10 were built whole would claim a store an installation does not
-	// carry. M8's is the same shape once more: the four read tools are built and
+	// which the disclosure test below pins. M10's clause was that shape until
+	// M4's store half landed: the audit, the record and the revocation are
+	// built, and the store they are at rest in is M2's bucket-backed one, whose
+	// bucket and single grant in an installation are M4's store half — so M10
+	// stood "built except the store", and it is the one clause the store half
+	// closed rather than added. A line that still carried it would be false in
+	// the direction that matters least (a task described as owing less than it
+	// does), which is why it is named here as removed rather than left to look
+	// like an oversight. M8's is the same shape once more: the four read tools are built and
 	// no binary registers them, and the wiring that would is what M5b gates, so
 	// its exception is named the same way and for the same reason -- a line
 	// saying M8 were built whole would claim a reach no process has.
-	mcpStatus = "Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built except the reading of the installation's published state its lists come from, which no task of this plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store half and not started; M8 is built except the wiring that would serve its four read tools, which is the task M5b gates; M9 is not started; this folder approves no task."
+	mcpStatus = "Status: design answered by the owner 2026-11-04; M1, M2, M3, M4, M6 and M10 are built and merged on `main`; the front door M4 creates is OFF on every installation until a release writes the flag that turns it on, `fugaro update --mcp-server` (D934); M5 is built except the paired device M-a asks for, which is M5b and is a hard prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built except the reading of the installation's published state its lists come from, which no task of this plan carries; M8 is built except the wiring that would serve its four read tools, which is the task M5b gates; M9 is not started; this folder approves no task."
 )
 
 func mcpDocs() []string { return []string{mcpReadme, mcpSpec, mcpReconciled, mcpPlan} }

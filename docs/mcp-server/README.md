@@ -1,27 +1,27 @@
 # The hosted MCP server
 
-**Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
-prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
-except the reading of the installation's published state its lists come from, which no task of this
-plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
-half and not started; M8 is built except the wiring that would serve its four read tools, which is
-the task M5b gates; M9 is not started; this folder approves no task.** The owner's spec of
-2026-10-24 is copied verbatim into [spec.md](spec.md) §0 and is reconciled against the code here;
-[reconciliation.md](reconciliation.md) §4 puts fifteen decisions
-(D920–D934) in front of the owner, each with the recommendation first and the cost of the
-alternative — and **all fifteen were answered on 2026-11-04**, **every one of them the
-recommendation**, with the owner's own detail written into the design (D922's was restated the same
-day: the first answer opened the subtree and the restatement closes it). **A sixteenth answer arrived
-on 2026-11-05 (D935), from the independent review of PR #1715's M3**: the `mcpauth` records leave the
-project's shared Realtime Database for a store whose IAM names only the front door's own account
-`mcp_server`, because the database's own grants are project-level and no rule can keep a launcher out
+**Status: design answered by the owner 2026-11-04; M1, M2, M3, M4, M6 and M10 are built and merged
+on `main`; the front door M4 creates is OFF on every installation until a release writes the flag
+that turns it on, `fugaro update --mcp-server` (D934); M5 is built except the paired device M-a asks
+for, which is M5b and is a hard prerequisite before any binary links the front door (the owner's
+ruling of 2026-11-07); M7 is built except the reading of the installation's published state its
+lists come from, which no task of this plan carries; M8 is built except the wiring that would serve
+its four read tools, which is the task M5b gates; M9 is not started; this folder approves no task.**
+The owner's spec of 2026-10-24 is copied verbatim into [spec.md](spec.md) §0 and is reconciled
+against the code here; [reconciliation.md](reconciliation.md) §4 puts fifteen decisions (D920–D934)
+in front of the owner, each with the recommendation first and the cost of the alternative — and
+**all fifteen were answered on 2026-11-04**, **every one of them the recommendation**, with the
+owner's own detail written into the design (D922's was restated the same day: the first answer
+opened the subtree and the restatement closes it). **A sixteenth answer arrived on 2026-11-05
+(D935), from the independent review of PR #1715's M3**: the `mcpauth` records leave the project's
+shared Realtime Database for a store whose IAM names only the front door's own account `mcp_server`,
+because the database's own grants are project-level and no rule can keep a launcher out
 ([reconciliation.md](reconciliation.md) §3 F32, §4 D935) — and **which store, the one thing D935
 carried over open, was answered by the owner the same day: the bucket the plan's §8 recommends**.
 **If the implementation happens, [implementation-plan.md](implementation-plan.md) §5 recommends
-0.21.0 "Rhino" or later** — 0.15.0,
-0.16.0, 0.17.0, 0.18.0, 0.19.0 and 0.20.0 have all shipped since this design was written, and §5 says
-why the work is big and security-heavy enough to want a window of its own.
+0.21.0 "Rhino" or later** — 0.15.0, 0.16.0, 0.17.0, 0.18.0, 0.19.0 and 0.20.0 have all shipped since
+this design was written, and §5 says why the work is big and security-heavy enough to want a window
+of its own.
 
 **Amended 2026-11-04, after the mandatory independent security review.** The design merged as
 **#1487** *before* the SECURITY review of [spec.md](spec.md) §8 that this folder requires; that
@@ -53,13 +53,14 @@ instead of fixing it. The findings and what each changed, in one line each:
 draft predates the D934/M-e answers) and **M6** (its predates M-a and H1). **M1 and M3 may
 continue** — M1's spend-type finding is **M9's to close**, which is where the review of 2026-11-05
 found the same defect (`ee/coordinator/mcpauth/limits.go:298`). **The tree has gone past that**:
-**M1 (#1713), M2 (#1767), M3 (#1715), M6 (#1714) and M4's first half (#1716) are merged** — M4's
-half being its account, the front door service and its public invoker binding
-(`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`, `:527`) — **M5, M7, M8 and
-M10 are built**, each apart from the half behind it: M5 apart from the paired device M-a asks for, M7
-apart from the reading of the installation's published state its lists come from, M8 apart from the
-wiring its four read tools wait for, and M10 apart from the store its records are at rest in, whose
-bucket and one grant are M4's store half — **and what is left is M4's store half, M5b and M9**
+**M1 (#1713), M2 (#1767), M3 (#1715), M6 (#1714) and M4 are merged** — M4's first half (#1716) being
+its account, the front door service and its public invoker binding
+(`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`, `:527`), and its store half
+being the bucket its records live in and the one binding that names them
+(`deploy/terraform/gcp/modules/installation/mcpauth_store.tf`) — **M5, M7, M8 and M10 are built**,
+each apart from the half behind it: M5 apart from the paired device M-a asks for, M7 apart from the
+reading of the installation's published state its lists come from, and M8 apart from the wiring its
+four read tools wait for — **and what is left is M5b and M9**
 ([reconciliation.md](reconciliation.md) §4a, "What has happened since", and spec.md §11).
 
 **Asked by.** The owner, on 2026-10-24: a hosted MCP server inside the coordinator, with OAuth 2.1
@@ -192,8 +193,8 @@ README, in its own diff, is where the block above D1189 is written.
   coordinator ran it on 2026-11-04) and its findings are answered in
   [reconciliation.md](reconciliation.md) §4a; **M4 and M6 were cancelled by those findings** and were
   to be **rerun from the amended plan**, and **M1 and M3 may continue** — **and the tree has gone past
-  that**: five tasks merged, M5, M7, M8 and M10 built, each apart from the half behind it, and what is
-  left is M4's store half, M5b and M9
+  that**: six tasks merged, M5, M7 and M8 built, each apart from the half behind it, and what is
+  left is M5b and M9
   ([reconciliation.md](reconciliation.md) §4a, "What has happened since"). **The first owner check of
   §6 was the licence, and the owner cleared it on 2026-11-07** — [licence-gate.md](licence-gate.md)
   is the record and [licence-table.md](licence-table.md) the evidence — and the one **UNVERIFIED**

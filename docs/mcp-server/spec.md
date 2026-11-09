@@ -1,20 +1,20 @@
 # The hosted MCP server: the spec
 
-**Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
-prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
-except the reading of the installation's published state its lists come from, which no task of this
-plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
-half and not started; M8 is built except the wiring that would serve its four read tools, which is
-the task M5b gates; M9 is not started; this folder approves no task.** The owner's spec of
-2026-10-24 is §0, copied **verbatim**; the design that follows (§1 onward) is written to the
-**answers the owner gave on 2026-11-04** to the fifteen decisions in
+**Status: design answered by the owner 2026-11-04; M1, M2, M3, M4, M6 and M10 are built and merged
+on `main`; the front door M4 creates is OFF on every installation until a release writes the flag
+that turns it on, `fugaro update --mcp-server` (D934); M5 is built except the paired device M-a asks
+for, which is M5b and is a hard prerequisite before any binary links the front door (the owner's
+ruling of 2026-11-07); M7 is built except the reading of the installation's published state its
+lists come from, which no task of this plan carries; M8 is built except the wiring that would serve
+its four read tools, which is the task M5b gates; M9 is not started; this folder approves no task.**
+The owner's spec of 2026-10-24 is §0, copied **verbatim**; the design that follows (§1 onward) is
+written to the **answers the owner gave on 2026-11-04** to the fifteen decisions in
 [reconciliation.md](reconciliation.md) §4 (D920–D934) — **every one of them the recommendation at
 the time** — with the owner's own detail written into §2, §3, §4, §5, §6 and §8. **Where §0 and this
 design disagree the reconciliation wins** — §0 is the record of what was asked, not of what this
-design proposes, and the one name that moved is the tool §0 calls `submit_task` and this design calls
-**`spawn_task`** (§5). Implementation is **not** approved: the owner decides, task by task, after
-[implementation-plan.md](implementation-plan.md) has been reviewed.
+design proposes, and the one name that moved is the tool §0 calls `submit_task` and this design
+calls **`spawn_task`** (§5). Implementation is **not** approved: the owner decides, task by task,
+after [implementation-plan.md](implementation-plan.md) has been reviewed.
 
 **Amended 2026-11-04, after the mandatory independent security review.** The design merged as
 **#1487** before the SECURITY review of §8 that this folder's own rules require; that review ran on
@@ -654,10 +654,19 @@ amended answer has four parts, and the rules clause above is only the first:
 
 **One half of D935 stays UNVERIFIED**, and it is an owner check
 ([reconciliation.md](reconciliation.md) §6, check 8): whether **GCS still attaches its convenience
-bindings to a Terraform-created bucket**, so that a basic project Viewer reads the store until M4
-strips or refuses those members (`SECURITY.md:88`, and what `internal/infra/statebucket.go:140` does
-for the state bucket). A live project is the only thing that can show it; the plan's M4 owns
-stripping or refusing them either way.
+bindings to a Terraform-created bucket**, so that a basic project Viewer reads the store
+(`SECURITY.md:88`, and what `internal/infra/statebucket.go:140` does for the state bucket). A live
+project is the only thing that can show it. **M4's store half has landed and it took the half a plan
+can take**: the plan writes none of those bindings — no legacy role, no `projectOwner:`,
+`projectEditor:` or `projectViewer:` member, no authoritative IAM resource — which the module and the
+installation plan's own resource changes both assert, because a binding the plan does not write is a
+binding this installation did not put there. **What it could not take is the removal of the ones GCS
+attaches at creation**, which no plan can see and no additive grant can undo: that is
+`internal/infra.RemoveProjectViewers`, the call `fugaro setup` and `fugaro update` already make on
+the state and runs buckets, and **its call site for this bucket is the release that turns the front
+door on** — nothing in this tree creates the store before an owner passes the front door's own
+opt-in, and no released `fugaro update` writes that flag yet. Until that call is there, check 8's "a
+basic project Viewer is refused" is the reading that proves it, and it is owner-run.
 
 **The node is closed on both sides, and after the amendment it holds nothing to argue about.** **No
 client reads it and no client writes it**, and the template's root denies by default:
@@ -893,7 +902,9 @@ the rule; [reconciliation.md](reconciliation.md) §4 records the answer, the ear
 and the amendment.
 **One half is UNVERIFIED** ([reconciliation.md](reconciliation.md) §6, check 8): whether GCS still
 attaches its convenience bindings to a Terraform-created bucket, so that a basic project Viewer reads
-the store until M4 strips or refuses those members.
+the store. M4's store half writes none of them, and the removal of the ones GCS attaches at creation
+is `internal/infra.RemoveProjectViewers`, whose call site for this bucket is the release that turns
+the front door on.
 
 **Redirect-URI abuse.** The registration endpoint is open, so an attacker can register a client with
 a redirect URI it controls — and gains nothing, because a code is delivered to that URI only after a
@@ -1065,10 +1076,12 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   decision to build it is a later one, and it is the only thing that makes the approval mean what §3
   step 5 says it means.
 - **Where the token records' store actually lands** (**D935**): the bucket
-  `fugaro-mcpauth-<gcp-project>`, answered by the owner on 2026-11-05 — and **one half of it is
-  UNVERIFIED** (§6, [reconciliation.md](reconciliation.md) §6 check 8): whether GCS still attaches
-  its convenience bindings to a Terraform-created bucket, so that a basic project Viewer reads the
-  store until M4 strips or refuses those members.
+  `fugaro-mcpauth-<gcp-project>`, answered by the owner on 2026-11-05 and created by M4's store half
+  since — and **one half of it is UNVERIFIED** (§6, [reconciliation.md](reconciliation.md) §6 check
+  8): whether GCS still attaches its convenience bindings to a Terraform-created bucket, so that a
+  basic project Viewer reads the store. The plan writes none of those bindings; taking off the ones
+  GCS attaches at creation is `internal/infra.RemoveProjectViewers`, whose call site for this bucket
+  is the release that turns the front door on.
 - **The keyed hashes and the MACs the store is specified to write** (§6, §8 — the answer to finding
   H3): **designed and not built.** The store hashes with a plain unkeyed `sha256`
   (`ee/coordinator/mcpauth/store.go:398`) and writes no MAC over a record's identity, limits or
@@ -1081,9 +1094,10 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   walk, so there the missing key buys a reader nothing practical. **It does not hold for the audit
   record** (M10): that one is keyed by the same unkeyed hash of a `user:<email>` entry
   (`ee/coordinator/mcpauth/audit_record.go:164`), and an address is guessable — so a reader who can
-  list the store, the project Viewer the bullet above leaves reading it until M4's row lands, can
-  walk a dictionary of addresses and **confirm which identities have called here**, the object's own
-  `identity` field then naming the person outright. That amendment's keyed hash is specified over
+  list the store, the project Viewer the bullet above leaves reading it until the strip above has a
+  call site, can walk a dictionary of addresses and **confirm which identities have called here**,
+  the object's own `identity` field then naming the person outright. That amendment's keyed hash is
+  specified over
   the **token** records, so the pepper held in Secret Manager has to be put under **this** key too
   when it lands, or the one walkable hash in the store is the one the amendment's own answer does
   not cover. What is wrong either way until the keyed hash and the MAC land is a security
