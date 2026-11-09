@@ -3,7 +3,9 @@
 # console-release.yml, mobile-release.yml): the tag is a strict vX.Y.Z -- or
 # the mobile app's strict mobile-vX.Y.Z, the one stream this repository's tags
 # carry a prefix on (docs/release.md, "Mobile releases") -- its commit is
-# reachable from origin/main, and every GitHub Actions check in `names` below
+# reachable from origin/main (or, for a patch release vX.Y.Z with Z of 1 or more,
+# from the maintenance branch release/X.Y, which must descend from the vX.Y.0
+# tag that is itself on main), and every GitHub Actions check in `names` below
 # succeeded on that commit.
 # Needs: a full-history checkout, GH_TOKEN (checks: read), GITHUB_SHA,
 # GITHUB_REPOSITORY. Usage: scripts/release-gate.sh vX.Y.Z|mobile-vX.Y.Z
@@ -33,8 +35,36 @@ if ! [[ $version =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; the
 fi
 retry_read git fetch --quiet origin main
 if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-  echo "::error::$tag ($GITHUB_SHA) is not on main; tag a commit that is reachable from main" >&2
-  exit 1
+  # The one other place a release commit may be: a maintenance branch, for a
+  # patch release of a line that was itself released from main (a hotfix, docs/
+  # release.md "Hotfix releases"). It is narrow on purpose, every condition
+  # below must hold, and each is a refusal and never a skip:
+  #   - the tag is a CLI tag vX.Y.Z with Z of 1 or more (the app's mobile- tags
+  #     and a vX.Y.0 stay main-only: a minor's first release is cut from main),
+  #   - the branch is the line's own, release/X.Y, and the commit is on it,
+  #   - vX.Y.0 exists and is reachable from main, so the line was gated on main
+  #     once and the patch cannot be the first release of anything,
+  #   - and the commit descends from that vX.Y.0, so the branch is the line's
+  #     history and not an unrelated one named like it.
+  # The required checks below are read from the commit itself, on any branch, so
+  # CI dispatched on the maintenance branch is what vouches for the commit.
+  maintenance_ok=""
+  if [[ $tag =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.([1-9][0-9]*)$ ]]; then
+    line="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+    branch="release/$line"
+    if retry_read git fetch --quiet origin "refs/heads/$branch:refs/remotes/origin/$branch" 2>/dev/null \
+      && git merge-base --is-ancestor "$GITHUB_SHA" "origin/$branch" \
+      && first=$(git rev-parse --quiet --verify "refs/tags/v$line.0^{commit}") \
+      && git merge-base --is-ancestor "$first" origin/main \
+      && git merge-base --is-ancestor "$first" "$GITHUB_SHA"; then
+      maintenance_ok=1
+      echo "$tag ($GITHUB_SHA) is on the maintenance branch $branch, which descends from v$line.0 on main"
+    fi
+  fi
+  if [ -z "$maintenance_ok" ]; then
+    echo "::error::$tag ($GITHUB_SHA) is not on main; tag a commit that is reachable from main (a patch release vX.Y.Z may instead be tagged on release/X.Y when vX.Y.0 exists on main and the commit descends from it)" >&2
+    exit 1
+  fi
 fi
 wait_seconds=${GATE_WAIT_SECONDS:-0}
 poll_seconds=${GATE_POLL_SECONDS:-30}
