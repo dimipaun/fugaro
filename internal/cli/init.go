@@ -3758,6 +3758,13 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gateGitAuthor(o, repo, lc, cfg); err != nil {
 		return err
 	}
+	// The security: block is the same kind of break on securitySince. Only
+	// the repository's half can be written in this build: the layer's half
+	// arrives with the task that lets a layer carry the key, and gateSecurity
+	// gains it then, the way gateRigor names both of rigor's.
+	if err := r.gateSecurity(o, repo, lc, cfg); err != nil {
+		return err
+	}
 	if !o.forget {
 		w := r.w
 		if o.printVars {
@@ -4261,6 +4268,27 @@ func (r *initRun) gateGitAuthor(o *initOptions, repo string, lc *localcfg.Config
 		w = r.cmd.ErrOrStderr()
 	}
 	return refuseGitAuthorSkew(repo, cfg.RepoGitAuthorSet, lc.BaseImage(config.BaseKind), w)
+}
+
+// gateSecurity is fugaro update --repo's gate for securitySince:
+// refuseSecuritySkew, with gateRigor's escapes and for its reason. The
+// repository's half is the key being written (RepoSecuritySet) rather than the
+// rows it holds: a runner older than securitySince refuses the security: key
+// whatever it holds, so security: {} and an explicit null are deployed by a
+// rows test and die at bootstrap. The project layer's half (D1501) is not
+// judged here yet: config's layerTopKeys does not carry the key, so a layer
+// that writes it is refused as an unknown key before this runs. The task that
+// lets a layer write it extends this gate the way gateRigor carries both
+// halves.
+func (r *initRun) gateSecurity(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseSecuritySkew(repo, cfg.RepoSecuritySet, lc.BaseImage(config.BaseKind), w)
 }
 
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates
