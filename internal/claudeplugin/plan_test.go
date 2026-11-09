@@ -45,7 +45,7 @@ func TestDecide(t *testing.T) {
 		installed []Install
 		want      [][]string
 		before    string
-		restore   []string
+		restore   [][]string
 	}{
 		{"a fresh machine", nil, nil, [][]string{add, inst}, "", nil},
 		{"marketplace only", pinned, nil, [][]string{upd, inst}, "", nil},
@@ -62,14 +62,24 @@ func TestDecide(t *testing.T) {
 		// this binary: it is re-declared at this release's tag even when every
 		// install is current (the 0.21.1 failure of 2026-11-09). The clear comes
 		// first, because claude refuses an add of a name already declared from a
-		// different source.
-		{"unpinned marketplace, current install", unpinned, []Install{user("0.5.2")}, [][]string{rm, add, upd}, "0.5.2", back},
-		{"unpinned marketplace, install behind", unpinned, []Install{user("0.5.1")}, [][]string{rm, add, upd, updU}, "0.5.1", back},
-		{"marketplace at an older tag", older, []Install{user("0.5.1")}, [][]string{rm, add, upd, updU}, "0.5.1", backAt("v0.5.1")},
+		// different source, and the clear takes every install of the marketplace
+		// with it, so the plugin is installed rather than updated: the install
+		// is what puts back the install the clear took, which is why the restore
+		// is the declaration and the install, in that order.
+		{"unpinned marketplace, current install", unpinned, []Install{user("0.5.2")}, [][]string{rm, add, upd, inst}, "0.5.2", [][]string{back, inst}},
+		{"unpinned marketplace, install behind", unpinned, []Install{user("0.5.1")}, [][]string{rm, add, upd, inst}, "0.5.1", [][]string{back, inst}},
+		{"marketplace at an older tag", older, []Install{user("0.5.1")}, [][]string{rm, add, upd, inst}, "0.5.1", [][]string{backAt("v0.5.1"), inst}},
+		// The clear takes the project install too, so the user-scope install is
+		// the whole repair: a project-scope update of an install the clear has
+		// already removed would fail the step (claude: plugin not found).
+		{"unpinned marketplace, this checkout's project install", unpinned, []Install{project("0.5.1", root)}, [][]string{rm, add, upd, inst}, "0.5.1", [][]string{back, inst}},
+		// Nothing installed, so the clear takes the declaration alone, and the
+		// declaration alone is what a failed add puts back.
+		{"unpinned marketplace, nothing installed", unpinned, nil, [][]string{rm, add, upd, inst}, "", [][]string{back}},
 		// A ref that is not a release tag is not one this binary passes to
 		// claude, so the clear puts the plain source back: what the marketplace
 		// was before any fugaro pinned it.
-		{"marketplace on a branch", at("main"), []Install{user("0.5.1")}, [][]string{rm, add, upd, updU}, "0.5.1", back},
+		{"marketplace on a branch", at("main"), []Install{user("0.5.1")}, [][]string{rm, add, upd, inst}, "0.5.1", [][]string{back, inst}},
 		// U10: a ref a newer fugaro wrote is never lowered, and a plugin that
 		// applies is left to it: nothing to do at all.
 		{"marketplace at a newer tag", newer, []Install{user("0.5.2")}, nil, "0.5.2", nil},
@@ -82,10 +92,10 @@ func TestDecide(t *testing.T) {
 			if !slices.EqualFunc(argsOf(p.Calls), tc.want, slices.Equal[[]string]) || p.Before != tc.before {
 				t.Fatalf("calls %q before %q, want %q %q", argsOf(p.Calls), p.Before, tc.want, tc.before)
 			}
-			if !slices.Equal(p.Restore, tc.restore) {
+			if !slices.EqualFunc(p.Restore, tc.restore, slices.Equal[[]string]) {
 				t.Fatalf("restore %q, want %q", p.Restore, tc.restore)
 			}
-			for _, args := range append(argsOf(p.Calls), p.Restore) {
+			for _, args := range append(argsOf(p.Calls), p.Restore...) {
 				if args != nil {
 					if err := Allowed(args); err != nil {
 						t.Errorf("a planned call is not allowed: %v", err)

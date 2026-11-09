@@ -114,18 +114,20 @@ func TestUpgradePluginMovesAnUnpinnedMarketplaceToTheRelease(t *testing.T) {
 	f := testutil.NewClaudePluginFake(t, ourMarket, userInstall("0.5.1"))
 	f.On(t, "fail", refusedAdd, argsAdd...)
 	f.On(t, "rm", "fail."+testutil.ClaudePluginKey(argsAdd...), argsRemove...)
-	// What Claude Code serves is decided by the marketplace's ref, so the fake
-	// changes the installed version when the pinned add runs — the way the
-	// failed update of 2026-11-09 got 0.21.0 from an unpinned marketplace.
-	f.On(t, "plugins", userInstall("0.5.2"), argsAdd...)
-	f.On(t, "plugins", userInstall("0.5.2"), argsUpdUser...)
+	// The removal takes every install of the marketplace with it (claude's own
+	// "add the marketplace back and reinstall the plugin"), and what Claude Code
+	// serves is decided by the marketplace's ref, so the install that follows the
+	// pinned add is what leaves 0.5.2 — the way the failed update of 2026-11-09
+	// got 0.21.0 from an unpinned marketplace.
+	f.On(t, "plugins", "[]", argsRemove...)
+	f.On(t, "plugins", userInstall("0.5.2"), argsInstall...)
 	useFakeClaude(t, f)
 	root, _ := skillCheckout(t, wiredAt("v0.5.2")) // the checkout's own pin is already right
 	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	want := [][]string{argsRemove, argsAdd, argsUpdMarket, argsUpdUser}
+	want := [][]string{argsRemove, argsAdd, argsUpdMarket, argsInstall}
 	if !slices.EqualFunc(f.Changes(t), want, slices.Equal[[]string]) {
 		t.Fatalf("changes %q, want %q\n%s", f.Changes(t), want, out)
 	}
@@ -164,9 +166,9 @@ func TestUpgradePluginReportsAMarketplaceItCannotDeclare(t *testing.T) {
 // TestUpgradePluginPutsBackTheDeclarationItsClearRemoved: the clear runs before
 // the add because claude refuses an add of a name already declared from another
 // source, so an add that then fails must not leave the machine without the
-// marketplace it had — and claude's own refusal of the declaration is the only
-// add failure the step reports and carries on from: anything else (a clone that
-// failed, a network that is down) fails the step.
+// marketplace and the plugin it had — and claude's own refusal of the
+// declaration is the only add failure the step reports and carries on from:
+// anything else (a clone that failed, a network that is down) fails the step.
 func TestUpgradePluginPutsBackTheDeclarationItsClearRemoved(t *testing.T) {
 	for _, tc := range []struct {
 		name, said, want string
@@ -186,7 +188,9 @@ func TestUpgradePluginPutsBackTheDeclarationItsClearRemoved(t *testing.T) {
 			if ExitCode(err) != tc.code {
 				t.Fatalf("exit %d\n%s", ExitCode(err), out)
 			}
-			want := [][]string{argsRemove, argsAdd, argsBack}
+			// The clear takes the plugin with the declaration, so both go back
+			// before the step reads why the add failed.
+			want := [][]string{argsRemove, argsAdd, argsBack, argsInstall}
 			if !slices.EqualFunc(f.Changes(t), want, slices.Equal[[]string]) {
 				t.Fatalf("changes %q, want %q\n%s", f.Changes(t), want, out)
 			}

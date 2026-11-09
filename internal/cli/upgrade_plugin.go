@@ -77,10 +77,11 @@ func pluginStep(ctx context.Context, u *upgradeCtx) stepResult {
 		return stepResult{state: stepCurrent, reason: "installed " + pluginwire.Printable(plan.Before)}
 	}
 	before, _ := os.ReadFile(u.loc.Settings)
-	// cleared is the declaration a Clear removed, and so what a failed add has
-	// to put back: a failed step must not leave the machine without the
-	// marketplace it had (a clear of a name claude has not declared fails, and
-	// then there is nothing to put back).
+	// cleared is whether a Clear ran, and so whether a failed add has anything
+	// to put back: claude's removal takes the marketplace declaration and every
+	// install of it, so a failed step must not leave the machine without either
+	// (a clear of a name claude has not declared fails, and then there is
+	// nothing to put back).
 	cleared := false
 	for _, c := range plan.Calls {
 		err := run.Change(ctx, c.Args...)
@@ -103,12 +104,14 @@ func pluginStep(ctx context.Context, u *upgradeCtx) stepResult {
 			// machine, and the checkout's other steps are not this one's to
 			// stop: the step says exactly that, and hands the user the commands
 			// that do it by hand. Any other failure — a clone that failed, a
-			// network that is down — fails the step. Either way the declaration
-			// the clear removed goes back first, so neither outcome leaves the
-			// machine without the marketplace it had.
+			// network that is down — fails the step. Either way what the clear
+			// removed goes back first, so neither outcome leaves the machine
+			// without the marketplace and the plugin it had.
 			if cleared {
-				if rerr := run.Change(ctx, plan.Restore...); rerr != nil {
-					fmt.Fprintf(u.w, "  the declaration the clear removed could not be put back: %v\n", rerr)
+				for _, args := range plan.Restore {
+					if rerr := run.Change(ctx, args...); rerr != nil {
+						fmt.Fprintf(u.w, "  putting back what the clear removed failed: %v\n", rerr)
+					}
 				}
 			}
 			if !claudeplugin.RefusedByDeclaration(err) {

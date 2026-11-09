@@ -48,14 +48,16 @@ type Call struct {
 }
 
 // Plan is the change calls to make, in order (none: nothing to do), the plugin
-// version that applied to the checkout before them ("" for none), and the add
-// that puts back the declaration a Clear removes (nil when nothing is cleared):
-// a Declare that fails for any reason other than the declaration itself runs it
-// first, so a failed add leaves the machine with the marketplace it had.
+// version that applied to the checkout before them ("" for none), and the calls
+// that put back what a Clear removes (nil when nothing is cleared), in the
+// order they are needed: the marketplace declared as it was, then the plugin
+// installed from it, because claude uninstalls every install of a marketplace
+// it removes. A Declare that fails runs them, so a failed add leaves the machine
+// with the marketplace and the plugin it had.
 type Plan struct {
 	Calls   []Call
 	Before  string
-	Restore []string
+	Restore [][]string
 }
 
 // OtherMarketError: Claude Code's fugaro marketplace on this machine is not
@@ -118,9 +120,11 @@ func refNewer(ref, want string) bool {
 //   - the marketplace pinned at Ref and every applying install at Want: none;
 //   - otherwise the marketplace declared at Ref (missing, or there at another
 //     ref that is not newer, in which case the declaration it is refused by is
-//     cleared first, and Restore is the add that puts it back) and refreshed,
-//     then the plugin installed at user scope when no install applies, or each
-//     stale scope updated (local, project, user).
+//     cleared first, and Restore is what puts back what the clear takes) and
+//     refreshed, then the plugin installed at user scope — always on the
+//     cleared path, because the clear uninstalls it — or, when a Clear is not
+//     in the plan and an install applies, each stale scope updated (local,
+//     project, user).
 //
 // Every call it returns passes Allowed.
 func Decide(in Input) (Plan, error) {
@@ -171,19 +175,33 @@ func Decide(in Input) (Plan, error) {
 	if market == nil || moved {
 		if moved {
 			p.Calls = append(p.Calls, Call{Args: slices.Clone(removeUser), Kind: Clear})
-			p.Restore = addMarket(in.Repo, restoreRef(market.Ref))
+			p.Restore = append(p.Restore, addMarket(in.Repo, restoreRef(market.Ref)))
 		}
 		p.Calls = append(p.Calls, Call{Args: addMarket(in.Repo, in.Ref), Kind: Declare})
 	}
 	if market != nil {
 		p.Calls = append(p.Calls, Call{Args: slices.Clone(updateMarket)})
 	}
-	if len(applying) == 0 {
-		p.Calls = append(p.Calls, Call{Args: slices.Clone(installUser)})
+	// The clear is a removal of the marketplace, and claude takes every install
+	// of it with the removal, at every scope ("To use a plugin again, add the
+	// marketplace back and reinstall the plugin"): on that path the installs
+	// read above are not the ones the calls act on, so the plugin is installed
+	// rather than updated. That install is also what puts back the one the clear
+	// took, which is why the restore is the pair and not the declaration alone —
+	// and only when an install applies: with none, the clear took the
+	// declaration alone and the declaration alone is what goes back.
+	if len(applying) == 0 || moved {
+		install := slices.Clone(installUser)
+		p.Calls = append(p.Calls, Call{Args: install})
+		if moved && len(applying) > 0 {
+			p.Restore = append(p.Restore, install)
+		}
 	}
-	for _, s := range scopes {
-		if slices.Contains(stale, s) {
-			p.Calls = append(p.Calls, Call{Args: updatePlugin(s)})
+	if !moved {
+		for _, s := range scopes {
+			if slices.Contains(stale, s) {
+				p.Calls = append(p.Calls, Call{Args: updatePlugin(s)})
+			}
 		}
 	}
 	return p, nil
