@@ -1,7 +1,7 @@
 # Dynamic secret delivery: implementation plan
 
 **Status: plan only; nothing is implemented; no task is approved.** It builds [spec.md](spec.md) as amended by
-[reconciliation.md](reconciliation.md) (D1930–D1937, R1–R6, answered 2026-11-09, all as recommended). Each
+[reconciliation.md](reconciliation.md) (D1930–D1940, R1–R10, answered 2026-11-09, all as recommended). Each
 task needs the owner's own explicit go; answering a decision is not approving a task. Base: `main` at
 `934bb23f8`. Numbers held: **D1930–D1959**, **Checks 510–519** (510 and 511 used here; 512–519 reserved).
 
@@ -26,14 +26,17 @@ task needs the owner's own explicit go; answering a decision is not approving a 
 | --- | --- | --- |
 | G1 | No two (id, name) pairs give one secret ID (F6, R1) | DS0.1 |
 | G2 | The intake never reads, never touches the bundle or a name outside the two prefixes, and derives the prefix from the verified `sub` (R3) | DS2.1, DS2.2 |
-| G3 | A slip ID alone is never enough; the claim binds the verified job account once (F7, D1937) | DS1.3, DS1.6 |
+| G3 | A slip ID alone is never enough; it records slug, run and expected account, and the claim and every call need the matching verified run identity and account (F7, R8, D1937) | DS1.1, DS1.3, DS1.6 |
 | G4 | Liveness and stop switches are read per call, uncached (F14, R4) | DS1.6 |
-| G5 | The agent never holds a slip or an identity token; only the runner does (D1933) | DS1.5 |
+| G5 | Fugaro does not hand the slip to the agent's environment; the agent can still reach it (F22), so protection is G3's binding, and a leaked slip buys one run's credentials until it ends | DS1.5, DS1.3 |
 | G6 | A hostile launcher or coding agent cannot read a value, overwrite another user's secret or write `fugaro-p-` unless admin (F8, F9) | DS2.1, DS2.3 |
 | G7 | A pre-existing installation keeps working after `update` alone; bundle entries are read second (R6) | DS3.3, DS4.1 |
 | G8 | Pool and token use is checked against owner and allowed users at issue time, default owner-only (D1936) | DS3.2 |
 | G9 | No credential value in the slip record, audit line or run record (F19) | DS1.1, DS1.6 |
-| G10 | `TestServiceHasNoAdminRoutes` still holds: the slip routes are the service's own contract, not an admin surface | DS1.3 |
+| G10 | The served-route set is pinned exactly (`TestServedRoutesAreExactly`): the slip routes are the service's own contract, not an admin surface | DS1.3 |
+| G11 | No `fugaro_u_`/`fugaro_p_` name can equal a name the existing scheme builds, or a bundle credential name (F6, R1, R7) | DS0.1, DS2.1 |
+| G12 | Per-user, pool-owned and shared credentials are served only under a claimed slip; a slip-less call fails closed (R9) | DS1.6, DS3.2, DS3.3 |
+| G13 | Cross-class: a job is refused on the grant, a person and a launcher on the claim, a service account at the intake (D1938) | DS1.2, DS1.3, DS2.1 |
 
 ## Slices
 
@@ -52,17 +55,17 @@ named tests only.
 
 ### DS0.1 The secret name grammar (new package)
 - **Files:** `internal/secretname/secretname.go` (new), `internal/secretname/secretname_test.go` (new)
-- **Interfaces:** produces `User(id, name)`, `Project(name)`, `Parse(secretID)`; consumed by DS2.1, DS3.3.
+- **Interfaces:** prefixes `fugaro_u_<id>_<name>` and `fugaro_p_<name>`; produces `User(id, name)`, `Project(name)`, `Parse(secretID)`; consumed by DS2.1, DS3.3.
 - **Schema/rules/config:** none.
-- **Tests:** `TestNoTwoPairsOneSecretID` (generated pairs), `TestSeparatorNotInName`, `TestLengthLimit`, `TestParseRoundTrip`.
+- **Tests:** `TestNoTwoPairsOneSecretID`, `TestNoOverlapWithExistingSecretIDs` (fed `gcp.SecretID`, the project-secret and bundle builders, including owners `p`, `u`, `p-labs`), `TestReservedBundleNamesRefused`, `TestSeparatorNotInName`, `TestLengthLimit`, `TestParseRoundTrip`.
 - **Command:** `go test ./internal/secretname/ -count=1`
 - **Depends on:** none. **Commit:** `secretname: the user and project secret ID grammar (R1)`
-- **Red step:** the grammar test with `-` as the separator fails on the collision pair `12`/`3-foo` vs `123`/`foo`.
+- **Red step:** with the first-draft prefix `fugaro-p-`, `TestNoOverlapWithExistingSecretIDs` fails on `p-labs/app`.
 - **Tier:** opus + mandatory independent review. Not owner-run.
 
 ### DS0.2 Checks 510 and 511, written (one task, one writer of the register)
-- **Files:** `scripts/live-checks/check510.sh` (new), `scripts/live-checks/check511.sh` (new), `docs/gcp-live-checklist.md` (edit), `docs/secrets-brokering/dynamic-delivery/check510-steps.md` (new)
-- **What they measure:** **510** (U3): in the sandbox project, a name-prefix IAM condition admits `versions.add`/`secrets.delete` for a `fugaro-u-` secret and refuses the same on another name, create works unconditioned, and the maximum secret ID length. **511** (U4, U5): a request every N seconds keeps one service instance up between runs, and an agent-side process cannot fetch the job account's identity token from the metadata server.
+- **Files:** `scripts/live-checks/check510.sh` (new), `scripts/live-checks/check511.sh` (new), `docs/gcp-live-checklist.md` (edit), `docs/secrets-brokering/dynamic-delivery/check510-steps.md` (new), `docs/secrets-brokering/dynamic-delivery/check511-steps.md` (new), and each check's sibling shell test as `scripts/live-checks/check191.sh` has (path read at task start)
+- **What they measure:** **510** (U3): in the sandbox project, a name-prefix IAM condition admits `versions.add`/`secrets.delete` for a `fugaro-u-` secret and refuses the same on another name, create works unconditioned, and the maximum secret ID length. **511** (U4): a request every N seconds keeps one service instance up between runs. (U5 is answered already: the agent can reach the metadata server, F22.)
 - **Tests:** `go test ./internal/cli/ -run Docs` (register pins), `bash -n` on both scripts.
 - **Command:** `go test ./internal/cli/ -run Docs -count=1`
 - **Depends on:** none. **Commit:** `live-checks: Checks 510 and 511, written (not run)`
@@ -75,27 +78,27 @@ named tests only.
 
 ### DS1.1 The slip store
 - **Files:** `internal/creds/slips.go` (new), `internal/creds/slips_test.go` (new), `internal/creds/boundary_test.go` (edit)
-- **Interfaces:** produces `Slip{ID, Owner, Allowed, Pool, MaxRuntime, Claimed{Account, At}}`, `Create`, `Claim` (compare-and-set), `End`; consumed by DS1.3, DS1.6. RTDB `creds/slips/<id>`; **no credential value is stored** (G9). The rules already deny every run identity `creds/`.
+- **Interfaces:** produces `Slip{ID, Owner(sub), Slug, Run, ExpectedAccount, Allowed, Pool, MaxRuntime, Claimed{Account, At}}`, `Create`, `Claim` (compare-and-set), `End`; consumed by DS1.3, DS1.6. RTDB `creds/slips/<id>`; **no credential value is stored** (G9). The rules already deny every run identity `creds/`.
 - **Tests:** `TestClaimIsOnce`, `TestSlipHoldsNoValue`, `TestBoundaryAllowsSlipsOnlyViaService`, `TestExpiredSlipRefused`.
 - **Command:** `go test ./internal/creds/ -run 'Slip|Boundary' -count=1`
 - **Depends on:** none. **Commit:** `creds: the slip record under creds/slips (D1932)`
 - **Red step:** `TestClaimIsOnce` fails with a non-atomic claim.
 - **Tier:** opus + mandatory independent review.
 
-### DS1.2 A person caller keyed on the Google `sub`
+### DS1.2 A launcher caller class keyed on the Google `sub`
 - **Files:** `internal/credsvc/auth.go` (edit), `internal/credsvc/auth_test.go` (edit)
-- **Interfaces:** produces `PersonSub(ctx, token) (sub string, email string, err)` for the grant request and the intake; the person class still admits nothing else.
-- **Tests:** `TestPersonSubIsTheTokenSub`, `TestPersonRefusedWithoutVerifiedEmail`, `TestPersonClassStillRefusedOnRunRoutes`.
-- **Command:** `go test ./internal/credsvc/ -run 'Person' -count=1`
-- **Depends on:** none. **Commit:** `credsvc: the person caller's account ID (F5)`
-- **Red step:** a token with an email and no `sub` is admitted before the change.
+- **Interfaces:** a new launcher class (D1938) admitted on the grant route and the intake only, keyed on the token's `sub` with a verified email; `PersonAccounts` is untouched, so the read mints stay operators-only.
+- **Tests:** `TestLauncherSubIsTheTokenSub`, `TestLauncherRefusedWithoutVerifiedEmail`, `TestLauncherClassRefusedOnRunAndReadRoutes`, `TestPersonClassStillOperatorsOnly`, `TestServiceAccountRefusedAtIntakeAuth`.
+- **Command:** `go test ./internal/credsvc/ -run 'Launcher|Person' -count=1`
+- **Depends on:** none. **Commit:** `credsvc: the launcher caller class (F5, D1938)`
+- **Red step:** a launcher is refused on the grant before the class exists.
 - **Tier:** opus + mandatory independent review.
 
 ### DS1.3 Grant and claim routes
 - **Files:** `internal/credsvc/slip.go` (new), `internal/credsvc/slip_test.go` (new), `internal/credsvc/wire.go` (edit), `internal/credsvc/server.go` (edit)
-- **Interfaces:** consumes DS1.1, DS1.2; produces `POST /v1/slip` (launcher grant, person class) and `POST /v1/slip/claim` (job class, first call). A claim binds the **verified job account**; the execution name is recorded for audit only (D1937).
-- **Tests:** `TestGrantRefusedForAnotherOwnersToken`, `TestSlipIDAloneIsNotEnough`, `TestSecondClaimRefused`, `TestClaimBindsVerifiedAccount`, `TestServiceHasNoAdminRoutes`.
-- **Command:** `go test ./internal/credsvc/ -run 'Slip|HasNoAdminRoutes' -count=1`
+- **Interfaces:** consumes DS1.1, DS1.2; produces `POST /v1/slip` (launcher class; max runtime capped by a service constant, R10) and `POST /v1/slip/claim` (job class, first call). The claim needs the slip's run identity and expected account, and binds the verified account; the execution name is recorded for audit only (D1937, R8).
+- **Tests:** `TestGrantRefusedForAnotherOwnersToken`, `TestSlipIDAloneIsNotEnough`, `TestOtherRunCannotClaim`, `TestOtherJobAccountCannotClaim`, `TestSecondClaimRefused`, `TestJobRefusedOnGrantAndLauncherOnClaim`, `TestServedRoutesAreExactly`, `TestServiceHasNoAdminRoutes`.
+- **Command:** `go test ./internal/credsvc/ -run 'Slip|ServedRoutes|HasNoAdminRoutes' -count=1`
 - **Depends on:** DS1.1, DS1.2. **Commit:** `credsvc: slip grant and claim routes (D1937)`
 - **Red step:** `TestSecondClaimRefused` fails before the claim is conditional.
 - **Tier:** opus + mandatory independent review.
@@ -111,17 +114,17 @@ named tests only.
 
 ### DS1.5 The runner claims, heartbeats, retries
 - **Files:** `internal/runner/budget_session.go` (edit), `internal/gateway/service.go` (edit), `internal/runner/slip_test.go` (new)
-- **Interfaces:** consumes DS1.3; the runner claims at the first model call, sends a keep-warm request while the run lives (D1934), retries credential and proxy requests with backoff; the slip and identity token stay in the runner's process, not in the agent's environment (G5).
-- **Tests:** `TestClaimOnFirstCall`, `TestAgentEnvHoldsNoSlip`, `TestBackoffOnServiceError`, `TestHeartbeatStopsWithRun`.
+- **Interfaces:** consumes DS1.3; the runner claims at the first model call, sends a keep-warm request while the run lives (D1934), retries credential and proxy requests with backoff; the slip is not exported to the agent's environment (G5; the agent can still read the runner's, F22).
+- **Tests:** `TestClaimOnFirstCall`, `TestSlipNotExportedToAgentEnv`, `TestBackoffOnServiceError`, `TestHeartbeatStopsWithRun`.
 - **Command:** `go test ./internal/runner/ -run 'Slip' -count=1 -timeout 15m`
 - **Depends on:** DS1.3, DS0.3 (U4/U5 pass). **Commit:** `runner: claim the slip, keep the service warm (D1933, D1934)`
-- **Red step:** `TestAgentEnvHoldsNoSlip` fails if the variable is exported to the agent.
+- **Red step:** `TestSlipNotExportedToAgentEnv` fails if the variable is exported to the agent.
 - **Tier:** opus + mandatory independent review.
 
 ### DS1.6 Per-call verification, the cache, the audit fields
 - **Files:** `internal/credsvc/server.go` (edit), `internal/credsvc/audit.go` (edit), `internal/credsvc/slip_verify_test.go` (new)
-- **Interfaces:** every run call checks slip ID, the job token's account against the claim, expiry and max runtime; the slip body is cached 5 minutes, the outcome and stop switches are not (R4); the audit line gains `slip`, `owner`, `credential` (R5); issuance ends at max runtime.
-- **Tests:** `TestFinishedRunRefusedUncached`, `TestCacheOnlyHoldsSlipBody`, `TestMaxRuntimeEndsIssuance`, `TestOneAuditLinePerRefusal`.
+- **Interfaces:** every run call checks slip ID, the run identity and job token's account against the claim, expiry and max runtime; a per-user, pool-owned or shared credential is served only under a claimed slip, and a slip-less call for one fails closed (R9); the slip body is cached 5 minutes, the outcome and stop switches are not (R4); the audit line gains `slip`, `owner`, `credential` (R5); issuance ends at max runtime.
+- **Tests:** `TestSlipLessCallForOwnedCredentialRefused`, `TestFinishedRunRefusedUncached`, `TestCacheOnlyHoldsSlipBody`, `TestMaxRuntimeEndsIssuance`, `TestOneAuditLinePerRefusal`.
 - **Command:** `go test ./internal/credsvc/ -run 'SlipVerify|OneAuditLine' -count=1`
 - **Depends on:** DS1.3. **Commit:** `credsvc: verify the slip on every call (R4, R5)`
 - **Red step:** `TestFinishedRunRefusedUncached` fails if liveness reads the cache.
@@ -129,25 +132,25 @@ named tests only.
 
 ### DS2.1 The intake function
 - **Files:** `internal/intake/server.go` (new), `internal/intake/handlers.go` (new), `internal/intake/server_test.go` (new), `cmd/fugaro-intake/main.go` (new; or the existing credentials serve pattern in `internal/cli/credentials_serve.go`, which this task reads first and follows)
-- **Interfaces:** consumes `secretname` and DS1.2; produces create, add-version, list (names and dates), delete under the caller's prefix; `fugaro-p-` only for an admin (D1935); an admin-only delete of another user's prefix for offboarding. One audit line per call; never a value in a line (G2, G6).
-- **Tests:** `TestPrefixFromSubNotFromBody`, `TestRefusesNameOutsideGrammar`, `TestNonAdminRefusedSharedPrefix`, `TestListNeverReturnsValue`, `TestNoReadMethodExists`.
+- **Interfaces:** consumes `secretname`, DS1.2 and DS2.0's admin list; produces create, add-version, list (names, dates) and delete under the caller's prefix; each secret carries the owner's verified email as a label (R10); `fugaro_p_` only for an admin on the list (D1935, D1940); an admin-only delete of another user's prefix, found by that label, for offboarding; reserved bundle names refused (R7). One audit line per call; never a value in a line (G2, G6, G11, G13). The intake holds no database role.
+- **Tests:** `TestPrefixFromSubNotFromBody`, `TestRefusesNameOutsideGrammar`, `TestNonAdminRefusedSharedPrefix`, `TestListNeverReturnsValue`, `TestNoReadMethodExists`, `TestServiceAccountRefused`, `TestNonAdminCannotDeleteOtherPrefix`.
 - **Command:** `go test ./internal/intake/ -count=1`
-- **Depends on:** DS0.1, DS1.2. **Commit:** `intake: the secret intake function (R3)`
+- **Depends on:** DS0.1, DS1.2, DS2.0. **Commit:** `intake: the secret intake function (R3)`
 - **Red step:** `TestPrefixFromSubNotFromBody` fails if the prefix is taken from the request.
 - **Tier:** opus + mandatory independent review.
 
 ### DS2.2 Terraform: the intake, its account, the service's prefix accessor
 - **Files:** `deploy/terraform/gcp/modules/installation/intake.tf` (new), `deploy/terraform/gcp/modules/installation/credentials.tf` (edit), `deploy/terraform/gcp/modules/installation/iam.tf` (edit), `deploy/terraform/secret_readers_test.go` (edit), `docs/secrets-brokering/secret-readers.md` (edit), `deploy/terraform/terraform_test.go` (edit)
-- **Interfaces:** the intake account holds create (unconditional) and version-add, list, delete with a name-prefix condition; no accessor. The service's account gains an accessor with the same condition. A guard test holds both conditions, and the exceptions table gains one row for the service's prefix accessor (F18).
-- **Tests:** `TestIntakeAccountHasNoAccessor`, `TestIntakeRolesAreConditioned`, `TestServicePrefixAccessorIsConditioned`, `TestSecretReadersTableMatches`.
-- **Command:** `go test -tags terraform ./deploy/terraform/ -run 'Intake|SecretReaders' -count=1` and `terraform fmt -check -recursive deploy/terraform`
+- **Interfaces:** the intake account holds create (unconditional) and version-add, list, delete with a `fugaro_u_`/`fugaro_p_` name-prefix condition; no accessor, no database role; invoker on the intake follows the roster, as the service's does (R10). The service's account gains an accessor with the same condition. A guard test holds both conditions, and the exceptions table gains one row for the service's prefix accessor (F18).
+- **Tests:** `TestIntakeAccountHasNoAccessor`, `TestIntakeRolesAreConditioned`, `TestServicePrefixAccessorIsConditioned`, `TestEverySecretReaderIsAListedException`.
+- **Command:** `go test -tags terraform ./deploy/terraform/ -run 'Intake|SecretReader' -count=1` and `terraform fmt -check -recursive deploy/terraform`
 - **Depends on:** DS2.1, DS0.3 (Check 510 passed). **Commit:** `terraform: the intake and the prefix-conditioned reader (D1931)`
 - **Red step:** the guard fails if the intake account holds `secretAccessor`.
 - **Tier:** opus + mandatory independent review. Applied by `fugaro update` (HARD RULE).
 
 ### DS2.3 The user verbs
 - **Files:** `internal/cli/secrets.go` (edit), `internal/cli/secrets_intake.go` (new), `internal/cli/secrets_intake_test.go` (new)
-- **Interfaces:** `fugaro secrets set|ls|rm` for a user (`--project` for shared) call the intake with the caller's ID token; value from a hidden prompt or stdin only; refused inside an agent session or a run (F9, F12).
+- **Interfaces:** new verbs `fugaro secrets user set|ls|rm` and `fugaro secrets shared set|ls|rm`; today's `fugaro secrets set`/`ls` keep their meaning (project-wide default, `--project-wide`) and the plugin skills' command tests stay green. The verbs call the intake with the caller's ID token; value from a hidden prompt or stdin only; refused inside an agent session or a run (F9, F12).
 - **Tests:** `TestSetRefusedInAgentSession`, `TestValueNeverInArgsOrEnv`, `TestLsPrintsNamesAndDates`.
 - **Command:** `go test ./internal/cli/ -run 'SecretsIntake' -count=1`
 - **Depends on:** DS2.1. **Commit:** `cli: user secrets through the intake`
@@ -156,16 +159,16 @@ named tests only.
 
 ### DS2.4 Offboarding
 - **Files:** `internal/cli/offboard.go` (new), `internal/cli/offboard_test.go` (new)
-- **Interfaces:** an admin command deletes a user's prefix through the intake, ends the user's open slips (DS1.1) and removes the invoker grant through `update`'s own converge path (F20).
+- **Interfaces:** an admin command names the member by email; the intake finds that member's secrets by the owner label (R10) and deletes them, the command ends the member's open slips (DS1.1) and the invoker grant comes off in `update`'s converge once the roster drops the member (F20).
 - **Tests:** `TestOffboardDeletesPrefixAndEndsSlips`, `TestOffboardRefusedForNonAdmin`, `TestPoolLosesRemovedMembers`.
 - **Command:** `go test ./internal/cli/ -run 'Offboard' -count=1`
-- **Depends on:** DS2.1, DS1.1. **Commit:** `cli: offboard a member (D1935)`
+- **Depends on:** DS2.1, DS2.2, DS1.1. **Commit:** `cli: offboard a member (D1935)`
 - **Red step:** the non-admin test fails before the role check.
 - **Tier:** opus + mandatory independent review.
 
 ### DS3.1 Pools with an owner and allowed users
 - **Files:** `internal/config/craft.go` (edit), `internal/projectpolicy/policy.go` (edit), `internal/projectpolicy/version.go` (edit), `internal/projectpolicy/migrate.go` (edit), `schemas/project-layer.schema.json` (edit), tests beside each
-- **Interfaces:** additive `owner`, `allowed_users`; default owner-only; policy version bump with the migration run by `update`.
+- **Interfaces:** additive `owner`, `allowed_users` (spelled by email, resolved to `sub` at grant, R10); default owner-only; policy version bump with the migration run by `update`.
 - **Tests:** `TestPoolOwnerDefaultsToOnlyOwner`, `TestMigrationFromPreviousVersionConverges`, `TestSchemaMatchesDecoder`.
 - **Command:** `go test ./internal/config/ ./internal/projectpolicy/ -run 'Pool|Migrat|Schema' -count=1`
 - **Depends on:** none. **Commit:** `policy: pool owner and allowed users, version bump (D1936)`
@@ -191,13 +194,31 @@ named tests only.
 - **Tier:** opus + mandatory independent review.
 
 ### DS3.4 Token ownership on the run record
-- **Files:** `internal/runstore/runstore.go` (edit), `internal/runstore/runstore_owner_test.go` (new), `internal/runner/record_owner.go` (new)
+- **Files:** `internal/runstore/runstore.go` (edit), `internal/runstore/runstore_owner_test.go` (new), `internal/runner/record_owner.go` (new), `internal/credsvc/wire.go` (edit), `internal/gateway/service.go` (edit)
 - **Interfaces:** additive `credential_owner` beside `oauth_account` and `stage_accounts`, never changing either (F16). The reader tests in `internal/runstore/cost_readers_guard_test.go` stay green.
 - **Tests:** `TestRecordNamesOwnerOfTokenUsed`, `TestExistingFieldsUnchanged`.
 - **Command:** `go test ./internal/runstore/ -run 'Owner|Fields' -count=1`
-- **Depends on:** DS1.6. **Commit:** `runstore: credential_owner on the run record (F16)`
+- **Depends on:** DS1.6, DS1.5. **Commit:** `runstore: credential_owner on the run record (F16)`
 - **Red step:** the owner test fails with the field absent.
 - **Tier:** standard.
+
+### DS3.5 The OpenRouter upstream
+- **Files:** `internal/credsvc/forward.go` (edit), `internal/credsvc/forward_openrouter_test.go` (new), `internal/config/model_providers.go` (read; edit only if it lacks the base URL)
+- **Interfaces:** the spec's OpenRouter path through the service. The task first reads whether `forward.go` serves OpenRouter (U1); if it already does, it only adds the test and reports no change.
+- **Tests:** `TestOpenRouterCallSwapsKeyAndStreams`, `TestOpenRouterKeyNeverReachesJob`.
+- **Command:** `go test ./internal/credsvc/ -run 'OpenRouter' -count=1`
+- **Depends on:** DS3.3. **Commit:** `credsvc: the OpenRouter upstream (F1)`
+- **Red step:** the call test fails before the route is served.
+- **Tier:** opus + mandatory independent review.
+
+### DS2.0 The derived admin list
+- **Files:** `internal/access/adminlist.go` (new), `internal/access/adminlist_test.go` (new), `internal/cli/update.go` (edit)
+- **Interfaces:** `update` writes the roster's admins (email and sub where known) to a bucket object the intake reads (D1940); it lags a role change until `update` runs, and says so.
+- **Tests:** `TestAdminListHoldsOnlyAdmins`, `TestUpdateRewritesListAfterRoleChange`.
+- **Command:** `go test ./internal/access/ -run AdminList -count=1`
+- **Depends on:** none. **Commit:** `access: the derived admin list for the intake (D1940)`
+- **Red step:** a viewer in the roster appears in the list before the filter.
+- **Tier:** opus + mandatory independent review.
 
 ### DS4.1 Convergence under update
 - **Files:** `internal/cli/update.go` (edit), `internal/cli/update_slips_test.go` (new)
@@ -219,7 +240,7 @@ named tests only.
 
 ### DS4.3 Docs, SECURITY and release notes
 - **Files:** `SECURITY.md` (edit), `website/content/security.md` (regenerated), `docs/releases/vNEXT.md` (edit or new), `docs/secrets-brokering/README.md` (edit)
-- **Interfaces:** states the new trust boundary (intake write power, the prefix accessor, the slip) and what a hostile launcher can do; `### For operators`: "run `fugaro update`" plus what it asks.
+- **Interfaces:** states the new trust boundary (intake write power, the prefix accessor, the slip) and what a hostile launcher can do, the replayable gcloud-audience token and an admin's agent (D1939, F9); `### For operators`: "run `fugaro update`" plus what it asks.
 - **Tests:** `go test ./internal/cli/ -run Docs -count=1`; `npm run check` in `website/` for the regenerated page.
 - **Depends on:** DS2.3, DS3.2, DS4.1. **Commit:** `docs: SECURITY and the release notes for dynamic delivery`
 - **Red step:** the website security test fails on drift before regeneration.
@@ -227,17 +248,17 @@ named tests only.
 
 ## Parallel execution
 
-**Edges** (from the Depends-on lines): DS0.3←DS0.2; DS1.3←DS1.1,DS1.2; DS1.4←DS1.3; DS1.5←DS1.3,DS0.3; DS1.6←DS1.3; DS2.1←DS0.1,DS1.2; DS2.2←DS2.1,DS0.3; DS2.3←DS2.1; DS2.4←DS2.1,DS1.1; DS3.2←DS1.3,DS3.1; DS3.3←DS0.1,DS1.3; DS3.4←DS1.6; DS4.1←DS2.2,DS3.1; DS4.2←DS2.2; DS4.3←DS2.3,DS3.2,DS4.1.
+**Edges** (from the Depends-on lines): DS0.3←DS0.2; DS1.3←DS1.1,DS1.2; DS1.4←DS1.3; DS1.5←DS1.3,DS0.3; DS1.6←DS1.3; DS2.1←DS0.1,DS1.2,DS2.0; DS2.2←DS2.1,DS0.3; DS2.3←DS2.1; DS2.4←DS2.1,DS2.2,DS1.1; DS3.5←DS3.3; DS3.2←DS1.3,DS3.1; DS3.3←DS0.1,DS1.3; DS3.4←DS1.6,DS1.5; DS4.1←DS2.2,DS3.1; DS4.2←DS2.2; DS4.3←DS2.3,DS3.2,DS4.1.
 
 | Level | Tasks (concurrent) |
 | --- | --- |
-| 0 | DS0.1, DS0.2, DS1.1, DS1.2, DS3.1 |
+| 0 | DS0.1, DS0.2, DS1.1, DS1.2, DS2.0, DS3.1 |
 | 1 | DS0.3 (OWNER-RUN), DS1.3, DS2.1 |
 | 2 | DS1.4, DS1.5, DS1.6, DS2.2, DS2.3, DS2.4, DS3.2, DS3.3 |
-| 3 | DS3.4, DS4.1, DS4.2 |
+| 3 | DS3.4, DS3.5, DS4.1, DS4.2 |
 | 4 | DS4.3 |
 
-**Critical path:** DS1.2 → DS2.1 → DS2.2 → DS4.1 → DS4.3 (with DS0.2 → DS0.3 gating DS2.2 in parallel).
+**Critical path:** DS2.0 → DS2.1 → DS2.2 → DS4.1 → DS4.3 (with DS0.2 → DS0.3 gating DS2.2 in parallel).
 Sequential only where an interface or a gate forces it: slips need the store and the caller identity; the
 Terraform needs the function and the owner's Check 510.
 
@@ -251,7 +272,10 @@ Terraform needs the function and the owner's Check 510.
 | `internal/credsvc/cascade.go` | DS3.3 (2) |
 | `internal/credsvc/audit.go`, `wire.go` | DS1.6 (2), DS1.3 (1) |
 | `internal/cli/secrets.go` | DS2.3 (2) |
-| `internal/cli/update.go` | DS4.1 (3) |
+| `internal/cli/update.go` | DS2.0 (0), DS4.1 (3) |
+| `internal/access/adminlist.go` | DS2.0 (0) |
+| `internal/credsvc/forward.go` | DS3.5 (3) |
+| `internal/credsvc/wire.go`, `internal/gateway/service.go` | DS3.4 (3) beside DS1.3 (1) and DS1.5 (2) |
 | `internal/cli/doctor_brokering.go` | DS4.2 (3) |
 | `internal/cli/run.go` | DS1.4 (2) |
 | `internal/runner/budget_session.go`, `internal/gateway/service.go` | DS1.5 (2) |
@@ -266,7 +290,7 @@ Terraform needs the function and the owner's Check 510.
 | Check | Measures | Run by |
 | --- | --- | --- |
 | 510 | IAM name-prefix conditions on version-add and delete, unconditioned create, secret ID length (U3) | Owner (DS0.3), sandbox project |
-| 511 | A request every N seconds keeps an instance up; the agent cannot fetch the identity token (U4, U5) | Owner (DS0.3) |
+| 511 | A request every N seconds keeps an instance up (U4) | Owner (DS0.3) |
 | 512–519 | Reserved, unused | |
 
 ## Declined, and why

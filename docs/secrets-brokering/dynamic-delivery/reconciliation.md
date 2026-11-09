@@ -1,6 +1,6 @@
 # Dynamic secret delivery: reconciliation
 
-**Status: the owner answered D1930–D1937 on 2026-11-09, all as recommended. Plan only; nothing is implemented; no task approved.**
+**Status: the owner answered D1930–D1937 on 2026-11-09, all as recommended, and D1938–D1940 (review round 1) the same day, all as recommended. Plan only; nothing is implemented; no task approved.**
 Checked against `origin/main` at `934bb23f8`, 2026-11-09. **Where this file disagrees with [spec.md](spec.md), it wins.**
 
 The addendum asked to be merged with the existing secrets and credentials brokering spec as one unified
@@ -43,7 +43,7 @@ is only partly true (F4).
 | Token owner, job records its token | `oauth_account` and `stage_accounts` on the run record (docs/accounts-add D876); no owner of a token |
 | Person callers | The person class in `internal/credsvc/auth.go` (read mints only), keyed on a verified email |
 | Intake function | Nothing. `fugaro creds set` writes the bundle from the owner's machine with their own credentials |
-| Project admins in config | `terraform.budget_admins` (`internal/localcfg/localcfg.go`) for Firebase; the roles-scopes admin role is planned, not on `main` |
+| Project admins in config | `terraform.budget_admins` (`internal/localcfg/localcfg.go`) for Firebase; the roles-scopes roster is on `main` (`internal/access`, `config/admin/access`), read over IAM with a database-wide grant |
 | Warm instance | The service sets `min_instance_count = 0` (`deploy/terraform/gcp/modules/installation/credentials.tf`, D501) |
 | Offboarding | invoker grants are Terraform-applied in `iam.tf` of the installation module |
 
@@ -66,15 +66,15 @@ is only partly true (F4).
 
 1. **Two stores.** The bundle keeps the platform credentials (GitHub App key, Bitbucket token, review
    signing keys). User-supplied credentials (model tokens, API keys, later workflow secrets) become
-   per-secret names written by the intake: `fugaro-u-<id>_<name>` and `fugaro-p-<name>` (R1).
+   per-secret names written by the intake: `fugaro_u_<id>_<name>` and `fugaro_p_<name>` (R1, R7).
 2. **The service reads both.** The bundle by its one grant; the per-secret names by an accessor whose IAM
    condition is the name prefix. It has no write access.
 3. **The intake** is a separate Cloud Run service with its own account: create, add version, list (names
-   and dates) and delete, all conditioned to `fugaro-u-`/`fugaro-p-` names; no accessor, no IAM rights (R3).
+   and dates) and delete, all conditioned to `fugaro_u_`/`fugaro_p_` names; no accessor, no IAM rights (R3).
 4. **Slips** are written by the service under RTDB `creds/slips/<id>`; claimed once, bound to the verified
    job account; cached 5 minutes; ended by the outcome or the max runtime.
-5. **The agent-facing endpoint stays the runner's gateway.** The slip ID and the identity token live in the
-   runner, never in the agent's environment.
+5. **The agent-facing endpoint stays the runner's gateway.** The slip is not exported to the agent, which can
+   still read the runner's environment (F22); the slip is bound to its run (R8).
 6. **Pools** gain `owner` and `allowed_users`; a slip naming a token or pool is checked against them at
    issue time.
 7. **The service stays default-on, scale-to-zero, with a runner heartbeat** keeping an instance warm while
@@ -89,10 +89,10 @@ is only partly true (F4).
 | F3 | Exists | Pools exist (`config.Pool`, `craft_pools`, `CraftPools`). No owner, no allowed users |
 | F4 | Wrong | "Today a secret is mounted by Terraform" holds for the non-cascade modes (`modules/workflow/job.tf` `secret_key_ref`, `secretVersionAdder` in `modules/installation/secrets.tf`), the GitHub App key and workflow secrets. A `cascade` run's model credential is already read by the service from the bundle, which `fugaro creds set` writes with no Terraform. The pain is real for the other classes |
 | F5 | Gap | The service's person class admits read mints only, keyed on a verified email. The grant request and the intake need a caller identity keyed on the Google **`sub`**, so the person class is extended, not reused as is. UNVERIFIED: that a user's Google ID token `sub` is the stable numeric account ID in every sign-in path the CLI uses (U2) |
-| F6 | Wrong | `fugaro-u-<id>-<name>` is ambiguous: id `12` with name `3-foo` and id `123` with name `foo` both give `fugaro-u-123-foo`, so one user's write can land on another's secret. **Resolution R1** |
+| F6 | Wrong | The collision is with the **existing** secret names, not between ids (a digits-only id already splits at `-`): `gcp.SecretID` builds `fugaro-<readableSlug>-<logical>-<hash>` from a slug of `[a-z0-9-]`, so a repository owned by `p`, `u` or `p-labs` produces `fugaro-p-labs-app-…`, inside the intake's `fugaro-p-` IAM prefix. An admin could overwrite or delete a repository's mounted token through the intake. **Resolution R1** (prefixes the existing scheme never emits) |
 | F7 | Wrong | Step 4 binds the "Cloud Run execution ID" to the slip, but a job's ID token carries the account and no execution claim, so the service cannot verify an execution ID a caller states. The job SA email is the verified fact (`Authenticator`, one SA per job); **D1937** |
 | F8 | Gap | The intake cannot read, but write is an integrity power: adding a version to a shared or platform secret replaces a key with one an attacker holds (model prompts then go to the attacker's account), and delete is a denial. IAM can condition version-add and delete on the name prefix and cannot condition create. **R3** |
-| F9 | Gap | The agent on the owner's machine holds the owner's credentials, so the server cannot tell a person from a coding agent at the intake. The refusal in an agent's session is client-side only (as `fugaro creds set` today). The intake's limits (own prefix, no read) are what bound the damage; R3 |
+| F9 | Gap | The agent on a person's machine holds that person's credentials, so the server cannot tell a person from a coding agent at the intake. The refusal in an agent's session is client-side only (as `fugaro creds set` today). For an ordinary member the own-prefix and no-read limits bound the damage; **for an admin they do not**: an admin's agent could write `fugaro_p_` and delete another member's prefix. That is a power the admin's machine already holds as a role, recorded as an accepted limit (SECURITY.md in DS4.3) and narrowed by R7's reserved names |
 | F10 | Rule | D501 and the addendum disagree (C4). A cold start sits on the path of the first call; the heartbeat is the owner's answer (D1934) |
 | F11 | Rule | CLAUDE.md's HARD RULE: the migration of every existing secret (bundle entries, per-repository and project-wide secrets with mounts) to the new names happens inside `fugaro update`, safely while runs are in flight, with a convergence test. **R2** |
 | F12 | Rule | `fugaro creds set` is the bundle's only writer and is refused in an agent session; it stays so for the platform credentials. The intake client keeps the same refusal (`.claude/rules/credentials-service.md`) |
@@ -104,7 +104,13 @@ is only partly true (F4).
 | F18 | Rule | The CI secret-reader guard (`deploy/terraform/secret_readers_test.go`, `docs/secrets-brokering/secret-readers.md`) lists today's readers; every new reader (the intake's writes are not reads; the service's prefix accessor is) needs a row |
 | F19 | Rule | Security-sensitive tree: `.claude/rules/credentials-service.md`: independent review, one audit line per refusal, no secret-shaped literals, owner runs live steps |
 | F20 | Gap | Offboarding "revokes invoker rights": the grants are Terraform-applied today (`iam.tf`); revocation is `fugaro update`-class work and must also end the person's open slips |
-| F21 | Open | Workspaces (docs/workspaces W6) plan a workspace credentials service; this design is per project. Not decided here; recorded as T3 |
+| F22 | Wrong | The addendum, and this plan's first draft, treat the slip ID and job token as hidden from the agent. SECURITY.md ("What one run's agent can reach") already states the agent shares the runner's container and user, reads its environment through `/proc` and reaches the job account through the metadata server. So U5 is already answered (it can), and the slip's protection is its **binding**, not secrecy (R8) |
+| F23 | Gap | A slip holding only a job account is claimable by another run or job: runs of one repository, and every run of a shared job, share an account, and launchers can override a job's environment. **R8** |
+| F24 | Gap | A launcher that omits the slip would downgrade to the old path and bypass pool authorisation. **R9** |
+| F25 | Gap | The person class is the operators' addresses and "not its launchers" (`internal/credsvc/auth.go`, `PersonAccounts`). Non-operator launchers cannot request a slip as it stands. **D1938** |
+| F26 | Gap | A person's ID token carries only gcloud's audience, so a token the user sends to any Cloud Run service is replayable at the intake for about an hour. **D1939** |
+| F27 | Gap | The roster is read over IAM with a database-wide grant and keyed by email; the prefix is keyed by `sub`. **D1940** |
+| F21 | Open | Workspaces (docs/workspaces W6) plan a workspace credentials service; this design is per project. Not decided here; recorded, not decided here |
 
 ## 6. Decisions
 
@@ -115,18 +121,18 @@ is only partly true (F4).
 | **D1932** | Slip store | RTDB `creds/slips`: same subtree, rules and service role as marks and leases | Firestore: new database, role, rules | **2026-11-09: the recommendation.** Departs from the spec's letter, D494's precedent |
 | **D1933** | Agent endpoint | The gateway stays; the slip lives in the runner | Direct jobs: agent holds a token, budget role moves | **2026-11-09: the recommendation.** The sandbox rule holds |
 | **D1934** | Warm instance | A runner heartbeat keeps an instance up only while runs live; no `min_instance_count` change | min=1: idle billing; scale-to-zero: cold start | **2026-11-09: the recommendation.** D501 stands |
-| **D1935** | Shared writers | Reuse the roles-scopes admin role | A new config list: two lists | **2026-11-09: the recommendation.** Depends on roles-scopes (T3 below) |
+| **D1935** | Shared writers | Reuse the roles-scopes admin role (on `main`; read through D1940's derived list) | A new config list: two lists | **2026-11-09: the recommendation.** |
 | **D1936** | Pool owner | Additive `owner` and `allowed_users`, default owner-only, policy version bump with `update` migrating | A separate node: two nodes for one pool | **2026-11-09: the recommendation.** |
+| **D1938** | Who may request a slip (F25) | A new launcher caller class admitted on the grant route only; the person class stays operators-only | Operators only: members cannot launch; widen the person class: launchers gain the workspace-wide read mints | **2026-11-09: the recommendation.** |
+| **D1939** | Token replay (F26) | Accept and document in SECURITY.md; the own-prefix, no-read bounds stay | A short-lived intake-audience token: an extra IAM grant per user, outside the update-only rule | **2026-11-09: the recommendation.** |
+| **D1940** | Admin check (F27) | `update` publishes a derived admin list (email and sub) to a bucket object the intake reads; the intake never touches the database | Direct roster read: database-wide read; the service writes shared secrets: breaks its least privilege | **2026-11-09: the recommendation.** The list lags a role change until `update` runs |
 | **D1937** | Slip binding | Verified job SA plus one-time claim; execution name audit-only | Launcher-written execution ID: unverifiable | **2026-11-09: the recommendation.** F7 |
 
-No answer deviates from a recommendation, and no two answers conflict.
+No answer deviates from a recommendation, and no two answers conflict. D1938–D1940 were raised by review round 1.
 
 ### Resolutions (one defensible answer; not questions)
 
-- **R1: name grammar.** `fugaro-u-<id>_<name>`: the id is digits only and the separator `_` is not allowed
-  inside `<name>` (letters, digits, `-`), so the split is unique. `fugaro-p-<name>` uses the same name rules.
-  A property test pins that no two (id, name) pairs give one secret ID, and a name over the Secret Manager
-  limit is refused with a sentence that names the limit.
+- **R1: name grammar.** Prefixes the existing scheme never emits (it emits no `_`): `fugaro_u_<id>_<name>` and `fugaro_p_<name>`, the id digits only and `<name>` letters, digits and `-` (no `_`), so the split is unique. A test pins that no output of `gcp.SecretID`, the project-secret and bundle ID builders can match either prefix, and a name over the Secret Manager limit is refused with a sentence that names the limit. The IAM conditions use these prefixes.
 - **R2: migration and removal are staged.** Per secret class, behind flip lists gated on owner-run live
   checks (D500, D491), with `belong` never touched (D147). Order: model credentials of the cascade
   first (they are already service-read), then the other `agent.auth` modes, then workflow secrets and
@@ -143,6 +149,10 @@ No answer deviates from a recommendation, and no two answers conflict.
   is resolved by its per-secret name first and by its bundle entry second, and a bundle entry is replaced
   only when the owner rotates it through the intake. Every installation keeps working after `update`
   alone (HARD RULE), and nothing is deleted or re-entered.
+- **R7: reserved names and read order.** The intake refuses a `fugaro_p_` or `fugaro_u_` name equal to a bundle credential name, so a per-secret name can never shadow a platform or bundle entry. A credential name maps to its per-secret name by the one grammar function (`secretname`), and for a user credential only the slip owner's `fugaro_u_<sub>_<name>` is read; a shared `fugaro_p_<name>` is read only for a name the pool or slip lists.
+- **R8: a slip is bound to its run.** The slip records the slug, the run and the expected job account; the claim and every call require the matching verified run identity (D134) as well as the account. The slip is not a secret from the agent (F22); binding limits what a leaked one buys.
+- **R9: no downgrade.** A per-user, pool-owned or shared credential is served only under a claimed slip; a call without one fails closed. The slip-less path serves only what it serves today.
+- **R10: the rest of review round 1.** The grant's max runtime is capped by a service constant. Pool `owner` and `allowed_users` are spelled by email in the policy (the roster's key) and resolved to `sub` at grant time. Each secret carries its owner's verified email as a label written by the intake, which is how offboarding finds a prefix; the invoker grant on the intake follows the same roster as the service's, and is removed by `update`. The OpenRouter upstream gets its own task. The roster is a bucket object (D1940), so the intake holds no database role.
 - **R4: the slip cache.** The slip body is cached 5 minutes per the spec; the run's liveness (the outcome)
   and the stop switches are read per call as today (F14), so the 5-minute window bounds only a change to
   the slip's own fields.
@@ -163,4 +173,4 @@ user-supplied credentials only, which the owner's recommended answer already acc
 | U2 | That a user ID token's `sub` is the numeric account ID in every CLI sign-in path |
 | U3 | Secret Manager's maximum secret-ID length and whether IAM conditions on `resource.name` apply to `secretmanager.versions.add` and `secrets.delete` as the plan assumes |
 | U4 | That a runner heartbeat reliably keeps one Cloud Run instance up (request-based billing, instance idle timeout) |
-| U5 | That the agent process cannot reach the metadata server's identity token inside the job today |
+| U5 | (answered by F22: the agent can reach it; kept for the record) |
