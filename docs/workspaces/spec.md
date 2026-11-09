@@ -37,8 +37,11 @@ Two rules bind everything below and are not up for a decision:
 
 1. **A workspace never widens a member.** Every member keeps its own policy, its own caps, its own
    allow-lists and its own launcher/operator lists, and nothing a workspace holds can make a call
-   possible in a member that the member's own configuration forbids. A workspace *groups*; it never
-   grants. §9 states it as a prohibition.
+   possible in a member that the member's own configuration forbids **by name** — the name being the
+   dimension the workspace's service asks a member's policy in (§5): it admits a pooled credential
+   only where the member's own `accounts` block names it, and it asks nothing else. A workspace
+   *groups*; it never grants. §9 states it as a prohibition, and §8's residual risk 7 states the one
+   dimension in which the prohibition is by name rather than the whole of a member's policy.
 2. **No agent handles a credential.** The workspace's services never hand a model credential or a
    forge credential to a run, to a CLI, or to a person — not as a tool result, not in an error, not
    in a log line. A run's credential reaches the run the way it reaches every run today: the
@@ -861,7 +864,9 @@ ceiling is decided.
    allow-list and the member's own declaration of the credential are both still required, so the pool
    serves only names the member already admits, and a member that needs the narrowing enforced keeps
    that credential in its own project rather than sharing it. Closing it is an owner decision and a
-   column, not a redesign.
+   column, not a redesign. It is the one dimension in which §0's rule 1 and §9's "never widens a
+   member" are stated **by name** rather than as the whole of a member's policy, and both point here
+   for it.
 
 ## 9. What a workspace never does
 
@@ -870,7 +875,10 @@ This is rule 1 and rule 2 written as prohibitions. A workspace:
 - **never widens a member.** It cannot add a launcher or an operator, admit an address a member's
   lists do not name, raise a member's cap, run a mode a member's policy forbids, or serve a
   credential a member's policy excludes. It cannot make a repository reachable in a member that the
-  member's own policy excludes.
+  member's own policy excludes — in the dimension this prohibition is stated in, which is the
+  credential's **name**: the member's policy is asked by name and nothing else, so a credential the
+  member narrowed to some of its repositories is served to that member's jobs on the others (§8,
+  residual risk 7, states the divergence and why the service cannot close it).
 - **never hands out a credential.** No shared credential's value is returned to a run, a CLI, a
   person, an error message or a log line. The service proxies the call; the key stays with the
   service.
