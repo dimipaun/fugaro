@@ -33,7 +33,10 @@
 #             carries a refusal's class),
 #             Logging, the job list, the secrets carrying the Bitbucket token's
 #             label and their IAM policies, and mints the access token the
-#             outcome node is written with), fugaro (the release under test,
+#             outcome node is written with), fugaro (the release under test —
+#             the release that first carries the proxy, 0.21.0: the first tag
+#             holding internal/credsvc/bitbucketproxy.go, and not a development
+#             build, which resolves no released credentials-service image) —
 #             installed here and configured for the installation, with `fugaro
 #             doctor --project fugaro --all` working), and git for --after-flip (the
 #             repository's origin remote, to check you are standing in the

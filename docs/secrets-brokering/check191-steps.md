@@ -2,10 +2,13 @@
 
 **Status: written by task B1.11 of the secrets-brokering plan; run by the owner, task B1.12 (Check
 191) and the flip's own task (Check 192).** Neither has been run: Check 191 runs on the **released**
-0.15.0 and not on a development build — a build from a checkout resolves no released
-credentials-service image to deploy (`internal/cli/init_credentials.go`, `resolveCredentialsImage`),
-so `fugaro version` must not print `dev` — and Check 192 runs after the flip (D500, O7). **No agent runs any step of either**, and no agent has: what they measure is a live
-installation, real runs and the credentials service's own answers.
+build that first carries the proxy — **0.21.0** (the plan's Levels table gives the proxy chain
+0.15.0, and that release has no proxy to measure: `internal/credsvc/bitbucketproxy.go` landed
+2026-11-07, and 0.21.0 is the first tag that holds it) — and not on a development build: a build from
+a checkout resolves no released credentials-service image to deploy
+(`internal/cli/init_credentials.go`, `resolveCredentialsImage`), so `fugaro version` must not print
+`dev`. Check 192 runs after the flip (D500, O7). **No agent runs any step of either**, and no agent
+has: what they measure is a live installation, real runs and the credentials service's own answers.
 
 The check is `scripts/live-checks/check191.sh` — one script, two modes: without an argument it runs
 **Check 191**, with `--after-flip` it runs **Check 192**. The register's sections are
@@ -36,7 +39,7 @@ neither deletes nor closes them, and the block names each one.
 ## What you need
 
 - **Installation `fugaro` only.** The project (`fugaro-dev`) and the region (`us-east5`) are
-  hard-coded in the script, and `fugaro doctor --project fugaro` must answer that this is the
+  hard-coded in the script, and `fugaro doctor --project fugaro --all` must answer that this is the
   `fugaro-dev` installation: the script refuses to run against anything else. Never `belong`, and a
   repository whose workspace is `belong` is refused by name.
 - **The credentials service on for this installation, and the sandbox repository published with
@@ -157,8 +160,9 @@ the run never reached reads `FAIL — not reached`.
 A stop prints the same block first, with an `aborted` fact naming the reason, and exits `1` (a guard
 that stopped it before it could run) or `2` (it could not measure). The stops worth knowing by name:
 
-- **`this is not the fugaro-dev installation`** — `fugaro doctor --project fugaro` printed no
-  `project: ... (GCP fugaro-dev,` line. Either this is another installation, or `--project fugaro`
+- **`this is not the fugaro-dev installation`** — `fugaro doctor --project fugaro --all` printed no
+  `project: ... (GCP fugaro-dev,` line (that line is part of doctor's `--all` tail: the default view
+  stops at its pointer lines). Either this is another installation, or `--project fugaro`
   disagrees with the checkout's `project:`, or doctor itself failed. Nothing was created.
 - **`this shell is tracing`** — the check was started with `bash -x`. Run it without `-x`: it prints
   its own block, and a trace is not needed to report a failure.
