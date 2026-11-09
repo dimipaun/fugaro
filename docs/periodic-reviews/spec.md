@@ -127,23 +127,6 @@ longer window, five months): `cost_per_run_rising`, the billed cost per run risi
 months running, which is the long view the four rules cannot give — two of them read weeks and two
 read one month against the one before it. Like the others it is a signal to look, never a verdict.
 
-The failure classes add **two more rules of this same kind, read over a closed vocabulary of causes
-instead of over free text** ([failure-classes.md](../design/failure-classes.md) §6.2, built by FC7 of
-[the failure-classes plan](../failure-classes/implementation-plan.md)). They are **D326**'s idea,
-which is the detector's: a fixed, documented rule over the periods' committed blocks, not a search
-(`docs/task-governance/reconciliation.md`).
-
-| Rule | Fires when |
-| --- | --- |
-| `failure_class_high` | one class's runs were above a quarter of a week's runs, 2 weeks running |
-| `failure_class_new` | a class appeared in a week's report that no report of the last 4 weeks names |
-
-Like the others they are a signal to look, never a verdict, and both read only the summaries that
-**carry the `failures` block**: the first needs every one of its two weeks to carry it, and the second
-needs a report before it to have named the class at all, so neither can fire in the week the block
-first ships; a class a build does not know counts as `unclassified`, the closed-cell rule a report's
-other tables keep.
-
 ## 6. The practice: every user
 
 The `working` skill already carries the review: the four periods, the daily sweep, the reading of the
