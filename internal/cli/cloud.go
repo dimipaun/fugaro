@@ -468,6 +468,9 @@ func (o resolveRunOptions) notes() io.Writer {
 // Nothing calls it yet: the commands that accept an ending are wired to it at
 // SR14.
 func resolveRun(ctx context.Context, env *cloudEnv, ref string, o resolveRunOptions) (slug, runID string, err error) {
+	// A full ID and <slug>/<run-id> are locateRun's, refusals included: this
+	// adds endings to what a command accepts and changes nothing about what it
+	// accepts already.
 	if _, err := runstore.RunTime(ref); strings.Contains(ref, "/") || err == nil {
 		return locateRun(ctx, env, ref)
 	}
@@ -477,15 +480,14 @@ func resolveRun(ctx context.Context, env *cloudEnv, ref string, o resolveRunOpti
 	if n := utf8.RuneCountInString(ref); n < task.MinEnding {
 		return "", "", userErr("%q is %d characters; an ending needs at least %d, the shortest form a run is shown in", ref, n, task.MinEnding)
 	}
-	since := lsNow().UTC().Add(-lsDefaultWindow)
 	if o.activeOnly {
 		refs, err := env.activeRuns(ctx, ref)
 		if err != nil {
-			// There is no window to fall back to here: a lookup that cannot
-			// read the live runs does not know whether this ending names one,
-			// and a command that stops runs must not be told it names none
-			// (F6). The caller's own refusal is the answer (dbErr says which
-			// role is missing; anything else is remote).
+			// There is no window to fall back to here, so the read's own error
+			// is the answer: a lookup that cannot see the live runs does not
+			// know whether this ending names one, and a command that stops runs
+			// must not be told it names none (F6). dbErr names the role a
+			// person lacks; anything else is remote.
 			return "", "", err
 		}
 		if len(refs) == 0 {
@@ -511,6 +513,7 @@ func resolveRun(ctx context.Context, env *cloudEnv, ref string, o resolveRunOpti
 	// The feed is read once per lookup and only for an ending: a full ID never
 	// opens the database. Its failure is remembered rather than returned, so
 	// the lookup can fall back to the window and say which answer this is.
+	since := lsNow().UTC().Add(-lsDefaultWindow)
 	var feedErr error
 	active := func(ctx context.Context) ([]task.Ref, error) {
 		refs, err := env.activeRuns(ctx, ref)
@@ -524,6 +527,9 @@ func resolveRun(ctx context.Context, env *cloudEnv, ref string, o resolveRunOpti
 	}
 	switch {
 	case errors.Is(err, runstore.ErrTooShort):
+		// Unreachable while the two minimums agree (the check above is the
+		// resolver's own): kept so that a resolver that ever widened its rule
+		// is still refused as the user error it is rather than as remote.
 		return "", "", userErr("%v", err)
 	case errors.Is(err, runstore.ErrNotFound):
 		return "", "", userErr("no run ending %q among the active runs and the last %d days; pass the full ID", ref, lsDefaultDays)
