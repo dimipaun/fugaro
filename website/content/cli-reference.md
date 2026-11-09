@@ -322,12 +322,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--ask` | bool | `false` | no | ask the confirmation this write would otherwise get; refused where nobody can answer it (a coding agent's session, a pipe), and beside --yes |
-| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
-| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for add |
-| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
-| `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--strategy` | string | "" | no | how the pool walks its members: failover (the default: try them in order) or round-robin (share the load). Left out, a pool that exists keeps the strategy it has |
 | `--yes` | bool | `false` | no | confirm the write without a prompt |
 
@@ -387,14 +382,8 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--ask` | bool | `false` | no | ask the confirmation this write would otherwise get; refused where nobody can answer it (a coding agent's session, a pipe), and beside --yes |
-| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
-| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for rm |
-| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
-| `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--strategy` | string | "" | no | how the pool walks its members: failover (the default: try them in order) or round-robin (share the load). Left out, a pool that exists keeps the strategy it has |
-| `--yes` | bool | `false` | no | confirm the write without a prompt |
+| `--yes` | bool | `false` | no | confirm the removal without a prompt |
 
 Subcommands:
 

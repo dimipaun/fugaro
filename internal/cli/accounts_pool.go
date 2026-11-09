@@ -41,28 +41,30 @@ func newAccountsPoolCmd() *cobra.Command {
 	return cmd
 }
 
-// accountsPoolOptions are the flags the pool writes take.
-type accountsPoolOptions struct {
-	cloud    cloudOptions
-	strategy string
-	yes      bool
-	// ask is the write path's --ask, exactly as accounts add's is: the flag is
-	// refused beside --yes and asks nothing where nobody could answer
-	// (managed_ask.go). It is here because these are the same writes' family
-	// and a person who learned the flag on one command must not lose it on the
-	// next.
-	ask bool
+// accountsPoolReadOptions are the flags `accounts pool ls` takes: the same
+// cloud selection `craft ls` takes, because it reads the very same config that
+// command reads. The writes below take none of them.
+type accountsPoolReadOptions struct {
+	cloud cloudOptions
 }
 
-func (o *accountsPoolOptions) addWriteFlags(cmd *cobra.Command) {
-	addCloudFlags(cmd, &o.cloud)
-	cmd.Flags().StringVar(&o.strategy, "strategy", "", "how the pool walks its members: failover (the default: try them in order) or round-robin (share the load). Left out, a pool that exists keeps the strategy it has")
-	cmd.Flags().BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
-	cmd.Flags().BoolVar(&o.ask, "ask", false, "ask the confirmation this write would otherwise get; refused where nobody can answer it (a coding agent's session, a pipe), and beside --yes")
+// accountsPoolWriteOptions are the flags the two pool writes take, registered
+// where each is used.
+//
+// Neither takes --config/--project, exactly as `models add` and `accounts rm`
+// take none: the file they edit is the selected project's own config, which
+// those commands resolve through settingsSelection and not through the cloud
+// flags a read carries. Nor does either take --ask: that flag puts back a
+// confirmation a managed project's gate would otherwise have stood in for
+// (accounts add registers it because it reads that gate), and neither of these
+// reads one.
+type accountsPoolWriteOptions struct {
+	strategy string
+	yes      bool
 }
 
 func newAccountsPoolLsCmd() *cobra.Command {
-	var o accountsPoolOptions
+	var o accountsPoolReadOptions
 	cmd := &cobra.Command{
 		Use:   "ls",
 		Short: "List the named pools and the members each one walks",
@@ -88,7 +90,7 @@ bucket, no database and no host.`,
 // reads (craftLsConfig): the pools are the installation's own answer, and the
 // selection rules — an explicit --project/--config, the environment, the
 // checkout's own project — are the same ones every other offline read resolves.
-func runAccountsPoolLs(cmd *cobra.Command, o accountsPoolOptions) error {
+func runAccountsPoolLs(cmd *cobra.Command, o accountsPoolReadOptions) error {
 	lc, err := craftLsConfig(cmd, o.cloud)
 	if err != nil {
 		return err
@@ -157,7 +159,7 @@ func accountsPoolServingText(paths []string) string {
 }
 
 func newAccountsPoolAddCmd() *cobra.Command {
-	var o accountsPoolOptions
+	var o accountsPoolWriteOptions
 	cmd := &cobra.Command{
 		Use:   "add NAME MEMBER...",
 		Short: "Declare a pool with these members, in this order",
@@ -184,17 +186,16 @@ spent and whose key they may carry, so a coding agent's session is refused,
 			return runAccountsPoolAdd(cmd, args[0], args[1:], o)
 		},
 	}
-	o.addWriteFlags(cmd)
+	f := cmd.Flags()
+	f.StringVar(&o.strategy, "strategy", "", "how the pool walks its members: failover (the default: try them in order) or round-robin (share the load). Left out, a pool that exists keeps the strategy it has")
+	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	return cmd
 }
 
 // runAccountsPoolAdd is the order every settings write here takes: everything
 // that can refuse does, and it refuses on the config this would write, before
 // the file is read for the write at all.
-func runAccountsPoolAdd(cmd *cobra.Command, name string, members []string, o accountsPoolOptions) error {
-	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
-		return err
-	}
+func runAccountsPoolAdd(cmd *cobra.Command, name string, members []string, o accountsPoolWriteOptions) error {
 	sel, lc, err := settingsSelection()
 	if err != nil {
 		return err
@@ -235,7 +236,6 @@ func runAccountsPoolAdd(cmd *cobra.Command, name string, members []string, o acc
 		Kind:    settingsDocLocal,
 		Command: command,
 		Yes:     o.yes,
-		Ask:     o.ask,
 	}); err != nil {
 		return err
 	}
@@ -273,7 +273,7 @@ func accountsPoolAddWhat(pool config.Pool, strategy string) string {
 }
 
 func newAccountsPoolRmCmd() *cobra.Command {
-	var o accountsPoolOptions
+	var o accountsPoolWriteOptions
 	cmd := &cobra.Command{
 		Use:   "rm NAME",
 		Short: "Remove a pool from this project's config",
@@ -289,14 +289,11 @@ spent, so a coding agent's session is refused, --yes included.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runAccountsPoolRm(cmd, args[0], o) },
 	}
-	o.addWriteFlags(cmd)
+	cmd.Flags().BoolVar(&o.yes, "yes", false, "confirm the removal without a prompt")
 	return cmd
 }
 
-func runAccountsPoolRm(cmd *cobra.Command, name string, o accountsPoolOptions) error {
-	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
-		return err
-	}
+func runAccountsPoolRm(cmd *cobra.Command, name string, o accountsPoolWriteOptions) error {
 	sel, lc, err := settingsSelection()
 	if err != nil {
 		return err
@@ -337,7 +334,6 @@ func runAccountsPoolRm(cmd *cobra.Command, name string, o accountsPoolOptions) e
 		Kind:    settingsDocLocal,
 		Command: command,
 		Yes:     o.yes,
-		Ask:     o.ask,
 	})
 }
 
