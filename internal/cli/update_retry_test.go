@@ -32,12 +32,8 @@ var retryAt = time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
 // hash of anything.
 var retryFingerprint = strings.Repeat("ab", 32)
 
-// retryRun is the run stem the records here were written by, and retryLocalID
-// the local name D1723 gives that run.
-const (
-	retryRun     = "update-20261109120000-4242"
-	retryLocalID = "local-" + retryRun
-)
+// retryRun is the run stem every record in this file was written by.
+const retryRun = "update-20261109120000-4242"
 
 // retryEnv is the world the offer's tests read: private XDG directories (so the
 // issue store is a temp dir nobody else's records live in), no coding agent's
