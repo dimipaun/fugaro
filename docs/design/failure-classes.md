@@ -393,7 +393,7 @@ within 90 days anyway.
 (`api.LoadRows`, `internal/cli/runs.go`), so the group table costs one read of the same rows and
 **adds no network path at all** — the owner's brief's constraint. `--group-by` takes exactly one
 value, `failure_class`, refused by the flag's own closed list the way `--state` refuses
-(`lsStates`, `runs.go:67`), so the flag cannot be asked for a grouping that does not exist.
+(`lsStates`, `runs.go:65`), so the flag cannot be asked for a grouping that does not exist.
 
 - The text listing prints one row per class — `class`, `runs`, `share` (of the window's runs) and
   `spend` beside it — by runs descending, ties by name, so two readers of one window print the same
@@ -401,7 +401,7 @@ value, `failure_class`, refused by the flag's own closed list the way `--state` 
   with one block added, so the totals it already carries are the window's, and a share written into
   them would be a second reading of the number the block already gives.
 - `--json` gains one block, `groups`, beside the `runs` array it already carries (`lsDoc`,
-  `runs.go:216`): per class, those four figures, in the vocabulary's own order
+  `runs.go:214`): per class, those four figures, in the vocabulary's own order
   (`failure.Classes()`, §3). The block is additive: a reader that does not know it loses the
   grouping, not the rows.
 - **These four keys are what FC6 settled, and this section's first sketch was wider.** The sketch
