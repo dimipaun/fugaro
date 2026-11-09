@@ -887,6 +887,23 @@ describe('the console with no installation to read', () => {
     expectWslPage(aNoInstallationState('no-fugaro-in-distro'), NO_FUGARO_IN_DISTRO_HEADLINE, NO_FUGARO_IN_DISTRO_REMEDY)
   })
 
+  it('points the no-distribution page at the window that lists them, and draws no control', () => {
+    // T-G3: the picker's window is where this machine's distributions are drawn
+    // (`fugaro:installations/distros`), and this is the page an operator reaches
+    // when the installation names one the machine does not have -- a rename, a
+    // removal, or a name the console may not hand to `wsl.exe`. The remedy names
+    // that window **in words**: §2.8's rule is that this screen draws no control
+    // and asks for no path, so what changes here is the sentence and not the
+    // page's capability. A button or a field appearing under it is the mutation
+    // this case is written against -- it is the file dialog the old binary picker
+    // offered, in the shape it would come back as.
+    expectWslPage(aNoInstallationState('no-distro'), NO_DISTRO_HEADLINE, NO_DISTRO_REMEDY)
+    expect(NO_DISTRO_REMEDY).toContain('installations window')
+    const tree = renderUnavailable(factory, aNoInstallationState('no-distro'), 'light')
+    const controls = walk(tree).filter((node) => node.tag === 'button' || node.tag === 'input' || node.tag === 'a')
+    expect(controls, 'the no-distribution page offers a control').toEqual([])
+  })
+
   it('offers the install line of the route it is on, and never the other route’s', () => {
     // F32, D9(a): there is one install line **per route**, and the constant that
     // used to be shown on every failure is the host route's. `brew install

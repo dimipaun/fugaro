@@ -1276,6 +1276,23 @@ main p {
   line-height: var(--leading-normal);
 }
 
+/* This machine's WSL distributions, under the CLI's warning lines (Part G,
+ * T-G3): a heading of its own, because it is the one part of this window that
+ * is not this console's record of an installation, and one line per
+ * distribution in the muted colour -- the names are `wsl.exe`'s, read here and
+ * not claimed here (design section 2.2). */
+#picker-distros h2 {
+  margin: 0 0 var(--space-sm);
+  font-size: var(--font-size-base);
+  font-weight: var(--weight-semibold);
+}
+
+#picker-distros li {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: var(--leading-normal);
+}
+
 /* The onboarding screen (owner's ruling of 2026-10-20): a heading, one
  * sentence, the one command and the one link button. It is a screen and not a
  * panel -- no surface, no border -- because it replaces the list rather than
@@ -1839,6 +1856,7 @@ p.graph-empty {
   li.run-log-line,
   div.unavailable-body,
   #picker-warnings li,
+  #picker-distros li,
   #picker-onboarding,
   #picker-list li {
     background: Canvas;
