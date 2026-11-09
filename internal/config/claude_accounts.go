@@ -107,6 +107,91 @@ const MaxClaudeAccountNameLen = 31
 // repository says its reviews are served by the project's own key.
 const AnthropicKeyAccount = AnthropicSecret + "--project"
 
+// ProviderKeySecret is the logical name of the project's provider key: the
+// credential of a model provider's endpoint — an OpenRouter key, and whatever
+// provider the credentials service's bundle describes — which the service
+// holds once for the project and serves a review caller with
+// (docs/api-key-review, AK6a and AK6b).
+//
+// It is a name the platform speaks and not one a job mounts: no ReservedSecrets
+// entry, no job variable and no project_secrets key (that block admits only
+// ReservedSecrets' names, ValidateProjectSecrets), for the reason
+// CredentialsBundleSecret is not one either — the value belongs to the
+// service's own document, whose only writer is `fugaro creds set` (C1.25). What
+// this name is needed for here is the reach question its axis value's policy
+// list is gated by (ProjectSecretReaches): a credential the service holds for
+// the whole project, with no list of repositories anywhere in the local config,
+// reaches every repository it is asked about, and the profiles that list
+// ProviderKeyAccount are the whole of its bound.
+//
+// It is deliberately not in ReservedSecrets. That map is the names the platform
+// MOUNTS into a job, and a provider key mounted into a job is a *different*
+// credential with a variable of its own (ProviderKeyEnv, from a provider entry
+// in the local config); this one never rides a job at all, because the class
+// that uses it reads it out of the service per call.
+const ProviderKeySecret = "provider-key"
+
+// ProviderKeyAccount is the account axis's value for the project's provider
+// key: the SECOND of the axis's values that is not a Claude account at all,
+// beside AnthropicKeyAccount, and the value a policy's accounts block is keyed
+// by, a profile's claude_accounts entry names and a launch places on a job
+// (docs/api-key-review, D1418 and the reconciliation of 2026-11-09 with
+// docs/cloud-senior-review §6.7's CSR17).
+//
+// It is a value of its own rather than a spelling of the sentinel, and that is
+// the point of it: the axis's value IS the admission unit (projectpolicy's
+// accounts block is keyed by it and the credentials service intersects a
+// repository's child admission with it), so one value for two credentials would
+// leave one repository admitted to a key its job is not the one for — and the
+// class's pairing fixes which credential serves a review call from the account
+// alone (credsvc's offeredToReview matches by name and tier, one credential and
+// no fallback).
+//
+// It is derived from the credential's own name (ProviderKeySecret) so the two
+// spellings cannot drift, and the doubled dash is deliberate, for the sentinel's
+// reason: it puts the value outside ClaudeAccountNameRE, so no installation can
+// spell it as a claude_accounts key, a repository's own agent.oauth_token, a
+// credential's name or a job.account, and no value an installation already
+// spells changes meaning. The axis gains a second value and renames none.
+//
+// It is valid where an account is REFERENCED (ValidClaudeAccountRef) and
+// refused where one is DEFINED (ValidateClaudeAccounts), exactly as the sentinel
+// is: the credential under it is not a Claude token and not a local config
+// entry, so a claude_accounts entry under it would be an account no bundle could
+// hold. A profile that lists it is deployable — internal/infra's ProjectJobs
+// builds the job whose account segment is this value, mounted with nothing at
+// all (projectAccountMount), and its review-only variant beside it — and that
+// variant is the job the class's calls are served from. The three doors AK5
+// opened for the sentinel open for it in the same shape and no wider: it is
+// admissible at the account flag `--token` (and by inheritance from a launch
+// that used one), refused in a repository's own fugaro.yaml
+// (config.Validate's agent.oauth_token rule) and refused as a stage account
+// (the account-choice keys, whose one sentence for the two values is
+// NonAccountChoiceMessage).
+//
+// Which repositories it may serve is decided where every other axis value's is
+// (projectpolicy's accounts block, D3), and its own source is the profiles that
+// name it: the key is held for the project rather than for a list of
+// repositories, so ProjectSecretReaches answers "every repository" for it and a
+// profile's allow_repos is where a repository says its reviews are served by the
+// project's provider key.
+const ProviderKeyAccount = ProviderKeySecret + "--project"
+
+// AxisNonAccountValue reports whether an account-axis value is one of the two
+// that is no Claude account at all: the project's own Anthropic API key
+// (AnthropicKeyAccount) or the project's provider key (ProviderKeyAccount).
+//
+// It is spelled once because the axis now holds two such values and every
+// reader of the axis answers both the same way — no token is mounted for
+// either (ProjectJobTokenAccount), neither is defined in claude_accounts
+// (ValidateClaudeAccounts) and neither is resolved against the account blocks
+// (ValidateProfileClaudeAccounts) — while a third value added here must be
+// judged by every one of those readers without anyone remembering to list it,
+// which is the failure this predicate exists to prevent.
+func AxisNonAccountValue(account string) bool {
+	return account == AnthropicKeyAccount || account == ProviderKeyAccount
+}
+
 // ClaudeOAuthTokenPrefix is ClaudeAccountSecret's prefix for every name but
 // the default: the whole claude-oauth-token-<name> namespace is reserved
 // for a named Claude account's derived secret ID and may never be a
