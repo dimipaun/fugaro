@@ -1773,13 +1773,6 @@ function logEntryOf(document: JSONObject): JSONObject | null {
 }
 
 /**
- * LiveStream is `LiveFeed` over a supervised child: the sidecar's frames become
- * snapshots, its notices accumulate onto the next snapshot (so a degraded mode's
- * sentence travels with the document a screen draws), and an end that is not a
- * stop is a refusal the screen can show. `deps.gate`, where a feed has one, is
- * the rule a frame must pass to become a snapshot at all (`GraphStreamGate`).
- */
-/**
  * LiveStreamDeps is what a feed is built from: the supervisor's own four
  * arguments, the first-frame budget `current()` uses, and the two facts the
  * graph's feed adds.
@@ -1803,6 +1796,13 @@ interface LiveStreamDeps {
   readonly gate?: GraphStreamGate | undefined
 }
 
+/**
+ * LiveStream is `LiveFeed` over a supervised child: the sidecar's frames become
+ * snapshots, its notices accumulate onto the next snapshot (so a degraded mode's
+ * sentence travels with the document a screen draws), and an end that is not a
+ * stop is a refusal the screen can show. `deps.gate`, where a feed has one, is
+ * the rule a frame must pass to become a snapshot at all (`GraphStreamGate`).
+ */
 class LiveStream implements LiveFeed {
   #latest: Snapshot | null = null
   #notices: Notice[] = []
