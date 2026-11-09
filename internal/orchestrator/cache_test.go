@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"sync"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
