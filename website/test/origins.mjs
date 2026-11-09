@@ -283,6 +283,14 @@ export function refuse(raw, context, facts) {
     if (new URL(url).origin === intake) return null
     return `${host} is not the key service's intake: a form on this site posts to this site or to ${intake}, the one service the site sends a request to (S3.3; the design's §7.2, D451)`
   }
+  // And the intake is a form host in every OTHER context too, `media` included — which is where
+  // an entry of `allowed_hosts` would otherwise admit it, since that list is the one the media
+  // rule reads. The list carries the host so `linkcheck.mjs` can resolve the forms' actions;
+  // admitting a form host as an image host is not what that entry is for, and `site.yaml` says
+  // so beside it (S3.3).
+  if (host === new URL(intakeOrigin(facts)).host) {
+    return `${host} is the key service's intake: the one address the site SENDS a key request to, admitted in form-action and in nothing else — a page loads nothing from the service (S3.3, D106)`
+  }
   if (context === 'embed') {
     // Nothing a build emits frames another host. The campaign page's inline booking widget is
     // the site's one third-party frame and the consent gate builds it at runtime, after a
@@ -994,7 +1002,7 @@ test('every way a page can fetch from another host is refused', () => {
     ['a form posting elsewhere', { body: '<form action="https://collect.example.net/"><label>e<input name="e"></label></form>' }, /collect\.example\.net/],
     ['a form posting to a host the site links to', { body: '<form action="https://github.com/"><label>e<input name="e"></label></form>' }, /is not the key service's intake/],
     ['a formaction posting elsewhere', { body: '<form action="/x"><label>e<input name="e"></label></form><button formaction="https://collect.example.net/">s</button>' }, /collect\.example\.net/],
-    ['a form fetching from the intake', { body: '<img src="https://keys.site.example/p.gif" alt="">' }, /keys\.site\.example is not on the allowed-host list/],
+    ["an image fetched from the site's own intake", { body: '<img src="https://keys.site.example/p.gif" alt="">' }, /keys\.site\.example is the key service's intake/],
     ['a <base>', { head: '<base href="https://cdn.example.net/">' }, /<base>/],
     ['a meta refresh', { head: '<meta http-equiv="refresh" content="0;url=https://elsewhere.example.net/">' }, /refresh/],
     ['an inline handler', { body: '<a href="/" onclick="track()">x</a>' }, /onclick/],

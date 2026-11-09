@@ -132,6 +132,12 @@ export function formFailures(main, intake) {
       )
       return
     }
+    if (url.search || url.hash) {
+      out.push(
+        `${where}'s action ${JSON.stringify(action)} carries a query or a fragment: the request is the route and nothing else, and a parameter the service does not read is one nobody sees (the intakes' routes are the site's half of its contract)`,
+      )
+      return
+    }
     const match = FORMS.find((one) => one.route === url.pathname)
     if (!match) {
       out.push(
@@ -168,7 +174,9 @@ export function formFailures(main, intake) {
 /**
  * Every way the page's fields depart from "the site asks for what it collects", or [].
  *
- * Each field sits inside one of the three forms, carries a `name` the intake reads, and has a
+ * Each field sits inside one of the three forms, carries a `name` (so the control reaches the
+ * intake as a field and not as nothing — which names the intake reads is S3.2's contract and
+ * not this page's), and has a
  * label of its own — resolved through `for`/`id` or by being wrapped in one — because a field a
  * screen-reader user cannot name is a field they cannot fill (WCAG 3.3.2; `a11y.mjs` holds the
  * same pair on every page, and this case reads the three forms together, so a field the three
@@ -227,8 +235,9 @@ const srcsetURLs = (value) => value.split(',').map((part) => part.trim().split(/
 /**
  * Every way the page loads something from another origin, or posts anywhere but the intake, or [].
  *
- * A relative URL is this site's. An absolute one is this site's when its host is the canonical
- * host, and the intake's when the element is a submit target (`form action`, `formaction`) —
+ * A URL with no scheme is this site's. An absolute one is this site's when it is http(s) on the
+ * canonical host — over https, so a plain-http address is refused rather than counted as this
+ * site's — and the intake's when the element is a submit target (`form action`, `formaction`) —
  * the page's one off-site address, and the reason the deployed policy's `form-action` carries
  * the intake's token (`origins.mjs` holds the policy to it; the widening is D451, option (a),
  * with the owner's approval). Anything else is a third party, which is what this case refuses.
@@ -240,7 +249,13 @@ export function fetchFailures(main, facts, intake) {
     if (value === undefined || value === '') return
     for (const raw of attr === 'srcset' ? srcsetURLs(value) : [value]) {
       const url = raw.trim().replace(/[\t\n\r]/g, '')
-      if (url.startsWith('#') || !/^(?:https?:)?\/\//i.test(url)) continue // this site's own file, or a fragment
+      if (url.startsWith('#')) continue // a fragment names this page
+      // A URL that names no scheme is this site's own file. The test is "carries a scheme",
+      // not "carries `//`": `//evil.example.net/x` is another host, and so is
+      // `http:evil.example.net/x` — a scheme-only URL in a scheme other than this page's is
+      // still an authority, where the same scheme (`https:evil.example.net/x` on an https
+      // page) is a path on this site, which is what the browser does with it too.
+      if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url) && !url.startsWith('//')) continue
       let parsed
       try {
         parsed = new URL(url, `https://${facts.canonicalHost}/`)
@@ -248,7 +263,9 @@ export function fetchFailures(main, facts, intake) {
         out.push(`the key request page's <${el.name} ${attr}=${JSON.stringify(raw)}> is not a URL`)
         continue
       }
-      if (parsed.host === facts.canonicalHost) continue
+      // This site's own file: https on the canonical host. A plain-http one is not, and
+      // `origins.mjs` refuses it too.
+      if (parsed.origin === `https://${facts.canonicalHost}`) continue
       const submits = (el.name === 'form' && attr === 'action') || (['button', 'input'].includes(el.name) && attr === 'formaction')
       if (submits && parsed.origin === intake) continue
       out.push(
@@ -268,10 +285,25 @@ export function fetchFailures(main, facts, intake) {
 
 // ---- 4. the privacy link ------------------------------------------------------------------
 
-/** Every way the page's pointer at the privacy statement departs from the task, or []. */
-export function privacyLinkFailures(main) {
+/**
+ * Every way the page's pointer at the privacy statement departs from the task, or [].
+ *
+ * The statement is `/privacy/` on this site, so the link may be written the way the rest of the
+ * site writes its own links — relative, or absolute on the canonical origin (W1.3 builds both)
+ * — and a fragment or a query that is not the statement's path is not it.
+ */
+export function privacyLinkFailures(main, facts) {
+  const base = `https://${facts.canonicalHost}/`
   const hrefs = [...walk(main)].filter((el) => el.name === 'a' && el.attrs.has('href')).map((el) => el.attrs.get('href'))
-  if (!hrefs.some((href) => /^\/privacy\/?$/.test(href))) {
+  const isStatement = (href) => {
+    try {
+      const url = new URL(href, base)
+      return url.origin === base.slice(0, -1) && /^\/privacy\/?$/.test(url.pathname)
+    } catch {
+      return false
+    }
+  }
+  if (!hrefs.some(isStatement)) {
     return [
       "the key request page carries no link to /privacy/: the intake collects an applicant's address and the repositories they name, and the statement that says what is collected, how long it is kept and who receives it is the one a reader filling a form has to be able to read first (the design's §7.3, S7.3)",
     ]
@@ -286,7 +318,7 @@ const INTAKE = keysIntakeOrigin(FACTS.canonicalURL)
 
 test('the key request page posts its three requests to the intake, and to nothing else', () => {
   const main = mainOf(keysPage().html)
-  for (const failures of [formFailures(main, INTAKE), fieldFailures(main), fetchFailures(main, FACTS, INTAKE), privacyLinkFailures(main)]) {
+  for (const failures of [formFailures(main, INTAKE), fieldFailures(main), fetchFailures(main, FACTS, INTAKE), privacyLinkFailures(main, FACTS)]) {
     assert.deepEqual(failures, [], failures.join('\n'))
   }
 })
@@ -313,6 +345,7 @@ test('a form posting anywhere but the intake, a wrong method, a wrong route and 
     ['a GET', THREE_FORMS.replace('method="post"', 'method="get"'), /submits with method="get"/],
     ['a relative action', THREE_FORMS.replace(`${INTAKE}/free-seat`, '/free-seat'), /is not an absolute URL/],
     ['a route the service does not answer', THREE_FORMS.replace(`${INTAKE}/open-source`, `${INTAKE}/purchase`), /not one of the requests this page carries/],
+    ['a route with a query on it', THREE_FORMS.replace(`${INTAKE}/request`, `${INTAKE}/request?utm=1`), /carries a query or a fragment/],
     ['a form outside the section that names its request', THREE_FORMS.replace('<section id="request">', '<section id="other">'), /sits in no section carrying id="request"/],
     ['a missing request', THREE_FORMS.replace(/<section id="request">.*?<\/section>/, ''), /carries no form posting to \/request/],
   ]
@@ -340,6 +373,8 @@ test('a third-party fetch, a post off the intake and a protocol-relative fetch a
 
   const cases = [
     ['an image from a third party', '<img src="https://pixel.example.net/p.gif" alt="">', /loads from pixel\.example\.net/],
+    ['a scheme-only image URL in another scheme, which a browser reads as another host', '<img src="http:pixel.example.net/p.gif" alt="">', /loads from pixel\.example\.net/],
+    ['an image this site serves over plain http', '<img src="http://site.example/a.png" alt="">', /loads from site\.example/],
     ['an image in srcset', '<img src="/a.png" srcset="/a.png 1x, https://img.example.net/a@2x.png 2x" alt="">', /loads from img\.example\.net/],
     ['a protocol-relative image', '<img src="//pixel.example.net/p.gif" alt="">', /loads from pixel\.example\.net/],
     ['a stylesheet from another host', '<link rel="stylesheet" href="https://cdn.example.net/x.css">', /loads from cdn\.example\.net/],
@@ -353,11 +388,22 @@ test('a third-party fetch, a post off the intake and a protocol-relative fetch a
 })
 
 test('a page with no pointer at the privacy statement is refused', () => {
-  assert.deepEqual(privacyLinkFailures(mainOf(shipped())), [], 'the shipped page carries the link this case refuses, so it proves nothing')
-  assert.match(privacyLinkFailures(mainOf(SHELL('<h1>t</h1>'))).join('\n'), /carries no link to \/privacy\//)
-  // A link to a page that is not the statement — the FAQ's own answer about privacy, say — is not it.
-  assert.match(
-    privacyLinkFailures(mainOf(SHELL('<a href="/faq/">privacy-ish</a>'))).join('\n'),
-    /carries no link to \/privacy\//,
+  assert.deepEqual(privacyLinkFailures(mainOf(shipped()), FACTS), [], 'the shipped page carries the link this case refuses, so it proves nothing')
+  // The other way the site writes a link to one of its own pages: absolute on the canonical
+  // origin, which is what W1.3 builds. Either form is a link to the statement.
+  assert.deepEqual(
+    privacyLinkFailures(mainOf(SHELL('<a href="https://fugaro.dev/privacy/">privacy statement</a>')), FACTS),
+    [],
+    'an absolute link to the statement is refused, so this case demands one spelling of it rather than the page',
   )
+  assert.match(privacyLinkFailures(mainOf(SHELL('<h1>t</h1>')), FACTS).join('\n'), /carries no link to \/privacy\//)
+  // A link to a page that is not the statement — the FAQ's own answer about privacy, say — is
+  // not it, and neither is another host's `/privacy/`.
+  for (const href of ['/faq/', 'https://elsewhere.example/privacy/']) {
+    assert.match(
+      privacyLinkFailures(mainOf(SHELL(`<a href="${href}">privacy-ish</a>`)), FACTS).join('\n'),
+      /carries no link to \/privacy\//,
+      `${href} was taken for the statement`,
+    )
+  }
 })

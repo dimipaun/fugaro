@@ -2368,10 +2368,12 @@ test('the claims the privacy page makes about the site are held to the artifact'
     // The key request page carries the three forms the statement's sentence does not account
     // for, and the sentence and the section that restates it for key sign-up are S7.3's copy
     // (the design's §7.3, which the owner and counsel write) — the page is in the repository
-    // and is not published before S7.4. So the exemption is written down here, where the claim
-    // is read, rather than left to the walk to miss; what holds the page meanwhile is its own
-    // gate, `website/test/keys.mjs`, which reads the three forms, every field inside them, and
-    // the intake they post to.
+    // and is not published before S7.4. This case's subject is the controls a page carries, so
+    // the exemption is this page's controls and no wider, and it is written down here rather
+    // than left to the walk to miss: what holds them meanwhile is the page's own gate,
+    // `website/test/keys.mjs`, which reads the three forms, every field inside them, and the
+    // intake they post to. When S7.3 writes the section, this exemption goes and the sentence
+    // holds the page like any other.
     if (page.rel === KEYS_PAGE) continue
     for (const el of walk(parse(page.html))) {
       // The one field the site carries: the homepage hero's live card, where a reader types a
