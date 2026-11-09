@@ -271,6 +271,36 @@ func policyConfigPath(lc *localcfg.Config) string {
 	return ""
 }
 
+// policyContextRefusal refuses the node about to be published when it carries a
+// catalog entry whose source names a build context, while no released runner
+// reads that member (imageContextShipped). The member is not optional the way
+// the catalog key itself is: an older runner decodes the node strictly and
+// refuses the whole image_catalog block an unknown member sits in
+// (projectpolicy's catalogSourceMembers), so the node would fail every run of
+// the project rather than the one job the entry builds — the failure D1403
+// keeps out of a published node.
+//
+// The node is judged and not the local config, because the node is what the
+// older runner reads: a config silent about the catalog keeps the published
+// one, so the member can reach these bytes from either side. Both doors build
+// the node through policyNodeForPublish, which is why the check is here.
+//
+// shipped is passed rather than read so a test can ask both halves of the
+// gate, the way the skew gates' callers do.
+func policyContextRefusal(p *projectpolicy.Policy, shipped bool) error {
+	if shipped || p == nil || p.ImageCatalog == nil {
+		return nil
+	}
+	for _, e := range p.ImageCatalog.Entries {
+		if e.Source.Context == "" {
+			continue
+		}
+		return userErr("the image catalog's entry %s names a build context, and no fugaro release reads that key yet: the policy node is decoded strictly by every runner, so a published node carrying it is refused whole and every run of the project fails until someone removes it. Leave context: off the entry until the release that reads it ships, then fugaro update publishes it",
+			e.Name)
+	}
+	return nil
+}
+
 // policyNodeForPublish is the one build both doors take: the node the operator's
 // config states, on top of the node it replaces, with the allow-list seeded or
 // kept as the writer's rule has it. `fugaro project policy publish` and the
@@ -283,6 +313,9 @@ func policyNodeForPublish(ctx context.Context, lc *localcfg.Config, old *project
 	}
 	pol, keepRouting, err := buildProjectPolicy(lc, allow, old, removeRouting)
 	if err != nil {
+		return nil, nil, nil, err
+	}
+	if err := policyContextRefusal(pol, imageContextShipped); err != nil {
 		return nil, nil, nil, err
 	}
 	body, err := policyNodeBytes(pol, base, exists, keepRouting)

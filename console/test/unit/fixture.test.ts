@@ -615,6 +615,27 @@ describe('the committed synthetic fixture', () => {
       // beside it, with the other `.json` ones.
       'settings.json',
       'settings.json.license',
+      // `watch-parity.json` and `shortid_cases.json` are the short-run-ids
+      // plan's SR10, and they are the fourth and fifth *invented* documents
+      // rather than recordings: the first is one frame of `watch --json` beside
+      // the plain text frame the same view draws, both recorded by the Go test
+      // `internal/watch/console_parity_test.go` from watch's own renderers over
+      // one fixed view (D1704's "when watch changes, the live tab follows", made
+      // a test rather than a promise); the second is the console's copy of the
+      // short-ID case table SR1 wrote (`internal/task/testdata/shortid_cases.json`),
+      // held to it byte for byte by the same Go test so the two languages cannot
+      // answer a case differently. Both are JSON and not `.ndjson`, so the sweep
+      // above never reads them, and each is run over the console's own code by
+      // a suite of its own: `test/unit/live-parity.test.ts` replays the frame
+      // through the live tab's decoder and model, and `test/unit/shortid.test.ts`
+      // answers every `short[]` and `display[]` case of the table with
+      // `shared/shortid.ts` -- a table held equal and never run would prove only
+      // that the two files match. Their `.license` siblings are listed beside
+      // them, with the other `.json` ones.
+      'watch-parity.json',
+      'watch-parity.json.license',
+      'shortid_cases.json',
+      'shortid_cases.json.license',
       ...FIXTURE_CASES.map((name) => `${name}.ndjson`),
     ])
     const present = readdirSync(FIXTURE_DIRECTORY)

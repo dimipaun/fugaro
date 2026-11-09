@@ -1170,6 +1170,45 @@ func TestImageCatalogDecodeRefusesFoldedMemberNames(t *testing.T) {
 	}
 }
 
+// TestPolicyAcceptsAContextInTheNode: a dockerfile source's context is a member
+// of the node's own spelling, so the member allowlist carries it and the
+// decoder reads it into the catalog the run is given. A member the allowlist
+// did not list would be one encoding/json folds onto a documented name and this
+// reader would take whatever the node wrote, which is what the refusal beside
+// this test is about.
+func TestPolicyAcceptsAContextInTheNode(t *testing.T) {
+	raw := []byte(`{"version": 4, "image_catalog": {"entries": [
+		{"name": "rust", "tags": ["cargo"], "source": {"kind": "dockerfile", "repo": "acme/app", "path": "ci/Dockerfile", "context": "."}}
+	]}}`)
+	p, found, err := Decode(raw)
+	if err != nil || !found {
+		t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
+	}
+	if p.ImageCatalog == nil || len(p.ImageCatalog.Entries) != 1 {
+		t.Fatalf("ImageCatalog = %+v, want the node's one entry", p.ImageCatalog)
+	}
+	if got := p.ImageCatalog.Entries[0].Source.Context; got != "." {
+		t.Errorf("source.context = %q, want the repository root the node names", got)
+	}
+}
+
+// TestPolicyRefusesAnUnknownSourceMember: the source's members are the
+// documented spelling and nothing else, so a member the allowlist does not list
+// is refused rather than folded onto one it does — encoding/json matches a
+// member name case-insensitively, so a node spelling `Context` would otherwise
+// decide a build's context from a key this Fugaro never documents.
+func TestPolicyRefusesAnUnknownSourceMember(t *testing.T) {
+	for _, body := range []string{
+		`{"entries": [{"name": "a", "source": {"kind": "dockerfile", "repo": "acme/app", "path": "ci/Dockerfile", "Context": "."}}]}`,
+		`{"entries": [{"name": "a", "source": {"kind": "dockerfile", "repo": "acme/app", "path": "ci/Dockerfile", "contexts": "."}}]}`,
+	} {
+		raw := []byte(`{"version": 4, "image_catalog": ` + body + `}`)
+		if _, _, err := Decode(raw); err == nil {
+			t.Errorf("Decode(%s) was accepted: a source member outside the documented spelling is one this reader would fold onto a member it knows", body)
+		}
+	}
+}
+
 // TestImageCatalogIsUnknownToAReaderThatPredatesIt is D1156's skew as a test
 // rather than a sentence, and it is the verifier list's test in shape: this
 // binary reads a node that carries image_catalog and lists no unknown key,

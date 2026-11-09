@@ -45,6 +45,12 @@ func markdownCore(d Digest) []byte {
 			d.Dropped, MaxBytes)
 	}
 
+	if len(d.Failures) > 0 {
+		b.WriteString("## Failures\n\n")
+		b.WriteString("Why the period's runs did not succeed, over every run of the period, not only the rows above.\n\n")
+		b.WriteString(FailuresTable(d.Failures))
+	}
+
 	if len(d.Stages) > 0 {
 		b.WriteString("## Stages\n\n")
 		b.WriteString("Model calls and sub-agents by stage, over every run of the period.\n\n")
@@ -84,6 +90,21 @@ func RunsTable(runs []Run) string {
 	return b.String()
 }
 
+// FailuresTable is the report's failure table: one row per class, the class
+// itself and its figures. Every cell is a figure or a value of the closed
+// vocabulary, and the run ID is the example the digest picked out of its own
+// records, so a row can hold no word a record chose (G1).
+func FailuresTable(failures []ClassCount) string {
+	var b strings.Builder
+	b.WriteString("| class | runs | billed | example |\n")
+	b.WriteString("| --- | --- | --- | --- |\n")
+	for _, f := range failures {
+		fmt.Fprintf(&b, "| `%s` | %d | %s | `%s` |\n", f.Class, f.Runs, USD(f.Billed), f.Example)
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
 // Summary is d's machine-readable block: the same figures the tables show,
 // for a later report's pattern rules. A dollar figure is a string of exact
 // micro-dollars, never a float, so two readers of one file agree to the
@@ -106,6 +127,16 @@ type Summary struct {
 	// other period writes it.
 	Months int            `json:"months,omitempty"`
 	Flags  map[string]int `json:"flags,omitempty"`
+	// Failures is how many of the period's runs each class holds, by the
+	// class's own name (design §6.2): the two failure-class rules read counts,
+	// and money per class stays out of a block whose discipline is flat maps
+	// and exact strings.
+	//
+	// A block written before the field shipped carries no key at all, which is
+	// not the same fact as a period of no failures: the two rules read the
+	// key's presence, so a period whose runs all succeeded carries none either
+	// (G5).
+	Failures map[string]int `json:"failures,omitempty"`
 	// Recipes is each recipe's median cost over the period's runs, by the
 	// name the report writes: a catalog recipe's own, "other" for the runs no
 	// catalog recipe names. The pattern rules read it month over month, and a
@@ -126,6 +157,12 @@ func (d Digest) Summary() Summary {
 			s.Flags = map[string]int{}
 		}
 		s.Flags[f.Name] = f.Count
+	}
+	for _, f := range d.Failures {
+		if s.Failures == nil {
+			s.Failures = map[string]int{}
+		}
+		s.Failures[string(f.Class)] = f.Runs
 	}
 	for name, med := range d.Recipes {
 		if s.Recipes == nil {
