@@ -46,7 +46,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { SPAWN_COMMANDS, SPAWN_FLAGS, argvFor } from '../../src/main/spawn'
-import { CliSource, MAX_LIVE_FEEDS, createBoundSource } from '../../src/source/cli'
+import { CliSource, GRAPH_READ_MIN_INTERVAL_MS, MAX_LIVE_FEEDS, createBoundSource } from '../../src/source/cli'
 import { handlersFor } from '../../src/source/source'
 import type { LiveFeed, Snapshot } from '../../src/source/source'
 import { GRAPH_DOCUMENT_VERSION } from '../../src/shared/schema'
@@ -308,6 +308,57 @@ describe('the graph feed’s lifetime', () => {
     await waitFor(() => graphSpawns(stub) === 2)
     await source.close()
     await waitFor(() => stub.kills().length === 2)
+  })
+
+  it('answers a dead child’s refusal again instead of spawning one child per poll', async () => {
+    // A `graph --watch` child that exits at once -- a scope its own CLI refuses,
+    // no database, no bucket -- leaves a refusal and not a stream, and the poll
+    // is what starts the child: the Graph tab polls once a second, so a feed with
+    // no floor opens the project's cloud again on every tick to be refused again.
+    // `graph.read`, which is the read that answers this screen while the feed is
+    // gone, holds the same project to `GRAPH_READ_MIN_INTERVAL_MS`; the feed that
+    // died holds it too, per scope, and answers the refusal the child left.
+    const now = { at: new Date('2026-11-09T10:00:00Z') }
+    const stub = installStub(freshDirectory(), {
+      commands: {
+        version: { stdout: '1.4.2\n' },
+        'graph --watch': { code: 1, stderr: 'fugaro: no database for this project\n' },
+      },
+    })
+    const source = createBoundSource({
+      installation: () => ({ id: 'a1', project: PROJECT, binaryPath: stub.binary }),
+      clock: () => now.at,
+      create: async () =>
+        CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} }),
+    })
+    const handlers = handlersFor(source, { openExternal: async () => {} })
+    // One poll, as the main process asks it: the refusal is answered rather than
+    // thrown at this file, which is what the renderer's `pollGraph` sees.
+    const poll = async (): Promise<string> => {
+      try {
+        await handlers['graph.watch']?.({ source: 'all' })
+        return 'answered'
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error)
+      }
+    }
+
+    const died = await poll()
+    await waitFor(() => graphSpawns(stub) === 1)
+    expect(died, 'the sentence the child died with did not reach the caller').toContain('no database')
+    for (let tick = 0; tick < 4; tick += 1) {
+      now.at = new Date(now.at.getTime() + 1_000)
+      expect(await poll(), 'a poll inside the floor answered something else').toBe(died)
+    }
+    expect(graphSpawns(stub), 'a poll inside the floor spawned a child of its own').toBe(1)
+
+    // Past the floor the project is asked again -- the console does not believe a
+    // minute-old refusal forever -- and the child it starts is the second one.
+    now.at = new Date(now.at.getTime() + GRAPH_READ_MIN_INTERVAL_MS)
+    expect(await poll()).toContain('no database')
+    await waitFor(() => graphSpawns(stub) === 2)
+    expect(graphSpawns(stub)).toBe(2)
+    await source.close()
   })
 
   it('counts toward MAX_LIVE_FEEDS with the live feeds, and evicts the oldest', async () => {

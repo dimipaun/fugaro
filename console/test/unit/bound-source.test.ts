@@ -288,6 +288,12 @@ describe('the source bound to the active installation', () => {
               ? Promise.reject(new SourceRefusal('watch failed: the feed ended'))
               : Promise.resolve({ document: { child: stream.n }, receivedAt: '2026-10-15T12:00:00Z' }),
           stop: async () => undefined,
+          // A feed says it has ended through `onEnded` and not through a
+          // rejection -- a `current()` can be refused for a document that did not
+          // arrive in time while the child is alive -- and the bound source
+          // listens for it. This feed never ends on its own; the case sets
+          // `ended` itself, and the `watch` feed holds no floor either way.
+          onEnded: () => () => undefined,
         }
       },
     } as unknown as CliSource

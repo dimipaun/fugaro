@@ -146,6 +146,11 @@ export const PLAN_STATUS_MIN_INTERVAL_MS = 60_000
  * clock of that read and never re-stamped, exactly as `PLAN_STATUS_MIN_INTERVAL_MS`
  * above; the scope is part of the key, because one scope's document is not
  * another's.
+ *
+ * The feed this command's `--watch` form is (`subscribeGraph`) holds the same
+ * floor **for a feed that has ended**: a child that exits at once leaves a
+ * refusal and no stream, and the poll that finds it gone is answered with that
+ * refusal rather than with another child a second (`lazyFeed`).
  */
 export const GRAPH_READ_MIN_INTERVAL_MS = 60_000
 
@@ -1200,14 +1205,40 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
    * same stream while it is live and drop one that has *ended*, so the poll after
    * a child exited (or was evicted past `MAX_LIVE_FEEDS`) starts a fresh child; a
    * stream held here would be polled dead forever.
+   *
+   * **`endedFloorMs` holds that re-subscription to a cadence, for a feed that has
+   * ended.** A child that exits at once -- a scope its own CLI refuses, no
+   * database, no bucket -- leaves a refusal and no stream at all, and the poll
+   * that finds it gone would otherwise start another child on every tick and open
+   * the project's cloud again to be refused again. The answer the feed gave is
+   * kept with the console clock of the moment it ended, and a call inside the
+   * floor is answered with it. `null` is the live feed's rule: the `watch` child
+   * is wanted on every poll, and a feed that has gone is a feed the screen is
+   * owed back.
    */
-  const lazyFeed = (subscribe: (source: CliSource) => LiveFeed): LiveFeed => {
+  const lazyFeed = (subscribe: (source: CliSource) => LiveFeed, endedFloorMs: number | null): LiveFeed => {
     let real: LiveFeed | null = null
     let attaching: Promise<LiveFeed> | null = null
+    /** the answer the feed in hand gave, and when it ended -- `null` while it
+     * lives, which is what makes the floor below about a feed that is *gone*. */
+    let answering: Promise<Snapshot> | null = null
+    let endedAt: number | null = null
+    /** endedAnswer is the answer a feed that has ended left, for as long as the
+     * floor holds it: `null` means this call is due a child. */
+    const endedAnswer = (): Promise<Snapshot> | null => {
+      if (endedFloorMs === null || endedAt === null || answering === null) return null
+      return nowMs() - endedAt < endedFloorMs ? answering : null
+    }
     const attach = (): Promise<LiveFeed> => {
       attaching = resolve().then((source) => {
-        real = subscribe(source)
-        return real
+        const feed = subscribe(source)
+        real = feed
+        answering = null
+        endedAt = null
+        feed.onEnded(() => {
+          endedAt = nowMs()
+        })
+        return feed
       })
       return attaching
     }
@@ -1231,7 +1262,13 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
       onChange: (listener) => defer((feed) => feed.onChange(listener)),
       onNotice: (listener) => defer((feed) => feed.onNotice(listener)),
       onEnded: (listener) => defer((feed) => feed.onEnded(listener)),
-      current: async (): Promise<Snapshot> => (await attach()).current(),
+      current: async (): Promise<Snapshot> => {
+        const held = endedAnswer()
+        if (held !== null) return held
+        const feed = await attach()
+        answering = feed.current()
+        return answering
+      },
       stop: async (): Promise<void> => {
         if (real !== null) {
           await real.stop()
@@ -1297,7 +1334,7 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
       const key = feedKey('live.watch', installation.id, args)
       const existing = feeds.get(key)
       if (existing !== undefined) return existing.feed
-      const feed = lazyFeed((source) => source.subscribeLive(args))
+      const feed = lazyFeed((source) => source.subscribeLive(args), null)
       feeds.set(key, { binding: bindingKey(installation), feed })
       return feed
     },
@@ -1314,9 +1351,17 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      *     `all` -- the selector, not a member -- is admitted without being
      *     listed. What the CLI itself rejects inside an admitted scope is its own
      *     refusal, with its own sentence, on the frame or on the child's exit.
-     *   - **no cadence.** A floor exists to keep a *read* from spawning once per
-     *     poll; a live feed is one child for as long as it is wanted, and the
-     *     thing that bounds it is `MAX_LIVE_FEEDS` on the source below.
+     *   - **no cadence while the child lives, and `graph.read`'s floor once it has
+     *     died.** A floor exists to keep a *read* from spawning once per poll, and
+     *     a live feed is one child for as long as it is wanted -- the thing that
+     *     bounds it is `MAX_LIVE_FEEDS` on the source below. But a child that
+     *     exits at once (a scope its own CLI refuses, no database, no bucket) is
+     *     not a stream that can be polled: the poll starts the next child, so
+     *     without a floor the Graph tab would open the project's cloud once a
+     *     second to be refused again, where `graph.read` beside it asks once a
+     *     minute. So a feed that has **ended** holds the answer it left for
+     *     `GRAPH_READ_MIN_INTERVAL_MS`, per scope (`lazyFeed`'s `endedFloorMs`),
+     *     and the tab is answered with the refusal it already has.
      *   - **no checkout is required**, exactly as `graphRead` requires none: the
      *     stream reads the project's stored view through the caller's own
      *     credential, from wherever the child runs.
@@ -1341,7 +1386,7 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
       const key = feedKey('graph.watch', installation.id, args)
       const existing = feeds.get(key)
       if (existing !== undefined) return existing.feed
-      const feed = lazyFeed((source) => source.subscribeGraph(args))
+      const feed = lazyFeed((source) => source.subscribeGraph(args), GRAPH_READ_MIN_INTERVAL_MS)
       feeds.set(key, { binding: bindingKey(installation), feed })
       return feed
     },
