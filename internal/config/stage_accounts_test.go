@@ -211,3 +211,81 @@ func TestCheckMixBudgetIsTheModeClause(t *testing.T) {
 		})
 	}
 }
+
+// TestPoolServingPathsPlacesEveryMemberOnItsOwnPath pins D1634's reading: an
+// OAuth or Anthropic-key member is served by the credentials service, an
+// OpenRouter or Vertex member by the run's own gateway, a pool of one kind is a
+// list one path can walk, and a pool of two kinds is one that can only fail
+// over at a stage boundary (F7). The built-in vertex is placed without being
+// defined, which is what makes it usable as a pool's last member (D1624).
+func TestPoolServingPathsPlacesEveryMemberOnItsOwnPath(t *testing.T) {
+	creds := []Credential{
+		{Name: "acme-oauth", Type: CredentialTypeClaudeOAuth},
+		{Name: "acme-key", Type: CredentialTypeAnthropic},
+		{Name: "acme-router", Type: CredentialTypeOpenRouter},
+	}
+	for _, tc := range []struct {
+		name   string
+		member []string
+		paths  []string
+	}{
+		{"the service's own two types", []string{"acme-oauth", "acme-key"}, []string{CredentialPathCredsvc}},
+		{"a gateway member alone", []string{"acme-router"}, []string{CredentialPathRunner}},
+		{"the built-in vertex", []string{"vertex"}, []string{CredentialPathRunner}},
+		{"one of each", []string{"acme-oauth", "acme-router"}, []string{CredentialPathCredsvc, CredentialPathRunner}},
+		{"a repeat is one path", []string{"acme-oauth", "acme-oauth", "acme-key"}, []string{CredentialPathCredsvc}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			paths, unplaced := PoolServingPaths(Pool{Name: "p", Members: tc.member}, creds)
+			if len(unplaced) != 0 {
+				t.Fatalf("members %v were not placed: %v", tc.member, unplaced)
+			}
+			if len(paths) != len(tc.paths) {
+				t.Fatalf("paths = %v, want %v", paths, tc.paths)
+			}
+			for i, want := range tc.paths {
+				if paths[i] != want {
+					t.Fatalf("paths = %v, want %v", paths, tc.paths)
+				}
+			}
+		})
+	}
+}
+
+// TestCredentialServingPathPlacesOnlyTheTypesThatShip pins the other half: a
+// type neither path serves is "" rather than a guess, so a caller that places
+// credentials refuses it instead of sending it somewhere it could not be
+// served.
+func TestCredentialServingPathPlacesOnlyTheTypesThatShip(t *testing.T) {
+	for _, tc := range []struct{ typ, want string }{
+		{CredentialTypeClaudeOAuth, CredentialPathCredsvc},
+		{CredentialTypeAnthropic, CredentialPathCredsvc},
+		{CredentialTypeOpenRouter, CredentialPathRunner},
+		{CredentialTypeVertex, CredentialPathRunner},
+		{CredentialTypeOpenAI, ""},
+		{CredentialTypeCodexOAuth, ""},
+		{"", ""},
+		{"someone's-own", ""},
+	} {
+		if got := CredentialServingPath(tc.typ); got != tc.want {
+			t.Errorf("CredentialServingPath(%q) = %q, want %q", tc.typ, got, tc.want)
+		}
+	}
+}
+
+// TestPoolServingPathsNamesTheMemberNothingServes pins the third answer: a
+// member whose credential type no path serves is reported by name, because the
+// sentence a caller prints has to say WHICH member it could not place.
+func TestPoolServingPathsNamesTheMemberNothingServes(t *testing.T) {
+	creds := []Credential{
+		{Name: "acme-oauth", Type: CredentialTypeClaudeOAuth},
+		{Name: "acme-future", Type: CredentialTypeOpenAI},
+	}
+	paths, unplaced := PoolServingPaths(Pool{Name: "p", Members: []string{"acme-oauth", "acme-future"}}, creds)
+	if len(paths) != 1 || paths[0] != CredentialPathCredsvc {
+		t.Fatalf("paths = %v, want the one member it could place", paths)
+	}
+	if len(unplaced) != 1 || unplaced[0] != "acme-future" {
+		t.Fatalf("unplaced = %v, want [acme-future]", unplaced)
+	}
+}

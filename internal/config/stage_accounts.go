@@ -237,3 +237,74 @@ func stageAccountUnderOtherAuth(auth string, stages map[string]string, path stri
 	}
 	return ps
 }
+
+// The two paths a credential can be served by (F7, D1634), and the vocabulary
+// the whole plan speaks with: a pool's members are not a candidate list of one
+// selection, they are credentials each served by the half of a run that can
+// reach it. The credentials service holds the Claude OAuth and Anthropic-key
+// members and selects among them by tier; a run's own gateway sends the
+// OpenRouter and Vertex members, whose key or platform credential the job
+// holds. It lives here, beside the mix rules, because the readers that have to
+// place a credential — a pool's own read, the run's launch, the credentials
+// service's own candidate list — must not answer it differently.
+const (
+	// CredentialPathCredsvc is the credentials service: OAuth before API key,
+	// tier order, one credential sticky per run (D154, D1634).
+	CredentialPathCredsvc = "credsvc"
+	// CredentialPathRunner is the run's own gateway, which is where a member
+	// whose credential the job holds is sent: failover at a stage boundary,
+	// never by retrying a call (F20, D1634, D1635).
+	CredentialPathRunner = "runner"
+)
+
+// CredentialServingPath is the path that serves a credential of this type:
+// CredentialPathCredsvc, CredentialPathRunner, or "" for a type neither path
+// serves. Every type this release ships has one (ValidateCredentials refuses
+// the two that do not), and a type nothing places is "" rather than a guess:
+// the readers above place what they can and refuse the rest.
+func CredentialServingPath(typ string) string {
+	switch typ {
+	case CredentialTypeClaudeOAuth, CredentialTypeAnthropic:
+		return CredentialPathCredsvc
+	case CredentialTypeOpenRouter, CredentialTypeVertex:
+		return CredentialPathRunner
+	}
+	return ""
+}
+
+// PoolServingPaths are the distinct paths the pool's members are served by, in
+// CredentialPathCredsvc and CredentialPathRunner order. creds is the
+// credentials block of the document the pool is written in; a member it does
+// not define is the built-in vertex, which no installation defines (D1624).
+//
+// One path is a pool both halves of a run can walk as a list: the credentials
+// service's tier order, or the gateway's ordered members. Two of them are a
+// pool that can only fail over where the credential is chosen again — at a
+// stage boundary — because neither path can reach the other's members (F7,
+// D1634). A member of a type nothing serves contributes no path and is
+// reported by name, so a caller that must say which member it could not place
+// has the name to say it with.
+func PoolServingPaths(p Pool, creds []Credential) (paths, unplaced []string) {
+	types := map[string]string{}
+	for _, c := range creds {
+		types[c.Name] = c.Type
+	}
+	seen := map[string]bool{}
+	for _, m := range p.Members {
+		typ, ok := types[m]
+		if !ok {
+			typ = CredentialTypeVertex
+		}
+		switch path := CredentialServingPath(typ); {
+		case path == "":
+			if !slices.Contains(unplaced, m) {
+				unplaced = append(unplaced, m)
+			}
+		case !seen[path]:
+			seen[path] = true
+			paths = append(paths, path)
+		}
+	}
+	slices.Sort(paths)
+	return paths, unplaced
+}
