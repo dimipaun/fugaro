@@ -158,9 +158,9 @@ could touch).
 | `internal/credsvc/server_test.go` | — | AK9 (the same) |
 | `internal/cli/validate.go` | — | AK9 (the note `fugaro validate` prints) |
 | `internal/cli/validate_test.go` | — | AK9 (the same) |
-| `internal/cli/credentials_serve.go` | — | AK9 (the two comments that say it) |
+| `internal/cli/credentials_serve.go` | — | AK9 (the three comments that say it) |
 | `internal/cli/credentials_serve_test.go` | — | AK9 (the same) |
-| `internal/infra/tfvars.go` | — | AK9 (the comment for `FUGARO_REVIEW_JOB_ACCOUNTS`) |
+| `internal/infra/tfvars.go` | — | AK9 (the comments for `CredentialsReviewJob` and `FUGARO_REVIEW_JOB_ACCOUNTS`) |
 | `deploy/terraform/gcp/modules/installation/variables.tf` | — | AK9 (the same, in the module's prose) |
 | `deploy/terraform/gcp/modules/installation/credentials.tf` | — | AK9 (the same, in the module's other file) |
 | `internal/cli/creds.go` | — | AK10 (the credential write's guard) |
@@ -607,8 +607,8 @@ all in the Anthropic-key slice", which leaves the provider endpoint to this half
 **And its release depends on AK10, which lands in the same release, after this half's own commit**
 (§6 item 11, condition 8 of the review): the provider entry is the first bundle key a deployed service
 can be too old to read, so **the release that first ships the entry carries the guard against the
-write** — `fugaro creds set` refuses a bundle whose newest key the installation's recorded service
-image predates — and **no release ships one without the other**. AK10 is **written and not approved**,
+write** — `fugaro creds set` refuses a bundle whose newest key the release of the service that **serves**
+the document predates — and **no release ships one without the other**. AK10 is **written and not approved**,
 so **this half cannot be released until the owner approves it**. **The other half of §6.7's CSR17**,
 and the half whose six-file list this plan already had: it is
 that list — `bundle.go` and its test, `cascade.go`, `forward.go` and its test and the bundle schema —
@@ -848,15 +848,28 @@ that reads it predates, naming `fugaro update` as the one command that fixes it.
 **What the guard judges, and it is not the pin alone.** Two records name a release, and the guard
 reads both:
 
-- **the deployed service's own image** — Cloud Run's `services.get` on
+- **the image of the revision that serves** — Cloud Run's `services.get` on
   `projects/<project>/locations/<region>/services/<infra.CredentialsServiceName>`, through `run/v2`,
-  taking the container image the service's template carries (the reference is the pinned
-  `:X.Y.Z@sha256:` form, so the release reads out of it with the same `CredentialsServiceImageRelease`
-  the pin's does). This is
-  the state that **serves** the document, and its `NotFound` is the one answer that needs no judging.
-  **The read is this task's own — nothing in the tree makes it** — and what `doctor` supplies is the
-  precedent for making it: its credentials-service check builds the same client and the same resource
-  name for the installation's service and names the same `NotFound` as "Cloud Run has no service …"
+  to learn **which** revision serves, and then that revision's own container image through
+  `services.revisions.get`. Which revision it is comes from the service's own answer and not from a
+  guess: an allocation to the latest revision — what the module writes, `credentials.tf`'s `traffic`
+  block, `TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST` — serves the `latestReadyRevision` the service
+  reports, and an entry naming a revision by name (`TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION`) serves
+  that one. **The template's image is deliberately not the answer**: the template is the *next*
+  revision, and Cloud Run keeps serving the previous healthy one when a new revision fails to become
+  ready or an operator pins traffic to it by hand, so a guard reading the template would call a
+  service new whose serving revision is old. The **oldest release among the revisions that serve**
+  decides, so no revision that serves and cannot read the document can slip past. The reference is the
+  pinned `:X.Y.Z@sha256:` form the module writes, so the release reads out of it with the same
+  `CredentialsServiceImageRelease` the pin's does — and **how Cloud Run hands that reference back is
+  what decides whether the read succeeds**, so the form is confirmed against the installation's own
+  service when the guard is implemented rather than assumed: a reference that comes back without its
+  release refuses the write (below) instead of guessing a release for it. This is the state that
+  **serves** the document, and the service's `NotFound` is the one answer that needs no judging. **The
+  reads are this task's own — nothing in the tree makes them** — and what `doctor` supplies is the
+  precedent for making them: its
+  credentials-service check builds the same client and the same resource name for the installation's
+  service and names the same `NotFound` as "Cloud Run has no service …"
   (`internal/cli/doctor_brokering.go`, an IAM read on that path rather than a service get);
 - **the installation's pin** — `terraform.tfvars.json`'s `credentials_service.image` through
   `installationServiceRelease`, which is the **desired** state and not the applied one: `fugaro update`
@@ -868,21 +881,21 @@ reads both:
 **What is deployed decides, and the pin only when nothing is deployed; what cannot be read is a
 refusal.**
 
-- **The deployed service's release decides whenever the service exists** — it is what serves the
-  document — and the pin cannot raise that answer. A pin ahead of a deployed service older than the
-  constant (the declined or failed apply above) is therefore refused, which is the direction a guard
-  reading the pin alone gets wrong.
+- **The release of the revisions that serve decides whenever the service exists** — they are what
+  serve the document — and the pin cannot raise that answer. A pin ahead of a service whose serving
+  revision is older than the constant (the declined or failed apply above) is therefore refused, which
+  is the direction a guard reading the pin alone gets wrong.
 - **The deployed service absent, the pin stated** — nothing serves yet and a service is coming, at the
   release the installation's own record names — is judged by the **pin**, so an old one refuses the
   write rather than let it halt the service the next apply deploys.
 - **The deployed service absent and no pin** — nothing serves and nothing is coming — is the write as
   today, and `TestCredsSetIsUnaffectedByAnInstallationWithNoService` is that case and not "unknown".
-- **The record that decides unreadable** — the Cloud Run read failing for any reason other than
-  `NotFound`, or a reference carrying no release at all (an operator's hand-written digest, one
-  resolved from another registry) — **refuses the write**. This is where the guard deliberately parts
-  from `checkReviewAdmission`, which warns and admits: a review launch from a machine holding no record
-  can still work and the remedy is the reader's own, while this write is the one that can halt every
-  caller of the service, and the read it needs asks the project the write itself already opens
+- **The record that decides unreadable** — a Cloud Run read failing for any reason other than the
+  service's `NotFound`, or a reference carrying no release at all (an operator's hand-written digest,
+  one resolved from another registry) — **refuses the write**. This is where the guard deliberately
+  parts from `checkReviewAdmission`, which warns and admits: a review launch from a machine holding no
+  record can still work and the remedy is the reader's own, while this write is the one that can halt
+  every caller of the service, and the read it needs asks the project the write itself already opens
   (`creds set` reaches Secret Manager in that project with the owner's own identity). An unknown
   release is exactly what the guard cannot clear, so it is a refusal that names the read that failed
   and `fugaro update` beside it.
@@ -901,7 +914,10 @@ calls the agent marker "a speed bump and not a boundary" — is outside every ga
 
 - `TestCredsSetRefusesAProviderBundleAnOlderServiceCannotRead` — the write of a document carrying the
   provider entry against a deployed service older than the constant is refused, nothing is written, and
-  the sentence names `fugaro update`. **The red step.**
+  the sentence names `fugaro update`. **Its fixture is the service whose *template* names a newer image
+  while the revision that *serves* is the old one** — a roll-out that failed to become ready, which is
+  the state a template-reading guard calls new — so the case the guard's own read exists for is the one
+  the test pins. **The red step.**
 - `TestCredsSetRefusesWhenNoRecordSaysWhichServiceServes` — **neither half of the guard may be
   skipped on an unknown**: a Cloud Run read that fails (a refused credential, an unavailable API) and a
   record whose reference carries no release (a hand-written digest) are each refused, nothing is
@@ -929,7 +945,10 @@ declined-apply fixture of `TestCredsSetJudgesWhatIsDeployedBeforeWhatIsPinned` i
 and the service-wide refusal ships, which is exactly what **F26** found. A second: admit an unknown
 record with a warning, the way `checkReviewAdmission` does — the release-less digest and the failed
 read are written, and
-`TestCredsSetRefusesWhenNoRecordSaysWhichServiceServes` is what goes red.
+`TestCredsSetRefusesWhenNoRecordSaysWhichServiceServes` is what goes red. A third: judge the service's
+**template** rather than the revision that serves — the failed roll-out of
+`TestCredsSetRefusesAProviderBundleAnOlderServiceCannotRead` is written, and the old revision that is
+still serving the document refuses every caller of it.
 
 **Reviewer tier:** **SEC** — opus, with the independent security review mandatory. It is a refusal on
 the credentials service's only write path.
@@ -1124,9 +1143,10 @@ that reconciliation found, and item 11 the release precondition AK6b cannot ship
     key it does not know, so a bundle written with AK6b's provider entry by a CLI newer than the
     installation's deployed service **halts every caller of that service, coding runs included**, until
     the owner runs `fugaro update`. AK10 is the guard that stops the write from happening — `fugaro
-    creds set` reads the **deployed** service's own image through Cloud Run, falls back to the
-    installation's **pin** for a service that is not deployed yet, and refuses a bundle whose newest
-    key that release predates, naming `fugaro update`; a release it cannot read is a refusal too, which
+    creds set` reads through Cloud Run the image of the revision that **serves** — not the template's,
+    which is the next revision — falls back to the installation's **pin** for a service that is not
+    deployed yet, and refuses a bundle whose newest key that release predates, naming `fugaro update`; a
+    release it cannot read is a refusal too, which
     is where it parts from `checkReviewAdmission`'s warn-and-admit (AK10's own Interfaces) — so **AK6b
     may not be released without it, and AK10 lands in the
     same release, after AK6b's own commit** (the guard's own test loads the write it judges through

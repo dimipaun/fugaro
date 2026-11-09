@@ -413,8 +413,10 @@ CLI newer than the installation's deployed credentials service halts every run t
 service, coding runs included, until `fugaro update` moves the image. `fugaro creds set` is the
 bundle's only writer and an owner-only command, so the guard belongs at that write: the
 `*Since`-style check `reviewAdmissionSince` established — but judged against the release that
-**serves** the document: the deployed credentials service's own image, read from Cloud Run, which
-decides whenever the service exists, falling back to the installation's pin
+**serves** the document: the image of the revision that serves, read from Cloud Run
+(`services.get` answers which revision serves, that revision's own image follows; the template's is
+the next revision, not the serving one), which decides whenever the service exists, falling back to
+the installation's pin
 (`terraform.tfvars.json`'s `credentials_service.image`, the update's **desired** state, which a
 declined or failed apply leaves ahead of what serves) only for a service not deployed yet — refusing
 the write, and naming `fugaro update`, with the release's own `### For operators` sentence. A release

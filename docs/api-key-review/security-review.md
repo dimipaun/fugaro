@@ -192,10 +192,12 @@ write whose newest key the release that **serves** the document predates, naming
 sentence. **And it is not that guard's reading of the record.** The installation's
 `terraform.tfvars.json` pin is the update's **desired** state, written as its stage plans and applied
 afterwards, so a declined or failed apply leaves it ahead of the deployed service and a guard reading
-it alone admits the very write this finding is about; the deployed service's own image comes from Cloud
-Run's `services.get` and **it decides when the service exists**, the pin decides only for a service not
-deployed yet, and **a release that cannot be read** — a failed read, a reference carrying no release —
-is a **refusal**, where `checkReviewAdmission` warns and admits. Both of those are AK10's own
+it alone admits the very write this finding is about; the image of **the revision that serves** comes
+from Cloud Run — `services.get` for which revision serves, then that revision's own image, never the
+template's, which is the next revision and not the serving one — and it **decides when the service
+exists**, the pin decides only for a service not deployed yet, and **a release that cannot be read** — a
+failed read, a reference carrying no release — is a **refusal**, where `checkReviewAdmission` warns and
+admits. Both of those are AK10's own
 Interfaces ([implementation-plan.md](implementation-plan.md) §3). **Became AK10** (SEC), written and not approved, and it is a **guard AK6b's own shape needs**
 rather than a defect in AK4 or AK5: today no credential kind reaches the bundle that the deployed
 service cannot read. **Severity: high when AK6b lands, none before it** — and because it is high there,

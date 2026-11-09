@@ -2607,8 +2607,8 @@ this subsection names.
 **What the tree can hold and mint today, verified rather than assumed — this is the slice's whole cost.**
 The review class's candidates are the pairing's **ONE** account at tier A and nothing else, with no
 fallback even where the policy's `fallback` would allow one (`reviewCandidates`,
-`internal/credsvc/cascade.go:105`), and that account is a **Claude OAuth account**: `ReviewJobAccount.Account`
-is the Claude account's name (`internal/credsvc/review.go:112`), the axis is built from `claude_accounts`
+`internal/credsvc/cascade.go:116`), and that account is a **Claude OAuth account**: `ReviewJobAccount.Account`
+is the Claude account's name (`internal/credsvc/review.go:121`), the axis is built from `claude_accounts`
 (`internal/config/claude_accounts.go`) and its secrets are the `claude-oauth-token` family. The service's
 model credentials are exactly two kinds: the Claude OAuth tokens at **tier A** and the Anthropic API key at
 **tier B** (`config.AnthropicSecret`, `internal/credsvc/bundle.go:677`), and the two the cascade selects are
@@ -2631,8 +2631,12 @@ the api-key review's **first** half — the project's own **Anthropic** key as t
 — has since been designed, approved and **merged** (`docs/api-key-review`'s AK4 and AK5), so
 `ReviewJobAccount.Account` may now be `config.AnthropicKeyAccount`, the sentinel that names the project's
 own key and is **not** an account, and the class may be served by the tier-B entry. The sentence above
-about the account being a Claude OAuth account is read with that in mind. **Everything else there stands
-and the provider review is still a slice:** `CredentialKey`'s closed set still has no provider-key kind,
+about the account being a Claude OAuth account is read with that in mind. **Two of the paragraph's own line
+citations moved with that merge and are corrected here** — `reviewCandidates` is `cascade.go`'s **116** and
+`ReviewJobAccount.Account` is `review.go`'s **121** — and **this plan's other citations of those two symbols
+were not swept**: they still carry the lines they had before the merge, and the symbol is what to read
+them by. **Everything else there stands and the provider review is still a slice:** `CredentialKey`'s
+closed set still has no provider-key kind,
 `reviewCandidates` still offers exactly one credential, and no upstream carries a provider's base URL or
 auth shape.
 
