@@ -12,7 +12,9 @@ import (
 // directory, then each argument, tab-separated. The two lists print their
 // answer files; any other call acts on the files named after its key
 // (ClaudePluginKey): sleep.<key> sleeps (exec, so a kill reaches it),
-// fail.<key> fails with its content on stderr, plugins.<key> and
+// fail.<key> fails with its content on stderr, nextlistfail.<key> makes the
+// next "plugin list --json" fail with its content, once (the call whose key it
+// is written under is the one before it), plugins.<key> and
 // marketplaces.<key> replace the lists' answers, touch.<key> appends a newline
 // to the working directory's .claude/settings.json, rm.<key> deletes the file
 // it names in this directory (a call that clears what a later one is refused
@@ -35,6 +37,7 @@ if [ -f "$d/grandchild" ]; then (sleep 2; echo done >> "$d/marker") & : > "$d/sp
 if [ -f "$d/holdout" ]; then set -m; (sleep 6) & : > "$d/spawned"; exec sleep 30; fi
 if [ -f "$d/bigout" ]; then head -c 300000 /dev/zero | tr '\000' x; exit 0; fi
 if [ -f "$d/listfail" ]; then cat "$d/listfail" >&2; exit 1; fi
+if [ -f "$d/nextlistfail" ] && [ "$*" = "plugin list --json" ]; then cat "$d/nextlistfail" >&2; rm -f "$d/nextlistfail"; exit 1; fi
 case "$*" in
 "plugin marketplace list --json") cat "$d/marketplaces.json"; exit 0 ;;
 "plugin list --json") cat "$d/plugins.json"; exit 0 ;;
@@ -42,6 +45,7 @@ esac
 key=$(printf '%s' "$*" | tr ' @/' '___')
 if [ -f "$d/sleep.$key" ]; then exec sleep 30; fi
 if [ -f "$d/fail.$key" ]; then cat "$d/fail.$key" >&2; exit 1; fi
+if [ -f "$d/nextlistfail.$key" ]; then cp "$d/nextlistfail.$key" "$d/nextlistfail"; fi
 if [ -f "$d/plugins.$key" ]; then cp "$d/plugins.$key" "$d/plugins.json"; fi
 if [ -f "$d/marketplaces.$key" ]; then cp "$d/marketplaces.$key" "$d/marketplaces.json"; fi
 if [ -f "$d/touch.$key" ]; then printf '\n' >> "$PWD/.claude/settings.json"; fi

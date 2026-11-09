@@ -281,6 +281,42 @@ func TestUpgradePluginPutsBackWhatTheClearRemovedWhenTheCheckAfterTheCallsFails(
 	}
 }
 
+// TestUpgradePluginPutsBackWhatTheClearRemovedWhenTheReListFails: the check
+// after the calls reads the installs again, and that read can fail on its own
+// — claude's record of them unreadable, say — after a clear that took the
+// plugin with it. That stop is the step's, and it is a stop after the clear
+// like any other: the declaration and the install go back before it is
+// reported, so even a failed update leaves the machine with the plugin it had
+// rather than with neither.
+func TestUpgradePluginPutsBackWhatTheClearRemovedWhenTheReListFails(t *testing.T) {
+	upgradeEnv(t, "0.5.2")
+	f := testutil.NewClaudePluginFake(t, ourMarket, userInstall("0.5.1"))
+	f.On(t, "rm", "fail."+testutil.ClaudePluginKey(argsAdd...), argsRemove...)
+	f.On(t, "plugins", "[]", argsRemove...)
+	f.On(t, "plugins", userInstall("0.5.2"), argsInstall...)
+	// The install is the last call before the read, and this makes the read
+	// that follows it fail, once: the change calls the put-back then runs are
+	// not the read, and come back with the plugin.
+	f.On(t, "nextlistfail", "could not read the installed plugins\n", argsInstall...)
+	f.On(t, "fail", refusedAdd, argsBack...) // the tag is declared by then: the add-back is refused
+	useFakeClaude(t, f)
+	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
+	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d\n%s", ExitCode(err), out)
+	}
+	want := [][]string{argsRemove, argsAdd, argsUpdMarket, argsInstall, argsUpdUser, argsBack, argsInstall}
+	if !slices.EqualFunc(f.Changes(t), want, slices.Equal[[]string]) {
+		t.Fatalf("changes %q, want %q\n%s", f.Changes(t), want, out)
+	}
+	for _, w := range []string{"plugin: failed: claude plugin list --json failed: exit status 1",
+		"could not read the installed plugins", "putting back what the clear removed failed"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("output lacks %q:\n%s", w, out)
+		}
+	}
+}
+
 // TestUpgradePluginPutsBackWhatTheClearRemovedWhenAChangeFails: the clear runs
 // before the rest of the plan, and claude's removal took the plugin with it, so
 // a change call that fails after it — the marketplace update, or the install

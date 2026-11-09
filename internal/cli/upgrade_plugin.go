@@ -151,6 +151,9 @@ func pluginStep(ctx context.Context, u *upgradeCtx) stepResult {
 		note = "; claude changed " + pluginwire.Printable(u.loc.Settings) + ": review it with git diff"
 	}
 	if installed, err = run.Installed(ctx); err != nil {
+		// The read of the installs can fail on its own (the record is
+		// unreadable, say), and that stop is after the clear like any other.
+		putBack()
 		return fail(err)
 	}
 	got := claudeplugin.Effective(u.loc.Root, installed)
