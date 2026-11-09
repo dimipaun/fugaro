@@ -102,6 +102,10 @@ export class LicenceStore {
    * other's key -- and the cap of two would then drop the older of the two rather
    * than keep both.
    *
+   * One store object is one queue, and the app builds one store: `mobile/index.js`
+   * is the composition root that builds the account store once and hands it down,
+   * and the store for the key is built there the same way.
+   *
    * A read is not queued with them, and it is not because a read writes nothing:
    * `#read` clears an entry that does not decode. It is because that clear cannot
    * cost a key. An install beside it reads the same damaged entry -- only this
