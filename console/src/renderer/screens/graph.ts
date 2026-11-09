@@ -2162,10 +2162,13 @@ function scopeRelease(factory: ScreenFactory, release: ScopeRelease): ScreenElem
  * The row is a reading and not a gesture.
  *
  * **A figure kept from the last read says so in words**, immediately after its
- * title: the source above it is drawn `down` and this row is its last answer, and
- * a reader who saw only the row would otherwise read a figure from an older
- * snapshot as one of this one's. `data-kept` is the hook the words come with, in
- * the same two-channel shape every state in this console has (H10).
+ * title: the source above it is drawn in a state that is not `up` -- `down`,
+ * `stale`, `unreadable`, or a word this build has no vocabulary for -- and this
+ * key is one that document said nothing about (a source that is not up may still
+ * list figures of its own, and those rows are the document's), so a reader who
+ * saw only the row would read a figure from an older snapshot as one of this
+ * one's. `data-kept` is the hook the words come with, in the same two-channel
+ * shape every state in this console has (H10).
  */
 function scopeNode(factory: ScreenFactory, node: ScopeNode): ScreenElement {
   const row = make(factory, 'li', 'graph-scope-node')

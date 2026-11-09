@@ -36,9 +36,9 @@ import { describe, expect, it } from 'vitest'
 
 import { GRAPH_DOCUMENT_VERSION, decodeGraphDocument } from '../../src/shared/schema'
 import type { GraphView } from '../../src/shared/schema'
-import { GRAPH_SCOPE_KEPT } from '../../src/renderer/graph/model'
+import { GRAPH_MAX_SCOPE_NODES, GRAPH_SCOPE_KEPT } from '../../src/renderer/graph/model'
 import { STAMP_LEAD, stampOf } from '../../src/renderer/section'
-import { GRAPH_SCOPE_ALL, GraphLayoutClient, GraphScreen } from '../../src/renderer/screens/graph'
+import { GRAPH_NOT_SHOWN_PLURAL, GRAPH_SCOPE_ALL, GraphLayoutClient, GraphScreen } from '../../src/renderer/screens/graph'
 import type { GraphTheme, ScreenElement } from '../../src/renderer/screens/graph'
 import { FakeDocument, everyNode } from '../support/fakeDom'
 import type { FakeNode } from '../support/fakeDom'
@@ -348,6 +348,30 @@ describe('the Graph and the feed', () => {
     expect(keys(drawn)).toEqual([PULL])
     expect(classedIn(drawn, 'graph-scope-kept')).toHaveLength(0)
     expect(classedIn(drawn, 'graph-scope-node').filter((each) => each.getAttribute('data-kept') !== null)).toHaveLength(0)
+  })
+
+  it('counts the kept figures against the bound, so no document can outgrow it', () => {
+    // The bound is the **drawing's**: a document that fills it has no room left,
+    // and the figures a silent source would keep are dropped and counted like a
+    // node the bound cut. Without that the picture would grow past
+    // GRAPH_MAX_SCOPE_NODES by one row per key a source stopped answering about,
+    // while the not-shown sentence still read "0 more tasks are not drawn".
+    const { screen } = liveScreen()
+    screen.loadScope(FIRST)
+    const full = Array.from({ length: GRAPH_MAX_SCOPE_NODES }, (_, at) =>
+      one(`coordinator:acme/widgets#${String(1000 + at)}`, 'coordinator', 'run', `run ${String(at)}`, 'succeeded', 'v1.4.0'),
+    )
+    screen.loadScope(wire(6, [up('coordinator', '2026-11-09T12:04:00Z'), down('orchestrator:o1', 'the stream was withdrawn')], full))
+    const drawn = drawing(screen)
+
+    // The document's own rows fill the bound exactly, so both kept figures are
+    // past it: neither is drawn, and both are counted.
+    expect(keys(drawn)).toHaveLength(GRAPH_MAX_SCOPE_NODES)
+    expect(rowOf(drawn, 'coordinator:acme/widgets#1000').getAttribute('data-kept')).toBeNull()
+    expect(classedIn(drawn, 'graph-scope-kept')).toHaveLength(0)
+    expect(classedIn(drawn, 'graph-not-shown').map((each) => each.textContent)).toEqual([
+      `${String(2)} ${GRAPH_NOT_SHOWN_PLURAL}`,
+    ])
   })
 
   it('the feed falls back to the read when the child refuses', () => {

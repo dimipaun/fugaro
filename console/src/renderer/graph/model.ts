@@ -641,9 +641,15 @@ function compare(left: string, right: string): number {
  * GRAPH_MAX_SCOPE_NODES bounds the coordinator drawing, for the reason the plan's
  * three bounds exist: the coordinator's view is an installation's whole history,
  * not one checkout's plan, so it is the picture that is bounded and never the
- * document -- everything past the bound is dropped in document order (two reads
- * of one document draw the same picture) and counted in `notShown`, which the
- * screen prints.
+ * document -- everything past the bound is dropped in drawing order and counted
+ * in `notShown`, which the screen prints.
+ *
+ * **The bound is the drawing's, so the figures a silent source keeps count
+ * against it too.** The document's own nodes are drawn first, in document order
+ * (two reads of one document draw the same picture), and the kept ones after
+ * them, in the order the read they came from drew them: a bound that stopped at
+ * the document would let the picture grow past it by one row per key a source
+ * stopped answering about, which is exactly the case the bound exists for.
  */
 export const GRAPH_MAX_SCOPE_NODES = 2000
 
@@ -798,6 +804,10 @@ function scopeText(value: string, key: string, field: string): Sanitized {
  *
  * A source this document does not mention at all is not a source any more, and
  * its figures go with it.
+ *
+ * **The bound counts the kept figures too**, because it bounds the drawing and
+ * not the document: they are drawn after the document's own rows and dropped and
+ * counted like them when the bound is already full (`GRAPH_MAX_SCOPE_NODES`).
  */
 export function buildScopeModel(view: GraphView, previous: ScopeModel | null = null): ScopeModel {
   const sources = view.sources.map((source, at) => ({
@@ -835,7 +845,17 @@ export function buildScopeModel(view: GraphView, previous: ScopeModel | null = n
   }
 
   const listed = new Set([...groups.values()].flat().map((node) => node.key))
-  for (const node of keptFigures(view, previous, listed)) {
+  // The kept figures are drawn inside the same bound as the document's own: the
+  // room left is what the document did not use, and a figure with no room is
+  // dropped and counted exactly as a node past the bound is. Without this the
+  // drawing would grow past GRAPH_MAX_SCOPE_NODES by one row per key a silent
+  // source holds while `notShown` still read 0.
+  const room = GRAPH_MAX_SCOPE_NODES - [...groups.values()].reduce((total, group) => total + group.length, 0)
+  for (const [at, node] of keptFigures(view, previous, listed).entries()) {
+    if (at >= room) {
+      notShown += 1
+      continue
+    }
     const held = groups.get(node.release)
     if (held === undefined) groups.set(node.release, [node])
     else held.push(node)
