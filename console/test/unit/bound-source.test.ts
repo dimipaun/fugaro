@@ -296,6 +296,12 @@ describe('the source bound to the active installation', () => {
               ? Promise.reject(new SourceRefusal('watch failed: the feed ended'))
               : Promise.resolve({ document: { child: stream.n }, receivedAt: '2026-10-15T12:00:00Z' }),
           stop: async () => undefined,
+          // A feed says it has ended through `onEnded` and not through a
+          // rejection -- a `current()` can be refused for a document that did not
+          // arrive in time while the child is alive -- and the bound source
+          // listens for it. This feed never ends on its own; the case sets
+          // `ended` itself, and the `watch` feed holds no floor either way.
+          onEnded: () => () => undefined,
         }
       },
     } as unknown as CliSource
@@ -313,6 +319,84 @@ describe('the source bound to the active installation', () => {
       'the poll after the feed ended was answered by the dead stream',
     ).toEqual({ child: 2 })
     expect(started).toBe(2)
+  })
+
+  it('watches the end of a stream once, however many polls a live feed takes', async () => {
+    // `current()` asks the source for the feed again on every poll (`lazyFeed`),
+    // and a source answers the **same stream** for the same key while it is live:
+    // an end listener registered per call would grow that stream's own set by one
+    // a second for as long as the Graph tab is open, and every one of them would
+    // run when the child finally ended. So the end is watched once per stream --
+    // and the floor that reading feeds is still re-armed for the stream that
+    // replaces it, which is what the second half of this case holds.
+    let started = 0
+    let now = Date.parse('2026-11-09T12:00:00Z')
+    let live: { ended: boolean; n: number } | null = null
+    let listeners: (() => void)[] = []
+    const watching: number[] = []
+    let stream: unknown = null
+    const real = {
+      version: async () => ({ text: FIRST.id, receivedAt: '2026-10-15T12:00:00Z' }),
+      close: async () => undefined,
+      subscribeGraph: () => {
+        if (live === null || live.ended) {
+          started += 1
+          live = { ended: false, n: started }
+          listeners = []
+          watching.push(0)
+          const state = live
+          stream = {
+            latest: null,
+            current: () =>
+              state.ended
+                ? Promise.reject(new SourceRefusal('graph failed: the feed ended'))
+                : Promise.resolve({ document: { child: state.n }, receivedAt: '2026-10-15T12:00:00Z' }),
+            stop: async () => undefined,
+            onEnded: (listener: () => void) => {
+              watching[watching.length - 1] = (watching[watching.length - 1] ?? 0) + 1
+              listeners.push(listener)
+              if (state.ended) listener()
+              return () => undefined
+            },
+          }
+        }
+        return stream
+      },
+    } as unknown as CliSource
+    const source = createBoundSource({
+      installation: () => FIRST,
+      clock: () => new Date(now),
+      create: async () => real,
+    })
+    const args = { source: 'all' }
+
+    for (let poll = 0; poll < 5; poll += 1) {
+      expect((await source.subscribeGraph(args).current()).document, 'a poll did not answer the live feed').toEqual({
+        child: 1,
+      })
+    }
+    expect(started, 'a poll started a child of its own').toBe(1)
+    expect(watching, 'an end listener was registered per poll').toEqual([1])
+
+    // The child exits. A poll inside the floor is answered with what that feed
+    // last gave -- the document it had, or the refusal a child that died before
+    // its first one left (`graph-watch.test.ts`) -- and starts nothing. The stream
+    // that replaces it afterwards is watched in its turn: one listener for the
+    // feed that ended, one for the feed that is new.
+    if (live === null) throw new Error('no feed was started: the case proves nothing')
+    ;(live as { ended: boolean }).ended = true
+    for (const listener of listeners) listener()
+    expect(
+      (await source.subscribeGraph(args).current()).document,
+      'a poll inside the floor did not hold the answer the feed left',
+    ).toEqual({ child: 1 })
+    expect(started, 'a poll inside the floor started a child').toBe(1)
+
+    now += GRAPH_READ_MIN_INTERVAL_MS
+    expect((await source.subscribeGraph(args).current()).document, 'the poll past the floor drew a dead feed').toEqual({
+      child: 2,
+    })
+    expect(watching).toEqual([1, 1])
   })
 
 describe('the plan read, whose directory is the binding’s', () => {

@@ -78,6 +78,7 @@ import {
   isExecutableFile,
   decodeFeedLine,
   isSafeArgumentValue,
+  keyedArguments,
   locationsFor,
   nodeSpawner,
   parseVersionLine,
@@ -163,7 +164,10 @@ const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
  * CG9a's `graph.read`, the twenty-first, and the managed screens' plan's CM4's
  * two reads, `managed.status` and `policy.show`, the twenty-second and
  * twenty-third (the Project tab's managed state and its published policy node,
- * the two commands the plan's CM3 put on `consoleReadPaths`). The
+ * the two commands the plan's CM3 put on `consoleReadPaths`), and the graph
+ * plan's feed, CG9b's `graph.watch`, the twenty-fourth -- the same `graph`
+ * command as CG9a's read above, exactly as `logs`'s and `settings`'s two rows
+ * are one command each. The
  * complement -- the commands
  * that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
@@ -180,6 +184,7 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'runs.summary',
   'plan.status',
   'graph.read',
+  'graph.watch',
   'run.diagnose',
   'run.logs',
   'run.logLink',
@@ -506,7 +511,7 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: twenty-five argvs, twenty-three commands, twenty-three of them with --project', () => {
+  it('fixes the design allow-list exactly: twenty-six argvs, twenty-four commands, twenty-four of them with --project', () => {
     // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
     // the rail's read (`config list --json`, the case above) used to be the
     // picker's own row in a second table until the owner's ruling of 2026-10-25,
@@ -548,6 +553,10 @@ describe('the spawn table and the argv it builds', () => {
       'runs summary --json',
       'plan status --json',
       'graph --json',
+      // The same command with one word more (the graph plan's CG9b): the feed a
+      // screen subscribes to while the Graph tab is on screen, whose `--watch`
+      // is a word of the command path rather than a flag a caller controls.
+      'graph --watch --json',
       'diagnose --json',
       'logs --json',
       'logs --url',
@@ -606,7 +615,7 @@ describe('the spawn table and the argv it builds', () => {
         'run',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(23)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(24)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
@@ -670,6 +679,30 @@ describe('the spawn table and the argv it builds', () => {
     // An undeclared key cannot smuggle a word in either: the row's arguments are
     // the whole of what reaches this argv.
     expect(() => argvFor('graph.read', { watch: true } as never, safeContext())).toThrow(/does not declare/)
+  })
+
+  it('keys a subscription on the arguments that reach a word, and no others', () => {
+    // The bound source and the fixture both name a live child by what it was
+    // spawned with, so the two calls a screen makes for one child must build one
+    // key. `graph.watch`'s calls differ by `visible`: the poll names the scope,
+    // the stop adds `visible: false` for the tab that went away, and the row
+    // declares that argument with no flag -- `argvFor` emits no word for it, so
+    // it is no part of the child's identity and `keyedArguments` drops it here.
+    expect(keyedArguments('graph.watch', { source: 'all' })).toEqual({ source: 'all' })
+    expect(keyedArguments('graph.watch', { source: 'all', visible: false })).toEqual({ source: 'all' })
+    // `visible: true` is dropped too: it is not a word either, and a screen that
+    // sent it would otherwise name a second child that never existed.
+    expect(keyedArguments('graph.watch', { source: 'all', visible: true })).toEqual({ source: 'all' })
+    // Every argument of the live feed does reach a word, so its key is the whole
+    // object and a per-repository subscription stays its own child.
+    expect(keyedArguments('live.watch', { repo: 'r-1a2b3c4d/r-5e6f7a8b' })).toEqual({ repo: 'r-1a2b3c4d/r-5e6f7a8b' })
+    // An undeclared key is kept rather than dropped: `argvFor` is where it is
+    // refused, by name, and a key merged away here would let a payload the row
+    // never saw answer an existing child of the same scope.
+    expect(keyedArguments('graph.watch', { source: 'all', watch: true } as never)).toEqual({
+      source: 'all',
+      watch: true,
+    })
   })
 
   it('a source value outside the pattern is refused before any spawn', () => {
