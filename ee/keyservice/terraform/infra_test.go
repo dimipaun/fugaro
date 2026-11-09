@@ -144,6 +144,18 @@ func tfGrants(header, compact string) bool {
 	return false
 }
 
+// tfList renders a map of the grants this service may hold, one per line and
+// sorted, so that a failure names the whole list rather than only the block it
+// refused: the point of the list is that a person reads it.
+func tfList(grants map[string]string) string {
+	lines := make([]string, 0, len(grants))
+	for header, why := range grants {
+		lines = append(lines, "  "+header+" — "+why)
+	}
+	slices.Sort(lines)
+	return strings.Join(lines, "\n")
+}
+
 // tfFiles lists this tree's Terraform, so that a sweep covers a file a later
 // change adds as well as the two roots there are today. Hidden directories are
 // skipped: a provider data directory belongs outside the tree (the `terraform`
@@ -258,7 +270,7 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 				continue
 			}
 			if _, ok := sanctioned[header]; !ok {
-				t.Errorf("%s holds a grant that is not one of the four this service is allowed:\n%s\nthe signer role is granted in one place, to one account, so that a reader of the plan sees every identity that can mint a licence key (Check 174)", rel, strings.TrimSpace(block))
+				t.Errorf("%s holds a grant this service is not allowed:\n%s\nthe signer role is granted in one place, to one account, so that a reader of the plan sees every identity that can mint a licence key (Check 174). The whole list of grants is:\n%s", rel, strings.TrimSpace(block), tfList(sanctioned))
 			}
 		}
 	}
