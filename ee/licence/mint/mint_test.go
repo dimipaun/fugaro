@@ -341,3 +341,166 @@ func argValue(args []string, name string) (string, error) {
 	}
 	return "", fmt.Errorf("the argv carries no %s: %v", name, args)
 }
+
+// TestMintRefusesAKeyThatHasAlreadyEnded is the tool's own rule where the
+// verifier's cannot reach: a claim set whose `expires` is before its `issued` is
+// signed into a key the verifier accepts -- an expired or a grace key is a key a
+// verifier answers for, not a refusal, and its bound only fires on a term longer
+// than the tier's -- so the state is held beside the error and nothing is
+// answered.
+func TestMintRefusesAKeyThatHasAlreadyEnded(t *testing.T) {
+	claims := teamClaims()
+	claims.Expires = claims.Issued - 1
+
+	signer := newFakeSigner(t)
+	ring := ringOf(t, signer)
+	key, refusal := Mint(context.Background(), testKeyID, claims, signer, verifyWith(ring))
+	if refusal == nil {
+		t.Fatalf("a claim set that ends a second before it starts was minted as %q, want a refusal: the owner would store a key that is already dead", key)
+	}
+	if key != "" {
+		t.Errorf("the tool answered %q beside the refusal", key)
+	}
+	if errors.Is(refusal, licence.ErrLifetime) {
+		t.Errorf("the refusal is %v, which is the verifier's length bound: an ended key is not a term the verifier bounds, which is why the state is checked too", refusal)
+	}
+
+	// What the verifier itself makes of the very key the tool built: it accepts
+	// it, in a state that is not valid. That is the whole reason the state is
+	// held -- on this claim set there is no error for the check above to catch.
+	if len(signer.seen) != 1 {
+		t.Fatalf("the signer was asked to sign %d times, want 1: the claim set is signed before it is checked", len(signer.seen))
+	}
+	payload := signer.seen[0]
+	built := keyText(testKeyID, payload, ed25519.Sign(signer.priv, payload))
+	_, state, err := licence.VerifyAgainst([]byte(built), time.Unix(claims.Issued, 0), ring)
+	if err != nil {
+		t.Fatalf("the verifier refused that key at its own issued instant, so this test is not about the state at all: %v", err)
+	}
+	if state == licence.Valid {
+		t.Fatalf("the verifier reads %s for that key at its own issued instant, so there is nothing for the tool to catch", state)
+	}
+	if !strings.Contains(refusal.Error(), string(state)) {
+		t.Errorf("the refusal is %v, and it does not name the %s state it caught", refusal, state)
+	}
+}
+
+// signingRunner is the Runner the command's tests hand it: the KMS seam without
+// a KMS. It reads the payload gcloud would have been handed and answers with the
+// test signer's signature over it, which is what a KMS key's signing API answers.
+func signingRunner(f *fakeSigner) Runner {
+	return func(ctx context.Context, args ...string) error {
+		input, err := argValue(args, "--input-file")
+		if err != nil {
+			return err
+		}
+		payload, err := os.ReadFile(input)
+		if err != nil {
+			return err
+		}
+		signature, err := f.Sign(ctx, payload)
+		if err != nil {
+			return err
+		}
+		output, err := argValue(args, "--signature-file")
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(output, signature, 0o600)
+	}
+}
+
+// runArgs is the command line one mint takes, with the fake signer's public half
+// in the spelling -public-key carries, plus what a test adds: a flag named twice
+// is the last one, so a test overrides -days by naming it again.
+func runArgs(f *fakeSigner, extra ...string) []string {
+	args := []string{
+		"-key-id", testKeyID,
+		"-public-key", base64.RawURLEncoding.EncodeToString(f.public()),
+		"-tier", licence.TierTeam,
+		"-organisation", "example.com",
+		"-seats", "3",
+		"-days", "365",
+		"-project", "a-project",
+		"-location", "a-location",
+		"-keyring", "a-key-ring",
+		"-key", "a-key",
+		"-algorithm", "a-signing-algorithm",
+	}
+	return append(args, extra...)
+}
+
+// TestRunMintsAKeyTheVerifierAccepts drives the whole command -- the flags, the
+// claim set they build, the key text -- with the KMS seam replaced: stdout holds
+// one line and that line is a key S2.3's verifier accepts, with the terms the
+// flags asked for.
+func TestRunMintsAKeyTheVerifierAccepts(t *testing.T) {
+	signer := newFakeSigner(t)
+	var out bytes.Buffer
+	if err := run(runArgs(signer), &out, signingRunner(signer)); err != nil {
+		t.Fatalf("minting through the command: %v", err)
+	}
+	key := strings.TrimSpace(out.String())
+	if out.String() != key+"\n" {
+		t.Fatalf("the command printed %q, want the key text and one newline: nothing else reaches the owner's stdout", out.String())
+	}
+
+	claims, state, err := licence.VerifyAgainst([]byte(key), time.Now(), ringOf(t, signer))
+	if err != nil {
+		t.Fatalf("the verifier refused the key the command printed: %v", err)
+	}
+	if state != licence.Valid {
+		t.Errorf("the key the command printed reads %s today, want %s", state, licence.Valid)
+	}
+	if claims.Tier != licence.TierTeam || claims.Organisation != "example.com" || claims.Seats != 3 {
+		t.Errorf("the key carries %+v, want the tier, the organisation and the seats the flags asked for", claims)
+	}
+	if term := claims.Expires - claims.Issued; term != int64(365*24*time.Hour/time.Second) {
+		t.Errorf("the key's term is %d seconds, want the 365 days -days asked for", term)
+	}
+	if id := string(partOf(t, []byte(key), 0)); id != testKeyID {
+		t.Errorf("the key text leads with %q, want %q", id, testKeyID)
+	}
+	if len(signer.seen) != 1 {
+		t.Errorf("the signer was asked to sign %d times, want 1", len(signer.seen))
+	}
+}
+
+// TestRunRefusesWhatItCannotMint holds the command to answering nothing it
+// cannot mint: a flag it needs, a term of no days, a term too long to count, a
+// term past the tier's maximum, and a public half that is not a key. What the
+// owner sees is the refusal, and stdout stays empty -- except that a term the
+// verifier bounds is refused after the signature, which is the one discarded
+// signature the tool pays for keeping the ceiling in the verifier.
+func TestRunRefusesWhatItCannotMint(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		args      func(*fakeSigner) []string
+		wantErr   error
+		noSigning bool
+	}{
+		{"a flag that is missing", func(*fakeSigner) []string { return nil }, nil, true},
+		{"a term of no days", func(f *fakeSigner) []string { return runArgs(f, "-days", "0") }, nil, true},
+		{"a term too long to count", func(f *fakeSigner) []string { return runArgs(f, "-days", "200000") }, nil, true},
+		{"a term past the tier's maximum", func(f *fakeSigner) []string { return runArgs(f, "-days", "400") }, licence.ErrLifetime, false},
+		{"a public half that is not a key", func(f *fakeSigner) []string { return runArgs(f, "-public-key", "AA") }, nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			signer := newFakeSigner(t)
+			var out bytes.Buffer
+			err := run(tc.args(signer), &out, signingRunner(signer))
+			if err == nil {
+				t.Fatalf("the command answered %q and no refusal", out.String())
+			}
+			if out.Len() != 0 {
+				t.Errorf("the command printed %q beside the refusal: nothing but a key may reach the owner's stdout", out.String())
+			}
+			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Errorf("the refusal is %v, want %v", err, tc.wantErr)
+			}
+			if tc.noSigning && len(signer.seen) != 0 {
+				t.Errorf("the signer was asked to sign %d payload(s) before the refusal: %v is a thing the tool can see before it spends a signature", len(signer.seen), tc.name)
+			}
+		})
+	}
+}

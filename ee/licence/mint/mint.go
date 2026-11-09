@@ -44,6 +44,14 @@ type Verifier func(raw []byte, now time.Time) (licence.Claims, licence.State, er
 // business -- `issued` is the minter's to choose, the hole S2.1 states and the
 // design leaves open for hand minting.
 //
+// The state is held and not only the error, because a claim set whose `expires`
+// is before its `issued` is not a refusal: it is a key that has already ended,
+// which verifies as expired, and the verifier's bound -- a term longer than the
+// tier's maximum -- does not fire on a term shorter than nothing. So the check
+// above the signature is not the whole guard: what this answers is a key that is
+// good at the instant it was minted, and a caller that hands over a claim set
+// `issued` in the future gets one, which is the accepted hole and not this one.
+//
 // The claim set is signed before it is checked. That one signature is spent on
 // a claim set the tool then refuses, and it is the price of keeping S2.1's
 // maxima in one place: the rule lives in the verifier, this tool keeps no copy
@@ -58,8 +66,12 @@ func Mint(ctx context.Context, keyID string, claims licence.Claims, sign Signer,
 		return "", fmt.Errorf("signing the payload through the key's API: %w", err)
 	}
 	key := keyText(keyID, payload, signature)
-	if _, _, err := verify([]byte(key), time.Unix(claims.Issued, 0)); err != nil {
+	_, state, err := verify([]byte(key), time.Unix(claims.Issued, 0))
+	if err != nil {
 		return "", fmt.Errorf("the key this claim set makes: %w", err)
+	}
+	if state != licence.Valid {
+		return "", fmt.Errorf("the key this claim set makes reads %s at its own issued instant, and this tool mints keys that are good then: a term that ends before it starts is not one anyone means to mint", state)
 	}
 	return key, nil
 }

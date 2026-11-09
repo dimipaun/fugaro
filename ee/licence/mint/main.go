@@ -31,7 +31,11 @@
 //     reaches stdout: a term past the tier's maximum, a tier the verifier does
 //     not know and an organisation the key does not bind to are refused there.
 //     The rule is the verifier's and is not restated here, which is what keeps
-//     a hand-minted key and the service's one format.
+//     a hand-minted key and the service's one format. The key must also read
+//     `valid` at its own `issued`, which is a rule of the tool's: a claim set
+//     whose `expires` is before its `issued` is a key that has already ended,
+//     and a verifier accepts it -- as an expired key, which is what an expired
+//     key is -- so nothing but this check would catch it.
 //   - **The ring is the owner's, not the build's.** The compiled keyring is
 //     empty until S2.9 publishes the owner's production half, and the interim
 //     this tool exists for starts at S3.8, so the tool checks against the public
@@ -57,15 +61,17 @@ import (
 )
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout); err != nil {
+	if err := run(os.Args[1:], os.Stdout, execRunner); err != nil {
 		fmt.Fprintln(os.Stderr, "mint:", err)
 		os.Exit(1)
 	}
 }
 
 // run is main's whole body, so the flags, the claim set they build and the one
-// line that is printed are one function a reader can follow.
-func run(args []string, out io.Writer) error {
+// line that is printed are one function a reader can follow. The runner is the
+// KMS seam, so the whole command is a thing a test drives: a test's runner signs
+// what gcloud would have been handed and no binary is run.
+func run(args []string, out io.Writer, runner Runner) error {
 	flags := flag.NewFlagSet("mint", flag.ContinueOnError)
 	keyID := flags.String("key-id", "", "the key id the key text leads with and a verifier places the key by")
 	publicKey := flags.String("public-key", "", "the signing key's public half, unpadded base64url of the 32 bytes a keyring entry carries")
@@ -110,6 +116,16 @@ func run(args []string, out io.Writer) error {
 	if *days <= 0 {
 		return errors.New("-days must be a positive number of days: a key that ends before it starts is not one anyone means to mint")
 	}
+	// The term is counted in nanoseconds, where a term of more than about 106751
+	// days wraps to a negative duration. That is the same already-ended key by
+	// another route, and a silent one: `expires` would land before `issued`, and
+	// the verifier's bound -- a term longer than the tier's maximum -- does not
+	// fire on a term shorter than nothing. The bound here is arithmetic and not
+	// the tier's: what a tier may be given stays the verifier's rule.
+	term := time.Duration(*days) * 24 * time.Hour
+	if term <= 0 {
+		return fmt.Errorf("-days is %d, and a term that long wraps when it is counted in nanoseconds: the longest term anyone mints is far below it, and the verifier is where that ceiling is stated", *days)
+	}
 
 	ring, err := ringFromPublicKey(*keyID, *publicKey)
 	if err != nil {
@@ -122,7 +138,7 @@ func run(args []string, out io.Writer) error {
 		Seats:        *seats,
 		Organisation: *organisation,
 		Issued:       now.Unix(),
-		Expires:      now.Add(time.Duration(*days) * 24 * time.Hour).Unix(),
+		Expires:      now.Add(term).Unix(),
 	}, KMS{
 		Project:   *project,
 		Location:  *location,
@@ -130,6 +146,7 @@ func run(args []string, out io.Writer) error {
 		Key:       *key,
 		Version:   *version,
 		Algorithm: *algorithm,
+		Run:       runner,
 	}, verifier(ring))
 	if err != nil {
 		return err
