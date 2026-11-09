@@ -394,6 +394,10 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(plan.Graph{}),
 		reflect.TypeOf(plan.NodeState{}),
 		reflect.TypeOf(plan.CriticalPath{}),
+		// What the decoupling pass bought (CD3): the gain and the critical path
+		// it measures before and after, both of them the read's own fields.
+		reflect.TypeOf(plan.Gain{}),
+		reflect.TypeOf(plan.PathMeasure{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
 		// The rigor block and the rule inside it (docs/rigor-modes D24).
 		reflect.TypeOf(runstore.RigorRecord{}),
@@ -674,6 +678,9 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		// computed where the graph is read.
 		reflect.TypeOf(plan.Graph{}), reflect.TypeOf(plan.NodeState{}),
 		reflect.TypeOf(plan.CriticalPath{}),
+		// The gain the pass bought and the path it measures before and after,
+		// as in the test above (CD3).
+		reflect.TypeOf(plan.Gain{}), reflect.TypeOf(plan.PathMeasure{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
 		// The rigor block and the rule inside it (docs/rigor-modes D24).
 		reflect.TypeOf(runstore.RigorRecord{}), reflect.TypeOf(runstore.RigorArea{}),
