@@ -1277,6 +1277,64 @@ func TestAnExpiredRequestIsAnsweredWithTheClientsOwnError(t *testing.T) {
 	}
 }
 
+// TestAnAllowTheGuardLetThroughMintsNothing is the approval read a second time,
+// at the record the code is actually minted from: the guard above the take and
+// the mint below it can disagree only about a clock that moved backwards
+// between them, and an Allow they disagree about has to be answered rather than
+// reached.
+//
+// The clock below is the flow's own instant until the answer steps it: one read
+// past the flow's lifetime, which is the guard's, and the flow's instant again
+// from the next read on, which is the take's. So the Allow is let through as a
+// flow the guard reads as expired — the case that is owed the client's own
+// error — and the record it took is then read as live with no approval behind
+// it, which is the state in which the mint would act for the identity of an
+// approval that is not there. What is asserted is the answer a client can act
+// on and the code that was not written.
+func TestAnAllowTheGuardLetThroughMintsNothing(t *testing.T) {
+	// The clock every endpoint of this server reads, until the answer below
+	// steps it: the base is the flow's own instant, so the flow is recorded
+	// live and the step is the only thing that moves time.
+	var stepped func() time.Time
+	ts := newTestServerClock(t, testConfig(), func() time.Time {
+		if stepped != nil {
+			return stepped()
+		}
+		return testNow
+	})
+	clientID, _ := ts.register(t, "an editor", testClientRedirect)
+	binding, _ := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+
+	reads := 0
+	stepped = func() time.Time {
+		reads++
+		if reads == 1 {
+			return testNow.Add(RequestTTL + time.Second)
+		}
+		return testNow
+	}
+	rec := ts.pageAnswer(t, binding, "allow")
+	if rec.Code != http.StatusFound {
+		t.Fatalf("an Allow on a flow no device approved answered %d (%s); want the redirect the client is waiting on", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	u, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("the redirect is not a URL: %v", err)
+	}
+	if u.Host != redirectHost(testClientRedirect) {
+		t.Errorf("the answer went to %q; want the URI the flow was recorded with (%q)", u.Host, testClientRedirect)
+	}
+	if got := u.Query().Get("error"); got != string(oidc.ErrAccessDenied().ErrorType) {
+		t.Errorf("the answer carries error %q; want %q: the flow carries no approval from the paired device, and the code acts for the identity that approval holds", got, string(oidc.ErrAccessDenied().ErrorType))
+	}
+	if u.Query().Get("code") != "" {
+		t.Errorf("an Allow the flow carried no approval for produced a code: %s", u.RawQuery)
+	}
+	if got := ts.store.objects(t); len(got) != 2 {
+		t.Errorf("the store holds %d objects after the answer; want the client and the spent flow and no code", len(got))
+	}
+}
+
 // TestAnExpiredCodeIsRefused is CodeTTL stated as a fact about the wire, and
 // the other half of "a code that is spent is spent": a code past its lifetime
 // is refused even when everything else about the exchange is right.

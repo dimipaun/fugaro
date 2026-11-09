@@ -82,6 +82,49 @@ func TestAnApprovalFromThePageAloneIsRefused(t *testing.T) {
 	}
 }
 
+// TestKnowingWhatThePageShowsIsNotApprovingTheFlow is the boundary of M-a's
+// first requirement stated as a fact about the wire: everything the consent
+// page shows or carries — the flow's binding in its form and the flow's number
+// in its text — is not an approval of the flow, however it is posted.
+//
+// What the act is proved by is the Firebase ID token the paired device's own
+// session produced, which is the one value the page's form does not carry and
+// the one value the endpoint reads out of a body. The number ties the act to
+// the screen the person is reading and the token is what makes it an act, so a
+// post that has the number and not the token is the page's own answer at best
+// (M5's shape with the token taken out of it), and it is refused while the flow
+// is unapproved — which is what the two posts below are, and why neither of
+// them mints a code or spends the flow. The device's own act still approves the
+// flow afterwards, so the refusals are about what the posts carried.
+func TestKnowingWhatThePageShowsIsNotApprovingTheFlow(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, _ := ts.register(t, "an editor", testClientRedirect)
+	binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+
+	for _, form := range []url.Values{
+		{"request_id": {binding}, "decision": {"allow"}},
+		{"request_id": {binding}, "number": {number}, "decision": {"allow"}},
+	} {
+		if rec := ts.consent(t, form); rec.Code == http.StatusFound {
+			t.Errorf("a post carrying {%s} answered with a redirect to %q: the binding is in the page's form and the number is on it, and neither of them is the approval — the sign-in the paired device's session produced is", form.Encode(), rec.Header().Get("Location"))
+		}
+	}
+	for key := range ts.store.objects(t) {
+		if strings.HasPrefix(key, codePrefix) {
+			t.Errorf("%s is a code minted for a post that carried no sign-in: the code is minted only for a flow the paired device approved", key)
+		}
+	}
+
+	// The device's own act approves the flow, and the page's answer then mints
+	// the code: the refusals above are about the act and not about the flow.
+	if rec := ts.deviceApprove(t, binding, number, approvalToken(t)); rec.Code != http.StatusOK {
+		t.Fatalf("the paired device's act answered %d (%s); want it to record the approval", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	if rec := ts.pageAnswer(t, binding, "allow"); rec.Code != http.StatusFound {
+		t.Errorf("the flow the paired device approved answered %d (%s); want the code redirect", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+}
+
 // TestTheNumberNamesOneRequest is M5b's third requirement: the approval is bound
 // to the flow, so the number names exactly one authorization request.
 //

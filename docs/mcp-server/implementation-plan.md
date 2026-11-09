@@ -785,7 +785,12 @@ tree did not carry:
    back is not this** — the page knows its own number — which is why the page's check is what M5
    built and this task is what it built past. **What this task built is the shape the server can
    check**: an act arriving with the flow's id, the number and the paired device's own ID token, and
-   an approval no page post can produce. **What it did not build is the delivery** — the device's
+   an approval no page post can produce. **What the act is proved by is the device's session and not
+   the device's own key**: the endpoint checks the ID token and cannot tell a paired device from any
+   other holder of one, which is **H1's accepted residual risk**, stated with its consequences in
+   [spec.md](spec.md) §8 and whose signing key (a device-held key registered at pairing) is in no
+   task — so the number and the endpoint's two shapes are not a hardware binding. **What it did not
+   build is the delivery** — the device's
    side of showing or taking the number — so the requirement is met at the endpoint and unperformed
    on the device, and that half is named as owed in [spec.md](spec.md) §11.
 2. **The ID token is spent.** The approve step records the token as used, in M2's store and as a

@@ -337,7 +337,11 @@ func (s *Server) serveAuthorizeConsent(w http.ResponseWriter, r *http.Request) {
 // The flow has to carry an approval by the time the code is minted, and that
 // check is the one M5b adds here: the identity the code acts for is the
 // device's (`taken.Approval`), and a page that minted without one would be the
-// page approving on its own.
+// page approving on its own. It is made on both reads — the one the guard above
+// makes of the record the request carried and the one the mint makes of the
+// record it took — because they can disagree only by a clock that moved
+// backwards between them, and an Allow that reached the mint with no approval
+// behind it would be a nil dereference rather than a refusal.
 func (s *Server) servePageAnswer(w http.ResponseWriter, r *http.Request, form url.Values) {
 	pending, err := s.store.GetRequest(r.Context(), form.Get("request_id"))
 	switch {
@@ -382,6 +386,23 @@ func (s *Server) servePageAnswer(w http.ResponseWriter, r *http.Request, form ur
 	if form.Get("decision") != "allow" {
 		s.redirectError(w, r, taken.RedirectURI, taken.State, oauthError(oidc.ErrAccessDenied(),
 			"the person did not allow this client to call the MCP endpoint"))
+		return
+	}
+	// The approval the code is minted from is read again here, off the record
+	// the take returned rather than the one the request carried. The two reads
+	// are one read apart and a clock that stepped backwards between them — an
+	// injected clock, a skew — is the one way they can disagree: the guard
+	// above lets an Allow through on a flow it read as expired, and this read
+	// then sees the flow live with no approval behind it. The identity the code
+	// is minted for is the device's and there is none, so the mint would act for
+	// an approval that is not there; it is answered with the error the expiry
+	// above answers with, to the client, because the answer has spent the
+	// binding either way. A page that minted without an approval would be the
+	// page approving on its own, which is the one thing M5b's two acts exist to
+	// prevent.
+	if taken.Approval == nil {
+		s.redirectError(w, r, taken.RedirectURI, taken.State, oauthError(oidc.ErrAccessDenied(),
+			"the authorization request was answered without an approval from the device this installation paired with it"))
 		return
 	}
 
