@@ -1,6 +1,6 @@
 # Failure classes: a closed vocabulary on the run record, and a failures report
 
-**Status: a design, and its FC1–FC5 have shipped; the rest of §10 is not built.** This document
+**Status: a design, and its FC1–FC6 have shipped; the rest of §10 is not built.** This document
 recommends, and names the alternative and what it costs, for every question it takes up; the owner
 rules, and the design's own decisions — §8 D1–D9 and §9 O1–O6 — stay his. The plan's decisions,
 D1450–D1469, are answered 2026-11-07, each as recommended. **FC1** — the vocabulary, the record's
@@ -17,7 +17,7 @@ stage's own error result, and `runview.ClassOf`, the one function the row reads 
 class through — exported on D1454's decision so the digest's own read (§5, "the digest reads the
 same function") can call the same one when FC7 builds it; today the only callers outside that
 package are tests.
-**FC6–FC8 are not started.** What is written here was read against `main` on 2026-11-05, and the
+**FC7–FC8 are not started.** What is written here was read against `main` on 2026-11-05, and the
 line citations are taken from that tree.
 
 Related: [v1.md](v1.md) §4.5 (failure paths), §4.6 (the run record) and §4.8 (`runs ls`),
@@ -392,18 +392,25 @@ within 90 days anyway.
 (`api.LoadRows`, `internal/cli/runs.go`), so the group table costs one read of the same rows and
 **adds no network path at all** — the owner's brief's constraint. `--group-by` takes exactly one
 value, `failure_class`, refused by the flag's own closed list the way `--state` refuses
-(`lsStates`, `runs.go:65`), so the flag cannot be asked for a grouping that does not exist.
+(`lsStates`, `runs.go:67`), so the flag cannot be asked for a grouping that does not exist.
 
-- The text listing prints one row per class — `class`, `kind`, `runs`, `spend`, `share` (of the
-  window's runs), `delivered` (runs whose `outcome` is `draft` or `ready` with a branch pushed) and
-  an example run id — newest-first classes first? No: by runs descending, ties by name, so two
-  readers of one window print the same table. The totals line keeps its meaning and now reads
-  `191 of 585 runs failed (33%), $354.68 of $844.27` — the same figures, with the share the owner
-  computed by hand.
+- The text listing prints one row per class — `class`, `runs`, `share` (of the window's runs) and
+  `spend` beside it — by runs descending, ties by name, so two readers of one window print the same
+  table. The totals line keeps its figures: the grouped listing is the same read of the same window
+  with one block added, so the totals it already carries are the window's, and a share written into
+  them would be a second reading of the number the block already gives.
 - `--json` gains one block, `groups`, beside the `runs` array it already carries (`lsDoc`,
-  `runs.go:214`): per class, the six figures and the properties (`kind`, `retryable`,
-  `needs_owner`). The block is additive: a reader that does not know it loses the grouping, not the
-  rows.
+  `runs.go:216`): per class, those four figures, in the vocabulary's own order
+  (`failure.Classes()`, §3). The block is additive: a reader that does not know it loses the
+  grouping, not the rows.
+- **These four keys are what FC6 settled, and this section's first sketch was wider.** The sketch
+  named six figures per class — adding `kind`, `delivered` (runs whose `outcome` is `draft` or
+  `ready` with a branch pushed) and an example run id — and a totals line that moved to read
+  `191 of 585 runs failed (33%), $354.68 of $844.27`. The plan's approved Interfaces carry the four
+  above and leave the totals line alone: `kind`, `retryable` and `needs_owner` are the vocabulary's
+  own and `failure.PropertiesOf` answers them from the class alone (§3), so a wire format needs no
+  second copy of them, and an example run id is the committed table's figure (§6.2), not a listing's.
+  The plan is what shipped.
 - **`--group-by` and `--limit`/`--after` are refused together** (a page of a grouped table is a
   total of a page, and `--limit`'s own help says a page is not a total); `--group-by` with `--watch`
   is refused for the same reason `--limit` is.
@@ -579,7 +586,7 @@ that is already long; no reader of it is a contract.
 
 ## 10. Tasks
 
-**Status: a plan, approved to build on 2026-11-07; FC1–FC5 are built and FC6–FC8 are not
+**Status: a plan, approved to build on 2026-11-07; FC1–FC6 are built and FC7–FC8 are not
 started.** Each task is written to fit one run's $5 cap: it names at most twelve files, one command,
 one commit message and one red step. The convention is the one the active plans use
 (`docs/bitbucket-credentials/implementation-plan.md` is the most recent): **Files**,

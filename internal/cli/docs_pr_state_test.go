@@ -136,17 +136,17 @@ func TestDocsFailureClassDesignPinsTheVocabulary(t *testing.T) {
 	// must find that what it describes is in the tree -- a status line that
 	// reads as an open question while the code is on `main` is the defect
 	// TestDocsProjectWorkflowSecretsSaysTheBuildLanded fails a document for. FC1
-	// to FC5 are the five tasks of §10 that have moved it, so the line names all
-	// five, and the pins below say the same of §10's own status.
+	// to FC6 are the six tasks of §10 that have moved it, so the line names all
+	// six, and the pins below say the same of §10's own status.
 	for _, want := range []string{
-		"**Status: a design, and its FC1–FC5 have shipped; the rest of §10 is not built.**",
+		"**Status: a design, and its FC1–FC6 have shipped; the rest of §10 is not built.**",
 		// The design's own decisions stay the owner's: the plan's decisions being
 		// answered is not the design's D1–D9 and O1–O6 being answered, which is
 		// what README.md's and the plan's own notes about this document say.
 		"the design's own decisions — §8 D1–D9 and §9 O1–O6 — stay his",
 		// §10's own status, in the shape the coordinator plan's parts use: a
 		// line above the tasks saying how far the plan has got.
-		"**Status: a plan, approved to build on 2026-11-07; FC1–FC5 are built and FC6–FC8 are not started.**",
+		"**Status: a plan, approved to build on 2026-11-07; FC1–FC6 are built and FC7–FC8 are not started.**",
 		"## 9. Open items (the owner's)",
 		"## 11. What this design does not do",
 	} {
@@ -160,7 +160,7 @@ func TestDocsFailureClassDesignPinsTheVocabulary(t *testing.T) {
 	// flip has to fail here rather than read plausibly.
 	for _, gone := range []string{"nothing is built", "no decision below is answered", "no task is approved"} {
 		if strings.Contains(flat, gone) {
-			t.Errorf("%s still says %q: FC1 -- the package, the record's field and the schema's enum -- FC2 -- the one writer of a terminal status -- FC3 -- the classes the runner knows from its own state -- FC4 -- the classifier over the agent's own message -- and FC5 -- the reader that classes a record written before the field shipped -- are on `main`, and the status lines are where a reader checks the document against the build", fcDoc, gone)
+			t.Errorf("%s still says %q: FC1 -- the package, the record's field and the schema's enum -- FC2 -- the one writer of a terminal status -- FC3 -- the classes the runner knows from its own state -- FC4 -- the classifier over the agent's own message -- FC5 -- the reader that classes a record written before the field shipped -- and FC6 -- the grouping on `runs ls` -- are on `main`, and the status lines are where a reader checks the document against the build", fcDoc, gone)
 		}
 	}
 
