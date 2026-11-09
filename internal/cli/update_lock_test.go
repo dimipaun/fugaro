@@ -14,6 +14,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // update_lock_test.go is the installation half of the workdir lock: two
@@ -344,5 +345,44 @@ func TestTheAccountsConvergeTakesTheWorkdirLock(t *testing.T) {
 	}
 	if got := len(r.calls(t)); got != before {
 		t.Errorf("the refused accounts converge ran terraform: %q", r.calls(t)[before:])
+	}
+}
+
+// TestTheRepoDoorTakesTheWorkdirLock: `fugaro update --repo` and `setup --repo`
+// are the other door that prepares a workdir of its own — the checkout's, under
+// <project>/repos/<slug>, which is the directory the project's other workdirs
+// live in — so they take the same lock, and a converge in flight on this machine
+// refuses them. Without the lock the repository door rebuilds that workdir under
+// a run that is planning in it, which is the failure the lock exists for.
+func TestTheRepoDoorTakesTheWorkdirLock(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	path := writeProject(t, "aurora", "proj-1234")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc}\n"...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), checkoutYAML("github", "api-key", "aurora", ""))
+	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
+	t.Chdir(t.TempDir())
+
+	lock, err := infra.LockWorkdirs(os.Getenv, initProject, "fugaro update")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Release() }()
+
+	out, errOut, err := execute(t, "setup", "--repo", "--print-vars", "--project", "aurora", "--github-app-id", "42", root)
+	if err == nil {
+		t.Fatalf("the repository door ran while a converge held the workdirs:\n%s%s", out, errOut)
+	}
+	if got := ExitCode(err); got != ExitUserError {
+		t.Errorf("the repository door exited %d, want %d: %v", got, ExitUserError, err)
+	}
+	refusal := fmt.Sprintf("another fugaro update is running on this machine for project %s (pid %d), wait for it to finish, then rerun", initProject, os.Getpid())
+	if got := err.Error(); got != refusal {
+		t.Errorf("the refusal is\n  %s\nwant\n  %s", got, refusal)
 	}
 }
