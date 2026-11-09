@@ -705,7 +705,6 @@ var pendingSites = map[string]string{
 	"billing_prompt.go:billingAPIOff":  "T7",
 	"budget.go:confirmTyped":           "T3",
 	"budget.go:confirmTypedStrict":     "T3",
-	"image.go:confirmBuild":            "T4",
 	"init.go:Read":                     "T7",
 	"init.go:confirmResumedMark":       "T7",
 	"init.go:newInitRun":               "T7",

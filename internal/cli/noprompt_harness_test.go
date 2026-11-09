@@ -276,10 +276,10 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro creds ls":          "prints the no-project-config refusal",
 	"fugaro doctor":            "runs its whole check and reports what this world lacks",
 	"fugaro graph":             "refuses: the edition is not in this build",
-	"fugaro image build":       "refuses before the build: a billable build's confirmation needs a real terminal",
+	"fugaro image build":       "refuses before anything it could build: it builds the repository its checkout's origin names, and this world stands in no git checkout",
 	"fugaro image check":       "prints the no-project-config refusal",
 	"fugaro image ls":          "prints the no-project-config refusal",
-	"fugaro image refresh":     "refuses before its steps: each asks for the project's name at a real terminal",
+	"fugaro image refresh":     "refuses before its steps: this world is a development build with no pinned base images for the refresh to move to",
 	"fugaro image render":      "refuses outside a git checkout, which is what the world is",
 	"fugaro image selftest":    "reads its spec from the closed stdin and returns on the EOF",
 	"fugaro image status":      "prints the no-project-config refusal",
@@ -374,16 +374,6 @@ var closedStdinUnreached = map[string]closedStdinUnreachedAsk{
 	"fugaro managed apply": {
 		file: "managed_apply.go", marker: "func managedAsk(cmd *cobra.Command, lc *localcfg.Config)",
 		task: "T9", why: "asks inside an apply, which needs a saved plan this world does not build",
-	},
-	// A build's confirmation stands behind the rig that builds a real image:
-	// the registry, the build record and the Cloud Build API it submits to.
-	"fugaro image build": {
-		file: "image.go", marker: "func confirmBuild(cmd *cobra.Command, project, gcpProject, what string) error {",
-		task: "T4", why: "confirms at the submit, which needs the build rig's registry and Cloud Build fake",
-	},
-	"fugaro image refresh": {
-		file: "image_refresh_steps.go", marker: "r.confirm(",
-		task: "T4", why: "asks from the refresh's own plan, which needs the jobs this world does not fake",
 	},
 	// The published policy's own two writes ask before they replace rules
 	// nothing can read back after them; both stand behind a deployed-rules read.
