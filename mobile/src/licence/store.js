@@ -129,7 +129,7 @@ export class LicenceStore {
     if (!read.ok) return read;
     const held = await this.#read();
     if (!held.ok) return held;
-    const text = String(raw).trim();
+    const text = raw.trim();
     const kept = [...held.keys.filter((one) => one !== text), text].slice(-LICENCE_KEYS_MAX);
     const wrote = await this.#write(kept);
     if (wrote !== null) return wrote;
@@ -166,7 +166,6 @@ export class LicenceStore {
     return this.#verifier.latest(held.keys, now);
   }
 
-  /** #read answers the installed keys. */
   async #read() {
     let stored;
     try {

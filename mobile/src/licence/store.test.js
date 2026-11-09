@@ -145,7 +145,10 @@ test('a verified key is kept where the app keeps it, and survives a restart', as
   const claims = claimsFor();
   const key = mint(production, claims);
 
-  const installed = await store(port, [production]).install(key, at(ISSUED));
+  // Pasted with the whitespace a paste brings: the store keeps the text the
+  // verifier read, so a key that was accepted cannot come back spelled
+  // differently from the one the claims belong to.
+  const installed = await store(port, [production]).install(`\n  ${key}  \n`, at(ISSUED));
   assert.deepEqual(installed, { ok: true, claims, state: 'valid' }, 'the key verified');
 
   // Where it is kept: one entry in the app's ordinary store, under the
