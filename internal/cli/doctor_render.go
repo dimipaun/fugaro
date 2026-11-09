@@ -879,7 +879,7 @@ var doctorShorts = map[string]doctorShort{
 	"launcher-jobs":                {"which Cloud Run jobs a launcher can start could not be checked.", ""},
 	"launcher-jobs-public":         {"a Cloud Run job can be started by allUsers or allAuthenticatedUsers, which is anyone.", ""},
 	"launcher-jobs-unread":         {"the IAM policy of some Cloud Run jobs could not be read, so whether a launcher can start them is unknown.", ""},
-	"coordinator-overrides":        {"the coordinator holds a role that can override a run's execution, which it must never be able to do, or whether it does could not be read.", ""},
+	"coordinator-overrides":        {"the coordinator holds a role that can override a run's execution, or whether it does could not be read.", ""},
 	"batch-launcher-iam":           {"the launchers' roles/batch.jobsEditor grant in this project is not the one Fugaro writes, or could not be read.", ""},
 	"allow-list-uncovered":         {"the published policy does not admit a repository this machine's config names.", ""},
 	"creds-broken":                 {"a Claude account's token was refused, and no work routes to it until an operator clears the mark.", ""},
