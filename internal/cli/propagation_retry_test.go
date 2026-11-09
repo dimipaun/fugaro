@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
@@ -186,6 +187,62 @@ func TestPropagationRetryRerunsTheInstallationStep(t *testing.T) {
 		t.Errorf("the installation root's plan/show/apply = %q, want the whole cycle again\n%s", got, out)
 	}
 }
+
+// The repository step runs the same cycle through the same retry: its own
+// plan, gate and apply, and no saved plan applied twice. The failure here is
+// the repository root's own version of the reported one -- an account this
+// apply creates, and the binding on it that IAM refuses until it has seen the
+// account (the repo module's build.tf) -- because the repository root is where
+// the module's own bindings are made.
+func TestPropagationRetryRerunsTheRepositoryStep(t *testing.T) {
+	noPropagationWaits(t)
+	p := newRepoPlanRig(t, names(4), sandboxBaseRelease, sandboxProjectSecretLC, repoAccountGapChanges)
+	p.ri.script["apply"] = []any{
+		map[string]any{"exit": 1, "stderr": repoAccountGap400},
+		map[string]any{"exit": 0},
+	}
+	p.ri.save(t)
+
+	if _, _, err := p.plan(t); err != nil {
+		t.Fatalf("the retried repository step failed: %v\n%s", err, p.out.String())
+	}
+	out := p.out.String()
+	const line = "retrying the repository step in 20s: Google had not yet caught up with a resource it just created (attempt 1 of 3)"
+	if n := strings.Count(out, line); n != 1 {
+		t.Errorf("the retry was reported %d times, want one line:\n%s", n, out)
+	}
+	// The leading show is the retirement's read of the state, which planRepo
+	// makes once before the cycle; the cycle itself is plan, show, apply --
+	// twice.
+	if got, want := rootSubs(t, p.ri, filepath.Base(p.wd.Root), "plan", "show", "apply"),
+		[]string{"show", "plan", "show", "apply", "plan", "show", "apply"}; !slices.Equal(got, want) {
+		t.Errorf("the repository root's plan/show/apply = %q, want the whole cycle again\n%s", got, out)
+	}
+}
+
+// repoAccountGapChanges is the repository root's plan in that failure: the
+// build account the apply creates, and the project binding on it (build.tf's
+// google_project_iam_member.build).
+func repoAccountGapChanges(infra.RepoSpec) []planChange {
+	return []planChange{
+		created(repoBuildAccountAddr, "google_service_account",
+			map[string]any{"account_id": repoBuildAccount, "email": repoBuildAccount + "@" + initProject + ".iam.gserviceaccount.com"}),
+		created(repoBuildBindingAddr, "google_project_iam_member",
+			map[string]any{"member": "serviceAccount:" + repoBuildAccount + "@" + initProject + ".iam.gserviceaccount.com", "role": "projects/" + initProject + "/roles/fugaroBuildSubmitter"}),
+	}
+}
+
+// repoAccountGap400 is Google's answer to the binding while the account it
+// names is not visible to IAM yet: the 400 entry of the closed list, on the
+// repository root's own addresses.
+var repoAccountGap400 = applyDiagnostic(repoBuildBindingAddr,
+	"Error applying IAM policy for project \"projects/"+initProject+"\": googleapi: Error 400: Service account "+repoBuildAccount+"@"+initProject+".iam.gserviceaccount.com does not exist., badRequest")
+
+const (
+	repoBuildAccountAddr = "module.repo.google_service_account.build"
+	repoBuildBindingAddr = "module.repo.google_project_iam_member.build"
+	repoBuildAccount     = "fugaro-build"
+)
 
 // The second plan is a plan like the first one: the managed gate judges it
 // again, and the record is of the plan the retry applied -- the digest of the
