@@ -303,6 +303,36 @@ test('every bare import under index.js and src/ is a declared dependency', () =>
   assert.deepEqual(offences(MANIFEST, files), [], 'declare each import in package.json, or drop the import');
 });
 
+test('the licence verifier names one package, and it is the Ed25519 dependency (S2.5)', () => {
+  // The scan above admits the verifier's import because the manifest declares
+  // it; this case is what makes *which* package a decision. S2.5's Files line is
+  // one dependency, on the owner's yes, and the reach for it is one line in the
+  // module's door: a second package behind the primitive, a different one, or a
+  // range where the app pins exact is an edit here and not a quiet import.
+  const files = Object.fromEntries(
+    sourceFiles()
+      .filter((file) => file.startsWith('src/licence/'))
+      .map((file) => [file, readFileSync(join(ROOT, file), 'utf8')]),
+  );
+  assert.ok(Object.keys(files).includes('src/licence/index.js'), 'the door is in the walk');
+
+  const named = [];
+  for (const text of Object.values(files)) {
+    for (const specifier of specifiers(text)) {
+      if (packageOf(specifier) !== null) named.push(specifier);
+    }
+  }
+  assert.deepEqual(named, ['@noble/curves/ed25519.js']);
+
+  // Pinned exact, like the rest of this manifest, and MIT in the lockfile --
+  // with the one package behind it, so the app's bundle carries no licence the
+  // business licence in `mobile/LICENSE.md` cannot ship.
+  assert.equal(MANIFEST.dependencies['@noble/curves'], '2.4.0');
+  for (const name of ['@noble/curves', '@noble/hashes']) {
+    assert.equal(LOCK.packages[`node_modules/${name}`]?.license, 'MIT', `${name} is MIT`);
+  }
+});
+
 test('the lockfile is the manifest npm ci installs, and it is lockfileVersion 3', () => {
   assert.equal(LOCK.lockfileVersion, 3);
   assert.equal(LOCK.name, MANIFEST.name);
