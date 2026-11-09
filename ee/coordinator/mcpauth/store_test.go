@@ -560,3 +560,101 @@ func TestTheStoreRefusesARecordItDoesNotUnderstand(t *testing.T) {
 		t.Errorf("LookupByHash = %v; want the decode's own refusal of the field", err)
 	}
 }
+
+// TestAFamilyExpires is M5b's fourth requirement read where it is enforced: a
+// refresh family has a lifetime of its own and an idle bound of its own, and a
+// family past either of them stops rotating.
+//
+// What the bounds are for is the exposure a leaked ID token leaves behind: an
+// approval opens a family, and until this task that family had no lifetime at
+// all — the access token expired in fifteen minutes and the chain behind it was
+// extendable forever (spec.md §6, §8). What the two figures *are* is the
+// owner's to set, so this test carries the shape rather than the numbers: every
+// instant below is written relative to FamilyTTL and FamilyIdleTTL, and a
+// change to either moves the test with it.
+//
+// The store is built with the test's own clock and not the process's, because
+// the bound is read at the rotation and a test that waited for a month would be
+// a test nobody runs. Both halves are held: an idle bound that ends a chain
+// nothing has extended, an absolute bound that ends one that is still busy, and
+// the answer a rotation past either of them gives — the terminal
+// ErrTokenNotFound a token endpoint turns into invalid_grant, and not the theft
+// signal a replay raises (ErrRefreshReplay), because a family that got old is
+// not a family somebody stole.
+func TestAFamilyExpires(t *testing.T) {
+	ctx := context.Background()
+	now := testNow
+	s := newRecordsAt(bucketObjects{b: newFakeBucket(t)}, func() time.Time { return now })
+
+	_, refresh, err := MintAt(ctx, s, "user:person-1", testClient(), testLimits(), testNow)
+	if err != nil {
+		t.Fatalf("MintAt: %v", err)
+	}
+
+	// A chain that keeps being used keeps rotating: each rotation restarts the
+	// idle bound, so the family is inside both bounds every time it is used —
+	// which is the half that makes the idle bound an idle bound and not a
+	// second lifetime.
+	stale := refresh
+	for used := FamilyIdleTTL - time.Hour; testNow.Add(used).Before(testNow.Add(FamilyTTL)); used += FamilyIdleTTL - time.Hour {
+		now = testNow.Add(used)
+		stale = refresh
+		_, next, err := RotateAt(ctx, s, refresh, now)
+		if err != nil {
+			t.Fatalf("a rotation %s after the mint, the family having last rotated %s before it, = %v; want it answered: the chain is inside both of its bounds",
+				used, FamilyIdleTTL-time.Hour, err)
+		}
+		refresh = next
+	}
+
+	// The absolute bound, and the case that separates it from the idle one: the
+	// family rotated a couple of days before this instant, so nothing about it
+	// is idle — it is simply FamilyTTL old, and that ends it.
+	now = testNow.Add(FamilyTTL + time.Minute)
+	if _, _, err := RotateAt(ctx, s, refresh, now); !errors.Is(err, ErrTokenNotFound) {
+		t.Errorf("a rotation of a family %s old, last used minutes before it, = %v; want ErrTokenNotFound: a family's lifetime is its own bound and being busy does not extend it",
+			FamilyTTL+time.Minute, err)
+	}
+	// The aged check is read before the replay one, so presenting a token the
+	// family rotated away is answered as the age and not as the theft it would
+	// otherwise be — and nothing is revoked for a family that merely got old.
+	if _, _, err := RotateAt(ctx, s, stale, now); !errors.Is(err, ErrTokenNotFound) {
+		t.Errorf("a rotated-away token of an aged family = %v; want ErrTokenNotFound rather than ErrRefreshReplay: the age is the read that decides, and a family nobody stole must not be revoked",
+			err)
+	}
+	if _, err := s.LookupByHash(ctx, TokenHash(stale)); err != nil {
+		t.Errorf("a token of an aged family no longer resolves after the refusals above (%v): an aged family is refused rather than revoked, so nothing was deleted and a person can still revoke the chain",
+			err)
+	}
+
+	// The idle bound, on a family of its own: nothing has extended it, and the
+	// first rotation past the bound is refused.
+	_, idle, err := MintAt(ctx, s, "user:person-1", testClient(), testLimits(), testNow)
+	if err != nil {
+		t.Fatalf("MintAt: %v", err)
+	}
+	now = testNow.Add(FamilyIdleTTL + time.Minute)
+	if _, _, err := RotateAt(ctx, s, idle, now); !errors.Is(err, ErrTokenNotFound) {
+		t.Errorf("a rotation of a family nothing has extended for %s = %v; want ErrTokenNotFound: the idle bound is what ends a chain the client stopped using",
+			FamilyIdleTTL+time.Minute, err)
+	}
+	rec, err := s.LookupByHash(ctx, TokenHash(idle))
+	if err != nil {
+		t.Fatalf("the idle family's own refresh token: %v", err)
+	}
+	if _, _, err := s.GetFamily(ctx, rec.FamilyID); err != nil {
+		t.Errorf("the family of an idle-refused rotation is gone (%v): a refusal is not a revoke, and an idle family that was deleted would be one a person can no longer revoke",
+			err)
+	}
+
+	// And the control: a family inside both bounds rotates, so the refusals
+	// above are about the bounds and not about the store refusing everything.
+	_, young, err := MintAt(ctx, s, "user:person-1", testClient(), testLimits(), testNow)
+	if err != nil {
+		t.Fatalf("MintAt: %v", err)
+	}
+	now = testNow.Add(FamilyIdleTTL - time.Minute)
+	if _, _, err := RotateAt(ctx, s, young, now); err != nil {
+		t.Errorf("a rotation of a fresh family %s after its mint = %v; want it answered", FamilyIdleTTL-time.Minute, err)
+	}
+}

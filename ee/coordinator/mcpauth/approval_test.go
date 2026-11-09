@@ -226,8 +226,17 @@ func TestTheDeviceActIsNotAQueryString(t *testing.T) {
 	if strings.Contains(rec.Body.String(), token) {
 		t.Errorf("the refusal repeats the token: a token rendered into a page is a token in a browser's history")
 	}
-	if rec := ts.consent(t, url.Values{"request_id": {binding}, "decision": {"allow"}}); rec.Code == http.StatusFound {
-		t.Errorf("a GET carrying the ID token approved the flow: the act is a POST, and one the server reads a token out of a URL for is one it will read a token out of a URL for anywhere")
+	// And the flow is where it was: the record it names carries no approval and
+	// is not spent, which is what says the GET approved nothing — a GET is not
+	// the act, and an act the server reads a token out of a URL for is one it
+	// will read a token out of a URL for anywhere.
+	at := ts.store.objects(t)
+	data, ok := at[requestPrefix+binding]
+	if !ok {
+		t.Fatalf("the flow's own record is gone from the store: a GET carrying a token in its query string ended a flow that was never answered")
+	}
+	if strings.Contains(string(data), "approval") {
+		t.Errorf("the flow's record carries an approval after the GET: the request is %s, and no act of the paired device made that approval", string(data))
 	}
 
 	// The POST is the act, and the answer to it carries the token nowhere.

@@ -138,17 +138,28 @@ func approvalToken(t *testing.T) string {
 	return signJWT(t, testKey(), testKid, "RS256", claims)
 }
 
-// approve posts the approval the page above asks for: the binding, the number
-// the page showed, and the Firebase ID token the sign-in produced — all three
-// in the form body, which is the only place M-a allows the token to be.
-func (ts *testServer) approve(t *testing.T, binding, number string) *httptest.ResponseRecorder {
+// pageAnswer is the page's own answer to a flow (M5b): the flow's binding and
+// the person's decision, and neither the number nor the token — those are the
+// paired device's act, which is a request of its own.
+func (ts *testServer) pageAnswer(t *testing.T, binding, decision string) *httptest.ResponseRecorder {
 	t.Helper()
 	return ts.consent(t, url.Values{
 		"request_id": {binding},
-		"number":     {number},
-		"id_token":   {acceptedToken(t)},
-		"decision":   {"allow"},
+		"decision":   {decision},
 	})
+}
+
+// approve is one whole approval of one flow: the paired device's act, carrying
+// the number the person read off the screen and a sign-in token of its own, and
+// then the page's answer, which is what the browser the client is waiting on
+// posts. A test that wants only one of the two calls it directly.
+func (ts *testServer) approve(t *testing.T, binding, number string) *httptest.ResponseRecorder {
+	t.Helper()
+	if rec := ts.deviceApprove(t, binding, number, approvalToken(t)); rec.Code != http.StatusOK {
+		t.Fatalf("the paired device's act answered %d (%s); want the page that records the approval, so the flow is approved before the page answers it",
+			rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	return ts.pageAnswer(t, binding, "allow")
 }
 
 // codeOf reads the code out of a consent's redirect, which is where a client
@@ -653,11 +664,18 @@ func TestAScopeTheInstallationDoesNotGrantIsRefusedNotWidened(t *testing.T) {
 	if got := refusalOf(t, rec).Error; got != string(oidc.InvalidGrant) {
 		t.Errorf("the exchange refused a scope this installation does not grant with %q; want %q", got, oidc.InvalidGrant)
 	}
-	// Nothing was minted and no family was opened: the store holds the client
-	// and the spent code, and a token record would be the widening itself.
-	for key := range ts.store.objects(t) {
-		if strings.HasPrefix(key, tokenPrefix) || strings.HasPrefix(key, familyPrefix) {
-			t.Errorf("%s exists after an exchange this installation refused: a refused authorization mints no token and opens no family", key)
+	// Nothing was minted and no family was opened: the store holds the client,
+	// the spent code and the marker of the ID token the approval spent (M5b) —
+	// and a record of a token this installation issued, or a family, would be
+	// the widening itself. The spend is told from a minted record by its kind,
+	// which is the one thing the two do not share: it is written by the
+	// approval, before any code exists, and it names no family.
+	for key, data := range ts.store.objects(t) {
+		if strings.HasPrefix(key, familyPrefix) {
+			t.Errorf("%s exists after an exchange this installation refused: a refused authorization opens no family", key)
+		}
+		if strings.HasPrefix(key, tokenPrefix) && !strings.Contains(string(data), `"kind":"`+string(KindIDToken)+`"`) {
+			t.Errorf("%s exists after an exchange this installation refused: a refused authorization mints no token", key)
 		}
 	}
 }
@@ -936,8 +954,8 @@ func TestConsentNamesTheRedirectHost(t *testing.T) {
 // flow's own binding, an approval that does not is refused, and the state
 // returns on the redirect unaltered.
 //
-// The third assertion is the one that holds the whole rule: an approval that
-// carried the right binding, the right number and a redirect URI of its own
+// The third assertion is the one that holds the whole rule: an answer that
+// carried the right binding, a device's approval and a redirect URI of its own
 // choosing still goes where the record says, because the record is the only
 // place any of it is read from. Without that, a binding would be a token an
 // attacker could present beside values of their own.
@@ -975,13 +993,15 @@ func TestConsentIsCSRFBound(t *testing.T) {
 		t.Errorf("the store holds %d objects after four refused approvals; want the client and the pending request and no code", len(got))
 	}
 
-	// The real approval, with a redirect URI of the caller's own choosing beside
-	// the binding: the code goes to the record's URI, and the state comes back
+	// The device's act on that flow, and then the real answer: the page's own
+	// binding and decision, with a redirect URI of the caller's own choosing
+	// beside them. The code goes to the record's URI, and the state comes back
 	// as the client sent it.
+	if rec := ts.deviceApprove(t, binding, number, approvalToken(t)); rec.Code != http.StatusOK {
+		t.Fatalf("the paired device's act answered %d (%s); want it to record the approval", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
 	rec := ts.consent(t, url.Values{
 		"request_id":   {binding},
-		"number":       {number},
-		"id_token":     {acceptedToken(t)},
 		"decision":     {"allow"},
 		"redirect_uri": {"https://evil.example.org/callback"},
 	})
@@ -1003,7 +1023,7 @@ func TestConsentIsCSRFBound(t *testing.T) {
 	}
 
 	// And the flow is answered once.
-	if again := ts.approve(t, binding, number); again.Code == http.StatusFound {
+	if again := ts.pageAnswer(t, binding, "allow"); again.Code == http.StatusFound {
 		t.Errorf("the same binding was answered twice: one binding answers one approval, and the second is refused rather than honoured")
 	}
 }
@@ -1029,12 +1049,10 @@ func TestTheFlowBindsTheIdentityTheProjectsListsCarry(t *testing.T) {
 	tok := signJWT(t, testKey(), testKid, "RS256", claims)
 
 	binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
-	code := codeOf(t, ts.consent(t, url.Values{
-		"request_id": {binding},
-		"number":     {number},
-		"id_token":   {tok},
-		"decision":   {"allow"},
-	}))
+	if rec := ts.deviceApprove(t, binding, number, tok); rec.Code != http.StatusOK {
+		t.Fatalf("the paired device's act answered %d (%s); want it to record the approval", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	code := codeOf(t, ts.pageAnswer(t, binding, "allow"))
 	rec, tokens := ts.exchange(t, url.Values{
 		"grant_type":    {string(GrantAuthorizationCode)},
 		"code":          {code},
@@ -1062,21 +1080,24 @@ func TestTheFlowBindsTheIdentityTheProjectsListsCarry(t *testing.T) {
 }
 
 // TestTheApprovalRefusesAnUnverifiedSignIn: the sign-in step is what the whole
-// approval rests on, and neither of the two ways it can fail issues a code.
+// approval rests on, and none of the three ways it can fail issues a code.
 //
-// The two ways are the two branches of verifySignIn: an approval that carries no
-// token at all, and one that carries a token this installation will not verify —
-// here, a token another project's Firebase signed, which is the refusal M6's own
-// tests hold one layer down. What this test adds is that the endpoint does not
-// go on regardless: an unverified sign-in is a 401 page, never a code and never
-// a redirect to the client, because there is no person whose approval this was.
+// The three ways are the branches of verifySignIn reached from the paired
+// device's act: a submission that carries no token value at all, one that
+// carries a token that is not a JWT, and one that carries a token this
+// installation will not verify — here, a token another project's Firebase
+// signed, which is the refusal M6's own tests hold one layer down. What this
+// test adds is that the endpoint does not go on regardless: an unverified
+// sign-in is a 401 page, never a code and never a redirect to the client,
+// because there is no person whose approval this was. It is the device's act
+// rather than the page's answer because the token arrives only there (M5b).
 func TestTheApprovalRefusesAnUnverifiedSignIn(t *testing.T) {
 	ts := newTestServer(t)
 	clientID, _ := ts.register(t, "an editor", testClientRedirect)
 	otherProjectToken := signJWT(t, testKey(), testKid, "RS256", idTokenClaims(testOtherProject))
 
 	for _, tc := range []struct{ what, token string }{
-		{"no token at all", ""},
+		{"no token value at all", ""},
 		{"a token that is not a JWT", "not-a-jwt"},
 		{"a token another installation's Firebase signed", otherProjectToken},
 	} {
@@ -1085,7 +1106,6 @@ func TestTheApprovalRefusesAnUnverifiedSignIn(t *testing.T) {
 			"request_id": {binding},
 			"number":     {number},
 			"id_token":   {tc.token},
-			"decision":   {"allow"},
 		})
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("an approval carrying %s answered %d (%s); want 401: an unverified sign-in is refused rather than answered with a code", tc.what, rec.Code, strings.TrimSpace(rec.Body.String()))
@@ -1118,16 +1138,15 @@ func TestTheApprovalRefusesAnUnverifiedSignIn(t *testing.T) {
 }
 
 // TestTheApprovalNeedsTheNumberThePageShowed is M-a's number check at the
-// endpoint: an approval that does not present the flow's own number is refused,
-// whatever else it carries.
+// endpoint, on the act M5b moved it to: the paired device's approval that does
+// not present the flow's own number is refused, whatever else it carries — and
+// the flow it named is left unapproved, so the page's own answer mints nothing.
 //
-// What that holds is the page binding — the number the page rendered has to
-// come back with the approval, so an approval that never saw the page is
-// refused. What it does not hold, and this test does not claim, is M-a's
-// device-side approval: the number is displayed and echoed on the same page, so
-// a page rendering a flow of its own knows its own number too
-// (ee/coordinator/mcpauth/authorize.go's note, and the follow-up's finding for
-// the owner).
+// What that holds is the number the person read off the screen: the device took
+// it from the screen in front of them, so an approval that never had the number
+// is refused, and one that presents another flow's number is refused too
+// (TestTheNumberNamesOneRequest). The refusal is a page rather than a redirect,
+// because the device is not the browser the client is waiting on.
 func TestTheApprovalNeedsTheNumberThePageShowed(t *testing.T) {
 	ts := newTestServer(t)
 	clientID, _ := ts.register(t, "an editor", testClientRedirect)
@@ -1139,25 +1158,25 @@ func TestTheApprovalNeedsTheNumberThePageShowed(t *testing.T) {
 			// indistinguishable from the refusals.
 			t.Skip("the flow's number happened to be the one this case presents")
 		}
-		rec := ts.consent(t, url.Values{
-			"request_id": {binding},
-			"number":     {number},
-			"id_token":   {acceptedToken(t)},
-			"decision":   {"allow"},
-		})
-		if rec.Code == http.StatusFound {
-			t.Errorf("an approval presenting the number %q was answered with a code, and the page showed %q: the approval has to present the number the page showed, or the check is a hidden field's theatre", number, shown)
+		rec := ts.deviceApprove(t, binding, number, approvalToken(t))
+		if rec.Code == http.StatusOK {
+			t.Errorf("a device's act presenting the number %q was recorded, and the page showed %q: the act has to present the number the screen showed, or the check is a hidden field's theatre", number, shown)
 		}
 		if loc := rec.Header().Get("Location"); loc != "" {
-			t.Errorf("an approval presenting the number %q answered with a redirect to %q: the number is checked before the flow is answered, so there is nothing to redirect to", number, loc)
+			t.Errorf("a device's act presenting the number %q answered with a redirect to %q: the number is checked before the flow is approved, so there is nothing to redirect to", number, loc)
+		}
+		// And the flow is not approved: the page's answer mints nothing for it.
+		if again := ts.pageAnswer(t, binding, "allow"); again.Code == http.StatusFound {
+			t.Errorf("a flow whose device act presented the number %q minted a code: an act that did not carry this flow's number has not approved it", number)
 		}
 	}
 
-	// The control: the number the page showed is answered, so the refusals above
-	// are about the number and not about the rest of the approval.
+	// The control: the number the screen showed is approved, and the page's
+	// answer mints the code — so the refusals above are about the number and not
+	// about the rest of the act.
 	binding, shown := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
 	if rec := ts.approve(t, binding, shown); rec.Code != http.StatusFound {
-		t.Errorf("the approval carrying the number the page showed answered %d (%s); want the code redirect", rec.Code, strings.TrimSpace(rec.Body.String()))
+		t.Errorf("the approval carrying the number the screen showed answered %d (%s); want the code redirect", rec.Code, strings.TrimSpace(rec.Body.String()))
 	}
 }
 
@@ -1224,10 +1243,16 @@ func TestAnExpiredRequestIsAnsweredWithTheClientsOwnError(t *testing.T) {
 	binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
 
 	now = testNow.Add(RequestTTL + time.Second)
-	// The approval is a whole, correct approval: the binding, the number the
+	// The device's act is a whole, correct act: the flow's id, the number the
 	// page showed and a token that verifies. Only the clock has moved, so the
-	// only thing that can refuse it is the lifetime.
-	rec := ts.approve(t, binding, number)
+	// only thing that can refuse it is the lifetime — and refused it is, before
+	// it spends the token or records anything.
+	if rec := ts.deviceApprove(t, binding, number, approvalToken(t)); rec.Code != http.StatusBadRequest {
+		t.Errorf("a device's act on an expired flow answered %d (%s); want it refused rather than recorded: a flow that is over is not one a device approves", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	// The page's answer is the client's own: the browser that asked is still
+	// there, so the error goes to its callback rather than to a page.
+	rec := ts.pageAnswer(t, binding, "allow")
 	if rec.Code != http.StatusFound {
 		t.Fatalf("an approval of an expired request answered %d (%s); want the redirect the client is waiting on, carrying the flow's own error", rec.Code, strings.TrimSpace(rec.Body.String()))
 	}
@@ -1316,11 +1341,11 @@ func TestAnIDTokenInAQueryStringIsRefused(t *testing.T) {
 		t.Errorf("the refusal page carries X-Frame-Options %q; want DENY", xfo)
 	}
 
-	// The approval itself, carrying the token in its query string *and* a valid
-	// one in its body. This is the case that makes the refusal load-bearing: an
-	// endpoint that read the query would answer it with a code, and a URL that
-	// carried the token has already been written to a log line, so the request
-	// is refused rather than answered.
+	// The device's act itself, carrying the token in its query string *and* a
+	// valid one in its body. This is the case that makes the refusal
+	// load-bearing: an endpoint that read the query would record the approval,
+	// and a URL that carried the token has already been written to a log line,
+	// so the request is refused rather than read.
 	binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
 	req := httptest.NewRequest(http.MethodPost,
 		AuthorizePath+"?id_token="+url.QueryEscape(token),
@@ -1328,7 +1353,6 @@ func TestAnIDTokenInAQueryStringIsRefused(t *testing.T) {
 			"request_id": {binding},
 			"number":     {number},
 			"id_token":   {token},
-			"decision":   {"allow"},
 		}.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec = ts.do(t, req)
@@ -1362,7 +1386,6 @@ func TestAnIDTokenInAQueryStringIsRefused(t *testing.T) {
 			"request_id": {binding},
 			"number":     {number},
 			"id_token":   {token},
-			"decision":   {"allow"},
 		}.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if rec := ts.do(t, req); rec.Code == http.StatusFound {
