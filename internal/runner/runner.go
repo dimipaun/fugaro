@@ -1945,14 +1945,17 @@ func (r *run) openCheckout(ctx context.Context, remote string, cloneVars map[str
 	return gitops.CloneBlobless(ctx, r.d.WorkDir, remote, "", env, modelCredentialVars...)
 }
 
-// bakedRepoRoot is the directory a shared image lays the repositories it baked
-// out under: one checkout per repository, named by the repository's storage
-// slug (openBakedCheckout). Both sides of the layout are Fugaro's own code — the
-// generated Dockerfile bakes into this path, and a run of the image reads it
-// here — so the name is fixed rather than discovered. It is a sibling of the
-// work directory and never a path inside it, because the work directory is the
-// run's own checkout and a repository the image merely carries is not part of
-// it.
+// bakedRepoRoot is the directory a shared image keeps the repositories it baked
+// in: one checkout per repository, named by the repository's storage slug
+// (openBakedCheckout). The name is fixed here rather than discovered because
+// both ends of the layout are Fugaro's own code — the bake step writes these
+// directories, and a run of the image reads them here. Nothing writes them yet:
+// the bake step (IS8b, docs/image-setup-skill) waits on the owner's ruling on
+// O3, so this constant and the per-slug arm below are the contract that step has
+// to meet, and until it does every run falls back to the clone. It is a sibling
+// of the work directory and never a path inside it, because the work directory
+// is the run's own checkout and a repository the image merely carries is not
+// part of it.
 const bakedRepoRoot = "baked"
 
 // openBakedCheckout settles the checkout this run finds in its image, before
@@ -1970,12 +1973,18 @@ const bakedRepoRoot = "baked"
 // (checkBakedCheckoutOrigin); a run with neither clones (openCheckout).
 //
 // Only a per-repository job looks. A project job's image bakes no checkout and
-// the run refuses any it finds (checkProjectCheckoutOrigin), so there is
-// nothing for it to adopt. And only a run whose slug derives the kind of the
-// repository its task names — the binding admissionCheck holds a cloud run to —
-// is held to one: a run without that binding (a local invocation, which
-// admission skips) has no repository to tell a baked checkout of its own from
-// another's, and keeps the behaviour it had before this layout existed.
+// the run refuses any it finds (checkProjectCheckoutOrigin), so there is nothing
+// for it to adopt. And the run must be able to name the repository its task
+// names under the kind its own slug derives (providerForSlug): a slug no
+// provider kind produces — what `--provider fake` gives a local invocation —
+// names no repository to call a baked directory after and no remote to hold the
+// checkout the run finds to, so such a run looks for neither.
+//
+// A local run whose slug does derive one (`fugaro exec --run <slug>/<id>`) is
+// held to the binding like a cloud one, and deliberately: the slug it was given
+// keys its bucket paths, its locks, its cache and its budget session, so a
+// checkout of another repository is not this run's to work on and push from
+// there either.
 func (r *run) openBakedCheckout(ctx context.Context) error {
 	slug := r.d.Store.Slug()
 	kind, ok := providerForSlug(slug, r.spec.Repo)

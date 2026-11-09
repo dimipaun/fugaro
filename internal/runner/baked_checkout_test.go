@@ -29,47 +29,75 @@ func bakedDir(t *testing.T, h *harness, slug string) string {
 	return dir
 }
 
-// TestBakedCheckoutOriginMismatchRefuses (IS8): the job is for acme/app, and
-// the checkout already in the image's work directory is another repository's —
-// a shared image built for someone else, or a warm container an earlier job
-// left behind. The run must not work on it: the diff would be repo B's source
+// otherRepositoryCheckout makes dir a checkout of another repository: a clone
+// of the fixture's remote, so that nothing here needs a network, whose origin
+// is then the other repository's.
+func otherRepositoryCheckout(t *testing.T, h *harness, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, filepath.Dir(dir), "clone", "--quiet", h.remote, dir)
+	testutil.Git(t, dir, "remote", "set-url", "origin", otherRemote)
+}
+
+// TestBakedCheckoutOriginMismatchRefuses (IS8): the job is for acme/app, and a
+// checkout the image already holds is another repository's — a shared image
+// built for someone else, or a warm container an earlier job or execution left
+// behind. The run must not work on it: the diff would be repo B's source
 // committed under repo A's slug and pushed with this run's git credential. It
 // stops at bootstrap, before any git credential is requested and before a stage
 // runs.
 //
-// Mutation (run, restore): drop the checkBakedCheckoutOrigin call for the work
-// directory's own checkout — the run opens another repository's checkout and
-// fails further down (no fugaro.yaml, then a fetch of a remote that does not
-// resolve), with a git credential already requested.
+// The two rows are the two places such a checkout can be: the work directory,
+// which the admission check reads too, and the per-slug directory the run would
+// adopt for its own repository on a shared image, which nothing else looks at.
+//
+// Mutation (run, restore): drop the checkBakedCheckoutOrigin call — the run
+// opens another repository's checkout and fails further down (no fugaro.yaml,
+// then a fetch of a remote that does not resolve), with a git credential
+// already requested. Mutation (run, restore): return right after
+// openBakedCheckout sets r.d.WorkDir, checking only the work directory's own
+// checkout — the first row still passes and the second one fails.
 func TestBakedCheckoutOriginMismatchRefuses(t *testing.T) {
-	h := newHarness(t, "", nil)
-	auths := 0
-	h.provider.Auth = func(time.Duration) gitprov.GitAuth {
-		auths++
-		return gitprov.GitAuth{}
-	}
-	if err := os.MkdirAll(h.deps.WorkDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	testutil.Git(t, h.deps.WorkDir, "init", "--quiet", "-b", "main", ".")
-	testutil.Git(t, h.deps.WorkDir, "remote", "add", "origin", otherRemote)
-	rec, err := h.run(t, implement("feature"), review("ship", 0))
-	if err == nil || rec == nil || rec.Status != runstore.StatusInfraError {
-		t.Fatalf("rec = %+v, err = %v: the run did not refuse another repository's checkout", rec, err)
-	}
-	for _, want := range []string{otherRemote, "evil/other", "acme/app", "not this run's repository"} {
-		if !strings.Contains(rec.Reason, want) {
-			t.Errorf("reason %q lacks %q", rec.Reason, want)
-		}
-	}
-	if strings.Contains(rec.Reason, "\n") {
-		t.Errorf("the reason is not one line: %q", rec.Reason)
-	}
-	if auths != 0 {
-		t.Errorf("%d git credential requests were made before the refusal", auths)
-	}
-	if len(h.agent.calls) != 0 {
-		t.Errorf("%d stages ran after the refusal", len(h.agent.calls))
+	for _, tc := range []struct {
+		name  string
+		plant func(t *testing.T, h *harness)
+	}{
+		{"the work directory", func(t *testing.T, h *harness) {
+			otherRepositoryCheckout(t, h, h.deps.WorkDir)
+		}},
+		{"the directory the run would adopt", func(t *testing.T, h *harness) {
+			otherRepositoryCheckout(t, h, bakedDir(t, h, repoSlug))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, "", nil)
+			auths := 0
+			h.provider.Auth = func(time.Duration) gitprov.GitAuth {
+				auths++
+				return gitprov.GitAuth{}
+			}
+			tc.plant(t, h)
+			rec, err := h.run(t, implement("feature"), review("ship", 0))
+			if err == nil || rec == nil || rec.Status != runstore.StatusInfraError {
+				t.Fatalf("rec = %+v, err = %v: the run did not refuse another repository's checkout", rec, err)
+			}
+			for _, want := range []string{otherRemote, "evil/other", "acme/app", "not this run's repository"} {
+				if !strings.Contains(rec.Reason, want) {
+					t.Errorf("reason %q lacks %q", rec.Reason, want)
+				}
+			}
+			if strings.Contains(rec.Reason, "\n") {
+				t.Errorf("the reason is not one line: %q", rec.Reason)
+			}
+			if auths != 0 {
+				t.Errorf("%d git credential requests were made before the refusal", auths)
+			}
+			if len(h.agent.calls) != 0 {
+				t.Errorf("%d stages ran after the refusal", len(h.agent.calls))
+			}
+		})
 	}
 }
 
