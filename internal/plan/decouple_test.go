@@ -507,6 +507,22 @@ func TestStubsPresentListsOnlyExistingFiles(t *testing.T) {
 	}
 }
 
+// TestStubsPresentDoesNotReportADirectory: a stub is a whole *file* the contract
+// names (D1815) — the integration task deletes it — and the path is plan text
+// rather than a promise about what is at it. A directory there is not a file of
+// the contract, and reporting it would say the integration task still has a stub
+// to delete where there is nothing of the contract's to delete.
+func TestStubsPresentDoesNotReportADirectory(t *testing.T) {
+	root := checkout(t)
+	written(t, root, "internal/contract/stub.go")
+	if err := os.MkdirAll(filepath.Join(root, "internal/contract/gone.go"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := stubsOf(t, stubGraph(t)), []string{"internal/contract/stub.go"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("stubs_present = %v, want %v: a directory at the path is not a stub of the contract", got, want)
+	}
+}
+
 // TestStubsPresentDoesNotFollowSymlinksOut: a stub whose file is a symlink out
 // of the checkout is not a file of this checkout, however exactly the path
 // names one. The root refuses to follow it, so nothing is reported -- and the
