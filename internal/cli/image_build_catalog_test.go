@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -216,13 +217,28 @@ func catalogBuildStep(t *testing.T, fb *gcpfake.Build, id string) map[string]any
 	return nil
 }
 
+// catalogBuildStepIDs are the ids of the last request's steps, in order.
+func catalogBuildStepIDs(t *testing.T, fb *gcpfake.Build) []string {
+	t.Helper()
+	steps, _ := fb.Last()["steps"].([]any)
+	ids := make([]string, 0, len(steps))
+	for _, raw := range steps {
+		st, _ := raw.(map[string]any)
+		id, _ := st["id"].(string)
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // TestImageBuildWithACatalogBuildsTheEntry: with a catalog published,
 // `fugaro image build <name>` submits that entry's own build (D1144) — the
 // copied Dockerfile is the build's whole context, the definition's sha256 is
 // the content tag of the image it produces, and the image lands in the
 // installation's shared registry (D1152) as this repository's build account.
-// Without a name every entry that has a Dockerfile is built, and one that is a
-// prebuilt image is named and passed over rather than failing the others.
+// Without a name every entry of this checkout is submitted, a prebuilt image
+// among them: it is not built but smoked, which is the entry's own run
+// (TestPrebuiltEntrySmoked), and only another repository's entry is passed
+// over rather than failing the rest.
 func TestImageBuildWithACatalogBuildsTheEntry(t *testing.T) {
 	fb, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
 	stubCatalogProvider(t, map[string]string{
@@ -318,21 +334,20 @@ func TestImageBuildWithACatalogBuildsTheEntry(t *testing.T) {
 		t.Errorf("stdout = %q", out)
 	}
 
-	// No name with a catalog published is every entry that has a Dockerfile,
-	// and the prebuilt one is said to have nothing to build rather than
-	// stopping the others.
+	// No name with a catalog published is every entry of this checkout: a
+	// build per entry that has a Dockerfile, and the smoke of the one a
+	// prebuilt image answers (F10/IS11). Only another repository's entry is
+	// passed over rather than failing the rest.
 	before := buildPosts(fb)
 	_, stderr, err = executeBuild(t, "image", "build", "--base", "b:1")
 	if err != nil {
 		t.Fatalf("%v (%s)", err, stderr)
 	}
-	if got := buildPosts(fb) - before; got != 2 {
-		t.Errorf("the unnamed build submitted %d builds, want one per buildable entry", got)
+	if got := buildPosts(fb) - before; got != 3 {
+		t.Errorf("the unnamed build submitted %d builds, want one per entry of this checkout", got)
 	}
-	for _, want := range []string{"prebuilt", "other"} {
-		if !strings.Contains(stderr, want) {
-			t.Errorf("stderr = %q, want %s named among the entries passed over", stderr, want)
-		}
+	if !strings.Contains(stderr, "other") {
+		t.Errorf("stderr = %q, want other named among the entries passed over", stderr)
 	}
 
 	// An entry whose Dockerfile is another repository's is refused by name:
@@ -345,15 +360,6 @@ func TestImageBuildWithACatalogBuildsTheEntry(t *testing.T) {
 	}
 	if buildPosts(fb) != before {
 		t.Errorf("another repository's entry reached Cloud Build: %d posts", buildPosts(fb)-before)
-	}
-	// A named prebuilt entry is refused in the same way: it has no Dockerfile
-	// to copy and no build to submit.
-	_, _, err = executeBuild(t, "image", "build", "prebuilt", "--base", "b:1")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "prebuilt") {
-		t.Fatalf("exit %d, err %v: a prebuilt entry is named as having nothing to build", ExitCode(err), err)
-	}
-	if buildPosts(fb) != before {
-		t.Errorf("a prebuilt entry reached Cloud Build: %d posts", buildPosts(fb)-before)
 	}
 
 	// --no-wait reports the submitted build and its log instead of waiting
@@ -592,5 +598,106 @@ func TestCatalogBuildStopsAtTheEntryThatFails(t *testing.T) {
 	catalogCopy(t, gcs, "alpha")
 	if !catalogCopyAbsent(t, gcs, "gamma") {
 		t.Errorf("an entry after the failing one was copied: the build went on past the failure")
+	}
+}
+
+// TestPrebuiltEntrySmoked: an entry whose source is a prebuilt image is not
+// built, and not passed over either — its run is the smoke of the reference
+// the entry names against the runtime contract (F10/IS11), submitted as that
+// entry's own Cloud Build. Before this, an unnamed build passed such an entry
+// over and a named one was refused, so nothing in this tool ever asserted that
+// the image a job starts on is one a job can start on: the job was the first
+// thing to find out.
+//
+// What reports the answer afterwards is the record the run writes, which
+// fugaro doctor reads back. Nothing of a build is in the submission, and the
+// fixture makes that checkable: it holds no secret, stubs no provider and has
+// nothing copied, so a run that read a credential, opened a provider or wrote
+// a Dockerfile fails here rather than passing unnoticed.
+func TestPrebuiltEntrySmoked(t *testing.T) {
+	fb, gcs, _ := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+	const ref = "docker.io/library/node:22"
+
+	out, stderr, err := executeBuild(t, "image", "build", "prebuilt", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	if got := buildPosts(fb); got != 1 {
+		t.Fatalf("smoking the entry submitted %d builds, want one", got)
+	}
+	// The run is the smoke and the record of it: no step of a build is in it.
+	if got, want := catalogBuildStepIDs(t, fb), []string{"catalog-smoke", "catalog-record"}; !slices.Equal(got, want) {
+		t.Errorf("the smoke's steps are %v, want %v", got, want)
+	}
+	subs := catalogBuildSubs(t, fb)
+	if len(subs) != 3 {
+		t.Errorf("the smoke's substitutions are %v, want the entry's reference and the smoke's spec alone", subs)
+	}
+	if subs["_IMAGE"] != ref {
+		t.Errorf("_IMAGE = %v, want the reference the entry names", subs["_IMAGE"])
+	}
+	if subs["_CATALOG_TAG"] != "" {
+		t.Errorf("_CATALOG_TAG = %v, want empty: the run pushes no image and moves no tag", subs["_CATALOG_TAG"])
+	}
+	// The smoke of a reference somebody else published is the critical tools
+	// alone: the checkout, the hardening and the stamped versions the
+	// per-workflow spec asks about are about a container this command built.
+	b64, _ := subs["_SELFTEST_B64"].(string)
+	spec, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		t.Fatalf("_SELFTEST_B64 = %q: %v", b64, err)
+	}
+	want, err := json.Marshal(image.SelftestSpec{ToolsOnly: true, Tools: "critical"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(spec) != string(want) {
+		t.Errorf("the smoke's spec is %s, want the tools tier alone %s", spec, want)
+	}
+	// Nothing was copied for the entry and nothing was pushed under its
+	// reference: a smoke is not a build.
+	if !catalogCopyAbsent(t, gcs, "prebuilt") {
+		t.Errorf("the prebuilt entry's run wrote a Dockerfile copy")
+	}
+	if fb.Tag(ref, "latest") != "" {
+		t.Errorf("the smoke pushed %s:latest", ref)
+	}
+	// What the entry answers is the digest its reference resolved to, which is
+	// what the record then carries.
+	if !strings.Contains(out, "smoked "+ref+"@sha256:") {
+		t.Errorf("stdout = %q, want the reference and the digest it smoked", out)
+	}
+
+	// --no-wait reports the submitted run without a digest, and says what it
+	// is smoking rather than that it built something.
+	before := buildPosts(fb)
+	if out, stderr, err = executeBuild(t, "image", "build", "prebuilt", "--base", "b:1", "--no-wait"); err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	if got := buildPosts(fb) - before; got != 1 {
+		t.Errorf("a --no-wait smoke submitted %d builds", got)
+	}
+	if !strings.Contains(out, "smoking "+ref) || strings.Contains(out, "@sha256:") {
+		t.Errorf("stdout = %q, want the submitted run and what it smokes", out)
+	}
+
+	// --no-smoke asks for a build without its smoke, and a prebuilt entry has
+	// nothing else: there would be no run at all.
+	before = buildPosts(fb)
+	_, _, err = executeBuild(t, "image", "build", "prebuilt", "--base", "b:1", "--no-smoke")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--no-smoke") {
+		t.Fatalf("exit %d, err %v: --no-smoke on a prebuilt entry is refused", ExitCode(err), err)
+	}
+	if buildPosts(fb) != before {
+		t.Errorf("a run --no-smoke left nothing in reached Cloud Build: %d posts", buildPosts(fb)-before)
+	}
+
+	// A smoke that fails is the command's failure: the build stops at the
+	// smoke step, so the record step never runs and fugaro doctor reports the
+	// entry as one whose smoke was never recorded.
+	fb.FailStep = "catalog-smoke"
+	_, _, err = executeBuild(t, "image", "build", "prebuilt", "--base", "b:1")
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, err %v: a failed smoke is the command's failure", ExitCode(err), err)
 	}
 }
