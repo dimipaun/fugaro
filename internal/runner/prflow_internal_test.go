@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // TestInlineTextNeutralisesMarkdownAndMarkers: free text placed in the
@@ -78,5 +79,18 @@ func TestShortGitHead(t *testing.T) {
 		if got := shortGitHead(bad); got != "(invalid)" {
 			t.Errorf("shortGitHead(%q) = %q, want (invalid)", bad, got)
 		}
+	}
+}
+
+// TestStatusLineShortID: the status section names the run by its short ID
+// (spec.md §1), and the command it tells a reader to paste takes that form --
+// the four characters are what a person reads in the section and types back
+// (D1701).
+func TestStatusLineShortID(t *testing.T) {
+	r := &run{rec: &runstore.Record{RunID: "20261024-120000-3bb2"}}
+	got := r.sectionLines("**Ready for review**")
+	const want = "**Ready for review**\nRun `3bb2` (a stale time here means the run died: `fugaro diagnose 3bb2`)"
+	if got != want {
+		t.Errorf("the status section is\n%q\nwant\n%q", got, want)
 	}
 }

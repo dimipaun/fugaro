@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -77,7 +78,7 @@ func TestHaltMidImplementOpensDraft(t *testing.T) {
 		t.Fatal("PR is not a draft")
 	}
 	lines := strings.Split(lastComment(t, h), "\n")
-	if !strings.HasPrefix(lines[0], "### Fugaro run `"+runID+"`") || lines[1] != "" || !strings.HasPrefix(lines[2], "**Halted:** the per-run dollar cap was reached (run spent $5.00 of $5.00) at 2026-09-30 10:00:00 UTC — this run spent $1.00.") {
+	if !strings.HasPrefix(lines[0], "### Fugaro run `"+task.ShortRun(runID)+"`") || lines[1] != "" || !strings.HasPrefix(lines[2], "**Halted:** the per-run dollar cap was reached (run spent $5.00 of $5.00) at 2026-09-30 10:00:00 UTC — this run spent $1.00.") {
 		t.Fatalf("report starts:\n%s", strings.Join(lines[:4], "\n"))
 	}
 	if !strings.Contains(lastComment(t, h), "budget.per_run_usd") || !strings.Contains(lastComment(t, h), "fugaro run --pr 1") {

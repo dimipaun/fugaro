@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
@@ -400,7 +401,7 @@ func (r *run) earlyPRText() (string, string) {
 	title, body := r.rawPRText()
 	title = scrubDescription(title)
 	if title == "" {
-		title = "Fugaro run " + inlineText(r.rec.RunID) // the agent title was only markers
+		title = "Fugaro run " + inlineText(task.ShortRun(r.rec.RunID)) // the agent title was only markers
 	}
 	body = scrubDescription(body)
 	if runes := []rune(title); len(runes) > maxTitleRunes {
@@ -779,7 +780,10 @@ func (r *run) sectionLines(head string, parts ...string) string {
 		}
 	}
 	line := strings.Join(kept, " · ")
-	id := inlineText(r.rec.RunID)
+	// The section names the run the way every other surface a person reads
+	// does -- its last four characters -- and the command it tells a reader to
+	// paste takes that form too (spec.md §1, D1701).
+	id := inlineText(task.ShortRun(r.rec.RunID))
 	out := line + "\n"
 	out += r.ownerPart()
 	if r.rec.DraftFallback {
