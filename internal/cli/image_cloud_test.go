@@ -16,6 +16,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/image"
@@ -73,22 +74,32 @@ func TestImageBuildCloudNeedsRegistry(t *testing.T) {
 	}
 }
 
-// Review fix: a declined (or unconfirmable) billable build must leave no
-// trace in the bucket. prepareLayerCopy both writes
-// builds/<slug>/project-layer.yaml and validates the base image's release,
-// so running it before confirmBuild would publish the copy (and could even
-// refuse the build on the base-image gate) before the user ever typed
-// anything.
+// A billable build that will not be submitted must leave no trace in the
+// bucket. prepareLayerCopy both writes builds/<slug>/project-layer.yaml and
+// validates the base image's release, so running it before the build is admitted
+// would publish the copy (and could even refuse the build on the base-image
+// gate) for a build nobody is going to run. The confirmation this test was
+// written for is gone (T4); what stands in its place is the lease (T8), which is
+// taken after the registry check and before the copy for exactly this reason.
+//
+// The refusal made here is the project's kill switch, which refuses in every
+// mode: an installation whose owner has stopped it must not get a layer copy out
+// of a build that will not run.
 //
 // Mutation (run, restore): move the cfg.Layer != nil { ... prepareLayerCopy
-// ... } block in runImageBuildCloud back above confirmBuild, and this test
-// fails: the copy is written even though "not-aurora" never confirms the
-// build.
-func TestImageBuildCloudDeclinedConfirmationWritesNoLayerCopy(t *testing.T) {
+// ... } block in runImageBuildCloud back above the reserveBuildLease call, and
+// this test fails: the copy is written even though the switch refuses the build.
+func TestImageBuildCloudRefusedBuildWritesNoLayerCopy(t *testing.T) {
 	fb := gcpfake.NewBuild(t)
 	sm := gcpfake.NewSecrets(t)
 	f := newCloudFixture(t, "cloud_build: "+fb.URL+"/", "secret_manager: "+sm.URL+"/")
 	f.sm = sm
+	slug := mustSlug("github", "acme/other")
+	db := gcpfake.NewRTDB(t)
+	db.Set(budget.PathMark, auroraMark())
+	db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 5 * usd1})
+	db.Set(budget.PathKillRepo(slug), map[string]any{"on": true, "reason": "the project is being stopped"})
+	f.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: "+db.URL+" }\n")
 	publishedLayer(t, f, testProjectLayer)
 	path := os.Getenv("FUGARO_CONFIG")
 	data, err := os.ReadFile(path)
@@ -103,19 +114,18 @@ func TestImageBuildCloudDeclinedConfirmationWritesNoLayerCopy(t *testing.T) {
 	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	slug := mustSlug("github", "acme/other")
 	fb.AddRegistry("proj-1234", "us-east5", gcp.RegistryRepoID(slug))
 	layerCheckout(t, f, minimalAnchored)
 	fakeTerminal(t)
 	_, _, err = executeStdin(t, "not-aurora\n", "image", "build", "--base", "b:1")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "not confirmed") {
-		t.Fatalf("err = %v", err)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "kill switch is on") {
+		t.Fatalf("the build was not refused over the project's switch: %v", err)
 	}
 	if buildPosts(fb) != 0 {
-		t.Fatal("a declined build still reached Cloud Build")
+		t.Fatal("a refused build still reached Cloud Build")
 	}
 	if bucketText(t, f, config.LayerCopyKey(slug)) != "" {
-		t.Fatal("a declined build still wrote the project layer copy")
+		t.Fatal("a refused build still wrote the project layer copy")
 	}
 }
 

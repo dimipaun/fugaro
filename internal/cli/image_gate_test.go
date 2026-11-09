@@ -1,44 +1,48 @@
 package cli
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// executeBuild is executeStdin at a terminal that types the project's name:
-// a cloud image build is billable, so the rule is the typed confirmation, and
-// the tests of everything else about the build give it.
+// executeBuild is executeStdin with the project's name on stdin and a terminal
+// under it. The name is left over from the typed confirmation this command used
+// to require; the tests below keep it so that a confirmation coming back is a
+// failure rather than a silently satisfied read.
 func executeBuild(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
 	fakeTerminal(t)
 	return executeStdin(t, "aurora\n", args...)
 }
 
-// A Cloud Build is billable: only the project's name typed at a real terminal
-// submits it. --json, a pipe and a coding agent never do, with or without a
-// marker, and none of them reaches Cloud Build at all.
-func TestImageBuildCloudMatrix(t *testing.T) {
+// T4's own claim, over every session at once: a Cloud Build is billable, and
+// this command asks nothing about it — no name typed, no y/N — in a person's
+// terminal, a pipe, a coding agent's session and a --json run alike, and every
+// one of them reaches Cloud Build and submits its build.
+//
+// "Nothing was asked" is a claim about an ABSENCE, so it is said three ways: the
+// reader each session's own stdin is handed to is never reached (unreadStdin
+// fails the test when anything reads it), the sentence the removed prompt
+// printed is nowhere in what the session read, and the build was submitted
+// anyway — a command that asked and a command that did not both submit one
+// build in a test that only watched the fake's request count.
+func TestImageBuildAsksNothing(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		args     []string
 		terminal bool
 		marker   string
-		stdin    string
-		want     bool
 	}{
-		{"a terminal, name typed", nil, true, "", "aurora\n", true},
-		{"a terminal, wrong name", nil, true, "", "yes\n", false},
-		{"a terminal, nothing typed", nil, true, "", "", false},
-		{"a pipe", nil, false, "", "aurora\n", false},
-		{"--json at a terminal", []string{"--json"}, true, "", "aurora\n", false},
-		{"a coding agent at a terminal", nil, true, "CLAUDECODE", "aurora\n", false},
+		{"a terminal", nil, true, ""},
+		{"a pipe", nil, false, ""},
+		{"--json at a terminal", []string{"--json"}, true, ""},
+		{"a coding agent at a terminal", nil, true, "CLAUDECODE"},
 		// The Claude Code IDE extension sets its marker in a person's own
 		// terminal too, so that marker alone, at a terminal, is a person's
 		// (the ruling of 2026-11-05); with no terminal it is an agent's.
-		{"an IDE terminal", nil, true, "CLAUDE_CODE_SSE_PORT", "aurora\n", true},
-		{"an IDE terminal, a pipe", nil, false, "CLAUDE_CODE_SSE_PORT", "aurora\n", false},
-		{"a coding agent, a pipe", nil, false, "CURSOR_AGENT", "aurora\n", false},
+		{"an IDE terminal", nil, true, "CLAUDE_CODE_SSE_PORT"},
+		{"an IDE terminal, a pipe", nil, false, "CLAUDE_CODE_SSE_PORT"},
+		{"a coding agent, a pipe", nil, false, "CURSOR_AGENT"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fb, _ := cloudBuildCheckout(t, false)
@@ -48,37 +52,20 @@ func TestImageBuildCloudMatrix(t *testing.T) {
 			if tc.marker != "" {
 				t.Setenv(tc.marker, "1")
 			}
+			stdin := &unreadStdin{}
 			args := append([]string{"image", "build", "--base", "b:1"}, tc.args...)
-			out, errOut, err := executeStdin(t, tc.stdin, args...)
-			if tc.want {
-				if err != nil || buildPosts(fb) != 1 {
-					t.Fatalf("err %v, %d builds\n%s%s", err, buildPosts(fb), out, errOut)
-				}
-				return
+			out, errOut, err := executeStdinReader(t, stdin, args...)
+			if err != nil {
+				t.Fatalf("err %v\n%s%s", err, out, errOut)
 			}
-			if buildPosts(fb) != 0 {
-				t.Fatalf("a build was submitted")
+			if stdin.read {
+				t.Errorf("the session was read, so a question was asked:\n%s", errOut)
 			}
-			// A refusal that cannot be typed makes no cloud call at all.
-			typedAtTerminal := tc.terminal && tc.marker == "" && !strings.Contains(strings.Join(tc.args, " "), "--json")
-			if !typedAtTerminal && len(fb.Requests()) != 0 {
-				t.Fatalf("Cloud Build was reached: %d requests", len(fb.Requests()))
+			if strings.Contains(errOut, "Type "+initProjectName+" to submit the build: ") || strings.Contains(errOut, "[y/N]: ") {
+				t.Errorf("the removed confirmation was printed:\n%s", errOut)
 			}
-			if ExitCode(err) != ExitUserError {
-				t.Fatalf("exit %d, err %v", ExitCode(err), err)
-			}
-			msg := err.Error()
-			if strings.Contains(msg, "--yes") || strings.Contains(msg, "\n") {
-				t.Errorf("the refusal is not one line without --yes: %q", msg)
-			}
-			if tc.marker != "" && !strings.Contains(msg, tc.marker+" is set") {
-				t.Errorf("the refusal does not name the marker: %q", msg)
-			}
-			if typedAtTerminal && !strings.Contains(msg, "not confirmed") {
-				t.Errorf("a wrong name must say it was not confirmed: %q", msg)
-			}
-			if tc.marker == "" && !typedAtTerminal && !strings.Contains(msg, "real terminal") {
-				t.Errorf("no terminal must name the route: %q", msg)
+			if buildPosts(fb) != 1 {
+				t.Fatalf("submitted %d builds, want one\n%s%s", buildPosts(fb), out, errOut)
 			}
 		})
 	}
@@ -131,15 +118,5 @@ func TestImageCheckJobRefusals(t *testing.T) {
 				t.Fatalf("err = %v", err)
 			}
 		})
-	}
-}
-
-// The refusal comes before the local config or the bucket is read at all.
-func TestImageBuildRefusalPrecedesTheCloud(t *testing.T) {
-	t.Setenv("FUGARO_CONFIG", filepath.Join(t.TempDir(), "missing.yaml"))
-	t.Setenv("CLAUDECODE", "1")
-	_, _, err := execute(t, "image", "build")
-	if err == nil || !strings.Contains(err.Error(), "CLAUDECODE is set") {
-		t.Fatalf("err = %v", err)
 	}
 }
