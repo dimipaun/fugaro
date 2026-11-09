@@ -392,7 +392,7 @@ test('a page with no pointer at the privacy statement is refused', () => {
   // The other way the site writes a link to one of its own pages: absolute on the canonical
   // origin, which is what W1.3 builds. Either form is a link to the statement.
   assert.deepEqual(
-    privacyLinkFailures(mainOf(SHELL('<a href="https://fugaro.dev/privacy/">privacy statement</a>')), FACTS),
+    privacyLinkFailures(mainOf(SHELL(`<a href="https://${FACTS.canonicalHost}/privacy/">privacy statement</a>`)), FACTS),
     [],
     'an absolute link to the statement is refused, so this case demands one spelling of it rather than the page',
   )
