@@ -57,8 +57,10 @@
 
 import { estimated, measured, notional, unavailable } from '../../shared/availability'
 import type { Reading, Unit } from '../../shared/availability'
-import { maskCredentialBlocks, nameableText, sanitizeText } from '../../shared/sanitize'
+import { isMarkerText, maskCredentialBlocks, nameableText, sanitizeText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
+import { displayRuns, shortRun } from '../../shared/shortid'
+import type { RunRef } from '../../shared/shortid'
 import { BUSY_SLOT_CLASS, STAMP_CLASS, STAMP_REFRESH_CLASS, STAMP_REFRESH_LABEL } from '../section'
 import type { SkeletonBlock, SkeletonShape } from '../skeleton'
 import { decodeRunsList } from '../../shared/schema'
@@ -1749,7 +1751,10 @@ function make(factory: ScreenFactory, tag: string, ...classes: string[]): Screen
 }
 
 /** literal writes the console's own vocabulary -- never a document's string,
- * which comes through `putText` (`../app.ts`) or not at all. */
+ * which comes through `putText` (`../app.ts`) or not at all, with the one
+ * exception `drawRunId` states: a run id's short ending, a cut of a string the
+ * `runId` class has already accepted, which is the argument
+ * `screen-literals.test.ts` carries in this file's vocabulary. */
 function literal(element: ScreenElement, text: string): ScreenElement {
   element.textContent = text
   return element
@@ -1927,6 +1932,7 @@ function queueItemCell(
   parent: ScreenElement,
   factory: ScreenFactory,
   item: CoordinatorQueueItem,
+  ending: string,
 ): CoordinatorPullButton | null {
   const row = cell(parent, factory, 'li', 'coordinator-queue-item')
   const kind = cell(row, factory, 'span', 'coordinator-queue-kind')
@@ -1946,7 +1952,14 @@ function queueItemCell(
   // not-available mark, which claims a figure could not be read. That is a
   // different fact from "there is no such figure", and a false one.
   if (item.subject === '') literal(subject, '')
-  else putText(subject, item.subject, cells.subject.textClass, cells.subject.field)
+  // A job item's subject is the run it is about, and it is drawn the way every
+  // other list view names a run: the short id, extended where two items of the
+  // same part collide. The item's own value is untouched -- the act a press
+  // performs carries the whole id the model holds (`CoordinatorQueueAction`) --
+  // so this cell is a reading, exactly as the jobs list's id cell is.
+  else if (item.kind === 'job') {
+    drawRunId(subject, { run: item.subject, repo: item.repo }, ending, 'runs[].run')
+  } else putText(subject, item.subject, cells.subject.textClass, cells.subject.field)
   // A number the console can form a triple for is a button, and the triple is
   // what the entry point binds -- never a value the entry reads back out of the
   // element. A number it cannot form one for is the text K1 drew.
@@ -2014,8 +2027,21 @@ export function fillCoordinatorQueuePart(
   }
   if (part.items.length === 0) return pulls
   const list = cell(host, factory, 'ul', 'coordinator-queue-items')
+  // One part is the group drawn together, and the runs in it are its job items:
+  // a run whose last four characters another job item of the same part shares is
+  // extended until the two are told apart (`shared/shortid.ts`, spec part 3).
+  // Every other kind's subject is a number, a task id or a repository, and takes
+  // no part in the rule (`runEndings` is handed the job items alone, so nothing
+  // else can vote with characters it never shows).
+  const endings = runEndings(
+    part.items.flatMap((item) => (item.kind === 'job' ? [{ run: item.subject, repo: item.repo }] : [])),
+    'runs[].run',
+  )
+  let at = 0
   for (const item of part.items) {
-    const pull = queueItemCell(list, factory, item)
+    const ending = item.kind === 'job' ? (endings[at] ?? shortRun(item.subject)) : ''
+    if (item.kind === 'job') at += 1
+    const pull = queueItemCell(list, factory, item, ending)
     if (pull !== null) pulls.push(pull)
   }
   if (part.dropped > 0) {
@@ -2247,6 +2273,65 @@ export function fillCoordinatorJobsHead(
   numberCell(head, factory, COORDINATOR_JOBS_SPENT_WORD, window.spent, 'usd', 'coordinator-jobs-window-spent')
 }
 
+/** CoordinatorRunIdRow is a row this screen names by a run: the id, and the
+ * repository the row belongs to -- which is the pair the collision rule reads
+ * (`shared/shortid.ts`'s `RunRef`). */
+interface CoordinatorRunIdRow {
+  readonly run: string
+  readonly repo: string
+}
+
+/** drawnRef is one row's run as the collision rule reads it: **the strings this
+ * screen would draw, not the ones that arrived**, which is `live.ts`'s
+ * `drawnRef` for the same reason. A value the `runId` or `repository` class
+ * refuses is handed over as the empty string: the row draws `n/a` for it, so it
+ * takes no part in the rule rather than voting with characters it never shows. */
+function drawnRef(row: CoordinatorRunIdRow, field: string): RunRef {
+  const id = sanitizeText(row.run, 'runId', field)
+  const repo = sanitizeText(row.repo, row.repo.includes('/') ? 'repository' : 'slug', 'repo')
+  return { slug: repo.ok ? repo.text : '', runId: id.ok ? id.text : '' }
+}
+
+/** runEndings is the ending to draw for each row of **one list**, in the order
+ * given. The list is the group and the group is what is drawn together
+ * (`shared/shortid.ts`'s `displayRuns`, spec part 3): an ending grows only until
+ * it tells its run apart from the other rows handed in, and the repository is
+ * passed beside the id for the case no suffix can separate -- the same id under
+ * two repositories. */
+function runEndings(rows: readonly CoordinatorRunIdRow[], field: string): readonly string[] {
+  return displayRuns(rows.map((row) => drawnRef(row, field)))
+}
+
+/** drawRunId draws a run's **ending** into the cell this screen names a run by:
+ * the four characters a person reads and types back into the CLI, and the
+ * shortest suffix that tells this row apart from the others drawn beside it. It
+ * is the drawing half of `live.ts`'s `putRunId` **without the attribute**: a
+ * coordinator row opens no run (this screen's rows press nothing that runs a
+ * command), so the whole id stays where it was -- the row's own `data-run`, or
+ * the detail the entry already holds -- and this cell carries no door.
+ *
+ * One sanitizer answer decides what is drawn, exactly as `putRunId` states: the
+ * ending is cut from the **sanitized** id (`drawnRef`), and the characters
+ * written are that id's own tail whenever the ending handed in is not part of
+ * it, so what is on screen is always a cut of a string this console would draw
+ * whole. A refusal, and a marker the recorder wrote, draw through `putText` and
+ * no ending at all. */
+function drawRunId(
+  element: ScreenElement,
+  row: CoordinatorRunIdRow,
+  ending: string,
+  field: string,
+): void {
+  const id = sanitizeText(row.run, 'runId', field)
+  if (!id.ok || isMarkerText(id.text)) {
+    putText(element, row.run, 'runId', field)
+    return
+  }
+  const tail = ending.slice(ending.lastIndexOf('/') + 1)
+  const drawn = id.text.endsWith(tail) ? ending : shortRun(id.text)
+  literal(element, drawn)
+}
+
 /**
  * jobCell draws one row: the collapsed line -- the run's id, the repository, the
  * status and the untrusted title -- and, under it, the body the operator expands.
@@ -2259,7 +2344,9 @@ export function fillCoordinatorJobsHead(
  *
  * The row draws **no button that opens anything**: the job list is a list, and
  * the console's one write is the launch confirmation (rule 11). A run's id is
- * text here, exactly as it is in the queue.
+ * text here, exactly as it is in the queue -- and it is drawn as the **short id**
+ * the queue and `fugaro watch` name a run by (`drawRunId`, `shared/shortid.ts`),
+ * with the row carrying no run to open either way.
  *
  * The head itself is a **real `button`**, and not a `div` carrying `role`: it
  * is the disclosure the row's press opens, and a `div` would need a `tabindex`
@@ -2268,11 +2355,16 @@ export function fillCoordinatorJobsHead(
  * reset in `base.css` is what makes a button with a line of spans in it read
  * as the line does.
  */
-function jobCell(parent: ScreenElement, factory: ScreenFactory, row: CoordinatorJobRow): ScreenElement {
+function jobCell(
+  parent: ScreenElement,
+  factory: ScreenFactory,
+  row: CoordinatorJobRow,
+  ending: string,
+): ScreenElement {
   const item = cell(parent, factory, 'li', 'coordinator-job')
   const head = cell(item, factory, 'button', 'coordinator-job-head')
   head.setAttribute('type', 'button')
-  textCell(head, factory, 'span', row.run, 'runId', 'runs[].run_id', 'coordinator-job-id')
+  drawRunId(cell(head, factory, 'span', 'coordinator-job-id'), row, ending, 'runs[].run_id')
   if (row.repo !== '') {
     textCell(head, factory, 'span', row.repo, 'repository', 'runs[].repo', 'coordinator-job-repo')
   }
@@ -2336,13 +2428,21 @@ function jobCell(parent: ScreenElement, factory: ScreenFactory, row: Coordinator
  * replaces**, which is what keeps a row the operator expanded open when the page
  * after it lands: the rows already drawn are the operator's own view, and the
  * press that asked for more is answered under them.
+ *
+ * The endings are answered for **the page being drawn**, which is the group this
+ * call prints: a run whose last four characters another row of the same page
+ * shares is extended until the two are told apart, and a row drawn on a page of
+ * its own keeps its plain four (`shared/shortid.ts`, spec part 3). The list is
+ * one page's rows at a time by construction -- the entry appends the next page
+ * when the operator asks for it -- so the page is the list this function draws.
  */
 export function fillCoordinatorJobs(
   factory: ScreenFactory,
   rows: readonly CoordinatorJobRow[],
   list: ScreenElement,
 ): readonly ScreenElement[] {
-  return rows.map((row) => jobCell(list, factory, row))
+  const endings = runEndings(rows, 'runs[].run_id')
+  return rows.map((row, at) => jobCell(list, factory, row, endings[at] ?? shortRun(row.run)))
 }
 
 /**
@@ -2477,9 +2577,15 @@ export interface DrawnCoordinatorTranscript {
   readonly slot: ScreenElement
 }
 
-function runCell(parent: ScreenElement, factory: ScreenFactory, run: CoordinatorRunPanel): void {
+function runCell(
+  parent: ScreenElement,
+  factory: ScreenFactory,
+  run: CoordinatorRunPanel,
+  repo: string,
+  ending: string,
+): void {
   const row = cell(parent, factory, 'li', 'coordinator-run')
-  textCell(row, factory, 'span', run.id, 'runId', 'runs[].id', 'coordinator-run-id')
+  drawRunId(cell(row, factory, 'span', 'coordinator-run-id'), { run: run.id, repo }, ending, 'runs[].id')
   if (run.status !== '') {
     textCell(row, factory, 'span', run.status, 'label', 'runs[].status', 'coordinator-run-status')
   }
@@ -2597,11 +2703,17 @@ interface DrawnRecord {
  * The number is the row's **one** control where the console can form a triple
  * for it (K2), and text where it cannot -- the same rule the queue's subject
  * follows, drawn by the other half of this screen. It answers the pairs it drew,
- * for the reason `fillCoordinatorQueuePart` does. */
+ * for the reason `fillCoordinatorQueuePart` does.
+ *
+ * `repo` is the repository the record belongs to, and it is passed down for the
+ * one thing this row's runs need it for: the collision rule reads a run as its
+ * id **and** its repository (`shared/shortid.ts`'s `RunRef`). The runs behind a
+ * pull request are that repository's by construction. */
 function recordCell(
   parent: ScreenElement,
   factory: ScreenFactory,
   record: CoordinatorRecordPanel,
+  repo: string,
 ): DrawnRecord {
   const row = cell(parent, factory, 'li', 'coordinator-record')
   const head = cell(row, factory, 'div', 'coordinator-record-head')
@@ -2646,7 +2758,15 @@ function recordCell(
     return { pull, description }
   }
   const runs = cell(row, factory, 'ul', 'coordinator-runs')
-  for (const run of record.runs) runCell(runs, factory, run)
+  // The runs behind one pull request are the group drawn together, and they are
+  // one repository's (`repo`), which is the pair the collision rule reads.
+  const endings = runEndings(
+    record.runs.map((run) => ({ run: run.id, repo })),
+    'runs[].id',
+  )
+  record.runs.forEach((run, at) => {
+    runCell(runs, factory, run, repo, endings[at] ?? shortRun(run.id))
+  })
   if (record.runsDropped > 0) {
     // A list holds list items, so this count is one rather than the span
     // `countCell` makes: the figure is a reading like every other here.
@@ -2757,7 +2877,7 @@ export function repoDetail(
   if (panel.records.length > 0) {
     const records = cell(parent, factory, 'ul', 'coordinator-records')
     for (const record of panel.records) {
-      const drawn = recordCell(records, factory, record)
+      const drawn = recordCell(records, factory, record, panel.repo)
       if (drawn.pull !== null) pulls.push(drawn.pull)
       if (drawn.description !== null) descriptions.push(drawn.description)
     }

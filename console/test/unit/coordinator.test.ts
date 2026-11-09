@@ -32,6 +32,7 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
+import { shortRun } from '../../src/shared/shortid'
 import { CONSOLE_OPERATIONS, validateArguments } from '../../src/main/ipc'
 import { SPAWN_COMMANDS, argvFor, assertSpawnSurface } from '../../src/main/spawn'
 import type { SpawnCommand } from '../../src/main/spawn'
@@ -1033,7 +1034,7 @@ describe('the Coordinator screen in the Flight Deck look (console redesign, step
     // The first run the cap cut is not in the tree at all: the count above is
     // what stands for it, and there is no silent twenty-first row.
     const cut = `20261027-0300${String(COORDINATOR_LIST_CAP % 100).padStart(2, '0')}-aa${String(COORDINATOR_LIST_CAP).padStart(2, '0')}`
-    expect(runs.map((run) => textOf(run, 'coordinator-run-id'))).not.toContain(cut)
+    expect(runs.map((run) => textOf(run, 'coordinator-run-id'))).not.toContain(shortRun(cut))
   })
 
   it('draws a pull request as a row: its number, chip, title, branch, version and state', () => {
@@ -1084,7 +1085,7 @@ describe('the Coordinator screen in the Flight Deck look (console redesign, step
     // The runs are the row's own nested list, not a list beside it.
     const runs = one(first, 'coordinator-runs')
     expect(walk(first)).toContain(runs)
-    expect(textOf(runs, 'coordinator-run-id')).toBe('20261027-030000-aa01')
+    expect(textOf(runs, 'coordinator-run-id')).toBe(shortRun('20261027-030000-aa01'))
 
     // The second record has no run behind it, and no draft chip either: the
     // console's own sentence is drawn where the runs would be.
@@ -1224,7 +1225,9 @@ describe('the action queue (K1)', () => {
     })
     // The halted run is the one item: a halt is a person's own act on a run
     // that then ended however it ended, so the status is not the whole ground.
-    expect(itemTexts(node, 'coordinator-queue-subject')).toEqual(['20261030-220114-77bd'])
+    // The item is named by the run's short id, as every list view on this
+    // console names one (SR10), and the whole id is what the press carries.
+    expect(itemTexts(node, 'coordinator-queue-subject')).toEqual([shortRun('20261030-220114-77bd')])
     expect(itemTexts(node, 'coordinator-queue-kind')).toEqual([COORDINATOR_QUEUE_JOB_WORD])
   })
 
@@ -1275,7 +1278,12 @@ describe('the action queue (K1)', () => {
     // A pull request's item names the pull request and never offers the link:
     // the number is text, and no element anywhere carries a destination
     // (`href` is refused by the harness, and K2 is where the link arrives).
-    expect(itemTexts(node, 'coordinator-queue-subject')).toEqual(['#1458', '20261030-220114-77bd', 'C2', 'owner/repo-a'])
+    expect(itemTexts(node, 'coordinator-queue-subject')).toEqual([
+      '#1458',
+      shortRun('20261030-220114-77bd'),
+      'C2',
+      'owner/repo-a',
+    ])
     expect(itemTexts(node, 'coordinator-queue-why')).toEqual([
       COORDINATOR_QUEUE_PR_WHY_WORD,
       COORDINATOR_QUEUE_JOB_WHY_WORD,
@@ -1688,7 +1696,7 @@ describe('the job list (K4)', () => {
     const second = rows[1]
     if (first === undefined || second === undefined) throw new Error('the list drew no row')
 
-    expect(textOf(first, 'coordinator-job-id')).toBe('20261101-090000-aa01')
+    expect(textOf(first, 'coordinator-job-id')).toBe(shortRun('20261101-090000-aa01'))
     expect(textOf(first, 'coordinator-job-repo')).toBe('owner/repo-a')
     expect(textOf(first, 'coordinator-job-status')).toBe('succeeded')
     expect(textOf(first, 'coordinator-job-title')).toBe('the job that finished')
