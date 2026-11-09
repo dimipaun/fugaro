@@ -861,9 +861,11 @@ func TestSettingsSetManagedOwnerTerminalAsksNoConfirmation(t *testing.T) {
 // owner's own hand is reached by a person at a real terminal and by nobody else.
 // The gate is not read for a Typed edit made there, because the refusal it would
 // answer with is the one thing that may not happen to that person: the step IS
-// theirs, and the admission is what every other class is for. Both runs below
-// therefore write — with --yes and without it — which is what the class meant
-// before the gate existed and what a widening's own sentence asks for it.
+// theirs, and the admission is what every other class is for. Every run below
+// therefore writes — with --yes and without it, raising the ceiling and taking
+// it away, which are the two directions of the one class and the two call sites
+// of the read — which is what the class meant before the gate existed and what a
+// widening's own sentence asks for it.
 //
 // The mutation caught: reading the gate for every class at a terminal (this is
 // the shape a gate read without the Typed term has), which hands the owner
@@ -872,31 +874,39 @@ func TestSettingsSetManagedOwnerTerminalAsksNoConfirmation(t *testing.T) {
 func TestSettingsSetManagedOwnerTerminalWidensACeiling(t *testing.T) {
 	for _, tc := range []struct {
 		what string
-		yes  bool
+		args []string
+		want string
+		says string
 	}{
-		{"without --yes", false},
-		{"with --yes", true},
+		{"set, without --yes", []string{"set", "layer.defaults.agent.max_budget_usd", "500"}, "max_budget_usd: 500", "this raises a limit"},
+		{"set, with --yes", []string{"set", "layer.defaults.agent.max_budget_usd", "500", "--yes"}, "max_budget_usd: 500", "this raises a limit"},
+		{"unset", []string{"unset", "layer.defaults.agent.max_budget_usd"}, "", "removing a ceiling hands the decision back to a looser layer"},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			r := newSettingsManagedRig(t, settingsMarksManaged)
 			r.managedRunsBucket(t)
-			path := settingsManagedLayerFile(t, minimalAnchored+"defaults:\n  agent:\n    max_budget_usd: 10\n")
+			// The block carries a second key, so withdrawing the ceiling leaves
+			// a file that still reads back: an emptied block is not a layer.
+			path := settingsManagedLayerFile(t, minimalAnchored+"defaults:\n  agent:\n    max_budget_usd: 10\n    review_rounds: 4\n")
 			noAgentSession(t)
 			fakeTerminal(t)
 
-			args := []string{"settings", "set", "layer.defaults.agent.max_budget_usd", "500", "--layer", "project"}
-			if tc.yes {
-				args = append(args, "--yes")
-			}
+			args := append(append([]string{"settings"}, tc.args...), "--layer", "project")
 			out, _, err := executeStdin(t, "", args...)
 			if err != nil {
 				t.Fatalf("the owner's own terminal was refused the one widening it is the door to: %v\n%s", err, out)
 			}
-			if got := readFileString(t, path); !strings.Contains(got, "max_budget_usd: 500") {
-				t.Errorf("the layer file does not carry the raised ceiling:\n%s", got)
+			got := readFileString(t, path)
+			if tc.want == "" {
+				// The ceiling taken away: the key is what the run withdraws.
+				if strings.Contains(got, "max_budget_usd") {
+					t.Errorf("the withdrawn ceiling is still in the layer file:\n%s", got)
+				}
+			} else if !strings.Contains(got, tc.want) {
+				t.Errorf("the layer file does not carry %q:\n%s", tc.want, got)
 			}
-			if !strings.Contains(out, "this raises a limit") {
-				t.Errorf("the write does not say the edit raises a limit:\n%s", out)
+			if !strings.Contains(out, tc.says) {
+				t.Errorf("the write does not say what it widens (%q):\n%s", tc.says, out)
 			}
 			assertNoPrompt(t, out)
 			if recs := r.audits(t); len(recs) != 0 {
