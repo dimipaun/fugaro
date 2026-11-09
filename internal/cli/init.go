@@ -3759,6 +3759,13 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// lock the converge takes — and a run that reaches here as a stage of one
 	// already holds it. Only the door takes it, for the reason
 	// runInit.lockWorkdirs states.
+	if !embedded {
+		unlock, err := r.lockWorkdirs(lc.GCPProject)
+		if err != nil {
+			return err
+		}
+		defer unlock()
+	}
 	r.noteOpenProviders(lc)
 	r.res.Repo = repo
 	if !embedded && !o.planOnly && !o.forget && !o.printVars {
