@@ -722,9 +722,9 @@ func TestStubsPresentDoesNotReadANestedCheckoutsParent(t *testing.T) {
 
 // TestBeforeGraphEdgesAreBounded: the rewrite is a product of two sides that
 // both come from the file — every edge onto an integration node against every
-// endpoint that node re-joins — so a graph well inside the artifact's own cap
-// can ask for gigabytes of them. A graph past the bound is refused, with the
-// figure named, rather than read slowly; one under it is measured.
+// dependency that node has — so a graph well inside the artifact's own cap can
+// ask for gigabytes of them. A graph past the bound is refused, with the figure
+// named, rather than read slowly; one under it is measured.
 func TestBeforeGraphEdgesAreBounded(t *testing.T) {
 	// builder builds a graph of `breaks` broken edges over one integration node
 	// and `waiters` tasks that wait on it, so the before graph asks for

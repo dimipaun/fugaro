@@ -176,8 +176,8 @@ func countPairs(edges []Edge) int {
 // pass had already merged — one no plan before the pass could hold.
 //
 // The rewrite is a product of two sides that both come from the file — every
-// edge onto an integration node against every endpoint that node re-joins — so
-// the edges are counted as they are built and the graph is refused past
+// edge onto an integration node against every dependency that node has — so the
+// edges are counted as they are built and the graph is refused past
 // maxBeforeEdges, the way the contract-file rule counts its own pairs (F10).
 func beforePath(path string, doc Document) (PathMeasure, error) {
 	kinds := make(map[string]string, len(doc.Nodes))
@@ -223,7 +223,7 @@ func beforePath(path string, doc Document) (PathMeasure, error) {
 			}
 		}
 		if len(edges) > maxBeforeEdges {
-			return PathMeasure{}, refuse(path, "the graph's edges onto integration nodes ask for more than %d edges in the before graph, one per endpoint each of them re-joins; a graph that large is refused rather than read slowly", maxBeforeEdges)
+			return PathMeasure{}, refuse(path, "the graph's edges onto integration nodes ask for more than %d edges in the before graph, one per dependency each of them has; a graph that large is refused rather than read slowly", maxBeforeEdges)
 		}
 	}
 	for _, d := range doc.Decoupling {
