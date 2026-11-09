@@ -315,6 +315,38 @@ func TestAccountsAddManagedRefusesClaudeByTheGate(t *testing.T) {
 	}
 }
 
+// The credential entry: --type declares credentials.<name>, which is a pool's
+// member and a craft's access — a spending and data-egress grant, created at
+// the project/local layer at the owner's terminal (D1628, F12), never by a
+// session's plan gate. It is refused BY THE GATE, before anything is screened
+// or written, so a session that asks for one leaves the file byte-identical.
+func TestAccountsAddManagedRefusesACredentialByTheGate(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+	before := readFileString(t, r.cfg)
+	t.Setenv(accountsAddAgent, "1")
+
+	out, _, err := executeStdin(t, "", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--type", "claude-oauth", "--yes")
+	if err == nil {
+		t.Fatalf("a coding agent's session declared a credential:\n%s", out)
+	}
+	if !errors.Is(err, managedmode.ErrNotConverged) {
+		t.Fatalf("the credential entry was not refused by the gate: %v", err)
+	}
+	if !strings.Contains(err.Error(), "credentials.team-a") {
+		t.Errorf("the refusal does not name the credential it refused: %v", err)
+	}
+	if after := readFileString(t, r.cfg); after != before {
+		t.Errorf("the file changed under a refused credential entry:\n%s", after)
+	}
+	recs := r.audits(t)
+	if len(recs) != 1 || recs[0].Verdict != managedmode.AuditRefused {
+		t.Fatalf("the refusal left %+v, want exactly one refused record", recs)
+	}
+	if !slices.ContainsFunc(recs[0].Rules, func(rule string) bool { return strings.Contains(rule, "credentials.team-a") }) {
+		t.Errorf("the refused record's rules (%v) do not name the entry that refused: %v", recs[0].Rules, err)
+	}
+}
+
 // The pasted token: the other half of "no gate admits a token". A session that
 // pipes a value at the hidden prompt is refused at that step — the declaration
 // above it stands, because the gate admitted the declaration — and the value is
@@ -629,5 +661,32 @@ func TestAccountsAddManagedOwnerTerminalRunsTheClaudeLogin(t *testing.T) {
 	}
 	if recs := r.audits(t); len(recs) != 0 {
 		t.Errorf("--claude at the owner's own terminal filed %+v", recs)
+	}
+}
+
+// The third class the owner-only term covers is the credential entry: --type
+// declares credentials.<name>, which D1628/F12 keep at the project/local layer
+// at the owner's own terminal, so the flag has to work at that terminal — and
+// it works there only if the marks are not read, because the read is what
+// refuses it. The control is the same call in a coding agent's session
+// (TestAccountsAddManagedRefusesACredentialByTheGate).
+func TestAccountsAddManagedOwnerTerminalDeclaresTheCredential(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+	lc := r.addLocal(t)
+	noAgentSession(t)
+	fakeTerminal(t)
+
+	m, _, err := accountsAddGate(t.Context(), gateCmd(), lc, accountsAddOptions{typ: "claude-oauth"}, "team-a", "standard", nil, []byte("version: 1\n"))
+	if err != nil {
+		t.Fatalf("--type at the owner's own terminal was refused: %v", err)
+	}
+	if m != (initflow.Managed{}) {
+		t.Errorf("--type at the owner's own terminal was answered %+v, want the zero value: creating a credential is the owner's own step", m)
+	}
+	if reqs := r.gcs.Requests(); len(reqs) != 0 {
+		t.Errorf("--type at the owner's own terminal paid %d calls to read marks it is the door of:\n%v", len(reqs), reqs)
+	}
+	if recs := r.audits(t); len(recs) != 0 {
+		t.Errorf("--type at the owner's own terminal filed %+v", recs)
 	}
 }

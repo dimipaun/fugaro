@@ -44,6 +44,14 @@ import (
 //     accountsAddTokenStep below — so a session that pipes one at the hidden
 //     prompt reads nothing, stores nothing, and is told which command to run at
 //     its own terminal.
+//   - A credential entry. `--type` writes `credentials.<name>` on the same
+//     bytes, and that entry is a pool's member and a craft's access: creating a
+//     credential is creating a spending and data-egress grant, which D1628/F12
+//     put at the project/local layer at the owner's own terminal. It is refused
+//     by the declaration's own rule set (accountsAddRules) rather than at a
+//     step, because the document the gate reads is the one already carrying it
+//     — and only the flag is refused: the account's declaration stays what a
+//     session may write.
 //   - The reserved names, the profile's coverage and the subset rule. These are
 //     not restated here and must not be: they are config.ValidateClaudeAccounts'
 //     and accountsAddSubsetRule's own decisions, made before this command has a
@@ -116,7 +124,7 @@ func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Confi
 	// given (accountsAddOwnerOnly). The two lists are the verdict below and the
 	// record's rules as well, so the document judged, the door the step has and
 	// the record of it are one reading of one document.
-	applied, refused := accountsAddRules(name, profile, beyond, o.claude)
+	applied, refused := accountsAddRules(name, profile, beyond, o.claude, o.typ)
 	// The read is made where this command would ask, and --ask is one more
 	// such place: the flag has to speak about the marks in every session that
 	// passes it (a refusal in a managed project's agent session, a sentence
@@ -210,7 +218,7 @@ func accountsAddOwnerOnly(refused []string) bool { return len(refused) > 0 }
 // command had a document at all. What the gate adds is the answer an agent's
 // session needs — that this step's own rules are the whole of what was judged
 // — and a rule that passed is written into the record beside the ones that did.
-func accountsAddRules(name, profile string, beyond []string, claude bool) (applied, refused []string) {
+func accountsAddRules(name, profile string, beyond []string, claude bool, typ string) (applied, refused []string) {
 	// The name: config.ValidateClaudeAccounts refused a reserved one and
 	// "default" before this point, in the loader's own words, so a name that
 	// reaches the gate is one that passed that rule. It is named here because a
@@ -229,6 +237,20 @@ func accountsAddRules(name, profile string, beyond []string, claude bool) (appli
 		refused = append(refused, "--claude runs Anthropic's login and then reads a token: a secret entering the project is the class of step no plan gate admits (D1026), and no plan is a token")
 	} else {
 		applied = append(applied, "the step carries no token entry: --claude is absent, and the token this command reads is read from a terminal")
+	}
+	// A credential. --type writes credentials.<name> on the same bytes, and that
+	// entry is not a name: it is what a pool's members may list and a craft's
+	// access may name, so it decides where a run's calls are spent and which
+	// repositories the provider behind it is handed. Credentials are created at
+	// the project/local layer only, at the owner's own terminal (D1628, F12), and
+	// the gate's plan is the declaration the grant is for — no plan is a grant —
+	// so the entry is refused even though every other rule here passes. The
+	// declaration itself is still the session's to write, which is why this
+	// refuses the flag and not the whole step (accountsAddOwnerOnly).
+	if typ != "" {
+		refused = append(refused, "--type "+pluginwire.Printable(typ)+" declares credentials."+pluginwire.Printable(name)+", the entry a pool's members may list and a craft's access may name: a credential is a spending and data-egress grant, and creating one is the project/local layer at the owner's own terminal, never a plan gate's step (D1628)")
+	} else {
+		applied = append(applied, "the step creates no credential: --type is absent, so nothing this write declares is an entry a pool may list")
 	}
 	return applied, refused
 }
