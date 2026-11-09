@@ -353,6 +353,25 @@ func TestTheSigningKeyIsNonExportable(t *testing.T) {
 	}
 }
 
+// TestTheSigningKeyIsNeverDestroyedByAnApply: the keys outlive the services
+// that sign with them, so no apply removes one — a destroy takes the key id out
+// of the ring, and every install holding that key's public half stops verifying
+// the licences it signed with no revocation to notice it by (§11). Rotation is a
+// new key id published in the three verifiers, never an apply's side effect,
+// which is what the key's own comment and the root's say and what this holds:
+// `for_each = var.keys` puts both keys under this one block, so the lifecycle
+// covers production and staging alike.
+//
+// The mutation this fails on: the lifecycle block deleted, or its
+// prevent_destroy flipped to false, either of which leaves the key an ordinary
+// resource a plan may remove.
+func TestTheSigningKeyIsNeverDestroyedByAnApply(t *testing.T) {
+	key := tfCompact(tfRootBlock(t, keyringRoot, `resource "google_kms_crypto_key" "signing"`))
+	if !strings.Contains(key, "prevent_destroy=true") {
+		t.Errorf("the signing keys in %s do not write prevent_destroy = true: the key id is what the three verifiers hold a public half of, so a destroy stops every install verifying the licences that key signed, and rotation is a new id published in the verifiers rather than a removal an apply may make (S3.5, §11)", keyringRoot)
+	}
+}
+
 // TestOnlyTheMinterHoldsTheSignerRole: the signer role reaches exactly one
 // identity, and it is the minter's account — and that account is the one the
 // minter service RUNS as, since a service running as another identity is that
