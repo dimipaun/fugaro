@@ -217,9 +217,31 @@ func jobPaused(l *ProjectLayer, job func(*Jobs) *JobState) bool {
 // default is the mode a repository that writes none takes, and areas are
 // rules that stay in effect beside the repository's own (D20c).
 type LayerDefaults struct {
-	Git   LayerGit   `yaml:"git"`
-	Agent LayerAgent `yaml:"agent"`
-	Rigor LayerRigor `yaml:"rigor"`
+	Git      LayerGit      `yaml:"git"`
+	Agent    LayerAgent    `yaml:"agent"`
+	Rigor    LayerRigor    `yaml:"rigor"`
+	Planning LayerPlanning `yaml:"planning"`
+}
+
+// LayerPlanning is defaults.planning (docs/contract-first-decoupling, D1813):
+// the same key a repository's own planning: block carries, because either
+// layer may set it.
+type LayerPlanning struct {
+	Decoupling *bool `yaml:"decoupling"`
+}
+
+// SetsPlanning reports whether the layer's text writes defaults.planning, at
+// any value: a runner before planningSince decodes the layer with KnownFields,
+// so the key alone is what it refuses, and LayerPlanning's zero value cannot
+// tell an absent block from one written with decoupling: true — and the skew
+// gate judges both files by the key, not by the value.
+func (l *ProjectLayer) SetsPlanning() bool {
+	if l == nil {
+		return false
+	}
+	d, _ := l.tree["defaults"].(map[string]any)
+	_, ok := d["planning"]
+	return ok
 }
 
 // SetsRigor reports whether the layer's text writes defaults.rigor, at any

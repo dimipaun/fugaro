@@ -166,6 +166,52 @@ func TestProfileArtifactKeys(t *testing.T) {
 	}
 }
 
+// planningLayer turns the dependency-breaking pass off for the whole project:
+// defaults.planning is a key the project layer may set (D1813).
+const planningLayer = `version: 1
+project: acme
+gcp_project: acme-fugaro
+defaults:
+  git:
+    provider: github
+  planning:
+    decoupling: false
+profiles:
+  p:
+    commands: { build: make, test: make test }
+default_profile: p
+`
+
+// TestPlanningDecouplingRepoOverridesProject: planning.decoupling is a
+// preference and not a bound, so it follows the ordinary rule — the narrowest
+// layer that sets it decides — and a repository may turn the pass back on
+// where its project turned it off, as it may turn it off where the project
+// left it on (D1813). The project layer would otherwise be a floor, which is
+// what the rigor mode is and why a per-task switch was refused.
+func TestPlanningDecouplingRepoOverridesProject(t *testing.T) {
+	c, res, ps := Resolve([]byte(minimalRepo), mustLayer(t, planningLayer))
+	if len(ps) > 0 {
+		t.Fatalf("resolve problems: %v", ps)
+	}
+	if c.Planning.DecouplingOn() {
+		t.Error("the project layer wrote decoupling: false and the resolved config kept the pass on")
+	}
+	if got := res.SourceOf("planning.decoupling"); got != SourceProject {
+		t.Errorf("SourceOf(planning.decoupling) = %q, want %q", got, SourceProject)
+	}
+
+	c, res, ps = Resolve([]byte(minimalRepo+"planning:\n  decoupling: true\n"), mustLayer(t, planningLayer))
+	if len(ps) > 0 {
+		t.Fatalf("resolve problems: %v", ps)
+	}
+	if !c.Planning.DecouplingOn() {
+		t.Error("the repository wrote decoupling: true and the project's false won")
+	}
+	if got := res.SourceOf("planning.decoupling"); got != SourceRepo {
+		t.Errorf("SourceOf(planning.decoupling) = %q, want %q", got, SourceRepo)
+	}
+}
+
 // TestCheckoutProfileCorpusOneReason reads each checkout-related
 // testdata/project-layer/invalid fixture from disk and pins that it fails
 // for exactly the one reason it exists to exercise: a schema corpus gap

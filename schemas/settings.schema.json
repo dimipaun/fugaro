@@ -801,6 +801,9 @@
         "layer.defaults.rigor.default": {
           "default": "unset = the built-in mode (pro)"
         },
+        "layer.defaults.planning.decoupling": {
+          "default": "unset = true"
+        },
         "layer.gcp_project": {
           "default": "unset = the installation's GCP project"
         },
@@ -1152,6 +1155,10 @@
         },
         "repos.*.workflows": {
           "default": "unset = every workflow the repository defines"
+        },
+        "planning.decoupling": {
+          "$comment": "config.DefaultPlanningDecoupling",
+          "default": "true"
         },
         "review_floor": {
           "default": "unset = none: no floor is added"

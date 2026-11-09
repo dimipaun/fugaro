@@ -100,8 +100,11 @@ const (
 // added to the registry and not to the allowlist widens the gap the audit is
 // about rather than narrowing it, and with CB1 of docs/catalog-build-context/,
 // whose image_catalog.entries.*.source.context row is the image catalog's own.
+// This branch moved it to 384: planning.decoupling's own row, at
+// internal/settings/registry.go:301, and the defaults.planning.decoupling layer
+// row at :542, are two rows the merged tree holds and main's did not.
 const (
-	cfmRegistryRows   = 382
+	cfmRegistryRows   = 384
 	cfmAllowlistNamed = 88
 )
 
@@ -329,11 +332,11 @@ func TestDocsConfigManagementRelativeCitationsResolve(t *testing.T) {
 }
 
 // TestDocsConfigManagementAllowlistCounts: the figure the audit's whole argument
-// is made of is re-counted here rather than trusted. The registry holds 382 rows
+// is made of is re-counted here rather than trusted. The registry holds 384 rows
 // and the generic write path's allowlist carries eighty-eight of them by name
 // plus the rows its nine prefixes reach; the documents state the registry's
 // count and the allowlist's, and a row added to either -- which moves the gap
-// between the two -- fails here rather than leaving §1's "218 rows have no
+// between the two -- fails here rather than leaving §1's "219 rows have no
 // generic writer" reading as checked when it is not.
 //
 // The count moved with G0, which gained the allowlist the wildcard blocks
@@ -351,7 +354,10 @@ func TestDocsConfigManagementRelativeCitationsResolve(t *testing.T) {
 // `fugaro config publish`'s, not `fugaro settings set`'s.
 // CB1 of docs/catalog-build-context/ moved it once more: its
 // image_catalog.entries.*.source.context row is the image catalog's own, and no
-// writer carries it.
+// writer carries it. This branch's planning.decoupling is the last mover: the
+// planning pass's own preference is two rows the merged tree adds --
+// internal/settings/registry.go:301, and its layer row for defaults.planning at
+// :542.
 //
 // It counts through the same predicate the write path uses, so the test and the
 // command cannot disagree about what "the allowlist carries" means: the three
