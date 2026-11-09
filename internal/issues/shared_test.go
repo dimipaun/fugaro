@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -774,5 +775,156 @@ func TestSubmittedIsFinal(t *testing.T) {
 	}
 	if rec.Issue.Status != StatusSubmitted || rec.Issue.URL != url {
 		t.Errorf("the filed issue = %+v, want it unchanged", rec.Issue)
+	}
+}
+
+// shape joins the pieces of a credential-shaped fixture: this file carries no
+// secret-shaped literal, and a pattern pass is tested on shapes.
+func shape(parts ...string) string { return strings.Join(parts, "") }
+
+// An occurrence carries a teammate's own text into an object the whole team
+// reads, so the excerpt goes in through the redaction a report gets (F5) —
+// whichever path attached it. The fixture is asserted to leak as it stands, so
+// a store that wrote it verbatim fails this test rather than passing it.
+func TestOccurrenceExcerptIsRedacted(t *testing.T) {
+	ctx := context.Background()
+	leaky := "the update failed for ana@example.test under " + shape("/home/", "ana/.fugaro") +
+		", printing " + shape("ghp_", strings.Repeat("A1b2C3d4", 5))
+	for _, piece := range []string{"ana@example.test", shape("/home/", "ana"), shape("ghp_")} {
+		if !strings.Contains(leaky, piece) {
+			t.Fatalf("the fixture does not carry %q", piece)
+		}
+	}
+
+	// stored asserts on what the bucket holds: a teammate reads the object, not
+	// the call's return value.
+	stored := func(t *testing.T, b *blobx.Bucket, number int) Occurrence {
+		t.Helper()
+		occs := storedOccurrences(t, ctx, b, number)
+		if len(occs) != 1 {
+			t.Fatalf("the store holds %d occurrences of issue %d, want 1", len(occs), number)
+		}
+		for _, piece := range []string{"ana@example.test", shape("/home/", "ana"), shape("ghp_")} {
+			if strings.Contains(occs[0].Excerpt, piece) {
+				t.Errorf("the stored excerpt kept %q: %q", piece, occs[0].Excerpt)
+			}
+		}
+		if !strings.Contains(occs[0].Excerpt, redactedValue) {
+			t.Errorf("the stored excerpt carries no redaction marker: %q", occs[0].Excerpt)
+		}
+		if !strings.Contains(occs[0].Excerpt, "the update failed for") {
+			t.Errorf("the stored excerpt lost the text around it: %q", occs[0].Excerpt)
+		}
+		return occs[0]
+	}
+
+	// The path the upload takes: a machine hits an issue that is already there,
+	// and the excerpt is cut from its summary.
+	t.Run("an upload that hits an issue again", func(t *testing.T) {
+		b := sharedBucket(t)
+		up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", "21212121212121212121212121212121"))
+		other := hit("update-20261107183020-48220", "21212121212121212121212121212121", "bo@example.test", "0.9.0", sharedAt.Add(time.Minute))
+		other.Summary = leaky
+		if got := upload(t, ctx, b, other); !got.Attached {
+			t.Fatalf("the second upload = %+v, want an attached occurrence", got)
+		}
+		stored(t, b, up.Number)
+	})
+
+	// The store's own door, for a caller that already has an occurrence in
+	// hand.
+	t.Run("recorded on its own", func(t *testing.T) {
+		b := sharedBucket(t)
+		up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", "22222222222222222222222222222222"))
+		occ := Occurrence{Reporter: "bo@example.test", At: sharedAt.Add(time.Minute), Excerpt: leaky}
+		if err := AttachOccurrence(ctx, b, up.Number, occ); err != nil {
+			t.Fatalf("recording an occurrence of issue %d: %v", up.Number, err)
+		}
+		stored(t, b, up.Number)
+	})
+}
+
+// A fingerprint names the object an issue is filed under, and the local record
+// it comes from is a file a person can edit, so the store builds no key from a
+// value that is not one (F20): blogx takes the key as given, and a fingerprint
+// carrying a slash or a dot-dot would reach outside the prefix. Nothing is
+// written, so a refused upload costs its caller nothing.
+func TestUploadRefusesAValueThatIsNotAFingerprint(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	for _, tc := range []struct{ name, fingerprint string }{
+		{"empty", ""},
+		{"a path", "../../../etc/passwd"},
+		{"a nested name", "aaaa/bbbb"},
+		{"uppercase", "9F2C4A1B0D3E5F60718293A4B5C6D7E8"},
+		{"too short", "9f2c4a1b"},
+		{"not hexadecimal", "9f2c4a1b0d3e5f60718293a4b5c6d7gz"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Upload(ctx, b, sharedIssue("update-20261107183012-48213", tc.fingerprint)); err == nil {
+				t.Errorf("uploading %q as a fingerprint was allowed", tc.fingerprint)
+			}
+		})
+	}
+
+	// Nothing of a refused upload is in the store: no number taken, no entry
+	// under the fingerprint prefix, and the corrected issue still takes 1.
+	if _, err := readVersion(ctx, b, counterKey()); !errors.Is(err, blobx.ErrNotExist) {
+		t.Errorf("a refused upload moved the counter: %v", err)
+	}
+	iter := b.List(&blob.ListOptions{Prefix: sharedDir + "/" + fingerprintsDir + "/"})
+	if obj, err := iter.Next(ctx); !errors.Is(err, io.EOF) {
+		t.Errorf("a refused upload left %v under the fingerprint prefix: %v", obj, err)
+	}
+	up, err := Upload(ctx, b, sharedIssue("update-20261107183012-48213", "23232323232323232323232323232323"))
+	if err != nil || up.Number != 1 {
+		t.Fatalf("the corrected upload = %+v, %v; want issue 1", up, err)
+	}
+}
+
+// The listing walks a prefix any launcher can write (F24) and reads the number
+// a record's name spells as an issue, so only the name this store writes is one
+// (F20): a stray object beside it is not a second row of the same issue.
+func TestRecordKeyMustBeCanonical(t *testing.T) {
+	for _, tc := range []struct {
+		key  string
+		want int
+		ok   bool
+	}{
+		{"issues/records/0001", 1, true},
+		{"issues/records/0007", 7, true},
+		{"issues/records/00001", 0, false},
+		{"issues/records/1", 0, false},
+		{"issues/records/0000", 0, false},
+		{"issues/records/0001/x", 0, false},
+		{"issues/records/", 0, false},
+		{"issues/records/abc", 0, false},
+		{"issues/records/0001.json", 0, false},
+		{"issues/fingerprints/0001", 0, false},
+	} {
+		got, ok := numberFromRecordKey(tc.key)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("numberFromRecordKey(%q) = %d, %v; want %d, %v", tc.key, got, ok, tc.want, tc.ok)
+		}
+	}
+
+	ctx := context.Background()
+	b := sharedBucket(t)
+	up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", "24242424242424242424242424242424"))
+	raw, _, err := b.ReadMax(ctx, recordKey(up.Number), 1<<20)
+	if err != nil {
+		t.Fatalf("reading shared issue %d back: %v", up.Number, err)
+	}
+	for _, stray := range []string{"issues/records/00001", "issues/records/1"} {
+		if err := b.Put(ctx, stray, raw, sharedJSON); err != nil {
+			t.Fatalf("writing %s: %v", stray, err)
+		}
+	}
+	rows, err := ListShared(ctx, b)
+	if err != nil {
+		t.Fatalf("listing the shared store: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Number != up.Number {
+		t.Errorf("the listing = %+v, want issue %d once", rows, up.Number)
 	}
 }
