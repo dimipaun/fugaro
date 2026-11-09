@@ -124,7 +124,19 @@ run)
   if has --recipe "$@"; then kind=review; fi
   task=$(flag --task-file "$@")
   case "${task##*/}" in *ended*) kind=ended ;; esac
+  # The three modes are told apart by the title the check builds from its own
+  # label, so a row can be read as the run that opened it.
+  case "$(flag --title "$@")" in
+  *"flip ("*) kind=flip ;;
+  *"plain ("*) kind=plain ;;
+  esac
+  # The task the agent is handed, kept: a probe whose task asked for no change
+  # would end as a run the runner FAILS ("the agent made no commits") and pushes
+  # as a draft anyway, so the task text is the half of the reading a row about a
+  # pushed branch cannot show.
   printf '%s\t%s\t%s\n' "$rid" "$kind" "$(flag --repo "$@")" >>"$state/runs"
+  mkdir -p "$state/tasks"
+  if [ -n "$task" ] && [ -f "$task" ]; then cp "$task" "$state/tasks/$rid.md"; fi
   printf '{"run_id":"%s","repo":"%s","status":"queued"}\n' "$rid" "$(flag --repo "$@")"
   ;;
 runs)
@@ -140,12 +152,21 @@ for line in open(path).read().splitlines() if os.path.exists(path) else []:
     row = {"run": repo.replace("/", "-") + "/" + rid, "run_id": rid,
            "repo": repo, "terminal": True}
     if kind == "ended":
+        # The probe whose outcome was written before its launch: it must not be
+        # served at all, so it pushed nothing and opened no pull request.
         row.update({"status": "halted", "pushed": False,
                     "reason": "the run has ended: its outcome is written"})
-    elif mode == "run-failed" and kind == "work":
+    elif mode == "run-failed":
+        # A real run's task commits one line, so the row a repository whose run
+        # pushed nothing (or opened no pull request) answers with is the one the
+        # check must read as a failure.
         row.update({"status": "failed", "pushed": False})
     else:
-        row.update({"status": "succeeded", "pushed": False})
+        # Every other run of this check is a real run: it commits, pushes and
+        # opens its pull request (a run whose agent commits nothing is failed
+        # and pushed as a draft anyway).
+        row.update({"status": "succeeded", "pushed": True,
+                    "pr": {"work": 41, "flip": 42, "plain": 43}.get(kind, 41)})
     runs.append(row)
 print(json.dumps({"project": "fugaro", "runs": runs, "totals": {}}))
 PY
@@ -522,6 +543,15 @@ test_happy_path() {
   expect_contains "$calls" "--run-id $run_base-review" "happy path: the review run"
   expect_contains "$calls" "--recipe review-only" "happy path: the review run is a review-only run"
   expect_contains "$calls" "--run-id $run_base-ended" "happy path: the probe"
+  # The working run is a REAL run: its task asks for the one commit, the push
+  # and the pull request the row reads. A task that asked for no change would
+  # leave the runner failing the run ("the agent made no commits") and pushing a
+  # draft anyway, so a row that read `pushed=yes` alone would pass over a probe
+  # that measured a failure instead of the proxy.
+  expect_contains "$(cat "$dir/state/tasks/$run_base-work.md")" \
+    "commit it, push your branch and open the pull request" \
+    "happy path: the working run's task asks for a real run"
+  expect_contains "$out" "opened pull request #41" "happy path: the run-outcome row carries the pull request"
   # The outcome node was written, read back and deleted, and it is the node the
   # service reads a run's outcome from.
   calls=$(cat "$dir/logs/curl.calls")
@@ -600,6 +630,17 @@ test_after_flip_happy_path() {
   expect_contains "$out" "FACT mount: PASS — 1 job of workspace-a/repo-a carries FUGARO_REMOTE and none mounts bitbucket-token" \
     "after-flip: the mount row counts the repository's jobs"
   expect_contains "$(cat "$dir/logs/fugaro.calls")" "--run-id $run_base-plain" "after-flip: the plain repository's run"
+  # Both of the flip's runs are real runs: their tasks ask for the one commit,
+  # the push and the pull request their rows read, for the same reason the
+  # working run's task does.
+  expect_contains "$(cat "$dir/state/tasks/$run_base-flip.md")" \
+    "commit it, push your branch and open the pull request" \
+    "after-flip: the proxied repository's run is a real run"
+  expect_contains "$(cat "$dir/state/tasks/$run_base-plain.md")" \
+    "commit it, push your branch and open the pull request" \
+    "after-flip: the plain repository's run is a real run"
+  expect_contains "$out" "opened pull request #42" "after-flip: the proxied repository's row carries its pull request"
+  expect_contains "$out" "opened pull request #43" "after-flip: the plain repository's row carries its pull request"
   expect_absent "$(cat "$dir/logs/curl.calls")" "PUT" "after-flip: no outcome node is written"
 }
 

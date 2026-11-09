@@ -45,18 +45,30 @@
 #             working run, a review-only run, and a probe launched after its
 #             outcome was written by hand) and ONE Realtime Database node,
 #             outcomes/<day>/<slug>/<probe run id>, written as you and deleted
-#             again by the restore. Check 192: two throwaway runs. The runs'
-#             own records stay, which is what `fugaro runs ls` shows; nothing
-#             else is written.
-# Costs:      a few cents of Cloud Run time per run, and no model call for the
-#             seven attempts: they are refused before a call is served.
+#             again by the restore. The working run is a real one: it commits
+#             one line, pushes its branch and opens its pull request through the
+#             service (a run whose agent commits nothing is failed and pushed as
+#             a draft anyway), and that branch and pull request STAY on the
+#             sandbox repository — this check holds no Bitbucket credential of
+#             its own and cannot delete them, so the block names them and they
+#             are yours to settle. Check 192: two throwaway runs, the same way,
+#             and their branch and pull request stay too. The runs' own records
+#             stay, which is what `fugaro runs ls` shows; nothing else is
+#             written.
+# Costs:      three (Check 191) or two (Check 192) real runs: a model-driven
+#             loop each, billed to the installation as any run is, plus the
+#             seven attempts, which are refused before a model call is served.
 # Runs:       by YOU. No agent runs any step of it, and its own test
 #             (check191_test.sh) runs it against fake tools only.
 # Cleanup:    always, including on a Ctrl-C: the scratch directory, and the
 #             outcome node Check 191 wrote. Both are read back rather than
 #             assumed — the `restore` and `scratch-removed` rows are that
 #             reading — and a restore row that FAILs names the node's URL so you
-#             can delete it with `curl -X DELETE` and your own access token.
+#             can delete it with `curl -X DELETE` and your own access token. The
+#             branches and pull requests the runs opened are NOT this check's to
+#             delete (it holds no Bitbucket credential): the block names each
+#             one, and they are the owner's to settle on the sandbox
+#             repositories.
 # Output:     progress on stderr, ONE block on stdout headed CHECK 191 RESULT
 #             (CHECK 192 RESULT under --after-flip), then ... RESULT END (exit
 #             N). Exit 0: every criterion that was measured held. 1: a measured
@@ -636,10 +648,18 @@ step_policy() {
 step_work_run() {
   local task=$SCRATCH/task-work.md rid=$RUN_BASE-work row status pushed
   cat >"$task" <<TASK_EOF
-You are a probe for Fugaro's Check 191, run by this repository's owner. Do NOT
-change any file, do not push a branch and do not open a pull request.
+You are a probe for Fugaro's Check 191, run by this repository's owner.
 
-Make each of the seven attempts below against this repository's git host and its
+FIRST, do the one thing a run normally does: append one line to this
+repository's README.md saying that Check 191 ran here on $(date -u +%Y-%m-%d),
+commit it, push your branch and open the pull request. Change no other file and
+make no other commit. Every call that takes is served by this installation's
+credentials service — the job holds no Bitbucket token of its own — and that
+served clone, push and pull request is the positive half of what this run is
+for. A run whose agent commits nothing is failed and pushed as a draft anyway,
+so a run that changes nothing measures a failure rather than the proxy.
+
+THEN make each of the seven attempts below against this repository's git host and its
 API, with the credentials this job gave you (they are in the environment and in
 the git remote's helper — use them as they are). After each attempt print
 exactly one line, on its own, in this form and with nothing else on it:
@@ -671,11 +691,12 @@ TASK_EOF
   fact run-launch PASS "the working run (${rid}) was launched in ${REPO} and reached a final status"
   status=$(field_of status "$row")
   pushed=$(field_of pushed "$row")
-  if [ "$status" != succeeded ] || [ "$pushed" != no ]; then
-    fact run-outcome FAIL "the working run (${rid}) ended status=${status:-unread} pushed=${pushed:-unread}: it must SUCCEED (its first calls are served, which is what makes the refusals below a reading of the proxy rather than of a broken job) and it must push nothing (its task asks for no change, and a probe that pushed is one this check's own restore cannot undo). Read it: fugaro logs ${rid}"
+  pr=$(field_of pr "$row")
+  if [ "$pushed" != yes ] || [ -z "$pr" ] || [ "$pr" = 0 ]; then
+    fact run-outcome FAIL "the working run (${rid}) ended status=${status:-unread} pushed=${pushed:-unread} pr=${pr:-unread}, so nothing shows the credentials service SERVING a call: the task asks for one commit, a push and a pull request, and that is the positive half of this check — the seven refusals below are only a reading of the proxy when the very same run pushed through it. Read it: fugaro logs ${rid}"
     return 0
   fi
-  fact run-outcome PASS "the working run (${rid}) succeeded (status=succeeded, pushed=no) and pushed nothing: its calls were served through the credentials service, so every refusal below is about a call the SERVICE answered rather than about a job that could not reach Bitbucket"
+  fact run-outcome PASS "the working run (${rid}) pushed its branch and opened pull request #${pr} (status=${status:-unread}, pushed=yes), so the service SERVED its clone, its push and its pull request — every refusal below is therefore about a call the SERVICE answered rather than about a job that could not reach Bitbucket. The branch and the pull request stay on ${REPO}: this check holds no Bitbucket credential of its own, so delete them when you are done"
 }
 
 step_refusals() {
@@ -868,26 +889,34 @@ step_doctor() {
 }
 
 step_flip_run() {
-  local task=$SCRATCH/task-flip.md rid=$RUN_BASE-flip row status
-  cat >"$task" <<'TASK_EOF'
-Do not change any file. Reply with one line and stop.
+  local task=$SCRATCH/task-flip.md rid=$RUN_BASE-flip row status pushed pr
+  cat >"$task" <<TASK_EOF
+You are a probe for Fugaro's Check 192, run by this repository's owner, after
+the flip: this repository's job no longer mounts a Bitbucket token, and the
+credential is served by the installation's credentials service.
+
+Append one line to this repository's README.md saying that Check 192 ran here on
+$(date -u +%Y-%m-%d), commit it, push your branch and open the pull request.
+Change no other file, then stop.
 TASK_EOF
   if ! row=$(launch_into "$REPO" "flip" "$rid" "$task"); then
     fact run-still-works FAIL "the run in ${REPO} could not be read after the flip: ${LAUNCH_ERR}"
     return 0
   fi
   status=$(field_of status "$row")
-  if [ "$status" != succeeded ]; then
-    fact run-still-works FAIL "a run in ${REPO} ended status=${status:-unread} AFTER the flip: the flip takes the token off the job and serves it from the credentials service, so a run in a proxied repository must still work — this is the reading that the flip did not break the repository. Read that run's log (fugaro runs ls --repo ${REPO}, then fugaro logs) before anything else"
+  pushed=$(field_of pushed "$row")
+  pr=$(field_of pr "$row")
+  if [ "$pushed" != yes ] || [ -z "$pr" ] || [ "$pr" = 0 ]; then
+    fact run-still-works FAIL "a run in ${REPO} ended status=${status:-unread} pushed=${pushed:-unread} pr=${pr:-unread} AFTER the flip: the flip takes the token off the job and serves it from the credentials service, so a run in a proxied repository must still clone, push and open its pull request — this is the reading that the flip did not break the repository. Read that run's log (fugaro runs ls --repo ${REPO}, then fugaro logs) before anything else"
     return 0
   fi
-  fact run-still-works PASS "a run in ${REPO} still succeeded after the flip (status=succeeded): the credential is served by the credentials service, and the repository still works without its own mount"
+  fact run-still-works PASS "a run in ${REPO} still pushed its branch and opened pull request #${pr} after the flip (status=${status:-unread}, pushed=yes): the credential is served by the credentials service, and the repository still works without its own mount. The branch and the pull request stay on ${REPO}: delete them when you are done"
 }
 
 # step_plain_run: the other half of the flip — a NON-proxied Bitbucket
 # repository of the same installation still mounts its token and still runs.
 step_plain_run() {
-  local file=$SCRATCH/jobs-plain.json n mounts task=$SCRATCH/task-plain.md rid=$RUN_BASE-plain row status
+  local file=$SCRATCH/jobs-plain.json n mounts task=$SCRATCH/task-plain.md rid=$RUN_BASE-plain row status pushed pr
   gcloud run jobs list --project="$P" --region="$L" --format=json >"$file" 2>"$SCRATCH/jobs-plain.err" || true
   n=$(reader jobs "$file" "$PLAIN_REPO" | sed -n 's/^jobs=//p')
   mounts=$(reader jobs "$file" "$PLAIN_REPO" | sed -n 's/^mounts=//p')
@@ -899,19 +928,26 @@ step_plain_run() {
     fact plain-repo FAIL "${n} job(s) of ${PLAIN_REPO} carry FUGARO_REMOTE and NONE of them mounts bitbucket-token: a repository the policy does not admit with proxy: true must keep its token MOUNTED — the flip is per-repository, and a plain repository that lost its mount is a repository whose runs cannot reach Bitbucket at all. Read 'gcloud run jobs list' for ${PLAIN_REPO} yourself"
     return 0
   fi
-  cat >"$task" <<'TASK_EOF'
-Do not change any file. Reply with one line and stop.
+  cat >"$task" <<TASK_EOF
+You are a probe for Fugaro's Check 192, run by this repository's owner. This
+repository is NOT proxied: its job still mounts its own Bitbucket token.
+
+Append one line to this repository's README.md saying that Check 192 ran here on
+$(date -u +%Y-%m-%d), commit it, push your branch and open the pull request.
+Change no other file, then stop.
 TASK_EOF
   if ! row=$(launch_into "$PLAIN_REPO" "plain" "$rid" "$task"); then
     fact plain-repo FAIL "the run in ${PLAIN_REPO} (the non-proxied repository) could not be read: ${LAUNCH_ERR}"
     return 0
   fi
   status=$(field_of status "$row")
-  if [ "$status" != succeeded ]; then
-    fact plain-repo FAIL "the run in ${PLAIN_REPO} (the non-proxied repository, whose job still mounts its token) ended status=${status:-unread}: the flip must not disturb it. Read that run's log (fugaro runs ls --repo ${PLAIN_REPO}, then fugaro logs) before anything else"
+  pushed=$(field_of pushed "$row")
+  pr=$(field_of pr "$row")
+  if [ "$pushed" != yes ] || [ -z "$pr" ] || [ "$pr" = 0 ]; then
+    fact plain-repo FAIL "the run in ${PLAIN_REPO} (the non-proxied repository, whose job still mounts its token) ended status=${status:-unread} pushed=${pushed:-unread} pr=${pr:-unread}: the flip must not disturb it, and a run there must still reach Bitbucket with the token its own job mounts. Read that run's log (fugaro runs ls --repo ${PLAIN_REPO}, then fugaro logs) before anything else"
     return 0
   fi
-  fact plain-repo PASS "${n} job(s) of ${PLAIN_REPO} still mount bitbucket-token and a run in it still succeeded: the flip is per-repository, and the repository the policy does not proxy is untouched"
+  fact plain-repo PASS "${n} job$([ "$n" = 1 ] || printf 's') of ${PLAIN_REPO} still mount bitbucket-token and a run in it still pushed and opened pull request #${pr}: the flip is per-repository, and the repository the policy does not proxy is untouched"
 }
 
 run_192() {
@@ -935,13 +971,13 @@ plan() {
     say "  [network, read] gcloud run jobs list --project=${P} --region=${L} --format=json — the jobs of ${REPO} and of ${PLAIN_REPO}, and whether they mount bitbucket-token"
     say "  [network, read] gcloud secrets get-iam-policy bitbucket-token --project=${P} --format=json — the accessor on the secret"
     say "  [network, read] fugaro doctor --project fugaro --json — bitbucket-direct for ${REPO}"
-    say "  [network, runs] two throwaway runs (${RUN_BASE}-flip in ${REPO} through the credentials service, ${RUN_BASE}-plain in ${PLAIN_REPO} with its mounted token), each waited for to a final status"
+    say "  [network, runs] two throwaway runs (${RUN_BASE}-flip in ${REPO} through the credentials service, ${RUN_BASE}-plain in ${PLAIN_REPO} with its mounted token), each committing one line, pushing its branch and opening its pull request, and each waited for to a final status"
     for key in jobs mount accessor run-still-works doctor plain-repo; do
       fact "$key" INFO "planned: a real run reads this row; --dry-run did not"
     done
   else
     say "  [network, read] fugaro project policy show --project fugaro --json — whether ${REPO} is admitted with proxy: true"
-    say "  [network, runs] fugaro run --repo ${REPO} --run-id ${RUN_BASE}-work — the throwaway run itself, whose task makes the seven attempts and prints one line per attempt"
+    say "  [network, runs] fugaro run --repo ${REPO} --run-id ${RUN_BASE}-work — the throwaway run itself, whose task commits one line, pushes it and opens its pull request through the service, THEN makes the seven attempts and prints one line per attempt"
     say "  [network, read] gcloud logging read (service fugaro-credentials, jsonPayload.run) — the service's own audit lines for each run"
     say "  [network, runs] fugaro run --repo ${REPO} --recipe review-only --run-id ${RUN_BASE}-review — a review-only run, whose push must be refused"
     say "  [network, write+delete] ONE Realtime Database node, outcomes/<day>/<slug>/${RUN_BASE}-ended.json, written by you with your own credentials and deleted again by the restore, and one run (${RUN_BASE}-ended) launched with that outcome already written"
