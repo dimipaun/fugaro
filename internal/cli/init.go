@@ -2193,14 +2193,14 @@ func (r *initRun) stepConfirmation(class initflow.ConfirmClass) stepConfirmation
 	return stepLeave
 }
 
-// neverConfirmsBuild is the parenthetical that follows "typed at a real
-// terminal" in the warning a run that could not confirm a billable image build
-// prints: which ways of running do not give that confirmation. It names --yes
-// as the way that does, because D12's answer of 2026-10-20 covers the build in
-// BOTH front doors (askCovered) — a line that told the reader "--yes never
-// confirms it" would name the one flag that does. The steps that stay Typed
-// write their own line, at their own call site, where "--yes never confirms it"
-// is true.
+// neverConfirmsBuild is the parenthetical that follows "it needs the person at
+// a real terminal" in the warning a run that could not confirm a billable image
+// build prints: which ways of running do not give that confirmation. It names
+// --yes as the way that does, because D12's answer of 2026-10-20 covers the
+// build in BOTH front doors (askCovered) — a line that told the reader "--yes
+// never confirms it" would name the one flag that does. The steps that stay
+// Typed write their own line, at their own call site, where "--yes never
+// confirms it" is true.
 //
 // agent is the run's own reading of the coding-agent marker, and it is why this
 // is a function: a `--repo` run has no agent gate in front of the build (the
@@ -4862,11 +4862,11 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 		}
 		if !reachable {
 			r.buildsLeft = append(r.buildsLeft, name)
-			r.warn(fmt.Sprintf("the first image build of %s/%s is billable and was not confirmed: it needs the person at a real terminal ("+neverConfirmsBuild(r.conditions().Agent != "")+"), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (a person at that terminal confirms it, with nothing typed), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
+			r.warn(fmt.Sprintf("the first image build of %s/%s is billable and was not confirmed: it needs the person at a real terminal ("+neverConfirmsBuild(r.conditions().Agent != "")+"), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks for the project's name too), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
 			continue
 		}
 		if !ok {
-			r.warn(fmt.Sprintf("the first image build of %s/%s was not confirmed (the question was answered no), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (a person at that terminal confirms it, with nothing typed), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
+			r.warn(fmt.Sprintf("the first image build of %s/%s was not confirmed (the question was answered no), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks for the project's name too), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
 			continue
 		}
 		if _, err := r.submitAndWait(ctx, b, lc, cfg, spec, name, base, appliedGitSecretID(spec)); err != nil {
