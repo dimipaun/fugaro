@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -143,6 +144,14 @@ func (s *syncWriter) do(f func()) {
 // or an infrastructure tool keeps a token or a cluster credential in, and
 // /proc, whose environ entries hold every secret this process deliberately
 // kept out of the child's environment.
+//
+// These are the stores where the machine keeps them by default, and five of
+// them move: childStoresByVar names the variable that decides each of those
+// directories, so the payload for one diagnosis is this list plus a rule for
+// wherever the store actually is (childDenyRules). Without that, a machine
+// with $XDG_CONFIG_HOME set keeps gh's hosts.yml under it and the log, which
+// this process writes and which carries real paths, names a store no rule
+// here reaches.
 var childReadDeny = []string{
 	"~/.ssh/**",
 	"~/.aws/**",
@@ -185,7 +194,7 @@ var childReadDeny = []string{
 // — and the payload says it anyway, because "nothing declares a hook" is an
 // argument about the other flags and this is a statement about this one.
 //
-// The deny rules are childReadDeny, one rule per tool.
+// The deny rules are childDenyRules, one rule per tool.
 var childSettings = struct {
 	DisableAllHooks bool `json:"disableAllHooks"`
 	Permissions     struct {
@@ -193,15 +202,59 @@ var childSettings = struct {
 	} `json:"permissions"`
 }{}
 
-// childSettingsJSON is childSettings rendered once, when this package loads.
-// Order is the struct's, so the value is the same on every run, which is what
-// lets a test pin the command line whole.
-var childSettingsJSON = renderChildSettings()
+// childStoresByVar are the stores childReadDeny names whose directory a
+// variable decides rather than the home alone, as that variable and the
+// directory under it ("" is the variable's own value). The variable is
+// resolved against the environment this diagnosis is composed from, which is
+// the child's own: what the payload has to name is where the store is on the
+// machine the child is reading, and a store the log can name by its real path
+// is a store the ~/.config rule above does not reach.
+//
+// Each name is the store's own variable, not Fugaro's: gh reads GH_CONFIG_DIR
+// before the XDG directory, gcloud reads CLOUDSDK_CONFIG and no XDG variable
+// at all (internal/cli/adcpath.go, F29), and Fugaro and rclone follow the XDG
+// config home. A variable that is unset, relative or not a path leaves the
+// rule above as the answer.
+var childStoresByVar = []struct{ env, sub string }{
+	{"XDG_CONFIG_HOME", "fugaro"},
+	{"XDG_CONFIG_HOME", "gh"},
+	{"XDG_CONFIG_HOME", "rclone"},
+	{"GH_CONFIG_DIR", ""},
+	{"CLOUDSDK_CONFIG", ""},
+}
 
-func renderChildSettings() string {
+// childDenyRules is the payload's deny list for one diagnosis: childReadDeny,
+// plus a rule for every store a variable has moved. Order is fixed, so the
+// payload is the same for the same environment and a test can pin it whole.
+func childDenyRules(parent []string) []string {
+	rules := slices.Clone(childReadDeny)
+	for _, store := range childStoresByVar {
+		dir := envValue(parent, store.env)
+		if !filepath.IsAbs(dir) {
+			continue
+		}
+		// A parenthesis would not survive the rule syntax, and one rule the
+		// client cannot read risks the whole payload with it, so a directory
+		// that holds one is left to the rules above rather than written out.
+		if strings.ContainsAny(dir, "()") || strings.IndexFunc(dir, func(r rune) bool { return r < 0x20 }) >= 0 {
+			continue
+		}
+		if store.sub != "" {
+			dir = filepath.Join(dir, store.sub)
+		}
+		rules = append(rules, filepath.ToSlash(dir)+"/**")
+	}
+	return rules
+}
+
+// childSettingsJSON is childSettings rendered for one diagnosis, from the
+// environment that diagnosis is composed from (childDenyRules). Order is the
+// struct's and the rules' own, so the same environment gives the same command
+// line, which is what lets a test pin it whole.
+func childSettingsJSON(parent []string) string {
 	s := childSettings
 	s.DisableAllHooks = true
-	for _, path := range childReadDeny {
+	for _, path := range childDenyRules(parent) {
 		for _, tool := range childFileTools {
 			s.Permissions.Deny = append(s.Permissions.Deny, tool+"("+path+")")
 		}
@@ -325,7 +378,14 @@ type Diagnosis struct {
 // carry that lets an agent act — --dangerously-skip-permissions, a permission
 // mode, a settings source of the machine's, an MCP configuration — is absent
 // on purpose, and the value of --tools is what says so.
-func Args(req Request) []string {
+func Args(req Request) []string { return argsFor(req, req.ParentEnv) }
+
+// argsFor is Args with the environment the child's own is composed from passed
+// in, so that the payload's deny rules and the child's environment come from
+// one resolution of it: Run resolves them together, and Args with a nil
+// ParentEnv is a request that names no environment at all, which is what the
+// rules that are home-relative alone are for.
+func argsFor(req Request, parent []string) []string {
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
@@ -346,7 +406,7 @@ func Args(req Request) []string {
 		// answer, written under the person's home. A diagnosis is one question
 		// asked once, and nothing it reads belongs in a store on their disk.
 		"--no-session-persistence",
-		"--settings", childSettingsJSON,
+		"--settings", childSettingsJSON(parent),
 		"--add-dir", req.EvidenceDir,
 	}
 	if req.Model != "" {
@@ -391,13 +451,16 @@ func Run(ctx context.Context, req Request) (Diagnosis, error) {
 		stderrW = &syncWriter{w: stderrRed}
 		stderr = stderrW
 	}
+	// The environment is resolved once and used for both: the child's own, and
+	// the deny rules that name the stores it decides. A rule derived from an
+	// environment the child was not given would be a rule about another machine.
 	parent := req.ParentEnv
 	if parent == nil {
 		parent = os.Environ()
 	}
 	code, runErr := procgroup.Run(ctx, procgroup.Cmd{
 		Name:   bin,
-		Args:   Args(req),
+		Args:   argsFor(req, parent),
 		Dir:    req.SourceDir,
 		Env:    childEnvironment(parent, req.Handle),
 		Stdin:  strings.NewReader(req.Prompt),

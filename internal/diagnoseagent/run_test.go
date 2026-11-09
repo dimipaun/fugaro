@@ -105,9 +105,10 @@ func runFolders(t *testing.T) (source, evidence string) {
 // splices it into the result event.
 //
 // What it did lands in record, one key per line — the allow-list it was given,
-// what it did with it, and the directory it was really started in (pwd -P,
+// what it did with it, the directory it was really started in (pwd -P,
 // resolved, so a temp directory reached through a symlink compares equal to
-// the one the test named) — which is where the cases read a refusal from: the
+// the one the test named) and the *names* of the variables in its environment,
+// never their values — which is where the cases read a refusal from: the
 // answer itself is what the model wrote, and a test that looked for a refusal
 // there would be testing the fake's prose.
 func runChildScript(record string) string {
@@ -155,7 +156,8 @@ if [ -n "$want" ]; then
     did="read:$(cat "$want" 2>/dev/null)"
   fi
 fi
-printf 'tools=%s\ndid=%s\ncwd=%s\n' "$tools" "$did" "$(pwd -P)" > '` + record + `'
+envnames=$(env | sed 's/=.*//' | tr '\n' ' ')
+printf 'tools=%s\ndid=%s\ncwd=%s\nenv=%s\n' "$tools" "$did" "$(pwd -P)" "$envnames" > '` + record + `'
 if printf '%s\n' "$prompt" | grep -q '^CAP: turns'; then
   printf '{"type":"result","subtype":"error_max_turns","is_error":true,"total_cost_usd":0.02,"session_id":"s1","result":""}\n'
   exit 1
@@ -189,9 +191,40 @@ func newRunSetup(t *testing.T) *runSetup {
 	s := &runSetup{value: runValue(t, "child"), nonce: NewNonce()}
 	s.record = filepath.Join(t.TempDir(), "record")
 	testutil.FakeCommand(t, "claude", runChildScript(s.record))
-	s.req = Request{Handle: runHandle(t, s.value), Nonce: s.nonce, Cap: DefaultCap}
+	s.req = Request{
+		Handle: runHandle(t, s.value), Nonce: s.nonce, Cap: DefaultCap,
+		ParentEnv: runParentEnv(t),
+	}
 	s.req.SourceDir, s.req.EvidenceDir = runFolders(t)
 	return s
+}
+
+// runParentEnv is the environment one case's diagnosis is started from: the
+// variables a real machine has, and the shapes the child must not inherit — a
+// second model credential, a cloud key, a GitHub token and NODE_OPTIONS, which
+// names code the client would load. Every case runs on it rather than on the
+// test process's own, so what the child is given is what a test chose.
+//
+// HOME stands in for the machine's because a rule's ~ is expanded through it.
+// A case that moves HOME does so before newRunSetup, since this is read once.
+func runParentEnv(t *testing.T) []string {
+	t.Helper()
+	value := runValue(t, "parent")
+	home := os.Getenv("HOME")
+	if home == "" {
+		home = t.TempDir()
+	}
+	return []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + home,
+		"TERM=xterm-256color",
+		"LANG=C.UTF-8",
+		"GH_TOKEN=" + value,
+		"AWS_SECRET_ACCESS_KEY=" + value,
+		"ANTHROPIC_API_KEY=" + value,
+		"GOOGLE_APPLICATION_CREDENTIALS=" + filepath.Join(home, "adc.json"),
+		"NODE_OPTIONS=--require " + filepath.Join(home, "hook.js"),
+	}
 }
 
 // run starts the diagnosis with the prompt's lines.
@@ -523,11 +556,12 @@ func TestRunRefusesToStartWithoutTheTwoFolders(t *testing.T) {
 // That is the case the structural pin cannot make: a payload that denies
 // nothing is still a well-formed --settings argument.
 func TestRunDeniesTheReadsItsPayloadNames(t *testing.T) {
-	s := newRunSetup(t)
 	// The home is this test's own, so the ~ of a rule expands inside the test
-	// and never to the machine's real profile.
+	// and never to the machine's real profile. It is set before the setup,
+	// which reads the environment the diagnosis is composed from once.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	s := newRunSetup(t)
 	named := filepath.Join(home, ".config", "fugaro", "projects.yaml")
 	if err := os.MkdirAll(filepath.Dir(named), 0o700); err != nil {
 		t.Fatal(err)
@@ -583,6 +617,111 @@ func TestRunStartsTheChildInTheSourceTree(t *testing.T) {
 	}
 	if got := runField(t, s.did(t), "cwd"); got != want {
 		t.Errorf("the child ran in %s, want the source tree %s: its working directory is the first of the two roots a diagnosis gives it", got, want)
+	}
+}
+
+// TestRunDeniesAStoreTheEnvironmentMoved: the payload names the stores where
+// this machine keeps them, and some of them are not under the home. The
+// environment here moves each store somewhere outside HOME, so a rule that
+// only ever resolved ~ would leave every one of these files readable — and the
+// fake child refuses them, which says the rule it matched was the resolved one.
+func TestRunDeniesAStoreTheEnvironmentMoved(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// env is the variable, and store the file under the directory it names.
+		env, store string
+		// process is the one row that sets the variable in this process's own
+		// environment and leaves the request with none, which is the case Run
+		// resolves from os.Environ: a request that names no environment is not
+		// one where no store has moved.
+		process bool
+	}{
+		{"$XDG_CONFIG_HOME/gh", "XDG_CONFIG_HOME", filepath.Join("gh", "hosts.yml"), true},
+		{"$XDG_CONFIG_HOME/fugaro", "XDG_CONFIG_HOME", filepath.Join("fugaro", "projects", "aurora.yaml"), false},
+		{"$GH_CONFIG_DIR", "GH_CONFIG_DIR", "hosts.yml", false},
+		// gcloud reads no XDG variable at all (internal/cli/adcpath.go, F29),
+		// which is why its own variable is the one resolved for it.
+		{"$CLOUDSDK_CONFIG", "CLOUDSDK_CONFIG", "application_default_credentials.json", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newRunSetup(t)
+			dir := t.TempDir()
+			if home := os.Getenv("HOME"); home != "" && strings.HasPrefix(dir, home+string(os.PathSeparator)) {
+				t.Fatalf("the moved directory %s is under HOME, so a rule that resolved ~ could be the one that denied it", dir)
+			}
+			if tc.process {
+				t.Setenv(tc.env, dir)
+				s.req.ParentEnv = nil
+			} else {
+				s.req.ParentEnv = append(s.req.ParentEnv, tc.env+"="+dir)
+			}
+			moved := filepath.Join(dir, tc.store)
+			if err := os.MkdirAll(filepath.Dir(moved), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(moved, []byte(s.value), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			block := answer(t, fence(s.nonce, "outcome: bug\nsignature: update config invalid\nbody"))
+			if _, err := s.run(t, "READ: "+filepath.Join(s.req.EvidenceDir, "log.txt"), block); err != nil {
+				t.Fatal(err)
+			}
+			if did := s.did(t); !strings.Contains(did, "read:a step failed") {
+				t.Errorf("the child could not read a file no rule names, so a denial below proves nothing: %q", did)
+			}
+			if _, err := s.run(t, "READ: "+moved, block); err != nil {
+				t.Fatal(err)
+			}
+			did := s.did(t)
+			if !strings.Contains(did, "denied "+moved) {
+				t.Errorf("%s moved the store to %s and the child read it: the payload names the default directory alone", tc.env, moved)
+			}
+			if strings.Contains(did, s.value) {
+				t.Errorf("the child read a store %s moved: %q", tc.env, did)
+			}
+		})
+	}
+}
+
+// TestRunStartsTheChildWithTheAllowListedEnvironment: Run composes the child's
+// environment with childEnvironment, and the unit case above does not pin that
+// it does — it would pass whatever Run handed the child. The fake child
+// records the names of the variables it was given, and the parent here holds
+// four shapes a log-reading child must not inherit: a second model credential,
+// a cloud key, a GitHub token and NODE_OPTIONS.
+//
+// Mutation (run and restored): hand the child the parent's own environment
+// (Env: append(parent, req.Handle.Env()...)) -> red here, naming each variable
+// that arrived.
+func TestRunStartsTheChildWithTheAllowListedEnvironment(t *testing.T) {
+	s := newRunSetup(t)
+	if _, err := s.run(t, answer(t, fence(s.nonce, "outcome: bug\nsignature: update config invalid\nbody"))); err != nil {
+		t.Fatal(err)
+	}
+	names := strings.Fields(runField(t, s.did(t), "env"))
+	if len(names) == 0 {
+		t.Fatal("the fake child recorded no environment, so this case proves nothing")
+	}
+	allowed := map[string]bool{credsOAuthVar: true}
+	for _, name := range childEnvAllowList {
+		allowed[name] = true
+	}
+	// The fake's own shell exports these before it records anything: they are
+	// the shell's, not what the runner handed it.
+	for _, name := range []string{"PWD", "OLDPWD", "SHLVL", "_"} {
+		allowed[name] = true
+	}
+	for _, name := range names {
+		if !allowed[name] {
+			t.Errorf("the child's environment carries %s, which is neither a variable a diagnosis needs nor the handle's own credential", name)
+		}
+	}
+	// The control: the allow-listed variables really did arrive, so the check
+	// above is not passing on an environment that reached the child empty.
+	for _, want := range []string{"PATH", "HOME", "TERM", credsOAuthVar} {
+		if !slices.Contains(names, want) {
+			t.Errorf("the child's environment lacks %s, so the check above proves nothing: %v", want, names)
+		}
 	}
 }
 
