@@ -8,8 +8,8 @@
 // an impact of 5 outside Hotfix, an unscored finding and one only the owner can
 // settle — is never deferred whatever a verdict says. A judge's answer is
 // untrusted data, like every other model's text a run reads: it is bounded
-// here, and only the code that applies it inside that floor (the later task
-// T-TR6) lets it steer anything.
+// here, and only the code that applies it inside that floor (apply.go) lets it
+// steer anything.
 package triage
 
 import (
