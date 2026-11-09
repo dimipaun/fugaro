@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/installed.schema.json",
+  "title": "fugaro/installed.json",
+  "description": "The installation's version record in the runs bucket: the release the last `fugaro update` applied and the release the installation was on before it (internal/installrec, docs/issues-resolved-on-update). The update door writes it; every launcher reads it. A reader that does not know the format refuses the object rather than rewriting it, and the record only ever rises.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "release", "previous_release"],
+  "properties": {
+    "format": {
+      "const": 1,
+      "description": "The record's format number. A field never changes meaning, so a later shape that has to change one raises this number instead."
+    },
+    "release": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})$",
+      "description": "The release the last update applied: a strict X.Y.Z with no v prefix, which is what updatecheck.CanonicalRelease writes."
+    },
+    "previous_release": {
+      "type": "string",
+      "pattern": "^$|^(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})$",
+      "description": "The release the installation was on before the last update, or empty in the first record an installation writes."
+    }
+  }
+}

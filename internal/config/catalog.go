@@ -94,6 +94,12 @@ type Source struct {
 	Repo   string `yaml:"repo,omitempty" json:"repo,omitempty"`
 	Path   string `yaml:"path,omitempty" json:"path,omitempty"`
 	Branch string `yaml:"branch,omitempty" json:"branch,omitempty"`
+	// Context is the directory of Repo a build runs on, "" when the entry has
+	// none and the build runs on the copied Dockerfile alone. It is a
+	// SourceDockerfile field and not a second repository: the checkout it
+	// names is the one Repo already carries the credential for, which is what
+	// keeps the entry's build one commit (D1391, D1393).
+	Context string `yaml:"context,omitempty" json:"context,omitempty"`
 	// Inline is a SourceInline's Dockerfile definition, held in the catalog
 	// itself.
 	Inline string `yaml:"inline,omitempty" json:"inline,omitempty"`
@@ -132,15 +138,37 @@ const (
 
 // CatalogDockerfileKey is where an entry's Dockerfile is copied into the
 // project's bucket, before a build reads it (D1140, spec.md §Where
-// Dockerfiles live): under the builds/ prefix the build and check accounts'
-// grants are conditioned on, at the entry's own name so the copy a build
-// reads is the one an entry names.
-//
-// The name is checked here and not only where a catalog is validated,
-// because this is the one place a name becomes a key: a name outside the
-// grammar (a ".." segment, a "/", a NUL) would otherwise name an object
-// outside the entry's own directory.
+// Dockerfiles live).
 func CatalogDockerfileKey(name string) (string, error) {
+	return catalogKey(name, "Dockerfile")
+}
+
+// CatalogContextCommitKey is where the commit an entry's context was read at is
+// staged, under the same prefix and the entry's own name as the Dockerfile
+// (D1140, CB2): the copy writes it before the build, so the commit a build
+// checks out is the one the Dockerfile beside it was read at rather than the
+// branch head a build would resolve for itself.
+func CatalogContextCommitKey(name string) (string, error) {
+	return catalogKey(name, "source-commit")
+}
+
+// CatalogContextHashKey is where the digest of an entry's context is staged,
+// beside the commit above and under the same rules: it is what the nightly
+// check compares to decide a context moved, so it is read without a checkout
+// and without a credential.
+func CatalogContextHashKey(name string) (string, error) {
+	return catalogKey(name, "context-sha256")
+}
+
+// catalogKey is where one of a catalog entry's own objects lives: under the
+// builds/ prefix the build and check accounts' grants are conditioned on, at
+// the entry's own name so the object a build reads is the one an entry names.
+//
+// The name is checked here and not only where a catalog is validated, because
+// this is the one place a name becomes a key: a name outside the grammar (a ".."
+// segment, a "/", a NUL) would otherwise name an object outside the entry's own
+// directory.
+func catalogKey(name, leaf string) (string, error) {
 	if !catalogNameRE.MatchString(name) {
 		// The refusal names the value through pluginwire.Printable, the way
 		// layer.go's showKey prints a key and every other message here prints
@@ -151,7 +179,7 @@ func CatalogDockerfileKey(name string) (string, error) {
 		// cannot carry a control or bidi character into the log it lands in.
 		return "", fmt.Errorf("the catalog entry name %s %s", pluginwire.Printable(name), catalogNameMessage)
 	}
-	return buildsPrefix + "catalog/" + name + "/Dockerfile", nil
+	return buildsPrefix + "catalog/" + name + "/" + leaf, nil
 }
 
 // catalogNameRE is a catalog entry's name. It is ProjectNameRE's shape — 1 to
@@ -285,6 +313,9 @@ func validateCatalogSource(path string, s Source, add func(path, format string, 
 		if s.Branch != "" && !validBranchName(s.Branch) {
 			add(path+".branch", "must be a git branch name")
 		}
+		if msg := catalogContextMessage(s.Context); msg != "" {
+			add(path+".context", "%s", msg)
+		}
 		addCatalogWrongKind(path, s, SourceDockerfile, add)
 	case SourceInline:
 		if s.Inline == "" {
@@ -309,8 +340,8 @@ func validateCatalogSource(path string, s Source, add func(path, format string, 
 }
 
 // addCatalogWrongKind refuses the fields that belong to another kind: repo,
-// path and branch to a dockerfile source, inline to an inline one and image
-// to an image one. The message names the kind that owns the field and the
+// path, branch and context to a dockerfile source, inline to an inline one and
+// image to an image one. The message names the kind that owns the field and the
 // kind this source is, in that order, rather than phrasing the second as an
 // alternative ("not a inline one"): two of the three kind names begin with a
 // vowel, so no single indefinite article reads correctly in front of all
@@ -324,6 +355,7 @@ func addCatalogWrongKind(path string, s Source, kind SourceKind, add func(path, 
 		{"repo", s.Repo != "", SourceDockerfile},
 		{"path", s.Path != "", SourceDockerfile},
 		{"branch", s.Branch != "", SourceDockerfile},
+		{"context", s.Context != "", SourceDockerfile},
 		{"inline", s.Inline != "", SourceInline},
 		{"image", s.Image != "", SourceImage},
 	} {
@@ -358,6 +390,36 @@ func catalogPathMessage(f string) string {
 		return "must name a Dockerfile, not the repository root"
 	case path.Clean(f) != f:
 		return "must be a clean path: no trailing slash, no // and no . segment"
+	}
+	return ""
+}
+
+// catalogContextMessage names what is wrong with a dockerfile source's context,
+// "" when nothing is. It is catalogPathMessage's rules, held for a directory
+// rather than for one file: the rules the two share read the same whichever key
+// carries the value, except the .. segment one, which names the context because
+// that is the key the operator wrote it on. The values the two keys disagree
+// about are exactly what a directory is allowed and a file is not. A file has no
+// repository root and no trailing slash, so the path refuses both; a context
+// names the directory a build runs on, so the root is a legitimate one — the
+// value the issue's own example spells (D1392) — and a directory is written
+// with its own trailing slash, which is how the key's own example spells `ci/`
+// (D1391). Everything else is the path's rule, cleanliness included: the
+// trimmed value is one clean relative path, so a `//` or a `.` segment is
+// refused. The empty value is an entry with no context, the entry this
+// amendment leaves exactly as it was, and no rule here reads it.
+func catalogContextMessage(f string) string {
+	switch {
+	case strings.ContainsFunc(f, badKeyRune):
+		return "must hold no control character"
+	case utf8.RuneCountInString(f) > maxCatalogPathLen:
+		return fmt.Sprintf("must be at most %d characters", maxCatalogPathLen)
+	case strings.HasPrefix(f, "/"):
+		return "must be a relative path inside the repository"
+	case slices.Contains(strings.Split(f, "/"), ".."):
+		return "must not hold a .. segment: the context is read inside the repository it names"
+	case f != "" && path.Clean(f) != strings.TrimSuffix(f, "/"):
+		return "must be a clean path: no // and no . segment"
 	}
 	return ""
 }

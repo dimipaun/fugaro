@@ -171,6 +171,23 @@ type managedCostRule struct {
 	// own words for why the plan is above the line, or "" when it is at or
 	// below it. It is called only for a value the plan states and knows.
 	above func(v any) string
+	// idleUnless, when set, names a sibling the plan must state, and know, as
+	// the one value that makes this property idle: the property is then not
+	// read, because it prices nothing. It is the one way an unknown value is
+	// not refused, and it is narrow on purpose: the sibling has to be a known
+	// literal equal to value, so a plan that does not say, or says something
+	// else, is refused as before. Today's one use is the manual instance count
+	// of a service that states scaling_mode AUTOMATIC: the count only applies
+	// in manual mode, and the provider reports the attribute it computes as
+	// unknown on every create.
+	idleUnless *managedCostIdle
+}
+
+// managedCostIdle is a sibling property and the one literal that makes the rule
+// beside it idle.
+type managedCostIdle struct {
+	path  []any
+	value string
 }
 
 // managedCostList is the whole check: four entries, in the order the spec names
@@ -208,6 +225,9 @@ var managedCostList = []managedCostEntry{
 				what:  "the manual instance count",
 				path:  []any{"scaling", 0, "manual_instance_count"},
 				above: managedCostAboveInstances,
+				// Automatic scaling ignores the manual count, which the
+				// provider computes and so reports unknown on a create.
+				idleUnless: &managedCostIdle{path: []any{"scaling", 0, "scaling_mode"}, value: "AUTOMATIC"},
 			},
 		},
 	},
@@ -379,6 +399,9 @@ func (e managedCostEntry) fires(rc ResourceChange) (string, bool) {
 		// unknown is above the line, in the fail-closed direction Task 1.1's
 		// cover takes for a computed name.
 		if unknownAt(rc.Change.AfterUnknown, r.path...) {
+			if r.idle(rc) {
+				continue
+			}
 			return managedCostUnknown(r.what), true
 		}
 		v, ok := managedCostAt(rc.Change.After, r.path...)
@@ -390,6 +413,25 @@ func (e managedCostEntry) fires(rc ResourceChange) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// idle reports whether the rule's property prices nothing in this change: the
+// rule names a sibling, and the plan states that sibling as a known literal
+// equal to the value that idles it. An unknown sibling, an absent one and a
+// different one all read as not idle, the fail-closed direction.
+func (r managedCostRule) idle(rc ResourceChange) bool {
+	if r.idleUnless == nil {
+		return false
+	}
+	if unknownAt(rc.Change.AfterUnknown, r.idleUnless.path...) {
+		return false
+	}
+	v, ok := managedCostAt(rc.Change.After, r.idleUnless.path...)
+	if !ok {
+		return false
+	}
+	s, isString := v.(string)
+	return isString && s == r.idleUnless.value
 }
 
 // managedCostBills reports whether a change adds or upsizes what bills: a

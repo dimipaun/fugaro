@@ -606,3 +606,89 @@ func TestManagedCostAReplaceBills(t *testing.T) {
 		}
 	}
 }
+
+// TestManagedCostAdmitsEveryGoldenInstallationPlan: a managed project applies
+// the plans its gate admitted, and a Cloud Run service that does not state its
+// minimum instance count is refused as unpriceable. 0.21.0 shipped the
+// credentials service without a scaling block, so `fugaro update` on a managed
+// project stopped at the first create with "write it out literally". The
+// golden installation plans are the plans an update makes, so the gate is
+// asked about each of them here, and the credentials plan (the one that
+// carried the service) is named so a change that drops the plan fails loudly
+// rather than passing on one fewer file.
+func TestManagedCostAdmitsEveryGoldenInstallationPlan(t *testing.T) {
+	for _, name := range []string{"installation", "installation-credentials"} {
+		p := goldenPlan(t, name)
+		for _, r := range ManagedCostRefusals(p) {
+			t.Errorf("golden plan %s: the managed cost gate refuses %s", name, r)
+		}
+	}
+	credentials := goldenPlan(t, "installation-credentials")
+	found := false
+	for _, rc := range credentials.ResourceChanges {
+		if rc.Type == "google_cloud_run_v2_service" && strings.Contains(rc.Address, "credentials") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the credentials golden plan no longer holds the credentials Cloud Run service this test is about")
+	}
+}
+
+// serviceScaling builds a created Cloud Run service whose service-level scaling
+// block states after, with after_unknown marking the listed keys unknown, the
+// way the provider reports an attribute it computes on a create.
+func serviceScaling(after map[string]any, unknown ...string) ResourceChange {
+	au := map[string]any{}
+	for _, k := range unknown {
+		au[k] = true
+	}
+	return ResourceChange{
+		Address: "google_cloud_run_v2_service.s", Mode: "managed", Type: "google_cloud_run_v2_service",
+		Change: Change{
+			Actions:      []string{"create"},
+			After:        map[string]any{"scaling": []any{after}},
+			AfterUnknown: map[string]any{"scaling": []any{au}},
+		},
+	}
+}
+
+// TestManagedCostIdleManualCount: the manual instance count is computed by the
+// provider and reads unknown on every create, and it prices nothing while the
+// service states scaling_mode AUTOMATIC. Only that exact sibling idles it: an
+// unknown mode, a missing one and MANUAL are each refused as before, and a
+// stated manual count above the line is still above it whatever the mode says.
+func TestManagedCostIdleManualCount(t *testing.T) {
+	refused := func(rc ResourceChange) []string {
+		var out []string
+		for _, f := range ManagedCosts(&Plan{ResourceChanges: []ResourceChange{rc}}) {
+			if f.Block {
+				out = append(out, f.Detail)
+			}
+		}
+		return out
+	}
+	for name, tc := range map[string]struct {
+		rc      ResourceChange
+		refused bool
+	}{
+		"automatic mode idles the unknown count": {
+			serviceScaling(map[string]any{"scaling_mode": "AUTOMATIC", "min_instance_count": 0}, "manual_instance_count"), false},
+		"an unknown mode does not idle it": {
+			// The mode is also written into after, as AUTOMATIC, while after_unknown
+			// marks it unknown: only the sibling's own unknown check refuses this.
+			serviceScaling(map[string]any{"scaling_mode": "AUTOMATIC", "min_instance_count": 0}, "manual_instance_count", "scaling_mode"), true},
+		"a missing mode does not idle it": {
+			serviceScaling(map[string]any{"min_instance_count": 0}, "manual_instance_count"), true},
+		"manual mode does not idle it": {
+			serviceScaling(map[string]any{"scaling_mode": "MANUAL", "min_instance_count": 0}, "manual_instance_count"), true},
+		"another word for the mode does not idle it": {
+			serviceScaling(map[string]any{"scaling_mode": "automatic", "min_instance_count": 0}, "manual_instance_count"), true},
+		"a stated count above the line is refused in automatic mode": {
+			serviceScaling(map[string]any{"scaling_mode": "AUTOMATIC", "manual_instance_count": 5, "min_instance_count": 0}), true},
+	} {
+		if got := refused(tc.rc); (len(got) > 0) != tc.refused {
+			t.Errorf("%s: refusals = %v, want refused = %v", name, got, tc.refused)
+		}
+	}
+}

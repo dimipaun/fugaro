@@ -19,6 +19,26 @@ import (
 // whatever it holds.
 const securitySkewBlock = "security:\n  patterns:\n    - { name: payments, match: \"internal/payments/**\", category: credentials }\n"
 
+// securitySkewLayer is a project layer that writes a top-level security:
+// block, parsed the way repoEngine's resolution parses one.
+func securitySkewLayer(t *testing.T) *config.ProjectLayer {
+	t.Helper()
+	l, ps := config.ParseProjectLayer([]byte("version: 1\nproject: acme\ngcp_project: acme-fugaro\nsecurity: { patterns: [ { name: payments, match: \"internal/payments/**\", category: credentials } ], always_level_3: true }\n"),
+		config.LayerAnchor{Project: "acme", GCPProject: "acme-fugaro"})
+	if len(ps) > 0 {
+		t.Fatalf("layer problems: %v", ps)
+	}
+	return l
+}
+
+// layerWithSecurity is testProjectLayer with extra taken as a top-level
+// security: block: the layer file gives the block the root (D1501), because it
+// is a policy the project sets for all its repositories rather than a default a
+// branch may replace.
+func layerWithSecurity(extra string) string {
+	return strings.Replace(testProjectLayer, "gcp_project: proj-1234\n", "gcp_project: proj-1234\n"+extra, 1)
+}
+
 // TestRunRefusesSecurityOnAnOlderBaseImage is securitySince's launch gate for a
 // workflow whose job image is a derived one: a repository whose fugaro.yaml
 // writes the security: block onto a job image older than the release that reads
@@ -161,6 +181,44 @@ func TestRunJudgesTheRefsSecurityFileNotTheWorkingTree(t *testing.T) {
 	})
 }
 
+// TestRunRefusesTheLayersSecurityOnAnOlderBaseImage: the other file the key can
+// be written in is the project layer, and the launch gate judges it too — the
+// subject says so, because that block is the operator's to remove and breaks
+// every repository of the project whose job image is older, while a
+// repository's own file says nothing about it. The key named is the top-level
+// one, not defaults.security.
+func TestRunRefusesTheLayersSecurityOnAnOlderBaseImage(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, layerWithSecurity("security: { always_level_3: true }\n"))
+	dir := layerCheckout(t, f, minimalAnchored)
+	registerOtherLocally(t, f)
+	// Committed at the ref the launch resolves (the local config's base_branch
+	// for acme/other, main): the gate reads the ref's own file.
+	commitRef(t, dir, "main")
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, securitySince, -1))
+	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the launch refused", err)
+	}
+	for _, want := range []string{
+		"the project layer's security: block (read for acme/other)",
+		"knows the project layer's security: block",
+		"fugaro image refresh --repo acme/other --workflow " + config.ImplicitWorkflow,
+		"remove the security: block from the project layer",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "fugaro.yaml's security") {
+		t.Errorf("the refusal blames the repository's file, which writes no security: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
 // TestUpdateRepoRefusesSecurityOnOlderBaseImage is securitySince's gate at
 // fugaro update --repo, the same shape as rigorSince's
 // (TestUpdateRepoRefusesRigorOnOlderBaseImage): the key is decoded strictly by
@@ -170,11 +228,11 @@ func TestRunJudgesTheRefsSecurityFileNotTheWorkingTree(t *testing.T) {
 // and one above pass, a base that is not a release only warns, and no base at
 // all passes.
 //
-// The repository's half is the key being written (RepoSecuritySet), not the
-// rows it holds: security: {} is the key absent to this release and an explicit
-// null decodes to no block at all, while both are the same line to an older
-// runner's decoder — a rows test deploys a job that dies at bootstrap on a line
-// the operator did write.
+// Each half is the key being written — RepoSecuritySet for the repository's
+// file, SetsSecurity for the layer's — and not the rows it holds: security: {}
+// is the key absent to this release and an explicit null decodes to no block at
+// all, while both are the same line to an older runner's decoder — a rows test
+// deploys a job that dies at bootstrap on a line the operator did write.
 func TestUpdateRepoRefusesSecurityOnOlderBaseImage(t *testing.T) {
 	below, above := shiftRelease(t, securitySince, -1), shiftRelease(t, securitySince, 1)
 	older := "ghcr.io/dimipaun/fugaro-base:" + below
@@ -216,12 +274,12 @@ func TestUpdateRepoRefusesSecurityOnOlderBaseImage(t *testing.T) {
 
 	for _, ref := range []string{"ghcr.io/dimipaun/fugaro-base:" + securitySince, "ghcr.io/dimipaun/fugaro-base:" + above, ""} {
 		var warn bytes.Buffer
-		if err := refuseSecuritySkew("acme/app", true, ref, &warn); err != nil || warn.Len() != 0 {
+		if err := refuseSecuritySkew("acme/app", true, false, ref, &warn); err != nil || warn.Len() != 0 {
 			t.Errorf("%q: err = %v, warn = %q, want neither", ref, err, warn.String())
 		}
 	}
 	var warn bytes.Buffer
-	if err := refuseSecuritySkew("acme/app", true, devAuthorBase, &warn); err != nil {
+	if err := refuseSecuritySkew("acme/app", true, false, devAuthorBase, &warn); err != nil {
 		t.Errorf("dev base: err = %v, want a warning only", err)
 	}
 	if !strings.Contains(warn.String(), "not a release base image") || !strings.Contains(warn.String(), "is not checked") {
@@ -254,37 +312,96 @@ func TestUpdateRepoRefusesSecurityOnOlderBaseImage(t *testing.T) {
 	}
 }
 
+// TestSecuritySkewNamesTheLayerThatWroteIt: the subject names which file wrote
+// the key, because the fix differs. A repository's security: block is the
+// repository's to remove; the project layer's is read by every repository of
+// the project, and its refusal says so, since every repository whose job image
+// is older breaks the same way. The layer's key is the top-level one: a refusal
+// that sent its operator to defaults.security would name a line their file
+// cannot carry.
+func TestSecuritySkewNamesTheLayerThatWroteIt(t *testing.T) {
+	r := &initRun{o: &initOptions{}, cmd: NewRootCmd(), w: io.Discard}
+	older := &localcfg.Config{BaseImages: map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, securitySince, -1)}}
+	layer := securitySkewLayer(t)
+	for _, c := range []struct {
+		name    string
+		cfg     *config.Config
+		subject string
+		absent  string
+	}{
+		{"repo", &config.Config{RepoSecuritySet: true}, "fugaro.yaml's security: block of acme/app", "project layer's security"},
+		{"layer", &config.Config{Layer: layer}, "the project layer's security: block (read for acme/app)", "fugaro.yaml's security"},
+		{"both", &config.Config{Layer: layer, RepoSecuritySet: true}, "fugaro.yaml's security: block and the project layer's security: block of acme/app", ""},
+	} {
+		err := r.gateSecurity(r.o, "acme/app", older, c.cfg)
+		if err == nil || !strings.Contains(err.Error(), c.subject) {
+			t.Errorf("%s: the refusal does not name %q: %v", c.name, c.subject, err)
+			continue
+		}
+		if c.absent != "" && strings.Contains(err.Error(), c.absent) {
+			t.Errorf("%s: the refusal names %q, which did not write the key: %v", c.name, c.absent, err)
+		}
+		if strings.Contains(err.Error(), "defaults.security") {
+			t.Errorf("%s: the refusal names defaults.security, which is no key of the layer file: %v", c.name, err)
+		}
+	}
+	err := r.gateSecurity(r.o, "acme/app", older, &config.Config{Layer: layer})
+	if err == nil || !strings.Contains(err.Error(), "every repository of the project") {
+		t.Errorf("the layer's refusal does not say it reaches every repository: %v", err)
+	}
+}
+
 // TestRepoEngineRefusesSecurityOnAnOlderBaseImage is gateSecurity at its call
 // site in repoEngine, before the plan and before any apply — the half
 // TestUpdateRepoRefusesSecurityOnOlderBaseImage cannot reach by calling the
 // gate itself, where deleting the call in repoEngine would leave a green suite
-// and an older base deploying a job that dies at bootstrap. The repository's
-// own fugaro.yaml is the only place the key can be written in this build (the
-// project layer's half arrives with the task that lets a layer carry it), so
-// there is one case here where TestRepoEngineRefusesRigorOnAnOlderBaseImage has
-// two.
+// and an older base deploying a job that dies at bootstrap. Both places the key
+// can be written are here, the repository's own fugaro.yaml and the project
+// layer the checkout resolves over, the pair
+// TestRepoEngineRefusesRigorOnAnOlderBaseImage has.
 func TestRepoEngineRefusesSecurityOnAnOlderBaseImage(t *testing.T) {
 	below := shiftRelease(t, securitySince, -1)
 	const head = "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: bitbucket }\n"
 	const wf = "workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
-	r := newInitRig(t)
-	isolateCache(t)
-	noProjectLayerBucket(t)
-	r.appendConfig(t, "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:"+below+"}\n")
-	r.save(t)
-	t.Chdir(repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", head+securitySkewBlock+wf))
-	e := rigEngine(t, r, &initOptions{})
-	err := e.r.repoEngine(t.Context(), ".", "", true)
-	if ExitCode(err) != ExitUserError {
-		t.Fatalf("exit = %d, err = %v: want the security: block refused on this installation's base image", ExitCode(err), err)
-	}
-	for _, want := range []string{securitySince, below, "fugaro update --base base", "fugaro.yaml's security: block of"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("%v lacks %q", err, want)
-		}
-	}
-	if applies := r.ran(t, "apply"); len(applies) != 0 {
-		t.Errorf("the refusal applied anyway: %v", applies)
+	for _, c := range []struct {
+		name, yaml, layer, subject string
+	}{
+		{"repo", head + securitySkewBlock + wf, "", "fugaro.yaml's security: block of"},
+		{"layer", head + wf, "version: 1\nproject: aurora\ngcp_project: proj-1234\nsecurity: { always_level_3: true }\n", "the project layer's security: block"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := newInitRig(t)
+			isolateCache(t)
+			extra := "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:" + below + "}\n"
+			if c.layer == "" {
+				noProjectLayerBucket(t)
+			} else {
+				runs := t.TempDir()
+				if err := os.MkdirAll(filepath.Join(runs, "fugaro"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(runs, config.LayerKey), []byte(c.layer), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				extra += "bucket_url: file://" + runs + "\n"
+			}
+			r.appendConfig(t, extra)
+			r.save(t)
+			t.Chdir(repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", c.yaml))
+			e := rigEngine(t, r, &initOptions{})
+			err := e.r.repoEngine(t.Context(), ".", "", true)
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("exit = %d, err = %v: want the security: block refused on this installation's base image", ExitCode(err), err)
+			}
+			for _, want := range []string{securitySince, below, "fugaro update --base base", c.subject} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%v lacks %q", err, want)
+				}
+			}
+			if applies := r.ran(t, "apply"); len(applies) != 0 {
+				t.Errorf("the refusal applied anyway: %v", applies)
+			}
+		})
 	}
 }
 
@@ -335,6 +452,25 @@ func TestValidateWarnsThatSecurityNeedsEveryJobImage(t *testing.T) {
 	}
 	if doc, err := validateSecurity(t, ""); err != nil || has(doc.Warnings, "security", "") {
 		t.Errorf("a file that writes no security: block was warned about: %+v, %v", doc.Warnings, err)
+	}
+}
+
+// TestValidateWarnsWhenTheProjectLayerSetsSecurity: the layer's key reaches
+// every repository of the project, so validate says which of the two wrote it
+// and that the fix is the layer's.
+func TestValidateWarnsWhenTheProjectLayerSetsSecurity(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, layerWithSecurity("security: { always_level_3: true }\n"))
+	layerCheckout(t, f, minimalAnchored)
+	_, errOut, err := execute(t, "validate")
+	if err != nil {
+		t.Fatalf("a file that resolves over the layer is valid: %v", err)
+	}
+	for _, want := range []string{"the project layer's security: block", "needs fugaro " + securitySince, "fugaro update --base base"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr %q lacks %q", errOut, want)
+		}
 	}
 }
 
