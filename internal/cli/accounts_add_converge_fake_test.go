@@ -174,8 +174,8 @@ func addPolicyNode() map[string]any {
 func addToken() string { return strings.Repeat("k", 48) }
 
 // add runs the command the way the OWNER does — a real terminal on both
-// streams, the project's own name typed at the one confirmation, the token at
-// the hidden prompt — and returns what it printed.
+// streams, the repositories the token may be used by printed before it, the
+// token at the hidden prompt — and returns what it printed.
 //
 // It is the owner's run and not a scripted one because a managed project's
 // `accounts add` is refused to every caller that is not that person (the
@@ -185,16 +185,16 @@ func addToken() string { return strings.Repeat("k", 48) }
 func (r *addRig) add(t *testing.T, name string, args ...string) (string, string) {
 	t.Helper()
 	// What is typed, and where the run reads it, is what the project asks for.
-	// A managed project asks its owner to confirm the account first, and only a
-	// person at a real terminal is asked — so the fixture stands at both
-	// streams and answers the confirmation. An ordinary installation has no
-	// gate to answer and no question at all: it keeps the scripted shape it has
-	// always had, --yes for the installation stages below.
+	// A managed project's token is the owner's own step, and only a person at a
+	// real terminal is admitted to it — so the fixture stands at both streams,
+	// where the command prints the repositories the token may be used by and
+	// asks nothing before the prompt. An ordinary installation has no gate to
+	// read and no list to print: it keeps the scripted shape it has always had,
+	// --yes for the installation stages below.
 	typed := addToken() + "\n"
 	argv := append([]string{"accounts", "add", name}, args...)
 	if r.managed {
 		ownerAtTheTerminal(t)
-		typed = initProjectName + "\n" + typed
 	} else {
 		argv = append(argv, "--yes")
 	}
