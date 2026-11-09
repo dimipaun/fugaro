@@ -37,24 +37,30 @@ const retryOfferPrefix = "You can retry: "
 // bucket of their own.
 //
 // The selection is the converge's, minus everything that speaks: an offer may
-// print no line at all, so no project header and no note (selectFrom, not
+// print no line at all, so no project header and no note (selectNamed, not
 // selectProject, which announces), and no shared config to fall back to — an
 // update that converged selected a project to converge, and an offer does not
 // get to be the thing that finds a second config. dir is the checkout the run
 // converged ("" is the working directory), and it selects in both places the
 // converge selected in: the checkout whose fugaro.yaml names the project, and
 // the origin a config is matched by.
-var updateRetryBucket = func(ctx context.Context, o cloudOptions, dir string) (*blobx.Bucket, error) {
-	co, err := checkoutProject(ctx, dir)
+var updateRetryBucket = func(ctx context.Context, o cloudOptions, p retryProject) (*blobx.Bucket, error) {
+	co, err := checkoutProject(ctx, p.dir)
 	if err != nil {
 		return nil, err
 	}
-	if dir != "" {
+	if p.dir != "" {
 		// The origin that selects is the checkout's, not the working
 		// directory's (loadRepoConfig's own line, for the same reason).
-		o.originDir = dir
+		o.originDir = p.dir
 	}
-	_, lc, err := selectFrom(o, co, false)
+	// The converge's own call, name and all (loadInitConfig's selectNamed):
+	// on a machine with several project configs only --name selects one, and
+	// an offer that resolved them without it would find no project at all.
+	// creating is the same argument the converge passed and means nothing is
+	// written here — it is what makes a machine with no config for the project
+	// answer "no config" (lc nil, and the offer stops) instead of a refusal.
+	_, lc, err := selectNamed(o, co, true, p.name)
 	if err != nil {
 		return nil, err
 	}
@@ -64,20 +70,35 @@ var updateRetryBucket = func(ctx context.Context, o cloudOptions, dir string) (*
 	return blobx.Open(ctx, lc.BucketURL())
 }
 
-// updateRetryDir is the checkout the run this offer follows converged: the
-// positional PATH of --repo, which init.go's runInitRepo defaults to the
-// working directory. Every other run converges the installation the working
-// directory selects, which "" is to checkoutProject — and a --repo run's
-// project is the checkout's, not the working directory's, so an offer that
-// resolved the working directory would read another project's store (or none).
-func updateRetryDir(o *initOptions, args []string) string {
+// retryProject is the project the run this offer follows converged, as the
+// door still knows it after the fact: dir is the checkout --repo converged
+// ("" is the working directory), and name is the --name the run selected with.
+// The two together are the run's own selection, which is the one the offer has
+// to repeat — a project this offer found on its own would be a second
+// selection, and the whole point is that the run's is the only one.
+type retryProject struct {
+	dir  string
+	name string
+}
+
+// updateRetryProject is that project, from the flags and the door's own
+// positional arguments. dir is --repo's PATH, which init.go's runInitRepo
+// defaults to the working directory: a --repo run's project is the checkout's,
+// not the working directory's, so an offer that resolved the working directory
+// would read another project's store (or none). name is --name, which
+// loadInitConfig selects with and which loadRepoConfig validates against the
+// checkout's own project before this offer can run — on a machine with several
+// project configs, nothing else selects.
+func updateRetryProject(o *initOptions, args []string) retryProject {
+	p := retryProject{name: o.name}
 	if !o.repo {
-		return ""
+		return p
 	}
+	p.dir = "."
 	if len(args) > 0 {
-		return args[0]
+		p.dir = args[0]
 	}
-	return "."
+	return p
 }
 
 // updateRetryHint prints the offer for the issues a run just fixed, and marks
@@ -117,7 +138,7 @@ func updateRetryHint(cmd *cobra.Command, o *initOptions, args []string) {
 		return
 	}
 	ctx := cmd.Context()
-	b, err := updateRetryBucket(ctx, o.cloud, updateRetryDir(o, args))
+	b, err := updateRetryBucket(ctx, o.cloud, updateRetryProject(o, args))
 	if err != nil {
 		return
 	}

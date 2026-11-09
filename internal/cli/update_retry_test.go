@@ -145,7 +145,7 @@ func retryBucket(t *testing.T, resolvedIn string) (*blobx.Bucket, int) {
 }
 
 // stubRetryBucket replaces the bucket the offer reads the shared store from.
-func stubRetryBucket(t *testing.T, fn func(context.Context, cloudOptions, string) (*blobx.Bucket, error)) {
+func stubRetryBucket(t *testing.T, fn func(context.Context, cloudOptions, retryProject) (*blobx.Bucket, error)) {
 	t.Helper()
 	old := updateRetryBucket
 	updateRetryBucket = fn
@@ -352,7 +352,7 @@ func TestUpdateRetryOnce(t *testing.T) {
 	store := retryStore(t)
 	b, number := retryBucket(t, retryRelease)
 	retryFile(t, store, number, "fugaro update")
-	stubRetryBucket(t, func(context.Context, cloudOptions, string) (*blobx.Bucket, error) { return b, nil })
+	stubRetryBucket(t, func(context.Context, cloudOptions, retryProject) (*blobx.Bucket, error) { return b, nil })
 
 	cmd, o, _, errOut := retryRig(t)
 	updateRetryHint(cmd, o, nil)
@@ -410,7 +410,7 @@ func TestUpdateRetryMakesNoCloudWrite(t *testing.T) {
 func TestUpdateRetryReadFailureDoesNotFailUpdate(t *testing.T) {
 	retryEnv(t)
 	retryFile(t, retryStore(t), 7, "fugaro update")
-	stubRetryBucket(t, func(context.Context, cloudOptions, string) (*blobx.Bucket, error) {
+	stubRetryBucket(t, func(context.Context, cloudOptions, retryProject) (*blobx.Bucket, error) {
 		return nil, fmt.Errorf("the store is unreachable")
 	})
 	cmd, _, out, errOut := retryRig(t)
@@ -436,7 +436,7 @@ func TestUpdateRetryRunsNothing(t *testing.T) {
 	store := retryStore(t)
 	b, number := retryBucket(t, retryRelease)
 	retryFile(t, store, number, "fugaro update")
-	stubRetryBucket(t, func(context.Context, cloudOptions, string) (*blobx.Bucket, error) { return b, nil })
+	stubRetryBucket(t, func(context.Context, cloudOptions, retryProject) (*blobx.Bucket, error) { return b, nil })
 
 	cmd, o, _, errOut := retryRig(t)
 	updateRetryHint(cmd, o, nil)
@@ -456,7 +456,7 @@ func TestUpdateRetryAgentSessionMarksNothing(t *testing.T) {
 	store := retryStore(t)
 	b, number := retryBucket(t, retryRelease)
 	retryFile(t, store, number, "fugaro update")
-	stubRetryBucket(t, func(context.Context, cloudOptions, string) (*blobx.Bucket, error) { return b, nil })
+	stubRetryBucket(t, func(context.Context, cloudOptions, retryProject) (*blobx.Bucket, error) { return b, nil })
 	t.Setenv(agentMarkers[0], "1")
 
 	cmd, o, _, errOut := retryRig(t)
@@ -500,7 +500,7 @@ func TestUpdateRetryOffersNothingForARunThatAppliedNothing(t *testing.T) {
 			retryFile(t, store, number, "fugaro update")
 			// The store the offer would read, so the only thing this test can
 			// be measuring is the guard.
-			stubRetryBucket(t, func(context.Context, cloudOptions, string) (*blobx.Bucket, error) { return b, nil })
+			stubRetryBucket(t, func(context.Context, cloudOptions, retryProject) (*blobx.Bucket, error) { return b, nil })
 
 			cmd, o, _, errOut := retryRig(t)
 			tc.set(o)
@@ -560,6 +560,51 @@ func TestUpdateRetryReadsTheCheckoutsStore(t *testing.T) {
 	}
 	if !got.Notified {
 		t.Error("the offer printed without marking the issue as offered")
+	}
+}
+
+// TestUpdateRetrySelectsTheProjectTheRunNamed: `fugaro update --name aurora`
+// converges aurora on a machine whose working directory selects no project
+// (loadInitConfig's selectNamed), so the offer reads aurora's store and not
+// "the only config there is" — the machine that needs --name is the machine
+// with several, and there the run's own selection is the only answer.
+func TestUpdateRetrySelectsTheProjectTheRunNamed(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		want string
+	}{
+		// The project the run named: its store holds the resolved issue.
+		{"aurora", "You can retry: fugaro update\n"},
+		// The other config on the machine: its store holds nothing, so the
+		// name is what the offer went by and not the single store it found.
+		{"bramble", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			retryEnv(t)
+			// No project: the working directory is a checkout that names none,
+			// so nothing but --name can select.
+			checkoutWithoutOrigin(t)
+			dir := t.TempDir()
+			retryProjectConfig(t, "aurora", "file://"+dir)
+			retryProjectConfig(t, "bramble", "file://"+t.TempDir())
+			b, err := blobx.Open(t.Context(), "file://"+dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = b.Close() })
+			up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease))
+			if err != nil {
+				t.Fatal(err)
+			}
+			retryFile(t, retryStore(t), up.Number, "fugaro update")
+
+			cmd, o, _, errOut := retryRig(t)
+			o.name = tc.name
+			updateRetryHint(cmd, o, nil)
+			if errOut.String() != tc.want {
+				t.Fatalf("fugaro update --name %s printed %q, want %q", tc.name, errOut.String(), tc.want)
+			}
+		})
 	}
 }
 
