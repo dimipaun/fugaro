@@ -69,6 +69,7 @@ import {
   fuseTarget,
   linuxExecutable,
   macExecutable,
+  win32Executable,
   type AfterPackContext,
   type FuseTools,
 } from '../../src/main/fuses'
@@ -168,6 +169,17 @@ const LINUX_CONTEXT: AfterPackContext = {
     appInfo: { productFilename: 'Fugaro Console', sanitizedName: 'fugaro-console' },
     executableName: 'fugaro-console',
   },
+}
+
+/** WIN_CONTEXT is the same context for a Windows build. There is no bundle and
+ * no executable name on this platform: electron-builder writes
+ * `appOutDir/<productFilename>.exe`, so the packager's name for the app is the
+ * whole of what the hook reads -- and it is `productName`'s string with its
+ * space, not the package's sanitized `name`. */
+const WIN_CONTEXT: AfterPackContext = {
+  electronPlatformName: 'win32',
+  appOutDir: '/tmp/out/win-unpacked',
+  packager: { appInfo: { productFilename: 'Fugaro Console' } },
 }
 
 describe('the six fuses the console is built with', () => {
@@ -463,19 +475,41 @@ describe('the afterPack hook', () => {
     await expect(afterPack(LINUX_CONTEXT, fuses)).rejects.toThrow(/fugaro-console/)
   })
 
-  it('refuses a platform this build does not package, rather than shipping an unflipped binary', async () => {
-    // Windows is the platform this build does not produce (design D10: the CLI
-    // has no Windows build, and signing is the owner's). A build on it would
-    // produce a binary this hook has no path for, and silently skipping would
-    // be the one outcome that ships the fuses unset.
-    expect([...SUPPORTED_PLATFORMS]).toEqual(['darwin', 'linux'])
+  it('names the Windows executable electron-builder produced, by its productFilename', () => {
+    // Windows has no `.app` either, but it has the packer's own extension
+    // table -- `{ darwin: '.app', mas: '.app', win32: '.exe', linux: '' }` --
+    // and the name beside it is `appInfo.productFilename`, the packer's name
+    // for the app. That is the Linux row's precedent: this string is the
+    // packer's and not ours, so it is `Fugaro Console` with the space and not
+    // the package's sanitized `fugaro-console`.
+    expect(win32Executable(WIN_CONTEXT)).toBe(join(WIN_CONTEXT.appOutDir, 'Fugaro Console.exe'))
+  })
+
+  it('flips the same six fuses into the Windows executable, with the same configuration', async () => {
+    // The fuse set is a property of the application, not of the platform, so
+    // the EXE `win-unpacked` holds is flipped with byte-for-byte the
+    // configuration the macOS bundle and the Linux executable get.
     const fuses = fakeFuses()
-    const elsewhere: AfterPackContext = { ...CONTEXT, electronPlatformName: 'win32' }
-    await expect(afterPack(elsewhere, fuses)).rejects.toThrow(/win32/)
+    await afterPack(WIN_CONTEXT, fuses)
+    expect(fuses.calls).toHaveLength(1)
+    expect(fuses.calls[0]?.path).toBe(win32Executable(WIN_CONTEXT))
+    expect(fuses.calls[0]?.config).toEqual(fuseConfig())
+  })
+
+  it('refuses a platform nobody decided, rather than shipping an unflipped binary', async () => {
+    // Windows is a platform this build packages now (the owner's ruling of
+    // 2026-10-20 and D7(c): the pack runs at release time only), so the
+    // refusal is kept for a platform nobody decided at all. A build on one
+    // would produce a binary this hook has no path for, and silently skipping
+    // would be the one outcome that ships the fuses unset.
+    expect([...SUPPORTED_PLATFORMS]).toEqual(['darwin', 'linux', 'win32'])
+    const fuses = fakeFuses()
+    const elsewhere: AfterPackContext = { ...CONTEXT, electronPlatformName: 'freebsd' }
+    await expect(afterPack(elsewhere, fuses)).rejects.toThrow(/freebsd/)
     // and the message names what *is* packaged, so the refusal is actionable
-    await expect(afterPack(elsewhere, fuses)).rejects.toThrow(/darwin and linux/)
+    await expect(afterPack(elsewhere, fuses)).rejects.toThrow(/darwin and linux and win32/)
     expect(fuses.calls).toEqual([])
-    expect(() => fuseTarget(elsewhere)).toThrow(/win32/)
+    expect(() => fuseTarget(elsewhere)).toThrow(/freebsd/)
   })
 })
 
