@@ -3896,8 +3896,10 @@ func allResourceBlocks(t *testing.T, path string, src []byte) []block {
 // TestLauncherConditionPreconditionMatchesGo pins the installation module's
 // runs_launcher precondition to gcp.LauncherBucketCondition and its title:
 // the launchers' write is widened to tokens/ (the budget token's move,
-// docs/design/budget-token-channel.md §7.2, D16) in the Go that writes the
-// tfvars, the install guard and the plan cover, and in this precondition, and
+// docs/design/budget-token-channel.md §7.2, D16) and to issues/ (the shared
+// issue store, docs/troubleshoot-issue/reconciliation.md D1727) in the Go
+// that writes the tfvars, the install guard and the plan cover, and in this
+// precondition, and
 // a change that moved one without the other would refuse every installation
 // or, worse, let a different condition through. The precondition is rendered
 // for a bucket and compared with Go's own strings.

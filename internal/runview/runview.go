@@ -251,6 +251,24 @@ type Row struct {
 	// PreviousRun is the run a follow-up continues.
 	PreviousRun string `json:"previous_run,omitempty"`
 	FollowUp    bool   `json:"follow_up"`
+	// FollowUpOf is the parent a triage follow-up was filed from, as the
+	// run's own task carries it (task.Spec.FollowUpOf, docs/post-review-triage
+	// D1843): the parent run's ID and the keys of the deferred findings this
+	// task settles, written when the task is filed and read by nobody inside a
+	// run.
+	//
+	// It is its own fact beside FollowUp and not a second spelling of it: a
+	// follow-up continues the pull request of PreviousRun (a person or a
+	// command asked for it), while this names the deferral a run left behind,
+	// and a run can be either without the other.
+	//
+	// Absent for every run that is not one of those -- every run somebody
+	// asked for, and every task written before the field existed -- so
+	// absence reads as "not filed from a deferral" and never as "filed for
+	// no finding". Task-derived and not sanitised, like Title, Batch and
+	// RequestedBy beside it: the task's text is the launcher's, and the
+	// display layer sanitises it (design §5.1 rule 7).
+	FollowUpOf *task.FollowUpOf `json:"follow_up_of,omitempty"`
 
 	// DraftFallback: the host has no draft pull requests, so the PR is an
 	// ordinary one with "[DRAFT]" in its title.
@@ -349,10 +367,9 @@ func priced(p backend.Prices) bool {
 // The reading is a reading: it never writes the record back, so the bytes the
 // store handed over are the bytes the next reader gets, and the answer is
 // published on the row alone. It is exported on D1454's decision: design §5's
-// "the digest reads the same function" is the recommendation the digest's own
-// read will follow, and that read is FC7's, not built -- so today the callers
-// outside this package are tests (the runner's agreement walks) and nothing in
-// a plain build names it. It lives here rather than in internal/failure because
+// "the digest reads the same function" is the read the digest makes in FC7's
+// Failures table, so the callers outside this package are the digest and the
+// runner's own agreement walks. It lives here rather than in internal/failure because
 // it reads a *runstore.Record* and failure may not import runstore (F21:
 // runstore imports failure, so the import back is a cycle).
 func ClassOf(rec *runstore.Record) failure.Class {
@@ -411,8 +428,8 @@ func knownClass(c failure.Class) failure.Class {
 }
 
 // legacyClass reads a reason the runner wrote, through the fixed table below:
-// the reading an old record gets, which the row publishes now and the digest's
-// own read will publish when FC7 builds it (design §5). An answer is never
+// the reading an old record gets, which the row publishes and which the
+// digest's own read publishes too (design §5). An answer is never
 // derived from the status, and a sentence the table does not carry is
 // unclassified rather than a guess.
 func legacyClass(reason string) failure.Class {
@@ -755,6 +772,7 @@ func followUpFields(row *Row, t *task.Spec, r *runstore.Record) {
 	if t != nil {
 		row.Branch, row.TaskPR, row.PreviousRun = t.Branch, t.PR, t.PreviousRun
 		row.FollowUp = t.IsFollowUp()
+		row.FollowUpOf = t.FollowUpOf
 	}
 	if r != nil {
 		if r.Branch != "" {

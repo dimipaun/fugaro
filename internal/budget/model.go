@@ -32,9 +32,16 @@ const (
 	PathCapsDefaults = "config/caps/defaults"
 	PathLimits       = "config/limits"
 	PathMode         = "config/mode"
-	PathKillGlobal   = "config/kill/global"
-	PathMark         = "fugaro/mark"
-	PathProject      = "fugaro/project"
+	// PathModeSet records WHO chose the mode in PathMode: absent when the
+	// installation's own converge seeded it (a seeded observe is nobody's
+	// choice, D1548, and `fugaro update` raises it to enforce), and one of the
+	// ModeSet values below when a person or an update set it. It is written
+	// beside the mode with operator credentials, and nothing under config is
+	// writable by a run token.
+	PathModeSet    = "config/modeSet"
+	PathKillGlobal = "config/kill/global"
+	PathMark       = "fugaro/mark"
+	PathProject    = "fugaro/project"
 )
 
 // seg escapes one slug, run id or model name for a path and panics on an
@@ -147,6 +154,19 @@ func ModelKey(model string) string { return seg("model", model) }
 const (
 	ModeObserve = "observe"
 	ModeEnforce = "enforce"
+)
+
+// Values of PathModeSet, the record of who chose the mode: the person who owns
+// the installation, or the `fugaro update` that raised a seeded one. They carry
+// no Mode prefix on purpose. docs_desktop_console_test.go reads this file's
+// `Mode\w+ = "…"` constants as the values of PathMode and holds them against the
+// console scrub's vocabulary for the mode a run row carries; these two are
+// values of another node, which no console document carries, and a name the
+// scan picked up would have to be taught to the scrub as a mode it can never
+// see.
+const (
+	ChosenByOwner  = "owner"
+	ChosenByUpdate = "update"
 )
 
 // Key escapes one path segment for RTDB. RTDB forbids . $ # [ ] / and ASCII

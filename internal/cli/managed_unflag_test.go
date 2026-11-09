@@ -471,8 +471,8 @@ func TestManagedUnflagRefusesWhenTheRunsBucketRootRefusesTheDelete(t *testing.T)
 	if ExitCode(err) != ExitUserError {
 		t.Errorf("exit %d, want %d (a user error: run this as an operator)", ExitCode(err), ExitUserError)
 	}
-	if !strings.Contains(err.Error(), "a launcher writes only runs/ and tokens/") {
-		t.Errorf("the refusal does not name the launcher's write reach as runs/ and tokens/: %v", err)
+	if !strings.Contains(err.Error(), "a launcher writes only runs/, tokens/ and issues/") {
+		t.Errorf("the refusal does not name the launcher's write reach as runs/, tokens/ and issues/: %v", err)
 	}
 	assertBothMarksStillThere(t, r, "a refused run")
 }

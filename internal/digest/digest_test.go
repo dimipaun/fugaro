@@ -14,8 +14,10 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
@@ -547,6 +549,187 @@ func mustMicros(t *testing.T, usd string) budget.Micros {
 		t.Fatalf("%q is not a dollar string", usd)
 	}
 	return m
+}
+
+// failing is a run of the period that did not succeed: its record carries
+// class, or -- for a record written before the field shipped -- the reason a
+// reader derives the class from.
+func failing(t *testing.T, id string, billed float64, class failure.Class, reason string) runstore.Record {
+	t.Helper()
+	rec := run(t, id, "2026-10-21T09:00:00Z", billed, 0)
+	rec.Status = runstore.StatusFailed
+	rec.Outcome = runstore.OutcomeDraft
+	rec.FailureClass = class
+	rec.Reason = reason
+	return rec
+}
+
+// TestDigestFailuresTableIsClosed: the Failures table is the vocabulary's, and
+// closed over it (G1): one run of every class prints the one row per class, in
+// the vocabulary's order, and the report invents no row. A record written
+// before the field shipped is counted through its own reason -- the same
+// reading `runs ls` publishes (runview.ClassOf) -- and a class from outside the
+// vocabulary is the vocabulary's own unclassified rather than a word a record
+// chose.
+func TestDigestFailuresTableIsClosed(t *testing.T) {
+	classes := failure.Classes()
+	recs := make([]runstore.Record, 0, len(classes)+2)
+	for i, class := range classes {
+		if class == failure.Unclassified {
+			continue
+		}
+		recs = append(recs, failing(t, fmt.Sprintf("20261021-0900%02d-%04x", i, i+1), 0.10, class, ""))
+	}
+	// A legacy record: no class of its own, and a reason the reader's table
+	// carries, so it is counted under the class its reason means -- not under
+	// unclassified, and not as a row of its own.
+	recs = append(recs, failing(t, "20261021-090019-ffff", 0.20, "", "the agent made no commits"))
+	// A legacy record whose reason the table does not carry: unclassified,
+	// which is the vocabulary's own answer to a cause it cannot name.
+	recs = append(recs, failing(t, "20261021-090020-eeee", 0.30, "", "the run stopped for a reason this build cannot name"))
+
+	d := Build(recs, week43(t))
+	got := make([]string, 0, len(d.Failures))
+	for _, f := range d.Failures {
+		got = append(got, string(f.Class))
+	}
+	var want []string
+	for _, class := range classes {
+		want = append(want, string(class))
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("the table's classes = %v, want the vocabulary's %v", got, want)
+	}
+	for _, f := range d.Failures {
+		runs := 1
+		if f.Class == failure.NoCommits {
+			runs = 2 // the class's own run, and the legacy record's reason
+		}
+		if f.Runs != runs {
+			t.Errorf("%s counts %d runs, want %d", f.Class, f.Runs, runs)
+		}
+		if !task.ValidRunID(f.Example) {
+			t.Errorf("%s's example run = %q, want a run ID of the period", f.Class, f.Example)
+		}
+		if f.Billed <= 0 {
+			t.Errorf("%s billed %d, want the class's own rows added up", f.Class, f.Billed)
+		}
+	}
+
+	// The rendered table carries one row per class, and the block the rules
+	// read carries the counts.
+	out := string(Markdown(d))
+	if !strings.Contains(out, "## Failures\n\n") {
+		t.Fatalf("the report carries no Failures table:\n%s", out)
+	}
+	for _, class := range classes {
+		if !strings.Contains(out, "| `"+string(class)+"` |") {
+			t.Errorf("the table has no row for %s:\n%s", class, out)
+		}
+	}
+	raw, ok := fencedBlock([]byte(out))
+	if !ok {
+		t.Fatal("the report carries no json block")
+	}
+	var block Summary
+	if err := json.Unmarshal(raw, &block); err != nil {
+		t.Fatalf("the summary block is not JSON: %v", err)
+	}
+	if block.Failures[string(failure.NoCommits)] != 2 || block.Failures[string(failure.TestsFailed)] != 1 {
+		t.Errorf("the block's failures = %v, want no_commits 2 and tests_failed 1", block.Failures)
+	}
+
+	// A class from outside the vocabulary is the vocabulary's own answer,
+	// never a row this report invents and never the record's own word.
+	forged := failing(t, "20261021-090021-dddd", 0.10, failure.Class("person-1@example.invalid"), "")
+	out = string(Markdown(Build([]runstore.Record{forged}, week43(t))))
+	if strings.Contains(out, "person-1@example.invalid") {
+		t.Errorf("the table prints a class from outside the vocabulary:\n%s", out)
+	}
+	if !strings.Contains(out, "| `"+string(failure.Unclassified)+"` | 1 |") {
+		t.Errorf("a class outside the vocabulary is not unclassified:\n%s", out)
+	}
+}
+
+// TestDigestSummaryCarriesFailures: the summary block carries the class counts
+// and nothing else about them -- the two failure-class rules read counts, and
+// money per class stays out of a block whose discipline is flat maps of exact
+// strings (design §6.2) -- and a period whose runs all succeeded carries no
+// key at all, which is not the same fact as a period of no failures (G5).
+func TestDigestSummaryCarriesFailures(t *testing.T) {
+	d := Build([]runstore.Record{
+		failing(t, "20261021-090000-aaaa", 0.10, failure.TestsFailed, ""),
+		failing(t, "20261021-090001-bbbb", 0.20, failure.TestsFailed, ""),
+		failing(t, "20261021-090002-cccc", 0.30, failure.Cancelled, ""),
+	}, week43(t))
+	s := d.Summary()
+	if len(s.Failures) != 2 || s.Failures[string(failure.TestsFailed)] != 2 || s.Failures[string(failure.Cancelled)] != 1 {
+		t.Errorf("the block's failures = %v, want tests_failed 2 and cancelled 1", s.Failures)
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(b, &keys); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := keys["failures"]; !ok {
+		t.Errorf("the block carries no failures key: %s", b)
+	}
+
+	// Every run of the period succeeded: no class, no key. The two rules read
+	// the key's presence, so an empty block would be read as a period that
+	// classified nothing rather than as one written before the field shipped.
+	clean := Build([]runstore.Record{
+		run(t, "20261021-090000-aaaa", "2026-10-21T09:00:00Z", 0.10, 0),
+	}, week43(t)).Summary()
+	if clean.Failures != nil {
+		t.Errorf("a period whose runs all succeeded carries failures %v, want none", clean.Failures)
+	}
+	b, err = json.Marshal(clean)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "failures") {
+		t.Errorf("a period whose runs all succeeded prints a failures key: %s", b)
+	}
+}
+
+// TestDigestFailureExampleIsTheNewestRunOfItsClass pins the row's example: one
+// run of the class, the newest of them by its own run ID, which begins with the
+// run's start time. The figure is then the same whatever order the records
+// arrive in -- the CLI reads one order and the runner another (G3).
+func TestDigestFailureExampleIsTheNewestRunOfItsClass(t *testing.T) {
+	oldest := failing(t, "20261021-090000-aaaa", 0.10, failure.TestsFailed, "")
+	other := failing(t, "20261023-090000-cccc", 0.10, failure.Cancelled, "")
+	newest := failing(t, "20261024-090000-bbbb", 0.10, failure.TestsFailed, "")
+
+	for _, tc := range []struct {
+		name string
+		recs []runstore.Record
+	}{
+		{"oldest first", []runstore.Record{oldest, other, newest}},
+		{"newest first", []runstore.Record{newest, other, oldest}},
+	} {
+		rows := map[failure.Class]ClassCount{}
+		for _, f := range Build(tc.recs, week43(t)).Failures {
+			rows[f.Class] = f
+		}
+		for class, want := range map[failure.Class]struct {
+			runs    int
+			example string
+		}{
+			failure.TestsFailed: {2, "20261024-090000-bbbb"},
+			failure.Cancelled:   {1, "20261023-090000-cccc"},
+		} {
+			got := rows[class]
+			if got.Runs != want.runs || got.Example != want.example {
+				t.Errorf("%s: the row for %s = %d runs, example %q, want %d and %s",
+					tc.name, class, got.Runs, got.Example, want.runs, want.example)
+			}
+		}
+	}
 }
 
 // TestDigestHasNoPersonField pins the types: there is no field a person could
