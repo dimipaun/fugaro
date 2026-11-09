@@ -29,12 +29,12 @@ task needs the owner's own explicit go; answering a decision is not approving a 
 | G3 | A slip ID alone is never enough; it records slug, run and expected account, and the claim and every call need the matching verified run identity and account plus the claim secret held only in the runner (F7, R8, D1937, D1941) | DS1.1, DS1.3, DS1.6 |
 | G4 | Liveness and stop switches are read per call, uncached (F14, R4) | DS1.6 |
 | G5 | Fugaro does not hand the slip to the agent's environment; the agent can still reach it (F22), so protection is G3's binding, and a leaked slip buys one run's credentials until it ends | DS1.5, DS1.3 |
-| G6 | A hostile launcher or coding agent cannot read a value, overwrite another user's secret or write `fugaro-p-` unless admin (F8, F9) | DS2.1, DS2.3 |
+| G6 | A hostile launcher or coding agent cannot read a value, overwrite another user's secret or write `fugaro_p_` unless admin (F8, F9) | DS2.1, DS2.3 |
 | G7 | A pre-existing installation keeps working after `update` alone; bundle entries are read second (R6) | DS3.3, DS4.1 |
 | G8 | Pool and token use is checked against owner and allowed users at issue time, default owner-only (D1936) | DS3.2 |
 | G9 | No credential value in the slip record, audit line or run record (F19) | DS1.1, DS1.6 |
 | G10 | The served-route set is pinned exactly (`TestServedRoutesAreExactly`, new in DS1.3): the slip routes are the service's own contract, not an admin surface | DS1.3 |
-| G11 | No `fugaro_u_`/`fugaro_p_` name can equal a name the existing scheme builds, or a bundle credential name (F6, R1, R7) | DS0.1, DS2.1 |
+| G11 | No `fugaro_u_`/`fugaro_p_` name can equal a name the existing scheme builds, or a platform credential kind's name; model token names are accepted so R6 rotation works (F6, F29, R1, R7) | DS0.1, DS2.1 |
 | G12 | Per-user, pool-owned and shared credentials are served only under a claimed slip; a slip-less call fails closed (R9) | DS1.6, DS3.2, DS3.3 |
 | G13 | Cross-class: a job is refused on the grant, a person and a launcher on the claim, a service account at the intake (D1938) | DS1.2, DS1.3, DS2.1 |
 
@@ -57,7 +57,7 @@ named tests only.
 - **Files:** `internal/secretname/secretname.go` (new), `internal/secretname/secretname_test.go` (new)
 - **Interfaces:** prefixes `fugaro_u_<id>_<name>` and `fugaro_p_<name>`; produces `User(id, name)`, `Project(name)`, `Parse(secretID)`; consumed by DS2.1, DS3.3.
 - **Schema/rules/config:** none.
-- **Tests:** `TestNoTwoPairsOneSecretID`, `TestNoOverlapWithExistingSecretIDs` (fed `gcp.SecretID`, the project-secret and bundle builders, including owners `p`, `u`, `p-labs`), `TestReservedBundleNamesRefused`, `TestSeparatorNotInName`, `TestLengthLimit`, `TestParseRoundTrip`.
+- **Tests:** `TestNoTwoPairsOneSecretID`, `TestNoOverlapWithExistingSecretIDs` (fed `gcp.SecretID`, the project-secret and bundle builders, including owners `p`, `u`, `p-labs`), `TestReservedPlatformNamesRefused`, `TestModelTokenNamesAccepted`, `TestSeparatorNotInName`, `TestLengthLimit`, `TestParseRoundTrip`.
 - **Command:** `go test ./internal/secretname/ -count=1`
 - **Depends on:** none. **Commit:** `secretname: the user and project secret ID grammar (R1)`
 - **Red step:** with the first-draft prefix `fugaro-p-`, `TestNoOverlapWithExistingSecretIDs` fails on `p-labs/app`.
@@ -86,9 +86,9 @@ named tests only.
 - **Tier:** opus + mandatory independent review.
 
 ### DS1.2 A launcher caller class keyed on the Google `sub`
-- **Files:** `internal/credsvc/auth.go` (edit), `internal/credsvc/auth_test.go` (edit)
+- **Files:** `internal/credsvc/auth.go` (edit), `internal/credsvc/auth_test.go` (edit), `internal/cli/credentials_serve.go` (edit; reads `FUGARO_LAUNCHER_ACCOUNTS` as `FUGARO_PERSON_ACCOUNTS` is read), `internal/cli/credentials_serve_test.go` (edit)
 - **Interfaces:** a new launcher class (D1938) admitted on the grant route and the intake only, keyed on the token's `sub` with a verified email; `PersonAccounts` is untouched, so the read mints stay operators-only.
-- **Tests:** `TestLauncherSubIsTheTokenSub`, `TestLauncherRefusedWithoutVerifiedEmail`, `TestLauncherClassRefusedOnRunAndReadRoutes`, `TestPersonClassStillOperatorsOnly`, `TestServiceAccountRefusedAtIntakeAuth`.
+- **Tests:** `TestLauncherAccountsReadFromEnv`, `TestLauncherSubIsTheTokenSub`, `TestLauncherRefusedWithoutVerifiedEmail`, `TestLauncherClassRefusedOnRunAndReadRoutes`, `TestPersonClassStillOperatorsOnly`, `TestServiceAccountRefusedAtIntakeAuth`.
 - **Command:** `go test ./internal/credsvc/ -run 'TestLauncherClassRefusedOnRunAndReadRoutes|TestLauncherRefusedWithoutVerifiedEmail|TestLauncherSubIsTheTokenSub|TestPersonClassStillOperatorsOnly|TestServiceAccountRefusedAtIntakeAuth' -count=1`
 - **Depends on:** none. **Commit:** `credsvc: the launcher caller class (F5, D1938)`
 - **Red step:** a launcher is refused on the grant before the class exists.
@@ -132,7 +132,7 @@ named tests only.
 
 ### DS2.1 The intake function
 - **Files:** `internal/intake/server.go` (new), `internal/intake/handlers.go` (new), `internal/intake/server_test.go` (new), `cmd/fugaro-intake/main.go` (new; or the existing credentials serve pattern in `internal/cli/credentials_serve.go`, which this task reads first and follows)
-- **Interfaces:** consumes `secretname`, DS1.2 and DS2.0's admin list; produces create, add-version, list (names, dates) and delete under the caller's prefix; each secret carries the owner's `sub` and verified email as an annotation, plus `created_by` (R10, R12); `fugaro_p_` only for an admin on the list (D1935, D1940); an admin-only delete of another user's prefix, found by that annotation, for offboarding; reserved bundle names refused (R7). One audit line per call; never a value in a line (G2, G6, G11, G13). The intake holds no database role.
+- **Interfaces:** consumes `secretname`, DS1.2 and DS2.0's admin list; produces create, add-version, list (names, dates) and delete under the caller's prefix; each secret carries the owner's `sub` and verified email as an annotation, plus `created_by` (R10, R12); `fugaro_p_` only for an admin on the list (D1935, D1940); an admin-only delete of another user's prefix, found by that annotation, for offboarding; reserved platform credential names refused (R7); the owner is taken from the `sub` in the name and an existing container's shape is checked before any write (R12). One audit line per call; never a value in a line (G2, G6, G11, G13). The intake holds no database role.
 - **Tests:** `TestPrefixFromSubNotFromBody`, `TestRefusesNameOutsideGrammar`, `TestNonAdminRefusedSharedPrefix`, `TestListNeverReturnsValue`, `TestNoReadMethodExists`, `TestServiceAccountRefused`, `TestNonAdminCannotDeleteOtherPrefix`.
 - **Command:** `go test ./internal/intake/ -count=1`
 - **Depends on:** DS0.1, DS1.2, DS2.0. **Commit:** `intake: the secret intake function (R3)`
@@ -141,8 +141,8 @@ named tests only.
 
 ### DS2.2 Terraform: the intake, its account, the service's prefix accessor
 - **Files:** `deploy/terraform/gcp/modules/installation/intake.tf` (new), `deploy/terraform/gcp/modules/installation/credentials.tf` (edit), `deploy/terraform/gcp/modules/installation/iam.tf` (edit), `deploy/terraform/secret_readers_test.go` (edit), `docs/secrets-brokering/secret-readers.md` (edit), `deploy/terraform/terraform_test.go` (edit), `deploy/terraform/gcp/modules/installation/variables.tf` (edit), `internal/infra/launchers.go` (new), `internal/infra/launchers_test.go` (new)
-- **Interfaces:** the intake account holds create and list unconditioned (IAM cannot condition either by name, F30) and version-add and delete under the `fugaro_u_`/`fugaro_p_` name-prefix condition; no accessor, no database role; read on the admin-list object. The service's account gains the prefix accessor and `secrets.list`. A new `launchers` variable derived from the roster by `update` grants invoker on the intake and on the service's slip route; today the service's invoker is `var.operators` only (F31). A test pins that the intake writes only containers it created (R12). The service's account gains an accessor with the same condition. A guard test holds both conditions, and the exceptions table gains one row for the service's prefix accessor (F18).
-- **Tests:** `TestIntakeAccountHasNoAccessor`, `TestIntakeRolesAreConditioned`, `TestServicePrefixAccessorIsConditioned`, `TestEverySecretReaderIsAListedException`, `TestLaunchersVariableDerivedFromRoster`, `TestIntakeWritesOnlyContainersItCreated`.
+- **Interfaces:** the intake account holds create and list unconditioned (IAM cannot condition either by name, F30) and version-add and delete under the `fugaro_u_`/`fugaro_p_` name-prefix condition; no accessor, no database role; read on the admin-list object. The service's account gains the prefix accessor and `secrets.list`. A new `launchers` variable derived from the roster by `update` grants invoker on the intake and on the service; today the service's invoker is `var.operators` only (F31). A test pins that the intake refuses a container of another shape (R12). The intake image gets the same digest-pin validation `credentials.tf` applies to the service's image, built in the release (or served by one subcommand of the released image). Cloud Run invoker is per service: granting launchers invoker on the service lets them pass IAM on every route, so the launcher class's app-level check is the only fence (F36) and the `credentials.tf` comment that says the only member is each job account is updated. `FUGARO_LAUNCHER_ACCOUNTS` is set from the `launchers` variable. The service's account gains an accessor with the same condition. A guard test holds both conditions, and the exceptions table gains one row for the service's prefix accessor (F18).
+- **Tests:** `TestIntakeAccountHasNoAccessor`, `TestIntakeRolesAreConditioned`, `TestServicePrefixAccessorIsConditioned`, `TestEverySecretReaderIsAListedException`, `TestLaunchersVariableDerivedFromRoster`, `TestIntakeRefusesAContainerOfAnotherShape`.
 - **Command:** `go test -tags terraform ./deploy/terraform/ ./internal/infra/ -run 'TestEverySecretReaderIsAListedException|TestIntakeAccountHasNoAccessor|TestIntakeRolesAreConditioned|TestIntakeWritesOnlyContainersItCreated|TestLaunchersVariableDerivedFromRoster|TestServicePrefixAccessorIsConditioned' -count=1` and `terraform fmt -check -recursive deploy/terraform`
 - **Depends on:** DS2.1, DS0.3 (Check 510 passed). **Commit:** `terraform: the intake and the prefix-conditioned reader (D1931)`
 - **Red step:** the guard fails if the intake account holds `secretAccessor`.
@@ -159,17 +159,17 @@ named tests only.
 
 ### DS2.4 Offboarding
 - **Files:** `internal/cli/offboard.go` (new), `internal/cli/offboard_test.go` (new)
-- **Interfaces:** an admin command names the member by email; the intake finds that member's secrets by the owner annotation (R10) and deletes them, the command ends the member's open slips (DS1.1) and the invoker grant comes off in `update`'s converge once the roster drops the member (F20).
-- **Tests:** `TestOffboardDeletesPrefixAndEndsSlips`, `TestOffboardRefusedForNonAdmin`, `TestPoolLosesRemovedMembers` (in `internal/credsvc`, DS3.2's file set is not touched: it lives in `internal/cli/offboard_test.go` against a fake grant).
+- **Interfaces:** an admin command names the member by email; the intake finds that member's secrets by the owner annotation (R10) and deletes them, the member's open slips end by their max-runtime cap (no end route: the slip routes stay grant and claim, G10) and the invoker grant comes off in `update`'s converge once the roster drops the member (F20).
+- **Tests:** `TestOffboardDeletesPrefix`, `TestOffboardRefusedForNonAdmin`, `TestOffboardDropsMemberFromRoster`.
 - **Command:** `go test ./internal/cli/ -run 'TestOffboardDeletesPrefixAndEndsSlips|TestOffboardRefusedForNonAdmin|TestPoolLosesRemovedMembers' -count=1`
-- **Depends on:** DS2.1, DS2.2, DS1.1. **Commit:** `cli: offboard a member (D1935)`
+- **Depends on:** DS2.1, DS2.2. **Commit:** `cli: offboard a member (D1935)`
 - **Red step:** the non-admin test fails before the role check.
 - **Tier:** opus + mandatory independent review.
 
 ### DS3.1 Pools with an owner and allowed users
-- **Files:** `internal/config/craft.go` (edit), `internal/projectpolicy/policy.go` (edit), `internal/projectpolicy/version.go` (edit), `internal/projectpolicy/migrate.go` (edit), `schemas/project-layer.schema.json` (edit), tests beside each
-- **Interfaces:** additive `owner`, `allowed_users` (spelled by email, resolved to `sub` at grant, R10) for shared tokens; a **migrated pool has no owner and stays legacy-open** (D1942); a new pool defaults owner-only; policy version bump with the migration run by `update`.
-- **Tests:** `TestNewPoolDefaultsToOnlyOwner`, `TestMigratedPoolStaysLegacyOpen`, `TestMigrationFromPreviousVersionConverges`, `TestSchemaMatchesDecoder`.
+- **Files:** `schemas/settings.schema.json` (edit: `pools.*`), `internal/policy/craft.go` (edit: `allowed_users` only narrows in the layer merge; the service decides from the published policy only), `internal/config/craft.go` (edit), `internal/projectpolicy/policy.go` (edit), `internal/projectpolicy/version.go` (edit), `internal/projectpolicy/migrate.go` (edit), `schemas/project-layer.schema.json` (edit), tests beside each
+- **Interfaces:** additive `owner`, `allowed_users` (spelled by email, resolved to `sub` at grant, R10) for shared tokens; a **migrated pool has no owner and stays legacy-open** (D1942); a new pool defaults owner-only and **publish refuses a pool with no owner at the new version**; the migration writes an explicit `legacy_open` marker (new name); policy version bump with the migration run by `update`.
+- **Tests:** `TestNewPoolWithoutOwnerRefused`, `TestNewPoolDefaultsToOnlyOwner`, `TestMigratedPoolStaysLegacyOpen`, `TestMigrationFromPreviousVersionConverges`, `TestSchemaMatchesDecoder`.
 - **Command:** `go test ./internal/config/ ./internal/projectpolicy/ -run 'TestMigratedPoolStaysLegacyOpen|TestMigrationFromPreviousVersionConverges|TestNewPoolDefaultsToOnlyOwner|TestSchemaMatchesDecoder' -count=1`
 - **Depends on:** none. **Commit:** `policy: pool owner and allowed users, version bump (D1936)`
 - **Red step:** the convergence test fails against the previous version's fixture.
@@ -231,16 +231,16 @@ named tests only.
 
 ### DS4.2 Doctor
 - **Files:** `internal/cli/doctor_brokering.go` (edit), `internal/cli/doctor_brokering_test.go` (edit)
-- **Interfaces:** names legacy-open pools and asks an admin to give each an owner (D1942); reports the intake deployed, its account holding no accessor, the prefix condition present, and a per-secret name that no grammar admits. Short output (the one-screen rule).
+- **Interfaces:** names legacy-open pools (`TestDoctorNamesLegacyOpenPools`) and asks an admin to give each an owner (D1942); reports the intake deployed, its account holding no accessor, the prefix condition present, and a per-secret name that no grammar admits. Short output (the one-screen rule).
 - **Tests:** `TestDoctorIntakeHasNoAccessor`, `TestDoctorFlagsUnparseableSecretName`.
 - **Command:** `go test ./internal/cli/ -run 'TestDoctorFlagsUnparseableSecretName|TestDoctorIntakeHasNoAccessor' -count=1`
-- **Depends on:** DS2.2. **Commit:** `doctor: the intake and the prefix accessor`
+- **Depends on:** DS2.2, DS3.1. **Commit:** `doctor: the intake and the prefix accessor`
 - **Red step:** the accessor test fails before the check.
 - **Tier:** opus + mandatory independent review.
 
 ### DS4.3 Docs, SECURITY and release notes
 - **Files:** `SECURITY.md` (edit), `website/content/security.md` (regenerated), `docs/releases/vNEXT.md` (edit or new), `docs/secrets-brokering/README.md` (edit)
-- **Interfaces:** states the new trust boundary (intake write power, the prefix accessor, the slip) and what a hostile launcher can do, that launchers can steal an unclaimed slip only before the runner's start-up claim and never the claim secret (D1941), that database admins can forge a slip (D1943), and that a replayed gcloud-audience token gives an admin overwrite and delete of other members' prefixes as well as their own (D1939, F9, M6); `### For operators`: "run `fugaro update`" plus what it asks.
+- **Interfaces:** states the new trust boundary (intake write power, the prefix accessor, the slip) and what a hostile launcher can do, that launchers can steal an unclaimed slip only before the runner's start-up claim and never the claim secret (D1941), that database admins can forge a slip (D1943), and that a replayed gcloud-audience token gives an admin overwrite and delete of other members' prefixes as well as their own, and (if the owner confirms O1) also gets a slip at the grant route (D1939, F9), and that Cloud Run invoker is per service so the launcher class's check is the only fence between members and the service's other routes (F36); `### For operators`: "run `fugaro update`" plus what it asks.
 - **Tests:** `go test ./internal/cli/ -run Docs -count=1`; `npm run check` in `website/` for the regenerated page.
 - **Depends on:** DS2.3, DS3.2, DS4.1. **Commit:** `docs: SECURITY and the release notes for dynamic delivery`
 - **Red step:** the website security test fails on drift before regeneration.
