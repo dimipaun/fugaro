@@ -577,6 +577,85 @@ func tfUnheldKeys(t *testing.T, dir string) []string {
 	return out
 }
 
+// tfRingEnvironments answers the environments the key ring root under dir
+// declares in its `keys` default, sorted. The key block's `for_each = var.keys`
+// creates one signing key per entry, so that map is the ring's key set — and the
+// signer role is granted on the ring, which reaches every key in it. A third
+// entry is therefore a third signing key the minter can sign with, and one whose
+// algorithm, protection level and lifecycle no check above reads (D459(a), §2).
+// The entries are read out of the map the block writes rather than searched for
+// in its text: a description string naming an environment is not one.
+func tfRingEnvironments(t *testing.T, dir string) []string {
+	t.Helper()
+	var out []string
+	for _, rel := range tfRootFiles(t, filepath.Join(dir, keyringRoot)) {
+		src := tfSource(t, filepath.Join(dir, keyringRoot, rel))
+		for _, block := range tfBlocksUntil(src, `variable "keys"`, tfVarBlockEnds) {
+			value, ok := tfAttr(block, "default")
+			if !ok || !strings.HasPrefix(value, "{") {
+				t.Fatalf("keyring/'s `keys` variable writes no map default (it writes %q): the key block's for_each creates one signing key per entry, so that map is the ring's key set", value)
+			}
+			out = append(out, tfMapKeys(value)...)
+		}
+	}
+	if len(out) == 0 {
+		t.Fatalf("keyring/ declares no `keys` variable with a map default: `for_each = var.keys` on the key block would then create no key at all, and every check above reads a block that makes nothing")
+	}
+	slices.Sort(out)
+	return out
+}
+
+// tfMapKeys answers the entry names of a map value, in the order it writes them:
+// the names at the map's own depth, outside any nested bracket, so a key of a
+// nested map is not one and neither is a name written inside a string or a
+// heredoc.
+func tfMapKeys(value string) []string {
+	body, ok := tfBlockBody("map " + value)
+	if !ok {
+		return nil
+	}
+	var out []string
+	depth := 0
+	for i := 0; i < len(body); {
+		switch c := body[i]; {
+		case c == '"':
+			j, ok := tfSkipString(body, i)
+			if !ok {
+				return out
+			}
+			i = j
+		case c == '<' && strings.HasPrefix(body[i:], "<<"):
+			j, ok := tfSkipHeredoc(body, i)
+			if !ok {
+				return out
+			}
+			i = j
+		case c == '{' || c == '[' || c == '(':
+			depth++
+			i++
+		case c == '}' || c == ']' || c == ')':
+			depth--
+			i++
+		case depth == 0 && tfIdentStart(c):
+			j := i
+			for j < len(body) && tfIdentChar(body[j]) {
+				j++
+			}
+			k := j
+			for k < len(body) && (body[k] == ' ' || body[k] == '\t' || body[k] == '\n' || body[k] == '\r') {
+				k++
+			}
+			if k < len(body) && body[k] == '=' {
+				out = append(out, body[i:j])
+			}
+			i = j
+		default:
+			i++
+		}
+	}
+	return out
+}
+
 // tfVarBlockEnds are the markers that end a `variable` block in these roots: the
 // next variable, and the kinds of block a later change could put beside one.
 var tfVarBlockEnds = []string{"\nvariable \"", "\nresource \"", "\ndata \"", "\noutput \"", "\nprovider \"", "\nterraform {", "\nlocals {"}
@@ -818,8 +897,9 @@ func tfWantedDefaults() string {
 // The mutation this fails on: the key becoming an imported one (`import_only`
 // with `skip_initial_version_creation`, whose material an external machine would
 // generate), an external_key_uri appearing on a version, the algorithm or
-// protection level moving off the pair the verifiers were built for, or a second
-// key resource beside this one.
+// protection level moving off the pair the verifiers were built for, a second
+// key resource beside this one, or a third environment in the `keys` default
+// the one block creates a key per.
 func TestTheSigningKeyIsNonExportable(t *testing.T) {
 	key := tfRootBlock(t, keyringRoot, `resource "google_kms_crypto_key" "signing"`)
 
@@ -835,9 +915,22 @@ func TestTheSigningKeyIsNonExportable(t *testing.T) {
 		t.Errorf("this tree declares a KMS crypto key beside the one block above: %s\nthe signer role is granted on the key ring, so every key in it is one the minter signs with, and the checks here read that one block alone: a second key is a second algorithm, a second protection level and a lifecycle nothing here holds (Check 174, S3.5). The one key this service holds is %s", strings.Join(extra, ", "), tfNames(keyringRoot, `resource "google_kms_crypto_key" "signing"`))
 	}
 
+	// And the set that one block MAKES, which is the other half of the same
+	// rule: `for_each = var.keys` is what creates a key, so keyring/'s default
+	// for that variable is the ring's key set, and the signer role is granted on
+	// the ring rather than on a key. A third entry there is a third signing key
+	// the minter can sign with, made by a block whose algorithm, protection level
+	// and lifecycle are read once, for the key id the two environments hold.
+	// The ids themselves are not held: rotation is a new id in this map (§11),
+	// and what this refuses is a new environment.
+	if got := tfRingEnvironments(t, "."); !slices.Equal(got, []string{"production", "staging"}) {
+		t.Errorf("the keys keyring/ creates are keyed %v, want [production staging]: the key block's for_each makes one signing key per entry, the signer role is granted on the key ring so the minter can sign with every key in it, and the checks above read the one block — so a third environment is a third key none of them holds (D459(a), S2.1, §2, S3.5)", got)
+	}
+
 	tfAttrsAre(t, key, "the signing key in "+keyringRoot, []struct{ attr, value string }{
+		{"for_each", "var.keys"},
 		{"purpose", `"ASYMMETRIC_SIGN"`},
-	}, "S2.1 fixes the algorithm as Ed25519, which the three verifiers verify, and the key is signed with through the API rather than from a file")
+	}, "S2.1 fixes the algorithm as Ed25519, which the three verifiers verify, and the key is signed with through the API rather than from a file. for_each is the ring's key set — one key per environment keyring/ declares, which is what makes the two keys D459(a) names rather than a literal list only those keys' own ids would cover")
 
 	// The algorithm and the protection level are written one level down, inside
 	// version_template, so they are read out of that block rather than looked for
@@ -1383,6 +1476,30 @@ func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 		want := []string{tfNames(keyringRoot, `resource "google_kms_crypto_key" "signing_alt"`)}
 		if got := tfUnheldKeys(t, root); !slices.Equal(got, want) {
 			t.Errorf("a second key in the tree reads as %v, want %v: the checks read the signing key's own block, so a key beside it is one none of them reads while the signer role, granted at the ring, reaches it", got, want)
+		}
+	})
+
+	// And the map that key set comes from, over a tree this test writes: the
+	// entries of `keys`' default are the environments, and a name spelled out in
+	// the variable's own description is not one. The first tree is the two
+	// environments with a third written into the description; the second writes
+	// the third entry for real, which is what the rule refuses.
+	t.Run("an environment named in the description", func(t *testing.T) {
+		root := t.TempDir()
+		tfWrite(t, root, "keyring/variables.tf", "variable \"keys\" {\n"+
+			"  description = \"The environments: production, staging, dev = fugaro-licence-dev.\"\n"+
+			"  type        = map(string)\n\n"+
+			"  default = {\n    production = \"fugaro-licence-production\"\n    staging    = \"fugaro-licence-staging\"\n  }\n}\n")
+		held := []string{"production", "staging"}
+		if got := tfRingEnvironments(t, root); !slices.Equal(got, held) {
+			t.Errorf("the environments read as %v, want %v: a name inside the variable's description is text, and reading it as an entry would hold the ring's key set to a sentence", got, held)
+		}
+		tfWrite(t, root, "keyring/variables.tf", "variable \"keys\" {\n"+
+			"  description = \"The environments, one signing key each.\"\n"+
+			"  type        = map(string)\n\n"+
+			"  default = {\n    production = \"fugaro-licence-production\"\n    staging    = \"fugaro-licence-staging\"\n    dev        = \"fugaro-licence-dev\"\n  }\n}\n")
+		if got := tfRingEnvironments(t, root); slices.Equal(got, held) {
+			t.Errorf("a third entry in `keys`' default reads as %v, which is the held set: the key block's for_each makes one signing key per entry, so the third environment is a third key the minter's ring-level role reaches and no check reads", got)
 		}
 	})
 
