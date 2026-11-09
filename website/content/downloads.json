@@ -37,7 +37,7 @@
   ],
   "release": {
     "tag_prefix": "console-v",
-    "version": "0.120.0",
+    "version": "0.121.0",
     "source": "docs/release.md"
   },
   "downloads": [
@@ -45,25 +45,25 @@
       "id": "macos-dmg",
       "platform": "macOS",
       "file": "Fugaro Console-{version}-universal.dmg",
-      "sha256": "80633c8e017d37094a9c59547568e9aac22a4cc79230e764871d033f1a458d80"
+      "sha256": "f26ddb292d89d7e2366b59881667986daae0f6353e88a1fcd5839efca2f77352"
     },
     {
       "id": "macos-zip",
       "platform": "macOS",
       "file": "Fugaro Console-{version}-universal-mac.zip",
-      "sha256": "3cf8a24a46dc55a397f720b58b33189b500f4d7feb7febda30a99a664d743ca5"
+      "sha256": "1e229c9d0a824c33b5161797af54e36e91be7a108d5d2f88a1669e204d4532cf"
     },
     {
       "id": "linux-appimage",
       "platform": "Linux",
       "file": "Fugaro.Console-{version}-linux-x86_64.AppImage",
-      "sha256": "c9ea119e46ca0a22968b87c7bd73d721837f80de5654d97793f366fc4acf5221"
+      "sha256": "4767186d67b80079f0acebe3a5f2657f60d4e39816c39c6e9a69e3f347a97f22"
     },
     {
       "id": "linux-deb",
       "platform": "Linux",
       "file": "Fugaro.Console-{version}-linux-amd64.deb",
-      "sha256": "059f415cf24adb0903cc5cb468b97fa839fdc7b8430b18a463e6825dfa6de498"
+      "sha256": "e4ee5287ad7c5689addd686893937d96c291f2b201d22ed7a0e7b5704dba68ea"
     }
   ],
   "linux": {
