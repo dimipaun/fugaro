@@ -1799,7 +1799,7 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 			// only be some other process's run reusing the id — too
 			// improbable to recover from; the batch must not silently count
 			// a run it did not itself start.
-			err := fmt.Errorf("run %s was already launched, not by this batch", oneLine(res.Run))
+			err := fmt.Errorf("run %s was already launched, not by this batch", task.ShortRun(oneLine(res.Run)))
 			failStep(rep, step, err)
 			return reportBatchFailure(cmd, o.batch, n, o.asJSON, results, i, err)
 		}
@@ -1858,7 +1858,7 @@ func reportBatchFailure(cmd *cobra.Command, batch string, n int, asJSON bool, re
 	}
 	ids := make([]string, len(results))
 	for j, r := range results {
-		ids[j] = r.RunID
+		ids[j] = task.ShortRun(r.RunID)
 	}
 	return fmt.Errorf("attempt %d of %d: %w; launched %d (batch %s): %s", i+1, n, err, len(results), batch, strings.Join(ids, ", "))
 }
@@ -3768,7 +3768,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	if cancelled, err := s.CancelRequested(ctx); err != nil {
 		return res, remote(err)
 	} else if cancelled {
-		return res, userErr("run %s was cancelled; start a new one", res.Run)
+		return res, userErr("run %s was cancelled; start a new one", task.ShortRun(oneLine(res.Run)))
 	}
 	// The job this launch runs on (project_job.go): the shared project job of
 	// the profile the workflow selects, or nil for the per-repository job this
@@ -3822,7 +3822,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 			if round < claimRounds-1 {
 				continue
 			}
-			return res, userErr("the launch claim of %s keeps being released by other launches that were refused; fugaro run --retry %s tries again", res.Run, res.Run)
+			return res, userErr("the launch claim of %s keeps being released by other launches that were refused; fugaro run --retry %s tries again", task.ShortRun(oneLine(res.Run)), oneLine(res.Run))
 		}
 		if err != nil {
 			return res, err
@@ -3849,7 +3849,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		releaseClaim(rctx, env, s, holder)
 		rcancel()
-		return res, userErr("run %s was cancelled; start a new one", res.Run)
+		return res, userErr("run %s was cancelled; start a new one", task.ShortRun(oneLine(res.Run)))
 	}
 	// The docker tag's rule, before anything of this launch is written or
 	// reported (D1149): a run whose DEPLOYED job image carries the docker tag
@@ -3983,7 +3983,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 			rcancel()
 			// A GCP API error is a remote failure (exit 2); %w keeps
 			// ErrRejected and ErrNotFound visible to errors.Is.
-			return res, remote(fmt.Errorf("the launch of %s was refused, so nothing started; fix the cause, then fugaro run --retry %s: %w", res.Run, res.Run, err))
+			return res, remote(fmt.Errorf("the launch of %s was refused, so nothing started; fix the cause, then fugaro run --retry %s: %w", task.ShortRun(oneLine(res.Run)), oneLine(res.Run), err))
 		}
 		// Ambiguous (timeout, 5xx, dropped connection, unreadable reply): the
 		// execution may exist. Keep the claim, and the token object: an

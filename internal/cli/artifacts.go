@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // What `fugaro artifacts` is for: an artifact run's deliverable is a file in
@@ -239,6 +240,12 @@ func artifactsRun(ctx context.Context, env *cloudEnv, ref, repo string, o resolv
 	return runstore.Open(env.bucket.Bucket, slug, id), nil
 }
 
+// shortRef is a run's store the way a message here names it: the short form of
+// its "<slug>/<run-id>" (D1705). Every refusal that says which run recorded
+// what goes through it, so none of them prints a launch stamp — that is what
+// task.ShortRun is for, and this only spares each of them the same expression.
+func shortRef(s *runstore.Store) string { return task.ShortRun(oneLine(s.Slug() + "/" + s.RunID())) }
+
 // readArtifactRecord reads the run's result.json, the one thing both
 // subcommands trust about what it delivered. A run that never finished has
 // none, and there is then nothing to list and nothing to verify a download
@@ -247,7 +254,7 @@ func readArtifactRecord(ctx context.Context, s *runstore.Store) (*runstore.Recor
 	rec, err := s.ReadRecord(ctx)
 	switch {
 	case errors.Is(err, runstore.ErrNotFound):
-		return nil, userErr("run %s has no result.json: it never finished, so it recorded no artifacts", s.Slug()+"/"+s.RunID())
+		return nil, userErr("run %s has no result.json: it never finished, so it recorded no artifacts", shortRef(s))
 	case err != nil:
 		return nil, remote(err)
 	}
@@ -443,14 +450,14 @@ func selectArtifacts(s *runstore.Store, files []runstore.ArtifactFile, name stri
 		// them does not say which entry's bytes to write.
 		switch {
 		case len(chosen) == 0:
-			return nil, userErr("run %s recorded no artifact named %q: fugaro artifacts ls %s lists what it did", s.Slug()+"/"+s.RunID(), name, s.Slug()+"/"+s.RunID())
+			return nil, userErr("run %s recorded no artifact named %q: fugaro artifacts ls %s lists what it did", shortRef(s), name, shortRef(s))
 		case len(chosen) > 1:
-			return nil, userErr("run %s recorded the artifact %q twice: one name is one artifact, and naming it does not say which entry's bytes to write (fugaro artifacts ls %s prints the record as it is)", s.Slug()+"/"+s.RunID(), name, s.Slug()+"/"+s.RunID())
+			return nil, userErr("run %s recorded the artifact %q twice: one name is one artifact, and naming it does not say which entry's bytes to write (fugaro artifacts ls %s prints the record as it is)", shortRef(s), name, shortRef(s))
 		}
 		files = chosen
 	} else {
 		if len(files) == 0 {
-			return nil, userErr("run %s recorded no artifacts", s.Slug()+"/"+s.RunID())
+			return nil, userErr("run %s recorded no artifacts", shortRef(s))
 		}
 		// One name, one artifact, one path: the record is untrusted text, and
 		// two entries that a filesystem would write to one file are refused
@@ -470,7 +477,7 @@ func selectArtifacts(s *runstore.Store, files []runstore.ArtifactFile, name stri
 		// record being unreadable, and a named fetch of a doubled name is
 		// refused above, by the case that names the duplication.
 		if conflict := artifactSetConflict(files); conflict != "" {
-			return nil, userErr("run %s recorded %s", s.Slug()+"/"+s.RunID(), conflict)
+			return nil, userErr("run %s recorded %s", shortRef(s), conflict)
 		}
 	}
 	// The refusals below are the selected set's, whether it is the whole
@@ -482,7 +489,7 @@ func selectArtifacts(s *runstore.Store, files []runstore.ArtifactFile, name stri
 	// destination exists or any byte is read.
 	for _, a := range files {
 		if problem := artifactNameProblem(a.Name); problem != "" {
-			return nil, userErr("run %s recorded an artifact named %q, which cannot be retrieved: %s", s.Slug()+"/"+s.RunID(), a.Name, problem)
+			return nil, userErr("run %s recorded an artifact named %q, which cannot be retrieved: %s", shortRef(s), a.Name, problem)
 		}
 	}
 	for _, a := range files {
@@ -492,7 +499,7 @@ func selectArtifacts(s *runstore.Store, files []runstore.ArtifactFile, name stri
 			// entirely, and the bytes would then be bytes nothing attests
 			// to: the record's own hash is what makes the download
 			// checkable, so a record without one is refused.
-			return nil, userErr("run %s recorded %q without a sha256: there is nothing to verify the download against", s.Slug()+"/"+s.RunID(), a.Name)
+			return nil, userErr("run %s recorded %q without a sha256: there is nothing to verify the download against", shortRef(s), a.Name)
 		case a.Bytes < 0:
 			// 0 is a size a run records — result.schema.json's "bytes" has
 			// {"minimum": 0}, and a render that writes an empty file matched
@@ -500,13 +507,13 @@ func selectArtifacts(s *runstore.Store, files []runstore.ArtifactFile, name stri
 			// artifact is downloaded like any other, with a cap of 0 bytes.
 			// A negative count is not a size, and there is then no cap to
 			// bound the download by at all.
-			return nil, userErr("run %s recorded %q as %d bytes: a negative count is not a size, and there is no size to bound the download by", s.Slug()+"/"+s.RunID(), a.Name, a.Bytes)
+			return nil, userErr("run %s recorded %q as %d bytes: a negative count is not a size, and there is no size to bound the download by", shortRef(s), a.Name, a.Bytes)
 		case a.Bytes > recipe.MaxOutputBytes:
 			// The record's own byte count is the cap, and the cap itself has
 			// a ceiling: no runner can upload an artifact larger than the
 			// recipe format's per-artifact maximum, so a record that claims
 			// one is refused rather than believed (design §6, P6).
-			return nil, userErr("run %s recorded %q as %s, over the %s ceiling a recipe's outputs.max_bytes may not exceed: this is not an artifact any run could have delivered", s.Slug()+"/"+s.RunID(), a.Name, recipe.SizeText(a.Bytes), recipe.SizeText(recipe.MaxOutputBytes))
+			return nil, userErr("run %s recorded %q as %s, over the %s ceiling a recipe's outputs.max_bytes may not exceed: this is not an artifact any run could have delivered", shortRef(s), a.Name, recipe.SizeText(a.Bytes), recipe.SizeText(recipe.MaxOutputBytes))
 		}
 	}
 	return files, nil
@@ -866,7 +873,7 @@ func artifactObjectKey(prefix, name string) (string, error) {
 func getArtifact(ctx context.Context, env *cloudEnv, s *runstore.Store, a runstore.ArtifactFile, root, dest string, force bool, out io.Writer) error {
 	key, err := artifactObjectKey(s.Prefix(), a.Name)
 	if err != nil {
-		return userErr("run %s recorded an artifact named %q, which cannot be retrieved: %v", s.Slug()+"/"+s.RunID(), a.Name, err)
+		return userErr("run %s recorded an artifact named %q, which cannot be retrieved: %v", shortRef(s), a.Name, err)
 	}
 	// The directories this name needs, made now that this file is the one
 	// about to be written — after every destination has been checked, and
@@ -889,7 +896,7 @@ func getArtifact(ctx context.Context, env *cloudEnv, s *runstore.Store, a runsto
 	case errors.Is(err, blobx.ErrDestExists):
 		return userErr("%s already exists: pass --force to replace it", oneLine(dest))
 	case errors.Is(err, blobx.ErrNotExist):
-		return userErr("run %s/%s recorded %q, but there is no such artifact in the runs bucket: artifacts expire with their run (runs_days), and fugaro artifacts ls %s/%s shows the record's list", s.Slug(), s.RunID(), a.Name, s.Slug(), s.RunID())
+		return userErr("run %s recorded %q, but there is no such artifact in the runs bucket: artifacts expire with their run (runs_days), and fugaro artifacts ls %s shows the record's list", shortRef(s), a.Name, shortRef(s))
 	case errors.Is(err, blobx.ErrForbidden):
 		return remote(fmt.Errorf("reading %s: %w (this account may not read the run's artifacts: objectViewer on the runs bucket is what an operator holds)", key, err))
 	case errors.Is(err, blobx.ErrMismatch), errors.Is(err, blobx.ErrChanged), errors.Is(err, blobx.ErrTooLarge):
@@ -898,7 +905,7 @@ func getArtifact(ctx context.Context, env *cloudEnv, s *runstore.Store, a runsto
 		// Nothing was written — blobx verifies on its own temporary file,
 		// before the placement — and whatever was at the destination path is
 		// still there.
-		return userErr("run %s/%s recorded %q as %d bytes with sha256 %s, and the object in the runs bucket is not that: %v (nothing was written)", s.Slug(), s.RunID(), a.Name, a.Bytes, a.SHA256, err)
+		return userErr("run %s recorded %q as %d bytes with sha256 %s, and the object in the runs bucket is not that: %v (nothing was written)", shortRef(s), a.Name, a.Bytes, a.SHA256, err)
 	case err != nil:
 		return remote(err)
 	}

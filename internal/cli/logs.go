@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // logsLookback is how far before the launch logs reads: the launch time is
@@ -143,7 +144,7 @@ func locateLaunched(ctx context.Context, env *cloudEnv, ref string, o resolveRun
 		return nil, nil, "", err
 	}
 	if l == nil || l.Execution == "" {
-		return nil, nil, "", userErr("run %s/%s was never launched (see fugaro run --retry)", slug, id)
+		return nil, nil, "", userErr("run %s was never launched (see fugaro run --retry, which takes its full ID)", task.ShortRun(slug+"/"+id))
 	}
 	return s, l, slug + "/" + id, nil
 }

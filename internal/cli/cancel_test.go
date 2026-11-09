@@ -639,7 +639,7 @@ func TestCancelAlreadyFinishedClearsItsOwnLiveLock(t *testing.T) {
 	if jerr := json.Unmarshal([]byte(out), &res); err != nil || jerr != nil || res.Status != cancelAlreadyFinished || res.LockHeld {
 		t.Fatalf("cancel --json = %+v (parse err %v), %v (%s)", res, jerr, err, out)
 	}
-	if !strings.Contains(errOut, "cleared") || !strings.Contains(errOut, id) {
+	if !strings.Contains(errOut, "cleared") || !strings.Contains(errOut, task.ShortRun(id)) {
 		t.Fatalf("stderr = %q, want a note that the lock was cleared", errOut)
 	}
 	path := filepath.Join(strings.TrimPrefix(f.bucket, "file://"), key)
