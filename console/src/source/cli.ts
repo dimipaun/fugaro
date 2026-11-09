@@ -55,6 +55,7 @@ import {
   startSidecar,
 } from '../main/spawn'
 import type {
+  BinaryRefusalKind,
   ChildSpawner,
   JSONObject,
   Notice,
@@ -216,13 +217,36 @@ export const FUGARO_INSTALL_COMMAND = 'brew install dimipaun/tap/fugaro'
  * everything design section 6.3's first screen needs, with no document in it.
  * `renderer/screens/degraded.ts` draws it, and `degraded.spec.ts` holds one
  * built here to the renderer's own type, so the two cannot drift.
+ *
+ * **`kind` is the resolution's own** (`BinaryRefusalKind`, `src/main/spawn.ts`),
+ * and it is the whole of what tells the four failures apart: one page is drawn
+ * per kind, each with its own headline and its own remedy (Part G, T-G1). A
+ * state that answered `no-binary` for a machine with no WSL would send the
+ * operator to install a CLI they do not need.
  */
 export interface NoInstallationState {
-  readonly kind: 'no-binary'
+  readonly kind: BinaryRefusalKind
   /** the resolution's own sentence, kept as the CLI-less reason it is */
   readonly reason: string
+  /**
+   * the install line the screen offers under `install it with`, or the empty
+   * string when installing a CLI on this machine is not this kind's remedy.
+   * `FUGARO_INSTALL_COMMAND` is `no-binary`'s answer; a machine with no WSL, or
+   * no distribution this console can drive, is fixed by installing something no
+   * command here installs, and the page's own sentence says so instead.
+   *
+   * On the WSL route the line is not `brew` at all but the register procedure
+   * (`docs/windows-cli/wsl.md`), which is why the field can be empty here: the
+   * screen points at that procedure, it does not retype it (F32).
+   */
   readonly installCommand: string
-  /** every candidate the resolution looked at, in the order it looked */
+  /**
+   * every candidate the resolution looked at, in the order it looked. It is
+   * empty for the three WSL kinds, and not because nothing was looked at: that
+   * route asks `wsl.exe` and the distribution, and walks no directory on this
+   * host -- so there is no count of host places to draw (F30's rule: the count,
+   * and never the paths).
+   */
   readonly searched: readonly string[]
 }
 
@@ -246,26 +270,38 @@ export class NoInstallation extends SourceRefusal {
 }
 
 /**
- * noInstallationState is the state, built from the resolution that failed. The
- * candidate list is re-derived from the same `binDirectories` the resolution
+ * noInstallationState is the state, built from the resolution that failed --
+ * which kind it failed as, and its own sentence.
+ *
+ * The candidate list is re-derived from the same `binDirectories` the resolution
  * walked, with the same options -- so the screen names the directories this
  * machine would actually be searched in, not a list written down twice. The
  * configured path is an *input* and not a field: it is one of those candidates,
  * and the screen draws the count of them and never a path.
+ *
+ * **Only `no-binary` walked them.** The three WSL kinds are answered by
+ * `wsl.exe` and the distribution (`resolveInDistribution`), so they carry an
+ * empty `searched` and no install command: their remedy is not a command on this
+ * machine at all.
  */
 export function noInstallationState(options: {
+  readonly kind?: BinaryRefusalKind
   readonly reason: string
   readonly configuredPath?: string | undefined
   readonly home?: string
 }): NoInstallationState {
+  const kind = options.kind ?? 'no-binary'
+  const walked = kind === 'no-binary'
   return {
-    kind: 'no-binary',
+    kind,
     reason: options.reason,
-    installCommand: FUGARO_INSTALL_COMMAND,
-    searched: binDirectories({
-      ...(options.configuredPath === undefined ? {} : { configuredPath: options.configuredPath }),
-      ...(options.home === undefined ? {} : { home: options.home }),
-    }),
+    installCommand: walked ? FUGARO_INSTALL_COMMAND : '',
+    searched: walked
+      ? binDirectories({
+          ...(options.configuredPath === undefined ? {} : { configuredPath: options.configuredPath }),
+          ...(options.home === undefined ? {} : { home: options.home }),
+        })
+      : [],
   }
 }
 
@@ -356,6 +392,9 @@ export class CliSource implements FugaroSource {
       if (ownsLog) log.close()
       throw new NoInstallation(
         noInstallationState({
+          // The resolution's own kind, carried rather than flattened to
+          // `no-binary`: this is what the screen draws one page per (F26).
+          kind: resolution.kind,
           reason: resolution.reason,
           configuredPath: options.configuredBinaryPath,
           ...(options.home === undefined ? {} : { home: options.home }),
