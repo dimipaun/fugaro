@@ -32,12 +32,23 @@ const (
 	catalogTagStepID = "catalog-tag"
 	// catalogRecordStepID writes the record the daily check reads.
 	catalogRecordStepID = "catalog-record"
+	// catalogContextStepID is the checkout an entry that names a build
+	// context gets, between the copied Dockerfile and the step that pins it.
+	catalogContextStepID = "catalog-context"
 )
+
+// catalogContextRoot is where the checkout step clones the entry's
+// repository: the path the derived build's own source step clones into, and
+// the path a catalog build drops. It is not /workspace/context, which holds
+// the copied Dockerfile the build reads and the pin step verifies (D1404).
+const catalogContextRoot = "/workspace/src"
 
 // catalogBuildSteps are a catalog build's steps, in order. The derived
 // config's source, render, gate and record steps are not among them: a
-// catalog build never clones a repository into the build context, renders
-// nothing (its Dockerfile is PIC3's copy), and writes a record of its own.
+// catalog build renders nothing (its Dockerfile is PIC3's copy), writes a
+// record of its own, and clones only when the entry names a build context —
+// catalogContextStepID, which is dropped for an entry that names none, so
+// such an entry builds the steps it built before this existed.
 //
 // Having no gate is the one difference that shows: a derived build's gate
 // reads the record already in the bucket and refuses to promote over a newer
@@ -47,7 +58,7 @@ const (
 // the entry's record already carries — is a follow-up, and nothing here
 // pretends to have one.
 var catalogBuildSteps = []string{
-	"prep", credentialStep, catalogDockerfileStepID, catalogPinStepID,
+	"prep", credentialStep, catalogDockerfileStepID, catalogContextStepID, catalogPinStepID,
 	"build", "smoke", "promote", catalogTagStepID, catalogRecordStepID, "untag",
 }
 
@@ -98,6 +109,26 @@ type CatalogBuildSpec struct {
 	Image string
 	// Definition is the copy the build reads and pins.
 	Definition CatalogDefinition
+	// Context is the directory of the entry's repository the build runs on —
+	// config.Source.Context, the entry's own value — and "" when the entry
+	// names none, which is the shape every entry had before the key existed.
+	// It reaches the request as _CONTEXT_DIR, the directory the build step
+	// builds from; the Dockerfile it reads stays the copy (D1404).
+	Context string
+	// ContextCommit and ContextSHA256 are the context's own identity, as the
+	// copy staged it: the commit the checkout is made at
+	// (config.CatalogContextCommitKey) and the digest of the tree it holds
+	// (config.CatalogContextHashKey). Both are "" for an entry that names no
+	// context, and a submission states all three or none — a context nothing
+	// pinned, or a commit no tree was read at, is refused before a build is
+	// paid for.
+	//
+	// The commit is not Definition.SourceCommit: the two are one commit
+	// (D1395 pins the Dockerfile and the context to the same read), and the
+	// record's fields for them are two names because a reader of the record
+	// has to be able to tell which is which (D1400).
+	ContextCommit string
+	ContextSHA256 string
 	// ServiceAccount is the email of the repository's build account
 	// (BuildServiceAccountID), which the build runs as.
 	ServiceAccount string
@@ -254,6 +285,11 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 		catalogTagStepID:        catalogTagStep(s),
 		catalogRecordStepID:     catalogRecordStep(s),
 	}
+	// An entry with no context has no checkout step: the id is in the list
+	// and no step answers to it, which is how the list drops it.
+	if s.Context != "" {
+		own[catalogContextStepID] = catalogContextStep(s)
+	}
 	steps := make([]*cloudbuild.BuildStep, 0, len(catalogBuildSteps))
 	for _, id := range catalogBuildSteps {
 		if st := own[id]; st != nil {
@@ -292,6 +328,10 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 		// The content tag a rebuild moves (D1152): the definition's own
 		// sha256, so the tag names the definition the image was built from.
 		"_CATALOG_TAG": s.Definition.SHA256,
+		// The directory the build step builds from: the checkout, at the
+		// subdirectory a context names, or the copied definition's own
+		// directory for an entry that names none.
+		"_CONTEXT_DIR": s.contextDir(),
 		// The smoke's spec, base64 because the request substitutes textually
 		// and JSON is text this config would have to quote.
 		"_SELFTEST_B64": base64.StdEncoding.EncodeToString(s.Selftest),
@@ -373,6 +413,62 @@ echo "pinned $$KEY at generation $$GENERATION"`},
 	}
 }
 
+// contextDir is the directory the build step builds from: the checkout the
+// context step made, at the subdirectory the entry's context names — the
+// context root is that directory (D1406), so a COPY inside it resolves the
+// way the Dockerfile wrote it — or the copied definition's own directory,
+// contextDirDefault, for an entry that names no context.
+func (s CatalogBuildSpec) contextDir() string {
+	if s.Context == "" {
+		return contextDirDefault
+	}
+	if c := strings.TrimSuffix(s.Context, "/"); c != "" && c != "." {
+		return catalogContextRoot + "/" + c
+	}
+	return catalogContextRoot
+}
+
+// catalogContextStep is the step that gives a build context to the entry's
+// Dockerfile: it checks the entry's repository out at the commit the copy
+// pinned, into catalogContextRoot, so the build step's context is a tree
+// rather than the one copied object (D1394, D1396).
+//
+// It runs outside the Docker build, because Docker resolves COPY before any
+// RUN and a checkout inside the build is not a context at all. It clones
+// with the repository's own credential out of the volume the credential step
+// wrote — the same file the derived source step uses — and mounts nothing
+// else: the credential reaches no image, because it is never a build
+// argument, a secret of the build step or a file under the context.
+//
+// The clone is shallow, so it holds the branch tip and not an arbitrary
+// commit: the commit is fetched by itself when it is not there, and a commit
+// the remote no longer has fails the build saying so rather than building
+// another tree — the shape images/derived/Dockerfile.tmpl already uses for
+// FUGARO_COMMIT. The step writes catalogContextRoot and nothing under
+// /workspace/context: that directory holds the copied Dockerfile, which
+// stays the file the build runs and the pin step verifies (D1404).
+func catalogContextStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
+	// The values reach the script through env: and are read as quoted
+	// "$$VAR" (the rule images/derived/cloudbuild.yaml states).
+	return &cloudbuild.BuildStep{
+		Id:         catalogContextStepID,
+		Name:       "gcr.io/cloud-builders/git",
+		Entrypoint: "bash",
+		Env:        []string{"REPO_URL=" + s.RepoURL, "COMMIT=" + s.ContextCommit},
+		Args: []string{"-c", `set -eu
+case "$$REPO_URL" in https://*) ;; *) echo "REPO_URL must be an https URL" >&2; exit 1 ;; esac
+GIT_TERMINAL_PROMPT=0 git -c credential.helper='store --file=/creds/git-credentials' \
+  clone --quiet --depth 1 --no-checkout -- "$$REPO_URL" /workspace/src
+cd /workspace/src
+git cat-file -e "$$COMMIT^{commit}" 2>/dev/null \
+  || GIT_TERMINAL_PROMPT=0 git -c credential.helper='store --file=/creds/git-credentials' \
+       fetch --quiet origin "$$COMMIT" \
+  || { echo "commit $$COMMIT is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }
+git reset --quiet --hard "$$COMMIT"`},
+		Volumes: []*cloudbuild.Volume{{Name: "fugaro-creds", Path: "/creds"}},
+	}
+}
+
 // catalogTagStep adds the content tag to the digest the build pushed, so
 // the tag a rebuild moves and latest are the same image (D1152). A registry
 // retag by digest, like promote: it needs the build account's tag mover role
@@ -403,7 +499,14 @@ gcloud artifacts docker tags add "$$IMAGE@$$digest" "$$IMAGE:$$TAG" --quiet`},
 // off it and refuses a file that holds anything but a digest. built_at is
 // the pin step's file, the same instant the build step stamps the image's
 // created label with, so the record and the image say one build time and
-// not two readings of a clock.
+// not two readings of a clock. context_commit and context_sha256 are the
+// context's own identity, and they are new names rather than a reuse of
+// source_commit (D1400): that field means the commit the copied Dockerfile
+// was taken from, and a reader that already knows it — the console, the
+// mobile app, the history — would draw a wrong figure from a context's
+// commit under the same name. Both are "" for an entry that names no
+// context, and the check reads "" as a record that says nothing about a
+// context rather than as a context that has not moved.
 //
 // Every value it carries is constrained, so the step composes the JSON with
 // printf and no escaping, and no secret is anywhere near it: the entry name,
@@ -446,6 +549,7 @@ func catalogRecordStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
 			"BUCKET=" + s.Bucket, "KEY=" + key, "ENTRY=" + s.Entry, "IMAGE=" + s.Image,
 			"GENERATION=" + strconv.FormatInt(s.Definition.Generation, 10),
 			"SHA256=" + s.Definition.SHA256, "COMMIT=" + s.Definition.SourceCommit,
+			"CONTEXT_COMMIT=" + s.ContextCommit, "CONTEXT_SHA256=" + s.ContextSHA256,
 			"BASE=" + s.Base, "TAG=${_CATALOG_TAG}",
 		},
 		Args: []string{"-c", `set -eu
@@ -456,8 +560,8 @@ base_digest=$${base_digest#*@}
 case "$$base_digest" in sha256:*) ;; *) echo "no base digest" >&2; exit 1 ;; esac
 built_at=$$(cat /workspace/out/built-at)
 record=$$(mktemp)
-printf '{"version":1,"entry":"%s","source_commit":"%s","definition_generation":%s,"definition_sha256":"%s","base_ref":"%s","base_digest":"%s","image":"%s","content_tag":"%s","image_digest":"%s","build_id":"%s","built_at":"%s"}' \
-  "$$ENTRY" "$$COMMIT" "$$GENERATION" "$$SHA256" "$$BASE" "$$base_digest" "$$IMAGE" "$$TAG" "$$image_digest" "$BUILD_ID" "$$built_at" > "$$record"
+printf '{"version":1,"entry":"%s","source_commit":"%s","context_commit":"%s","context_sha256":"%s","definition_generation":%s,"definition_sha256":"%s","base_ref":"%s","base_digest":"%s","image":"%s","content_tag":"%s","image_digest":"%s","build_id":"%s","built_at":"%s"}' \
+  "$$ENTRY" "$$COMMIT" "$$CONTEXT_COMMIT" "$$CONTEXT_SHA256" "$$GENERATION" "$$SHA256" "$$BASE" "$$base_digest" "$$IMAGE" "$$TAG" "$$image_digest" "$BUILD_ID" "$$built_at" > "$$record"
 case "$$BUCKET" in gs://*) ;; *) echo "the runs bucket must be a gs:// URL" >&2; exit 1 ;; esac
 export LC_ALL=C
 name=
@@ -536,6 +640,20 @@ func (s CatalogBuildSpec) check(project string, reserved map[string]bool) error 
 	}
 	if !sha256HexRE.MatchString(s.Definition.SHA256) {
 		return fmt.Errorf("the copied definition's sum %q is not 64 hex digits", s.Definition.SHA256)
+	}
+	// An entry's context is three values that come together or not at all: a
+	// context nothing pinned would check nothing out, and a commit or a
+	// digest without a context is an identity for a tree the build never
+	// reads. They are written into a record this build composes without
+	// escaping, so each is checked for shape here rather than in the step.
+	if (s.Context == "") != (s.ContextCommit == "" && s.ContextSHA256 == "") {
+		return fmt.Errorf("the Cloud Build request has a context, a context commit and a context sum that do not come together: context %q, commit %q, sum %q", s.Context, s.ContextCommit, s.ContextSHA256)
+	}
+	if s.Context != "" && !catalogCommitRE.MatchString(s.ContextCommit) {
+		return fmt.Errorf("the context's commit %q is not a commit SHA", s.ContextCommit)
+	}
+	if s.Context != "" && !sha256HexRE.MatchString(s.ContextSHA256) {
+		return fmt.Errorf("the context's sum %q is not 64 hex digits", s.ContextSHA256)
 	}
 	if len(s.Selftest) == 0 || !json.Valid(s.Selftest) {
 		return fmt.Errorf("the smoke's spec is not JSON; a catalog build renders nothing, so the caller sends it")
