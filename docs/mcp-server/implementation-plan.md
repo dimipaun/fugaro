@@ -263,7 +263,7 @@ registry end up four levels apart.
 | Level | Tasks | What holds a task out of an earlier level |
 | --- | --- | --- |
 | **L0** | M1, M3, M4 | nothing. M4's one remaining gate (the review) stands in front of the level rather than in it |
-| **L1** | M2, M11 | M2: `token.go` is M1's file, and D935's answer decides `store_bucket.go`. M11: `coordinator.tf`, `outputs.tf`, `cover.go` and `SECURITY.md` are M4's files, and the account and the service it names are M4's |
+| **L1** | M2, M11 | M2: `token.go` is M1's file, and D935's answer decides `store_bucket.go`. M11: `coordinator.tf`, `cover.go` and `SECURITY.md` are M4's files, and the account and the service it names are M4's |
 | **L2** | M5 | M2's store, M4's service, and D921's licence — met, cleared by the owner on 2026-11-07 |
 | **L3** | M7, M5b | M7: `server.go` and `service.go` are M5's; M5b: `authorize.go` is M5's, and the approval it binds is the one M5's approve step takes today |
 | **L4** | M6, M8 | M6: `server.go`, which M5 and M7 both write; M8: `tools.go`, M7's |
@@ -285,9 +285,9 @@ a planner who wants them in parallel is asking for four conflicts in the one fil
 answers through. **M5 → M7 → M6** are the three writers of `server.go`, and M6 is off the critical
 path, which is why it takes the third slot rather than the second. **M4 → M5 → M7** are the three
 writers of the service's own entry point (`ee/coordinator/service.go`), and **M4 → M11** are the two
-writers of `coordinator.tf`, of `outputs.tf` and of `cover.go` — M4 creates the service and the
-account, M11 ends the account's own "one grant" comment, adds its role id to the output M4 writes and
-its principal kind and permission pin to the cover — which is why M11 takes L1 rather than M4's own
+writers of `coordinator.tf` and of `cover.go` — M4 creates the service and the
+account, M11 ends the account's own "one grant" comment and adds its principal kind and permission pin
+to the cover — which is why M11 takes L1 rather than M4's own
 level. **The grant itself is not one of those rows**: it is written in `module "project"`, which no
 first-slice task touches at all.
 **M9** waits for a release
@@ -1027,9 +1027,12 @@ here, unchanged, as the plan for when it is designed and the owner approves it.
   a runner built from an older release **refuses the whole task at bootstrap** (the unknown field,
   which is a launch that dies after it was paid for), and a coordinator built from an older
   release **writes no ceiling at all**, so the run silently resolves the job's own cap and the
-  token's limit is dropped — which is why the operator order belongs in that release's
-  `### For operators`: every job image a launch carrying the ceiling can reach is rebuilt or
-  repointed at the shipping release first.
+  token's limit is dropped — which is why **every job image a launch carrying the ceiling can reach
+  has to be at that release before any launch carries one, and `fugaro update` is what takes them
+  there**: the rebuild is update's own step, behind its own confirmation, so the release's
+  `### For operators` reads the one line the repository's rule allows — run `fugaro update` — and a
+  launch that meets an older image is refused with the release and that command named, rather than an
+  ordering an operator has to sequence.
 - **Interface:** **`spawn_task`** (D931's answer of 2026-11-04 — the owner's name for the
   `submit_task` of the spec §0) starts the project's own job through `internal/backend` with the
   token's spend limit and the marker that a launch carries one written into **the run's own task in the
@@ -1162,12 +1165,11 @@ the launcher's grant is wanted, which is before M9 rather than on the
 path to it (§2, L1). **Nothing in the first slice waits on it** — the first slice starts no run — so a
 planner who takes only the first slice takes no part of this task.
 
-- **Files (30):** `deploy/terraform/gcp/modules/installation/iam.tf` (the new custom role, whose
+- **Files (29):** `deploy/terraform/gcp/modules/installation/iam.tf` (the new custom role, whose
   permissions are exactly `run.jobs.run`, beside `google_project_iam_custom_role.job_runner` at
   `:26-33`), `deploy/terraform/gcp/modules/installation/variables.tf` (the **closed**
   `names.role_ids` object at `:61-66` gains the key — an object left open would let a plan name a role
-  nothing creates), `deploy/terraform/gcp/modules/installation/outputs.tf` (`role_ids` gains the role,
-  beside the **five** names it publishes at `:46-56`), `deploy/terraform/gcp/modules/installation/coordinator.tf` (**comments only**: the
+  nothing creates), `deploy/terraform/gcp/modules/installation/coordinator.tf` (**comments only**: the
   account's "one grant" comment at `:301-320` and the "deliberately absent" comment at `:377` both
   describe a state this task ends), `deploy/terraform/gcp/modules/project/iam.tf` (the one job-scoped
   binding, beside the launcher grant at `:7-14`), `deploy/terraform/gcp/modules/project/variables.tf`
@@ -1184,7 +1186,10 @@ planner who takes only the first slice takes no part of this task.
   `deploy/terraform/gcp/modules/project/iam_test.go` (new: the binding's own text-level test),
   `deploy/terraform/gcp/roots/installation/tests/project_job.tftest.hcl` (the binding asserted at plan
   level, where the launcher's grant already is), `deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl`
-  (the pin at `:81`, which reads `keys(output.role_ids)` as exactly five names and becomes six),
+  (the pin at `:81` **stays five names** — the role is created only under the front door's own opt-in,
+  which this file's installation does not have, and the root builds the two strings from its own
+  variables rather than the module publishing a sixth name — and the task adds a module-level run with
+  the opt-in set, asserting the fence role exists and carries `run.jobs.run` alone),
   `internal/infra/front_door_fence_test.go` (new: the convergence test and the spelling pin),
   `internal/infra/testdata/installation-*.tfvars.json` (**regenerated, never hand-edited**: the
   seven fixtures that carry `names.role_ids` — `installation-budget`, `installation-credentials`,
@@ -1194,22 +1199,28 @@ planner who takes only the first slice takes no part of this task.
   `checkGolden`, and the new key invalidates each one; the task runs the suite with `-update`, which
   is where "rerun with `-update` to rewrite" in that failure message points, and **never edits them
   by hand**, because the bytes are the assertion), **the runner and backend half the fence cannot
-  work without** — `internal/backend/gcp/run.go` and `internal/backend/gcp/run_test.go` (the launch
-  call with no execution override at all; the launcher's request carries `ContainerOverrides` today
-  and that is the one thing the fence account cannot send), `internal/cli/exec.go` and
+  work without** — `internal/backend/gcp/run.go` and `internal/backend/gcp/run_test.go` (a **second launch shape
+  beside the one `fugaro run` sends**: the fence account's start carries no `ContainerOverrides` at
+  all, while the launcher's own launch keeps every override it sends today — `FUGARO_RUN` at `:173`,
+  `internal/cli/run.go:3956`'s seal key and `:3977`'s review-job marker — because `fugaro run` still
+  holds `run.jobs.runWithOverrides` and **nothing about it changes**; both shapes are tested), `internal/cli/exec.go` and
   `internal/cli/exec_test.go` (resolve `<slug>/<run-id>` from the launch binding instead of
   `FUGARO_RUN`, `:60`), `internal/runstore/launch.go` and `internal/runstore/launch_test.go` (the
   binding and its key, beside the claim at `:112`), `internal/gcpfake/run.go` and
-  `internal/gcpfake/run_test.go` (the fake's project-job rule inverts: the execution that carries the
-  identity as an override is the one refused, where `:973` refuses the one without it), **its own
+  `internal/gcpfake/run_test.go` (the fake's project-job rule **widens rather than inverts**: a shared
+  project job's execution must carry the identity **or** have a launch binding in its bucket — a
+  launcher's launch satisfies it with `FUGARO_RUN`, the fence account's with the binding — and one with
+  neither is refused as `:973` refuses it today, so no CLI launch changes), **its own
   task-image skew** — `internal/cli/recipes_skew.go`, `internal/cli/recipes_skew_test.go`,
   `internal/cli/run.go` and `docs/release.md`, the four artifacts M9's list names: the identity change
   lives in the **container's** entrypoint (`internal/cli/exec.go` runs inside the job image), so a job
   image built from an older release resolves no run at all and its execution dies after it was paid for
-  — the constant says the release whose images read the binding, and the release notes' `### For
-  operators` carries the order (**every job image a launch can reach is rebuilt or repointed at the
-  shipping release first**, the same one line M9's ceiling needs and for the same reason) — and
-  `SECURITY.md`.
+  — the constant says the release whose images read the binding, and the images reach it through
+  `fugaro update`, whose own step rebuilds the job images **behind its own confirmation**: the ordering
+  is inside that one command and not a sequence an operator runs, so the release notes' `### For
+  operators` carries only the line the repository's rule allows (run `fugaro update`, and take the
+  rebuild it asks for) while a launch that meets an older image is refused with that release named —
+  the same one line M9's ceiling needs and for the same reason — and `SECURITY.md`.
 - **Interface:** a **second custom role of the installation, created with the front door's own
   opt-in** — where `fugaroJobRunner` carries
   `run.jobs.run` **and** `run.jobs.runWithOverrides` (`deploy/terraform/gcp/modules/installation/iam.tf:30`,
@@ -1225,7 +1236,13 @@ planner who takes only the first slice takes no part of this task.
   creates (`coordinator.tf:320`) cannot be named by a resource that module does not have, so
   `deploy/terraform/gcp/modules/project/iam.tf:7`'s launcher grant is the shape and the fence grant
   is written beside it. **The root
-  threads it exactly as it threads `job_runner_role`** (the same file, `:77`), and **the comment at
+  passes the two strings in the same `module "project"` call as `job_runner_role`**
+  (`deploy/terraform/gcp/roots/installation/main.tf:77`), **and `outputs.tf` is not touched by this
+  task at all** — the module publishes the same five names (`:46-56`) and
+  `deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl`'s pin at `:81` holds the same
+  five, because the root knows the opt-in itself and a module
+  output naming a role the module did not create would be a claim about a resource that is not there —
+  and **the comment at
   `coordinator.tf:377` that promises the grant is "added here" is rewritten by this task** rather than
   followed. **The role and the member travel as two known spellings** —
   `projects/<project>/roles/<id>` and `serviceAccount:fugaro-mcp@<project>.iam.gserviceaccount.com`,
@@ -1303,11 +1320,12 @@ planner who takes only the first slice takes no part of this task.
   repository requires of a migration**: an installation at the previous version, updated with the front
   door's opt-in, ends with exactly the role and its grants and the store's resources beside them, an
   installation without the flag ends with neither, and the run's own task carries the ceiling and the
-  marker while the execution's spec carries no override at all, **and the run still finds its own task
+  marker while **the fence account's** launch carries no override at all, **and the run still finds its own task
   — resolved from the execution the platform injects, which is the half that makes the first
-  claim true rather than empty**; `TestTheLaunchCarriesNoOverride` (`internal/backend/gcp/run_test.go`
-  and the fake's twin: the request has no `ContainerOverrides`, and a project-job execution carrying
-  the identity as an override is the one refused); and
+  claim true rather than empty**; `TestTheFrontDoorLaunchCarriesNoOverride` (`internal/backend/gcp/run_test.go`:
+  the fence account's request has no `ContainerOverrides` while `fugaro run`'s own still carries all
+  three, and the fake's twin: a project-job execution with neither the identity override nor a launch
+  binding is refused, and one the launcher started with the binding is resolved); and
   `TestAnExecutionWithNoBindingIsARefusalAndNotASilentRun` (a binding that never lands is a named
   bootstrap failure inside the bounded window, never a run that reads another run's task).
 - **A finding this task must close, and it is not optional for an IAM grant on a public service.** The
@@ -1347,7 +1365,7 @@ a planner who finds two tasks in the same row in one release serialises them.
 with M1, M2, M7 and M10, so a planner who takes the first slice alone takes none of them, and what
 leaves the first slice is M9's own work and the half of M10's that names a spawned or cancelled run.
 **M11's rows are in the first slice's files and in no first-slice task** — it shares
-`coordinator.tf`, `outputs.tf`, `cover.go` and `SECURITY.md` with M4 alone — so a planner who takes
+`coordinator.tf`, `cover.go` and `SECURITY.md` with M4 alone — so a planner who takes
 the first slice alone takes none of M11 either, and the one row M9 and M11 both stand in is
 `SECURITY.md`'s, where they are levels apart.
 
@@ -1360,7 +1378,6 @@ the first slice alone takes none of M11 either, and the one row M9 and M11 both 
 | `ee/coordinator/mcpauth/tools.go` | M7 (L3), M8 (L4), M9 (L5), M10 (L6) | the registry: each of the three tool tasks registers into it |
 | `ee/coordinator/service.go` | M4 (L0), M5 (L2), M7 (L3) | M4 creates the service's entry point; M5 and M7 mount handlers on it |
 | `deploy/terraform/gcp/modules/installation/coordinator.tf` | M4 (L0), M11 (L1) | M4 creates the service and the account; M11 rewrites the two comments (`:301-320`, `:377`) that describe the account's reach and the absent grant — **the grant itself is not written here**, because the job it goes on is not a resource of this module |
-| `deploy/terraform/gcp/modules/installation/outputs.tf` | M4 (L0), M11 (L1) | the service's URL and the store's bucket, then the fence role's id and the account id the root threads down |
 | `internal/infra/tf/cover.go` | M4 (L0), M11 (L1) | M4 adds the store's two resource types to the cover; M11 adds the front door's principal kind, the new role in `FugaroRoles` and `RolePermissions`, and the one `grantRules` row that accepts it |
 | `internal/runner/spend.go` | M9 (L5) alone, but **shared with every other runner task in its release** | the ceiling read out of the run's own task and its merge; see §5 — which is why the release slot is chosen for the file's other writers, not only for this work |
 | `internal/cli/recipes_skew.go`, `internal/cli/run.go`, `docs/release.md` | M11 (L1), M9 (L5) | the two skew constants and the two gates: M11's names the release whose **images** resolve their run from the execution (its identity half), M9's the release whose **runner** reads the ceiling off the task; different levels because each writes a constant of its own and the second reads the first's file before writing, and one bullet each in the release notes' `### For operators` — an image behind either release is a launch that dies after it was paid for |
@@ -1369,7 +1386,10 @@ the first slice alone takes none of M11 either, and the one row M9 and M11 both 
 | `ee/coordinator/mcpauth/authorize.go` | M5 (L2), M5b (L3), M6 (L4) | M5 defines the authorize and approve steps; M5b takes the approval onto the paired device and spends the ID token there; M6 verifies the ID token the approve step carries |
 
 **Files deliberately not in this table**, because one writer is not a shared file and a row for one
-would read as a conflict: `deploy/terraform/gcp/modules/installation/mcpauth_store.tf` is M4's alone.
+would read as a conflict: `deploy/terraform/gcp/modules/installation/mcpauth_store.tf` is M4's alone,
+and so is `deploy/terraform/gcp/modules/installation/outputs.tf` — M11 adds no module output (the root
+builds the fence role's name and the account's member from its own variables), so M4 is its only
+writer.
 
 **The wiring M11 threads the fence through is M11's alone** — the role's definition
 (`modules/installation/iam.tf`), the closed `names.role_ids` object that names it

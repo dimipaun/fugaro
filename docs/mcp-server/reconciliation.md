@@ -754,11 +754,13 @@ and a binding that never arrives is a named bootstrap refusal; a launcher that d
 and the write leaves an execution that was **paid for** and belongs to no run, which the operator has
 to be able to see (`fugaro ls`/doctor naming an execution with no binding) and which the plan's M11 and
 M9 carry as a refusal rather than a silence. **This is a runner and backend change, and the two tasks
-name its files**: `internal/backend/gcp/run.go` (start with no override at all),
-`internal/cli/exec.go` (resolve the run from the binding), `internal/runstore/launch.go` (the binding
-and its key), `internal/gcpfake/run.go` (the fake's project-job rule inverts: it refuses an execution
-that carries the identity as an override), and the runner's bootstrap that reads the store, with their
-tests. **The goal the owner ruled is untouched** — the front door's account still never holds
+name its files**: `internal/backend/gcp/run.go` (a **second launch shape** that sends no override at
+all — the fence account's — beside the CLI's own, which keeps every override it sends today and is
+unchanged), `internal/cli/exec.go` (resolve the run from the binding), `internal/runstore/launch.go`
+(the binding and its key), `internal/gcpfake/run.go` (the fake's project-job rule **widens**: a shared
+project job's execution must carry the identity **or** have a launch binding, so the CLI's launches
+still pass and only an execution with neither is refused), and the runner's bootstrap that reads the
+store, with their tests. **The goal the owner ruled is untouched** — the front door's account still never holds
 `run.jobs.runWithOverrides` — **and what is reopened is the ruling's premise**, which is why **D937**
 asks the owner to confirm the mechanism that replaces the override rather than the goal.
 
@@ -778,7 +780,7 @@ asks the owner to confirm the mechanism that replaces the override rather than t
   an answer** — **and one question of that ruling came back the same day: D937**, its premise about the
 run's identity and the content the fence does not cover (§4a's "The premise the ruling got wrong",
 §4b). Everything else is closed (§6 check 0, spec.md §8 and §11).
-- **M11's level, and the shared-files table.** M11 writes `coordinator.tf`, `outputs.tf` and
+- **M11's level, and the shared-files table.** M11 writes `coordinator.tf`, `cover.go` and
   `SECURITY.md` beside M4, so it takes **L1** — beside M2, whose files it does not touch — and M9 stops
   being a writer of the two Terraform files (§2, §4 of the plan). **No level holds two writers of one
   file**, which is the rule the table exists to check. M11 is **SEC-marked and not one of the five
