@@ -29,7 +29,7 @@ Each checkout starts with a line `== ` and its directory, then one line per step
 - `installed X.Y.Z` (`current` or `done`): the version Claude Code has for this checkout. After `done`, running sessions need a restart.
 - `installed X.Y.Z` (`stale`), the reason also naming this fugaro's own version: Claude Code has an older plugin than the binary.
 - `not installed on this machine` (`skipped`, with `--check`): `fugaro upgrade --local` installs it.
-- `newer than this fugaro`: Claude Code's marketplace follows the plugin repository's default branch, which can be ahead of the binary; the user upgrades the binary.
+- `newer than this fugaro`: the marketplace on this machine is pinned to a newer release than this binary (a newer `fugaro` pinned it, and the pin is never moved down), so the plugin comes from there; the user upgrades the binary.
 - `claude is not on PATH` (`skipped`): the user types the printed slash commands in Claude Code.
 - `never replaces it` (`failed`): Claude Code on this machine has a `fugaro` marketplace from another source; the user decides whether to remove it.
 - `cannot tell` (`skipped`): Claude Code's record could not be read; `fugaro upgrade --local` finds out.

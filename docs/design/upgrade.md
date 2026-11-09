@@ -27,7 +27,8 @@ Each PATH (the default is `.`) is a checkout, and each is processed on its own. 
 1. **pin**: what `fugaro update-skills` does. The plugin's marketplace and enablement are merged into `.claude/settings.json`, pinned to this binary's tag. The diff is shown, and the command never commits. A fork's marketplace moves only with `--allow-fork`, and a file that is not valid JSON is never rewritten. One rule is new: a pin **newer** than this binary is never moved down. Instead, that checkout stops and the output names `brew upgrade`. This matters because `update-skills` itself does lower such a pin today, even though its own fix text says it never does.
 2. **plugin**: the plugin is installed or updated in Claude Code through the `claude` CLI on `PATH`:
    - It reads `claude plugin marketplace list --json` and `claude plugin list --json`.
-   - It adds the marketplace if it is missing, otherwise it updates it.
+   - It adds the marketplace if it is missing; when it is there at another ref that is not newer, it declares it again at this release's tag (`dimipaun/fugaro#vX.Y.Z`, which is Claude Code's own syntax for a source, so what the marketplace serves is this binary's plugin and not whatever the repository's default branch carries — on a patch release cut from `release/X.Y` that is the version `main` was last bumped to, the 0.21.1 failure of 2026-11-09).
+   - It updates the marketplace when it is already at this release's tag or at a newer one. A ref a newer `fugaro` wrote is never lowered (U10), and the newer plugin that comes back from it is a note, not a failure.
    - It installs the plugin at user scope if nothing applies to this checkout. Otherwise it updates each install that applies (user scope, or project or local scope recorded for this checkout), at that install's own scope.
    - When everything is current, it makes no change call.
 
@@ -104,7 +105,7 @@ The paths whose gate was `checkDBProject` rather than the mark are **PRE-EXISTIN
 
 ## Safety
 
-- **The `claude` calls.** Every argv is one of seven fixed lists, or the marketplace add, whose one variable word is the marketplace repository: `dimipaun/fugaro`, or a fork that the checkout's pin names, passed only with `--allow-fork` and only after it matches a GitHub `owner/name` pattern that cannot start with `-`.
+- **The `claude` calls.** Every argv is one of seven fixed lists, or the marketplace add, whose one variable word is the marketplace source: `dimipaun/fugaro#vX.Y.Z`, or a fork that the checkout's pin names, passed only with `--allow-fork`. The repository is checked against a GitHub `owner/name` pattern that cannot start with `-`, and the ref against the strict release tag this binary's own version makes, so neither a branch name nor a word of the user's choosing reaches the command line.
 
   An allowlist (`claudeplugin.Allowed`) rejects anything else before anything is executed. There is no shell, and stdin is the null device, so a prompt reads end of file and refuses. The command never passes `-y`, `--accept-command` or `--dangerously-skip-permissions`. Each call has a timeout: 30 s for a list, 3 min for a change.
 - **Finding `claude`.** It is found with `exec.LookPath`, and a relative result (for example from a `.` entry in `PATH`) is refused. The resolved absolute path is printed before the first change.
@@ -116,7 +117,6 @@ The paths whose gate was `checkDBProject` rather than the mark are **PRE-EXISTIN
 ## Non-goals
 
 - Upgrading the binary.
-- Pinning Claude Code's own marketplace to the tag: `claude plugin marketplace add` takes no ref, so it follows `dimipaun/fugaro`'s default branch. The release PR bumps the plugin version there before the tag, so it equals the latest release.
 - `--json` (refresh has none either).
 - Teammates' cloud steps.
 - Changing `update-skills` or the `fugaro image refresh` hints that name a single workflow.
@@ -126,7 +126,7 @@ The paths whose gate was `checkDBProject` rather than the mark are **PRE-EXISTIN
 
 The plan lists U1 to U18. The ones that shape the behaviour:
 - install at user scope, and update every install at its own scope (U2);
-- the marketplace follows the default branch, and a plugin newer than the binary after the update is a note, not a failure (U3);
+- the marketplace is declared at this release's tag, so what it serves is this binary's plugin, and a plugin newer than the binary after the update is a note, not a failure (U3);
 - `--check` reads local files only (U6);
 - in an agent's session the command exits 0 (U7);
 - a terminal is refused up front without `--yes` (U8);
