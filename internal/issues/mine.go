@@ -317,18 +317,23 @@ func (s MineSharedIssue) display() Display {
 // even before it is uploaded, an issue with no number is local whatever it is
 // waiting for, and a flagged file is a regression against the release the
 // store matched it to.
+//
+// The number decides before the status does, so a file this machine marked
+// submitted without a number the store ever gave it still reads `local`: it is
+// only this machine's until it is uploaded (F2). A status alone never claims
+// an issue is filed.
 func (l MineLocal) display() Display {
 	if l.Regression && l.ResolvedIn != "" {
 		return DisplayRegression
 	}
-	switch l.Status {
-	case StatusDismissed:
+	if l.Status == StatusDismissed {
 		return DisplayDismissed
-	case StatusSubmitted:
-		return DisplaySubmitted
 	}
 	if l.Number == 0 {
 		return DisplayLocal
+	}
+	if l.Status == StatusSubmitted {
+		return DisplaySubmitted
 	}
 	return Display(l.Status)
 }

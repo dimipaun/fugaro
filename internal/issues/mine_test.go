@@ -167,6 +167,21 @@ func TestMineDisplayStatusDerivation(t *testing.T) {
 			}},
 		},
 		{
+			name: "a file marked submitted without a number the store gave it is local",
+			in: mineLocalOf(MineLocal{
+				LocalID: "local-run-20261109120000-4242",
+				Summary: "run refused to start",
+				Status:  StatusSubmitted,
+				HitAt:   mineDaysAgo(2),
+			}),
+			want: []mineWant{{
+				LocalID: "local-run-20261109120000-4242",
+				Summary: "run refused to start",
+				Display: DisplayLocal,
+				AsOf:    mineNow,
+			}},
+		},
+		{
 			name: "the record's pending status is the row's",
 			in: mineSharedOf(MineSharedIssue{
 				Number:  11,
