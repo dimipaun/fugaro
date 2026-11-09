@@ -963,7 +963,7 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   builder that reads no cloud, and `internal/infra/spec.go`'s whole input is the local config, the
   checkout's `fugaro.yaml` and the published policy. So the readiness half is **recorded** by the
   command that does read the cloud — `fugaro update` — as a per-repository record in the local config,
-  following `localcfg.Repo.Vertex` (`internal/localcfg/localcfg.go:1030-1033`, the fact `update` sets
+  following `localcfg.Repo.Vertex` (`internal/localcfg/localcfg.go:1056-1059`, the fact `update` sets
   from `infra`'s spec at `internal/cli/init.go:4488`). **The record is written where the root is
   applied, and only there** (the header's second *amended after review* row): `fugaro update --repo PATH`
   — and the converge's repository stage, which is the same engine — reads the bundle once and refreshes

@@ -101,30 +101,30 @@ Sources: `internal/config/layer.go:29`, `:50-180`. A per-repository copy is writ
 
 ### 1.3 The local project config: `~/.config/fugaro/projects/<name>.yaml`
 
-Sources: `internal/localcfg/localcfg.go:40-279`. The installation-wide subset is published as the shared config (§1.4). Other keys reach the cloud through Terraform (`update`), through the job environment (`update --repo`), or through the policy node (`project policy publish`).
+Sources: `internal/localcfg/localcfg.go:41-305`. The installation-wide subset is published as the shared config (§1.4). Other keys reach the cloud through Terraform (`update`), through the job environment (`update --repo`), or through the policy node (`project policy publish`).
 
 | Setting group | Cite | Show / json | Set | Reaches cloud | Who | agent (set) | Gap |
 |---|---|---|---|---|---|---|---|
-| `name`, `gcp_project`, `region`, `runs_bucket`, `registry*`, `scheduler_region`, `image_source`, `base_images`, `log_view`, `credentials_service.url`, `budget.{rtdb_url,firebase_project,firebase_api_key,token_signer}`, `setup_pending` | localcfg.go:41-101, :214, :434-442 | `config list --json` (partly); doctor | written by `setup`/`update` from Terraform outputs or flags (`--region`, `--scheduler-region`, `--runs-bucket`, `--state-bucket`, `--image-source`, `--base-image`) | Terraform via `update` | owner/operator | update applies nothing in an agent session (update `--help`) | L |
-| `terraform.{launchers,operators}` | localcfg.go:594-595 | `user ls --json` | **`user add|rm --role`** (user.go:186), `update --launcher/--operator` | IAM via `update` | owner | **refused** (user.go:320) | closed |
-| `terraform.{budget_admins,alert_email,registry_cleanup,no_log_isolation,budget_backend,coordinator,state_bucket}` | localcfg.go:592-614 | none dedicated (doctor partly) | `update --budget-admin/--alert-email/--registry-cleanup/--no-log-isolation/--firebase-project/--coordinator/--state-bucket` (init.go flags; e.g. init.go:372). **Turning the coordinator off is a hand edit** (init.go:2445-2446) | Terraform via `update` | owner | yes | M |
-| `budget.{mode,per_run_usd,max_run_tokens,allowed_models,unreachable_grace}` | localcfg.go:422-446 | none local (`project policy show` prints the published copy) | `mode`: `update --budget-mode` (init.go:372). **The rest are hand edits** | **two paths**: the job environment through `update --repo` (validate.go:65-77) and the node through `project policy publish` (project_cmd.go:795) | owner | none (hand) | **H** |
-| `model_prices` | localcfg.go:107, :453-470 | `budget prices --json` | hand; **`models add --price-*` designed** | node via `policy publish` (project_cmd.go:799) | owner | – | H (designed) |
-| `providers.<name>.{kind,base_url,auth,secret,route_fee_pct,require_zdr,price_policy,models,allow_data_to}` | providers.go:41-74; localcfg.go:110 | `budget prices`, doctor `routing-resolution` | hand; **`models add|rm` designed** (extends existing routes only; adding a route stays a hand edit, models reconciliation F12) | the job environment `FUGARO_MODEL_PROVIDERS` per repository through `update --repo` (upgrade_cloud.go:431); the node gets a copy | owner | – | **H** |
-| `routing.claude.{via,models}` | localcfg.go:111-132; routing.go:58-79 | `project policy show`, doctor | hand | node only, via `policy publish` (localcfg.go:118-121) | owner | – | **H** |
-| `claude_accounts.<name>.allow_data_to` | localcfg.go:136; claude_accounts.go:63-66 | `accounts ls --json` | hand (tokens through `secrets set`/`creds set`) | the node's `accounts` (derived, project_cmd.go:731-743) plus jobs per account via `update --repo` | owner | – | **H** |
-| `project_secrets.<reserved>.{allow_data_to,proxy}` | localcfg.go:144; project_secrets.go:23-37 | `secrets ls --json` (allow-lists) | hand. **The `secrets set --help` text tells the operator to copy this entry to every operator machine by hand** | the node's `bitbucket_token` (derived, project_cmd.go:762) plus update | owner | – | **H** |
-| `bitbucket_api_roots` | localcfg.go:145-161 | `project policy show` | hand | node via `policy publish`; also patched by update's migration (init_policy_migrate.go:34-36) | owner | – | M |
-| `profiles.<name>` (job profiles: provider, cpu, memory, timeout_class, secrets, allow_repos, claude_accounts) | localcfg.go:162-177; config.go:866-893 | `project policy show` | hand | node via `policy publish` plus job deploy via `update` | owner | – | **H** |
-| `base_branch` (project) and `repos.<r>.base_branch` | localcfg.go:243-254, :878 | `project policy show` (project value only) | hand | project value: node via `policy publish`; the per-repository value is local only | owner | – | M |
-| `review_floor.<mode>: [levels]` | localcfg.go:255-278 | `project policy show` | hand; an absent key keeps the node's floor, so removing a floor needs a written `{}` | node via `policy publish` | owner | – | **H** (a floor, and its semantics are subtle) |
-| `repos.<r>.{provider,workflows,github_app_id,vertex}` | localcfg.go:871-886 | `config list --json` | `update --repo`, `--github-app-id` | Terraform per repository | operator | yes | L |
-| `max_parallel` (default 20) | localcfg.go:241, :1160-1161 | none | hand | local launch check (`run.go:856`) | each machine | – | M |
-| `user`, `commit_name`, `commit_email` | localcfg.go:221-240 | none | hand | the task (git.author: launcher) | personal | – | M |
-| `update_check` | localcfg.go:215-220 | none | hand (or `FUGARO_NO_UPDATE_CHECK`) | local | personal | – | L |
-| `watch.burn_alert_usd_per_hour` | localcfg.go:395-399 | none | hand | local (`watch.go:271`) | personal | – | L |
-| `mailbox.keychain_item` | localcfg.go:287-311 | `pair ls --json` | `pair` / `pair revoke` | published in shared | operator | – | closed |
-| `compute_prices`, `build.machine_type`, `backend`, `batch.*`, `endpoints.*` | localcfg.go:80-98, :656-867 | `backends ls --json` | hand, or `setup --provision-batch` | Terraform / launch | owner | – | L (rare; `endpoints` is for fakes) |
+| `name`, `gcp_project`, `region`, `runs_bucket`, `registry*`, `scheduler_region`, `image_source`, `base_images`, `log_view`, `credentials_service.url`, `budget.{rtdb_url,firebase_project,firebase_api_key,token_signer}`, `setup_pending` | localcfg.go:42-102, :215, :460-468 | `config list --json` (partly); doctor | written by `setup`/`update` from Terraform outputs or flags (`--region`, `--scheduler-region`, `--runs-bucket`, `--state-bucket`, `--image-source`, `--base-image`) | Terraform via `update` | owner/operator | update applies nothing in an agent session (update `--help`) | L |
+| `terraform.{launchers,operators}` | localcfg.go:620-621 | `user ls --json` | **`user add|rm --role`** (user.go:186), `update --launcher/--operator` | IAM via `update` | owner | **refused** (user.go:320) | closed |
+| `terraform.{budget_admins,alert_email,registry_cleanup,no_log_isolation,budget_backend,coordinator,state_bucket}` | localcfg.go:618-640 | none dedicated (doctor partly) | `update --budget-admin/--alert-email/--registry-cleanup/--no-log-isolation/--firebase-project/--coordinator/--state-bucket` (init.go flags; e.g. init.go:372). **Turning the coordinator off is a hand edit** (init.go:2445-2446) | Terraform via `update` | owner | yes | M |
+| `budget.{mode,per_run_usd,max_run_tokens,allowed_models,unreachable_grace}` | localcfg.go:448-472 | none local (`project policy show` prints the published copy) | `mode`: `update --budget-mode` (init.go:372). **The rest are hand edits** | **two paths**: the job environment through `update --repo` (validate.go:65-77) and the node through `project policy publish` (project_cmd.go:795) | owner | none (hand) | **H** |
+| `model_prices` | localcfg.go:108, :479-496 | `budget prices --json` | hand; **`models add --price-*` designed** | node via `policy publish` (project_cmd.go:799) | owner | – | H (designed) |
+| `providers.<name>.{kind,base_url,auth,secret,route_fee_pct,require_zdr,price_policy,models,allow_data_to}` | providers.go:41-74; localcfg.go:111 | `budget prices`, doctor `routing-resolution` | hand; **`models add|rm` designed** (extends existing routes only; adding a route stays a hand edit, models reconciliation F12) | the job environment `FUGARO_MODEL_PROVIDERS` per repository through `update --repo` (upgrade_cloud.go:431); the node gets a copy | owner | – | **H** |
+| `routing.claude.{via,models}` | localcfg.go:112-133; routing.go:58-79 | `project policy show`, doctor | hand | node only, via `policy publish` (localcfg.go:119-122) | owner | – | **H** |
+| `claude_accounts.<name>.allow_data_to` | localcfg.go:137; claude_accounts.go:63-66 | `accounts ls --json` | hand (tokens through `secrets set`/`creds set`) | the node's `accounts` (derived, project_cmd.go:731-743) plus jobs per account via `update --repo` | owner | – | **H** |
+| `project_secrets.<reserved>.{allow_data_to,proxy}` | localcfg.go:145; project_secrets.go:23-37 | `secrets ls --json` (allow-lists) | hand. **The `secrets set --help` text tells the operator to copy this entry to every operator machine by hand** | the node's `bitbucket_token` (derived, project_cmd.go:762) plus update | owner | – | **H** |
+| `bitbucket_api_roots` | localcfg.go:146-162 | `project policy show` | hand | node via `policy publish`; also patched by update's migration (init_policy_migrate.go:34-36) | owner | – | M |
+| `profiles.<name>` (job profiles: provider, cpu, memory, timeout_class, secrets, allow_repos, claude_accounts) | localcfg.go:163-178; config.go:866-893 | `project policy show` | hand | node via `policy publish` plus job deploy via `update` | owner | – | **H** |
+| `base_branch` (project) and `repos.<r>.base_branch` | localcfg.go:244-255, :904 | `project policy show` (project value only) | hand | project value: node via `policy publish`; the per-repository value is local only | owner | – | M |
+| `review_floor.<mode>: [levels]` | localcfg.go:256-304 | `project policy show` | hand; an absent key keeps the node's floor, so removing a floor needs a written `{}` | node via `policy publish` | owner | – | **H** (a floor, and its semantics are subtle) |
+| `repos.<r>.{provider,workflows,github_app_id,vertex}` | localcfg.go:897-912 | `config list --json` | `update --repo`, `--github-app-id` | Terraform per repository | operator | yes | L |
+| `max_parallel` (default 20) | localcfg.go:242, :1186-1187 | none | hand | local launch check (`run.go:856`) | each machine | – | M |
+| `user`, `commit_name`, `commit_email` | localcfg.go:222-241 | none | hand | the task (git.author: launcher) | personal | – | M |
+| `update_check` | localcfg.go:216-221 | none | hand (or `FUGARO_NO_UPDATE_CHECK`) | local | personal | – | L |
+| `watch.burn_alert_usd_per_hour` | localcfg.go:421-425 | none | hand | local (`watch.go:271`) | personal | – | L |
+| `mailbox.keychain_item` | localcfg.go:313-337 | `pair ls --json` | `pair` / `pair revoke` | published in shared | operator | – | closed |
+| `compute_prices`, `build.machine_type`, `backend`, `batch.*`, `endpoints.*` | localcfg.go:81-99, :682-893 | `backends ls --json` | hand, or `setup --provision-batch` | Terraform / launch | owner | – | L (rare; `endpoints` is for fakes) |
 
 ### 1.4 The shared config (runs bucket, `infra.SharedConfigObject`)
 
@@ -139,9 +139,9 @@ Sources: `internal/projectpolicy/paths.go:19-22`; members at `policy.go:130-253`
 
 | Member | Source today | Show / json | Set | agent | Gap |
 |---|---|---|---|---|---|
-| `budget`, `base_branch`, `providers`, `model_prices`, `profiles`, `accounts` (derived), `bitbucket_token` (derived), `bitbucket_api_roots`, `review_floor`, `routing` | local config, via `buildProjectPolicy` (project_cmd.go:670-834) | `project policy show --json`, `project show --json` (project_cmd.go:2251, :2264) | `project policy publish` (project_cmd.go:95) | **not refused** (no `agentMarker` in project_cmd.go) | **H**: not published by `update` (models reconciliation F8) |
+| `budget`, `base_branch`, `providers`, `model_prices`, `profiles`, `accounts` (derived), `bitbucket_token` (derived), `bitbucket_api_roots`, `review_floor`, `routing` | local config, via `buildProjectPolicy` (project_cmd.go:670-834) | `project policy show --json`, `project show --json` (project_cmd.go:2273, :2286) | `project policy publish` (project_cmd.go:95) | **not refused** (no `agentMarker` in project_cmd.go) | **H**: not published by `update` (models reconciliation F8) |
 | `allow_repos` | the node itself | `project repos ls` (**no `--json`**), `project show --json` | `project repos add|rm` (project_enroll.go:92, :109), `project sync` (:757); seeded by `policy publish --seed-repos` | not refused (only `--github-app-key` is, project_enroll.go:778) | closed (json missing) |
-| `credentials.{fallback,wait_threshold,backoff.{initial,cap},stop_after_exhaustion_per_window,concurrency_per_token}` | **the node only**: "the node is the only place the block exists" (project_cmd.go:819-832). Defaults at policy.go:416-419 | `project policy show` (project_cmd.go:1693) | **none: Firebase console hand edit** | – | **H, highest risk** |
+| `credentials.{fallback,wait_threshold,backoff.{initial,cap},stop_after_exhaustion_per_window,concurrency_per_token}` | **the node only**: "the node is the only place the block exists" (project_cmd.go:819-832). Defaults at policy.go:416-419 | `project policy show` (project_cmd.go:1715) | **none: Firebase console hand edit** | – | **H, highest risk** |
 | `clone_urls.<canonical>` | **the node only**: "no command of this release writes one" (project_cmd.go:662-669, :815-818) | `project policy show` | **none: Firebase console hand edit** | – | M (rare, but a typo silently clones from the wrong host until the node is read) |
 | `version` | `update` migrates in place (init_policy_migrate.go) | doctor | `update` | refused in an agent session (init_policy_migrate.go:459) | closed |
 
@@ -199,7 +199,7 @@ No command shows these. A `settings` read should list them as a layer (§4B).
 | Caps, kill switches, marks | `budget set|kill|resume`, `accounts clear` (immediate) | n/a (runtime controls, see SD7) |
 | Project recipes | `recipes publish FILE` | no |
 
-A related message bug: `internal/cli/run.go:2032` tells the user to "add the allow-list to the **project layer** and publish it (fugaro project policy publish)". `budget.allowed_models` lives in the **local project config** (localcfg.go:430); the project layer has no such key (layer.go:98-161). The sentence names the wrong file.
+A related message bug: `internal/cli/run.go:2032` tells the user to "add the allow-list to the **project layer** and publish it (fugaro project policy publish)". `budget.allowed_models` lives in the **local project config** (localcfg.go:456); the project layer has no such key (layer.go:98-161). The sentence names the wrong file.
 
 ---
 
@@ -213,7 +213,7 @@ A related message bug: `internal/cli/run.go:2032` tells the user to "add the all
 | G4 | `providers` changes need `update --repo` per repository (D787 not built) | medium | silent partial rollout: some repositories route with the old table | 4 |
 | G5 | `budget.*` local ceiling (per_run_usd, allowed_models, max_run_tokens): hand only, two propagation paths | medium | a value set but read nowhere until both paths run | 5 |
 | G6 | `claude_accounts`, `project_secrets`, job `profiles`: hand only; `project_secrets` must be copied to every operator machine by hand (`secrets set --help`) | medium | a machine without the entry asks for a per-repository token; an allow-list typo widens or narrows a credential | 6 |
-| G7 | `review_floor`: hand only; an absent key and `{}` mean different things at publish (localcfg.go:271-277) | low | lowering review by accident is the risk the floor exists to prevent | 7 |
+| G7 | `review_floor`: hand only; an absent key and `{}` mean different things at publish (localcfg.go:297-303) | low | lowering review by accident is the risk the floor exists to prevent | 7 |
 | G8 | `routing`: hand only; the publish refuses silence (project_cmd.go:708-730) | low | a misrouted Claude call, which is a data-egress issue | 8 |
 | G9 | Repository `fugaro.yaml` keys (agent.*, git.*, followup.*): hand plus PR | high | low (PR review, `validate`, schema) | 9 |
 | G10 | Personal and local keys (max_parallel, commit_name/email, user, watch, update_check): hand | low | low | 10 |
@@ -280,7 +280,7 @@ One row per (key, scope), where scope is `project` or `repo:<canonical>`. The te
   - **Ceiling keys** (`budget.{mode,per_run_usd,allowed_models,max_run_tokens}`, `governance.*`): `default` → `local` (the job environment as of the last `update --repo`; validate.go:65-77) → `policy` (the node replaces it per key; `runner/policy.go:258`) → `project` (layer governance may loosen Fugaro's defaults; validate.go:79-100) → `repo` (default branch) → `branch` (the run's branch).
     - **Tighten only.** The smaller cap, the stricter mode and the intersection of lists win (merge.go:31-39).
     - A looser lower value is shown as `ignored` under `--why`, from `Effective.Ignored`.
-  - **`review_floor`:** `policy` ∪ lower layers (a union; a lower layer only adds; localcfg.go:255-266).
+  - **`review_floor`:** `policy` ∪ lower layers (a union; a lower layer only adds; localcfg.go:256-267).
   - **`rigor.default`:** `repo` > `project` > `default` (`pro`, `internal/rigor/mode.go:46`). `rigor.areas` is a union of both layers (scope.go:124-130).
   - **Runtime caps** (`caps.*`, `kill.*`): `caps.defaults` < `caps.repo` for repository caps (model.go:246-255). They are independent of, and enforced beside, the ceiling.
   - **Local and installation keys:** `local` only. For keys in the shared projection, `shared` stands in when this machine's file lacks them (`MergeShared`, shared.go).
@@ -346,7 +346,7 @@ Today the defaults are scattered:
   - `budget.DefaultGrace` 3m (budget/grace.go:10)
   - `projectpolicy.Default{WaitThreshold,BackoffInitial,BackoffCap,ConcurrencyPerToken}` (policy.go:416-419)
   - governance `WithDefaults` (policy/policy.go:249)
-- **Local config defaults** sit in the loader as literals: `max_parallel` 20, `build.machine_type` E2_HIGHCPU_8 (localcfg.go:1157-1164).
+- **Local config defaults** sit in the loader as literals: `max_parallel` 20, `build.machine_type` E2_HIGHCPU_8 (localcfg.go:1183-1190).
 - **Schemas:** there are **no** JSON-Schema `default` keywords. The only `"default"` strings in `schemas/*.json` are the property name `rigor.default` (fugaro.schema.json:203, project-layer.schema.json:60) and a `not const "default"` (fugaro.schema.json:89). Nothing tests schema defaults against the code, because there are none to test.
 - **`internal/config/example.yaml`** restates several defaults in comments (e.g. lines 21, 25, 74-75). I found no test that compares them with `applyDefaults`; `TestExampleForFillsProject`, config_test.go:495, checks only the project line.
 
@@ -361,7 +361,7 @@ Today the defaults are scattered:
 **Shared mechanics** (the models spec §4.5 and §9, and #1463):
 - One node-tree editor package for the three documents (local config, local layer file, repository `fugaro.yaml`): locate in the node tree, splice bytes.
 - Strict re-parse and a decoded-config comparison.
-- Reuse `backupFile`, `writeFileAtomic` and `lineDiff` (init.go:2583, :2619, :2646). Not `localcfg.Config.Marshal` (localcfg.go:1610), which drops comments.
+- Reuse `backupFile`, `writeFileAtomic` and `lineDiff` (init.go:2583, :2619, :2646). Not `localcfg.Config.Marshal` (localcfg.go:1636), which drops comments.
 - Every local or layer write ends with `next: fugaro update`.
 - In an agent session, a local or layer write prints the diff and the command and writes nothing, `--yes` included (D789). A write to the repository `fugaro.yaml` is allowed.
 - Loosening a ceiling or floor asks for the typed project name (the `budget set` precedent).
@@ -425,7 +425,7 @@ No D-number is taken. The numbers are assigned when a design folder is written.
 
 ## 7. Smaller findings noticed along the way
 
-- `internal/cli/run.go:2032`: the message names the project layer as the home of `budget.allowed_models`; it is the local project config (localcfg.go:430).
+- `internal/cli/run.go:2032`: the message names the project layer as the home of `budget.allowed_models`; it is the local project config (localcfg.go:456).
 - `fugaro config layer` requires a git checkout (config_show.go:205-208), so an owner outside a repository cannot read the layer.
 - `fugaro project repos ls` has no `--json`; every other read in this area has one.
 - `applyDefaults` hard-codes `"main"` (defaults.go:201) beside `config.DefaultBaseBranch` (basebranch.go:6). These are two copies of one default.

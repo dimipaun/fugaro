@@ -29,14 +29,14 @@ Five things already name people, and none of them is a role model.
 
 | List | Where it lives | Who is on it |
 | --- | --- | --- |
-| `terraform.launchers` | `internal/localcfg/localcfg.go:510`, `fugaro setup --launcher` (`internal/cli/init.go:362`) | IAM members who start runs |
-| `terraform.operators` | `internal/localcfg/localcfg.go:511`, `fugaro setup --operator` (`internal/cli/init.go:363`) | IAM members who onboard repositories and apply Terraform |
+| `terraform.launchers` | `internal/localcfg/localcfg.go:536`, `fugaro setup --launcher` (`internal/cli/init.go:362`) | IAM members who start runs |
+| `terraform.operators` | `internal/localcfg/localcfg.go:537`, `fugaro setup --operator` (`internal/cli/init.go:363`) | IAM members who onboard repositories and apply Terraform |
 | The project's owners and editors (`admins`) | read from the project's IAM policy into `deploy/terraform/gcp/modules/firebase/variables.tf:92` | whoever Google Cloud already trusts with the whole project |
-| `terraform.budget_admins` | `internal/localcfg/localcfg.go:515`, `fugaro setup --budget-admin` (`internal/cli/init.go:372`) | further people who may change caps and kill switches; refuses `domain:` members (`internal/localcfg/localcfg_test.go:981`) |
+| `terraform.budget_admins` | `internal/localcfg/localcfg.go:541`, `fugaro setup --budget-admin` (`internal/cli/init.go:372`) | further people who may change caps and kill switches; refuses `domain:` members (`internal/localcfg/localcfg_test.go:981`) |
 | The device allowlist `config/admin/devices/<uid>` | `internal/budget/rules/rules.go:458` (`PathDevices`), written over IAM by `fugaro pair` and `fugaro pair revoke` | paired phones; each entry carries a `role` child (`internal/mobileauth/mobileauth.go:117`, `NodeFieldRole`) |
 
 `localcfg`'s member grammar accepts `user:`, `group:`, `domain:` and `serviceAccount:`
-(`internal/localcfg/localcfg.go:830`). A `domain:` member therefore grants a whole domain whatever
+(`internal/localcfg/localcfg.go:856`). A `domain:` member therefore grants a whole domain whatever
 the list grants — which is why `budget_admins` refuses it (F42,
 `docs/forge-authorship-images/reconciliation.md:328`).
 

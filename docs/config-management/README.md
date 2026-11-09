@@ -36,7 +36,7 @@ that decides where a repository's code may go or what a run may cost:
   all**: `fugaro config init` writes a minimal file, and the setup skill writes the rest with the user
   in the user's own agent session (`plugin/skills/setup/SKILL.md:13`);
 - the **project layer file** (`<config home>/fugaro/projects/<project>.layer.yaml`,
-  `internal/localcfg/localcfg.go:1120`) — its `profiles.*` (36), `defaults.*` and
+  `internal/localcfg/localcfg.go:1146`) — its `profiles.*` (36), `defaults.*` and
   `ab.*` entries are hand-edited and then published by a **second** command, `fugaro config publish`,
   which the HARD RULE in `CLAUDE.md` forbids;
 - the **local project config** — `fugaro rigor set` and `fugaro rigor floor`, which the registry names
@@ -44,7 +44,7 @@ that decides where a repository's code may go or what a run may cost:
   **do not exist**; `secrets` has no `rm` and no policy flags; `accounts` has no `rm`.
 
 `fugaro settings set` already writes scalars and string lists
-(`internal/cli/settings_set.go:88`): the allowlist carries **172 of the registry's 392 rows** (95 by name
+(`internal/cli/settings_set.go:95`): the allowlist carries **172 of the registry's 392 rows** (95 by name
 and 77 through its prefixes), and the remaining **220 rows have no generic writer**
 ([reconciliation.md](reconciliation.md) §1, F1). The root cause is one sentence: **the
 generic writer handles scalars and string lists only**, and every gap above is a map, an object list, or

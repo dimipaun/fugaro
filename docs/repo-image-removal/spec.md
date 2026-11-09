@@ -284,10 +284,10 @@ No compatibility, in the shape the tree already uses for a removed key.
   for `rebuild`), and its mutual-exclusion clauses (`:306`) shrink to the pairs that survive
   (`image_name` with `needs`); `schemas/project-layer.schema.json:265` loses the same keys (`:338` for
   `rebuild`). **`schemas/settings.schema.json` loses the removed keys' own member rows** — the
-  twenty-one at `schemas/settings.schema.json:832` through `:1181` (`:1145` is
+  twenty-one at `schemas/settings.schema.json:838` through `:1187` (`:1151` is
   `workflows.*.image.setup`), beside their rows in `internal/settings/registry.go:229`, without which
   `fugaro settings set` would still offer a key the config refuses — **and keeps `base_images` and the
-  flattened `image_catalog.*` rows untouched** (`schemas/settings.schema.json:547`), as
+  flattened `image_catalog.*` rows untouched** (`schemas/settings.schema.json:550`), as
   `image_name`/`needs` keep their members (D1196).
 - **The goldens and the fixtures**: the **50** files under `testdata/` that carry one of the three
   keys — `grep -rlE '^[[:space:]]*(image|dockerfile|rebuild):' testdata/` — are the removal's own

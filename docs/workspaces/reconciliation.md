@@ -26,7 +26,7 @@ rather than two open ones. **No decision number moved and none was added**: §5 
 ## 1. What the code has, in one paragraph
 
 Fugaro has **projects** and no grouping of them. A machine holds many — `internal/localcfg` loads
-each from `~/.config/fugaro/projects/<name>.yaml` (`localcfg.go:41`, `:1145`, `:1181`) and
+each from `~/.config/fugaro/projects/<name>.yaml` (`localcfg.go:42`, `:1171`, `:1207`) and
 `fugaro config list` lists them (`internal/cli/config_list.go:220`) for the console's picker. Each
 project is one GCP project with its own Firebase, its own Realtime Database, its own caps
 (`internal/budget/model.go:31-33`, `:51`), its own policy node
@@ -44,17 +44,17 @@ and the workspace asks for all three to span projects at once.
 ### 2a. The grouping (spec §0, first bullet)
 
 **F1 — A machine can hold many projects, and there is a read that lists them. — Exists.**
-`internal/localcfg/localcfg.go:41` (`type Config`), `:1086` (`ProjectsDir`), `:1095` (`ProjectPath`),
-`:1145` (`Projects`), `:1181` (`LoadProject`). `internal/cli/config_list.go:220` is `fugaro config
+`internal/localcfg/localcfg.go:42` (`type Config`), `:1112` (`ProjectsDir`), `:1121` (`ProjectPath`),
+`:1171` (`Projects`), `:1207` (`LoadProject`). `internal/cli/config_list.go:220` is `fugaro config
 list`, "List the Fugaro installations this machine has", whose document type `configListDoc`
 (`config_list.go:53`) is the console's installation picker read. Consequence: the *members* of a
 workspace are already enumerable locally, so the workspace adds a grouping over an existing set and
 not a new set.
 
-**F2 — Nothing groups projects. — Missing.** `localcfg.Config` (`localcfg.go:41`) has no `workspace`
+**F2 — Nothing groups projects. — Missing.** `localcfg.Config` (`localcfg.go:42`) has no `workspace`
 key, and no other key means "this project is in a group": the struct's fields are the project's own
-(`Name` `:46`, `Region` `:48`, `BackendName` `:104`, `SchedulerRegion` `:125`,
-`CommitName`/`CommitEmail` `:338-339`, `FirebaseProject` `:567`, and the rest). A scan of the tree returns no grouping either:
+(`Name` `:47`, `Region` `:49`, `BackendName` `:105`, `SchedulerRegion` `:126`,
+`CommitName`/`CommitEmail` `:364-365`, `FirebaseProject` `:593`, and the rest). A scan of the tree returns no grouping either:
 `grep -rn 'workspace' internal/ --include='*.go'` returns Bitbucket's workspace
 (`internal/projectpolicy/bitbucket.go:30`, `internal/config/providers.go`) and pnpm's (an image
 test), and nothing else. Consequence: §2 of the spec is entirely new surface, and its red step is
@@ -206,7 +206,7 @@ reads more than one project, and [spec.md](spec.md) §8 bounds what it may read 
 ledger and its headroom node and nothing else.
 
 **F21 — A workspace name should reuse the project-name grammar, not invent one. — Exists.**
-`internal/localcfg/localcfg.go:43`'s doc names the grammar: "the Fugaro project
+`internal/localcfg/localcfg.go:44`'s doc names the grammar: "the Fugaro project
 (config.ProjectNameRE), which the file" carries in `name:`. Consequence: a second grammar for
 workspace names would be a second thing two writers could disagree about; the plan's W1 says the
 record reuses this one.
@@ -305,7 +305,7 @@ it a false one while every sentence around it stays true. **One had moved**: the
 `internal/pricing/pricing.go:18` `Micros`, `:26` `FromUSD`; `internal/config/config.go:166`
 `PerRunUSD float64`; `internal/budget/model.go:5-8` (money is µ$) and `:31` `PathCapsGlobal`;
 `internal/budget/rules/rules.json.tmpl:60` (`NEW >= OLD`); `internal/policy/merge.go:44` `Merge`;
-`internal/localcfg/localcfg.go:41` `Config`; `internal/cli/config_list.go:53` `configListDoc`;
+`internal/localcfg/localcfg.go:42` `Config`; `internal/cli/config_list.go:53` `configListDoc`;
 `internal/cli/user.go:73`, `internal/cli/settings.go:61`, `internal/cli/accounts.go:24`,
 `internal/cli/root.go:191`; the managed-gate set
 (`internal/cli/managed_gate.go:181` and its four callers, `internal/managed/plan.go:217`,

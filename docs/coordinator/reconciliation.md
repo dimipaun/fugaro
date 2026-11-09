@@ -454,10 +454,10 @@ Today's model configuration is per **slot**: `agent.model` and
 routing switch `routing.claude: {via: direct|openrouter|auto, models: [...]}`
 (`internal/config/routing.go:42-61`, values at `:14-24`, validated by `CheckRouting` at
 `:98`). A published project policy can carry `providers`, `model_prices` and `routing`
-(`internal/projectpolicy/policy.go:128-134`, `Policy{... Providers, Prices, Routing}`).
+(`internal/projectpolicy/policy.go:129-135`, `Policy{... Providers, Prices, Routing}`).
 There is no "tier" concept, and no place a coordinator's two tiers would be written: the
 policy's `budget` block carries `Mode`, `PerRunUSD`, `AllowedModels`, `MaxRunTokens`
-(`internal/projectpolicy/policy.go:192`), which is a run's ceiling, not a service's slots.
+(`internal/projectpolicy/policy.go:193`), which is a run's ceiling, not a service's slots.
 *Consequence:* a two-tier config needs a new key — most naturally two named slots in the
 published policy, matching the `agent.models` shape rather than inventing a third. → **Q9**.
 
@@ -704,7 +704,7 @@ not lost:
 
 ### Q9 — How is a two-tier model configuration expressed, and what does the coordinator's provider consent say?
 **Changes spec §8.**
-- **(A) Recommended — two named slots in the published project policy, in the shape `agent.models` already uses, and an explicit `allow_data_to` naming every repository the coordinator may read.** The policy already carries `providers`, `model_prices` and `routing` (`internal/projectpolicy/policy.go:128-134`), so a slot pair is an addition rather than a new concept; and `allow_data_to` is the gate that has to be widened deliberately (finding **#24**).
+- **(A) Recommended — two named slots in the published project policy, in the shape `agent.models` already uses, and an explicit `allow_data_to` naming every repository the coordinator may read.** The policy already carries `providers`, `model_prices` and `routing` (`internal/projectpolicy/policy.go:129-135`), so a slot pair is an addition rather than a new concept; and `allow_data_to` is the gate that has to be widened deliberately (finding **#24**).
 - **(B) Two workflow profiles in the project layer, one per tier.** Reuses `profiles:` (`internal/projectpolicy/profiles.go:31`) but means the coordinator's model choice is expressed as a job profile, which it is not.
 - **(C) A per-installation setting outside the policy.** Cost: it is invisible to every run and to `fugaro doctor`, and the policy is where every other project-wide model decision lives.
 *Consequence:* under (A), `allow_data_to: ["*"]` for the coordinator's provider is an explicit, visible owner-level statement that every repository's text may go to that provider.
@@ -818,7 +818,7 @@ the README and for whatever plan follows.
 | **Front agent** | The mobile design's P5.4: the phone's conversational agent. | `docs/mobile/implementation-plan.md`, under **Task P5.4**. Distinct from both of the above. |
 | **Summarising agent** | The mobile design's agent beside the orchestrator, which condenses task events into spoken updates. | `docs/mobile/spec.md`, on *"**Summarising agent** sits beside the orchestrator"*. The nearest existing thing to a "coordinator" in the mobile design, and not the same. |
 | **Run** | One execution of a coding agent in a fresh Cloud Run container, ending in a pull request. | `internal/runstore/`, `internal/backend/`. The unit every budget cap is keyed to. |
-| **Launcher / operator / budget admin** | The three people lists. Launchers start runs; operators hold the run bucket and the preload account; budget admins may write the database. | `internal/infra/firebase.go:117-120`; `internal/localcfg/localcfg.go:360-365`. Q2's answer is that callers are per-person IAM members on the coordinator, as a launcher is granted today, so the access list has to be said explicitly. |
+| **Launcher / operator / budget admin** | The three people lists. Launchers start runs; operators hold the run bucket and the preload account; budget admins may write the database. | `internal/infra/firebase.go:117-120`; `internal/localcfg/localcfg.go:386-391`. Q2's answer is that callers are per-person IAM members on the coordinator, as a launcher is granted today, so the access list has to be said explicitly. |
 | **Project job** | A **shared** Cloud Run job one repository's workflow can run in another's name, created by the `project` Terraform module. | `deploy/terraform/gcp/modules/project/job.tf:10`; `SECURITY.md:93`. **Not** the coordinator, and **not** "the project's job". |
 
 ---

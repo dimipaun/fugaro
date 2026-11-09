@@ -334,7 +334,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 		return bad("gcp_project", "%q is not %s", c.GCPProject, a.GCPProject)
 	case c.RunsBucket != a.Bucket || c.RunsBucketName() != a.Bucket:
 		return bad("runs_bucket", "%q is not the bucket it was read from, %s", c.RunsBucket, a.Bucket)
-	case c.User != "" || c.CommitName != "" || c.CommitEmail != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.Routing != nil || c.ClaudeAccounts != nil || c.ProjectSecrets != nil || c.WorkflowSecrets != nil || c.BitbucketAPIRoots != nil || c.UpdateCheck != nil || c.Issues != nil || c.SecretRotationDays != 0 || c.SecretExpires != nil || c.ReviewFloor != nil || c.ImageCatalog != nil || c.ImageMap != nil || c.BakeRepos != nil || c.DefaultClaudeAccount != "" || c.ClaudeAccountStages != nil || c.ClaudeAccountAuto || c.Credentials != nil || c.Pools != nil || !reflect.ValueOf(c.Crafts).IsZero() || c.Workspace != "" || !reflect.ValueOf(c.WorkspacePin).IsZero() || c.WorkspaceMembers != nil || c.WorkspaceCap != nil:
+	case sharedNeverPublished(c):
 		return refuse("carries a section that is never published (%s)", strings.Join(sharedForbidden, ", "))
 	case c.RegistryHost != c.Region+"-docker.pkg.dev/"+a.GCPProject:
 		return bad("registry_host", "%q is not this project's registry, %s-docker.pkg.dev/%s", c.RegistryHost, c.Region, a.GCPProject)
@@ -510,6 +510,17 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 		}
 	}
 	return c, nil
+}
+
+// sharedNeverPublished reports whether a decoded config carries one of the
+// sections the shared file never holds. It is the decoded-values half of the
+// key-by-key refusal above: that one reads the file's own keys before Parse, so
+// a section that decodes to its zero value cannot hide, and this one says the
+// same about the config the commands would use — a second net for a value that
+// arrived some other way (a merge, a decoder that mapped a key onto a field of
+// its own), and the check a test can hold each field of without a file.
+func sharedNeverPublished(c *localcfg.Config) bool {
+	return c.User != "" || c.CommitName != "" || c.CommitEmail != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.Routing != nil || c.ClaudeAccounts != nil || c.ProjectSecrets != nil || c.WorkflowSecrets != nil || c.BitbucketAPIRoots != nil || c.UpdateCheck != nil || c.Issues != nil || c.SecretRotationDays != 0 || c.SecretExpires != nil || c.ReviewFloor != nil || c.ImageCatalog != nil || c.ImageMap != nil || c.BakeRepos != nil || c.DefaultClaudeAccount != "" || c.ClaudeAccountStages != nil || c.ClaudeAccountAuto || c.Credentials != nil || c.Pools != nil || !reflect.ValueOf(c.Crafts).IsZero() || c.Workspace != "" || !reflect.ValueOf(c.WorkspacePin).IsZero() || c.WorkspaceMembers != nil || c.WorkspaceCap != nil
 }
 
 // dropLegacyBaseImages removes a base_images entry of exactly a kind

@@ -576,7 +576,7 @@ here because a reviewer has to be able to disagree with them:
    `len(b.Runs) == 0` (`internal/watch/build.go:332`), and this app is not
    granted `agents/**`, so it has no runs to count; and `burnOf` prefers
    `cfg.BurnAlertPerHour` — the operator's local
-   `watch.burn_alert_usd_per_hour` (`internal/localcfg/localcfg.go:145`), which
+   `watch.burn_alert_usd_per_hour` (`internal/localcfg/localcfg.go:146`), which
    is not in the database — so the phone only ever computes the `daily/8`
    fallback. Both divergences are written down in `src/feed/recompute.js`. The
    two figures are over **two different totals**, and that

@@ -1788,7 +1788,7 @@ the service opt-in, and they stay correct the day it is not.
       **new** member no installation's block carries yet. Left there, the default above would admit the
       installation's account on **every** opted-in installation whose local config says otherwise: an owner
       who wrote `verifier_accounts: []` — the clear `VerifierAccountsEffective` honours
-      (`internal/localcfg/localcfg.go:1402`) and the publisher keeps — would have the route switched back
+      (`internal/localcfg/localcfg.go:1428`) and the publisher keeps — would have the route switched back
       on at the service, and the published node and the service would disagree in the one direction
       CSR15's reader sees: the reader refuses every fix round on an installation whose service admits the
       account. So the **carry writes that one member from the effective list** — the owner's list as it is,
@@ -1804,7 +1804,7 @@ the service opt-in, and they stay correct the day it is not.
       `credentialsServiceBlock` already sets (`internal/cli/init.go:2622`, called at `:2581`: the update
       writes the block itself — its presence is the fact `fugaro run` reads — rather than asking the owner
       to type a URL) and the rule `VerifierAccountsEffective` states
-      (`internal/localcfg/localcfg.go:1402`: a written list is the owner's, `[]` included). **The gate is
+      (`internal/localcfg/localcfg.go:1428`: a written list is the owner's, `[]` included). **The gate is
       the effective list, not the local field**, and the difference is not academic: a silent local field
       is not a project that names nothing. `fugaro update` runs on any operator's machine, and a
       teammate's config — or the owner's second laptop — predates the key, so a write gated on the local
@@ -1961,7 +1961,7 @@ verify call is admitted for nobody until this lands.
   - **Which identity.** The **one** account the installation's published `verifier_accounts` names — the
     list `env.policy.read` already returns once per run (`policyReadOnce`,
     `internal/cli/launch_budget.go:226`/`:239`, `projectpolicy.Policy.VerifierAccounts`,
-    `internal/projectpolicy/policy.go:323`), which is the same list the service's own environment is
+    `internal/projectpolicy/policy.go:324`), which is the same list the service's own environment is
     rendered from and therefore the only list whose caller the service admits. **A list of none refuses**
     ("this installation names no verifier, and a fix round is not launched on a verdict nobody verified")
     and **a list of two refuses** ("two identities, and the launcher's verify call is one caller"): a
@@ -2273,7 +2273,7 @@ these levels**: their own release books their files, and the only 0.20.0 file th
   verifier account**: it is a resource the same apply creates beside the credentials service, and the same
   `fugaro update` writes its address into the local config — so the account is **created and
   named by one command**, and the owner's list, written or empty, stays the owner's (the keep rule,
-  `internal/localcfg/localcfg.go:1402`). **The credentials service's own opt-in is not what gates that**:
+  `internal/localcfg/localcfg.go:1428`). **The credentials service's own opt-in is not what gates that**:
   CSR14's guard is `credentials_service_on = var.credentials_service != null`
   (`deploy/terraform/gcp/modules/installation/credentials.tf:25`), and while that expression is unchanged,
   **what it evaluates to is a premise another work stream is moving** — `docs/credentials-service/default-on.md`
@@ -2532,7 +2532,7 @@ the job environment's alone (`internal/runner/policy.go:151`, where `""` becomes
 node replaces the ceiling key by key, so an installation that publishes `budget.mode: observe` (or
 `enforce`) turns the gateway on for a review run even when the job it was deployed with carries no mode at
 all (`internal/infra/spec.go:1266` sets the deploy-time mode only when it is not `off`, and
-`internal/localcfg/localcfg.go:622` is where "no budget block" means `off`). The state that breaks is
+`internal/localcfg/localcfg.go:648` is where "no budget block" means `off`). The state that breaks is
 therefore **an installation that has configured no budget anywhere** — no deploy-time mode and no node
 mode — which is a legal and quietly common state: nothing in the credentials-service work or in this
 section requires an owner to have a budget, and the service's own opt-in was never conditioned on one.
