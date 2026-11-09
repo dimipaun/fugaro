@@ -98,6 +98,48 @@ func TestIssueRoundTrip(t *testing.T) {
 	}
 }
 
+// The record an update's pass leaves behind: the issue is fixed by a release,
+// and the release is in the header, so a file that was synced from the shared
+// store reads back as the fixed issue it is (the update spec's F27).
+func TestIssueRoundTripResolved(t *testing.T) {
+	want := issueSample()
+	want.Status, want.ResolvedIn = StatusResolved, "0.22.0"
+	data, err := Marshal(want)
+	if err != nil {
+		t.Fatalf("marshalling: %v", err)
+	}
+	for _, line := range []string{"status: resolved\n", "resolved_in: 0.22.0\n"} {
+		if !strings.Contains(string(data), line) {
+			t.Errorf("the record does not carry %q:\n%s", line, data)
+		}
+	}
+	got, err := Unmarshal(data)
+	if err != nil {
+		t.Fatalf("unmarshalling:\n%s\ngave: %v", data, err)
+	}
+	if got.Status != StatusResolved || got.ResolvedIn != "0.22.0" {
+		t.Errorf("the record came back as %q fixed in %q, want %q in 0.22.0", got.Status, got.ResolvedIn, StatusResolved)
+	}
+	// And the other record: an issue closed as not planned or a duplicate is
+	// set aside with the reason, which is what tells a reader why it closed
+	// without a fix (D1752).
+	closed := issueSample()
+	closed.Status, closed.ClosedAs = StatusDismissed, ClosedDuplicate
+	data, err = Marshal(closed)
+	if err != nil {
+		t.Fatalf("marshalling the closed record: %v", err)
+	}
+	if !strings.Contains(string(data), "closed_as: duplicate\n") {
+		t.Errorf("the record does not carry the reason it closed:\n%s", data)
+	}
+	if got, err = Unmarshal(data); err != nil {
+		t.Fatalf("unmarshalling the closed record:\n%s\ngave: %v", data, err)
+	}
+	if got.Status != StatusDismissed || got.ClosedAs != ClosedDuplicate {
+		t.Errorf("the closed record came back as %q with %q", got.Status, got.ClosedAs)
+	}
+}
+
 func TestIssueRejectsUnknownHeaderField(t *testing.T) {
 	data, err := Marshal(issueSample())
 	if err != nil {
@@ -111,7 +153,8 @@ func TestIssueRejectsUnknownHeaderField(t *testing.T) {
 	}{
 		{"a field this record does not define", head + "\nsurprise: 1", "field surprise"},
 		{"no class at all", strings.Replace(head, "class: fugaro\n", "", 1), "is not a class"},
-		{"a status outside the three", strings.Replace(head, "status: pending", "status: resolved", 1), "is not a status"},
+		{"a status outside the four", strings.Replace(head, "status: pending", "status: closed", 1), "is not a status"},
+		{"a way of closing this format does not know", strings.Replace(head, "closed_as: \"\"", "closed_as: completed", 1), "is not a way an issue closed"},
 		// YAML's `...` ends a document, so a second one after it would be
 		// dropped without a word — the opposite of decoding strictly.
 		{"a second document after the header", head + "\n...\nsurprise: 1", "more than one document"},
@@ -128,6 +171,40 @@ func TestIssueRejectsUnknownHeaderField(t *testing.T) {
 				t.Errorf("refused for another reason, want %q in: %v", c.want, err)
 			}
 		})
+	}
+}
+
+// The schema a reader outside this binary reads a record by carries the two
+// vocabularies the resolver writes: the `resolved` status and the reason an
+// issue closed without a fix. A value the codec writes has to be one that
+// reader accepts, and one it refuses is refused here too.
+func TestRecordSchemaAcceptsResolved(t *testing.T) {
+	sch, doc := recordSchema(t)
+
+	fixed := issueSample()
+	fixed.Status, fixed.ResolvedIn = StatusResolved, "0.22.0"
+	closed := issueSample()
+	closed.Status, closed.ClosedAs = StatusDismissed, ClosedNotPlanned
+	for _, i := range []Issue{fixed, closed} {
+		if err := sch.Validate(recordInstance(t, i)); err != nil {
+			t.Errorf("the schema refuses a record this package writes: %v", err)
+		}
+	}
+	statuses := []string{string(StatusPending), string(StatusSubmitted), string(StatusDismissed), string(StatusResolved)}
+	if got := stringsOf(t, doc, "properties", "status", "enum"); !reflect.DeepEqual(got, statuses) {
+		t.Errorf("the schema's statuses are %v, want the four the codec knows %v", got, statuses)
+	}
+	// The empty value is one of them: every record the codec writes carries
+	// the member, and an issue that did not close this way carries nothing in
+	// it.
+	reasons := []string{"", string(ClosedNotPlanned), string(ClosedDuplicate)}
+	if got := stringsOf(t, doc, "properties", "closed_as", "enum"); !reflect.DeepEqual(got, reasons) {
+		t.Errorf("the schema's reasons are %v, want %v", got, reasons)
+	}
+	inst := recordInstance(t, closed).(map[string]any)
+	inst["closed_as"] = "completed"
+	if err := sch.Validate(inst); err == nil {
+		t.Error("the schema accepted a reason the codec does not know")
 	}
 }
 

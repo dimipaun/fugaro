@@ -1053,8 +1053,10 @@ func TestRejectsForeignIssueURL(t *testing.T) {
 }
 
 // A filed issue is final: the store never moves it back, never sets it aside
-// again and never files it twice (F9).
-func TestSubmittedIsFinal(t *testing.T) {
+// again and never files it twice (F9) — except for the one transition the
+// resolver makes, `submitted` to `resolved` or `dismissed`, which is the two
+// calls of its own below (F5 amended).
+func TestSubmittedStaysFinalOtherwise(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
 	up, url := filedIssue(t, ctx, b, fingerprint("18"))
@@ -1076,6 +1078,262 @@ func TestSubmittedIsFinal(t *testing.T) {
 	}
 	if rec.Issue.Status != StatusSubmitted || rec.Issue.URL != url {
 		t.Errorf("the filed issue = %+v, want it unchanged", rec.Issue)
+	}
+
+	// The two that may move it, and only from `submitted`: everything else is
+	// where the issue stands, and a transition out of it would rewrite a
+	// record that a person, or another machine's pass, decided.
+	fixed, _ := filedIssue(t, ctx, b, fingerprint("19"))
+	if err := SetResolved(ctx, b, fixed.Number, "0.22.0", 0); err != nil {
+		t.Errorf("the resolver could not mark a filed issue resolved: %v", err)
+	}
+	closed, _ := filedIssue(t, ctx, b, fingerprint("1a"))
+	if err := SetClosed(ctx, b, closed.Number, ClosedNotPlanned, 0); err != nil {
+		t.Errorf("the resolver could not set aside a filed issue: %v", err)
+	}
+	// The transition a record is already in is a no-op, not an error: a
+	// second machine's pass, or this machine a day later, finds the issue
+	// where it was left and is content. The other transition, and every other
+	// status, is refused: nothing moves an issue that was decided.
+	if err := SetResolved(ctx, b, fixed.Number, "0.23.0", 0); err != nil {
+		t.Errorf("a second pass over a resolved issue failed: %v", err)
+	}
+	if err := SetClosed(ctx, b, closed.Number, ClosedDuplicate, 0); err != nil {
+		t.Errorf("a second pass over a dismissed issue failed: %v", err)
+	}
+	if err := SetClosed(ctx, b, fixed.Number, ClosedNotPlanned, 0); err == nil {
+		t.Error("the resolver set a resolved issue aside")
+	}
+	if err := SetResolved(ctx, b, closed.Number, "0.23.0", 0); err == nil {
+		t.Error("the resolver resolved a dismissed issue")
+	}
+}
+
+// resolved is a filed issue the resolver has marked fixed, and the URL it was
+// filed at: the state every later reader — the report, `issue list`, another
+// pass — reads (the update spec's F27).
+func resolved(t *testing.T, ctx context.Context, b *blobx.Bucket, fingerprint, release string) (Uploaded, string) {
+	t.Helper()
+	up, url := filedIssue(t, ctx, b, fingerprint)
+	if err := SetResolved(ctx, b, up.Number, release, 0); err != nil {
+		t.Fatalf("resolving issue %d: %v", up.Number, err)
+	}
+	return up, url
+}
+
+// The transition is the resolver's alone, and a write of it lands only on the
+// version it read: two machines resolving one issue write one transition, the
+// second one re-reads, finds the issue fixed and answers nothing rather than
+// writing the copy it read (F18).
+func TestSetResolvedIsIdempotentUnderRace(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	up, _ := filedIssue(t, ctx, b, fingerprint("1b"))
+
+	var other error
+	race(t, recordKey(up.Number), func() {
+		ch := make(chan struct{})
+		go func() {
+			defer close(ch)
+			other = SetResolved(ctx, b, up.Number, "0.23.0", 0)
+		}()
+		<-ch
+	})
+	if err := SetResolved(ctx, b, up.Number, "0.22.0", 0); err != nil {
+		t.Fatalf("this machine's transition: %v", err)
+	}
+	if other != nil {
+		t.Fatalf("the other machine's transition failed: %v", other)
+	}
+	rec, _, err := readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", up.Number, err)
+	}
+	// Both machines saw the issue fixed, so both are content; the store holds
+	// the one that wrote first, and the machine that lost its race did not
+	// write the release it had read over it.
+	if rec.Issue.Status != StatusResolved || rec.Issue.ResolvedIn != "0.23.0" {
+		t.Errorf("the issue is %q fixed in %q, want %q in 0.23.0 (the transition that landed first)",
+			rec.Issue.Status, rec.Issue.ResolvedIn, StatusResolved)
+	}
+	// A second pass over an issue that is already fixed is the ordinary case:
+	// another machine's update, or this machine a day later, finds it fixed
+	// and writes nothing.
+	if err := SetResolved(ctx, b, up.Number, "0.22.0", 0); err != nil {
+		t.Fatalf("a second pass over a resolved issue failed: %v", err)
+	}
+	rec, _, err = readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", up.Number, err)
+	}
+	if rec.Issue.ResolvedIn != "0.23.0" {
+		t.Errorf("a second pass rewrote resolved_in to %q", rec.Issue.ResolvedIn)
+	}
+}
+
+// Where the transition may start from, and what it refuses: a release that is
+// not a release is no verdict to record, and an issue that is not filed has no
+// fix to record (F4, F18).
+func TestSetResolvedOnlyFromSubmitted(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	pending := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("1c")))
+
+	for _, release := range []string{"", "dev", "0.22", "0.22.0-rc1", "main", "0.22.0.1"} {
+		if err := SetResolved(ctx, b, pending.Number, release, 0); err == nil {
+			t.Errorf("the resolver recorded %q as a release", release)
+		}
+	}
+	if err := SetResolved(ctx, b, pending.Number, "0.22.0", 0); err == nil {
+		t.Error("the resolver resolved an issue nobody filed")
+	}
+	if err := SetClosed(ctx, b, pending.Number, ClosedNotPlanned, 0); err == nil {
+		t.Error("the resolver dismissed an issue nobody filed")
+	}
+	if err := SetResolved(ctx, b, pending.Number+100, "0.22.0", 0); err == nil {
+		t.Error("the resolver resolved an issue the store does not hold")
+	}
+	rec, _, err := readShared(ctx, b, pending.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", pending.Number, err)
+	}
+	if rec.Issue.Status != StatusPending || rec.Issue.ResolvedIn != "" || rec.Issue.ClosedAs != "" {
+		t.Errorf("a refused transition left the record as %+v", rec.Issue)
+	}
+	// The version a caller read is the one the write lands on: a caller that
+	// hands in another one is told the record moved rather than writing what
+	// it read over it.
+	up, _ := filedIssue(t, ctx, b, fingerprint("1d"))
+	_, v, err := readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", up.Number, err)
+	}
+	if err := SetResolved(ctx, b, up.Number, "0.22.0", v.gen+1); err == nil {
+		t.Error("the resolver wrote a record at a generation it did not read")
+	}
+	if err := SetResolved(ctx, b, up.Number, "0.22.0", v.gen); err != nil {
+		t.Errorf("the resolver refused the generation it read: %v", err)
+	}
+}
+
+// An issue closed without a fix is set aside with the reason, so the team sees
+// why it closed and nothing else on the record moves (F9, D1752).
+func TestSetClosedRecordsReason(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	notPlanned, _ := filedIssue(t, ctx, b, fingerprint("1e"))
+	for _, reason := range []ClosedAs{"", "completed", "fixed", ClosedAs("dismissed")} {
+		if err := SetClosed(ctx, b, notPlanned.Number, reason, 0); err == nil {
+			t.Errorf("the resolver recorded %q as a reason an issue closed", reason)
+		}
+	}
+	if err := SetClosed(ctx, b, notPlanned.Number, ClosedNotPlanned, 0); err != nil {
+		t.Fatalf("setting the issue aside: %v", err)
+	}
+	duplicate, _ := filedIssue(t, ctx, b, fingerprint("1f"))
+	if err := SetClosed(ctx, b, duplicate.Number, ClosedDuplicate, 0); err != nil {
+		t.Fatalf("setting the duplicate aside: %v", err)
+	}
+	for _, c := range []struct {
+		number int
+		reason ClosedAs
+	}{{notPlanned.Number, ClosedNotPlanned}, {duplicate.Number, ClosedDuplicate}} {
+		rec, _, err := readShared(ctx, b, c.number)
+		if err != nil {
+			t.Fatalf("reading shared issue %d: %v", c.number, err)
+		}
+		if rec.Issue.Status != StatusDismissed || rec.Issue.ClosedAs != c.reason {
+			t.Errorf("shared issue %d = %q with %q, want %q with %q",
+				c.number, rec.Issue.Status, rec.Issue.ClosedAs, StatusDismissed, c.reason)
+		}
+		if rec.Issue.ResolvedIn != "" || !rec.Issue.Uploaded || rec.Issue.URL == "" {
+			t.Errorf("setting shared issue %d aside changed the rest of it: %+v", c.number, rec.Issue)
+		}
+	}
+	// The same answer twice is the same record: a second pass over an issue
+	// already set aside writes nothing, and the reason it recorded stays.
+	if err := SetClosed(ctx, b, notPlanned.Number, ClosedDuplicate, 0); err != nil {
+		t.Fatalf("a second pass over a dismissed issue failed: %v", err)
+	}
+	rec, _, err := readShared(ctx, b, notPlanned.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", notPlanned.Number, err)
+	}
+	if rec.Issue.ClosedAs != ClosedNotPlanned {
+		t.Errorf("a second pass rewrote closed_as to %q", rec.Issue.ClosedAs)
+	}
+}
+
+// Who hit an issue is the reporter of the record that filed it plus every
+// occurrence's reporter, each one once (F10): the same person on two machines
+// is one name, and the order is the store's, so two runs print the same line.
+func TestReportersMergesOccurrences(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	up, _ := filedIssue(t, ctx, b, fingerprint("21"))
+	// The record that filed it is ana@example.test (the fixture's reporter).
+	got, err := Reporters(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading the reporters: %v", err)
+	}
+	if want := []string{"ana@example.test"}; !slices.Equal(got, want) {
+		t.Errorf("the reporters of an issue nobody else hit are %v, want %v", got, want)
+	}
+
+	for _, occ := range []Occurrence{
+		{Reporter: "bo@example.test", At: sharedAt},
+		{Reporter: "ana@example.test", At: sharedAt.Add(time.Minute)},
+		{Reporter: "", At: sharedAt.Add(2 * time.Minute)},
+		{Reporter: "cy@example.test", At: sharedAt.Add(3 * time.Minute)},
+	} {
+		if err := AttachOccurrence(ctx, b, up.Number, occ); err != nil {
+			t.Fatalf("recording an occurrence: %v", err)
+		}
+	}
+	// One object a launcher rewrote under the prefix answers as little as one
+	// that is not there: the pass prints the names it could read (F24).
+	if _, err := b.Create(ctx, occurrencePrefix(up.Number)+"junk", []byte("not an occurrence"), sharedJSON); err != nil {
+		t.Fatalf("seeding an unreadable occurrence: %v", err)
+	}
+	got, err = Reporters(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading the reporters: %v", err)
+	}
+	want := []string{"ana@example.test", "bo@example.test", "cy@example.test"}
+	if !slices.Equal(got, want) {
+		t.Errorf("the reporters are %v, want %v", got, want)
+	}
+	if _, err := Reporters(ctx, b, up.Number+100); err == nil {
+		t.Error("the reporters of an issue the store does not hold were reported")
+	}
+}
+
+// A regression finds the resolved issue it repeats: the fingerprint is still
+// the one the store holds, so a hit from a version that already has the fix is
+// flagged and linked to the GitHub issue, and the fix itself is not undone
+// (F14, F25).
+func TestResolvedIssueIsFoundByFingerprintAsRegression(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	up, url := resolved(t, ctx, b, fingerprint("22"), "0.21.0")
+
+	other := hit("update-20261107183020-48220", fingerprint("22"), "bo@example.test", "0.22.1", sharedAt.Add(time.Minute))
+	got := upload(t, ctx, b, other)
+	if !got.Attached || !got.Regression || got.OriginalURL != url {
+		t.Fatalf("a hit on a resolved issue = %+v, want it attached to %s as a regression", got, url)
+	}
+	rec, _, err := readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", up.Number, err)
+	}
+	if rec.Issue.Status != StatusResolved || rec.Issue.ResolvedIn != "0.21.0" || rec.Issue.URL != url {
+		t.Errorf("the hit changed the resolved issue: %+v", rec.Issue)
+	}
+	// The reporter that is still below the fix is an ordinary hit of an issue
+	// that is already filed: they are not told it came back (F25).
+	below := hit("update-20261107183021-48221", fingerprint("22"), "cy@example.test", "0.20.0", sharedAt.Add(2*time.Minute))
+	if got := upload(t, ctx, b, below); got.Regression || got.OriginalURL != "" {
+		t.Errorf("a hit from below the fix = %+v, want a plain occurrence", got)
 	}
 }
 
