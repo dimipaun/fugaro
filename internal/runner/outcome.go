@@ -455,7 +455,9 @@ type FindingsPolicy struct {
 	// the stop's acceptance and its own tolerance, are answers about the commit
 	// that round read, and neither reaches code no review read: a pull request is
 	// never ready on it (BF1m). nil wherever the last round read the commit that
-	// ships, which is every run whose loop bought no fix after its last round.
+	// ships, which is every run whose loop bought no fix after its last round,
+	// and wherever that round recorded no head: a head nobody read is not a
+	// mismatch, and the reason this field earns a run names a fix (unreadFix).
 	UnreadFix *runstore.ReviewSummary
 }
 
@@ -637,18 +639,20 @@ func (r *run) findingsPolicy() FindingsPolicy {
 // which reads the head level 2's round bought the fix for, while the deciding
 // round's head is the one before that fix by construction.
 //
-// A round that recorded no head — the read of the repository's head failed —
-// is not shown to have read the commit that ships, so it is read as a fix
-// nobody reviewed: the fail-closed answer the table gives a finding it cannot
-// read (D4). Every stop the run did not reach before that round is a draft the
-// same way, and its reason names the round instead of the count.
+// A round that recorded no head — the read of the repository's head failed
+// (reviewedHead) — is not read as an unread fix. An empty head says nothing
+// about which commit the round read, and the reason this field earns a run is a
+// sentence about a fix, so reading it as one would turn a round the mode takes
+// into a draft on a fix nobody can show was left unreviewed. The rule is for the
+// mismatch it can see: the round's head and the commit the run publishes are
+// both known and differ.
 func (r *run) unreadFix() *runstore.ReviewSummary {
 	rs := r.rec.Reviews
 	if len(rs) == 0 {
 		return nil
 	}
 	last := &rs[len(rs)-1]
-	if last.Head != "" && last.Head == r.rec.HeadSHA {
+	if last.Head == "" || last.Head == r.rec.HeadSHA {
 		return nil
 	}
 	return last

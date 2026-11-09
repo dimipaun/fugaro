@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -796,7 +797,11 @@ func validateLayer(l *ProjectLayer, a LayerAnchor) []Problem {
 	// A layer has no "unset" for this key: it is a scalar that replaces whole
 	// (resolve.go), so a project layer's number is the base a repository's
 	// replaces, and there is no third state to admit beside 0 and the range.
-	if ag.ReviewStopFraction != 0 && (ag.ReviewStopFraction < 0 || ag.ReviewStopFraction > 1) {
+	// A not-a-number is refused here as the repository's half refuses it
+	// (validate.go): `.nan` compares false against both ends of the range, so
+	// a range test alone would admit it and the run would then read it as the
+	// default (Budget.stopAt), which is a mistake the author could not see.
+	if ag.ReviewStopFraction != 0 && (math.IsNaN(ag.ReviewStopFraction) || ag.ReviewStopFraction < 0 || ag.ReviewStopFraction > 1) {
 		add("defaults.agent.review_stop_fraction", "must be greater than 0 and at most 1")
 	}
 	ps = append(ps, levelProblems("defaults.agent.levels", &ag.Levels)...)

@@ -354,6 +354,8 @@ func TestParseProjectLayerRefusesMore(t *testing.T) {
 		{"review rounds", agent("    review_rounds: 11\n"), "defaults.agent.review_rounds: must be between 1 and 10"},
 		{"first-line review", agent("    first_line_review: maybe\n"), "defaults.agent.first_line_review: must be one of"},
 		{"first-line rounds", agent("    first_line_rounds: 99\n"), "defaults.agent.first_line_rounds: must be between"},
+		{"a NaN stop fraction", agent("    review_stop_fraction: .nan\n"), "defaults.agent.review_stop_fraction: must be greater than 0 and at most 1"},
+		{"a stop fraction above the budget", agent("    review_stop_fraction: 1.5\n"), "defaults.agent.review_stop_fraction: must be greater than 0 and at most 1"},
 		{"a recipe", agent("    recipe: Bad_Recipe\n"), "defaults.agent.recipe: must be a recipe name"},
 		{"a negative budget", agent("    max_budget_usd: -1\n"), "defaults.agent.max_budget_usd: must be a finite number"},
 		{"a NaN budget", agent("    max_budget_usd: .nan\n"), "defaults.agent.max_budget_usd: must be a finite number"},
