@@ -86,33 +86,48 @@ function refuse(code, field) {
 }
 
 /**
+ * The tail of the queue every `install` runs on, and it is the module's because
+ * the entry is: `install` reads `fugaro.licence.keys` and then writes it, so two
+ * of them interleaved could each write a set that misses the other's key -- and
+ * the cap of two would then drop the older of the two rather than keep both. The
+ * queue belongs to the entry and not to the store object, so two objects over
+ * one store -- the app's and a second screen's, or two a test builds -- queue
+ * with each other rather than each queueing their own.
+ *
+ * A read is not queued with them, and it is not because a read writes nothing:
+ * `#read` clears an entry that does not decode. It is because that clear cannot
+ * cost a key. An install beside it reads the same damaged entry -- only this
+ * module writes it -- so the two clear one entry between them, and an install
+ * that lands after the clear reads the no-key state and writes its key onto it.
+ */
+let installs = Promise.resolve();
+
+/** serial runs one install after the one before it, and answers what it
+ * answered. A failure is still the caller's to see: the tail the queue keeps
+ * swallows it, because the next install must run whether the previous one threw
+ * or not. */
+function serial(work) {
+  const done = installs.then(work, work);
+  installs = done.then(
+    () => undefined,
+    () => undefined,
+  );
+  return done;
+}
+
+/**
  * The app's licence keys, over the platform store it is handed.
  *
  * Constructed over its two ports rather than creating them -- `new
- * LicenceStore({ port, verifier })` -- so the app and a test choose both: a
- * store that made its own storage could not be tested, and one that built its
- * own verifier could trust a keyring this build does not ship.
+ * LicenceStore({ port, verifier })` -- so a test can choose both, and the app
+ * chooses only the port, through the door's `createLicenceStore`, which binds
+ * this build's verifier: a store that made its own storage could not be tested,
+ * and one a caller could hand any verifier to could trust a keyring this build
+ * does not ship.
  */
 export class LicenceStore {
   #port;
   #verifier;
-  /**
-   * The tail of the queue `install` runs on. An install reads the entry and then
-   * writes it, so two of them interleaved could each write a set that misses the
-   * other's key -- and the cap of two would then drop the older of the two rather
-   * than keep both.
-   *
-   * One store object is one queue, and the app builds one store: `mobile/index.js`
-   * is the composition root that builds the account store once and hands it down,
-   * and the store for the key is built there the same way.
-   *
-   * A read is not queued with them, and it is not because a read writes nothing:
-   * `#read` clears an entry that does not decode. It is because that clear cannot
-   * cost a key. An install beside it reads the same damaged entry -- only this
-   * store writes it -- so the two clear one entry between them, and an install
-   * that lands after the clear reads the no-key state and writes its key onto it.
-   */
-  #queue = Promise.resolve();
 
   constructor({ port, verifier } = {}) {
     if (port === null || typeof port !== 'object') throw new TypeError('a store port is required');
@@ -148,7 +163,7 @@ export class LicenceStore {
     const read = this.#verifier.verify(raw, now);
     if (!read.ok) return read;
     const text = raw.trim();
-    return this.#serial(async () => {
+    return serial(async () => {
       const held = await this.#read();
       if (!held.ok) return held;
       const kept = [...held.keys.filter((one) => one !== text), text].slice(-LICENCE_KEYS_MAX);
@@ -186,18 +201,6 @@ export class LicenceStore {
     const held = await this.#read();
     if (!held.ok) return held;
     return this.#verifier.latest(held.keys, now);
-  }
-
-  /** #serial runs one mutation after the last one, and answers what it answered.
-   * The caller still sees a failure: the tail the queue keeps swallows it
-   * because the next install must run whether the previous one threw or not. */
-  #serial(work) {
-    const done = this.#queue.then(work, work);
-    this.#queue = done.then(
-      () => undefined,
-      () => undefined,
-    );
-    return done;
   }
 
   async #read() {

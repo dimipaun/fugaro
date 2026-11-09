@@ -3,13 +3,15 @@
 // The licence module's one door (subscriptions plan S2.5; D308, D303 as
 // amended).
 //
-// A screen imports `src/licence/index.js` and gets the app's verifier, the
-// store the key is kept in (S2.8, below) and the vocabulary it answers in --
-// the codes, the states' names and the numbers behind them. It does not get
-// `verify.js`'s factory, and that is the point of this file rather than a
+// A screen imports `src/licence/index.js` and gets the app's verifier, a way to
+// build the store the key is kept in (S2.8, below) and the vocabulary it answers
+// in -- the codes, the states' names and the numbers behind them. It does not
+// get `verify.js`'s factory, and that is the point of this file rather than a
 // tidiness: the factory takes a keyring, and a caller that could build a
 // verifier could build one that trusts a key this build does not hold, which is
-// the whole of what the compiled-in ring fences.
+// the whole of what the compiled-in ring fences. The store's class is withheld
+// for the same reason and not for symmetry: its constructor takes a verifier, so
+// handing out the class would hand out the choice the factory takes away.
 //
 // **This is the one file under `src/licence/` that names a package**, and the
 // reason is `mobile/README.md`'s: the suite runs in a fresh clone with no
@@ -37,6 +39,7 @@
 
 import { ed25519 } from '@noble/curves/ed25519.js';
 
+import { LicenceStore } from './store.js';
 import { GRACE_DAYS, LICENCE_CODES, PRODUCTION_KEYRING, TIER_MAX_LIFETIME_DAYS, createLicenceVerifier } from './verify.js';
 
 /** ed25519Port is the dependency as `verify.js` takes it: the three arguments in
@@ -51,10 +54,20 @@ export const LICENCE_VERIFIER = createLicenceVerifier({ ed25519: ed25519Port });
 
 export { GRACE_DAYS, LICENCE_CODES, PRODUCTION_KEYRING, TIER_MAX_LIFETIME_DAYS };
 
-// The store is exported here and not reached for where it is written, for the
-// reason the whole door exists: a screen that imported `store.js` would build
-// its own -- and the store a caller builds is the store a caller hands a
-// verifier, which is the one thing that must stay this build's. The screen
-// S2.1's table names is the caller: it takes the pasted text, calls `install`,
-// and reads `keys` and `active` to say what is installed.
-export { LICENCE_KEYS_ENTRY, LICENCE_KEYS_MAX, LICENCE_KEY_PREFIX, LICENCE_STORE_CODES, LicenceStore } from './store.js';
+/** createLicenceStore is the app's store for the key: `store.js`'s store over
+ * the port it is given and this build's verifier, which is why a factory is
+ * what the door hands out rather than the class. `new LicenceStore({ port,
+ * verifier })` is a caller choosing the verifier, and that is the one capability
+ * this door exists to withhold -- a store handed a keyring this build does not
+ * hold would verify a key the app is not meant to trust. The store's own file
+ * still exports the class, for the test that has to choose a test keyring; the
+ * door the app imports does not. */
+export function createLicenceStore(port) {
+  return new LicenceStore({ port, verifier: LICENCE_VERIFIER });
+}
+
+// The store is reached through the door and not built beside the screen that
+// reads it, for the reason above. The screen S2.1's table names is the caller:
+// it takes the pasted text, calls `install`, and reads `keys` and `active` to
+// say what is installed.
+export { LICENCE_KEYS_ENTRY, LICENCE_KEYS_MAX, LICENCE_KEY_PREFIX, LICENCE_STORE_CODES } from './store.js';

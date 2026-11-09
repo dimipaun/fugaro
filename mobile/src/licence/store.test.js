@@ -245,6 +245,26 @@ test('two pastes at once keep both keys rather than one overwriting the other', 
   assert.equal(applied.claims.expires, ISSUED + 700 * DAY, 'and the later expiry still applies');
 });
 
+test('two stores over one store queue with each other, because the entry is one', async () => {
+  const port = new MemoryStore();
+  const production = signer('prod-2026');
+
+  // The queue is the module's and not the object's, so this is the case that
+  // holds it there: two store objects write the one entry, and without a queue
+  // between them an install that read it before the other one wrote would drop a
+  // key.
+  const first = mint(production, claimsFor({ expires: ISSUED + 365 * DAY }));
+  const renewal = mint(production, claimsFor({ issued: ISSUED + 335 * DAY, expires: ISSUED + 700 * DAY }));
+  const [one, two] = await Promise.all([
+    store(port, [production]).install(first, at(ISSUED)),
+    store(port, [production]).install(renewal, at(ISSUED + 335 * DAY)),
+  ]);
+
+  assert.equal(one.ok, true, 'the first store installed its key');
+  assert.equal(two.ok, true, 'the second store installed its key');
+  assert.deepEqual(await store(port, [production]).keys(), { ok: true, keys: [first, renewal] }, 'both keys are kept');
+});
+
 test('an entry this store did not write is cleared rather than retried forever', async () => {
   const port = new MemoryStore();
   const production = signer('prod-2026');
