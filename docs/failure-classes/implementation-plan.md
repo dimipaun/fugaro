@@ -24,7 +24,7 @@ reconciliation's findings (F1–F36) and decisions (D1450–D1469) win, and the 
 
 **Every task here is approved, and what each one's gate named is settled.** The design stays a design
 and this stays a plan (§10 of the design and [README.md](README.md) say so); each task's gate is in
-§7, and the decision rows most of them name carry the owner's dated answer of 2026-11-07. **Five of
+§7, and the decision rows most of them name carry the owner's dated answer of 2026-11-07. **Six of
 the nine are built** — FC1–FC5 and FC7 — and **FC6, FC8 and FC9 are not started**: an approved task is still built on
 its own, in its own run, in the order §1 fixes.
 
