@@ -109,7 +109,12 @@ func sentences(text string) []string {
 // names `cancel`. After the command the path has begun, and there a flag ends
 // it like any other argument does (`fugaro run --pr N --retry <run>` names
 // `run`) — which is also what keeps a flag's value from being read as a word of
-// the command: the words past the flag are never looked at.
+// the command: the words past the flag are never looked at. The value of a flag
+// written *before* the command is not stepped over with it, so a span writing
+// `fugaro --project p cancel` names no command and its claim is missed; no
+// shape tells such a value apart from a command word, and no text writes one
+// there — the flags the texts write before a command are `--json` and its like,
+// which take none.
 func commandIn(span string) string {
 	words := strings.Fields(span)
 	if len(words) > 0 && words[0] == "fugaro" {
