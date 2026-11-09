@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"reflect"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // image_map.go's tests: `fugaro image map set`, the one command that writes the
@@ -226,5 +228,72 @@ func TestImageMapSetManagedRefusesASession(t *testing.T) {
 	}
 	if len(recs[0].Rules) == 0 || !strings.Contains(strings.Join(recs[0].Rules, " "), "another document") {
 		t.Errorf("the refused record's rules (%v) do not say what refused", recs[0].Rules)
+	}
+}
+
+// TestImageMapRoundTripThroughTheNode walks the map the way the prices test
+// walks a documented model ID: a repository's name carries the "/" RTDB refuses
+// in a key — the write is rejected whole, with a 400 — so the map has to be
+// published under keys RTDB takes (projectpolicy.ImageMap) and read back as the
+// repository names the operator wrote, in the node, in the decoded policy and
+// in both show commands, whose document a consumer is reading.
+func TestImageMapRoundTripThroughTheNode(t *testing.T) {
+	f := newProjectFixture(t, "image_map:\n  acme/app: tools\n")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("publishing a repository-keyed map was refused: %v\n%s", err, out)
+	}
+	raw := nodeJSON(t, f, projectpolicy.PathShared())
+	var node struct {
+		ImageMap map[string]json.RawMessage `json:"image_map"`
+	}
+	if err := json.Unmarshal([]byte(raw), &node); err != nil {
+		t.Fatalf("the published node is not JSON (%v):\n%s", err, raw)
+	}
+	if len(node.ImageMap) != 1 {
+		t.Fatalf("the node's image_map has %d members, want 1:\n%s", len(node.ImageMap), raw)
+	}
+	for key := range node.ImageMap {
+		if strings.ContainsAny(key, ".$#[]/") {
+			t.Errorf("the node holds the key %q, which RTDB refuses (a key may not contain . $ # [ ] /):\n%s", key, raw)
+		}
+	}
+	if strings.Contains(raw, `"acme/app"`) {
+		t.Errorf("the node holds the repository name itself as a key:\n%s", raw)
+	}
+
+	// And it decodes back to the name a run looks its own repository up by.
+	p := publishedPolicy(t, f)
+	if _, ok := p.ImageMap["acme/app"]; !ok {
+		t.Errorf("the decoded policy has no mapping for acme/app: %v", p.ImageMap)
+	}
+
+	// Both show commands print the repository, not the node's escape.
+	for _, args := range [][]string{{"project", "show"}, {"project", "policy", "show"}} {
+		out, _, err := execute(t, args...)
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		if !strings.Contains(out, "acme/app") {
+			t.Errorf("%v does not print the repository name:\n%s", args, out)
+		}
+		if strings.Contains(out, "acme%2Fapp") {
+			t.Errorf("%v prints the node's escaped key:\n%s", args, out)
+		}
+	}
+	js, _, err := execute(t, "project", "show", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Policy struct {
+			ImageMap map[string]string `json:"image_map"`
+		} `json:"policy"`
+	}
+	if err := json.Unmarshal([]byte(js), &doc); err != nil {
+		t.Fatalf("--json is not JSON (%v):\n%s", err, js)
+	}
+	if got := doc.Policy.ImageMap["acme/app"]; got != "tools" {
+		t.Errorf("--json's policy.image_map is not keyed by the repository name: %v", doc.Policy.ImageMap)
 	}
 }

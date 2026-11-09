@@ -2454,14 +2454,17 @@ type projectShowDoc struct {
 	EnrolledNotRunning []string `json:"enrolled_not_running"`
 }
 
-// showPolicy is the published policy as this document renders it: the node's
-// own bytes spell model_prices' member names the way RTDB requires (escaped,
-// projectpolicy.Prices), and a consumer of this document is reading model IDs.
-// The embedded Policy's own model_prices is shadowed by the field below, which
-// is at a shallower depth and so is the one encoding/json writes.
+// showPolicy is the published policy as this document renders it: the node
+// spells two blocks' member names the way RTDB requires them escaped
+// (projectpolicy.Prices for model IDs with a "." or a "/", projectpolicy.ImageMap
+// for repository names, which always carry a "/"), and a consumer of this
+// document is reading model IDs and repository names. So both blocks are
+// shadowed here by the same maps in the reader's own spelling — the shadows sit
+// at a shallower depth and are therefore the ones encoding/json writes.
 type showPolicy struct {
 	*projectpolicy.Policy
-	Prices map[string]projectpolicy.Price `json:"model_prices,omitempty"`
+	Prices   map[string]projectpolicy.Price `json:"model_prices,omitempty"`
+	ImageMap map[string]string              `json:"image_map,omitempty"`
 }
 
 // showPolicyOf is the document's policy, or nil when none is published.
@@ -2469,7 +2472,7 @@ func showPolicyOf(p *projectpolicy.Policy) *showPolicy {
 	if p == nil {
 		return nil
 	}
-	return &showPolicy{Policy: p, Prices: p.Prices}
+	return &showPolicy{Policy: p, Prices: p.Prices, ImageMap: p.ImageMap}
 }
 
 // showCaps is the ceiling the installation's own nodes carry — the side of the
