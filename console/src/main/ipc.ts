@@ -2554,8 +2554,10 @@ function validateValue(
     // that order would refuse the most ordinary paste of all with a sentence
     // about U+000A. What is judged is therefore the **trimmed** value: the
     // whitespace a copy adds carries no meaning (the verifier trims for the
-    // same reason, `verifyLicenceKey`), and whitespace *inside* a key is still
-    // refused, by the same rule and in the same words as every other argument.
+    // same reason, `verifyLicenceKey`), and a **hidden** character inside a key
+    // is still refused, by the same rule and in the same words as every other
+    // argument. A plain space inside one is not hidden and is admitted: the
+    // format is what refuses it, one step later and in its own words.
     //
     // **The format is deliberately not checked here.** Whether the three parts
     // decode, whether the id is one this build holds and whether the signature

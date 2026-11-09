@@ -122,6 +122,7 @@ import {
   MAX_INSTALLATION_PROJECT_LENGTH,
   validateInstallationArguments,
 } from '../../src/main/installations'
+import { MAX_LICENCE_KEY_LENGTH } from '../../src/main/licence'
 import { APP_ENTRY_URL } from '../../src/main/protocol'
 import { SPAWN_KIND_FOR, SPAWN_COMMANDS, argvFor } from '../../src/main/spawn'
 import {
@@ -1585,7 +1586,7 @@ describe('the argument schemas', () => {
     }
   })
 
-  it('takes no path, wherever a value goes, for every operation but the rail’s own two kinds', () => {
+  it('takes no path, wherever a value goes, for every operation but the rail’s two kinds and the licence key’s', () => {
     const paths = ['/etc/passwd', '../../etc/passwd', '/work/repo/fugaro.yaml', 'file:///etc/passwd']
     for (const operation of CONSOLE_OPERATIONS) {
       for (const spec of operation.args) {
@@ -1600,9 +1601,20 @@ describe('the argument schemas', () => {
         //   - `installationName` is a bare word, and what keeps a path-shaped
         //     string harmless is the lookup: a name this console holds no
         //     record for is refused before anything else happens.
+        //   - `licenceKey` is not a grammar for a stronger reason than either
+        //     (S2.7): the row's `command` is `null`, so there is no argv for a
+        //     path-shaped paste to reach at all, and the format is deliberately
+        //     the verifier's rather than this table's (`validateValue`'s note,
+        //     and `verifyLicenceKey` is what refuses the text).
         //
-        // Each has its own case below rather than a hole here.
-        if (spec.kind === 'installationCheckout' || spec.kind === 'installationName') continue
+        // Each of the three has its own case below rather than a hole here.
+        if (
+          spec.kind === 'installationCheckout' ||
+          spec.kind === 'installationName' ||
+          spec.kind === 'licenceKey'
+        ) {
+          continue
+        }
         for (const path of paths) {
           const decision = validateArguments(operation.name, { [spec.key]: path })
           expect(decision.ok, `${operation.name}.${spec.key} accepted ${path}`).toBe(false)
@@ -1625,7 +1637,7 @@ describe('the argument schemas', () => {
     }
   })
 
-  it('takes no command and no flag name, wherever a value goes, for every operation but the rail’s project name', () => {
+  it('takes no command and no flag name, wherever a value goes, for every operation but the rail’s project name and the licence key’s', () => {
     const words = ['budget kill', 'run', '--repo', '-x', 'ls -la', 'fugaro run']
     for (const operation of CONSOLE_OPERATIONS) {
       for (const spec of operation.args) {
@@ -1635,7 +1647,11 @@ describe('the argument schemas', () => {
         // this console does not hold is refused (`picker.ts`). Five of the six
         // spellings below are refused by this kind too (a space, a leading `-`),
         // and the case beneath is the one that says which.
-        if (spec.kind === 'installationName') continue
+        //
+        // `licenceKey` is skipped for the reason the case above it gives: its
+        // value reaches no argv at all, and the case below pins what its shape
+        // check does admit.
+        if (spec.kind === 'installationName' || spec.kind === 'licenceKey') continue
         for (const word of words) {
           const decision = validateArguments(operation.name, { [spec.key]: word })
           expect(decision.ok, `${operation.name}.${spec.key} accepted ${word}`).toBe(false)
@@ -1655,6 +1671,38 @@ describe('the argument schemas', () => {
     for (const name of ['budget kill', 'ls -la', 'fugaro run', '--repo', '-x', '']) {
       expect(validateArguments('installation.choose', { project: name }).ok, JSON.stringify(name)).toBe(false)
     }
+  })
+
+  it('takes a licence key as a paste: the shape only, and the format is the verifier’s', () => {
+    // The shape this table checks and nothing more (S2.7): the whitespace a
+    // copy adds around a key is trimmed -- a trailing newline is the ordinary
+    // paste -- the value is bounded before anything decodes it, an empty paste
+    // is refused, and the hidden characters every other string argument is held
+    // to are refused here too. Whether the three parts decode, whether the id is
+    // one this build holds and whether the signature covers the payload are
+    // `verifyLicenceKey`'s (S2.4): a grammar here would be a second copy of the
+    // format, which is what `validateValue` says it deliberately is not.
+    const trimmed = validateArguments('licence.save', { key: '  aaa.bbb.ccc\n' })
+    expect(trimmed.ok).toBe(true)
+    expect(trimmed.ok ? trimmed.args['key'] : null).toBe('aaa.bbb.ccc')
+
+    // **A path-shaped or command-shaped paste is admitted here, and that is the
+    // point of the two sweeps above skipping this kind.** The reason is not
+    // that such a value is harmless as a *value* -- it is that there is nothing
+    // for it to be: the row's `command` is `null`, so no argv exists to carry
+    // it, and what refuses the text is the verifier, one step later and in its
+    // own words.
+    expect(validateArguments('licence.save', { key: '/etc/passwd' }).ok).toBe(true)
+    expect(validateArguments('licence.save', { key: 'budget kill' }).ok).toBe(true)
+
+    // What the shape check does refuse, in the words of the one rule every
+    // string argument of this surface is held to.
+    expect(validateArguments('licence.save', { key: '' }).ok).toBe(false)
+    expect(validateArguments('licence.save', { key: '   ' }).ok).toBe(false)
+    expect(validateArguments('licence.save', { key: 'a'.repeat(MAX_LICENCE_KEY_LENGTH + 1) }).ok).toBe(false)
+    expect(validateArguments('licence.save', { key: 'aaa\u0000bbb' }).ok).toBe(false)
+    expect(validateArguments('licence.save', { key: 'aaa\u202ebbb' }).ok).toBe(false)
+    expect(validateArguments('licence.save', { key: 7 }).ok).toBe(false)
   })
 
   it('answers for the rail’s two kinds exactly as the store’s own validator does', () => {
