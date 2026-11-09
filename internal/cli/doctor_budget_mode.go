@@ -40,10 +40,15 @@ const budgetModeCheckID = "budget-mode"
 // The other two states are one warning each. A seeded observe (config/modeSet
 // absent, or stamped by an earlier update) is the state `fugaro update` exists
 // for: it raises the mode to enforce on a managed project in the same command.
-// Where the project-wide caps are missing the raise cannot land — enforce
-// without them halts every run (D6) — and the installation is unbounded:
-// nothing bounds how many image builds run, which is the state a person has to
-// be told about rather than one doctor may leave to the update.
+// Where a cap enforce compares every lease against is missing the raise cannot
+// land — the raise requires the same three the runner's Admit does, and the
+// third is the daily cap a repository's day counter is compared against, which
+// is the repository's own or the default and never the project-wide one
+// (update_budget_mode.go) — and the installation is unbounded: nothing bounds
+// how many image builds run, which is the state a person has to be told about
+// rather than one doctor may leave to the update. This line names the caps on
+// the same terms as the step, so a reader who sets what it names is left with
+// an installation the next update raises and no run halts.
 //
 // The state is one every installation can reach and the repair is not: the
 // update raises the mode on a managed project alone, so a line whose only fix
@@ -92,17 +97,25 @@ func doctorBudgetMode(ctx context.Context, db *rtdb.Client) []doctorCheck {
 	if err != nil {
 		return unread(budget.PathCapsGlobal, err)
 	}
+	var defaults budget.DefaultCaps
+	defaultsFound, err := db.Get(ctx, budget.PathCapsDefaults, &defaults)
+	if err != nil {
+		return unread(budget.PathCapsDefaults, err)
+	}
 	var missing []string
 	if !capsFound || caps.DailyMicros == nil {
-		missing = append(missing, "dailyMicros")
+		missing = append(missing, "dailyMicros in "+budget.PathCapsGlobal)
 	}
 	if !capsFound || caps.PerRunMicros == nil {
-		missing = append(missing, "perRunMicros")
+		missing = append(missing, "perRunMicros in "+budget.PathCapsGlobal)
+	}
+	if !defaultsFound || defaults.RepoDailyMicros == nil {
+		missing = append(missing, "repoDailyMicros in "+budget.PathCapsDefaults+" (the daily cap a repository without one of its own is compared against)")
 	}
 	if len(missing) > 0 {
 		return []doctorCheck{{ID: budgetModeCheckID, Severity: "warning",
-			Problem: fmt.Sprintf("the project-wide budget mode is %s, and the caps enforce needs are not set at %s (%s missing): enforce without them refuses every lease, so `fugaro update` leaves the mode as it is, and this installation is unbounded — nothing bounds how many image builds run", shown, budget.PathCapsGlobal, strings.Join(missing, " and ")),
-			Fix:     "set the project-wide caps with 'fugaro budget set --global --daily <usd> --per-run <usd>'; the next `fugaro update` then raises the mode to " + budget.ModeEnforce + " on a managed project, and 'fugaro budget set --global --mode " + budget.ModeEnforce + "' raises it on any installation"}}
+			Problem: fmt.Sprintf("the project-wide budget mode is %s, and the caps enforce compares every lease against are not set — %s — so `fugaro update` leaves the mode as it is (it raises a mode only where a lease would still be taken) and this installation is unbounded: nothing bounds how many image builds run", shown, strings.Join(missing, ", ")),
+			Fix:     "set them with 'fugaro budget set --global --daily <usd> --per-run <usd>' and 'fugaro budget set --defaults --daily <usd>'; the next `fugaro update` then raises the mode to " + budget.ModeEnforce + " on a managed project, and 'fugaro budget set --global --mode " + budget.ModeEnforce + "' raises it on any installation"}}
 	}
 	return []doctorCheck{{ID: budgetModeCheckID, Severity: "warning",
 		Problem: fmt.Sprintf("the project-wide budget mode is %s and no one chose it: a lease does not bite in observe, so an image build runs unbounded, and `fugaro update` raises the mode to %s on a managed project", shown, budget.ModeEnforce),

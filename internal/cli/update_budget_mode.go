@@ -124,30 +124,49 @@ func (e *initEngine) raiseBudgetMode(ctx context.Context) {
 	if cur == budget.ModeEnforce {
 		return
 	}
-	// Enforce needs both project-wide caps (D6, RequireCapsForEnforce's
-	// refusal): an absent daily cap is a refusal in the rules, so every lease
-	// is refused and every run halts, and without the per-run cap a run whose
-	// repository has no cap of its own and no default has none to compare
-	// against. Where they are missing the step sets no mode and says which are
-	// missing and that the installation is unbounded — the caps have no writer
-	// here, they are `fugaro budget set --global`'s, and doctor says the same
-	// line (doctor_budget_mode.go).
+	// Enforce compares every lease against three caps, and a side that is not
+	// set halts the run rather than bounding it: the project-wide daily cap and
+	// a per-run cap somewhere (D6, RequireCapsForEnforce's refusal, and the
+	// runner's own Admit), and — the side the global caps do not cover — the
+	// daily cap a repository's day counter is compared against, which is the
+	// repository's own or the DEFAULT and never the project-wide one
+	// (budget.Caps.RepoDaily, whose absence is evaluate.go's noRepoDailyCap). A database
+	// with the project-wide pair alone therefore halts every repository that
+	// has no daily cap of its own, which is exactly the state this step must
+	// never raise into: it would stop the runs it exists to bound. Where a cap
+	// is missing the step sets no mode and says which and that the installation
+	// is unbounded — the caps have no writer here, they are `fugaro budget
+	// set`'s, and doctor says the same line (doctor_budget_mode.go).
+	//
+	// The default is the side this step asks for rather than the repositories'
+	// own, because it is the one that covers every repository without a cap of
+	// its own: a repository the project adds later included, which holding each
+	// repository to a cap of its own would leave uncapped and halting.
 	var caps budget.GlobalCaps
 	capsFound, err := db.Get(ctx, budget.PathCapsGlobal, &caps)
 	if err != nil {
 		r.warn(fmt.Sprintf("the budget mode was left as it is: %s could not be read (%s), and enforce on a database whose caps are unknown would halt every run", budget.PathCapsGlobal, safetext.FieldErr(err)))
 		return
 	}
+	var defaults budget.DefaultCaps
+	defaultsFound, err := db.Get(ctx, budget.PathCapsDefaults, &defaults)
+	if err != nil {
+		r.warn(fmt.Sprintf("the budget mode was left as it is: %s could not be read (%s), and enforce on a database whose caps are unknown would halt every run", budget.PathCapsDefaults, safetext.FieldErr(err)))
+		return
+	}
 	var missing []string
 	if !capsFound || caps.DailyMicros == nil {
-		missing = append(missing, "dailyMicros")
+		missing = append(missing, "dailyMicros in "+budget.PathCapsGlobal)
 	}
 	if !capsFound || caps.PerRunMicros == nil {
-		missing = append(missing, "perRunMicros")
+		missing = append(missing, "perRunMicros in "+budget.PathCapsGlobal)
+	}
+	if !defaultsFound || defaults.RepoDailyMicros == nil {
+		missing = append(missing, "repoDailyMicros in "+budget.PathCapsDefaults+" (the daily cap a repository without one of its own is compared against)")
 	}
 	if len(missing) > 0 {
-		r.warn(fmt.Sprintf("the budget mode stays %s on this managed project: enforce needs both project-wide caps (%s: %s are not set, and neither setup nor update seeds them), and the installation is unbounded until they are — nothing bounds how many image builds run. Set them with `fugaro budget set --global --daily <usd> --per-run <usd>`; the next `fugaro update` raises the mode itself",
-			cur, budget.PathCapsGlobal, strings.Join(missing, " and ")))
+		r.warn(fmt.Sprintf("the budget mode stays %s on this managed project: enforce compares every lease against caps that are not set — %s — and neither setup nor update seeds them, so the installation is unbounded until it has them (nothing bounds how many image builds run) and raising the mode now would halt the lease whose cap is missing. Set them with `fugaro budget set --global --daily <usd> --per-run <usd>` and `fugaro budget set --defaults --daily <usd>`; the next `fugaro update` raises the mode itself",
+			cur, strings.Join(missing, ", ")))
 		return
 	}
 	// The mode first and the record after it, because the two halves fail in

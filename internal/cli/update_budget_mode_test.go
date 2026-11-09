@@ -56,9 +56,70 @@ func budgetModeUpdateRig(t *testing.T, mode, modeSet string) (*initRig, *gcpfake
 	return r, db
 }
 
-// budgetModeCaps seeds the two project-wide caps the mode enforce needs (D6).
+// budgetModeUpdateRigUnmanaged is the same installation with the one fact
+// removed: the project is Fugaro's own — the runs bucket exists and carries the
+// installation's mark — and it is NOT flagged as managed. Its budget backend is
+// configured and reachable all the same, which is the state no rig combined
+// with an unmanaged installation until now: without it, deleting the step's
+// `!managed` guard costs nothing, because every other rig either has the marks
+// or has no database for the raise to land in.
+func budgetModeUpdateRigUnmanaged(t *testing.T, mode string) (*initRig, *gcpfake.RTDB) {
+	t.Helper()
+	noAgentSession(t)
+	noRunSession(t)
+	r := updateRig(t)
+	// The installation's own runs bucket and mark, and neither of the two
+	// management facts (managedRuns writes the label and the object): this is
+	// a project nobody flagged, which is the whole of what makes the step
+	// leave it alone (D1553).
+	r.markedRuns(t, initProjectName, initProject)
+	db := gcpfake.NewRTDB(t)
+	r.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: "+initProject+", rtdb_url: "+db.URL+" }\n")
+	// Everything the raise would need is here and correct, so a step that
+	// reached the write would succeed at it: what keeps the mode observe is
+	// the project not being managed, and nothing else.
+	db.Set(budget.PathMark, auroraMark())
+	db.Set(budget.PathProject, initProjectName)
+	db.Set(budget.PathMode, mode)
+	budgetModeCaps(db)
+	if managedFlagIsManaged(t, r) {
+		t.Fatal("the rig is a managed project, so the step under test would fire on it whatever its guard says")
+	}
+	return r, db
+}
+
+// TestAnUnmanagedProjectKeepsItsSeededObserve: the raise's precondition is the
+// project being managed, and on one that is not it is not a warning, a
+// refusal or a question — the step declines in silence and the mode is exactly
+// what it found. D1553: `fugaro managed flag` is what makes an installation
+// managed, never the update, so an owner's own run may not move a mode the
+// owner never asked this command to touch.
+func TestAnUnmanagedProjectKeepsItsSeededObserve(t *testing.T) {
+	_, db := budgetModeUpdateRigUnmanaged(t, budget.ModeObserve)
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	said := out + errOut
+	if err != nil {
+		t.Fatalf("fugaro update: %v\n%s", err, said)
+	}
+	if got := db.Value(budget.PathMode); got != budget.ModeObserve {
+		t.Errorf("%s = %v after an update of an unmanaged project, want %s: this step raises a mode on a managed project alone", budget.PathMode, got, budget.ModeObserve)
+	}
+	if got := db.Value(budget.PathModeSet); got != nil {
+		t.Errorf("%s = %v: the update records a choice only where it raised the mode", budget.PathModeSet, got)
+	}
+	if strings.Contains(said, "budget mode") {
+		t.Errorf("the run says something about the mode of a project that is not managed:\n%s", said)
+	}
+}
+
+// budgetModeCaps seeds every cap the mode enforce compares a lease against:
+// the project-wide pair (D6, RequireCapsForEnforce), and the default daily cap
+// a repository with none of its own is compared against — the side the
+// project-wide caps do not cover, without which enforce halts on
+// noRepoDailyCap instead of bounding anything (budget.Caps.RepoDaily).
 func budgetModeCaps(db *gcpfake.RTDB) {
 	db.Set(budget.PathCapsGlobal, map[string]any{"dailyMicros": 150 * usd1, "perRunMicros": 20 * usd1})
+	db.Set(budget.PathCapsDefaults, map[string]any{"repoDailyMicros": 60 * usd1})
 }
 
 // TestUpdateRaisesASeededObserveToEnforce: one `fugaro update` over a managed
@@ -183,6 +244,41 @@ func TestUpdateLeavesASeededObserveWhenTheCapsAreMissing(t *testing.T) {
 	}
 }
 
+// TestUpdateLeavesASeededObserveWhenTheRepositoryDailyCapIsMissing: the caps
+// enforce compares every lease against are three, and the third is not one of
+// the project-wide pair — it is the daily cap a repository's day counter is
+// compared against, which is the repository's own or the default and never the
+// project-wide one (budget.Caps.RepoDaily; its absence is evaluate.go's
+// noRepoDailyCap). An installation whose caps were set with `fugaro budget set
+// --global --daily … --per-run …` alone is therefore exactly the installation
+// the raise must refuse: every repository without a daily cap of its own would
+// halt with no_cap, and doctor would fall silent afterwards, because an
+// installation that enforces is one it says nothing about.
+func TestUpdateLeavesASeededObserveWhenTheRepositoryDailyCapIsMissing(t *testing.T) {
+	_, db := budgetModeUpdateRig(t, budget.ModeObserve, "")
+	db.Set(budget.PathCapsGlobal, map[string]any{"dailyMicros": 150 * usd1, "perRunMicros": 20 * usd1})
+	db.Set(budget.PathCapsDefaults, map[string]any{"repoPerRunMicros": 20 * usd1})
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	said := out + errOut
+	if err != nil {
+		t.Fatalf("fugaro update: %v\n%s", err, said)
+	}
+	if got := db.Value(budget.PathMode); got != budget.ModeObserve {
+		t.Errorf("%s = %v, want %s: enforce with no repository daily cap halts every repository that has none of its own", budget.PathMode, got, budget.ModeObserve)
+	}
+	if got := db.Value(budget.PathModeSet); got != nil {
+		t.Errorf("%s = %v: a raise that did not land records nothing", budget.PathModeSet, got)
+	}
+	for _, want := range []string{"repoDailyMicros", budget.PathCapsDefaults, "fugaro budget set --defaults --daily", "unbounded"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the run does not say %q about the raise it could not make:\n%s", want, said)
+		}
+	}
+	// The line doctor leaves for this state names the same cap and the same
+	// command (TestDoctorNamesTheMode's own rig), so a reader who does what
+	// either line says is left with an installation the next update raises.
+}
+
 // TestUpdateRaisesTheModeInTheRunThatNamesTheBackend: the run whose own
 // arguments shape the installation — `update --firebase-project` — is the one
 // that gives it a budget backend, and that run is admitted without the managed
@@ -251,7 +347,7 @@ func TestDoctorNamesTheMode(t *testing.T) {
 		if !ok {
 			t.Fatalf("doctor printed no %s check", budgetModeCheckID)
 		}
-		for _, want := range []string{"dailyMicros", "perRunMicros", "unbounded"} {
+		for _, want := range []string{"dailyMicros", "perRunMicros", "repoDailyMicros", "unbounded"} {
 			if !strings.Contains(c.Problem+c.Fix, want) {
 				t.Errorf("the line does not name %q: %+v", want, c)
 			}
@@ -259,11 +355,38 @@ func TestDoctorNamesTheMode(t *testing.T) {
 		if !strings.Contains(c.Fix, "fugaro budget set --global") {
 			t.Errorf("the line does not name the command that sets the caps: %+v", c)
 		}
+		// The third cap is not one of the project-wide pair and has a command of
+		// its own: a reader told only about `--global` would set the two it
+		// names and be left in exactly the state the update refuses to raise.
+		if !strings.Contains(c.Fix, "fugaro budget set --defaults --daily") {
+			t.Errorf("the line does not name the command that sets the cap a repository without one is compared against: %+v", c)
+		}
 		// Setting the caps is not the whole repair: with them set the mode still
 		// has to be raised, and the line hands the reader the command that does
 		// it on an installation the update does not raise it on.
 		if !strings.Contains(c.Fix, "fugaro budget set --global --mode "+budget.ModeEnforce) {
 			t.Errorf("the line does not name the command that raises the mode: %+v", c)
+		}
+	})
+	t.Run("the default daily cap is named on its own", func(t *testing.T) {
+		_, db := doctorPolicyRig(t, nil, "")
+		db.Set(budget.PathMode, budget.ModeObserve)
+		// The state the project-wide commands alone leave behind: both caps
+		// set, and no cap a repository without one of its own is compared
+		// against. The update refuses to raise, so this line is the one that
+		// names what is missing.
+		db.Set(budget.PathCapsGlobal, map[string]any{"dailyMicros": 150 * usd1, "perRunMicros": 20 * usd1})
+		c, ok := doctorChecksByID(t)[budgetModeCheckID]
+		if !ok {
+			t.Fatalf("doctor printed no %s check", budgetModeCheckID)
+		}
+		if c.OK {
+			t.Fatalf("doctor passes an installation whose caps enforce needs are missing: %+v", c)
+		}
+		for _, want := range []string{"repoDailyMicros", budget.PathCapsDefaults, "fugaro budget set --defaults --daily"} {
+			if !strings.Contains(c.Problem+c.Fix, want) {
+				t.Errorf("the line does not name %q: %+v", want, c)
+			}
 		}
 	})
 	t.Run("an enforcing installation has nothing to say", func(t *testing.T) {
