@@ -138,13 +138,21 @@ func TestFindingsAreBoundedAndQuoted(t *testing.T) {
 // (task.DisplayRuns, D1706) — and a plan task by its plan name (D1703), and
 // they never print the full ID in what an agent writes for a person.
 //
-// The job prompt names no command here, unlike the plugin skills, where the
-// same rule sits beside "never launch, cancel or follow up without the user's
+// The rule is scoped to what the agent writes for a person, and says in as
+// many words that a command is given the ID its own help asks for: a naming
+// rule that read as "only ever the short ID" would withhold the full ID the
+// read commands need today (F11), and the agent would be left guessing which
+// rule wins.
+//
+// The job prompt names no command, unlike the plugin skills, where the same
+// rule sits beside "never launch, cancel or follow up without the user's
 // go-ahead". This prompt drives an unattended stage: nobody gives a go-ahead,
 // the container can reach the run's own service account, and `--review-run` is
 // a flag the CLI hides, so a list of run commands here would be instructions
-// for cancelling or relaunching runs rather than for naming one. The form a
-// command takes belongs to that command's own help, and internal/cli's
+// for launching, cancelling or relaunching runs rather than for naming one.
+// What it does say is that those actions are not this stage's to take, and it
+// says it without naming a command; the form a command takes belongs to that
+// command's own help, and internal/cli's
 // TestShortIDRuleNamesOnlyCommandsThatTakeOne is what holds any text that does
 // name one to a command that really takes it.
 func TestPromptsCarryShortIDRule(t *testing.T) {
@@ -154,9 +162,11 @@ func TestPromptsCarryShortIDRule(t *testing.T) {
 	} {
 		got := runner.SystemPrompt(d, "")
 		for _, want := range []string{
-			"Refer to runs only by their short ID — the last 4 characters of the run ID, and one character more for as long as another run you name shares them",
-			"and to plan tasks by their plan name",
-			"never print the full run ID in anything you write for a person",
+			"In anything you write for a person, refer to a run by its short ID — the last 4 characters of the run ID, and one character more for as long as another run you name shares them",
+			"and to a plan task by its plan name",
+			"never print the full run ID there",
+			"A command is given whatever ID its own help asks for, the full run ID included",
+			"Never launch, cancel or retry a run from inside this job",
 		} {
 			if !strings.Contains(got, want) {
 				t.Errorf("the prompt %+v lacks %q:\n%s", d, want, got)
