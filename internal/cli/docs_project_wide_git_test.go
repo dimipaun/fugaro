@@ -261,8 +261,11 @@ func TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository(t *testing
 // single author every repository's pull requests then carry (F8, D472),
 // that no one has run the path with such a token yet (D468 = no, Check 180),
 // where the API-root lock stands: unchecked in 0.12.1, D474's in 0.13.0, and
-// that nothing here keeps the token out of the job (D490, the 2026-10-27
-// amendment to plan T1.1).
+// what the D490 pointer says now that the proxy is built: the proxy keeps
+// the token out of the run's own git traffic, and the job's mount, with the
+// accessor behind it, leaves only with the flip the empty
+// `config.ProxiedGitSecretNames` has not filled (the 2026-10-27 amendment to
+// plan T1.1, B1.10).
 // The sentences wrap in the files, so the assertions are made against the
 // whitespace-normalized text.
 //
@@ -273,7 +276,8 @@ func TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository(t *testing
 // a launcher can override the job's environment; the "is 0.13.0's (D474,
 // T2.8)" clause deleted → FAIL; the D490 pointer sentence deleted → FAIL,
 // which is the one that says the page describes a token in the job and the
-// design that would keep it out is a plan. The base floor's move into step 4
+// built proxy is what keeps it out of the run's own git traffic while the
+// mount stays until the flip. The base floor's move into step 4
 // is a placement fix and is deliberately unpinned: the fact is F3's, and pinning
 // where a paragraph sits would fail on the next reordering that keeps it.
 func TestDocsStateTheBitbucketProjectTokenReach(t *testing.T) {
@@ -338,8 +342,11 @@ func TestDocsStateTheBitbucketProjectTokenReach(t *testing.T) {
 		// every reading above is now scoped to a repository the published
 		// node does not proxy -- the run reads no token only where that
 		// node admits the repository with `proxy: true`.
-		"A proxy that keeps the token out of the job is designed in [docs/secrets-brokering](secrets-brokering/README.md) and **built** (D490, \"What the agent gets\" below): on a repository the published node admits with `proxy: true` the runner reads no token, the run's git environment carries none, and the service puts the credential on the wire",
-		"while every reading above is a run of a repository the node does not proxy, which still holds the token's value itself.",
+		"A proxy that keeps the token out of the **run's own git traffic** is designed in [docs/secrets-brokering](secrets-brokering/README.md) and **built** (D490, \"What the agent gets\" below): on a repository the published node admits with `proxy: true` the runner reads no token, the run's git environment carries none, and the service puts the credential on the wire",
+		// The half that has NOT moved, which the sentence has to keep: every
+		// reach above is the mounted token's value, and the mount -- and the
+		// accessor behind it -- leave with the flip, not with the proxy.
+		"while the job's mount and the accessor behind it leave only with the flip, whose list `config.ProxiedGitSecretNames` is still empty on this tree, so every reach above is one read of the runner's `/proc` away on a proxied repository too.",
 	} {
 		if !strings.Contains(providers, strings.Join(strings.Fields(want), " ")) {
 			t.Errorf("docs/git-providers.md does not say %q: it is the page an operator reads to opt in to one Bitbucket token for many repositories", want)
