@@ -31,8 +31,9 @@
 # command that may never have run:
 #
 #   1. it finds a working node or stops, rather than reporting mutations it
-#      never ran (this repository's base image keeps node off PATH on purpose,
-#      docs/base-image.md, so "on PATH" is not the only place to look);
+#      never ran (the base carries no node of its own, docs/base-image.md: a
+#      project's runtimes come from mise, so "on PATH" is not the only place
+#      to look);
 #   2. **the positive control** -- the suite must PASS on the pristine module,
 #      with at least one test actually run. `node --test` exits 0 over a glob
 #      that matched nothing, so a missing test file would otherwise look exactly
@@ -73,9 +74,9 @@ runner_works() {
   node --version >/dev/null 2>&1
 }
 
-# A runner, found rather than assumed: PATH first, then mise (the toolchains
-# this repository pins live there), then the location this repository's own
-# cloud runner keeps node in when it is deliberately not on PATH.
+# A runner, found rather than assumed: PATH first, then mise, where a project
+# pins its runtimes. The base carries no node of its own (docs/base-image.md),
+# so there is no third place to look.
 NODE_SOURCE="PATH"
 if ! runner_works && command -v mise >/dev/null 2>&1; then
   for tool in node@24 node@22 node; do
@@ -87,13 +88,10 @@ if ! runner_works && command -v mise >/dev/null 2>&1; then
     fi
   done
 fi
-if ! runner_works && [ -x /opt/fugaro/node/bin/node ]; then
-  PATH="/opt/fugaro/node/bin:$PATH"
-  NODE_SOURCE="/opt/fugaro/node/bin (the runner's own node, off PATH)"
-fi
 if ! runner_works; then
-  echo "REFUSING: no working node (on PATH, through mise, or at /opt/fugaro/node);" >&2
-  echo "          the suites below would not run, so their verdicts would be fiction." >&2
+  echo "REFUSING: no working node (on PATH or through mise);" >&2
+  echo "          the base carries none (docs/base-image.md): 'mise use -g node@22' provides" >&2
+  echo "          one -- and without a runner the verdicts below would be fiction." >&2
   exit 2
 fi
 echo "runner        node $(node --version) from $NODE_SOURCE"

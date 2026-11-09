@@ -61,23 +61,24 @@ func runBlockWith(t *testing.T, df, marker string) string {
 // script is bind-mounted (like fetch.sh), never copied in.
 func TestBaseByproductsAreNormalizedInTheirOwnLayer(t *testing.T) {
 	df := baseDockerfile(t)
-	for _, m := range []struct{ marker, what string }{
-		{"apt-get install -y --no-install-recommends", "the apt layer (useradd, git-lfs's postinst, dpkg's logs)"},
-		{"npm ci --ignore-scripts", "the harness layer (npm writes /tmp/node-compile-cache)"},
-	} {
-		block := runBlockWith(t, df, m.marker)
-		if !strings.Contains(block, "--mount=type=bind,source=images/base/byproducts.sh,target=/tmp/byproducts.sh") {
-			t.Errorf("%s does not bind-mount images/base/byproducts.sh", m.what)
-		}
-		if !strings.Contains(block, "sh /tmp/byproducts.sh") {
-			t.Errorf("%s does not run byproducts.sh, so what it wrote from the clock stays in that layer", m.what)
-		}
-		// The script has to be the last thing that RUN does: anything after it
-		// that touches /etc, /var or /tmp would be a byproduct again.
-		const run = "sh /tmp/byproducts.sh"
-		if tail := strings.TrimSpace(block[strings.LastIndex(block, run)+len(run):]); tail != "" {
-			t.Errorf("%s keeps writing after byproducts.sh, so that write is a byproduct of its own:\n%s", m.what, tail)
-		}
+	// The one layer that leaves byproducts (useradd, git-lfs's postinst,
+	// dpkg's logs). The harness layer's `npm ci` was the other, and it is gone
+	// with the harnesses (image setup skill IS4): the test names the layers the
+	// image still has, so a new one that skips the normalizer has to be added
+	// here rather than passing unnoticed.
+	const what = "the apt layer (useradd, git-lfs's postinst, dpkg's logs)"
+	block := runBlockWith(t, df, "apt-get install -y --no-install-recommends")
+	if !strings.Contains(block, "--mount=type=bind,source=images/base/byproducts.sh,target=/tmp/byproducts.sh") {
+		t.Errorf("%s does not bind-mount images/base/byproducts.sh", what)
+	}
+	if !strings.Contains(block, "sh /tmp/byproducts.sh") {
+		t.Errorf("%s does not run byproducts.sh, so what it wrote from the clock stays in that layer", what)
+	}
+	// The script has to be the last thing that RUN does: anything after it
+	// that touches /etc, /var or /tmp would be a byproduct again.
+	const run = "sh /tmp/byproducts.sh"
+	if tail := strings.TrimSpace(block[strings.LastIndex(block, run)+len(run):]); tail != "" {
+		t.Errorf("%s keeps writing after byproducts.sh, so that write is a byproduct of its own:\n%s", what, tail)
 	}
 	// No default on the ARG: a default of 0 would date the build 1970, and
 	// `chage -d 1970-01-01` writes the last-change day PAM reads as a required
