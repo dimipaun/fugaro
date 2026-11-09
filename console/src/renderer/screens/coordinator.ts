@@ -2305,10 +2305,11 @@ function runEndings(rows: readonly CoordinatorRunIdRow[], field: string): readon
 /** drawRunId draws a run's **ending** into the cell this screen names a run by:
  * the four characters a person reads and types back into the CLI, and the
  * shortest suffix that tells this row apart from the others drawn beside it. It
- * is the drawing half of `live.ts`'s `putRunId` **without the attribute**: a
- * coordinator row opens no run (this screen's rows press nothing that runs a
- * command), so the whole id stays where it was -- the row's own `data-run`, or
- * the detail the entry already holds -- and this cell carries no door.
+ * is the drawing half of `live.ts`'s `putRunId` **without the attribute**: no
+ * cell of this screen is a door, because every press the entry binds is given
+ * the value the model holds (`CoordinatorQueueItem.action`, `CoordinatorPullLink`)
+ * rather than text read back out of an element. So the whole id stays in the
+ * model, this cell is a reading of it, and nothing here needs `data-run-id`.
  *
  * One sanitizer answer decides what is drawn, exactly as `putRunId` states: the
  * ending is cut from the **sanitized** id (`drawnRef`), and the characters
