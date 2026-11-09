@@ -57,7 +57,7 @@ The patterns are the fixed rules over this report and the ones written before it
 
 ## 4. The daily sweep
 
-A daily report is the outlier sweep. Take each flagged run and each of the dearest through `fugaro diagnose RUN` for the cost and the halt, then `fugaro logs RUN`, and look for:
+A daily report is the outlier sweep. Take each flagged run and each of the dearest through `fugaro diagnose RUN` for the cost and the halt, then `fugaro logs RUN`. A run is named by its short ID — the last 4 characters of its row's `run` — wherever you report one. Look for:
 
 - **the review stage costing far more than implement.** Where a run's calls go through the gateway, each model call is one log line carrying its stage — `[implement] model call`, `[review] model call`, `[fix] model call`, and `[review_first] model call` for the cheaper first-line review — and the snippet below counts them. A review making many times implement's calls for a small change has read too much, and often the wrong diff base (below).
 - **sub-agent fan-outs** — `tool Agent:` lines, each a sub-agent the stage spawned, with its own calls on top of the stage's. These are the agent's own output, so they are there on every run.

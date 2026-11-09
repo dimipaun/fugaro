@@ -14,7 +14,7 @@ Ground rules:
 
 ## 1. Find the run
 
-Take the run from the conversation: a `fugaro run` result, a `fugaro runs ls` row's `run`, or what the user says. A run is `<repo-slug>/<run-id>`, or a bare run ID. If you don't have one:
+Take the run from the conversation: a `fugaro run` result, a `fugaro runs ls` row's `run`, or what the user says. A run is `<repo-slug>/<run-id>` or a bare run ID; say it to the user by its short ID — the last 4 characters — and take the full ID from the row's `run` in `--json` output. If you don't have one:
 
 ```bash
 fugaro runs ls --json

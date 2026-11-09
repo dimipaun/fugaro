@@ -22,7 +22,7 @@ fugaro run --batch <name> --run-id <id> --task-file - <<'TASK'
 TASK
 ```
 
-`fugaro runs ls --batch <name>` lists the batch, and `fugaro runs ls --watch --batch <name>` follows it.
+`fugaro runs ls --batch <name>` lists the batch, and `fugaro runs ls --watch --batch <name>` follows it. Report each piece to the user by its short ID — the last 4 characters of the run ID you chose — and keep the full run ID for `--run-id`, which a retry repeats as you typed it.
 
 ## Stay narrow for coupled work
 
