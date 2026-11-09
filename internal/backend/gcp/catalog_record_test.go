@@ -63,6 +63,7 @@ func recordSpec(t *testing.T) gcp.CatalogBuildSpec {
 			Generation:   1712345678901234,
 			SHA256:       strings.Repeat("b", 64),
 		},
+		Context: "ci/", ContextCommit: strings.Repeat("e", 40), ContextSHA256: strings.Repeat("f", 64),
 		ServiceAccount:  gcp.BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com",
 		MachineType:     "E2_HIGHCPU_8",
 		WorkflowSecrets: []config.Secret{{Name: "npm-token", Env: "NPM_TOKEN"}},
@@ -145,6 +146,7 @@ func TestCatalogRecordDecodesStrictly(t *testing.T) {
 	script := recordScript(t)
 	record := renderRecord(t, script, map[string]string{
 		"ENTRY": spec.Entry, "COMMIT": spec.Definition.SourceCommit,
+		"CONTEXT_COMMIT": spec.ContextCommit, "CONTEXT_SHA256": spec.ContextSHA256,
 		"GENERATION": strconv.FormatInt(spec.Definition.Generation, 10),
 		"SHA256":     spec.Definition.SHA256, "BASE": spec.Base, "IMAGE": spec.Image,
 		"TAG": spec.Definition.SHA256, "BUILD_ID": recordBuildID,
@@ -158,6 +160,7 @@ func TestCatalogRecordDecodesStrictly(t *testing.T) {
 	strictDecode(t, record, &got)
 	want := imagecheck.CatalogRecordState{
 		Version: 1, Entry: spec.Entry, SourceCommit: spec.Definition.SourceCommit,
+		ContextCommit: spec.ContextCommit, ContextSHA256: spec.ContextSHA256,
 		DefinitionGeneration: spec.Definition.Generation, DefinitionSHA256: spec.Definition.SHA256,
 		BaseRef: spec.Base, BaseDigest: recordBaseDigest, Image: spec.Image,
 		ContentTag: spec.Definition.SHA256, ImageDigest: recordImageDigest,
@@ -286,6 +289,7 @@ exit "$CURL_EXIT"
 		"CURL_ARGS=" + argsFile, "CURL_EXIT=" + strconv.Itoa(curlExit),
 		"BUCKET=" + spec.Bucket, "KEY=" + key, "ENTRY=" + spec.Entry,
 		"COMMIT=" + spec.Definition.SourceCommit,
+		"CONTEXT_COMMIT=" + spec.ContextCommit, "CONTEXT_SHA256=" + spec.ContextSHA256,
 		"GENERATION=" + strconv.FormatInt(spec.Definition.Generation, 10),
 		"SHA256=" + spec.Definition.SHA256, "BASE=" + spec.Base, "IMAGE=" + spec.Image,
 		"TAG=" + spec.Definition.SHA256, "BUILD_ID=" + recordBuildID,
