@@ -1,6 +1,7 @@
 package diagnoseagent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -85,10 +86,12 @@ func runFolders(t *testing.T) (source, evidence string) {
 //   - it ends the way the client ends when a cap stopped the run.
 //
 // The prompt is a line-oriented script so that one child covers every case:
-// RUN: asks it to run a shell command, READ: asks it to read a file, CAP:
-// makes it stop, and ANSWER_JSON: carries the model's answer as a JSON string
-// literal — already escaped by the test, so no shell ever quotes it and the
-// child only splices it into the result event.
+// RUN: asks it to run a shell command, READ: asks it to read a file, CAP: and
+// FAIL: make it stop the way the client stops when a cap or an error ends it,
+// LEAK: makes it print its own credential, COST: sets what it reports the run
+// cost, and ANSWER_JSON: carries the model's answer as a JSON string literal —
+// already escaped by the test, so no shell ever quotes it and the child only
+// splices it into the result event.
 //
 // What it did lands in record, one key per line, which is where the cases read
 // a refusal from: the answer itself is what the model wrote, and a test that
@@ -134,8 +137,18 @@ if printf '%s\n' "$prompt" | grep -q '^CAP: turns'; then
   printf '{"type":"result","subtype":"error_max_turns","is_error":true,"total_cost_usd":0.02,"session_id":"s1","result":""}\n'
   exit 1
 fi
+fail=$(printf '%s\n' "$prompt" | sed -n 's/^FAIL: //p' | head -1)
+if [ -n "$fail" ]; then
+  printf '{"type":"result","subtype":"%s","is_error":true,"total_cost_usd":0.02,"session_id":"s1","result":""}\n' "$fail"
+  exit 1
+fi
+if printf '%s\n' "$prompt" | grep -q '^LEAK: stderr'; then
+  printf '%s\n' "${` + credsOAuthVar + `:-}" >&2
+fi
+cost=$(printf '%s\n' "$prompt" | sed -n 's/^COST: //p' | head -1)
+[ -n "$cost" ] || cost=0.31
 answer=$(printf '%s\n' "$prompt" | sed -n 's/^ANSWER_JSON: //p' | head -1)
-printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.31,"session_id":"s1","result":%s}\n' "$answer"
+printf '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":%s,"session_id":"s1","result":%s}\n' "$cost" "$answer"
 `
 }
 
@@ -275,10 +288,19 @@ func TestRunArgsIsTheReadOnlyContract(t *testing.T) {
 	if !doc.DisableAllHooks {
 		t.Error("the settings payload does not disable hooks: a hook is a process the client starts with the child's environment, the credential among it")
 	}
-	for _, want := range []string{"Read(~/.ssh/**)", "Read(~/.claude/**)", "Read(~/.config/gcloud/**)", "Read(~/.aws/**)"} {
-		if !slices.Contains(doc.Permissions.Deny, want) {
-			t.Errorf("the settings payload does not deny %s, so a log that steers the agent there is read", want)
+	// Every tool the child has reads files, so every one of them needs every
+	// rule: a payload that denied a path to Read alone would leave Grep and
+	// Glob as the way round it.
+	for _, path := range []string{"~/.ssh/**", "~/.claude/**", "~/.config/gcloud/**", "~/.aws/**"} {
+		for _, tool := range []string{"Read", "Grep", "Glob"} {
+			want := tool + "(" + path + ")"
+			if !slices.Contains(doc.Permissions.Deny, want) {
+				t.Errorf("the settings payload does not deny %s, so a log that steers the agent there is read", want)
+			}
 		}
+	}
+	if want := len(childFileTools) * len(childReadDeny); len(doc.Permissions.Deny) != want {
+		t.Errorf("the settings payload holds %d deny rules, want %d — one per tool per path", len(doc.Permissions.Deny), want)
 	}
 	var adds []string
 	for i, a := range args {
@@ -288,6 +310,11 @@ func TestRunArgsIsTheReadOnlyContract(t *testing.T) {
 	}
 	if len(adds) != 1 || adds[0] != evidence {
 		t.Errorf("the child is given the roots %v, want %s alone: the source tree is its working directory and no third folder is readable", adds, evidence)
+	}
+	// The model is D1607's key, and a diagnosis that quietly ran on the
+	// client's own default would not be the model the setting names.
+	if model, ok := runFlag(args, "--model"); !ok || model != "claude-sonnet-5-5" {
+		t.Errorf("--model is %q (present: %v), want the model this request named", model, ok)
 	}
 	// The cap (D1613): both halves, always.
 	if _, ok := runFlag(args, "--max-turns"); !ok {
@@ -345,6 +372,33 @@ func TestRunChildEnvironmentHoldsNothingButTheHandle(t *testing.T) {
 	}
 }
 
+// TestRunChildEnvironmentWritesTheCredentialOnce: the credential is written
+// last and once, so a name that appears twice cannot be read two ways. The
+// handle here is deliberately named after an allow-listed variable, which is
+// the only way the two can meet: a getenv takes the first match and a map the
+// last, so the parent's value has to be the one dropped.
+func TestRunChildEnvironmentWritesTheCredentialOnce(t *testing.T) {
+	value := runValue(t, "once")
+	h, err := newHandle("HOME", "in HOME", value, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := childEnvironment([]string{"HOME=/home/someone", "PATH=/usr/bin"}, h)
+	found := 0
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, "HOME=") {
+			continue
+		}
+		found++
+		if kv != "HOME="+value {
+			t.Errorf("HOME is %q, want the handle's credential: the allow-listed name has to yield to it", kv)
+		}
+	}
+	if found != 1 {
+		t.Errorf("the child's environment names HOME %d times, want once: %v", found, env)
+	}
+}
+
 // TestRunRefusesAZeroHandle: a Handle is the one credential a diagnosis has,
 // and a caller that built none has a bug this package refuses rather than a
 // child started with whatever else the machine holds.
@@ -373,6 +427,7 @@ func TestRunRefusesToStartWithoutTheTwoFolders(t *testing.T) {
 		{"no source tree", "", evidence},
 		{"no evidence folder", source, ""},
 		{"a source tree that is not there", filepath.Join(source, "gone"), evidence},
+		{"an evidence folder that is a file", source, filepath.Join(source, "main.go")},
 	} {
 		req := Request{
 			Handle: runHandle(t, runValue(t, "folders")), Prompt: "prompt", Nonce: NewNonce(),
@@ -454,6 +509,97 @@ func TestRunACapStopsIt(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cap") || !strings.Contains(err.Error(), "error_max_turns") {
 		t.Errorf("the refusal does not name the cap that stopped the run: %v", err)
+	}
+}
+
+// TestRunRefusesAnAnswerItPaidTooMuchFor: --max-budget-usd is the client's own
+// estimate, and the run's own report of what it cost is checked rather than
+// trusted (F14). A run that reports more than its cap did not stay inside it
+// whatever the flag said, and its answer is not shown.
+func TestRunRefusesAnAnswerItPaidTooMuchFor(t *testing.T) {
+	s := newRunSetup(t)
+	s.req.Cap = Cap{Turns: 5, USD: 0.10}
+	_, err := s.run(t, "COST: 0.80", answer(t, fence(s.nonce, "outcome: bug\nsignature: update config invalid\nbody")))
+	if err == nil {
+		t.Fatal("a run that reported more than its cap was reported as a diagnosis")
+	}
+	if !strings.Contains(err.Error(), "cost") || !strings.Contains(err.Error(), "0.80") {
+		t.Errorf("the refusal does not say what the run cost: %v", err)
+	}
+}
+
+// TestRunRefusesAnErrorThatIsNotACap: the client reporting an error of its own
+// — not one of the two caps — is a run that answered nothing, and the person
+// is told which error rather than shown an empty diagnosis.
+func TestRunRefusesAnErrorThatIsNotACap(t *testing.T) {
+	s := newRunSetup(t)
+	_, err := s.run(t, "FAIL: error_during_execution")
+	if err == nil {
+		t.Fatal("a run that reported an error was reported as a diagnosis")
+	}
+	if !strings.Contains(err.Error(), "error_during_execution") {
+		t.Errorf("the refusal does not name the error the client reported: %v", err)
+	}
+}
+
+// TestRunReadsTheLastBlockThisNonceFences: this diagnosis's nonce fences the
+// block, and the block read is the *last* one it fences. The first block here
+// carries the real nonce — the shape of an agent that quotes the instructions'
+// own template before writing the answer — so taking the first would report the
+// quotation as the diagnosis.
+func TestRunReadsTheLastBlockThisNonceFences(t *testing.T) {
+	s := newRunSetup(t)
+	quoted := fence(s.nonce, "outcome: unclear\nsignature: quoted from the instructions\nnot the answer")
+	d, err := s.run(t, answer(t, quoted+"\n"+fence(s.nonce, "outcome: bug\nsignature: update config invalid\nthe answer")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Outcome != OutcomeBug {
+		t.Errorf("the outcome is %q, want %q: the answer is the last block this nonce fences", d.Outcome, OutcomeBug)
+	}
+}
+
+// TestRunRedactsTheSignatureItMatchesOn: the signature is model output too, and
+// a credential that reached it would be written into whatever a finding saved
+// from this diagnosis is matched by.
+func TestRunRedactsTheSignatureItMatchesOn(t *testing.T) {
+	s := newRunSetup(t)
+	d, err := s.run(t, answer(t, fence(s.nonce, "outcome: bug\nsignature: update config invalid "+s.value+"\nthe body")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(d.Signature, s.value) {
+		t.Errorf("the signature still carries the credential: %q", d.Signature)
+	}
+	if !strings.Contains(d.Signature, "update config invalid") {
+		t.Errorf("the signature lost what a saved finding is matched by: %q", d.Signature)
+	}
+}
+
+// TestRunRedactsWhatTheChildWritesOnTheWay: the transcript and the child's own
+// stderr are the two streams a person watches, and both run through the same
+// redactor as the answer. The child prints its own credential here, so an
+// unredacted writer is a credential on the terminal. The [REDACTED] check is
+// the control: without it a child that printed nothing would satisfy a test
+// that only looked for the value's absence.
+func TestRunRedactsWhatTheChildWritesOnTheWay(t *testing.T) {
+	s := newRunSetup(t)
+	var stderr, transcript bytes.Buffer
+	s.req.Stderr, s.req.Transcript = &stderr, &transcript
+	if _, err := s.run(t, "LEAK: stderr", answer(t, fence(s.nonce, "outcome: bug\nsignature: update config invalid\nit was "+s.value))); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stderr.String(), s.value) {
+		t.Errorf("the child's stderr still carries the credential: %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "[REDACTED]") {
+		t.Errorf("nothing on the child's stderr was redacted, so this case proves nothing: %q", stderr.String())
+	}
+	if strings.Contains(transcript.String(), s.value) {
+		t.Errorf("the transcript still carries the credential: %q", transcript.String())
+	}
+	if !strings.Contains(transcript.String(), "result") {
+		t.Errorf("the transcript is empty, so its redaction proves nothing: %q", transcript.String())
 	}
 }
 
