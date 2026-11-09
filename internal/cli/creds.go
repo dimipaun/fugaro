@@ -312,6 +312,19 @@ type bundleStore struct {
 	id      string // the container's ID (credsvc.BundleSecretID)
 }
 
+// openBundleStore selects the container from the SELECTED CONFIG and from
+// nothing else, which is what makes the same two verbs serve both deployments
+// the credentials service has (docs/workspaces/spec.md §4): an installation's
+// config names the installation's bundle, and the config of the project a
+// workspace is named after (workspaceOwnerConfig — the config the owner's
+// member table and cap are written in) names the workspace's own project and
+// therefore the workspace's ONE bundle, the pool its service reads
+// (credsvc.WorkspaceBundleSecretID, which is the same container
+// credsvc.BundleSecretID derives for that name). There is deliberately no flag
+// and no second command for the workspace case: a container chosen by an
+// argument is a container an operator can be pointed at by one, and the
+// deployment it belongs to is the thing that decides which pool a credential
+// is in.
 func openBundleStore(ctx context.Context, lc *localcfg.Config) (*bundleStore, error) {
 	svc, err := gcp.NewSecretManager(ctx, gcpOptions(lc))
 	if err != nil {
