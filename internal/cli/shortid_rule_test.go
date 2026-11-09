@@ -60,11 +60,22 @@ var flagWordRE = regexp.MustCompile(`^--[a-z][a-z0-9-]*$`)
 // covered the day it is written, as long as its help says which form it takes.
 var runFlagHelpRE = regexp.MustCompile(`(\bRUN\b|<repo-slug>/<run-id>|(?i:\brun id\b))`)
 
-// endingHelpRE matches a command's or a flag's own help telling the reader it
-// takes an ending, the last four or more characters of a run ID: the RUN
-// argument SR14 gives `logs`, `diagnose` and `artifacts` when it wires them to
-// resolveRun.
-var endingHelpRE = regexp.MustCompile(`(?i)(characters? of a run ID|short(er)? run ID|an ending)`)
+// endingHelpRE matches a command's or a flag's own help *offering* an ending,
+// the last four or more characters of a run ID: the RUN argument SR14 gives
+// `logs`, `diagnose` and `artifacts` when it wires them to resolveRun. It names
+// the form as this CLI spells it rather than the word "ending", because a help
+// may mention endings to say the opposite and a flag is held to its help alone:
+// `--retry`'s "a run an ending names is never launched, since the bucket cannot
+// vouch for which run an ending means" is the one a keyword would read as an
+// offer, and the flag launches a run, so no probe can refuse it. A help that
+// words an offer some other way fails the check and says so, the message naming
+// the form the help asks for. A command is not left to this reading, though: a
+// help may state a refusal in an offer's own words — cancel's "is the one
+// command that acts on a run and takes no ending. Given the last four or more
+// characters of a run ID it cancels nothing" — and it is the probe above, which
+// every command the check names gets, that refuses that one
+// (TestEndingHelpDistinguishesOfferFromWarning).
+var endingHelpRE = regexp.MustCompile(`(?i)(characters? of a run ID|short(er)? run ID)`)
 
 // sentences splits a text into the units a claim is made in: a line of a
 // markdown file, or one sentence of it. A claim is read inside one of these, so
@@ -167,19 +178,27 @@ func flagClaims(root *cobra.Command, flag string) []string {
 // claims nothing about the form a run is given — a placeholder, a record's
 // field, another document, or a flag that takes something else, `--json` being
 // the one the texts carry.
+//
+// A span is read for both, and what each finds is claimed: one span writes
+// `fugaro cancel --json`, which names the command as surely as `fugaro cancel`
+// does, and a flag that takes no run — `--json`, in that same span — must not
+// be what silences it. Reading the flag alone would drop the claim, and a
+// dropped claim is the one thing this guard promises never to do: the text is
+// reported, or checked, never skipped.
 func claimNames(root *cobra.Command, span string) []string {
+	var out []string
 	if flag := flagIn(span); flag != "" {
-		return flagClaims(root, flag)
+		out = flagClaims(root, flag)
 	}
 	name := commandIn(span)
 	if name == "" {
-		return nil
+		return out
 	}
 	cmd, _, err := root.Find(strings.Fields(name))
 	if err != nil || cmd == nil || cmd == root || len(runArgLeaves(cmd)) == 0 {
-		return nil
+		return out
 	}
-	return []string{name}
+	return append(out, name)
 }
 
 // splitFlagClaim splits a "cmd --flag" claim, and reports false for a claim
@@ -344,6 +363,12 @@ func TestShortIDRuleNamesOnlyCommandsThatTakeOne(t *testing.T) {
 		{"Never give `fugaro run --retry` the short ID", nil, []string{"Never give `fugaro run --retry` the short ID"}},
 		{"`fugaro run --retry` takes the short ID and `--run-id` the full ID", nil, []string{"`fugaro run --retry` takes the short ID and `--run-id` the full ID"}},
 
+		// A span naming a command and a flag at once claims the command: the
+		// flag is read where it names a run, and a flag that takes no run
+		// (`--json` here) is not what makes the command's claim disappear.
+		{"Pass the short ID to `fugaro cancel --json`", []string{"cancel"}, nil},
+		{"`fugaro logs --json` takes the short ID", []string{"logs"}, nil},
+
 		// A flag that takes no run claims nothing, whatever the sentence says
 		// about it: `--json` carries both forms without being given either.
 		{"`--json` prints the short ID", nil, nil},
@@ -399,5 +424,49 @@ func TestShortIDRuleNamesOnlyCommandsThatTakeOne(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestEndingHelpDistinguishesOfferFromWarning: the help check above is only as
+// good as what it reads as an offer of an ending, and on a flag the reading is
+// the whole guard: `fugaro run --retry` launches a run, so no probe can refuse
+// an ending for it. Its help mentions endings twice and offers neither — "a run
+// an ending names is never launched, since the bucket cannot vouch for which
+// run an ending means" — so a check that matched the word would pass a text
+// that claimed a short ID for the flag, the false claim it exists to catch. A
+// help that offers one has to read as one for the same reason in reverse: the
+// check fails a text naming `logs`, `diagnose` or `artifacts` if their help
+// stops reading as an offer, and those are the commands SR14 wired to
+// resolveRun.
+//
+// Only a flag is held to the reading. A command's help may state the refusal in
+// the very words of an offer — cancel's "takes no ending. Given the last four
+// or more characters of a run ID it cancels nothing" — and no reading of prose
+// tells that offer from that refusal; running the command does, which is what
+// the check above does, and why cancel is not in this test.
+func TestEndingHelpDistinguishesOfferFromWarning(t *testing.T) {
+	root := NewRootCmd()
+	helpOf := func(cmd *cobra.Command) string { return cmd.Long + " " + cmd.Short + " " + cmd.Use }
+	find := func(path string) *cobra.Command {
+		t.Helper()
+		cmd, _, err := root.Find(strings.Fields(path))
+		if err != nil || cmd == nil {
+			t.Fatalf("no %s in this CLI: %v", path, err)
+		}
+		return cmd
+	}
+
+	for _, path := range []string{"logs", "diagnose", "artifacts ls", "artifacts get"} {
+		if help := helpOf(find(path)); !endingHelpRE.MatchString(help) {
+			t.Errorf("%s reads an ending through resolveRun and its help does not read as an offer: %q -- a text naming it as a command that takes a short ID would fail the help check on a command that takes one", path, help)
+		}
+	}
+
+	retry := find("run").Flags().Lookup("retry")
+	if retry == nil {
+		t.Fatal("no --retry on `fugaro run`: the flag this test exists for is gone")
+	}
+	if endingHelpRE.MatchString(retry.Usage) {
+		t.Errorf("`fugaro run --retry` takes a full ID only -- an ending names a run the bucket cannot vouch for -- and its help reads as an offer: %q -- a text naming the flag as one that takes a short ID would pass, and no probe can refuse it: the help is the whole guard on a flag that launches a run", retry.Usage)
 	}
 }
