@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/issues"
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/shellword"
 	"github.com/dimipaun/fugaro/internal/updatecheck"
 )
 
@@ -242,8 +243,8 @@ func retryHintLines(local []issues.Issue, rows []issues.SharedRow, version strin
 }
 
 // retryCommand is the command an issue offers to run again, as one line, or
-// ok false when this build has no such command. Two things are checked, and
-// both are about the same thing: the offer is a line a person pastes into a
+// ok false when this build has no such command. Three things are checked, and
+// each is about the same thing: the offer is a line a person pastes into a
 // shell.
 //
 // It has to begin with this build's own name. A command the person ran by
@@ -251,8 +252,16 @@ func retryHintLines(local []issues.Issue, rows []issues.SharedRow, version strin
 // word is [REDACTED] and nothing can be offered: a name that is not the
 // binary's is not something this build can vouch for.
 //
-// Every word after it walks down this build's own tree until one is not a
-// subcommand — a flag, or an argument such as a task or a checkout path — and
+// Every word has to be one a shell reads as a literal (retryWordsInert). The
+// record is a file on this machine, and a coding agent running as the user can
+// write it — internal/issues says as much of the store it reads — so the text
+// is not the person's own until it is checked. `fugaro update --yes; curl … |
+// sh` is a stored command a shell runs as two, and an offer that printed it
+// would hand the reader the injection with `You can retry: ` in front of it,
+// on a line whose whole purpose is to be pasted.
+//
+// Every word after the name walks down this build's own tree until one is not
+// a subcommand — a flag, or an argument such as a task or a checkout path — and
 // a word that a command WITH subcommands does not answer to refuses the whole
 // line: `fugaro frobnicate` is not a command of this build, and neither is
 // `fugaro issue frobnicate`, so an offer naming one would send the reader to a
@@ -262,7 +271,7 @@ func retryHintLines(local []issues.Issue, rows []issues.SharedRow, version strin
 // command line, and a terminal is no place to trust one.
 func retryCommand(command string, root *cobra.Command) (string, bool) {
 	words := strings.Fields(command)
-	if len(words) == 0 || words[0] != root.Name() {
+	if len(words) == 0 || words[0] != root.Name() || !retryWordsInert(words) {
 		return "", false
 	}
 	cur := root
@@ -280,4 +289,33 @@ func retryCommand(command string, root *cobra.Command) (string, bool) {
 		cur = next
 	}
 	return safetext.OneLine(command), true
+}
+
+// retryRedacted is the word the record carries where a value it may not keep
+// stood: internal/issues writes it (its redactedValue, unexported there), and
+// a command run by path has it as its first word. It is the one word of an
+// offer that is not a run of shell-literal bytes.
+const retryRedacted = "[REDACTED]"
+
+// retryWordsInert reports whether every word is one a shell reads as a literal
+// word: shellword's own set of bytes, which is the set this program's printed
+// commands are made of, so a line this build wrote passes it — plus the
+// redaction marker, which stands in a value's place and is not literal.
+//
+// A word holding anything else is one a shell does something with — a
+// separator, a substitution, a redirect, a glob, an expansion — and the whole
+// line is refused rather than the word quoted: the offer is the record's own
+// text (F28), so a text that is not the person's own is not offered at all.
+func retryWordsInert(words []string) bool {
+	for _, w := range words {
+		if w == retryRedacted {
+			continue
+		}
+		for i := 0; i < len(w); i++ {
+			if !shellword.SafeByte(w[i]) {
+				return false
+			}
+		}
+	}
+	return true
 }

