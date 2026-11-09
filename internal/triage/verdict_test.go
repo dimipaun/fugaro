@@ -53,6 +53,14 @@ func TestDecodeStrict(t *testing.T) {
 		{"a document that is not an object", `[{"version":1}]`},
 		{"data after the object", `{"version":1,"findings":[]}{"version":1,"findings":[]}`},
 		{"nothing at all", `not json`},
+		// encoding/json matches a member name whatever its case and keeps the
+		// last of a repeated one, so without its own check the reader would take
+		// these for verdicts where the schema, and any reader that takes the
+		// exact name or the first one, sees something else.
+		{"a member name in another case", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"x","Group":"docs"}]}`},
+		{"a case variant that would take the member", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"x","VERDICT":"defer"}]}`},
+		{"a member written twice", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"x","verdict":"defer"}]}`},
+		{"a document whose members are all in another case", `{"VERSION":1,"FINDINGS":[]}`},
 	} {
 		if _, err := Decode([]byte(tc.in)); err == nil {
 			t.Errorf("%s was accepted", tc.name)
@@ -105,9 +113,11 @@ func TestDecodeKeepsEveryEntry(t *testing.T) {
 
 // TestSchemaAcceptsADecodedVerdict holds schemas/triage.schema.json to the
 // reader: the document Decode accepts is the document the schema accepts, and
-// the refusals both of them make are the same refusals but for the key's shape,
-// which is the caller's to derive and so the schema's to state — the one
-// divergence this test pins rather than hides.
+// the refusals both of them make are the same refusals, but for the two the
+// reader makes on its own: the key's shape, which is the caller's to derive and
+// so the schema's to state, and a member name an object writes twice, which is
+// one member by the time a parser has read the document. This test pins both
+// divergences rather than hiding them.
 func TestSchemaAcceptsADecodedVerdict(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "triage.schema.json"))
 	if err != nil {
@@ -182,9 +192,27 @@ func TestSchemaAcceptsADecodedVerdict(t *testing.T) {
 		t.Error("the schema accepted a key outside the shape it states: the divergence this test pins runs the other way")
 	}
 
+	// The second divergence, pinned the same way: a member name an object
+	// writes twice is refused by the reader and invisible to the schema, since
+	// a JSON object has one member of that name by the time a parser has read
+	// it — and it is the last that wins, which is exactly why the reader does
+	// not let the document say two things and leave the reading to whoever
+	// parses it.
+	twice := `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"x","verdict":"defer"}]}`
+	if _, err := Decode([]byte(twice)); err == nil {
+		t.Error("the reader accepted a member written twice, and read the last of them")
+	}
+	inst, err = jsonschema.UnmarshalJSON(strings.NewReader(twice))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Errorf("the schema refused a member written twice, which it cannot see: %v", err)
+	}
+
 	// The bounds the schema states are the reader's own: a third verdict word,
-	// a reason over the limit, no reason, an empty key, no findings array, and
-	// a member the shape does not know.
+	// a reason over the limit, no reason, an empty key, a member name in
+	// another case, no findings array, and a member the shape does not know.
 	for _, tc := range []struct{ name, in string }{
 		{"a third verdict word", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"maybe","reason":"x"}]}`},
 		{"a reason over the limit", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"` + strings.Repeat("x", 201) + `"}]}`},
@@ -193,6 +221,8 @@ func TestSchemaAcceptsADecodedVerdict(t *testing.T) {
 		{"no findings array", `{"version":1}`},
 		{"another version", `{"version":2,"findings":[]}`},
 		{"an unknown member", `{"version":1,"findings":[],"tolerated":[]}`},
+		{"a member name in another case", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"x","Group":"docs"}]}`},
+		{"a document whose members are all in another case", `{"VERSION":1,"FINDINGS":[]}`},
 	} {
 		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(tc.in))
 		if err != nil {

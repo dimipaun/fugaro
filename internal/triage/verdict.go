@@ -85,13 +85,14 @@ type Entry struct {
 }
 
 // Decode reads one verdict from a judge's answer, strictly: an unknown member
-// of the document or of an entry, a version this reader does not know, a
-// verdict word outside the two, a missing findings array, a reason that is
-// empty, over MaxLine bytes or on more than one line, and an empty key or a
-// negative index are all refused. Anything refused here is a call the runner
-// records as failed, which blocks every finding (D1846): the refusals are the
-// strict direction, so an answer this reader cannot place never becomes a
-// deferral.
+// of the document or of an entry, a member name that is not spelled exactly as
+// the schema spells it or that an object writes twice, a version this reader
+// does not know, a verdict word outside the two, a missing findings array, a
+// reason that is empty, over MaxLine bytes or on more than one line, and an
+// empty key or a negative index are all refused. Anything refused here is a
+// call the runner records as failed, which blocks every finding (D1846): the
+// refusals are the strict direction, so an answer this reader cannot place
+// never becomes a deferral.
 func Decode(data []byte) (Verdict, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
@@ -101,6 +102,9 @@ func Decode(data []byte) (Verdict, error) {
 	}
 	if err := dec.Decode(new(any)); !errors.Is(err, io.EOF) {
 		return Verdict{}, errors.New("triage: the verdict carries a second document after it")
+	}
+	if err := checkNames(data); err != nil {
+		return Verdict{}, err
 	}
 	if v.Version != Version {
 		return Verdict{}, fmt.Errorf("triage: verdict version %d, want %d", v.Version, Version)
@@ -147,4 +151,82 @@ func checkLine(field, s string, required bool) error {
 		return fmt.Errorf("triage: %s is not one line", field)
 	}
 	return nil
+}
+
+// verdictNames and entryNames are the members each object of a verdict may
+// carry, spelled exactly as schemas/triage.schema.json spells them.
+var (
+	verdictNames = map[string]bool{"version": true, "findings": true}
+	entryNames   = map[string]bool{"index": true, "key": true, "verdict": true, "reason": true, "group": true}
+)
+
+// checkNames refuses a member name the verdict does not spell exactly, and one
+// an object spells twice. encoding/json matches a name whatever its case — it
+// reads {"VERSION":1,"FINDINGS":[]} whole — and keeps the last of a repeated
+// one, so neither DisallowUnknownFields nor the decode above would stop
+// {"verdict":"block","VERDICT":"defer"}: the runner would read a deferral where
+// schemas/triage.schema.json, and any reader that takes the exact name or the
+// first one, sees a block. A verdict two readers place differently is refused
+// as a whole, like every other refusal here (D1846).
+//
+// It runs over the bytes after the decode above, so it settles names alone:
+// the syntax, the shapes and the members the document does not know at all are
+// that decoder's refusals, and this pass never sees a document it refused.
+func checkNames(data []byte) error {
+	entries, err := memberValues(data, verdictNames, "findings")
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if _, err := memberValues(entry, entryNames, ""); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// memberValues reads the members of the JSON object raw holds, refusing a name
+// the object may not carry and a name it carries twice, and returns the raw
+// values of the member named nested — empty when it is absent, and for a value
+// that is not an array, a shape the decode above already refused.
+func memberValues(raw []byte, allowed map[string]bool, nested string) ([]json.RawMessage, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, fmt.Errorf("triage: %w", err)
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		// Not an object, so it carries no name: the decode above refused it.
+		return nil, nil
+	}
+	var entries []json.RawMessage
+	seen := map[string]bool{}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, fmt.Errorf("triage: %w", err)
+		}
+		name, ok := tok.(string)
+		if !ok {
+			return nil, errors.New("triage: a member of the verdict has no name")
+		}
+		switch {
+		case !allowed[name]:
+			return nil, fmt.Errorf("triage: %q is not a member of the verdict: names are matched exactly", name)
+		case seen[name]:
+			return nil, fmt.Errorf("triage: the member %q is written twice", name)
+		}
+		seen[name] = true
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return nil, fmt.Errorf("triage: %w", err)
+		}
+		if name == nested {
+			var list []json.RawMessage
+			if err := json.Unmarshal(value, &list); err == nil {
+				entries = list
+			}
+		}
+	}
+	return entries, nil
 }
