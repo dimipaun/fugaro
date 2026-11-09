@@ -237,14 +237,15 @@ func TestTheToolHoldsNoWayToSignButTheSigner(t *testing.T) {
 
 // signingRoutes answers what one parsed file holds that could sign a payload or
 // hold a private half, and it is a function rather than a loop in the test above
-// because the scan's own reach is a thing to hold too: TestTheScanRefusesADotImport
+// because the scan's own reach is a thing to hold too: TestTheScanRefusesASecondWayToSign
 // parses a source it would accept and holds this to refusing it.
 //
-// Three things are refused: an import of a crypto package that is not
-// crypto/ed25519; a dot-import of that one, whose names are bare identifiers and
-// so are not selectors this scan can follow; and any of the symbols that sign,
-// hold or derive a private half, named through the binding the file gives the
-// package -- its own name or an alias, so a renamed import is caught.
+// Three things are refused: an import of any package but crypto/ed25519 that
+// names crypto or ed25519, however it is spelled; a dot-import of that one,
+// whose names are bare identifiers and so are not selectors this scan can
+// follow; and any of the symbols that sign, hold or derive a private half, named
+// through the binding the file gives the package -- its own name or an alias, so
+// a renamed import is caught.
 func signingRoutes(file *ast.File) []string {
 	// The symbols that would sign, hold or derive a private half. Signing a
 	// payload and reading a private key out of a file both need one of these,
@@ -255,8 +256,12 @@ func signingRoutes(file *ast.File) []string {
 	local := localEd25519Name(file)
 	for _, spec := range file.Imports {
 		path := strings.Trim(spec.Path.Value, `"`)
-		if strings.HasPrefix(path, "crypto/") && path != ed25519Path {
-			problems = append(problems, fmt.Sprintf("imports %s: the tool's only route to a signature is the Signer it is handed, so a second crypto package is a second route", path))
+		// The check is on the name and not on the "crypto/" prefix: a signing
+		// package by another spelling is the same route, and
+		// golang.org/x/crypto/ed25519 -- a module this repository already
+		// depends on -- signs exactly as the standard library's does.
+		if path != ed25519Path && (strings.Contains(path, "crypto") || strings.Contains(path, "ed25519")) {
+			problems = append(problems, fmt.Sprintf("imports %s: the tool's only route to a signature is the Signer it is handed, so any package but crypto/ed25519 that names crypto or ed25519 is a second route", path))
 		}
 		if path == ed25519Path && spec.Name != nil && spec.Name.Name == "." {
 			problems = append(problems, fmt.Sprintf("dot-imports %s: a dot-imported name is a bare identifier and not a selector, so a signing call made through one is not something this scan could see, and the tool's only route to a signature is the Signer it is handed", path))
@@ -282,15 +287,24 @@ func signingRoutes(file *ast.File) []string {
 	return problems
 }
 
-// TestTheScanRefusesADotImport holds the scan's own reach, in both directions: a
-// dot-import of crypto/ed25519 makes every name in it a bare identifier, which
-// is not an *ast.SelectorExpr and therefore nothing the scan above can follow,
-// so the import is refused rather than trusted -- and the imports the tool may
-// hold are not refused, so the rule is not simply "refuse more".
+// TestTheScanRefusesASecondWayToSign holds the scan's own reach, in both
+// directions: the ways this package could reach a signature without the Signer
+// are refused, and the import it may hold is not, so the rule is not simply
+// "refuse more".
+//
+// Two of the refusals are blind spots rather than rules:
+//
+//   - a dot-import of crypto/ed25519 makes every name in it a bare identifier,
+//     which is not an *ast.SelectorExpr and therefore nothing the scan above can
+//     follow;
+//   - a crypto package by another spelling -- golang.org/x/crypto/ed25519 signs
+//     exactly as the standard library's does, and this repository already
+//     depends on that module -- is not reached by a check on the "crypto/"
+//     prefix, so the check is on the name.
 //
 // Each source is parsed from a string: a fixture file of this package would be a
 // file the scan reads, and one of these must never exist here.
-func TestTheScanRefusesADotImport(t *testing.T) {
+func TestTheScanRefusesASecondWayToSign(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		source string
@@ -312,6 +326,11 @@ func TestTheScanRefusesADotImport(t *testing.T) {
 			true,
 		},
 		{
+			"the same signer under another module's name",
+			"package main\n\nimport xed \"golang.org/x/crypto/ed25519\"\n\nfunc sign(key, payload []byte) []byte { return xed.Sign(xed.PrivateKey(key), payload) }\n",
+			true,
+		},
+		{
 			"the imports the tool may hold",
 			"package main\n\nimport \"crypto/ed25519\"\n\nfunc size() int { return ed25519.PublicKeySize }\n",
 			false,
@@ -324,7 +343,7 @@ func TestTheScanRefusesADotImport(t *testing.T) {
 			}
 			problems := signingRoutes(file)
 			if tc.want && len(problems) == 0 {
-				t.Errorf("%q holds no problem, want a refusal: a dot-imported name is a bare identifier, so the scan would read straight past it", tc.source)
+				t.Errorf("%q holds no problem, want a refusal: the scan would read straight past a route to a signature", tc.source)
 			}
 			if !tc.want && len(problems) > 0 {
 				t.Errorf("%q holds %v, want none: a public key is what the ring the tool checks against is made of", tc.source, problems)
@@ -571,6 +590,11 @@ func TestRunRefusesWhatItCannotMint(t *testing.T) {
 		noSigning bool
 	}{
 		{"a flag that is missing", func(*fakeSigner) []string { return nil }, nil, true},
+		// A word that is not a flag stops flag.Parse, and every flag written
+		// after it is dropped in silence: -seats and -features here are terms
+		// the owner asked for and a key that does not carry them. The command
+		// takes no positional argument, so any word is a mistake.
+		{"a word that is not a flag", func(f *fakeSigner) []string { return runArgs(f, "stray", "-seats", "50") }, nil, true},
 		// An asymmetric key has no primary version, so there is nothing for the
 		// signer to fall back to and gcloud refuses the run: the flag is
 		// required rather than defaulted.

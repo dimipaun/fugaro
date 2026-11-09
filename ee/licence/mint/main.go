@@ -95,6 +95,13 @@ func run(args []string, out io.Writer, runner Runner) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
+	// flag.Parse stops at the first word that is not a flag, and every flag
+	// written after one is dropped without a word: -seats and -features there
+	// are terms the owner asked for and a key that does not carry them. The
+	// command takes no positional argument, so a word is always a mistake.
+	if extra := flags.Args(); len(extra) > 0 {
+		return fmt.Errorf("unexpected %s: this command takes nothing but flags, and a word that is not one stops the reading, so every flag after it is dropped in silence and the key is minted without the terms it asked for", strings.Join(extra, " "))
+	}
 
 	var missing []string
 	for _, required := range []struct{ name, value string }{
