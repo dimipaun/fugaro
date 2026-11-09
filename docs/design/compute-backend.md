@@ -3455,13 +3455,17 @@ recipe — the one route it leaves, the gid baked into the image, is untested
   fresh project (§1.9, Task 6). **Built** (Task 6): the module's bindings are
   `google_project_iam_member` resources that name the accounts it creates, so
   Terraform orders the account before the binding — but ordering is not a
-  wait, so the stage also retries: an apply that fails with "Service account
-  … does not exist" waits (15 s, 30 s, 60 s, 120 s), re-plans, and applies
-  what is left, and only when the new plan passes the guard and the grant
-  rules and holds nothing the confirmed plan did not (`computeStage.apply`,
-  `TestComputeStageRetriesIAMPropagation`). Which message GCP gives for the
+  wait, so the stage also retries: an apply that fails only on that gap —
+  which is one entry of the closed list every step of the converge retries on
+  (`tf.PropagationFailure`) — is planned, guarded and granted again, on the
+  same three waits the installation and repository steps use (20 s, 60 s,
+  120 s), and what is left is applied, and only when the new plan passes the
+  guard and the grant rules and holds nothing the confirmed plan did not
+  (`computeStage.apply`, `propagationRetry`, `TestComputeStageRetriesIAMPropagation`).
+  Which message GCP gives for the
   gap is what a live run (57b) has to confirm rather than a fake; a gap
-  reported in other words fails the stage, and rerunning it applies the rest.
+  reported in other words is not on the list, fails the stage, and rerunning
+  it applies the rest.
   What Task 6 also retries is the call that follows the apply: starting the preload
   rebuild, whose scheduler agent's binding on the preload account is seconds
   old (`infra.RunSchedulerJob`: a 403 is retried for about a minute, a 404 —

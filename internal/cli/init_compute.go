@@ -4,10 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"regexp"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -194,64 +192,57 @@ func (s *computeStage) grants(plan *tf.Plan) error {
 	return nil
 }
 
-// computeApplyWaits are the waits before each retry of an apply that failed
-// on IAM propagation: about four minutes in all. A variable so a test can make
-// them instant.
-var computeApplyWaits = []time.Duration{15 * time.Second, 30 * time.Second, 60 * time.Second, 120 * time.Second}
-
-// iamGap is how an apply reports a binding that names a service account IAM
-// does not see yet: "Service account <email> does not exist".
-var iamGap = regexp.MustCompile(`(?i)service\s+account\s+\S+\s+does\s+not\s+exist`)
-
 // apply applies the confirmed plan, and waits out IAM propagation (design
 // compute-backend §7.2 finding 5, §8.1 task 6): the module's bindings name the
 // accounts it creates, so Terraform orders each account before its bindings,
 // but a service account is not visible to IAM binding calls for a while after
 // it is created, and ordering alone does not wait for that. So an apply that
-// fails with "Service account ... does not exist" waits, re-plans, and applies
-// what is left -- and only when the new plan passes the guard and the grant
-// rules and every change in it is a change the confirmed plan held with the
-// same actions, which is what lets it go ahead without asking again. Any other
+// fails only on that gap (the closed list tf.PropagationFailure holds) is
+// planned, guarded and granted again -- propagationRetry's cycle, which is the
+// same one every other step of the converge runs -- and what is left is
+// applied only when the new plan passes the guard and the grant rules and
+// every change in it is a change the confirmed plan held with the same
+// actions, which is what lets it go ahead without asking again. Any other
 // failure, a gap that outlasts the waits, or a re-plan holding anything new is
 // the stage's error.
+//
+// The first pass applies the plan this stage already planned, guarded, granted
+// and had confirmed: it is not planned again for nothing. Every pass after it
+// is a new plan (s.plan), judged like the first.
 func (s *computeStage) apply(ctx context.Context, confirmed *tf.Plan) error {
 	r := s.e.r
-	for attempt := 0; ; attempt++ {
-		err := s.t.Apply(ctx, infra.PlanFile)
-		if err == nil {
-			return nil
+	first := true
+	var applied *tf.Plan
+	return propagationRetry(ctx, r.w, "the compute step", func(ctx context.Context) (*tf.Plan, error) {
+		if first {
+			first = false
+			applied = confirmed
+		} else {
+			changed, err := s.t.Plan(ctx, infra.PlanFile)
+			if err != nil {
+				return nil, remote(err)
+			}
+			if !changed {
+				// Nothing left to apply: the failed apply got there.
+				return nil, nil
+			}
+			next, err := s.t.Show(ctx, infra.PlanFile)
+			if err != nil {
+				return nil, remote(err)
+			}
+			if err := r.guard(ctx, s.e.c, next, r.o.allowDelete); err != nil {
+				return next, err
+			}
+			if err := s.grants(next); err != nil {
+				return next, err
+			}
+			if extra := unconfirmed(next, confirmed); len(extra) > 0 {
+				return next, userErr("the retry's plan holds changes the confirmed plan did not (%s); nothing more was applied: run fugaro setup --provision-batch again to review and confirm them", strings.Join(extra, ", "))
+			}
+			applied = next
 		}
-		if !iamGap.MatchString(err.Error()) || attempt >= len(computeApplyWaits) {
-			return remote(err)
-		}
-		wait := computeApplyWaits[attempt]
-		fmt.Fprintf(r.w, "a service account this apply created is not visible to IAM yet (design compute-backend §7.2); retrying what is left in %s\n", wait)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(wait):
-		}
-		changed, err := s.t.Plan(ctx, infra.PlanFile)
-		if err != nil {
-			return remote(err)
-		}
-		if !changed {
-			return nil
-		}
-		next, err := s.t.Show(ctx, infra.PlanFile)
-		if err != nil {
-			return remote(err)
-		}
-		if err := r.guard(ctx, s.e.c, next, r.o.allowDelete); err != nil {
-			return err
-		}
-		if err := s.grants(next); err != nil {
-			return err
-		}
-		if extra := unconfirmed(next, confirmed); len(extra) > 0 {
-			return userErr("the retry's plan holds changes the confirmed plan did not (%s); nothing more was applied: run fugaro setup --provision-batch again to review and confirm them", strings.Join(extra, ", "))
-		}
-	}
+		return applied, remote(s.t.Apply(ctx, infra.PlanFile))
+	})
 }
 
 // unconfirmed are the addresses next changes that confirmed did not change,

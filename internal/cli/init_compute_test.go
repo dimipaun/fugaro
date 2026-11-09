@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -593,8 +592,21 @@ func TestComputeStageHoldsItsGrantsToTheCover(t *testing.T) {
 
 // propagationStderr is what an apply says when a binding names a service
 // account the same apply created a moment ago and IAM does not see yet
-// (design compute-backend §7.2 finding 5).
-const propagationStderr = `Error: Error applying IAM policy for project "proj-1234": Error setting IAM policy for project "proj-1234": googleapi: Error 400: Service account fugaro-reaper@proj-1234.iam.gserviceaccount.com does not exist., badRequest`
+// (design compute-backend §7.2 finding 5). It is terraform's own shape -- the
+// box, and the resource the diagnostic was applying -- because that is what
+// the retry's closed list reads: a one-line error nobody sees is not what an
+// apply writes.
+const propagationStderr = "╷\n│ Error: Error applying IAM policy for project \"proj-1234\": Error setting IAM policy for project \"proj-1234\": googleapi: Error 400: Service account fugaro-reaper@proj-1234.iam.gserviceaccount.com does not exist., badRequest\n│ \n│   with module.compute.google_project_iam_member.reaper,\n│   on iam.tf line 88, in resource \"google_project_iam_member\" \"reaper\":\n│   88: resource \"google_project_iam_member\" \"reaper\" {\n│ \n╵\n"
+
+// reaperGapPlan makes the compute root's plan hold the account the apply's own
+// error names: the gap is only retryable against a plan that creates that
+// resource in the same apply (tf.PropagationFailure), which is what an apply
+// that lost the race to IAM was on.
+func reaperGapPlan(t *testing.T, r *initRig) {
+	t.Helper()
+	r.setPlanAt(t, "compute", created("module.compute.google_service_account.reaper", "google_service_account",
+		map[string]any{"account_id": infra.ReaperAccountID, "email": infra.ReaperAccountID + "@" + initProject + ".iam.gserviceaccount.com"}))
+}
 
 // A fresh account's bindings are retried, not given up on: an apply that fails
 // because IAM does not see an account yet waits, re-plans, holds the new plan
@@ -602,9 +614,10 @@ const propagationStderr = `Error: Error applying IAM policy for project "proj-12
 // what is left -- without asking again, since what is left is part of what
 // was confirmed.
 func TestComputeStageRetriesIAMPropagation(t *testing.T) {
-	noComputeWaits(t)
+	noPropagationWaits(t)
 	typedThroughYes(t)
 	r := computeRig(t)
+	reaperGapPlan(t, r)
 	r.script["apply@compute"] = []any{map[string]any{"exit": 1, "stderr": propagationStderr}, map[string]any{"exit": 0}}
 	r.save(t)
 	fakeTerminal(t)
@@ -615,7 +628,7 @@ func TestComputeStageRetriesIAMPropagation(t *testing.T) {
 	if got := subcommands(computeCalls(t, r)); !slices.Equal(got, []string{"version", "init", "plan", "show", "apply", "plan", "show", "apply", "output"}) {
 		t.Fatalf("terraform calls in the compute workdir = %q, want one re-plan and one more apply\n%s", got, out)
 	}
-	if !strings.Contains(out, "not visible to IAM yet") {
+	if !strings.Contains(out, "retrying the compute step in 20s: Google had not yet caught up with a resource it just created (attempt 1 of 3)") {
 		t.Errorf("the retry was not reported:\n%s", out)
 	}
 	if runs := r.sched.Runs(); len(runs) != 1 {
@@ -627,9 +640,10 @@ func TestComputeStageRetriesIAMPropagation(t *testing.T) {
 // retry for ever, or apply a re-plan that holds more than was confirmed.
 func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 	t.Run("another failure", func(t *testing.T) {
-		noComputeWaits(t)
+		noPropagationWaits(t)
 		typedThroughYes(t)
 		r := computeRig(t)
+		reaperGapPlan(t, r)
 		r.script["apply@compute"] = map[string]any{"exit": 1, "stderr": "Error: quota exceeded"}
 		r.save(t)
 		fakeTerminal(t)
@@ -642,9 +656,10 @@ func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 		}
 	})
 	t.Run("a gap that never closes", func(t *testing.T) {
-		noComputeWaits(t)
+		noPropagationWaits(t)
 		typedThroughYes(t)
 		r := computeRig(t)
+		reaperGapPlan(t, r)
 		r.script["apply@compute"] = map[string]any{"exit": 1, "stderr": propagationStderr}
 		r.save(t)
 		fakeTerminal(t)
@@ -652,16 +667,19 @@ func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "does not exist") {
 			t.Fatalf("err = %v, want the last propagation error", err)
 		}
-		if n := strings.Count(strings.Join(subcommands(computeCalls(t, r)), " "), "apply"); n != len(computeApplyWaits)+1 {
-			t.Errorf("applied %d times, want %d", n, len(computeApplyWaits)+1)
+		if n := strings.Count(strings.Join(subcommands(computeCalls(t, r)), " "), "apply"); n != len(propagationWaits)+1 {
+			t.Errorf("applied %d times, want %d", n, len(propagationWaits)+1)
 		}
 	})
 	t.Run("a re-plan with something new", func(t *testing.T) {
-		noComputeWaits(t)
+		noPropagationWaits(t)
 		typedThroughYes(t)
 		r := computeRig(t)
-		first := planJSON(t, change("module.compute.google_compute_router.this", "create"))
-		second := planJSON(t, change("module.compute.google_compute_router.this", "create"), change("module.compute.google_compute_firewall.extra", "create"))
+		first := planJSON(t, created("module.compute.google_service_account.reaper", "google_service_account",
+			map[string]any{"account_id": infra.ReaperAccountID}))
+		second := planJSON(t, created("module.compute.google_service_account.reaper", "google_service_account",
+			map[string]any{"account_id": infra.ReaperAccountID}),
+			change("module.compute.google_compute_firewall.extra", "create"))
 		r.script["show@compute"] = []any{map[string]any{"stdout": first}, map[string]any{"stdout": second}}
 		r.script["apply@compute"] = []any{map[string]any{"exit": 1, "stderr": propagationStderr}, map[string]any{"exit": 0}}
 		r.save(t)
@@ -674,12 +692,4 @@ func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 			t.Errorf("applied %d times, want 1", n)
 		}
 	})
-}
-
-// noComputeWaits makes the propagation retry's waits instant.
-func noComputeWaits(t *testing.T) {
-	t.Helper()
-	old := computeApplyWaits
-	computeApplyWaits = make([]time.Duration, len(old))
-	t.Cleanup(func() { computeApplyWaits = old })
 }
