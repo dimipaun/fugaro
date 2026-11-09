@@ -211,6 +211,47 @@ func TestRunPRRefusesErrorRow(t *testing.T) {
 	wantRefused(t, f, task.ShortRun(bad), "run", "--repo", "acme/app", "--pr", "7")
 }
 
+// TestRunPRRefusalHintResolves: checkRoot refuses a PR whose branch names a
+// root run whose result.json is unreadable. That run is named by its ending —
+// never the whole ID, and never a `<slug>/<ending>`, which is a listing's cell
+// and not a reference any command takes (locateRun's ParseRef wants the whole
+// pair) — and the refusal hands the reader `fugaro diagnose <ending>`. The
+// root here is older than the window the follow-up reads, so it does not show
+// in the PR's rows: its own refusal is the one that prints, and its hint is a
+// name the CLI has to resolve.
+func TestRunPRRefusalHintResolves(t *testing.T) {
+	f := newCloudFixture(t)
+	root := wallRunIDAt(100, "090000", "aaaa")
+	seedRoot(t, f, root, time.Now().Add(-100*24*time.Hour))
+	putBuildObject(t, f, "runs/"+appSlug+"/"+root+"/result.json", []byte("{not json"))
+	seedFollowUp(t, f, wallRunIDAt(0, "120000", "f00d"), root, root, time.Now().Add(-time.Hour), runstore.StatusSucceeded, true)
+
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "unreadable result.json") {
+		t.Fatalf("err = %v, want the root run's unreadable result.json", err)
+	}
+	after, ok := strings.CutPrefix(strings.TrimSpace(err.Error()), "run "+task.ShortRun(root)+", which PR #7's branch names,")
+	if !ok {
+		t.Fatalf("err = %v, want the refusal to name the root run by its ending %s first", err, task.ShortRun(root))
+	}
+	_, hint, ok := strings.Cut(after, "see fugaro diagnose ")
+	if !ok {
+		t.Fatalf("err = %v, want the refusal to hand over fugaro diagnose", err)
+	}
+	if hint = strings.TrimSpace(hint); strings.Contains(hint, "/") {
+		t.Fatalf("the refusal says fugaro diagnose %q: a <slug>/<ending> is a listing's cell, and locateRun refuses it as a shape", hint)
+	}
+	// diagnose is the command the hint names: the name it prints has to be one
+	// that command answers with the run the refusal is about.
+	out, errOut, err := execute(t, "diagnose", "--json", hint)
+	if err != nil {
+		t.Fatalf("fugaro diagnose %q -- the hint the refusal prints -- = %v (%s)", hint, err, errOut)
+	}
+	if !strings.Contains(out, root) {
+		t.Fatalf("fugaro diagnose %q named no run of %s:\n%s", hint, root, out)
+	}
+}
+
 func TestRunPRRefusesLiveLock(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))

@@ -355,14 +355,18 @@ func checkRoot(ctx context.Context, env *cloudEnv, slug, root, branch string, pr
 	case errors.Is(err, runstore.ErrNotFound):
 		return nil // expired: the runs that remain agree on the branch
 	case corruptObject(err):
-		return userErr("run %s/%s, which PR #%d's branch names, has an unreadable result.json (%v); see fugaro diagnose %s/%s",
-			slug, task.ShortRun(root), pr, err, slug, task.ShortRun(root))
+		// The run is named the way resolvePR names one (its ending, and the
+		// ending alone) and the hint is the command that takes that name: a
+		// `<slug>/<ending>` is a listing's cell, not a reference any command
+		// resolves (locateRun's ParseRef wants the whole pair).
+		return userErr("run %s, which PR #%d's branch names, has an unreadable result.json (%v); see fugaro diagnose %s",
+			task.ShortRun(root), pr, err, task.ShortRun(root))
 	case err != nil:
 		return remote(err)
 	}
 	if rec.Branch != branch {
-		return userErr("run %s/%s, which PR #%d's branch %s names, records branch %q; the PR is not the one it opened, so follow it up by hand",
-			slug, task.ShortRun(root), pr, branch, oneLine(rec.Branch))
+		return userErr("run %s, which PR #%d's branch %s names, records branch %q; the PR is not the one it opened, so follow it up by hand",
+			task.ShortRun(root), pr, branch, oneLine(rec.Branch))
 	}
 	return nil
 }
