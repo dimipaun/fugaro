@@ -305,12 +305,13 @@ var yamlMeta = map[string]Row{
 // `fugaro.yaml` rows from config.Scopes (so the two cannot drift), the project
 // layer's from config.ProjectLayer, the local config's from localcfg.Config.
 func buildRows() []Row {
-	out := make([]Row, 0, len(config.Scopes)+len(layerRows)+len(localRows))
+	out := make([]Row, 0, len(config.Scopes)+len(layerRows)+len(localRows)+len(config.RunStages))
 	for _, s := range config.Scopes {
 		out = append(out, yamlRow(s))
 	}
 	out = append(out, layerRows...)
 	out = append(out, localRows...)
+	out = append(out, stageAccountRows()...)
 	for i := range out {
 		out[i].Sensitive = sensitiveKeys[out[i].Key]
 		if v, ok := defaultValues[out[i].Key]; ok {
@@ -912,6 +913,32 @@ var localRows = []Row{
 	// update_check's does, rather than from an "unset means" sentence.
 	{Key: "issues.nudge_after_days", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config", Doc: docTroubleshoot},
 	{Key: "issues.nudge_recurrence", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config", Doc: docTroubleshoot},
+}
+
+// stageAccountRows are the concrete spellings of the stages.*.claude_account
+// pattern above, one per stage the config accepts — config.RunStages, the
+// closed set config.CheckStageSegment refuses a segment outside of.
+//
+// The pattern row is the registry's own shape: the local config's stages: is a
+// map, so the walk TestRegistryCoversEveryConfigField makes of it yields
+// `stages.*.claude_account` and nothing else. A concrete row per stage is what
+// makes the key addressable as it is written: `fugaro settings get
+// stages.review.claude_account` answers the row the owner changed, and a bare
+// `fugaro settings` prints every stage's own account rather than one wildcard
+// row whose value is the account of whichever stage sorts first — the state the
+// read had before this, and one that hides a second stage's account.
+//
+// The set is derived and not written out beside the pattern, so a stage added to
+// config.RunStages lands here, in the schema's key list and in the write path's
+// allowlist together: TestSettingsSchema fails when the schema has not moved
+// with it, and internal/cli's TestSettingsWritesEveryRunStageAccountKey fails
+// when the allowlist has not.
+func stageAccountRows() []Row {
+	out := make([]Row, 0, len(config.RunStages))
+	for _, stage := range config.RunStages {
+		out = append(out, locLocal("stages."+stage+".claude_account", "the project's default account", "settings set", docModels))
+	}
+	return out
 }
 
 // defaultValues are the rows whose default is a value the loaders leave in
