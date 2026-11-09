@@ -338,6 +338,39 @@ func TestWorkspaceServiceRefusesACallerTokenForAnotherAudience(t *testing.T) {
 	}
 }
 
+// TestWorkspaceServiceRefusesACallerTokenThatIsNotCurrent: the rest of the
+// shared caller check — the verified address, the token's window and its
+// not-before — and, like the audience check beside it, the ONLY one the
+// workspace owner's person class gets. A member's caller is re-checked inside
+// its own verifier on the run identity's route; a workspace-wide route admits
+// the owner through Caller alone, and it reaches every member's spend at once.
+//
+// The cases are the three a verifier exists for: a token whose address nobody
+// proved, one whose life has run out, and one that is not yet valid — each
+// asserted for BOTH classes, because only the member's leg has a second check
+// behind it and a test of that leg alone would leave the owner's unheld.
+func TestWorkspaceServiceRefusesACallerTokenThatIsNotCurrent(t *testing.T) {
+	f := newWSFixture(t)
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{"an unverified address", func(c map[string]any) { c["email_verified"] = false }},
+		{"an expired token", func(c map[string]any) { c["exp"] = f.now.Add(-time.Minute).Unix() }},
+		{"a token issued in the future", func(c map[string]any) { c["iat"] = f.now.Add(time.Hour).Unix() }},
+		{"a token that is not valid yet", func(c map[string]any) { c["nbf"] = f.now.Add(time.Hour).Unix() }},
+	} {
+		for _, addr := range []string{wsAccountA, wsOwner} {
+			t.Run(tc.name+" / "+addr, func(t *testing.T) {
+				if _, err := f.ws.Caller(ctx, f.jobToken(addr, tc.mutate)); !errors.Is(err, ErrUnverifiedJob) {
+					t.Errorf("Caller for %s with %s = %v, want ErrUnverifiedJob: the owner's person class reaches a workspace-wide route through Caller and nothing else", addr, tc.name, err)
+				}
+			})
+		}
+	}
+}
+
 // TestWorkspaceServiceAnswersTheConfiguredSpellingOfAnAccount: what a caller is
 // answered with is the address the OPERATOR configured, not the one the token
 // presented. The fold is what matches them, and two spellings that fold together
@@ -359,6 +392,45 @@ func TestWorkspaceServiceAnswersTheConfiguredSpellingOfAnAccount(t *testing.T) {
 	}
 	if caller.Member.Project != wsMemberA || caller.Class != ClassWorkspaceMember {
 		t.Errorf("the folded spelling resolved to %+v, want the member %s's job", caller, wsMemberA)
+	}
+}
+
+// TestWorkspaceServiceRefusesAMemberCallItDidNotProduce: MemberCall's whole job
+// is that only Verify makes one, and a doc comment cannot hold that — a route
+// written beside this package could build the literal out of Caller's answer,
+// and its fields would all be well-formed while it stood for no verified run
+// identity at all, which is the state the member's routes read the policy and
+// serve the pool in. The type carries an unexported mark Verify sets and every
+// entry point is held to it, so the literal is refused however plausible it is.
+func TestWorkspaceServiceRefusesAMemberCallItDidNotProduce(t *testing.T) {
+	f := newWSFixture(t)
+	ctx := context.Background()
+	caller, err := f.ws.Caller(ctx, f.jobToken(wsAccountA))
+	if err != nil {
+		t.Fatalf("Caller for the member's job: %v", err)
+	}
+	// The forged call is the literal a route would write, out of a caller that
+	// really did resolve to the member: the class and the member are honest and
+	// only the run identity is missing.
+	forged := MemberCall{WorkspaceCaller: caller}
+	if err := f.ws.MemberRoute(forged, wsMemberA); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("MemberRoute for a MemberCall this service did not produce = %v, want ErrUnverifiedJob", err)
+	}
+	if _, _, err := f.ws.Policy(ctx, forged); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("Policy for a MemberCall this service did not produce = %v, want ErrUnverifiedJob", err)
+	}
+	if _, err := f.ws.Shared(ctx, forged, f.offered(wsMemberA)); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("Shared for a MemberCall this service did not produce = %v, want ErrUnverifiedJob", err)
+	}
+	if len(f.dbs[wsMemberA].paths) != 0 {
+		t.Errorf("the member's database was read for a call with no verified run identity (%v): the mark is checked before any read", f.dbs[wsMemberA].paths)
+	}
+	// The member's own verified call is served with the same fields, so the
+	// refusals above are the missing mark and not the shape of the caller.
+	f.setPolicy(wsMemberA, wsShared)
+	got, err := f.ws.Shared(ctx, f.verifyOK(wsMemberA, wsAccountA), f.offered(wsMemberA))
+	if err != nil || len(got) != 1 {
+		t.Errorf("Shared for the verified caller = (%v, %v), want the pool's one credential", got, err)
 	}
 }
 

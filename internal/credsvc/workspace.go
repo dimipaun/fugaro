@@ -218,10 +218,33 @@ type WorkspaceCaller struct {
 // stopped at Caller would have no value for — the installation's serving path
 // takes its Identity the same way (cascade.go).
 //
+// **"Only Verify produces one" is carried by a value and not by this
+// paragraph.** The mark below is unexported, so no caller outside this package
+// can build the type at all; inside it, every entry point refuses a MemberCall
+// the mark is not set on (refuseUnverified), which closes the literal a route
+// written next to this file could otherwise build out of Caller's answer — a
+// literal whose fields are all well-formed and which stands for no verified run
+// identity at all.
+//
 // A member's Caller is still a WorkspaceCaller: the workspace-wide routes take
 // that type, because the class they admit — the workspace owner's people — holds
 // no run identity at all (Verify refuses it).
-type MemberCall struct{ WorkspaceCaller }
+type MemberCall struct {
+	WorkspaceCaller
+	verified bool
+}
+
+// refuseUnverified holds every route that acts for a member to the mark Verify
+// sets, and it is the check the unexported field exists for: a MemberCall whose
+// fields are all plausible and which Verify never produced is a call with no
+// run identity behind it, and the routes behind this check read the member's own
+// policy and serve the workspace's pool.
+func (c MemberCall) refuseUnverified() error {
+	if !c.verified {
+		return fmt.Errorf("%w: the call did not come from Verify, so no run identity stands behind it and the routes that act for a member are closed", ErrUnverifiedJob)
+	}
+	return nil
+}
 
 // Workspace is the workspace's credentials service: the front door, the
 // per-member verifiers and the route classes.
@@ -460,7 +483,7 @@ func (w *Workspace) Verify(ctx context.Context, req Request) (MemberCall, error)
 		return MemberCall{}, err
 	}
 	caller.Identity = id
-	return MemberCall{WorkspaceCaller: caller}, nil
+	return MemberCall{WorkspaceCaller: caller, verified: true}, nil
 }
 
 // WorkspaceWide admits a caller to the routes that answer about the workspace
@@ -483,6 +506,9 @@ func (w *Workspace) WorkspaceWide(c WorkspaceCaller) error {
 // than a bare caller so that a route cannot ask this question of a caller whose
 // run identity was never verified.
 func (w *Workspace) MemberRoute(c MemberCall, project string) error {
+	if err := c.refuseUnverified(); err != nil {
+		return err
+	}
 	if c.Class != ClassWorkspaceMember {
 		return fmt.Errorf("%w: the route answers about one member, and only a member's job service account may reach it", ErrUnverifiedJob)
 	}
@@ -543,6 +569,9 @@ func (w *Workspace) Shared(ctx context.Context, c MemberCall, offered []creds.Sh
 // another member's database, because the only way to name a member here is to
 // have resolved to it.
 func (w *Workspace) database(c MemberCall) (Getter, error) {
+	if err := c.refuseUnverified(); err != nil {
+		return nil, err
+	}
 	if c.Class != ClassWorkspaceMember {
 		return nil, fmt.Errorf("%w: the caller is not a member's job, so it names no member's database", ErrUnverifiedJob)
 	}

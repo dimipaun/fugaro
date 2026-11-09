@@ -356,7 +356,7 @@ of them the endpoints, all of them what happens at them):
    approves from a device paired to the installation, that device's session is the signer, and
    **the coordinator never mints a custom token** and holds no signer role. The coordinator verifies
    the Firebase ID token the approval yields the way `internal/credsvc` already verifies one
-   (`internal/credsvc/auth.go:1069`), and it **consumes that token here and nowhere else**: it is
+   (`internal/credsvc/auth.go:1086`), and it **consumes that token here and nowhere else**: it is
    the proof of the sign-in step, and it is never a grant at `POST /oauth/token`.
 
    **The approval is the flow's weak step, and the amendment of 2026-11-04 states it plainly rather
