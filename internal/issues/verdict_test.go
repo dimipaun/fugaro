@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -36,9 +35,71 @@ func TestVerdictRefusesUnknownOutcome(t *testing.T) {
 		{Outcome("Bug"), false},
 		{Outcome(""), false},
 	} {
-		err := Verdict{Outcome: tc.outcome, Summary: "a summary"}.Validate()
+		// A signature is set on every row: the two outcomes that are saved
+		// need one, and this test is about the outcome alone.
+		err := Verdict{
+			Outcome:   tc.outcome,
+			Summary:   "a summary",
+			Signature: "fugaro update: exit status 1 (apply failed)",
+		}.Validate()
 		if (err == nil) != tc.ok {
 			t.Errorf("Validate with outcome %q = %v, want ok=%v", tc.outcome, err, tc.ok)
+		}
+	}
+}
+
+func TestSavedVerdictNeedsASignature(t *testing.T) {
+	for _, tc := range []struct {
+		outcome   Outcome
+		signature string
+		ok        bool
+	}{
+		{OutcomeBug, "fugaro update: exit status 1", true},
+		{OutcomeUnclear, "  the provider cache is stale  ", true},
+		// Every blank signature hashes to one fingerprint, so a saved verdict
+		// without one would attach the next unrelated finding to the issue
+		// that got there first — the silent merge F21 forbids (D1724).
+		{OutcomeBug, "", false},
+		{OutcomeUnclear, "", false},
+		{OutcomeBug, "   \n\t ", false},
+		// The two outcomes nothing is saved from need no signature: their fix
+		// is printed and no record is written.
+		{OutcomeConfiguration, "", true},
+		{OutcomeFixedInNewerRelease, "", true},
+	} {
+		err := Verdict{Outcome: tc.outcome, Signature: tc.signature, Summary: "a summary"}.Validate()
+		if (err == nil) != tc.ok {
+			t.Errorf("Validate with outcome %q and the signature %q = %v, want ok=%v", tc.outcome, tc.signature, err, tc.ok)
+		}
+	}
+}
+
+// fingerprintCases is the values a record's fingerprint member may carry, and
+// the codec and the schema have to answer the same way for every one of them:
+// a record this package writes is a document a reader validating against the
+// schema accepts, and a value the codec refuses is not one the schema lets
+// through. Empty is the one value that is not a hash — a record with no
+// signature — and everything else is what Fingerprint writes.
+var fingerprintCases = []struct {
+	value string
+	ok    bool
+}{
+	{"", true},
+	{Fingerprint("fugaro update: exit status 1 (apply failed)"), true},
+	{strings.Repeat("a", 64), true},
+	{"abc", false},
+	{strings.Repeat("9f2c4a1b", 4), false},
+	{strings.Repeat("A", 64), false},
+	{strings.Repeat("a", 65), false},
+	{"9f2c4a1b0d3e5f60718293a4b5c6d7e8\n9f2c4a1b0d3e5f60718293a4b5c6d7e8", false},
+}
+
+func TestIssueRefusesMalformedFingerprint(t *testing.T) {
+	for _, tc := range fingerprintCases {
+		i := issueSample()
+		i.Fingerprint = tc.value
+		if err := i.Validate(); (err == nil) != tc.ok {
+			t.Errorf("Validate with the fingerprint %q = %v, want ok=%v", tc.value, err, tc.ok)
 		}
 	}
 }
@@ -71,10 +132,6 @@ func TestConfigurationAndFixedInNewerNeverSaved(t *testing.T) {
 		}
 	}
 }
-
-// fingerprintRE is the shape a fingerprint has: the SHA-256 of the normal form
-// in lowercase hex.
-var fingerprintRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 func TestFingerprintNormalises(t *testing.T) {
 	const signature = "fugaro update: exit status 1 (apply failed)"
@@ -252,6 +309,18 @@ func TestSchemaMatchesRecord(t *testing.T) {
 	whole["status"] = string(StatusDismissed)
 	if err := sch.Validate(whole); err != nil {
 		t.Errorf("the schema refuses a record with the class %q and the status %q: %v", ClassUnclear, StatusDismissed, err)
+	}
+
+	// The fingerprint is the member the codec and the schema have to agree on
+	// member for member: the shape is what Fingerprint writes, and a reader
+	// validating a record against the schema must not refuse one this package
+	// wrote, nor accept one it refuses.
+	for _, tc := range fingerprintCases {
+		inst := recordInstance(t, issueSample()).(map[string]any)
+		inst["fingerprint"] = tc.value
+		if err := sch.Validate(inst); (err == nil) != tc.ok {
+			t.Errorf("the schema with the fingerprint %q = %v, and the codec wants ok=%v", tc.value, err, tc.ok)
+		}
 	}
 	// The classes a record may carry are exactly the two the codec knows.
 	if got := stringsOf(t, doc, "properties", "class", "enum"); !slices.Equal(got, []string{string(ClassFugaro), string(ClassUnclear)}) {

@@ -94,9 +94,9 @@
     },
     "fingerprint": {
       "type": "string",
-      "pattern": "^[0-9a-f]{64}$",
-      "description": "The SHA-256, in lowercase hex, of the diagnosis signature's normal form: the failing command and the error class, case-folded with runs of whitespace folded to one space (D1724). Two reports of one bug share it, which is how an upload finds the issue that is already there instead of filing a second one; a report whose signature differs by a word is a different issue and nothing merges the two (F21).",
-      "$comment": "Fingerprint in internal/issues/verdict.go."
+      "pattern": "^(|[0-9a-f]{64})$",
+      "description": "The SHA-256, in lowercase hex, of the diagnosis signature's normal form: the failing command and the error class, case-folded with runs of whitespace folded to one space (D1724). Two reports of one bug share it, which is how an upload finds the issue that is already there instead of filing a second one; a report whose signature differs by a word is a different issue and nothing merges the two (F21). Empty is the one other value: a record that carries no signature. It is the only value that is not the shape Fingerprint writes, so every reader sees the same two cases.",
+      "$comment": "Fingerprint and fingerprintRE in internal/issues/verdict.go; the emptiness is held by Issue.Validate in internal/issues/issue.go, and no writer here produces it for a saved verdict."
     },
     "resolved_in": {
       "type": "string",

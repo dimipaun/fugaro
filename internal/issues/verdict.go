@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -58,13 +59,22 @@ type Verdict struct {
 }
 
 // Validate refuses a verdict this package would not act on: an outcome outside
-// the four labels. The record is written by the CLI from the verdict and never
-// by the agent (F6), so a value nobody here knows stops at this gate rather
-// than becoming a class.
+// the four labels, and — for the two outcomes that are saved — a signature with
+// nothing in it. The record is written by the CLI from the verdict and never by
+// the agent (F6), so a value nobody here knows stops at this gate rather than
+// becoming a class.
 func (v Verdict) Validate() error {
 	if !v.Outcome.Valid() {
 		return fmt.Errorf("issues: %q is not an outcome, want %q, %q, %q or %q",
 			v.Outcome, OutcomeConfiguration, OutcomeBug, OutcomeFixedInNewerRelease, OutcomeUnclear)
+	}
+	// A verdict with no signature hashes to the one fingerprint every other
+	// unsigned verdict hashes to, and an exact match would then attach an
+	// unrelated finding to the issue that got there first — the silent merge
+	// F21 forbids. The two outcomes that are not saved need no signature:
+	// nothing of theirs reaches the store.
+	if _, saved := v.Saved(); saved && normaliseSignature(v.Signature) == "" {
+		return fmt.Errorf("issues: a %q verdict carries the signature it is matched by, and this one is blank", v.Outcome)
 	}
 	return nil
 }
@@ -82,6 +92,12 @@ func (v Verdict) Saved() (Class, bool) {
 	}
 	return "", false
 }
+
+// fingerprintRE is the shape a fingerprint has: the SHA-256 of the normal form,
+// in lowercase hex. Fingerprint writes it and the record holds both its header
+// and its schema to it, so a value that is neither empty nor this shape is one
+// no writer here produces and one a validating reader would refuse.
+var fingerprintRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // Fingerprint is the key two reports of one bug share: the hash of the
 // signature's normal form (D1724). An exact match attaches an occurrence to
