@@ -200,4 +200,27 @@ func TestScrubNames(t *testing.T) {
 			t.Errorf("Scrub = %q, want the text unchanged", got)
 		}
 	})
+
+	t.Run("a name inside the marker is not read as text", func(t *testing.T) {
+		// Every name below sits inside the marker itself (red, act, ted), and a
+		// marker is in the text anyway: Redact writes one, and the pass reads
+		// its own and the one the text arrived with.
+		cases := []struct {
+			what  string
+			in    string
+			names []string
+			want  string
+		}{
+			{"the marker this pass writes", "Fugaro failed", []string{"Fugaro", "red"}, redactedValue + " failed"},
+			{"the marker this pass writes, again", "Acme failed", []string{"Acme", "act"}, redactedValue + " failed"},
+			{"the marker this pass writes, once more", "Widgets failed", []string{"Widgets", "ted"}, redactedValue + " failed"},
+			{"a marker the text arrived with", "the value " + redactedValue + " failed", []string{"act"}, "the value " + redactedValue + " failed"},
+			{"both", "Acme holds " + redactedValue + " failed", []string{"Acme", "act"}, redactedValue + " holds " + redactedValue + " failed"},
+		}
+		for _, tc := range cases {
+			if got := Scrub(tc.in, tc.names); got != tc.want {
+				t.Errorf("Scrub(%q, %v) = %q, want %q (%s)", tc.in, tc.names, got, tc.want, tc.what)
+			}
+		}
+	})
 }

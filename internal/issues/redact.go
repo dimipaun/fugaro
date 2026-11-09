@@ -35,9 +35,13 @@ const scrubMin = 3
 // because the same name is written `acme-widgets` in a path and `Acme-Widgets`
 // in a sentence.
 //
-// The longest name goes first, because one name is often the beginning of
+// The longest name is tried first, because one name is often the beginning of
 // another — an organisation and the repositories under it — and the short one
-// first would leave the rest of the long one standing beside the marker.
+// first would leave the rest of the long one standing beside the marker. All
+// the names go in one alternation, and the text they are matched in carries
+// no marker: `[REDACTED]` holds `red`, `act` and `ted` as readily as any other
+// text does, so a pass that read a marker as text would hand the post
+// `[[REDACTED]ACTED]` in place of the marker.
 //
 // It is not a boundary: a name the caller does not list survives, and one
 // that is also an ordinary word takes that word with it. Both are the
@@ -50,9 +54,21 @@ func Scrub(text string, names []string) string {
 			longest = append(longest, name)
 		}
 	}
-	sort.Slice(longest, func(i, j int) bool { return len(longest[i]) > len(longest[j]) })
-	for _, name := range longest {
-		text = regexp.MustCompile(`(?i)`+regexp.QuoteMeta(name)).ReplaceAllLiteralString(text, redactedValue)
+	if len(longest) == 0 {
+		return text
 	}
-	return text
+	sort.Slice(longest, func(i, j int) bool { return len(longest[i]) > len(longest[j]) })
+	quoted := make([]string, len(longest))
+	for i, name := range longest {
+		quoted[i] = regexp.QuoteMeta(name)
+	}
+	anyOf := regexp.MustCompile(`(?i)(?:` + strings.Join(quoted, "|") + `)`)
+	// Splitting on the marker is what holds it aside: the marker the text
+	// arrived with, written by Redact, and the one this pass writes are the
+	// same bytes, and neither is text for a name to match in.
+	segments := strings.Split(text, redactedValue)
+	for i, segment := range segments {
+		segments[i] = anyOf.ReplaceAllLiteralString(segment, redactedValue)
+	}
+	return strings.Join(segments, redactedValue)
 }
