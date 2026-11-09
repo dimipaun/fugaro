@@ -3758,10 +3758,9 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gateGitAuthor(o, repo, lc, cfg); err != nil {
 		return err
 	}
-	// The security: block is the same kind of break on securitySince. Only
-	// the repository's half can be written in this build: the layer's half
-	// arrives with the task that lets a layer carry the key, and gateSecurity
-	// gains it then, the way gateRigor names both of rigor's.
+	// The security: block, in either file, is the same kind of break, on
+	// securitySince: the repository writes it in fugaro.yaml, the project in
+	// the layer file it publishes (D1501).
 	if err := r.gateSecurity(o, repo, lc, cfg); err != nil {
 		return err
 	}
@@ -4271,15 +4270,14 @@ func (r *initRun) gateGitAuthor(o *initOptions, repo string, lc *localcfg.Config
 }
 
 // gateSecurity is fugaro update --repo's gate for securitySince:
-// refuseSecuritySkew, with gateRigor's escapes and for its reason. The
-// repository's half is the key being written (RepoSecuritySet) rather than the
-// rows it holds: a runner older than securitySince refuses the security: key
-// whatever it holds, so security: {} and an explicit null are deployed by a
-// rows test and die at bootstrap. The project layer's half (D1501) is not
-// judged here yet: it is another object, one an older runner refuses whole at
-// bootstrap, and extending this gate to it the way gateRigor carries both
-// halves — the layer file's own version of this same judgement — is still
-// owed.
+// refuseSecuritySkew, with gateRigor's escapes and for its reason. Each half is
+// the key being written rather than the rows it holds: a runner older than
+// securitySince refuses the security: key whatever it holds, so security: {}
+// and an explicit null are deployed by a rows test and die at bootstrap. Both
+// halves are judged, the way gateRigor names both of rigor's: the repository's
+// (RepoSecuritySet) and the project layer's top-level security: block
+// (config.ProjectLayer.SetsSecurity, D1501), whose refusal reaches every
+// repository of the project.
 func (r *initRun) gateSecurity(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
 	if o.forget || o.planOnly || cfg == nil {
 		return nil
@@ -4288,7 +4286,7 @@ func (r *initRun) gateSecurity(o *initOptions, repo string, lc *localcfg.Config,
 	if o.printVars {
 		w = r.cmd.ErrOrStderr()
 	}
-	return refuseSecuritySkew(repo, cfg.RepoSecuritySet, lc.BaseImage(config.BaseKind), w)
+	return refuseSecuritySkew(repo, cfg.RepoSecuritySet, cfg.Layer.SetsSecurity(), lc.BaseImage(config.BaseKind), w)
 }
 
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates

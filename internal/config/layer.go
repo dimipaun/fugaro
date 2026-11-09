@@ -278,6 +278,22 @@ func (l *ProjectLayer) SetsJobs() bool {
 	return ok
 }
 
+// SetsSecurity reports whether the layer's text writes security:, at any
+// value: a runner before securitySince (internal/cli) decodes the layer with
+// KnownFields, so the key alone is what it refuses, and Security's zero value
+// cannot tell an empty block from none. It is what the gates judge the job
+// images against. The key is top-level, not under defaults:
+// (TestProjectLayerSecurityIsInTheTopKeyAllowList), like jobs: and for the same
+// reason: the block is a policy the project sets for every one of its
+// repositories rather than a default a branch may replace (D1501).
+func (l *ProjectLayer) SetsSecurity() bool {
+	if l == nil {
+		return false
+	}
+	_, ok := l.tree["security"]
+	return ok
+}
+
 // SetsDefault reports whether the layer's text writes a fugaro.yaml key under
 // defaults:, at any value — its own, or the nearest ancestor the text writes,
 // because a list is one key (Resolution.Sources' own rule: rigor.areas is set

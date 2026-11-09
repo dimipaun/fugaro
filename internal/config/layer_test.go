@@ -1153,6 +1153,21 @@ func TestProjectLayerSecurityIsInTheTopKeyAllowList(t *testing.T) {
 	if !strings.Contains(got, "jobs, security") {
 		t.Errorf("problems %q, want the list to end with jobs, security", got)
 	}
+	// The key decides, whatever it holds: `security:` with nothing under it and
+	// an empty block are lines an older runner's KnownFields decoder refuses
+	// exactly like a populated one, so the skew gates read SetsSecurity and not
+	// Security — which cannot tell an empty block from none.
+	for _, text := range []string{"security:\n", "security: {}\n"} {
+		if l := mustLayer(t, layerHead+text); !l.SetsSecurity() {
+			t.Errorf("SetsSecurity = false for %q, and that key is what an older runner refuses", strings.TrimSpace(text))
+		}
+	}
+	if l := mustLayer(t, layerHead+"security:\n  patterns:\n    - { name: payments, match: \"internal/payments/**\", category: credentials }\n"); !l.SetsSecurity() {
+		t.Error("SetsSecurity = false for a layer that writes security: with rows")
+	}
+	if (*ProjectLayer)(nil).SetsSecurity() {
+		t.Error("SetsSecurity = true for no layer at all")
+	}
 }
 
 // TestProjectLayerSecuritySchemaAgreesWithTheLayerParser: two surfaces read
