@@ -915,7 +915,7 @@ const gated: ConsoleHandlers = {
   // process fetched (`settingsedit.ts`). The argv a write spawns is the argv the
   // window drew, and the source refuses a plan that differs from it.
   'settings.edit': (args) => settingsEditRunner.edit(args),
-  // **The Licence screen's two operations** (subscriptions plan S2.7). They are
+  // **The licence section's two operations** (subscriptions plan S2.7). They are
   // joined here for the reason the four above are: neither is a read of the
   // active installation's *source*, so `handlersFor` leaves them out
   // (`CliBackedHandlers` in `src/source/source.ts` says so from the other side)

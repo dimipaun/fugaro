@@ -281,7 +281,7 @@ export const BRIDGE_VERSION = 1
  *
  * **The subscriptions plan's S2.7 added the thirty-fifth and thirty-sixth**
  * (`licence.read` / `readLicence` and `licence.save` / `saveLicence`, the
- * Licence screen's key entry) and left the other thirty-four exactly where they
+ * licence section's key entry) and left the other thirty-four exactly where they
  * were. They are the first two rows here whose operation **spawns nothing** and
  * keeps a credential: the console's own store is the keeper
  * (`src/main/licence-store.ts`), and the CLI is handed the key in its
@@ -426,7 +426,7 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // `src/main/confirm.ts`), so no renderer reaches a `fugaro run` child through
   // this row by itself.
   ['run.launch', 'launchRun'],
-  // The Licence screen's two operations (subscriptions plan S2.7): the key the
+  // The licence section's two operations (subscriptions plan S2.7): the key the
   // active installation has, as the verifier sees it, and the key the operator
   // pasted. **They are the two rows here whose child is not a child at all** --
   // `command: null` in `src/main/ipc.ts`'s table, because the console keeps the

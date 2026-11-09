@@ -370,7 +370,7 @@ export const MAX_GRAPH_SCOPE_LENGTH = 'orchestrator:'.length + 40
  * checks live apart: this module refuses a spelling no scope could have, and
  * `createBoundSource` refuses an id the CLI never named.
  *
- * **`licenceKey` is the Licence screen's one argument** (subscriptions plan
+ * **`licenceKey` is the licence section's one argument** (subscriptions plan
  * S2.7), and it is the only argument on this surface whose value is a
  * **credential**: the key the operator pasted. Its bound is the one the key
  * format shares with the console's store (`MAX_LICENCE_KEY_LENGTH`,
@@ -1557,7 +1557,7 @@ export const CONSOLE_OPERATIONS = [
     summary: 'the published policy node the project’s runs read, and nothing else',
     args: [],
   },
-  // **The Licence screen's two operations** (subscriptions plan S2.7; the
+  // **The licence section's two operations** (subscriptions plan S2.7; the
   // design is `docs/licensing/licence-key.md`, "Storage and hand-off (F41)"),
   // and they are the first two rows on this table that **spawn nothing at all**:
   // the console keeps the key in its own store (`src/main/licence-store.ts`), so

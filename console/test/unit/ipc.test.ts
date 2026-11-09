@@ -1426,7 +1426,7 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   'installation.remove': { project: 'aurora' },
   'installation.reveal': { project: 'aurora' },
   'installation.open': {},
-  // The Licence screen's two operations (subscriptions plan S2.7). `licence.read`
+  // The licence section's two operations (subscriptions plan S2.7). `licence.read`
   // takes nothing for the same reason the rail's listing does: the installation
   // it answers for is the main process's own fact, so there is no project name a
   // renderer could put in its place. `licence.save` takes the one argument this
@@ -2666,7 +2666,7 @@ describe('the spend read’s arguments', () => {
  *
  * **The subscriptions plan's S2.7 added the thirty-fifth and thirty-sixth**
  * (`licence.read` / `readLicence` and `licence.save` / `saveLicence`: the
- * Licence screen's key entry -- the key the active installation has, as the
+ * licence section's key entry -- the key the active installation has, as the
  * verifier sees it, and the key the operator pasted) and left the other
  * thirty-four exactly where they were. They are appended here for the reason
  * every row above was. What is new about them is not where they sit but what
@@ -2712,7 +2712,7 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['managed.status', 'managedStatus'],
   ['policy.show', 'policyShow'],
   ['run.launch', 'launchRun'],
-  // The Licence screen's two (subscriptions plan S2.7), appended for the reason
+  // The licence section's two (subscriptions plan S2.7), appended for the reason
   // every row above was: what the task added must be visible as a diff, and the
   // next task that adds a channel cannot do it quietly. They are the first two
   // rows here whose operation spawns nothing and keeps a credential.
