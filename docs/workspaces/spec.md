@@ -369,10 +369,10 @@ effective set is the **intersection** of:
 - the workspace credential's allow-list;
 - the member's own policy, which may refuse a provider or a credential the workspace holds;
 - **the repository the run is on**, as the member's own database admits it: the repository's own
-  admission child, read from the member's database at the slug the run identity's `fs` verified —
-  the **run's** repository, which §8's residual risk 7 is about: nothing holds that slug to the
-  repository the calling job account belongs to, and the two `allow_repos` legs the child stands in
-  for are not re-asked.
+  admission child, read from the member's database at the slug the run identity's `fs` verified,
+  and the member's two `allow_repos` legs asked over the canonical name recovered from that child's
+  account list — the **run's** repository, which §8's residual risk 7 is about: nothing holds that
+  slug to the repository the calling job account belongs to.
 
 The member's policy is always the tighter side, because that is what "only tighten" means
 (`internal/policy/merge.go`). A credential the workspace holds and the member's policy excludes is
@@ -750,32 +750,36 @@ already has over the member's own credentials today; grouping it means one membe
 reaches the *pool*, not just that member. It is why the allow-list is mandatory and why a shared
 credential's allow-list should name the fewest members that need it.
 
-**The member's leg is asked by name and by the repository's own node; what is not re-asked are the
-pairing of that node with the calling job account and the two canonical `allow_repos` legs.** A
-member's policy scopes a credential to **some of that member's
+**The member's leg is asked by name, by the repository's own node, and by the two canonical
+`allow_repos` legs; what is not re-asked is the pairing of that node with the calling job account.**
+A member's policy scopes a credential to **some of that member's
 repositories** (`accounts.<name>.allow_repos`), and the workspace's service asks that scope the way it
 can ask it: from the member's own database, at the repository's **own admission child**, keyed by the
 **slug the run identity's `fs` verified** (projectpolicy.PathRepo — the node the member's publish
 derived from those very allow-lists, and the node the member's own cascade reads for the same
 purpose). A credential the member's policy names but that child does not is not served, so the pool
-is scoped to the repositories the member's own database admits it to. The slug is the run identity's
+is scoped to the repositories the member's own database admits it to. The two legs the member's own
+cascade asks by the **canonical `github/owner/repo` name** — the project's own `allow_repos`, and the
+account's as the policy holds it now — are asked too, and the name they need is **recovered rather
+than inverted**: a slug cannot be turned back into a name (F18), but it does not have to be, because
+the account's `allow_repos` is exact by validation (`projectpolicy.validAccounts` refuses a wildcard)
+and the publish path keys the child with `task.Slug` of the same canonical name, so the run's
+repository is the entry whose slug is the verified one. A child that is **stale** against the policy
+it was derived from (a `repos rm` that did not touch it, two concurrent publishes, a hand edit) is
+therefore refused here exactly as the member's own service refuses it. The slug is the run identity's
 own and it is **not** held to the repository the calling job account belongs to — the comparison the
 member's front door makes (`internal/credsvc/server.go`:737) — because the per-member table names
 accounts and no repository, so the node is the **run's** repository and the account that called may
 belong to another — the column the owner's per-member table does not carry, and **review finding
-N1**. And what the service cannot re-ask
-is the two legs the member's own cascade asks by the **canonical `github/owner/repo` name** — the
-project's own `allow_repos`, and the account's as the policy holds it now — because the canonical name
-cannot be recovered from the sanitised slug (F18). A child that is **stale** against the policy it
-was derived from (a `repos rm` that did not touch it, two concurrent publishes, a hand edit) is
-therefore served here where the member's own service refuses. That is the divergence; it is stated
+N1**. That is the divergence; it is stated
 here rather than left to be found, and it is narrow: the workspace's allow-list is still mandatory,
 the member's policy must still declare the credential, the repository's own node must still admit it,
-and option (B) the owner refused is still refused. Whether to close either is the owner's call, and
-closing them is a column rather than a redesign: the repository beside each job account in the
+the member's two canonical legs are asked, and option (B) the owner refused is still refused.
+Whether to close the pairing is the owner's call, and
+closing it is a column rather than a redesign: the repository beside each job account in the
 owner's per-member table — the pair `credsvc.JobAccount` already carries for the installation's own
-jobs, which yields the slug the pairing needs and the canonical name the legs need — and the column
-this table does not. Both are stated again as residual risk 7 below, which is where W6 leaves them:
+jobs, which yields the slug the pairing needs — and the column this table does not. It is stated
+again as residual risk 7 below, which is where W6 leaves it:
 the pairing stated and **not** enforced, because this release's row names job accounts and no
 repository.
 
@@ -882,30 +886,26 @@ ceiling is decided.
    (The exchange's `email_verified` requirement, §3 fact 2, is not a mitigation against this: setting
    that flag is exactly what a custom token can do. It is there because an unverified address is one
    nobody proved they own, and the provider pin is what answers this risk.)
-7. A shared credential is served where the member's own service would refuse it, in two ways, and
-   **both come from the same missing column**. **First, the run's repository is not held to the
-   calling job account.** The workspace's service asks the repository from the **slug the run
-   identity verified** — the repository's own admission child, the node that repository's
-   administrator published (projectpolicy.PathRepo) — and nothing ties that slug to the account that
-   called: the per-member table names a member's job service accounts and no repository, so an
+7. A shared credential is served where the member's own service would refuse it: **the run's
+   repository is not held to the calling job account.** The workspace's service asks the repository
+   from the **slug the run identity verified** — the repository's own admission child, the node that
+   repository's administrator published (projectpolicy.PathRepo), and the member's two canonical
+   `allow_repos` legs over the name recovered from that child's account list, so a child stale
+   against the policy it was derived from is refused here — and nothing ties that slug to the account
+   that called: the per-member table names a member's job service accounts and no repository, so an
    account admitted for one repository can present a run identity of **another** repository of the
    same member and be served that repository's admissions, where the member's own front door refuses
    the same call by comparing the two (`internal/credsvc/server.go`:737, `!bound || ja.Slug !=
    id.Slug`; **review finding N1**, and the table it compares is built from the installation's own
-   `{provider, repo, workflow}` triples, which this table does not carry). **Second, the two canonical
-   `allow_repos` legs are not re-asked**: the project's own `allow_repos`, which is the leg that closes
-   the `repos rm` gap because removing a repository does not touch its child, and the account's
-   `allow_repos` as the policy holds it now — both of them asked by the member's own cascade under the
-   **canonical `owner/repo` name**, which no reader can recover from the sanitised slug (F18). A child
-   stale against the policy it was derived from — a `repos rm`, two concurrent publishes, a
-   hand-edited node — is therefore served here too. Mitigation: the workspace's allow-list, the
-   member's own declaration of the credential and the repository's own admission child are all still
-   required, so the pool serves only names the member admits, on the repository the run identity
-   proved and that repository's own node admits; and a member that needs the last word keeps that
-   credential in its own project rather than sharing it. Closing both is an owner decision and a
-   column — the repository beside each job account in the owner's per-member table, the pair
-   `credsvc.JobAccount` already carries for the installation's own jobs, which yields both the slug
-   and the canonical name — not a redesign, and **it stays an open item until the owner makes that
+   `{provider, repo, workflow}` triples, which this table does not carry). Mitigation: the workspace's
+   allow-list, the member's own declaration of the credential, the repository's own admission child
+   and the member's two canonical `allow_repos` legs are all still required, so the pool serves only
+   names the member admits, on the repository the run identity proved, that repository's own node
+   admits and the member's own lists still scope; and a member that needs the last word keeps that
+   credential in its own project rather than sharing it. Closing the pairing is an owner decision and
+   a column — the repository beside each job account in the owner's per-member table, the pair
+   `credsvc.JobAccount` already carries for the installation's own jobs, which yields the slug the
+   pairing needs — not a redesign, and **it stays an open item until the owner makes that
    call: W6 ships with the pairing stated here and not enforced**, because the row's job accounts are
    emails and `Verify` therefore has no slug to compare.
 

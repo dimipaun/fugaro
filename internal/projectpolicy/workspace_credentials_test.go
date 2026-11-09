@@ -431,10 +431,13 @@ func TestWorkspaceCredentialsNodeIsAbsentNotRefused(t *testing.T) {
 // could not be read is refused rather than read as one that admits everything.
 //
 // The repository legs of the member's own intersection are NOT asked here, and
-// the test says so as a fact: MemberAdmitsShared takes no repository, because
-// the repository a run is on reaches the workspace only as the run identity's
-// sanitised slug and a check over an input a service cannot verify is not a
-// check.
+// the test says so as a fact: MemberAdmitsShared takes no repository, because the
+// repository a run is on reaches the workspace only as the run identity's
+// sanitised slug, and the slug is what the service reads the repository's child
+// with. The child's account list is what recovers the canonical name the
+// member's two allow_repos legs are then asked with
+// (credsvc.Workspace.Shared, canonicalOfSlug), so those legs belong to the
+// service's own test and not to this one.
 func TestWorkspaceMemberPolicyAdmitsOnlyWhatItNames(t *testing.T) {
 	p := &Policy{
 		AllowRepos: []string{"github/owner/repo-a"},

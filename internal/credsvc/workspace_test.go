@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The workspace's service, in the two members and the one owner person these
@@ -48,21 +49,51 @@ const (
 	// caller of no class here.
 	wsMemberPerson = "operator@project-a.example.com"
 	wsRepo         = "github/owner/repo-a"
-	// wsSlug is what a run identity's `fs` carries: task.Slug's sanitised form
-	// of the repository, which is the only spelling of the repository the
-	// workspace's service ever sees (and a valid database path segment).
-	wsSlug = "owner-repo-a"
-	wsJob  = "fugaro-owner-repo-a"
-	// wsSlugOther is a second repository of the same member: the slug a run
-	// identity of that member's own Firebase project can name while the job
-	// service account that presents it is the one the owner's table binds, which
-	// is the state §8's residual risk 7 is about (server.go's pairing).
-	wsSlugOther = "owner-repo-b"
+	// wsRepoOther is a second repository of the same member. It is the
+	// repository a run identity of that member's own Firebase project can name
+	// while the job service account presenting it is the one the owner's table
+	// binds, which is the state §8's residual risk 7 is about (server.go's
+	// pairing).
+	wsRepoOther = "github/owner/repo-b"
+	// wsJob is the job service account the workspace's own runs use. It is an
+	// account NAME and not a slug: the two are unrelated, and the slug the run
+	// identity carries is task.Slug's output (below).
+	wsJob = "fugaro-owner-repo-a"
 	// wsShared is one credential of the workspace's pool. It is a name: the
 	// pool's values live in the workspace's one bundle secret and no test
 	// carries one.
 	wsShared = "claude-oauth-token-team"
 )
+
+// wsSlug and wsSlugOther are what a run identity's `fs` carries: task.Slug's own
+// output for the two repositories, which is the only spelling of a repository the
+// workspace's service ever sees (and a valid database path segment).
+//
+// They are DERIVED and not written out, because the service holds a run's
+// repository to the member's own `allow_repos` by hashing each entry and
+// comparing (canonicalOfSlug, which the publish path keys the child with too). A
+// written-out slug — the readable half alone, "owner-repo-a", or that half plus
+// anything the hash is not — is a slug no launcher can mint, and a fixture that
+// used one would be testing a run no deployment can have.
+var (
+	wsSlug      = mustSlug(wsRepo)
+	wsSlugOther = mustSlug(wsRepoOther)
+)
+
+// mustSlug is task.Slug for a fixture repository, which the fixture may not get
+// wrong: a canonical name the node's own rules refuse is a test that could not
+// set up.
+func mustSlug(canonical string) string {
+	provider, repo, ok := strings.Cut(canonical, "/")
+	if !ok || provider == "" || repo == "" {
+		panic("the fixture's repository " + canonical + " is not a canonical provider/owner/name")
+	}
+	slug, err := task.Slug(provider, repo)
+	if err != nil {
+		panic("task.Slug refused the fixture's repository " + canonical + ": " + err.Error())
+	}
+	return slug
+}
 
 // wsDB is one member's database: the nodes it holds, keyed by the path a
 // reader asks for, and the paths it was asked for. Every member gets one of
@@ -253,16 +284,67 @@ func (f *wsFixture) verifyOK(member, account string) MemberCall {
 // lists it. One command writes the two nodes, and a fixture that wrote only the
 // policy would be a member whose repository node no publish ever produced.
 func (f *wsFixture) setPolicy(member string, accounts ...string) {
+	f.setPolicyOn(member, []string{wsRepo}, accounts...)
+}
+
+// setPolicyOn is setPolicy with the repositories given: the account's own
+// allow_repos AND the project's list carry all of them, and one admission child
+// per repository is written the way the publish path derives it — every account
+// of the list, for every repository any of them names.
+//
+// It writes the children only for the repositories it is given and leaves the
+// others where they are, which is what makes a STALE child reachable: a policy
+// published with two repositories and then narrowed to one leaves the second
+// repository's child behind, exactly as a `repos rm` whose publish did not
+// re-derive it, two concurrent publishes or a hand edit would.
+func (f *wsFixture) setPolicyOn(member string, repos []string, accounts ...string) {
 	block := map[string]any{}
 	for _, name := range accounts {
-		block[name] = map[string]any{"allow_repos": []string{wsRepo}}
+		block[name] = map[string]any{"allow_repos": append([]string(nil), repos...)}
 	}
 	f.dbs[member].nodes[projectpolicy.PathShared()] = map[string]any{
 		"version":     projectpolicy.Version,
-		"allow_repos": []string{wsRepo},
+		"allow_repos": append([]string(nil), repos...),
 		"accounts":    block,
 	}
-	f.setAdmissions(member, wsSlug, accounts...)
+	for _, repo := range repos {
+		f.setAdmissions(member, mustSlug(repo), accounts...)
+	}
+}
+
+// setProjectAllow rewrites the published policy's OWN allow_repos — the
+// project's list, which is the leg that closes the `repos rm` gap — and leaves
+// the accounts block and every child as they are: the state a publish that
+// narrowed the project's list, or a hand edit, leaves behind.
+func (f *wsFixture) setProjectAllow(member string, repos ...string) {
+	f.t.Helper()
+	node, ok := f.dbs[member].nodes[projectpolicy.PathShared()].(map[string]any)
+	if !ok {
+		f.t.Fatalf("no policy node is published for %s", member)
+	}
+	node["allow_repos"] = append([]string(nil), repos...)
+}
+
+// setAccountAllow rewrites one credential's entry in the published policy's
+// `accounts` block — the member's own allow_repos for that account — and leaves
+// the project's list and every repository child as they are: the state a publish
+// that narrowed the account's list, two concurrent publishes or a hand edit
+// leaves behind, with the child the previous list derived still in place.
+func (f *wsFixture) setAccountAllow(member, account string, repos ...string) {
+	f.t.Helper()
+	node, ok := f.dbs[member].nodes[projectpolicy.PathShared()].(map[string]any)
+	if !ok {
+		f.t.Fatalf("no policy node is published for %s", member)
+	}
+	block, ok := node["accounts"].(map[string]any)
+	if !ok {
+		f.t.Fatalf("the policy node of %s carries no accounts block", member)
+	}
+	entry, ok := block[account].(map[string]any)
+	if !ok {
+		f.t.Fatalf("the policy node of %s lists no account %q", member, account)
+	}
+	entry["allow_repos"] = append([]string(nil), repos...)
 }
 
 // setAdmissions writes one repository's own node — the child the service reads
@@ -990,8 +1072,10 @@ func TestWorkspaceSharedIsRefusedWhereTheRepositoriesOwnNodeDoesNotAdmitIt(t *te
 
 // TestWorkspaceSharedReadsTheRepositoryOfTheRunIdentityNotTheCallers pins, in
 // both directions, the divergence docs/workspaces/spec.md §8's residual risk 7
-// states: the repository leg is read at the slug the run identity VERIFIED, and
-// the calling job service account is not held to it.
+// states: the member's own two allow_repos legs ARE asked — over the canonical
+// name recovered from the verified slug — and what no reader carries is the
+// pairing of the calling job service account with the repository the identity
+// names.
 //
 // The installation's own front door holds the two together — its table binds
 // each job account to the repository the service account was derived from, and
@@ -1006,7 +1090,9 @@ func TestWorkspaceSharedIsRefusedWhereTheRepositoriesOwnNodeDoesNotAdmitIt(t *te
 // the identity did not name fails it.
 func TestWorkspaceSharedReadsTheRepositoryOfTheRunIdentityNotTheCallers(t *testing.T) {
 	f := newWSFixture(t)
-	f.setPolicy(wsMemberA, wsShared)                  // A's policy admits the credential
+	// A's policy names BOTH repositories, so neither allow_repos leg decides
+	// anything here: the pairing is the whole of the gap this test pins.
+	f.setPolicyOn(wsMemberA, []string{wsRepo, wsRepoOther}, wsShared)
 	f.setAdmissions(wsMemberA, wsSlug)                // A's own repository admits nobody
 	f.setAdmissions(wsMemberA, wsSlugOther, wsShared) // the other repository admits it
 	ctx := context.Background()
@@ -1040,7 +1126,7 @@ func TestWorkspaceSharedReadsTheRepositoryOfTheRunIdentityNotTheCallers(t *testi
 	// falls back to a repository the identity did not name, so the divergence is
 	// the pairing and not a widening of the node that is read.
 	f = newWSFixture(t)
-	f.setPolicy(wsMemberA, wsShared)
+	f.setPolicyOn(wsMemberA, []string{wsRepo, wsRepoOther}, wsShared)
 	f.setAdmissions(wsMemberA, wsSlug)
 	f.setAdmissions(wsMemberA, wsSlugOther, wsShared)
 	got, err = f.ws.Shared(ctx, f.verifyOK(wsMemberA, wsAccountA), f.offered(wsMemberA))
@@ -1052,6 +1138,77 @@ func TestWorkspaceSharedReadsTheRepositoryOfTheRunIdentityNotTheCallers(t *testi
 	}
 	if f.dbs[wsMemberA].read(projectpolicy.PathRepo(wsSlugOther)) {
 		t.Error("the other repository's node was read: only the slug the run identity names is, so nothing falls back to a repository the run is not on")
+	}
+}
+
+// TestWorkspaceSharedIsRefusedWhereTheMembersAllowListNoLongerNamesTheRun pins
+// the two canonical legs themselves: the pool asks them over the name it
+// recovers from the account's list, so a repository child a publish left behind
+// does not serve a credential the member's own policy no longer scopes to the
+// run's repository. The member's own cascade refuses the same call — its
+// admittedAccounts asks both lists, which is the `repos rm` gap the project's leg
+// closes — so a pool answering from the child alone would widen the member's own
+// policy.
+//
+// The state is one a publish leaves when it is the FIRST writer of the narrowed
+// list to finish (the publishes have no compare-and-set) or a hand edit does,
+// which is why the fixture writes the nodes directly (setPolicyOn,
+// setAccountAllow, setProjectAllow) instead of publishing through the verb.
+func TestWorkspaceSharedIsRefusedWhereTheMembersAllowListNoLongerNamesTheRun(t *testing.T) {
+	ctx := context.Background()
+
+	// The account's list narrowed to one repository, the other repository's child
+	// left behind and still admitting the credential: a run on the sibling
+	// repository is served nothing.
+	f := newWSFixture(t)
+	f.setPolicyOn(wsMemberA, []string{wsRepo, wsRepoOther}, wsShared)
+	f.setAccountAllow(wsMemberA, wsShared, wsRepo)
+	other, err := f.verify(wsMemberA, wsAccountA, func(c map[string]any) {
+		uid := "r~" + wsSlugOther + "~" + f.run
+		c["sub"], c["user_id"], c["fs"] = uid, uid, wsSlugOther
+	})
+	if err != nil {
+		t.Fatalf("Verify refused a run identity for the other repository: %v", err)
+	}
+	got, err := f.ws.Shared(ctx, other, f.offered(wsMemberA))
+	if err != nil {
+		t.Fatalf("Shared for a run the account's list no longer names: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("Shared = %v, want none: the member's account list no longer names the run's repository, and the child the list once derived does not decide for it", got)
+	}
+	if !f.dbs[wsMemberA].read(projectpolicy.PathRepo(wsSlugOther)) {
+		t.Error("the other repository's node was not read: the run's own child is still the node read, and the refusal is the account's allow_repos leg's")
+	}
+	// The control, on the same fixture: the repository the account's list DOES
+	// name is served, so the refusal above is the leg and not the fixture.
+	got, err = f.ws.Shared(ctx, f.verifyOK(wsMemberA, wsAccountA), f.offered(wsMemberA))
+	if err != nil {
+		t.Fatalf("Shared for a run the account's list names: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != wsShared {
+		t.Errorf("Shared = %v, want the credential: the run's repository is the one the account's list names and its child admits it", got)
+	}
+
+	// The project's list narrowed instead, the account's list and every child left
+	// where they were: the same refusal, from the leg that closes the `repos rm`
+	// gap and not from the account's.
+	f = newWSFixture(t)
+	f.setPolicyOn(wsMemberA, []string{wsRepo, wsRepoOther}, wsShared)
+	f.setProjectAllow(wsMemberA, wsRepo)
+	other, err = f.verify(wsMemberA, wsAccountA, func(c map[string]any) {
+		uid := "r~" + wsSlugOther + "~" + f.run
+		c["sub"], c["user_id"], c["fs"] = uid, uid, wsSlugOther
+	})
+	if err != nil {
+		t.Fatalf("Verify refused a run identity for the other repository: %v", err)
+	}
+	got, err = f.ws.Shared(ctx, other, f.offered(wsMemberA))
+	if err != nil {
+		t.Fatalf("Shared for a run the project's list no longer names: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("Shared = %v, want none: the member's project list no longer names the run's repository, and the child still admitting the credential does not decide for it", got)
 	}
 }
 

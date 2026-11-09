@@ -546,21 +546,25 @@ func validExchangeURL(raw string) error {
 // admits, on repositories the member's own database admits them to.
 //
 // **What is not re-asked is the pairing of the run's repository with the
-// calling job account, and the two canonical `allow_repos` legs.** The member's
-// own front door holds the account's repository to the run identity's slug, and
-// the table this row belongs to names a member's job accounts and no repository,
-// so the workspace's service has no slug to make that comparison with. The two
-// `allow_repos` legs are the member's own service's other check, asked by the
-// canonical `owner/repo` name (admittedAccounts): the project's own allow-list —
-// the leg that closes the `repos rm` gap, because removing a repository does not
-// touch its child — and the account's. A workspace's service holds only the
-// sanitised slug, which no reader can invert into that name, so it reads the
-// child the publish path derived from both legs instead. A child that is stale
-// against the policy it was derived from — a `repos rm` whose child was not
-// removed, two concurrent publishes, a hand-edited node — is therefore served
-// here where the member's own cascade would refuse. Both are spec.md §8's
-// residual risk 7, and closing them is the owner's call: the repository per job
-// account is a column the owner's per-member table does not carry.
+// calling job account.** The member's own front door holds the account's
+// repository to the run identity's slug, and the table this row belongs to names
+// a member's job accounts and no repository, so the workspace's service has no
+// slug to make that comparison with. The two `allow_repos` legs ARE re-asked,
+// and the service is what re-asks them: they are the member's own service's
+// other check, asked by the canonical `owner/repo` name (admittedAccounts) — the
+// project's own allow-list, the leg that closes the `repos rm` gap because
+// removing a repository does not touch its child, and the account's — and a
+// slug cannot be inverted into that name (F18). It does not have to be: the
+// account's list is exact (validAccounts refuses a wildcard) and the publish
+// path keys the child with task.Slug of the same name, so the entry whose slug
+// is the verified one IS the run's repository, and credsvc.Workspace.Shared
+// recovers it there (canonicalOfSlug) and asks both legs with it. A child that
+// is stale against the policy it was derived from — a `repos rm` whose child was
+// not removed, two concurrent publishes, a hand-edited node — is therefore
+// refused by the service exactly as the member's own cascade refuses it. The
+// pairing is spec.md §8's residual risk 7, and closing it is the owner's call:
+// the repository per job account is a column the owner's per-member table does
+// not carry.
 func MemberAdmitsShared(p *Policy, name string) bool {
 	if p == nil {
 		return false

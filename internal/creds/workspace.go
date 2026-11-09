@@ -25,29 +25,26 @@ import (
 //
 // **This file is the NAME leg of that intersection, and the repository leg is
 // the service's.** A member's policy can also scope a credential by repository
-// (`accounts.<name>.allow_repos`), and the two legs of it are read in two
-// places: this arithmetic asks which NAMES the member's policy admits, and
-// credsvc.Workspace.Shared asks, from the member's own database, whether the
-// repository the calling run is on was admitted to that name
-// (projectpolicy.PathRepo over the run identity's verified slug). So a pooled
-// credential is served only on repositories the member's own database admits it
-// to, and this file holds none of that: it is the arithmetic over names, and a
-// caller wanting the set asks the service.
+// (`accounts.<name>.allow_repos`), and the reading of it is split between this
+// file and the service: this arithmetic asks which NAMES the member's policy
+// admits, and credsvc.Workspace.Shared asks, from the member's own database,
+// whether the repository the calling run is on was admitted to that name
+// (projectpolicy.PathRepo over the run identity's verified slug) and re-asks the
+// member's two canonical `allow_repos` legs over the name it recovers from the
+// account's own list (canonicalOfSlug). So a pooled credential is served only on
+// repositories the member's own database admits it to AND the member's own lists
+// still scope to it, and this file holds none of that: it is the arithmetic over
+// names, and a caller wanting the set asks the service.
 //
-// What is not re-asked is the pairing of the run's repository with the calling
-// job account, and the two canonical `allow_repos` legs. The first is the
-// member's own front door's check — the repository the calling job account
-// belongs to against the run identity's slug — and a workspace's table names a
-// member's job accounts and no repository, so there is no slug to hold the
-// verified one to. The second is the project's own allow-list and the
-// account's, which the member's own service checks by the canonical `owner/repo`
-// name; a workspace's service holds only the sanitised slug and reads the child
-// the publish path derived from those legs, so a child that is stale against the
-// policy it came from is served here where the member's own cascade refuses.
-// Both are docs/workspaces/spec.md §8's residual risk 7, stated there and in
-// projectpolicy.MemberAdmitsShared, and closing them is the owner's call: the
-// repository per job account is a column the owner's per-member table does not
-// carry.
+// What is not re-asked is one thing: the pairing of the run's repository with the
+// calling job account. It is the member's own front door's check — the repository
+// the calling job account belongs to against the run identity's slug — and a
+// workspace's table names a member's job accounts and no repository, so there is
+// no slug to hold the verified one to, and an account admitted for one repository
+// can present a run identity of another. That is docs/workspaces/spec.md §8's
+// residual risk 7, stated there and in projectpolicy.MemberAdmitsShared, and
+// closing it is the owner's call: the repository per job account is a column the
+// owner's per-member table does not carry.
 //
 // **The two refusals are told apart, because they are two different fixes.** A
 // credential this project is not on the allow-list for is the workspace's

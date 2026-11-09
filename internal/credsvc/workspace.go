@@ -10,6 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The workspace's credentials service: one deployment in the workspace's own
@@ -592,6 +593,21 @@ func (w *Workspace) Policy(ctx context.Context, c MemberCall) (*projectpolicy.Po
 // repository's node does not is not served: the repository is the member's own
 // narrowing.
 //
+// **The member's two `allow_repos` legs are asked too, and the name they need is
+// recovered rather than inverted.** The member's own cascade scopes the
+// credential by the canonical `owner/repo` name as WELL as by the child
+// (admittedAccounts): the project's own `allow_repos`, which is the leg that
+// closes the `repos rm` gap, and the account's. A slug cannot be turned back
+// into a name (F18), but it does not have to be: the account's list is exact —
+// projectpolicy.validAccounts refuses a wildcard — so the run's repository is
+// the entry whose task.Slug is the verified slug, which is the direction the
+// publish path keys the child with (repoAdmissions). The account's leg is that
+// entry and the project's list is then asked with the recovered name
+// (canonicalOfSlug), so a child left behind by a narrowed account list or by a
+// narrowed project list is refused here exactly as the member's own cascade
+// refuses it, and the pool cannot widen a member by serving a decision that
+// member's database no longer holds.
+//
 // **The slug is the run's own repository, and it is NOT held to the calling job
 // account.** The identity Verify returned carries the slug its own token proved,
 // so the child read here is the run's repository and not one a caller named —
@@ -601,12 +617,10 @@ func (w *Workspace) Policy(ctx context.Context, c MemberCall) (*projectpolicy.Po
 // table binds each job account to the repository its service account is derived
 // from; this deployment's per-member table names a member's job accounts and no
 // repository, so there is no slug to compare and an account admitted for one
-// repository can present a run identity of another (review finding N1). So this
-// leg is narrower than the installation's pairing, and the canonical
-// `owner/repo` name is what this service does NOT have either. Both — the
-// pairing, and the two `allow_repos` legs that need the name — are
-// docs/workspaces/spec.md §8's residual risk 7: stated there, an open item for
-// the owner, and the column this service does not carry.
+// repository can present a run identity of another (review finding N1). That
+// pairing is all docs/workspaces/spec.md §8's residual risk 7 still holds:
+// stated there, an open item for the owner, and the column this service does
+// not carry.
 //
 // The refusal an operator reads for one named credential is creds.AdmitShared's,
 // and this answers the SET, which is what the cascade is offered: the legs are
@@ -629,9 +643,43 @@ func (w *Workspace) Shared(ctx context.Context, c MemberCall, offered []creds.Sh
 		return nil, err
 	}
 	member := creds.MemberPolicy(func(name string) bool {
-		return admitted[name] && projectpolicy.MemberAdmitsShared(policy, name)
+		if !admitted[name] || !projectpolicy.MemberAdmitsShared(policy, name) {
+			return false
+		}
+		repo, ok := canonicalOfSlug(policy.Accounts[name].AllowRepos, c.Identity.Slug)
+		return ok && projectpolicy.AdmitRepo(policy.AllowRepos, repo)
 	})
 	return creds.SharedFor(c.Member.Project, offered, member), nil
+}
+
+// canonicalOfSlug is the canonical name of the run's own repository, recovered
+// from the member's own policy rather than from the slug: the entry of an
+// account's `allow_repos` whose task.Slug is the slug the run identity verified.
+//
+// **The direction is canonical -> slug, the direction the publish path keys the
+// repository's child with** (repoAdmissions, internal/cli/project_cmd.go), and
+// the member's account lists are exact — projectpolicy.validAccounts refuses a
+// wildcard — which is what makes the search decide. A slug cannot be inverted
+// into a name (F18), and nothing here tries: the candidates are in the policy
+// this call already read, and hashing each of them and comparing is the whole of
+// the arithmetic. So the two legs the member's own cascade asks by the canonical
+// name can be asked here too, and the pool is bounded by the member's policy and
+// not only by the child a publish derived from it.
+//
+// An entry task.Slug refuses is skipped rather than fatal: the publish path
+// refuses to write such a list (repoAdmissions), and a hand-written one neither
+// matches nor stops the other entries from being asked.
+func canonicalOfSlug(allowRepos []string, slug string) (string, bool) {
+	for _, canonical := range allowRepos {
+		provider, repo, ok := strings.Cut(canonical, "/")
+		if !ok || provider == "" || repo == "" {
+			continue
+		}
+		if s, err := task.Slug(provider, repo); err == nil && s == slug {
+			return canonical, true
+		}
+	}
+	return "", false
 }
 
 // admittedOn is the account names the run's OWN repository is admitted to, read
