@@ -146,6 +146,16 @@ func postBody(i Issue, names []string) string {
 // the excerpts that were saved, cut at a line boundary so the excerpt does not
 // begin with half a line.
 //
+// The boundary is taken only while it keeps half the budget — the rule
+// cutForURL follows for the fallback body. A log whose last line is longer
+// than the whole budget has no boundary in reach that leaves anything: the one
+// newline left is the one at the end of the text, and advancing to it empties
+// the tail. postBody writes the section only when there is a tail to write, so
+// that advance would drop a multi-kilobyte log from the post with no excerpt
+// and no cut notice to say one was missing — the one thing the post must not
+// do with the log it was filed for. Cutting mid-line keeps the log and the
+// notice both.
+//
 // The text goes through the gate and through Scrub *before* it is cut, and
 // that order is the point: both passes match a whole value, so a credential or
 // a project name the cut fell in the middle of would be text no rule here
@@ -158,7 +168,7 @@ func postLog(logs []string, names []string) (tail string, cut bool) {
 		return text, false
 	}
 	at := len(text) - postLogBudget
-	if nl := strings.IndexByte(text[at:], '\n'); nl >= 0 {
+	if nl := strings.IndexByte(text[at:], '\n'); nl >= 0 && nl+1 <= postLogBudget/2 {
 		at += nl + 1
 	}
 	for at < len(text) && !utf8.RuneStart(text[at]) {

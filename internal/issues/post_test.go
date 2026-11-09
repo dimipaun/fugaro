@@ -174,6 +174,50 @@ func TestPostLogScrubsBeforeTheCut(t *testing.T) {
 	})
 }
 
+// TestPostLogKeepsTheTailOfTheLog: the excerpt's cut advances to the next line
+// boundary so it does not begin with half a line, but that boundary is worth
+// taking only while it keeps half the budget, the rule cutForURL follows for
+// the fallback body. A log whose last line is longer than the whole budget has
+// no boundary that leaves anything: the only newline in reach is the one at
+// the end of the text, and advancing to it empties the tail. postBody writes
+// the section only when the tail is non-empty, so a multi-kilobyte log would
+// leave the post with no excerpt and no cut notice — the log the issue was
+// filed for, gone from the issue without a word.
+func TestPostLogKeepsTheTailOfTheLog(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		log  string
+	}{
+		{"one line longer than the whole budget", strings.Repeat("x", 3000) + "\n"},
+		{"a boundary that would leave 47 bytes", strings.Repeat("x", 2953) + "\n" + strings.Repeat("y", 47)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tail, cut := postLog([]string{tc.log}, nil)
+			if !cut {
+				t.Fatalf("postLog of a %d byte log is not cut", len(tc.log))
+			}
+			if !strings.HasSuffix(tc.log, tail) {
+				t.Errorf("the excerpt is not the end of the log: %q", tail)
+			}
+			if len(tail) < postLogBudget/2 {
+				t.Errorf("the excerpt kept %d of the %d byte budget: most of the log given up for a line boundary",
+					len(tail), postLogBudget)
+			}
+
+			// And what the person filing it sees: the section, and the notice
+			// that says the log was cut.
+			i := issueSample()
+			i.Logs = []string{tc.log}
+			body := BuildPost(i, nil).Body
+			for _, want := range []string{"## Log", postLogCutNotice} {
+				if !strings.Contains(body, want) {
+					t.Errorf("the post does not carry %q:\n%s", want, body)
+				}
+			}
+		})
+	}
+}
+
 // TestPostHashCoversTheBody: the hash is of the bytes that would be filed, so
 // two submitters can agree on which record they are filing and `submit --ask`
 // can refuse a record that changed between the preview and the yes (F19). It
