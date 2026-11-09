@@ -100,9 +100,10 @@ const (
 // added to the registry and not to the allowlist widens the gap the audit is
 // about rather than narrowing it, and with CB1 of docs/catalog-build-context/,
 // whose image_catalog.entries.*.source.context row is the image catalog's own.
-// This branch moved it to 390: planning.decoupling's two rows (registry.go:301,
-// and :542 — which main's tree did not hold) and the six concrete spellings of
-// stages.*.claude_account, one per config.RunStages name (settings_stages_test.go).
+// This branch moved it to 390 with the six concrete spellings of
+// stages.*.claude_account, one per config.RunStages name (settings_stages_test.go),
+// which are the whole of the growth: planning.decoupling's two rows
+// (registry.go:301, and the layer row at :543) are already on main.
 const (
 	cfmRegistryRows   = 390
 	cfmAllowlistNamed = 94

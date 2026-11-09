@@ -130,7 +130,7 @@ ruling that `--yes` answers that one too, outside an agent session, and the plan
 task that makes it so — *(Amended 2026-11-07: **P4 has landed**, so `--yes` answers the typed
 confirmation too, outside an agent session, which is the argv the console spawns.)* Every successful
 write ends with `next: fugaro update` (`runSettingsSet`, **S5 #1525**
-`internal/cli/settings_set.go:1492`). *Consequence:*
+`internal/cli/settings_set.go:1728`). *Consequence:*
 the console spawns this and reads its sentences; it writes no document of its own, and it never
 re-implements the diff (**D1103**).
 
@@ -680,7 +680,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
 
 - **U1. Whether `--` before the value works with S5's parser as written.** `settings set` is
   `cobra.ArbitraryArgs` with `RunE` reading `args[0]`/`args[1]` (**S5 #1525**
-  `internal/cli/settings_set.go:363`), and pflag terminates flag parsing at `--`, so `set KEY
+  `internal/cli/settings_set.go:364`), and pflag terminates flag parsing at `--`, so `set KEY
   --layer local --yes -- -draft` should give `args = [KEY, -draft]`. **Not measured here** — this
   design adds no test and runs no command — and **P3's task measures it and, if it does not hold,
   changes S5's parser to `Flags().SetInterspersed(false)` or accepts the value only after `--`**,
