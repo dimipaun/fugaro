@@ -241,14 +241,17 @@ func beforePath(path string, doc Document) (PathMeasure, error) {
 	return measurePath(path, nodes, edges)
 }
 
-// maxBeforeEdges bounds the before graph's edges. An artifact inside the
-// one-megabyte cap can state a product of tens of millions of them from a few
+// maxBeforeEdges bounds the before graph's rewrite. An artifact inside the
+// one-megabyte cap can state a product of tens of millions of edges from a few
 // thousand decoupling entries and a few hundred edges onto one integration
 // node — a 541 KB file of that shape was measured allocating 2.4 GB — and the
 // read is local: a console spawns it, so the process a product that size would
 // take the memory of is the one the person who asked for a graph is looking at.
-// beforePath counts the edges as it builds them, so what the read holds never
-// passes the bound, and a plan an operator wrote does not come near it: the
+// beforePath counts the rewrite's edges as it builds them and refuses the graph
+// past the bound. The recorded `was` edges restored beside them are not part of
+// that count: they are one per break, the artifact's own list rather than a
+// product of two of its figures, and the cap the artifact arrived in bounds
+// them already. A plan an operator wrote does not come near either bound: the
 // before graph is the plan that stood before the pass, so it is the size of a
 // plan rather than of a product.
 const maxBeforeEdges = 1 << 18
