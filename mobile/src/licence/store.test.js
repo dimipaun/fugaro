@@ -47,7 +47,7 @@ import assert from 'node:assert/strict';
 import { createPublicKey, generateKeyPairSync, sign as edSign, verify as edVerify } from 'node:crypto';
 import test from 'node:test';
 
-import { SECRET_ITEMS } from '../accounts/index.js';
+import { SECRET_ITEMS, isSecretItem } from '../accounts/index.js';
 import { LICENCE_KEYS_ENTRY, LICENCE_KEYS_MAX, LICENCE_KEY_PREFIX, LICENCE_STORE_CODES, LicenceStore } from './store.js';
 import { createLicenceVerifier } from './verify.js';
 
@@ -268,5 +268,5 @@ test('the app’s two credentials are still exactly idToken and macKey', async (
   const production = signer('prod-2026');
   await store(port, [production]).install(mint(production, claimsFor()), at(ISSUED));
   assert.deepEqual(port.keys(), [LICENCE_KEYS_ENTRY], 'the licence key is stored where the tuple is, and nowhere else');
-  assert.equal(SECRET_ITEMS.includes('licenceKey'), false, 'and it is not an item the secure store would take');
+  assert.equal(isSecretItem('licenceKey'), false, 'and the secure store’s own fence refuses a licence key by name');
 });
