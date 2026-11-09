@@ -472,6 +472,19 @@ func TestContractFilesBelongToTheContractAndItsChanges(t *testing.T) {
 			`node "B"'s footprint covers "types.go"`, "F10")
 	})
 
+	t.Run("a separator spelled as a character class", func(t *testing.T) {
+		// A class consumes one rune and carries no check of what that rune is,
+		// so a class whose range spans `/` writes the file's separator: `[.-0]`
+		// is `.` to `0`, and `/` lies between them. The contract's file is what
+		// the pattern names, and a count of the pattern's own separators dropped
+		// the pair — the class's separator is not one — before doublestar was
+		// ever asked.
+		refused(t, v3Doc(t,
+			`"paths": ["internal/dep/**"]`,
+			`"paths": ["internal[.-0]contract/types.go"]`),
+			`node "B"'s footprint covers "internal/contract/types.go"`, "F10")
+	})
+
 	// A brace group is the fourth spelling, and the one `path.Clean` cannot
 	// read into: it cleans a pattern as one string, so a `.` or a `..` element
 	// standing inside `{…}` survives it. `{./internal/contract/types.go}` and

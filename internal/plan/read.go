@@ -699,9 +699,14 @@ func newGlobPath(pattern string) globPath {
 	if strings.Contains(pattern, "**") {
 		g.suffix = strings.TrimLeft(g.suffix, "/")
 	}
-	// A `**` matches any number of elements and a brace group may carry a `/`
-	// of its own, so the count is only a bound when neither is there.
-	if !strings.Contains(pattern, "**") && !strings.ContainsAny(pattern, "{}") {
+	// The count is only a bound when nothing in the pattern can stand for a
+	// separator: a `**` matches any number of elements, a brace group may carry a
+	// `/` of its own, and a class consumes one rune with no check of what that
+	// rune is — `internal[.-0]contract/types.go` is a pattern for
+	// internal/contract/types.go, because `/` lies in the range `.` to `0` that
+	// the class spans, and only a `*` or a `?` is refused a separator
+	// altogether.
+	if !strings.Contains(pattern, "**") && !strings.ContainsAny(pattern, "{}[]") {
 		g.elems = strings.Count(pattern, "/") + 1
 	}
 	return g
