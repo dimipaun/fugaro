@@ -260,9 +260,13 @@ func TestDevBuildHasNoSilentFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
+	// The stage's reason is one clause on the screen and the whole of it in the
+	// run's log (report.Brief), which is where the flags it names are.
+	_, log := onlyLog(t, "setup")
+	whole := out + log
 	for _, want := range []string{"development build", "images/build-base.sh", "--base-image KIND=<tag>", "sh images/build-base.sh history " + historyImagePath} {
-		if !strings.Contains(out, want) {
-			t.Errorf("no %q in\n%s", want, out)
+		if !strings.Contains(whole, want) {
+			t.Errorf("no %q in\n%s", want, whole)
 		}
 	}
 	if r.dst.puts != 0 || r.built != 0 {
@@ -996,8 +1000,11 @@ func TestImagesOutcomeSaysOnlyWhatItDid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if want := copied + "; " + pinned; !strings.Contains(out, want) {
-		t.Errorf("a base+history run does not report %q:\n%s", want, out)
+	// The stage's reason is one clause on the screen and the whole of it in the
+	// run's log (report.Brief), which is where both clauses of the outcome are.
+	whole := out + newestLog(t, "setup")
+	if want := copied + "; " + pinned; !strings.Contains(whole, want) {
+		t.Errorf("a base+history run does not report %q:\n%s", want, whole)
 	}
 	// Base alone: the pin clause, and no copy claim anywhere.
 	newImagesRig(t, "1.2.3")
@@ -1005,11 +1012,12 @@ func TestImagesOutcomeSaysOnlyWhatItDid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out, pinned) {
-		t.Errorf("a base-only run does not report %q:\n%s", pinned, out)
+	whole = out + newestLog(t, "setup")
+	if !strings.Contains(whole, pinned) {
+		t.Errorf("a base-only run does not report %q:\n%s", pinned, whole)
 	}
-	if strings.Contains(out, copied) {
-		t.Errorf("a base-only run still claims a copy:\n%s", out)
+	if strings.Contains(whole, copied) {
+		t.Errorf("a base-only run still claims a copy:\n%s", whole)
 	}
 }
 
@@ -1075,11 +1083,14 @@ func TestNoMessageOffersARemovedBaseCommand(t *testing.T) {
 			}
 		}
 	}
-	// The refusal for the flag itself names the working alternative.
+	// The refusal for the flag itself names the working alternative, in the
+	// whole of the stage's reason: the screen keeps one clause of it and the
+	// run's log the rest (report.Brief), and a failure prints that log's path.
 	newImagesRig(t, "1.2.3")
 	out, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--replace-image", "base")
-	if ExitCode(err) != ExitUserError || !strings.Contains(out, "--base-image base=IMAGE") || !strings.Contains(out, "there is nothing to replace") {
-		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
+	whole := out + newestLog(t, "setup")
+	if ExitCode(err) != ExitUserError || !strings.Contains(whole, "--base-image base=IMAGE") || !strings.Contains(whole, "there is nothing to replace") {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, whole)
 	}
 }
 

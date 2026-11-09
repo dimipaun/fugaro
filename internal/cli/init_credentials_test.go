@@ -1735,7 +1735,9 @@ func TestAFailedPolicyReadKeepsTheVerifierList(t *testing.T) {
 	r.save(t)
 
 	out, errOut, err := executeStdin(t, "", "update", "--yes")
-	s := out + errOut
+	// The step's line is one clause of the refusal and the log the whole of it
+	// (report.Brief), so the sentence is read back where the run keeps it.
+	s := out + errOut + namedLog(t, out+errOut)
 	if err == nil {
 		t.Fatalf("an update whose policy node is newer than this binary succeeded, want the read refused: the run cannot tell what the node names, so it must not answer for it\n%s", s)
 	}

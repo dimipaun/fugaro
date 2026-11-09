@@ -441,7 +441,10 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 	if !strings.Contains(out2.String(), "plugin: current") {
 		t.Errorf("the second run's plugin step is not current, so the parked cloud step is not the only step its plan holds:\n%s", out2)
 	}
-	if !strings.Contains(out2.String(), "skipped here: cloud") {
+	// The plan view's row is one clause (report.Brief) and the reason is whole
+	// in the log, so what is read here is the run's own block under it: the
+	// step it leaves is the checkout's cloud half, named in words.
+	if !strings.Contains(out2.String(), "the checkout's cloud half") {
 		t.Errorf("the second run no longer says which step it leaves:\n%s", out2)
 	}
 	b, err := res2.JSON()

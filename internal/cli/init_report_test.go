@@ -873,6 +873,34 @@ func namedLog(t *testing.T, out string) string {
 	return string(b)
 }
 
+// newestLog reads back the newest log the runs of cmdName in this test have
+// left so far — the run that has just finished. onlyLog refuses a test that
+// runs the command twice, and a run whose reason the screen shortened keeps the
+// whole of it in its log (report.Brief).
+func newestLog(t *testing.T, cmdName string) string {
+	t.Helper()
+	dir := logDir(t)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("the run left no log directory: %v", err)
+	}
+	re := regexp.MustCompile("^" + regexp.QuoteMeta(cmdName) + `-\d{14}-\d+\.log$`)
+	newest := ""
+	for _, e := range entries {
+		if re.MatchString(e.Name()) && e.Name() > newest {
+			newest = e.Name()
+		}
+	}
+	if newest == "" {
+		t.Fatalf("no log of %s: every run keeps one", cmdName)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, newest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
 // planRowOf is the plan view's row for one stage, without the view's own
 // indent: the row starts with a marker and the status word, which is what a
 // test asserting one stage's state reads. It is "" when the view has none.

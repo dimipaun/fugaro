@@ -1391,7 +1391,7 @@ func (r *initRun) progress() io.Writer {
 // else to send them must not swallow them.
 func (r *initRun) planBlock(plan *tf.Plan) {
 	if r.rep == nil {
-		r.planBlock(plan)
+		fmt.Fprint(r.w, tf.Summary(plan))
 		return
 	}
 	fmt.Fprint(r.w, tf.Brief(plan))

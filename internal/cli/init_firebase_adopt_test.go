@@ -143,9 +143,13 @@ func TestInitFirebaseAdoptFour(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
+	// The plan's own lines, the imports among them, are the run's record and
+	// go to the log (report.Brief keeps the terminal to the counts and the
+	// plain-words review); the confirmation below names them in words.
+	_, log := onlyLog(t, "setup")
 	for _, i := range fbAdoptImports {
-		if want := "import " + i.To + " (id " + i.ID + ")"; !strings.Contains(out, want) {
-			t.Errorf("no %q in\n%s", want, out)
+		if want := "import " + i.To + " (id " + i.ID + ")"; !strings.Contains(log, want) {
+			t.Errorf("no %q in the log\n%s", want, log)
 		}
 	}
 	for _, want := range []string{"applies 4 imports, 2 creates, 0 updates to the Firebase project proj-1234 (adopting the existing Realtime Database proj-1234-default-rtdb, web API key fugaro-web, token signer and fugaroTokenMinter role;"} {
