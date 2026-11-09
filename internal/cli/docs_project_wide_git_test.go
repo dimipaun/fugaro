@@ -342,7 +342,7 @@ func TestDocsStateTheBitbucketProjectTokenReach(t *testing.T) {
 		// every reading above is now scoped to a repository the published
 		// node does not proxy -- the run reads no token only where that
 		// node admits the repository with `proxy: true`.
-		"A proxy that keeps the token out of the **run's own git traffic** is designed in [docs/secrets-brokering](secrets-brokering/README.md) and **built** (D490, \"What the agent gets\" below): on a repository the published node admits with `proxy: true` the runner reads no token, the run's git environment carries none, and the service puts the credential on the wire",
+		"A proxy that keeps the token out of the **run's own git traffic** is designed in [docs/secrets-brokering](secrets-brokering/README.md) and **built** (D490, \"What the agent gets\" below): on a repository the published node admits with `proxy: true` the runner reads no token, the run's own git traffic carries none, and the service puts the credential on the wire",
 		// The half that has NOT moved, which the sentence has to keep: every
 		// reach above is the mounted token's value, and the mount -- and the
 		// accessor behind it -- leave with the flip, not with the proxy.
