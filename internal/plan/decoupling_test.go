@@ -448,6 +448,40 @@ func TestContractFilesBelongToTheContractAndItsChanges(t *testing.T) {
 		})
 	}
 
+	// A brace group is the fourth spelling, and the one `path.Clean` cannot
+	// read into: it cleans a pattern as one string, so a `.` or a `..` element
+	// standing inside `{…}` survives it. `{./internal/contract/types.go}` and
+	// `internal/{dep/..,}/contract/types.go` are the contract's one file to
+	// anyone reading the pattern, and the rule below reads neither of them —
+	// doublestar matches neither against the file, so nothing above refuses
+	// them. Refused by name, like the two before this.
+	for _, spelling := range []string{
+		"{./internal/contract/types.go}",
+		"internal/{dep/..,}/contract/types.go",
+	} {
+		t.Run("a footprint pattern that is not a checkout path: a brace respelling "+spelling, func(t *testing.T) {
+			refused(t, v3Doc(t, `{"id": "B", "title": "the dependent", "footprint": {"prediction": true, "paths": ["internal/dep/**"]}}`,
+				fmt.Sprintf(`{"id": "B", "title": "the dependent", "footprint": {"prediction": true, "paths": [%q]}}`, spelling)),
+				"a brace group", "not the one the contract-file rule reads")
+		})
+	}
+
+	// Refusing a group is not refusing braces: an alternation between real
+	// paths is the thing braces are for, and a `..` outside one is cleaned away
+	// and read as the file it names, so both still read.
+	t.Run("a brace group alternating between paths still reads", func(t *testing.T) {
+		for _, pattern := range []string{
+			"internal/{dep,other}/**",
+			"internal/dep/../dep/**",
+		} {
+			if _, err := Parse("graph.json", []byte(v3Doc(t,
+				`"paths": ["internal/dep/**"]`,
+				fmt.Sprintf(`"paths": [%q]`, pattern)))); err != nil {
+				t.Errorf("the footprint pattern %q was refused: %v", pattern, err)
+			}
+		}
+	})
+
 	t.Run("the integration node on a file that is not a stub", func(t *testing.T) {
 		refused(t, v3Doc(t, `{"id": "I1", "title": "the integration", "kind": "integration", "footprint": {"prediction": true, "paths": ["internal/contract/stub.go"]}}`,
 			`{"id": "I1", "title": "the integration", "kind": "integration", "footprint": {"prediction": true, "paths": ["internal/contract/types.go"]}}`),

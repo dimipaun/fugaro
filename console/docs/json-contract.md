@@ -1408,9 +1408,14 @@ has that file protected, rather than a file no other task's footprint is
 checked against. And a
 footprint **pattern** that is not a checkout path at all is refused by name, so
 it can never be read as the contract's file: a **backslash** — doublestar's
-escape character, where `types\.go` is a pattern for `types.go` — and a **leading
-slash**, which makes the pattern absolute. The console shows the CLI's sentence
-in each case, like every other refusal here.
+escape character, where `types\.go` is a pattern for `types.go` — a **leading
+slash**, which makes the pattern absolute — and a **brace group that spells an
+empty, a `.` or a `..` element**, as in `{./internal/contract/types.go}` or
+`internal/{dep/..,}/contract/types.go`: `path.Clean` reads a pattern as one
+string and normalises such an element only outside a group, so a group is how a
+respelling is written without the rule that reads the path reading it — a group
+alternating between real paths, `internal/{a,b}/x.go`, is untouched. The console
+shows the CLI's sentence in each case, like every other refusal here.
 
 **What the read computes, and why the done set is passed in.** `level`, `done`,
 `ready`, `blocked`, `critical_path_length`, `downstream`, `levels`,

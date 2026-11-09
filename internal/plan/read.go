@@ -386,6 +386,9 @@ func validateSchema3(path string, doc Document) error {
 			if strings.HasPrefix(pattern, "/") {
 				return refuse(path, "node %q has the footprint path %q; a footprint names paths in the checkout, never filesystem ones", n.ID, pattern)
 			}
+			if respelledInBraces(pattern) {
+				return refuse(path, "node %q has the footprint path %q; a brace group that spells an empty element, a %q or a %q respells a path rather than alternating between paths, so the file it names is not the one the contract-file rule reads — it is refused rather than matched as written", n.ID, pattern, ".", "..")
+			}
 		}
 	}
 
@@ -490,6 +493,58 @@ func carriesEdge(doc Document, task, needs string) bool {
 		}
 	}
 	return false
+}
+
+// respelledInBraces reports whether a brace group in p spells an element that
+// is empty, "." or "..". `path.Clean` normalises a pattern as one string, so it
+// collapses such an element only where it stands outside a group: it reads
+// `{./internal/x.go}` and `internal/{dep/..,}/x.go` as written, and both name
+// the one file internal/x.go to anyone reading the pattern — while the
+// contract-file rule below, which matches the pattern doublestar's way, sees
+// neither of them name it. That is a path claimed with the rule's own question
+// unanswered, so the pattern is refused by name, beside the escape and the
+// leading slash, rather than normalised into the file it respells.
+//
+// Only elements *inside* a group are refused. A `..` element outside one is
+// cleaned away above and read as the file it names, which is what the rule
+// wants; and a group alternating between real paths (`internal/{a,b}/x.go`) is
+// the alternation braces exist for.
+func respelledInBraces(p string) bool {
+	depth, start := 0, 0
+	respelt := func(end int) bool {
+		if depth == 0 {
+			return false
+		}
+		switch p[start:end] {
+		case "", ".", "..":
+			return true
+		}
+		return false
+	}
+	for i, r := range p {
+		switch r {
+		case '{':
+			if respelt(i) {
+				return true
+			}
+			depth++
+			start = i + 1
+		case '}':
+			if respelt(i) {
+				return true
+			}
+			if depth > 0 {
+				depth--
+			}
+			start = i + 1
+		case '/', ',':
+			if respelt(i) {
+				return true
+			}
+			start = i + 1
+		}
+	}
+	return respelt(len(p))
 }
 
 // printsAsRepoPath reports whether every rune of a footprint path is one that
