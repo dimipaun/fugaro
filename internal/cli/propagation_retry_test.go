@@ -371,6 +371,59 @@ func TestPropagationRetryJudgesTheNewPlanThroughTheGate(t *testing.T) {
 	}
 }
 
+// The other half of the same rule, and the half a retry that reused an
+// admission would get wrong: a step that failed on the closed list is planned
+// and JUDGED again, and a plan the gate refuses stops the step there. The
+// admission the failed attempt was under is spent -- it admits that plan and no
+// other -- so nothing is applied under it, and the refusal is the record the
+// day carries for the retry (D1012, D1014).
+func TestPropagationRetryAppliesNothingUnderTheFailedAttemptsAdmission(t *testing.T) {
+	noPropagationWaits(t)
+	r := updateManagedRig(t)
+	updating(t, r)
+	// The first attempt's plan is one the installation's own cover admits; the
+	// plan the retry is handed grants the credentials service to a principal
+	// the installation's modules do not grant, which the cover refuses.
+	admitted := credentialsAccountChanges()[:1]
+	refused := credentialsAccountChanges()
+	admittedJSON := map[string]any{"stdout": planJSON(t, admitted...)}
+	refusedJSON := map[string]any{"stdout": planJSON(t, refused...)}
+	r.script["plan@installation"] = map[string]any{"exit": 2}
+	r.script["show@installation"] = []any{admittedJSON, admittedJSON, admittedJSON, refusedJSON, refusedJSON, refusedJSON}
+	r.script["apply@installation"] = []any{
+		map[string]any{"exit": 1, "stderr": theAccountGap400s},
+		map[string]any{"exit": 0},
+	}
+	r.save(t)
+
+	got, err := updateRun(t, r, "update", "--yes")
+	if err == nil {
+		t.Fatalf("a plan the gate refused was applied:\n%s", got)
+	}
+	if !strings.Contains(got, "refused by cover") {
+		t.Errorf("the retry did not stop in the gate's own words:\n%s", got)
+	}
+	if n := len(rootSubs(t, r, "installation", "apply")); n != 1 {
+		t.Errorf("the installation root applied %d times, want 1: only the attempt that was admitted", n)
+	}
+	// Two verdicts, two records: the admission of the plan the failed apply was
+	// on, and the refusal of the plan the retry was handed.
+	recs := audits(t, r)
+	if len(recs) != 2 {
+		t.Fatalf("the day holds %d record(s), want the admission and the refusal: %+v", len(recs), recs)
+	}
+	kinds := map[string]managedmode.AuditVerdict{}
+	for _, rec := range recs {
+		kinds[rec.PlanDigest] = rec.Verdict
+	}
+	if want := gateDigest([]byte(planJSON(t, admitted...))); kinds[want] != managedmode.AuditAdmitted {
+		t.Errorf("the plan the failed apply was on has no admitted record (digest %s): %+v", want, recs)
+	}
+	if want := gateDigest([]byte(planJSON(t, refused...))); kinds[want] != managedmode.AuditRefused {
+		t.Errorf("the plan the retry judged was not recorded as refused (digest %s): %+v", want, recs)
+	}
+}
+
 // What the retry does not do: absorb anything that is not the closed list.
 // One error off the list is enough to stop, exactly as before this retry
 // existed -- the failure is reported and nothing is run again.
