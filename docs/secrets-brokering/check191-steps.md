@@ -23,9 +23,17 @@ Every row Check 191 exists for is a **refusal**, and a run's identity is sealed 
 its calls carry a launch token and its own job identity, bound to its run id and its repository. A
 call made from your machine — with your own credentials, or with the service's — is answered about
 **that** identity, not about a run's, so it can say nothing about whether a run in another repository,
-a push to `main`, a tag, a delete, another pull request's update, a merge or `/workspaces` is refused.
-That is why the check launches throwaway runs whose task tells the agent to make each attempt and
-print one line per attempt.
+a push to `main`, a tag, a delete, a write to another pull request of the run's **own** repository, a
+merge or `/workspaces` is refused. That is why the check launches throwaway runs whose task tells the
+agent to make each attempt and print one line per attempt.
+
+**Two of the seven attempts are only reachable from the right target.** `other_pull_request` is what a
+pull-request write earns when the pull request is not the run's — and the rules refuse a call that names
+another **repository** for the repository *before* they look at the pull request, so a pull request of
+another repository would earn `other_repository` and never `other_pull_request`: the attempt has to be a
+write to a pull request of the run's own repository that is not the run's own. `call_not_allowed` is the
+classification's own refusal — a merge and `/workspaces` are not paths this proxy names at all, so they
+earn it wherever they point.
 
 **And the probes are real runs.** The working run — and both of Check 192's runs — first commits one
 line, pushes its branch and opens its pull request, because a run whose agent commits nothing is
@@ -50,8 +58,12 @@ neither deletes nor closes them, and the block names each one.
 - **Three sandbox Bitbucket repositories of that installation**: `CHECK191_REPO` (the proxied one the
   runs work in), `CHECK191_OTHER_REPO` (a **second** one, for the other-repository refusal) and, for
   `--after-flip`, `CHECK191_PLAIN_REPO` (one the published policy does **not** proxy). Plus
-  `CHECK191_OTHER_PR`: the number of an **open** pull request in `CHECK191_OTHER_REPO` that is not
-  this run's, for the other-pull-request and merge attempts.
+  `CHECK191_OTHER_PR`: the number of an **open** pull request **in `CHECK191_REPO`** — the run's own
+  repository, and not the run's own pull request — for the other-pull-request and merge attempts. It
+  has to be this repository's: a call naming another repository is refused for the repository before
+  the pull-request rules are reached, so a pull request of `CHECK191_OTHER_REPO` would earn the
+  other-repository refusal and never `other_pull_request`. `CHECK191_OTHER_REPO` itself is only ever
+  the target of the other-repository attempt.
 - `bash`, `mktemp`, `python3`, `curl`, `gcloud` and `fugaro` on PATH, and `git` for `--after-flip`
   (the checkout's origin remote, so the check knows the directory it is about to read doctor in is
   this repository's). `gcloud` must be authenticated as an account that may read Cloud Logging for
@@ -140,8 +152,10 @@ Check 191: `proxied` (the published policy admits the repository with `proxy: tr
 `run-outcome` (the working run reached a final status, succeeded, and the service served its push and
 its pull request — the branch and the number the check leaves for you), the seven refusal rows
 (`refusal-other-repository`, `refusal-other-ref`, `refusal-tag-ref`, `refusal-ref-delete`,
-`refusal-other-pull-request`, `refusal-merge`, `refusal-workspaces`), `review-run`,
-`ended-identity`, and the `restore` and `scratch-removed` rows. Each refusal row reads **three**
+`refusal-other-pull-request`, `refusal-merge`, `refusal-workspaces`), `review-run` (a **review-only**
+run launched with `--pr`, the working run's own pull request: a review-mode recipe reviews a pull
+request and needs exactly one, and such a run has no branch of its own, which is what the row is
+about), `ended-identity`, and the `restore` and `scratch-removed` rows. Each refusal row reads **three**
 things and fails on any one of them: the run's own line for the attempt, the answer it got
 (`refused=yes` with the service's own words), and the service's **audit line** for that refusal, under
 the class the call belongs to — `other_repository`, `other_ref`, `tag_ref`, `ref_delete`,
@@ -212,7 +226,8 @@ The runs the check launches each commit one line, push their branch and open the
 **those branches and pull requests are left behind** — the block names each one, and they are yours to
 settle on the sandbox repositories (the check holds no Bitbucket credential of its own, so it cannot
 delete them; Check 190 instead has a token in a file for its own throwaway branch). The review-only
-run and the ended-run probe are the two that write nothing: a review-only run's push must be refused,
-and the probe is refused before it can be served at all.
+run and the ended-run probe are the two that write nothing: the review-only run reviews the working
+run's own pull request (a review-mode recipe is launched with the `--pr` it reviews and has no branch
+of its own), so its push must be refused, and the probe is refused before it can be served at all.
 
 **No agent runs any step of either check.**
