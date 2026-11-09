@@ -24,13 +24,13 @@ code. A `:line` is a **declaration** line at `777b902d`; the symbol is what to s
   about the image is project-level except the catalog's newer path.
 
 - **F2: Exists. `image:` is the repository's build input and it has no name.**
-  `internal/config/config.go:639` is the field, `internal/config/config.go:788` the block it holds
+  `internal/config/config.go:677` is the field, `:826` the block it holds
   (`apt`, `setup`, `tools`, `skip_build_scripts`, `key_files`, and the `node`/`jdk` tombstones
   `internal/config/image.go:119`, `:122`). The block is rendered into a Dockerfile by
   `internal/image/render.go:163`; nothing in it is addressable from outside the repository.
 
 - **F3: Exists. `dockerfile:` is one repository-relative path, and only the repository's own.**
-  `internal/config/config.go:640`, validated inside `validateImage` (`internal/config/image.go:109`),
+  `internal/config/config.go:678`, validated inside `validateImage` (`internal/config/image.go:109`),
   which refuses a path outside the repository. It is the escape hatch for exactly the repository that
   commits it.
 
@@ -46,7 +46,7 @@ code. A `:line` is a **declaration** line at `777b902d`; the symbol is what to s
 
 - **F6: Exists. The catalog's deploy-time selection is built**, with the tag-cover rule and the two
   refusals: `internal/infra/spec.go:807`, and the config-side references
-  (`image_name`, `needs`) at `internal/config/config.go:655`, `:626`.
+  (`image_name`, `needs`) at `internal/config/config.go:693`, `:664`.
 
 - **F7: Exists, in two pieces and at two stages. The catalog's scheduled check has its decision layer
   and its job mode, and not yet its schedule.** `internal/imagecheck/catalog.go:20` (`CheckCatalog`)
@@ -92,11 +92,11 @@ code. A `:line` is a **declaration** line at `777b902d`; the symbol is what to s
   (`catalogImageEntry`), which is what lets the removal **replace** the check rather than delete it.
 
 - **F13: Exists. `repoCtx.check` is the one producer of the check spec.**
-  `internal/infra/spec.go:1451` builds the `CheckSpec` (`internal/infra/spec.go:326`) that the module
+  `internal/infra/spec.go:1451` builds the `CheckSpec` (`:326`) that the module
   turns into the job and the Scheduler, from the head's workflows and the repository's registry.
 
 - **F14: Exists. The image is fixed at deploy time, so every choice here is a deploy-time choice.**
-  `internal/infra/spec.go:807`'s comment states it and `internal/infra/spec.go:1019` implements it: the
+  `internal/infra/spec.go:807`'s comment states it and `:1019` implements it: the
   job's image is written into the job, and a run cannot change it. A refusal for a bad image therefore
   has to happen where the spec is built, not where the run starts.
 
@@ -119,8 +119,8 @@ code. A `:line` is a **declaration** line at `777b902d`; the symbol is what to s
   admits it.
 
 - **F18: Exists. The scope table is what makes a key settable, and the image keys are in it.**
-  `internal/config/scope.go:106`, `:108`, `:113`, `:131` are the rows, `:179` (`ExecutableKeys`) and
-  `:189` (`NonExecutableImageKeys`) the classifications. Removing a key from `fugaro.yaml` and leaving
+  `internal/config/scope.go:106`, `:108`, `:113`, `:131` are the rows, `:186` (`ExecutableKeys`) and
+  `internal/config/scope.go:196` (`NonExecutableImageKeys`) the classifications. Removing a key from `fugaro.yaml` and leaving
   its scope row would leave the settings commands able to write a key the config refuses.
 
 - **F19: Missing. `internal/infra/cover.go` does not exist.** The brief names it; the cover logic is
@@ -144,8 +144,8 @@ code. A `:line` is a **declaration** line at `777b902d`; the symbol is what to s
   base image instead. `checkout` keeps both its values, but what `baked` points at is no longer built by
   the engine — a decision, not an implementation detail (D1191).
 
-- **F23: Exists. The project layer can set the same keys.** `schemas/project-layer.schema.json:265`
-  (`image`) and `:338` (`rebuild`), validated through `internal/config/layer.go:327`
+- **F23: Exists. The project layer can set the same keys.** `schemas/project-layer.schema.json:302`
+  (`image`) and `schemas/project-layer.schema.json:375` (`rebuild`), validated through `internal/config/layer.go:389`
   (`ParseProjectLayer`, which refuses a key outside its scope). A profile is therefore a **second door**
   to the removed build, so the removal has four configuration surfaces to move — this repository's
   schema, the project layer's, the settings document's and the registry's — and not one.
@@ -157,7 +157,7 @@ code. A `:line` is a **declaration** line at `777b902d`; the symbol is what to s
 - **F25: Exists, and it is what makes the migration possible at all. A catalog build hands the entry's
   Dockerfile every tool the renderer's own clone needs — the repository's URL and branch (the
   `_REPO_URL`/`_BASE_BRANCH` substitutions, `internal/backend/gcp/catalog.go:286`), the commit the
-  copied definition was read at (the pin step writes it, `internal/backend/gcp/catalog.go:364`), and
+  copied definition was read at (the pin step writes it, `internal/backend/gcp/catalog.go:369`), and
   the `git-credentials` file secret on the shared build step
   (`images/derived/cloudbuild.yaml:178`, read from `/workspace/out/source-commit`).** So a Dockerfile in
   a repository can `git clone "$REPO_URL"` at `$FUGARO_COMMIT` with the build's credential and bake the
@@ -249,7 +249,7 @@ its `Recommendation` and both costs, so the answer and the price of the other re
   deploy time.** The reason: `checkout` is a wire field and `CLAUDE.md` forbids re-meaning one, and a
   prebuilt image is the one source kind nothing guarantees holds the checkout. **The refusal is a new
   deploy-time refusal, so R1 is a SEC task.**
-  Recommendation: `checkout` **keeps both values** (`internal/config/config.go:693`) and both their
+  Recommendation: `checkout` **keeps both values** (`internal/config/config.go:731`) and both their
   meanings; a `baked` workflow's image is the **catalog's** choice, and a `baked` workflow whose chosen
   entry's source is a **prebuilt image** (`SourceImage`, `internal/config/catalog.go:71`) is **refused
   at deploy time**, where the spec is built (F14), the way the `docker` tag is refused on Cloud Run
@@ -303,7 +303,7 @@ its `Recommendation` and both costs, so the answer and the price of the other re
   Recommendation: each removed key becomes a **tombstone** in the config — the mechanism
   `image.node`/`image.jdk` already use (`internal/config/image.go:119`, `:122`) — and its refusal names
   the release and the catalog command that replaces it. Strict decoding
-  (`internal/config/config.go:1231`) is what makes a tombstone necessary: the field has to exist for
+  (`internal/config/config.go:1269`) is what makes a tombstone necessary: the field has to exist for
   the refusal to be the message rather than the decoder's.
   Cost of the alternative: deleting the fields makes every removed key read as *field image not found*,
   which names no replacement, reads as a typo and gives a person nothing to do next.
@@ -311,12 +311,12 @@ its `Recommendation` and both costs, so the answer and the price of the other re
   "removed" means "refused and named", not "absent from the source".
 
 - **D1196 (the schemas, and the rows that make the keys writable) — default-by-owner: not objected, 2026-11-04.** No answer came back on this one, so the design's recommendation stands as the default — on the reason the recommendation itself gives below, which is the reason a reader should re-check before building it.
-  Recommendation: `schemas/fugaro.schema.json:358` loses `image` (`:396` for `dockerfile`, `:511` for
-  `rebuild`) and its mutual-exclusion clauses (`:306`) shrink to `image_name` with `needs`;
-  `schemas/project-layer.schema.json:265` loses the same keys (`:338` for `rebuild`);
+  Recommendation: `schemas/fugaro.schema.json:372` loses `image` (`:429` for `dockerfile`, `:536` for
+  `rebuild`) and its mutual-exclusion clauses (`schemas/fugaro.schema.json:314`) shrink to `image_name` with `needs`;
+  `schemas/project-layer.schema.json:302` loses the same keys (`:375` for `rebuild`);
   `internal/settings/registry.go:229` loses the twenty-one rows that make the keys writable (`:234`,
-  `:254`, `:258`, and the `layerRow`s at `internal/settings/registry.go:454`, `:458`, `:477`, `:481`),
-  and `schemas/settings.schema.json:1145` loses their twenty-one members (`:832`, `:1181`) — a key
+  `:254`, `:258`, and the `layerRow`s at `internal/settings/registry.go:465`, `:469`, `:488`, `:492`),
+  and `schemas/settings.schema.json:1160` loses their twenty-one members (`:832`, `:1199`) — a key
   with no scope row and no registry row is a key `settings set` must not offer. `image_catalog.*`
   (`schemas/settings.schema.json:547`), `base_images` and the catalog's own rows are untouched.
   Cost of the alternative: a schema that still allows a removed key is the file a person's editor
@@ -507,7 +507,7 @@ its `Recommendation` and both costs, so the answer and the price of the other re
   this design meets the HARD RULE.** The check job's state carries `deletion_protection = true`
   (`deploy/terraform/gcp/modules/repo/check.tf:27`), so once R4 takes it out of the configuration the
   address is retired **and protected**: `blockingJobs` (`internal/cli/init_retire.go:305`) names it, and
-  `retireRefusal` (`internal/cli/init_retire.go:327`, called from `internal/cli/init.go:3845`) stops the
+  `retireRefusal` (`internal/cli/init_retire.go:327`, called from `internal/cli/init.go:3852`) stops the
   run **before the apply**, naming `fugaro update --repo . --retire`. Two consequences are named here
   rather than hidden. The unprotected Scheduler (`deploy/terraform/gcp/modules/repo/check.tf:116`, which
   carries no `deletion_protection` of its own) is **not** destroyed by that run either, because the run

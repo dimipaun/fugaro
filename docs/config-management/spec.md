@@ -67,7 +67,7 @@ needs no change at all.
 `yamledit.RemoveListItem` (`internal/yamledit/yamledit.go:234`, `:258`). They do not
 reach a **map** (`workflows.*.cache.*.key`, `providers.*.models`) or an **object list**
 (`workflows.*.cache` is a sequence of mappings, `workflows.*.secrets` a sequence of
-`{name, env}` — `internal/config/config.go:858`, `:828`).
+`{name, env}` — `internal/config/config.go:896`, `:866`).
 
 **Recommendation (D1162): one new pair, `--add-entry` / `--remove-entry`, for maps and object lists.**
 `--add` stays the string-list flag it is, and the new pair carries the entry's shape:
@@ -133,7 +133,7 @@ The commands below pass that test; every other key of the audit is closed by §2
 ### 3.1 `fugaro rigor set` and `fugaro rigor floor` (D1169, D1170)
 
 The registry names `rigor` and `rigor floor` as the owners of seven keys
-(`internal/settings/registry.go:266`, `:273`, `:445`, `:682`), and **no `rigor`
+(`internal/settings/registry.go:266`, `:273`, `:456`, `:707`), and **no `rigor`
 command exists**. But the commands are **already designed**, and this design **builds** them rather than
 re-designing them: `fugaro rigor set` in [docs/rigor-command](../rigor-command/README.md) (D830–D839,
 D900), and `fugaro rigor floor` in the settings design (SD10,
@@ -153,7 +153,7 @@ removal is not a plan the gate can read (D1026).
 `set` takes no flag for the seven policy keys the registry names it owner of —
 `secret_expires`, `secret_rotation_days`, `project_secrets.*.allow_data_to`, `project_secrets.*.proxy`,
 `batch.secrets`, `bitbucket_api_roots`, `mailbox.keychain_item`, `verifier_accounts`
-(`internal/settings/registry.go:567`, `:644`, `:684`).
+(`internal/settings/registry.go:578`, `:669`, `:709`).
 
 **Recommendation (D1171): `fugaro secrets rm NAME` deletes the Secret Manager version and the config
 entry, and the policy flags are added to the family as the settings write path's own rules cannot carry
@@ -168,7 +168,7 @@ no plan shows (§5).
 `fugaro accounts` has `ls`, `add` and `clear` and **no `rm`**
 (`internal/cli/accounts.go:25`, `internal/cli/accounts_add.go:41`).
 `clear` writes a project-DB mark and no config. The registry names `accounts` the owner of
-`claude_accounts.*.allow_data_to` (`internal/settings/registry.go:627`), which `add`
+`claude_accounts.*.allow_data_to` (`internal/settings/registry.go:652`), which `add`
 writes and **nothing can remove**.
 
 **Recommendation: `fugaro accounts rm NAME` removes the account definition and its allow-list entry, and
@@ -180,9 +180,9 @@ widening (D868) and stays refused in a coding agent's session.
 ### 3.4 `project`'s job profiles and the `repos.*` fields (D1173)
 
 `fugaro project repos` has `add`, `ls` and `rm` (`internal/cli/project_cmd.go:65`);
-nothing edits `job_profiles.*` (7 keys, `internal/settings/registry.go:647`) or a
+nothing edits `job_profiles.*` (7 keys, `internal/settings/registry.go:672`) or a
 `repos.*` field other than by enrolling a repository (`repos.*.base_branch`, `.provider`, `.vertex`,
-`.workflows`, `.github_app_id`, `internal/settings/registry.go:701`).
+`.workflows`, `.github_app_id`, `internal/settings/registry.go:726`).
 
 **Recommendation: the generic writer takes the `repos.*` scalars and lists** (they are a map of scalars,
 which §2 reaches), **and `fugaro project repos set` is added for the two facts a bare scalar cannot
@@ -211,7 +211,7 @@ the generation (`internal/cli/config_publish.go:255`) and writes the object.
 **Recommendation (D1175): every layer entry is a managed entry with a writer** — `profiles.*` (36),
 `defaults.*` (agent, git, rigor), `ab.*` (5) and `claude_models` — reached by the generic writer's §2
 mechanism. The layer's rows already exist in the registry
-(`internal/settings/registry.go:411`), so the change is the allowlist and the entry
+(`internal/settings/registry.go:422`), so the change is the allowlist and the entry
 mechanism, not a new registry.
 
 **Recommendation (D1176): the edit's own next step publishes.** `fugaro settings set --layer project`
@@ -225,7 +225,7 @@ publish a file every writer here has just written (D831's own task, inherited).
 ### 3.7 A repository's `workflows.*`, and what `setup` and `config init` write (D1177)
 
 A repository's `fugaro.yaml` `workflows.*` block (37 registry keys,
-`internal/config/config.go:608`) has **no writer**: `fugaro config init` writes a
+`internal/config/config.go:646`) has **no writer**: `fugaro config init` writes a
 minimal file (`internal/cli/config_init.go:84`) and the setup skill writes the rest
 **with the user**, in the user's own agent session (`plugin/skills/setup/SKILL.md:13`).
 
@@ -252,7 +252,7 @@ three parts:
 - **The mechanism is the read's own table, not the write's map.** `settingsFamilyCommands` is asked a
   second question too — it is what refuses a write and points the key at its family
   (`internal/cli/settings_set.go:402`) — so a family cannot simply be added to it: `config` owns
-  `max_parallel` (`internal/settings/registry.go:560`) and `setup` owns `update_check` (`:566`), and both
+  `max_parallel` (`internal/settings/registry.go:571`) and `setup` owns `update_check` (`:577`), and both
   are keys the generic path writes today, so an entry for either family would refuse two keys `settings
   set` writes.
 - **Every key that changes owner is listed**, in the plan's own table (§ plan, G12), so the change is
@@ -263,10 +263,10 @@ two it refuses.** `budget.mode`, `budget.per_day_usd`, `budget.per_run_usd` and 
 are a repository's own tightening of a ceiling (`internal/config/scope.go:91`, four `InRepo` rows): two
 of them are already in `settingsGenericKeys` (`internal/cli/settings_set.go:81`) and the other two are
 **added to it**, which is the whole of what F13 needs — today they default to the owner `settings set`
-(`internal/settings/registry.go:324`) while the allowlist refuses them on purpose
+(`internal/settings/registry.go:335`) while the allowlist refuses them on purpose
 (`internal/cli/settings_set.go:65`). `fugaro budget set` keeps writing the budget **database**'s caps
 under its ETag-guarded write (`internal/cli/budget.go:923`) and owns no registry row. `compute_prices.*`
-(`internal/settings/registry.go:595`) becomes a generic-writer entry (D1162) as well: it is a deliberate
+(`internal/settings/registry.go:606`) becomes a generic-writer entry (D1162) as well: it is a deliberate
 local override with its own validation (`internal/localcfg/localcfg.go:118`) that no run's ceiling turns
 on. **No key's meaning changes** — only the command the column names — so this is a rename of the owner
 and never a re-meaning of a key.
@@ -300,10 +300,10 @@ under the mark, and the mark's write path is the owner's alone
 here.** About seventy keys are `setup`'s and `update`'s — `endpoints.*` (22),
 `terraform.*`, `batch.*`, `build.*`, `gcp_project`, `region`, `runs_bucket`, `registry`,
 `policy_generation`, `layer_generation`
-(`internal/settings/registry.go:535`, `:571`, `:581`, `:585`, `:659`, `:545`). They
+(`internal/settings/registry.go:546`, `:582`, `:592`, `:596`, `:684`, `:556`). They
 are not a person's edit; they are the output of the converge. Two of them look like deliberate choices
-with no command today — `terraform.alert_email` (`internal/settings/registry.go:586`)
-and `batch.machine_type` (`internal/settings/registry.go:572`):
+with no command today — `terraform.alert_email` (`internal/settings/registry.go:597`)
+and `batch.machine_type` (`internal/settings/registry.go:583`):
 
 - **A deliberate change is made by the flag that feeds the converge, not by an edit of the file.** The
   converge already takes `--alert-email` (`internal/cli/init.go:368`) and the batch

@@ -162,7 +162,7 @@ publishes (O4, `docs/credentials-service/implementation-plan.md`):
 4. the run identity must be a **review** identity (§3.3).
 
 Both halves of the admission are the launcher's and neither is new: the account's `allow_data_to` must
-list the repository or the **launch** is refused (`claudeAccountAllowed`, `internal/cli/run.go:1800`), and
+list the repository or the **launch** is refused (`claudeAccountAllowed`, `internal/cli/run.go:1810`), and
 the run identity can only be minted by whoever holds the launcher's minting authority. The service's check
 is the second, independent reading of the same fact — the reading that is available to a service which
 must not trust the caller.
@@ -388,7 +388,7 @@ merge path — *not ship* — and a refusal is never read as a reason to re-revi
 timestamp, so there is no window to widen here, and what applies is what the service already checks on the
 two tokens the call presents. `verifyJob` (`auth.go:423`) checks expiry (`:482`), an `iat` not in the future
 (`:489`) and a `nbf` not in the future (`:492`), the last two against the one shared `clockSkew` the package
-declares (`auth.go:123`). `verifyRun` (`auth.go:516`) checks expiry (`:544`) and an `iat` not in the future
+declares (`auth.go:123`). `verifyRun` (`:516`) checks expiry (`:544`) and an `iat` not in the future
 (`:547`) — **two** of the three, and no `nbf`, because a Firebase ID token carries none: that claim belongs
 to the Google-issued job token, and `verifyJob` is the rule that reads it. Inventing a third check for the
 run identity would be a rule this design did not need to add. **`checkLive` (`auth.go:665`)

@@ -566,7 +566,7 @@ case it detects. The plan needs a liveness check (a periodic health probe
 with a timeout, not only a one-time readiness probe at startup) and a
 latency bound on the forwarding path itself. **Memory is a second,
 unaddressed bound**: Cloud Run gives one container one memory limit
-(`workflows.*.resources.memory`, `internal/config/config.go:434`), shared by
+(`workflows.*.resources.memory`, `internal/config/config.go:472`), shared by
 the runner, the agent and, now, the sidecar — nothing in this design yet
 stops Headroom from using enough memory (summarizing a very large tool
 output, say) to OOM-kill the whole container, taking the run down with it
@@ -880,7 +880,7 @@ figure inside one run.
 
 **How a user disables it.** `agent.compression` is **repository-wide, not
 per-workflow** — it is a single field of `Config.Agent`
-(`internal/config/config.go:36`, `Agent Agent`, not a
+(`internal/config/config.go:37`, `Agent Agent`, not a
 `map[string]Workflow`-keyed value — every workflow of a repository that sets
 it shares the same choice, exactly as `agent.auth` and `agent.model` already
 do), so "disabling it" means either the repository's `fugaro.yaml` (§4) or a
@@ -909,7 +909,7 @@ tunes.
 **The three edits, plus a fourth this design's first draft omitted**
 (`docs/design/recipes.md` §2, restated by every design since: "Config is
 strict-parsed in three places"), concretely, following the shape
-`OAuthToken` just added (`internal/config/config.go:195-204`):
+`OAuthToken` just added (`internal/config/config.go:233`):
 
 1. **The Go struct**, `internal/config/config.go`'s `Agent`: `Compression
    string \`yaml:"compression,omitempty"\`` next to `Recipe`/`OAuthToken`.
@@ -941,7 +941,7 @@ to a previous round's correction.** A previous draft argued `Validate`
 sets it. That argument is wrong: `config.Resolve` decodes the **merged**
 map (repository file over the project layer's `defaults:`) into one
 `Config`, and only then calls `Validate(&c)` on that merged value
-(`internal/config/resolve.go:144`, `if ps := Validate(&c); ...`) — `Validate`
+(`internal/config/resolve.go:145`, `if ps := Validate(&c); ...`) — `Validate`
 is never handed a single layer's raw, unmerged fields; even
 `config.Parse(data)` is `Resolve(data, nil)`, which still runs `Validate` on
 the (trivially merged, layer-less) result. So by the time `Validate` runs,

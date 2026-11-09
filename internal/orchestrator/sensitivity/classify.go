@@ -198,11 +198,15 @@ func (e rule) covers(p string) bool {
 // cleanRelative reports whether p is a repository-relative path that means
 // itself, which is the only kind of path a run records and the only kind the
 // tables are written against. What it refuses is every spelling that could mean
-// more than one path: an empty string, an absolute one, and a backslash or a
-// NUL (a prefix match reads either as an ordinary byte, and a filesystem that
-// read one as a separator would open a tree this table never opened), plus
-// anything path.Clean rewrites — a `..` or `.` component, a doubled or
-// trailing slash.
+// more than one path, or that names a path outside the checkout: an empty
+// string, an absolute one, and a backslash or a NUL (a prefix match reads
+// either as an ordinary byte, and a filesystem that read one as a separator
+// would open a tree this table never opened), plus anything path.Clean
+// rewrites — a `..` or `.` component, a doubled or trailing slash — and a
+// leading `..`, which is the one escaping spelling path.Clean leaves alone: it
+// rewrites `a/../b` to `b` but cannot rewrite `../b`, which names the tree above
+// the checkout. Bare `..` is that same path, and both are refused here by name
+// rather than left to a caller's second copy of this rule.
 // Comparing the path with its own cleaned form rather than matching its bytes
 // is what keeps a normalising filesystem or a second `..` from collapsing
 // something into a routine tree between this answer and the checkout.
@@ -226,6 +230,9 @@ func cleanRelative(p string) bool {
 		if p[i] >= utf8.RuneSelf {
 			return false
 		}
+	}
+	if p == ".." || strings.HasPrefix(p, "../") {
+		return false
 	}
 	return path.Clean(p) == p
 }

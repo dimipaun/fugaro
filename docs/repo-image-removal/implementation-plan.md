@@ -37,7 +37,7 @@ converge, and that is a change to a task rather than a detail inside it.
 
 | Order | Tasks | What forces it |
 | --- | --- | --- |
-| 0 | **the catalog ships — done, and it is the one step that had a date outside the plan.** Both `imageCatalogShipped` constants are `true` on `main` (`internal/cli/recipes_skew.go:176`, `internal/infra/readiness.go:762`; #1665 merged), the flip being 0.18.0's | While the flag was false, readiness held a job whose image is a catalog entry back rather than running it (`internal/infra/readiness.go:462`), so R0 could land and the dogfood would stop launching. **R0 now waits on nothing** |
+| 0 | **the catalog ships — done, and it is the one step that had a date outside the plan.** Both `imageCatalogShipped` constants are `true` on `main` (`internal/cli/recipes_skew.go:176`, `internal/infra/readiness.go:762`; #1665 merged), the flip being 0.18.0's | While the flag was false, readiness held a job whose image is a catalog entry back rather than running it (`:462`), so R0 could land and the dogfood would stop launching. **R0 now waits on nothing** |
 | 1 | **R0** | D1193: the entry, its build and the pin, before any removal. Nothing else may land first: every later task's red step runs against this repository's own pipeline |
 | 2 | **D1148's two tasks** | They add the installation-level schedule and its driver to `internal/infra/spec.go`, `internal/infra/tf/cover.go` and `internal/imagecheck/` — the files R4 and R6 change. Removing first would make D1148's driver read a check this plan deletes |
 | 3 | **R1**, **R2**, **R3** | R1 (the `baked` rule) and R2 (the refusals) are the configuration's two halves and neither depends on the other; R3 is R2's fixtures — **R2 first**, because a red step cannot assert a message that is not written |
@@ -113,8 +113,8 @@ adds its edit only after that task has merged**, and never re-derives what the o
 | `internal/backend/gcp/names.go` | **D1148 (ii)** (#1683), R4 | The name functions are shared: `CheckJobName` (`internal/backend/gcp/names.go:280`) and `CatalogReadCondition` (`:599`). #1683 reuses both for the installation-level job, so R4 must not delete a name the schedule still calls — what goes with the per-repository job is its **call site**, not the function. **#1683 merges first** |
 | `deploy/terraform/gcp/modules/installation/` and `deploy/terraform/gcp/roots/installation/` | **D1148 (ii)** (#1683), R4 | #1683 adds the Scheduler, its target, the root's wiring and their `terraform test` fixtures and goldens; R4 touches the shared registry's grants only. **#1683 merges first**, and R4 regenerates the goldens #1683 just regenerated |
 | `internal/imagecheck/` (`internal/imagecheck/catalog.go:20`, the per-repository check) | **D1148's driver**, R6 | D1148's driver calls `CheckCatalog` over every buildable entry; R6 removes the per-repository triggers' readers (`rebuild.*`) and `checkedWorkflows` (`internal/cli/imagecheck.go:241`). **D1148 first** |
-| `internal/settings/registry.go` | **G0/G1**, R2 | The configuration-management plan's G0 and G1 add rows and widen the generic writer's allowlist; R2 removes the twenty-one rows of the removed keys (`internal/settings/registry.go:229`, `:454`, `:477`). **One row, one owner**: R2 touches only the removed keys' rows and never the writer |
-| `schemas/settings.schema.json` | **G2**, **G8**, **G9**, R2 | They add member rows for the writes they add; R2 removes the members of the keys it removes (`schemas/settings.schema.json:1130`, `:1181`). **R2 does not move the document's version** — the rule G2 states |
+| `internal/settings/registry.go` | **G0/G1**, R2 | The configuration-management plan's G0 and G1 add rows and widen the generic writer's allowlist; R2 removes the twenty-one rows of the removed keys (`internal/settings/registry.go:229`, `:465`, `:488`). **One row, one owner**: R2 touches only the removed keys' rows and never the writer |
+| `schemas/settings.schema.json` | **G2**, **G8**, **G9**, R2 | They add member rows for the writes they add; R2 removes the members of the keys it removes (`schemas/settings.schema.json:1130`, `:1199`). **R2 does not move the document's version** — the rule G2 states |
 | `internal/cli/image_refresh*.go` | **M-series** (`image_refresh_steps.go`, `image_refresh_rules.go`), R6 | The managed build's M-series changes what `image refresh` converges; R6 removes its derived-image arm. **The M-series lands first**, or R6 rewrites lines it is about to be handed back |
 | `internal/cli/init.go`, `internal/cli/update.go` | **M-series** (`update.go`, `init.go`), R7 | R7 changes `setup`'s first-build offer (`offerBuilds`, `internal/cli/init.go:3415`) and the retirement door is left alone (`:444`); the M-series adds the converge stages. **Different functions, one file, M-series first** |
 | `docs/rigor-modes/reconciliation.md` | the design's own commit, **R2** | The design's commit moves the **pins** row (93 → 94, with its amendment sentence). **R2 moves `Config scope rows` (93 → 82)**, which is the eleven rows of spec §1.1 leaving `internal/config/scope.go`, and `TestDocsRigorModesCensusStatesItsCommands` re-runs that row's own command — so the row and the removal land together or the removal fails a test no task names. The rows R2 does **not** move, checked rather than assumed: the two top-level-key rows (a **workflow** key is not a top-level property), the skew-constant row (no `Since` constant leaves with the removal) and the pins row (no pin is deleted, one is rewritten) |
@@ -212,7 +212,7 @@ readiness branches that decide between them.
 - **Interface.** `catalog.Applies` (`internal/catalog/select.go:318`) stops reading `image:`/`dockerfile:`
   as "not a catalog workflow" — those keys no longer exist — and keeps its other refusals. The new
   refusal lives where the spec is built: a workflow whose `checkout` is `baked`
-  (`internal/config/config.go:693`) and whose chosen entry's source is a prebuilt image
+  (`internal/config/config.go:731`) and whose chosen entry's source is a prebuilt image
   (`SourceImage`, `internal/config/catalog.go:71`) is refused with a sentence naming the entry, the
   source kind and the two ways out (`checkout: clone`, or an entry that is built). `checkout`'s two
   values and both their meanings are unchanged.
@@ -233,10 +233,10 @@ readiness branches that decide between them.
 - **Interface.** Each removed key becomes a tombstone that refuses by name and names the catalog command
   — the mechanism `image.node`/`image.jdk` already are (`internal/config/image.go:119`, `:122`), whose
   sentence is built from `MigrationDoc`. `internal/config/scope.go:108` loses the eleven rows of the
-  removed keys (`:113`, `:131`, `:135`, `:179`, `:189`), `internal/settings/registry.go:229` its
-  twenty-one (`:454`, `:477`), and the three schemas their members
-  (`schemas/fugaro.schema.json:358`, `:396`, `:511`; `schemas/project-layer.schema.json:265`, `:338`;
-  `schemas/settings.schema.json:1130`, `:1181`).
+  removed keys (`:113`, `:131`, `:135`, `internal/config/scope.go:186`, `:196`), `internal/settings/registry.go:229` its
+  twenty-one (`internal/settings/registry.go:465`, `:488`), and the three schemas their members
+  (`schemas/fugaro.schema.json:372`, `:429`, `:536`; `schemas/project-layer.schema.json:302`, `:375`;
+  `schemas/settings.schema.json:1130`, `:1199`).
   `image_name`, `needs` and `image_catalog.*` keep every member they have, and no version moves.
   **The two tombstones stay**: `internal/config/scope.go:106` and `:107` are `image.node` and
   `image.jdk`, the 0.7.0 keys the removal keeps refusing, so they are **not** among the eleven and its

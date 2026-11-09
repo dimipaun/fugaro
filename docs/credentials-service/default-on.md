@@ -221,7 +221,7 @@ next apply. There is no flag, no second command and no per-repository choice in 
 GitHub provider is opened with `ServiceHeldKey: true` and the function **returns before `appKey(vars)`
 is ever called**, so there is no path that falls back to the mounted App key. The comment says why
 ("a run that reached for a key it was not given would be a credential the platform meant to withhold").
-`internal/cli/run.go:3657` (`credentialsServiceLaunchEnv`) is what sets it, from `lc.CredentialsService
+`internal/cli/run.go:3667` (`credentialsServiceLaunchEnv`) is what sets it, from `lc.CredentialsService
 .URL`. **And the App key's own half is inert today**, which is the one mercy here: `config
 .ServiceHeldSecretNames` is empty (`internal/config/providers.go:542`, #907), so `sa.tf`'s
 `service_held_secret_names` names no key and the *App key's* accessor is not dropped — the mount drop
@@ -285,7 +285,7 @@ why one flag could never have been the whole switch.
 |---|---|---|---|
 | 1 | the job account's **accessor on the model secrets**, and the job's **mount** of them | `deploy/terraform/gcp/modules/workflow/sa.tf:148-151` (`job_secret_names`, gated on `var.credentials_service == null` and `is_service_held` at `:135-137`); the Go spec's `dropModelMounts` (`internal/infra/spec.go:1177-1178`) and `repoCredentialsService` (`:244-248`, called at `:1314`) | **the bundle holds at least one model credential** — the service is the only source left once the mount is gone (D143, fail closed), and a `cascade` run with an empty bundle stops at the service's named refusal |
 | 2 | the **keyless GitHub provider** | `internal/gitprov/providers/providers.go:93-99` — `FUGARO_CREDENTIALS_SERVICE_URL` set opens the provider with `ServiceHeldKey: true` and returns **before `appKey(vars)`**, so the mounted key is never read | **the installation's service must mint**, which it does from the App key in the bundle: the runner installs the service as the token source (`internal/runner/runner.go:1119`, `serviceTokens` at `:1399-1420`), so this flip is already wired and needs the bundle's App key, not a code change |
-| 3 | the **URL on the execution** | `internal/cli/run.go:3657` (`credentialsServiceLaunchEnv`), which is what sets `FUGARO_CREDENTIALS_SERVICE_URL` at all (`:3553`) | **the workflow's `agent.auth` must be one the service serves** — today `cascade` alone (`config.AuthCascade`, `internal/config/defaults.go:85`); for an `oauth`, `api-key` or `vertex` job the URL buys nothing and flips 1 and 2 against it |
+| 3 | the **URL on the execution** | `internal/cli/run.go:3667` (`credentialsServiceLaunchEnv`), which is what sets `FUGARO_CREDENTIALS_SERVICE_URL` at all (`:3563`) | **the workflow's `agent.auth` must be one the service serves** — today `cascade` alone (`config.AuthCascade`, `internal/config/defaults.go:85`); for an `oauth`, `api-key` or `vertex` job the URL buys nothing and flips 1 and 2 against it |
 
 **The auth-mode condition is not a new rule — it is the tree's own rule, read from the same place.**
 `internal/infra/spec.go`'s `SecretMounts` (`:926`) already branches on `cfg.Agent.Auth`: the `cascade`
@@ -929,10 +929,10 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   `internal/localcfg/shared.go` (`mergeRepoRecords`, the one field a union carries rather than wins, and
   the `SharedDiff` rule that follows from it), `internal/localcfg/shared_test.go`,
   `internal/localcfg/select_shared_test.go`, `internal/cli/init.go` (the converge path that writes the
-  record — the same place `internal/cli/init.go:4271` writes `Vertex` — and the backfill's one call from
+  record — the same place `internal/cli/init.go:4298` writes `Vertex` — and the backfill's one call from
   `install`), `internal/cli/init_credentials.go` (both doors: the record write and the backfill that
   reads the installation's state), `internal/cli/run.go` (`credentialsServiceLaunchEnv` at `:3647` and
-  its call site at `:3553`), `internal/cli/update_switch_test.go` (new, so that DON2's
+  its call site at `internal/cli/init.go:3554`), `internal/cli/update_switch_test.go` (new, so that DON2's
   `init_converge_test.go` stays DON2's — §4.1), `internal/cli/run_credentials_env_test.go`. **The count
   is the honest one and not six**: the two review rounds after the first plan added the third reader of
   the record (`internal/localcfg/shared.go`), the state-bucket evidence (`internal/infra/repo.go`) and
@@ -964,7 +964,7 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   checkout's `fugaro.yaml` and the published policy. So the readiness half is **recorded** by the
   command that does read the cloud — `fugaro update` — as a per-repository record in the local config,
   following `localcfg.Repo.Vertex` (`internal/localcfg/localcfg.go:1030-1033`, the fact `update` sets
-  from `infra`'s spec at `internal/cli/init.go:4488`). **The record is written where the root is
+  from `infra`'s spec at `internal/cli/init.go:4515`). **The record is written where the root is
   applied, and only there** (the header's second *amended after review* row): `fugaro update --repo PATH`
   — and the converge's repository stage, which is the same engine — reads the bundle once and refreshes
   the entry for the repository whose root it applies. **The installation door applies no repository root,
@@ -1114,7 +1114,7 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   no `roles/run.invoker` on the service. `sa.tf` is not edited, the `workflow` and `repo` modules'
   variables are not edited, and **no golden plan moves** — every installation's repository roots plan
   today exactly what a held-off repository must plan. Flip 3 is the same predicate at
-  `internal/cli/run.go:3657`, where the launch decides whether to set `FUGARO_CREDENTIALS_SERVICE_URL`;
+  `internal/cli/run.go:3667`, where the launch decides whether to set `FUGARO_CREDENTIALS_SERVICE_URL`;
   flip 2 (`internal/gitprov/providers/providers.go:93-99`) follows the URL and needs nothing.
 - **Tests:** `TestTheSwitchIsOffUntilTheBundleHoldsAModelCredential` (a converged installation with an
   empty bundle plans a repository root whose `installation.credentials_service` is null and whose jobs

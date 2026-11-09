@@ -165,6 +165,13 @@ var Scopes = []ScopeRow{
 	// itself — the key is a preference, so the narrower layer replaces the
 	// wider one rather than only tightening it.
 	{Key: "planning.decoupling", In: InProject | InRepo},
+	// Both layers write the security list (D1501), and the project's rows are
+	// first in the union (D1506): the project layer says what every repository
+	// of the project has to treat as security-sensitive, and a repository adds
+	// the trees of its own. The list is a union and never a replacement, so
+	// the project layer cannot be overridden from below — the same reason
+	// rigor.areas is settable in both.
+	{Key: "security.patterns", In: InProject | InRepo},
 }
 
 // ExecutableKeys are the profile keys whose values run as shell, or control

@@ -26,7 +26,7 @@ reached the repository. The agent's environment is an **allow-list** (`internal/
 **What it is:** for a job whose image the **operator's catalog** chose, the run passes the image's
 own environment variables to the agent, **minus the denylist Fugaro already has** — the names a
 workflow secret's `env` may not take (`config.ReservedEnv`), which is the same list
-`schemas/fugaro.schema.json:473` mirrors — with every variable **Fugaro writes applied last**, so
+`schemas/fugaro.schema.json:481` mirrors — with every variable **Fugaro writes applied last**, so
 nothing an image sets can override the routing, the auth or a `FUGARO_*` name. Nothing the image
 sets is printed: the runs report **names, never values**. Per-repository images and a plain `env:`
 map on a workflow stay **out** (§"Considered and declined"). The load-bearing fact the reconciliation

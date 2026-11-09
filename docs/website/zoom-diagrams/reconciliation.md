@@ -95,7 +95,7 @@ is recorded with its tier, and the senior review that follows is told nothing of
 
 ### ZF2 — **Wrong** — "cheap coder ↔ cheap reviewer"
 
-The cheap loop's review is a review by **the coder's own model**. `internal/config/config.go:244`
+The cheap loop's review is a review by **the coder's own model**. `internal/config/config.go:282`
 `StageRole` maps `review_first` to `RoleCoder`; only `review` is `RoleReviewer`
 (`config.go:262` `ModelFor`). `docs/recipes.md:39` says the same in words: the `first_line`
 step "is a review by the coder's model in a fresh session". There is no separate cheap reviewer identity to
@@ -128,7 +128,7 @@ Bounces are `review_rounds − 1` (`docs/recipes.md:131`), so the default is exa
 only for recipes that declare `bounce: first_line` on the review step
 (`internal/recipe/recipe.go:96` `Step.Bounce`), which `standard` and `test-and-fix` do and
 `default` does not. The last senior round never bounces: the loop returns before reaching the
-bounce (`runner.go:1774` returns on `round == st.Rounds`; the bounce is `runner.go:1784`).
+bounce (`runner.go:1774` returns on `round == st.Rounds`; the bounce is `:1784`).
 "Then fail" is
 right in kind: the run ends not-ready with a draft outcome (`runner.go:2386-2395`), not an
 infrastructure error.
@@ -398,7 +398,7 @@ app on the live site is the privacy page's "The phone app" section
 
 **The site says "coming soon" nowhere.** `grep -rin 'coming soon' website/` is empty: no page,
 no data file, no test. The phrase exists in this repository only in documents about work not
-yet done — the brief itself (`spec.md:77` "Mobile app page (coming soon)", `spec.md:79` a
+yet done — the brief itself (`spec.md:77` "Mobile app page (coming soon)", `:79` a
 `"Coming soon"` badge) and this folder's own four files. An earlier draft of this finding
 claimed a search over `docs/website/` found none, which was false for the reason the search was
 meant to catch: `spec.md` is under `docs/website/`, and it is where the phrase comes from. What

@@ -236,11 +236,11 @@ D521's line is *the wire and the mechanism stay, the policy goes*. Below, symbol
 | `internal/tier` | the whole package: the four-word vocabulary the task validator uses |
 | `internal/runstore` | `StageTiming.Calls`, `.Agents`, `.Repeats`, `Record.ReviewScope`, `Record.Checkpoint`, and the halt reasons `HaltStageBudget`, `HaltReviewRatio`, `HaltFanout`, `HaltReviewScope`, `HaltExpectedExceeded` |
 | `internal/policy` | `Governance` and the rest of the vocabulary, `Effective.Governance`, `Governance.DefaultGovernanceKeys` (`policy.go:311`), `Governance.WithDefaults`, `TierKey`, and the merge's non-governance half (`Merge`, `tightenCap`, `tightenInt`, `tightenDuration`, `toSet`, `dedupe`). E2.3a exported the three rules the moved policy calls, so it calls them rather than keeping a copy that drifts: `(*Effective).TightenInt`, `TightenCap`, `TightenDuration` (`merge.go`) |
-| `internal/runner` | `governanceHalt` (`halt.go:238`), `checkpointPR` (`halt.go:278`), `checkpointReportPart` (`prflow.go:503`), `checkpointPrompt` (`prompts.go:220`), `readReviewScope` (`diffbase.go:280`), `stageTiming` (`cost.go:37`), and the stage-to-bound mechanism the moved tripwire reads: `stageTimeoutOf` and its export `StageTimeoutOf` (both in `governance_hook.go`, E2.3a) |
+| `internal/runner` | `governanceHalt` (`halt.go:238`), `checkpointPR` (`:278`), `checkpointReportPart` (`prflow.go:503`), `checkpointPrompt` (`prompts.go:220`), `readReviewScope` (`diffbase.go:280`), `stageTiming` (`cost.go:37`), and the stage-to-bound mechanism the moved tripwire reads: `stageTimeoutOf` and its export `StageTimeoutOf` (both in `governance_hook.go`, E2.3a) |
 | `internal/agent` | `SubAgents`, `Repeats` |
 | `internal/gateway` | `StageReport`, `.Agents` |
 | `internal/digest` | the halt accounting and the two report-only flags |
-| `internal/cli` | `governanceSince` (`recipes_skew.go:510`), `refuseGovernanceSkew`, `checkGovernanceImage`, `checkCloneGovernanceImage`, `governanceImageWarnings`, `governanceLaunchSources`, the launch gates in `run.go` and `validate.go`'s call, `--tier` (T8.1b), and `diagnose.go`'s `checkpointBlock` |
+| `internal/cli` | `governanceSince` (`recipes_skew.go:521`), `refuseGovernanceSkew`, `checkGovernanceImage`, `checkCloneGovernanceImage`, `governanceImageWarnings`, `governanceLaunchSources`, the launch gates in `run.go` and `validate.go`'s call, `--tier` (T8.1b), and `diagnose.go`'s `checkpointBlock` |
 | `schemas/` | `fugaro.schema.json` and `project-layer.schema.json` (`governance`), `result.schema.json` (`calls`, `agents`, `repeats`, the five reasons, `checkpoint`, `review_scope`), `task.schema.json` (`tier`, `expected_scope`) — unchanged (R7) |
 
 Two reasons this is the line, and both are load-bearing: strict decoding means the core must know
@@ -499,7 +499,7 @@ configuration that sets `governance:` will silently ignore the block.
 Three things make this the right carrier rather than an OCI label.
 
 - **The gate already reads exactly this object, for exactly this question.** `checkImageSinceDev`
-  (`internal/cli/recipes_skew.go:651`) reads `imagecheck.RecordKey(slug, spec.Workflow)` out of the
+  (`internal/cli/recipes_skew.go:673`) reads `imagecheck.RecordKey(slug, spec.Workflow)` out of the
   runs bucket and judges the *job image* by `rec.BaseRef` — the base image the build ran FROM, whose
   binary the job runs. The edition belongs beside the field that answers the same question, and that
   gate gains no read, no client and no credential: it already holds `env.recordBucket`.
@@ -526,12 +526,12 @@ gets no edition warning.** That is today's behaviour, and it is what every image
 every `--image-source` mirror looks like. Only a record that says `core` against a configuration that
 sets `governance:` produces the warning. The skew half of the same sentence — *this file needs fugaro
 X or later in the job image that runs it*, which is what `governanceImageWarnings`
-(`recipes_skew.go:1217`) says today — is a statement about the file, and prints whether or not the
+(`recipes_skew.go:1228`) says today — is a statement about the file, and prints whether or not the
 image can be judged.
 
 **The one reader that has to acquire the read is `fugaro validate`, and it does so online only.**
 Every other edition warning is emitted where a `cloudEnv` is already in hand: `checkGovernanceImage`
-(`recipes_skew.go:1186`) and `refuseGovernanceSkew` reach `checkImageSinceDev`'s
+(`recipes_skew.go:1197`) and `refuseGovernanceSkew` reach `checkImageSinceDev`'s
 `env.recordBucket(ctx)` read with the launch's own env, and `--tier`'s warning
 goes through `governanceLaunchSources` (`:1236`) on that same env, which is why E1.3 needs no change
 in `run.go`. The checkout path's `checkCloneGovernanceImage` (`:1197`) has the skew half alone and no
@@ -541,7 +541,7 @@ nothing on the edition, the shipped decision E1.3's `TestCloneWorkflowOnACoreRec
 pins. `internal/cli/validate.go` has no env — line 1669 calls `governanceImageWarnings(cfg)`
 with the config alone — so E1.3 gives that function the image it judges, and validate takes the road
 every other command in this package takes to an image from a checkout: `openCloudFor(ctx, lc)`
-(`cloud.go:225`), `env.repoSlug` (`cloud.go:527`, the shape `budget.go:176`'s `repoSlugOf` wraps),
+(`cloud.go:225`), `env.repoSlug` (`:527`, the shape `budget.go:176`'s `repoSlugOf` wraps),
 then one read of `RecordKey(slug, workflow)` per workflow the file names, memoized by key. Two
 consequences worth stating here rather than discovering in E1.3:
 
@@ -664,7 +664,7 @@ those paths share with the core.
 | `(*cloudEnv).bucket` (`cloud.go`) | `Cloud.RunsBucket` | `func (c *Cloud) RunsBucket() *blobx.Bucket` |
 | `(*cloudEnv).repoProvider` (`project_job.go:224`) | `Cloud.RepoProvider` | `func (c *Cloud) RepoProvider(repo string, co *config.Config) string` |
 | `(*cloudEnv).Close` (`cloud.go:186`) | `Cloud.Close` | `func (c *Cloud) Close()` |
-| `readRun` (`runs.go:414`), `runObjects` (`runs.go:402`) | `Cloud.ReadRun`, `RunObjects` (opaque: `Input`, `Warning`) | `func (c *Cloud) ReadRun(ctx context.Context, slug, id string) (*RunObjects, error)` |
+| `readRun` (`runs.go:414`), `runObjects` (`:402`) | `Cloud.ReadRun`, `RunObjects` (opaque: `Input`, `Warning`) | `func (c *Cloud) ReadRun(ctx context.Context, slug, id string) (*RunObjects, error)` |
 | a `cloudEnv` built over one bucket and nothing else (the coordinator's sweep, which runs with no config file and opens the runs bucket itself) | `CloudOverBucket` | `func CloudOverBucket(b *blobx.Bucket) *Cloud` |
 | `checkoutOf` (`run.go:2261`) | `CheckoutOf` | `func CheckoutOf(ctx context.Context, repo string) func() *config.Config` |
 | `parseSince` (`runs.go:532`) | `ParseSince` | `func ParseSince(s string) (time.Duration, error)` |
@@ -686,7 +686,7 @@ helpers those two paths call.
 | --- | --- | --- |
 | `lsSlugs` (`runs.go:212`), `lsOptions` | `Cloud.LsSlugs` | `func (c *Cloud) LsSlugs(ctx context.Context, repo string, all bool, warn io.Writer) ([]string, error)` |
 | `loadRows` (`runs.go:255`), `lsFilter` | `Cloud.LoadRows` | `func (c *Cloud) LoadRows(ctx context.Context, slugs []string, since time.Time, warn io.Writer, now time.Time) ([]runview.Row, error)` |
-| `readRunObjects` (`runs_stats.go:392`), `runObject` (`runs_stats.go:343`) | `Cloud.ReadRunRecords`, `RunRecord` (opaque: `ID`, `Record`, `RecordCorrupt`) | `func (c *Cloud) ReadRunRecords(ctx context.Context, slugs []string, since, until time.Time, max int) ([]RunRecord, int, bool, error)` |
+| `readRunObjects` (`runs_stats.go:392`), `runObject` (`:343`) | `Cloud.ReadRunRecords`, `RunRecord` (opaque: `ID`, `Record`, `RecordCorrupt`) | `func (c *Cloud) ReadRunRecords(ctx context.Context, slugs []string, since, until time.Time, max int) ([]RunRecord, int, bool, error)` |
 | `userStatsMaxRuns` (`runs_stats.go:54`) | `UserStatsMaxRuns` | const |
 | `budgetNow` (`budget.go:58`) | `BudgetNow` | `func BudgetNow() time.Time` |
 | `recordOfRun` (`report.go:602`) | `RecordOfRun` | `func RecordOfRun(r runview.Row) budget.DayRecord` |

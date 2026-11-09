@@ -269,8 +269,8 @@ drift the shared one exists to prevent, and the narrowness `invalidAllowDataToEn
 
 **Claim of the design:** that `settings set` is a second writer of the same decision.
 
-**What the code does.** `internal/settings/registry.go:644` registers
-`project_secrets.*.allow_data_to` (default `nobody`) and `:645` `project_secrets.*.proxy`, and
+**What the code does.** `internal/settings/registry.go:669` registers
+`project_secrets.*.allow_data_to` (default `nobody`) and `internal/settings/registry.go:670` `project_secrets.*.proxy`, and
 `schemas/settings.schema.json:962` and `:965` publish both. The command that writes them is built:
 `fugaro settings set` landed with S5 (`f09f10e5`, #1525) and lives in
 `internal/cli/settings_set.go`, reading the same registry to decide which keys it may write. (This
@@ -344,7 +344,7 @@ questions the document already asks. That is deliberate and it is why D1270 is c
 
 **Claim of the design:** that a project workflow secret can never be a reserved name.
 
-**What the code does.** `config.ReservedSecrets` (`internal/config/config.go:899`) is the four
+**What the code does.** `config.ReservedSecrets` (`internal/config/config.go:937`) is the four
 platform-mounted names; `config.Validate` refuses a workflow declaring one, and the provider
 convention names and the two harness OAuth namespaces are refused the same way
 (`internal/config/providers.go` `CheckWorkflowProviderSecrets`, `docs/multi-model.md:43`). The
@@ -887,9 +887,9 @@ plus the project-scope paragraph in `SECURITY.md` — so the section is the buil
 rather than an open question.
 
 **Recommendation.** All of F14's, plus one addition: `SECURITY.md`'s project-scope section gains the
-reach sentence for a workflow secret (D1273). Concretely — `SECURITY.md:28`, `SECURITY.md:38`,
+reach sentence for a workflow secret (D1273). Concretely — `SECURITY.md:28`, `:38`,
 `docs/project-layer.md:244`, `docs/design/project-secrets.md` §3 step 4 (a pointer to this folder,
-not a rewrite), `internal/cli/secrets.go`'s `set` help (`:308`) and store-time note (`:859`),
+not a rewrite), `internal/cli/secrets.go`'s `set` help (`docs/project-layer.md:313`) and store-time note (`:859`),
 `plugin/skills/setup/SKILL.md:128`, and this folder's own status lines. `internal/cli/docs_*_test.go`
 pins each.
 

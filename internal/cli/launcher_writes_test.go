@@ -25,12 +25,13 @@ func fakeBudgetToken(slug, run string) string {
 	return "h." + base64.RawURLEncoding.EncodeToString(payload) + ".s"
 }
 
-// Every write a launcher makes is under runs/ or tokens/, so the launchers'
-// conditioned write (gcp.LauncherBucketCondition: runs/ and, since the budget
-// token moved out of runs/, tokens/ — docs/design/budget-token-channel.md
-// §7.2) with writes denied everywhere else leaves launching, the claim
-// takeover and release, cancelling, the sealed token object and its cleanup
-// working (bucket-iam.md §2.2).
+// Every write a launcher makes is under runs/, tokens/ or issues/, so the
+// launchers' conditioned write (gcp.LauncherBucketCondition: runs/ and, since
+// the budget token moved out of runs/, tokens/ — docs/design/budget-token-
+// channel.md §7.2 — and, since the shared issue store, issues/ — T-IS17) with
+// writes denied everywhere else leaves launching, the claim takeover and
+// release, cancelling, the sealed token object and its cleanup working
+// (bucket-iam.md §2.2).
 func TestLauncherGrantsCoverEveryLauncherWrite(t *testing.T) {
 	ctx := context.Background()
 	fake := gcpfake.NewGCS(t)

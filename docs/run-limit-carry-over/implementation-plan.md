@@ -10,7 +10,7 @@ that did (U4, who reads the chain) is settled in L1.
 
 - **External dependency E1 (image skew):** the launcher gates a launch that writes any of the four
   `overrides` members behind `checkImageSince` with this work's own `*Since` constant
-  (`internal/cli/recipes_skew.go:700`). The release that carries L3 **must** also ship the new constant and
+  (`internal/cli/recipes_skew.go:722`). The release that carries L3 **must** also ship the new constant and
   the gate, or a launch against an older job image fails in the container (`internal/task/task.go:863`,
   `DisallowUnknownFields`). There is nothing for `fugaro update` to converge here: no job environment
   changes (F3), so the gate is the whole story.

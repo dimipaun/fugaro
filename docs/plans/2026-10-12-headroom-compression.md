@@ -228,7 +228,7 @@ Continuing the design doc's H1 and H2:
   `Validate`, reasoning that `Validate` "only sees one file." That reasoning
   was wrong for the `agent.auth` half: `config.Resolve` decodes the merged
   map (repository over project layer) into one `Config` and only then calls
-  `Validate(&c)` on it (`internal/config/resolve.go:144`) — even
+  `Validate(&c)` on it (`internal/config/resolve.go:145`) — even
   `config.Parse` is `Resolve(data, nil)`, so `Validate` is never handed raw,
   unmerged fields. `agent.compression` set with `agent.auth: oauth` or
   `vertex` is therefore an ordinary `Validate` rule (Task 1), the same

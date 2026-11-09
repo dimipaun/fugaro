@@ -100,9 +100,9 @@ Two refusals and one empty axis, in the order a launch meets them:
 
 Lifting refusal 1 alone would not do what the owner ruled: `projectSecretEnv`
 (`projectjobs.go:243-251`) maps the default account's `claude-oauth-token` (it is in
-`config.ReservedSecrets`, `internal/config/config.go:517-522`) and refuses a named account's
+`config.ReservedSecrets`, `internal/config/config.go:555`) and refuses a named account's
 `claude-oauth-token-<name>` ("neither a secret Fugaro reserves nor the key of a configured model
-provider", `:221-224`), and every profile still gets one job. The accounts have to be a profile
+provider", `internal/config/config.go:257`), and every profile still gets one job. The accounts have to be a profile
 field the deployer turns into jobs.
 
 ## 3. The carrier: the static mount, a stopgap — what it costs
@@ -178,7 +178,7 @@ profiles:
   account whose `allow_repos` does not cover every repository the profile admits, naming both
   lists and the repository in one and not the other. A profile that names an account must write its
   own `allow_repos` with exact entries only (an absent list means "the project's `allow_repos`
-  applies", `internal/config/config.go:555-569`, and a wildcard makes the subset undecidable).
+  applies", `internal/config/config.go:593`, and a wildcard makes the subset undecidable).
 - **No API key beside the accounts** (D4). A profile that lists accounts may not also mount an
   Anthropic API key, in either spelling (`anthropic-api-key`, or a provider whose key variable is
   `ANTHROPIC_API_KEY`). Least privilege: an account job's container would hold a key no OAuth run
@@ -186,7 +186,7 @@ profiles:
 - **A new field, not a `secrets:` entry.** `profiles.<p>.claude_accounts` sits beside `secrets:`,
   so refusal 1 stays true and in force: a Claude token is never something an operator lists in a
   profile's mounts; the deployer adds the one mount an account job carries (§4.3).
-- `config.JobProfile` (`internal/config/config.go:555`) gains the field — `projectpolicy.Profile`
+- `config.JobProfile` (`internal/config/config.go:593`) gains the field — `projectpolicy.Profile`
   embeds it (`projectjobs.go:120-129`), so it reaches publish, the deployer and the runner from one
   declaration — and the local config validates it against `lc.ClaudeAccounts` at load.
 - **The default account** (D5) cannot be defined in `claude_accounts` ("default" is reserved there,

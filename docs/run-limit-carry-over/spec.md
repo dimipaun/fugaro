@@ -48,7 +48,7 @@ tells the caller their limit took effect when it did not. So the launcher resolv
 layer that set the lower one (D1043).
 
 `--total-timeout` **keeps its present meaning** (D1043): it is a timeout, it may raise the run's own clock
-up to `OverrideCap` (`internal/cli/run.go:2360`), and it is not one of the four. `--max-time` is the new,
+up to `OverrideCap` (`internal/cli/run.go:2370`), and it is not one of the four. `--max-time` is the new,
 tighten-only one. A launch that gives both is accepted; the run's clock is `min(--total-timeout,
 --max-time remaining)`, and the report says which one bound it.
 
@@ -61,7 +61,7 @@ chain limit whose source reads `branch` — a place the number did not come from
 **A per-launch limit that cannot reach the job is not written.** `task.Parse` decodes with
 `DisallowUnknownFields` (`internal/task/task.go:863`), so a job image whose runner predates these fields
 refuses the whole task. The launcher therefore gates a launch that writes any of them behind
-`checkImageSince` (`internal/cli/recipes_skew.go:700`) with this work's own `*Since` constant, exactly as
+`checkImageSince` (`internal/cli/recipes_skew.go:722`) with this work's own `*Since` constant, exactly as
 the project layer, the named tokens, the title, the plan task, the rigor request and the governance block
 are gated today (`internal/cli/run.go:727-801`). A refused launch names `fugaro image refresh`, and that
 command stays the operator's, in their own terminal — never a step `fugaro update` hides (D1041).

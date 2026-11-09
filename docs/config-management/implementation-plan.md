@@ -174,7 +174,7 @@ landed.
 
 - **Interface.** Every entry of `<config home>/fugaro/projects/<name>.layer.yaml`
   (`internal/localcfg/localcfg.go:1120`) — `profiles.*`, `defaults.*` (agent, git, rigor) and `ab.*` —
-  written through G0 and G1 against `layerRows` (`internal/settings/registry.go:411`), with
+  written through G0 and G1 against `layerRows` (`internal/settings/registry.go:422`), with
   `config publish`'s reserved-key and executable-key refusals (`internal/cli/config_publish.go:309`)
   applied to the edit's own document. The layer's `--layer project` write keeps ending with
   `next: fugaro update` (`internal/cli/settings_set.go:1172`).
@@ -235,7 +235,7 @@ landed.
 
 - **Interface.** `fugaro secrets rm NAME` deletes the Secret Manager version and the config entry, and
   the family gains the flags for the policy keys that name it
-  (`internal/settings/registry.go:644`, `:684`), each through `applySettingsEdit` with the widening
+  (`internal/settings/registry.go:653`, `:693`), each through `applySettingsEdit` with the widening
   half classified (D1165). **No row is added for a secret's value** — it has none and never appears in a
   diff; `secrets set`'s hidden prompt (`internal/cli/secrets.go:276`) is unchanged.
 - **Red step.** `TestSecretsRmRemovesTheVersionAndTheEntry` — fails today because the subcommand does not
@@ -251,7 +251,7 @@ landed.
 ## G9. `fugaro accounts rm`, and `allow_data_to` (D1172). **SEC**
 
 - **Interface.** `fugaro accounts rm NAME` removes the account's definition and its
-  `claude_accounts.*.allow_data_to` entry (`internal/settings/registry.go:627`), refusing while any
+  `claude_accounts.*.allow_data_to` entry (`internal/settings/registry.go:652`), refusing while any
   profile or repository still names the account, and naming the referrer it found rather than the key.
   `add` with a widening `allow_data_to` stays refused in an agent's session (D868).
 - **Red step.** `TestAccountsRmRefusesWhileAProfileReferencesTheAccount` — fails today because the
@@ -263,9 +263,9 @@ landed.
 
 ## G10. `fugaro project repos set` (D1173). **SEC**
 
-- **Interface.** The `repos.*` scalars and lists (`internal/settings/registry.go:701`) go to the generic
+- **Interface.** The `repos.*` scalars and lists (`internal/settings/registry.go:710`) go to the generic
   writer; `fugaro project repos set` carries the two shapes a scalar cannot express — a `job_profiles.*`
-  block (`:647`, seven keys) and a repository's workflow selection — both object lists addressed by
+  block (`internal/settings/registry.go:656`, seven keys) and a repository's workflow selection — both object lists addressed by
   name (D1163). A separate `job` family is refused by D1173.
 - **Red step.** `TestProjectReposSetWritesAJobProfileBlock` — fails today because the subcommand does not
   exist — then `TestProjectReposSetWritesAWorkflowSelection`,

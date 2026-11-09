@@ -889,6 +889,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if err := checkCloneJobsImage(ctx, env, spec, warn); err != nil {
 				return launchResult{}, err
 			}
+			// The security: block, the same shape as the rigor: gate above
+			// and for the same reason: see checkSecurityImage.
+			if err := checkCloneSecurityImage(ctx, env, spec, warn); err != nil {
+				return launchResult{}, err
+			}
 			// The planning: block, the same shape and the same reason again:
 			// see checkPlanningImage.
 			if err := checkClonePlanningImage(ctx, env, spec, warn); err != nil {
@@ -1004,6 +1009,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			// The project layer's jobs: block, the same shape and the same
 			// reason again: see jobsSince.
 			if err := checkJobsImage(ctx, env, slug, spec, kind, warn); err != nil {
+				return launchResult{}, err
+			}
+			// The security: block, the same shape as the rigor: gate above and
+			// for the same reason: see checkSecurityImage.
+			if err := checkSecurityImage(ctx, env, slug, spec, kind, warn); err != nil {
 				return launchResult{}, err
 			}
 			// The planning: block, the same shape and the same reason again:

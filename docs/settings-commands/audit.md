@@ -67,7 +67,7 @@ Abbreviations used in the columns:
 
 ### 1.1 The repository's `fugaro.yaml`
 
-Sources: `internal/config/config.go:24-1030`; the scope table is `internal/config/scope.go:44-131`.
+Sources: `internal/config/config.go:25`; the scope table is `internal/config/scope.go:44-131`.
 
 These keys are PR-reviewed and reach a run through the base branch, the "default branch" layer of `policy.Merge` (`internal/policy/merge.go:31-39`). No key has a set command except `project`/`gcp_project`/`version` (written by `fugaro config init`, `internal/cli/config_init.go:91`, only when no file exists) and `gcp_project` (`fugaro update --anchor`). Reading is always `fugaro config show [--json]` (`internal/cli/config_show.go:56`) plus `fugaro validate [--json]`. Writing the repository file in an agent session is allowed by design, because the file goes through a PR (`config init --help`).
 
@@ -87,7 +87,7 @@ These keys are PR-reviewed and reach a run through the base branch, the "default
 
 ### 1.2 The project layer: bucket object `fugaro/project-layer.yaml`
 
-Sources: `internal/config/layer.go:29`, `:50-180`. A per-repository copy is written to `builds/<slug>/project-layer.yaml` (layer.go:42).
+Sources: `internal/config/layer.go:30`, `:50-180`. A per-repository copy is written to `builds/<slug>/project-layer.yaml` (layer.go:42).
 
 | Setting group | Cite | Show / json | Set | Reaches cloud | Who | agent | Gap |
 |---|---|---|---|---|---|---|---|
@@ -199,7 +199,7 @@ No command shows these. A `settings` read should list them as a layer (§4B).
 | Caps, kill switches, marks | `budget set|kill|resume`, `accounts clear` (immediate) | n/a (runtime controls, see SD7) |
 | Project recipes | `recipes publish FILE` | no |
 
-A related message bug: `internal/cli/run.go:2032` tells the user to "add the allow-list to the **project layer** and publish it (fugaro project policy publish)". `budget.allowed_models` lives in the **local project config** (localcfg.go:430); the project layer has no such key (layer.go:98-161). The sentence names the wrong file.
+A related message bug: `internal/cli/run.go:2042` tells the user to "add the allow-list to the **project layer** and publish it (fugaro project policy publish)". `budget.allowed_models` lives in the **local project config** (localcfg.go:430); the project layer has no such key (layer.go:98-161). The sentence names the wrong file.
 
 ---
 
@@ -425,7 +425,7 @@ No D-number is taken. The numbers are assigned when a design folder is written.
 
 ## 7. Smaller findings noticed along the way
 
-- `internal/cli/run.go:2032`: the message names the project layer as the home of `budget.allowed_models`; it is the local project config (localcfg.go:430).
+- `internal/cli/run.go:2042`: the message names the project layer as the home of `budget.allowed_models`; it is the local project config (localcfg.go:430).
 - `fugaro config layer` requires a git checkout (config_show.go:205-208), so an owner outside a repository cannot read the layer.
 - `fugaro project repos ls` has no `--json`; every other read in this area has one.
 - `applyDefaults` hard-codes `"main"` (defaults.go:209) beside `config.DefaultBaseBranch` (basebranch.go:6). These are two copies of one default.

@@ -338,9 +338,21 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 		_ = r.printResult()
 		return err
 	}
+	// And D1548's, on the same path and for the same reason: the converge has
+	// applied everything it had, and the mode a managed project's runs read is
+	// raised here or on no run at all (update_budget_mode.go). It returns no
+	// error — every state that leaves the mode as it is is a warning or
+	// silence, because nothing may fail an update the HARD RULE makes the
+	// whole upgrade — so it is a statement and not a branch, and it is before
+	// printResult for the reason the two above are: what it printed and
+	// recorded belongs to this run's result.
+	e.raiseBudgetMode(ctx)
 	if err := r.printResult(); err != nil {
 		return err
 	}
+	// The run's last line, on the door whose job it is to say it: what filing
+	// an issue on GitHub needs (`gh`), and that nothing else about issues does.
+	e.announceGhHint()
 	if len(res.Left) > 0 && !o.planOnly {
 		return userErr("%s is not finished: %d step(s) left for you, listed above", o.doorProgram(), len(res.Left))
 	}
@@ -875,7 +887,7 @@ func (e *initEngine) fillCredentialsAudience(ctx context.Context) (bool, error) 
 	// because this plan has none — every resource in it is in the state already,
 	// and the cover consults that list only for a change that carries an import
 	// (tf.Cover.NotCovered).
-	gated, err := r.gateStep(ctx, e.t, nil, r.coverOf(r.coverReasons))
+	gated, err := r.gateStep(ctx, e.t, nil, r.coverOf(r.coverReasons), nil)
 	if err != nil {
 		return false, err
 	}

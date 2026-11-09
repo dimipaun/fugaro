@@ -65,6 +65,115 @@ func catalogSpec(t *testing.T) (*cloud, RepoSpec) {
 	return f, spec
 }
 
+// contextCatalogBlock is the catalog above with a context on its entry: the
+// source is a Dockerfile of the project's own repository, which names `ci/` as
+// the directory the build runs on (D1391, D1406).
+const contextCatalogBlock = `
+image_catalog:
+  entries:
+    - name: base
+      tags: [node]
+      default: true
+      source: { kind: dockerfile, repo: acme/webapp, path: ci/Dockerfile, context: ci/ }
+`
+
+// contextReadiness is Readiness over a spec whose entry names a context, with
+// the context gate set the way a release that reads the key sets it. The
+// catalog's own gate is left where the code ships it: the member lives inside
+// a node whose key that gate already admits, which is the whole reason it
+// needs one of its own.
+func contextReadiness(t *testing.T, f *cloud, spec RepoSpec, shipped bool) (RepoSpec, []Missing) {
+	t.Helper()
+	was := imageContextShipped
+	imageContextShipped = shipped
+	t.Cleanup(func() { imageContextShipped = was })
+	return catalogReadiness(t, f, spec, imageCatalogShipped)
+}
+
+// contextCatalogSpec is catalogSpec's shape with the context entry above, and
+// with the mark readiness reads stated on the spec: a fixture that took an
+// entry the catalog does not speak for would pass while covering a repository
+// no catalog describes.
+func contextCatalogSpec(t *testing.T) (*cloud, RepoSpec) {
+	t.Helper()
+	f := newCloud(t)
+	spec, err := Repo(budgetInputs(t, contextCatalogBlock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyJob(t, f, spec)
+	for name, ws := range spec.Workflows {
+		if !strings.Contains(ws.Image, "/"+catalogImagePrefix+"base:latest") {
+			t.Fatalf("workflow %s's image is %s, want the catalog entry's: the fixture must pin nothing of its own", name, ws.Image)
+		}
+		if !ws.CatalogContext {
+			t.Fatalf("workflow %s does not carry the context its entry names, so readiness could not gate it", name)
+		}
+	}
+	return f, spec
+}
+
+// TestReadinessRefusesAContextEntryBeforeTheGateIsFlipped: the release that
+// first writes — and reads — a node carrying `context` flips its gate (D1403,
+// F22). Until it does, a job whose image comes from an entry whose source
+// names a context is held back with the fix that gives the operator a job
+// that reads the key, because a runner older than that release meets the
+// member as an unknown source key and refuses the whole node — which fails
+// the project's runs rather than its catalog. The last section is the flipped
+// gate: the same entry, built, is no longer held back for the key.
+func TestReadinessRefusesAContextEntryBeforeTheGateIsFlipped(t *testing.T) {
+	f, spec := contextCatalogSpec(t)
+	got, missing := contextReadiness(t, f, spec, false)
+	if !slices.ContainsFunc(missing, func(m Missing) bool {
+		return m.Kind == MissingImage && strings.Contains(m.Reason, "entry base") &&
+			strings.Contains(m.Reason, "context") && strings.Contains(m.Reason, "fugaro update")
+	}) {
+		t.Errorf("missing = %v, want the context gate's refusal naming the entry, the key and fugaro update", missing)
+	}
+	for name, ws := range got.Workflows {
+		if ws.DeployJob {
+			t.Errorf("workflow %s is deployed on an entry whose context no released fugaro reads", name)
+		}
+	}
+	f2, spec2 := contextCatalogSpec(t)
+	key, err := gcp.CatalogRecordKey(spec2.Slug, "base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f2.gcs.Put(spec2.Installation.RunsBucket, key, []byte(`{"entry":"base"}`))
+	got2, missing2 := contextReadiness(t, f2, spec2, true)
+	if slices.ContainsFunc(missing2, func(m Missing) bool { return m.Kind == MissingImage }) {
+		t.Fatalf("missing = %v, want a built entry's image to be no gate once the key ships", missing2)
+	}
+	for name, ws := range got2.Workflows {
+		if !ws.DeployJob {
+			t.Errorf("workflow %s is not deployed with the gate flipped: %v", name, missing2)
+		}
+	}
+}
+
+// TestReadinessDoesNotRefuseAnEntryWithNoContext: the gate is for the member,
+// not for the catalog. An entry that names no context is deployed on the same
+// installation exactly as it is today — the line between this gate and
+// imageCatalogShipped's, which covers every catalog entry there is.
+func TestReadinessDoesNotRefuseAnEntryWithNoContext(t *testing.T) {
+	f, spec := catalogSpec(t)
+	key, err := gcp.CatalogRecordKey(spec.Slug, "base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.gcs.Put(spec.Installation.RunsBucket, key, []byte(`{"entry":"base"}`))
+	got, missing := contextReadiness(t, f, spec, false)
+	if slices.ContainsFunc(missing, func(m Missing) bool { return m.Kind == MissingImage }) {
+		t.Fatalf("missing = %v, want an entry that names no context to be no gate", missing)
+	}
+	for name, ws := range got.Workflows {
+		if !ws.DeployJob {
+			t.Errorf("workflow %s is not deployed: %v", name, missing)
+		}
+	}
+}
+
 // TestReadinessAcceptsABuiltCatalogImage: the entry's image is built when its
 // build record is in the runs bucket or when the :latest tag the job pulls is
 // in the installation's shared registry, and either one deploys the job. The

@@ -104,7 +104,7 @@ cap. The per-member values the workspace's own service needs to reach a member a
 
 **Money is `pricing.Micros`, never a float.** The record holds the cap as integer micro-dollars
 (`internal/pricing/pricing.go:18`), not as the `float64` the config layer's own caps use
-(`internal/config/config.go:202`): the YAML writes a dollar amount, `Parse` converts it once with
+(`internal/config/config.go:240`): the YAML writes a dollar amount, `Parse` converts it once with
 `pricing.FromUSD` (`internal/pricing/pricing.go:26-28`), and below that point nothing does money
 arithmetic in a float. That conversion is also what gives the cap a project's bounds — `FromUSD`
 refuses a negative amount and anything above `pricing.MaxUSD`, the same refusal the config layer's

@@ -810,8 +810,8 @@ while documenting the others is exactly the kind of thing a plan loses by not wr
 | # | the gap | where it is | the owner |
 | --- | --- | --- | --- |
 | 1 | a review launch is refused unconditionally: the constant E7's second half is `false` | `internal/cli/review.go:58` | **CSR11 — CLOSED: flipped 2026-11-08.** The constant is `true` and the switch CSR12 added is deleted in the same commit; the flip was **released from its gate by the owner's ruling of 2026-11-07**, because the reason it was held — the service admitting no review caller — is gone (CSRW1, PR #1932, the service reads `FUGARO_REVIEW_JOB_ACCOUNTS`; CSRW2, PR #1934, the installation module renders it) and `fugaro update` deploys the service on every installation (DON1), so the launch is served with no operator step between the flip and it. **The OWNER-RUN live checks below are the owner's and are still unrun**: the flip is not a claim that they passed |
-| 2 | `fugaro review` is built and **registered nowhere**, so no released CLI answers to it: `newReviewCmd` is not in the list `newCoreRoot` adds | `internal/cli/root.go:189`, `internal/cli/review.go:81` | **CSR9 — CLOSED: merged as PR #1762.** `newReviewCmd()` is in the list `newCoreRoot` adds (`internal/cli/root.go:198`), so the command answers and its launch refusal is a sentence a person reads rather than a name nobody can type; what CSR11 inherits from it is that refusal alone |
-| 3 | the runner cannot place the job the launcher picks: the review variant's name is never a candidate, so a review container halts at admission with the client's `cannotPlaceJob` | `internal/runner/projectjob.go:178`, `internal/runner/project.go:1114` | **CSR8 — CLOSED: merged as PR #1761.** The variant is a candidate and the class is keyed on the run's own mode, not on the job name; what CSR13 inherits from it is a **fact to read**, `r.runClass()` (`internal/runner/projectjob.go:82`) and `jobTriple.Class` (`:50`), and never a mark to wait for |
+| 2 | `fugaro review` is built and **registered nowhere**, so no released CLI answers to it: `newReviewCmd` is not in the list `newCoreRoot` adds | `internal/cli/root.go:189`, `internal/cli/review.go:81` | **CSR9 — CLOSED: merged as PR #1762.** `newReviewCmd()` is in the list `newCoreRoot` adds (`:198`), so the command answers and its launch refusal is a sentence a person reads rather than a name nobody can type; what CSR11 inherits from it is that refusal alone |
+| 3 | the runner cannot place the job the launcher picks: the review variant's name is never a candidate, so a review container halts at admission with the client's `cannotPlaceJob` | `internal/runner/projectjob.go:178`, `internal/runner/project.go:1114` | **CSR8 — CLOSED: merged as PR #1761.** The variant is a candidate and the class is keyed on the run's own mode, not on the job name; what CSR13 inherits from it is a **fact to read**, `r.runClass()` (`:82`) and `jobTriple.Class` (`:50`), and never a mark to wait for |
 | 4 | the launcher reads `review.json` and never reads `review.json.sig`; `runner.VerifyReviewArtifact` exists and **nothing calls it**, because no implementation of `runner.SignatureVerifier` is in the tree | `internal/cli/review.go:522`, `internal/runner/reviewartifact.go:675`, `:223` | **CSR10 — CLOSED: merged as PR #1764.** The launcher's reader is a verifying one and `ServiceVerifier` implements `runner.SignatureVerifier`; what CSR15 inherits from it is the seam and the fail-closed refusal in `internal/cli/reviewverify.go` |
 | 5 | the owner-run live checks have not been run, and could not be while gap 1 held: the C3.9 check's step 3 launches `fugaro review --pr N`, and Check 125's steps 6 and 7 confirm the fence on the variant | `docs/c39-review-identity/live-check.md`, [spec.md](spec.md) §8 | **the owner**, and **the check is runnable now**: gap 1 closed on 2026-11-08, so step 3 is reached with the plain launch it names — the switch CSR12 added for it (Open item 1's answer of 2026-11-05) is deleted, and the step no longer sets anything |
 | 6 | the credentials service **ships dormant**: the opt-in, the App key and the verifier identity are the owner's own terminal (C3.9g1) | `internal/credsvc/auth.go:335` | **the owner** for the opt-in and the App key — no task here; it is the release's one conditional operator sentence (§6.5) — and **CSR14** for the verifier identity, which is a service account the installation creates rather than a value a person types (Open item 5, answered 2026-11-05) |
@@ -1187,7 +1187,7 @@ that is still the check's step 3.
   and the three places the installation half below made false: `run.go`'s refusal, `docs/recipes.md`'s
   review paragraph and the working skill's sentence about a service that does not admit the caller).
 - **The gate the flip made load-bearing, and the value it moved with it.** `reviewJobSince`
-  (`internal/cli/recipes_skew.go:456`) named `"0.19.0"` — the release that deploys the review-only
+  (`internal/cli/recipes_skew.go:467`) named `"0.19.0"` — the release that deploys the review-only
   variant — and no launch ever reached it while `reviewJobAdmitted` was `false`; the flip is what makes
   the value decide anything, and a `"0.19.0"` value then admits an image that **cannot serve the
   launch**: the variant is there and the review run's own model path (CSR13, PR #1777, first tagged in
@@ -1197,7 +1197,7 @@ that is still the check's step 3.
   (§2's rule, §6.4's note): the constant and its comment, `TestRecipesSkewRefusesReviewJobOnAnOldImage`
   (whose `0.19.0` row is a refused one now and whose admitted row is `"0.20.0"`, derived image and clone
   alike), two new tests — `TestReviewJobSinceHasAReleaseBullet`, the reader this constant never had,
-  since `docs/release.md:227`'s checklist bullet is what holds it to a release and every sibling
+  since `docs/release.md:228`'s checklist bullet is what holds it to a release and every sibling
   `…Since` constant has that test and this one did not, and `TestReviewJobSinceCitationsPointAtItsOwnLine`,
   because the citation checks resolve a line against its file and never against its subject, which is
   how this constant's own citations here went stale in the change that moved it — the same file's
@@ -1460,7 +1460,7 @@ task **Open item 4** became. **Depends on:** nothing unmerged — **CSR8 has mer
 class this task reads is the one CSR8 landed: `r.runClass()` (`internal/runner/projectjob.go:82`, the
 **task's mode**) and the class of the candidate the run was admitted to, never `r.reviewJob()`
 (`internal/runner/reviewartifact.go:934`, the environment marker `FUGARO_REVIEW_JOB` the **launcher** writes
-at `internal/cli/run.go:3570`) — see *the keying* below, which is the correction this task was re-read for.
+at `internal/cli/run.go:3580`) — see *the keying* below, which is the correction this task was re-read for.
 **E7 does not reach the code**: the
 review class exists on the service's side (C3.9a–C3.9g, merged) and every test here is hermetic; what E7
 still decides is whether a placed review run's **first call is served** (§1). **Before CSR11**: a flipped
@@ -1487,7 +1487,7 @@ constant launches a run whose reviewer this task is what gives a model to reach.
     `internal/credsvc/cascade.go:105`). `r.reviewJob()` reads `r.d.Env` — the whole of the function is
     `envLookup(r.d.Env, EnvReviewJob) != ""` (`internal/runner/reviewartifact.go:934`, the read at `:935`)
     — which is the container's environment, the one input the launcher writes for the execution
-    (`backend.LaunchSpec.Env`, `internal/cli/run.go:3563`) and the one
+    (`backend.LaunchSpec.Env`, `internal/cli/run.go:3573`) and the one
     a job definition carries — and CSR8's own rule for the class is the opposite in as many words:
     `r.runClass()` is the **task's mode** (`internal/runner/projectjob.go:82`), "never anything the job's
     environment says, so a container cannot be told which class it is by the name it was started under",
@@ -2252,7 +2252,7 @@ one writer per level is what keeps the two reviews apart.
 `internal/cli/validate.go` remain **CSR6's** (§2), and no task here books them: CSR8–CSR16 add **no
 `fugaro.yaml`, task, recipe or wire key**, so the `…Since` rule (E6) gives them nothing to gate. The one
 constant whose *value* the release slot decides — `reviewJobSince`
-(`internal/cli/recipes_skew.go:456`, `"0.20.0"` since CSR11's flip of 2026-11-08) — is **not** moved by
+(`internal/cli/recipes_skew.go:467`, `"0.20.0"` since CSR11's flip of 2026-11-08) — is **not** moved by
 CSR8–CSR16: it is the release slot's consequence, and **Open item 3's answer of 2026-11-05 is 0.20.0
 "Quokka"**, so the value names that release — and **CSR11's flip of 2026-11-08 is the change that moved
 it**, taking that file alone under §2's rule: 0.20.0's own change had nothing to move while every launch
@@ -2412,8 +2412,8 @@ recommendation). **Why, in one line:** the 0.19.0 release in flight carries none
 release that carries the flip has to carry the tasks that make the flip work — the placement, the
 registration, the verifier and the switch's own removal. Two consequences, settled together as the item
 said: the release note's `### For operators` sentence is written for that release (§6.5), and
-**`reviewJobSince` is `"0.20.0"`** — `docs/release.md:227`'s bullet verifies it against the release
-whose runner can serve the launch, `internal/cli/recipes_skew.go:456` holds it, and a wrong value refuses
+**`reviewJobSince` is `"0.20.0"`** — `docs/release.md:228`'s bullet verifies it against the release
+whose runner can serve the launch, `internal/cli/recipes_skew.go:467` holds it, and a wrong value refuses
 too late (a launch names a variant the installation has not deployed, or a runner that cannot serve one)
 or too early (an installation that holds both stays blocked). **The move waited for CSR11's flip**:
 0.20.0's own change did not take it, because while `reviewJobAdmitted` was `false` this gate was never

@@ -1483,3 +1483,91 @@ func TestReviewLevelsRefusesUnknownKey(t *testing.T) {
 		}
 	}
 }
+
+// TestTaskWithoutFollowUpIsByteIdentical: a task that is not a triage
+// follow-up writes neither the key nor a byte the release before these
+// fields did not, so every existing task.json stays readable by a runner
+// older than them — the claim Spec.BaseBranch, CompressionOff, DigestRuns,
+// AB and Author rest on.
+func TestTaskWithoutFollowUpIsByteIdentical(t *testing.T) {
+	s := Spec{Version: 1, RunID: "20261108-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it"}
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"version":1,"run_id":"20261108-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it","overrides":{}}`
+	if string(data) != want {
+		t.Fatalf("a task with no follow_up_of is not byte-identical to the previous release's:\n got %s\nwant %s", data, want)
+	}
+}
+
+// TestFollowUpOfRoundTrips: the parent a triage follow-up came from, and the
+// debt mark beside it, survive a marshal and a parse with both keys intact.
+// The command that files the follow-ups writes them (T-TR10) and the runner
+// reads the parent off the spec it parsed, so a value that did not survive
+// the round trip would leave a follow-up that names no finding at all.
+func TestFollowUpOfRoundTrips(t *testing.T) {
+	s := Spec{
+		Version:    1,
+		RunID:      "20261108-120000-abcd",
+		Repo:       "owner/repo-a",
+		Ref:        "main",
+		Task:       "settle the finding the triage deferred",
+		FollowUpOf: &FollowUpOf{Run: "20261107-090000-3c4d", Keys: []string{"9f2a1c", "3b7e05"}},
+		Debt:       true,
+	}
+	data, err := s.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Parse(data)
+	if err != nil {
+		t.Fatalf("parse of %s: %v", data, err)
+	}
+	if got.FollowUpOf == nil {
+		t.Fatalf("follow_up_of did not survive the round trip: %s", data)
+	}
+	if got.FollowUpOf.Run != s.FollowUpOf.Run {
+		t.Errorf("follow_up_of.run = %q, want %q", got.FollowUpOf.Run, s.FollowUpOf.Run)
+	}
+	if strings.Join(got.FollowUpOf.Keys, ",") != strings.Join(s.FollowUpOf.Keys, ",") {
+		t.Errorf("follow_up_of.keys = %v, want %v", got.FollowUpOf.Keys, s.FollowUpOf.Keys)
+	}
+	if !got.Debt {
+		t.Errorf("debt did not survive the round trip: %s", data)
+	}
+}
+
+// TestFollowUpOfRefusesAnEmptyRun: the parent is the whole point of the
+// field, and it names another run — the one whose deferred findings this
+// task settles. A follow_up_of that names none, or names something that is
+// not a run ID, is refused where the spec is decoded rather than left for
+// whoever reads the field to notice that there is nothing to read.
+func TestFollowUpOfRefusesAnEmptyRun(t *testing.T) {
+	head := `"version":1,"run_id":"20261108-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it"`
+	for _, tc := range []struct{ name, doc string }{
+		{"no run at all", `{"keys":["9f2a1c"]}`},
+		{"an empty run", `{"run":""}`},
+		{"a blank run", `{"run":"   "}`},
+		{"a run that is not a run ID", `{"run":"yesterday"}`},
+		{"a run ID without its four hex digits", `{"run":"20261107-090000"}`},
+		{"an upper-case run ID", `{"run":"20261107-090000-3C4D"}`},
+	} {
+		_, err := Parse([]byte("{" + head + `,"follow_up_of":` + tc.doc + "}"))
+		if err == nil {
+			t.Errorf("%s: Parse accepted the spec", tc.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), "follow_up_of") {
+			t.Errorf("%s: refusal %q does not mention follow_up_of", tc.name, err)
+		}
+	}
+	for _, doc := range []string{
+		`{"run":"20261107-090000-3c4d"}`,
+		`{"run":"20261107-090000-3c4d","keys":["9f2a1c"]}`,
+	} {
+		if _, err := Parse([]byte("{" + head + `,"follow_up_of":` + doc + "}")); err != nil {
+			t.Errorf("Parse refused %s: %v", doc, err)
+		}
+	}
+}

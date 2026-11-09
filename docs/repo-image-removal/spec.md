@@ -24,23 +24,23 @@ Gone from `fugaro.yaml`, from a workflow:
 
 | Key | What it is today | Declaration |
 | --- | --- | --- |
-| `image.*` (`apt`, `setup`, `tools`, `skip_build_scripts`, `key_files`) | the generated Dockerfile's build instructions | `internal/config/config.go:788` |
-| `dockerfile` | the repository's own Dockerfile, one repository-relative path | `internal/config/config.go:640` |
-| `rebuild.*` (`check`, `max_age`, `lockfiles`, `base`, `paths`) | the daily check's triggers for this repository's image | `internal/config/config.go:750` |
+| `image.*` (`apt`, `setup`, `tools`, `skip_build_scripts`, `key_files`) | the generated Dockerfile's build instructions | `internal/config/config.go:826` |
+| `dockerfile` | the repository's own Dockerfile, one repository-relative path | `internal/config/config.go:678` |
+| `rebuild.*` (`check`, `max_age`, `lockfiles`, `base`, `paths`) | the daily check's triggers for this repository's image | `internal/config/config.go:788` |
 
 Gone from the **project layer file** too: the same `image.*` keys and `rebuild.*`
-(`schemas/project-layer.schema.json:265`, `:338`) — a profile can set them today, so removing them
+(`schemas/project-layer.schema.json:302`, `:375`) — a profile can set them today, so removing them
 from `fugaro.yaml` alone would leave a second door to the same build.
 
 **What is not removed, and why it is named here:** `image_name` and `needs`
-(`internal/config/config.go:655`, `:626`) are the catalog's own selectors and stay; `checkout`
-(`internal/config/config.go:693`) keeps both its values (§2.2), and the `image.node`/`image.jdk`
+(`internal/config/config.go:693`, `:664`) are the catalog's own selectors and stay; `checkout`
+(`internal/config/config.go:731`) keeps both its values (§2.2), and the `image.node`/`image.jdk`
 tombstones stay with them — they are not settings but refusals with a migration sentence
 (`internal/config/image.go:119`, `:122`), which is the mechanism the keys above reuse (C4, D1195).
 
 The eleven scope rows that make the removed keys settable
 (`internal/config/scope.go:108`, `:113`, `:131`, `:135`) go with them, and so do their entries in
-`ExecutableKeys` and `NonExecutableImageKeys` (`internal/config/scope.go:184`, `:189`). **Not every
+`ExecutableKeys` and `NonExecutableImageKeys` (`internal/config/scope.go:191`, `:196`). **Not every
 `image.*` row goes**: `internal/config/scope.go:106` and `:107` are `image.node` and `image.jdk`, the
 two tombstones that stay, so the removal's first scope row is `:108` and its last `:135`. A key that is
 gone from the scope table is a key no settings command may write, which is the second half of the
@@ -55,7 +55,7 @@ removal and not a separate one.
 | `fugaro image check` | **loses its repository arms and keeps the catalog job's.** The local workflow check and the per-repository `--job` mode go with the repository image — they read `rebuild.*` and the repository's registry, and the job they serve is R4's. **`--job --catalog` stays** (`internal/cli/image_check_catalog.go:31`, merged as #1679): one run of the installation's catalog check job, reading its spec out of `catalogCheckSpecEnv` and deciding every entry of the project's catalog — that is D1148's driver, and not this removal's to delete |
 | `fugaro image status` | **removed** (`internal/cli/imagecheck.go:982`) |
 | `fugaro image render` | **removed** (`internal/cli/image.go:510`). It prints the Dockerfile the template generates, and there is no template |
-| `fugaro image gate`, `fugaro image record` | **removed** (`internal/cli/image_record.go:60`, `:145`). They are the derived build's own steps; the catalog build carries its own pin, tag and record steps (`internal/backend/gcp/catalog.go:338`, `:376`, `:410`) and calls neither |
+| `fugaro image gate`, `fugaro image record` | **removed** (`internal/cli/image_record.go:60`, `:145`). They are the derived build's own steps; the catalog build carries its own pin, tag and record steps (`internal/backend/gcp/catalog.go:343`, `:381`, `:415`) and calls neither |
 | `fugaro image selftest` | **stays** (`internal/cli/image.go:44`). It is the runtime-contract check the *catalog* build's smoke runs too (`internal/cli/image_build_catalog.go:208`), so it is the catalog's step now |
 | `fugaro image git-credential` | **stays** (`internal/cli/gitcred.go:39`); the catalog build clones with it |
 | `fugaro image ls`, `add`, `rm` | **stay unchanged** (`internal/cli/image_catalog.go:60`, `:286`, `:407`) |
@@ -250,7 +250,7 @@ They are destroyed by the flow the tree already has and by nothing else:
   run with it.** The retired check job's state says `deletion_protection = true`, so
   `blockingJobs` (`internal/cli/init_retire.go:305`) names it and the run refuses with
   `fugaro update --repo . --retire` (`internal/cli/init_retire.go:327`, called from
-  `internal/cli/init.go:3845`) — **before the apply**, which is why the Scheduler, which carries no
+  `internal/cli/init.go:3852`) — **before the apply**, which is why the Scheduler, which carries no
   protection of its own (`deploy/terraform/gcp/modules/repo/check.tf:116`), is not destroyed by an
   ordinary converge either: the run stops, rather than destroying what it can and failing on what it
   cannot. `fugaro update --repo <r> --retire` is the one path that finishes it: it removes the protected
@@ -275,16 +275,16 @@ They are destroyed by the flow the tree already has and by nothing else:
 
 No compatibility, in the shape the tree already uses for a removed key.
 
-- **`fugaro.yaml` validation** (`internal/config/config.go:1231` decodes strictly, so an unknown field
+- **`fugaro.yaml` validation** (`internal/config/config.go:1269` decodes strictly, so an unknown field
   is already an error) **refuses each removed key by name**, with a message that names the catalog
   command that replaces it — the pattern the `image.node` and `image.jdk` tombstones already set
   (`internal/config/image.go:119`, `:122`). The keys stay decodable as tombstones and their *refusal*
   is the message; a bare "field image not found" names nothing and is not what ships (D1195).
-- **The schemas**: `schemas/fugaro.schema.json:358` loses `image` (`:396` for `dockerfile`, `:511`
-  for `rebuild`), and its mutual-exclusion clauses (`:306`) shrink to the pairs that survive
-  (`image_name` with `needs`); `schemas/project-layer.schema.json:265` loses the same keys (`:338` for
+- **The schemas**: `schemas/fugaro.schema.json:372` loses `image` (`:429` for `dockerfile`, `:536`
+  for `rebuild`), and its mutual-exclusion clauses (`schemas/fugaro.schema.json:314`) shrink to the pairs that survive
+  (`image_name` with `needs`); `schemas/project-layer.schema.json:302` loses the same keys (`:375` for
   `rebuild`). **`schemas/settings.schema.json` loses the removed keys' own member rows** — the
-  twenty-one at `schemas/settings.schema.json:832` through `:1181` (`:1145` is
+  twenty-one at `schemas/settings.schema.json:832` through `:1199` (`:1160` is
   `workflows.*.image.setup`), beside their rows in `internal/settings/registry.go:229`, without which
   `fugaro settings set` would still offer a key the config refuses — **and keeps `base_images` and the
   flattened `image_catalog.*` rows untouched** (`schemas/settings.schema.json:547`), as
