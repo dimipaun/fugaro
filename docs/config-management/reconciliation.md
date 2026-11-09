@@ -19,10 +19,14 @@ project config** — a sentence it prints and exits on — so the figures below
 are counted from the registry in this tree through the same predicate the write path uses, which is
 what the guard at the end of this section re-runs.
 
-- **F1 — the registry is 384 rows and the generic writer carries 165 of them.** 88 by name
+- **F1 — the registry is 390 rows and the generic writer carries 171 of them.** 94 by name
   (`internal/cli/settings_set.go:81`), made of the thirteen §4.4 names (the four budget scalars,
-  `base_branch`, `max_parallel`, `update_check`, `commit_name`, `commit_email`, `layer.default_profile`
-  and D873's three account keys), the two budget keys D1179 hands this path, and the wildcard blocks
+  `base_branch`, `max_parallel`, `update_check`, `commit_name`, `commit_email`, `layer.default_profile`)
+  and D873's three account keys with the six concrete spellings of `stages.*.claude_account` beside them
+  — one per `config.RunStages` name, which make a stage's account addressable under the name it is
+  written as rather than only under the registry's wildcard (the incident of 2026-11-09: a review
+  account ran out, and repointing the stage meant editing the local config by hand) — the two budget
+  keys D1179 hands this path, and the wildcard blocks
   D1161 gives it — a repository's 37 `workflows.*` rows and the project layer's 36 `profiles.*` ones;
   the layer's five `ab.*` rows are listed beside them, but the models family owns them, so this count
   does not carry them — and 77 through the nine prefixes

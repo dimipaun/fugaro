@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -80,7 +81,10 @@ var settingsFamilyCommands = map[string]string{
 // and the diff carry. Nothing enumerates a wildcard block's concrete spellings,
 // which is what lets one written key create a block the file does not hold —
 // D1161's stated cost, and the reason the layer a write lands in is still the
-// row's own Layers.
+// row's own Layers. The stage account's block is the one exception and is
+// described at its own entries below: its segment is a closed vocabulary rather
+// than a name the file invents, so the registry carries the row and this list
+// names it.
 var settingsGenericKeys = map[string]bool{
 	"budget.per_run_usd":       true,
 	"budget.max_run_tokens":    true,
@@ -100,6 +104,18 @@ var settingsGenericKeys = map[string]bool{
 	"default_claude_account":  true,
 	"claude_account_auto":     true,
 	"stages.*.claude_account": true,
+	// The pattern above is the registry's shape and this is every stage of the
+	// closed set beside it, one spelling per config.RunStages name: the registry
+	// carries a row for each (internal/settings' stageAccountRows), and a row no
+	// list here names is a key the read offers an edit for and this path
+	// refuses. TestSettingsWritesEveryRunStageAccountKey is what fails when a
+	// stage lands in config.RunStages and not here.
+	"stages.adversarial.claude_account":  true,
+	"stages.fix.claude_account":          true,
+	"stages.implement.claude_account":    true,
+	"stages.plan.claude_account":         true,
+	"stages.review.claude_account":       true,
+	"stages.review_first.claude_account": true,
 	// A repository's workflows.* (37 rows) and the project layer's profiles.*
 	// (36), in the registry's own order.
 	"workflows.*.profile":                            true,
@@ -496,6 +512,77 @@ func settingsPatternMatch(pattern, key string) bool {
 		}
 	}
 	return true
+}
+
+// settingsStageAccountPattern is the registry pattern every stage's account key
+// is a spelling of: `stages.<stage>.claude_account` (internal/settings' row, and
+// the concrete row per config.RunStages name beside it).
+const settingsStageAccountPattern = "stages.*.claude_account"
+
+// settingsStageAccountRule is what a value written to a stage's account key owes
+// beyond the loader's own rule: the name must be one this project declares, and
+// its allow_data_to must already cover every repository the project onboards.
+//
+// The loader refuses a name nothing defines (localcfg's choiceRefProblem) and
+// this path re-reads the edited document through it, so a refusal here would be
+// second help on a name the file would reject a moment later — what it adds is
+// what the loader cannot say. The loader holds no repository: whether an account
+// is admitted for a repository is decided at launch against the account's own
+// allow_data_to, where the repository is known (config.AllowedClaudeAccounts),
+// and a stage key that names an account covering less than the project's
+// repositories is a key whose every run on the missed ones stops at the launch.
+// Refusing it here is the one place the miss can be reported before it is a run
+// that failed: the owner's own act is the command, and the sentence names the
+// repositories to widen it with.
+//
+// It asks the same question the launch asks, through the same predicate: whether
+// repo may choose the account is config.ClaudeAccount.AllowsData, which a run's
+// own check reads (claudeAccountMembership). A name the account covers less with
+// is a name whose write is refused rather than a name the file may hold.
+//
+// The two values valid here besides a declared account are "default"
+// (config.DefaultClaudeAccount, the unsuffixed account, which every repository
+// may choose) and nothing else: config.AnthropicKeyAccount is refused with the
+// loader's own sentence for it, because it names the project's key rather than
+// any account of a run's.
+func settingsStageAccountRule(key, value string, lc *localcfg.Config) error {
+	if value == "" || !settingsPatternMatch(settingsStageAccountPattern, key) {
+		return nil
+	}
+	stage := strings.SplitN(key, ".", 3)[1]
+	if value == config.DefaultClaudeAccount {
+		return nil
+	}
+	if msg := config.ValidClaudeAccountRef(value); msg != "" {
+		return userErr("%s: %s", key, msg)
+	}
+	if value == config.AnthropicKeyAccount {
+		return userErr("%s: %s", key, config.AnthropicKeyAccountChoiceMessage)
+	}
+	account, declared := lc.ClaudeAccounts[value]
+	if !declared {
+		// The declared names, in the order every other sentence here lists
+		// them: a refusal that names only the offending value sends the owner
+		// to the file to find out what they could have written instead.
+		names := slices.Sorted(maps.Keys(lc.ClaudeAccounts))
+		instead := "this project declares no account yet"
+		if len(names) > 0 {
+			instead = "this project declares " + strings.Join(names, ", ")
+		}
+		return userErr("stages.%s.claude_account: the account %s is not one this project declares — %s. A stage's account is a name of the local config's claude_accounts, where the account's own allow_data_to decides which repositories may use its token, or %q for the unsuffixed default account: declare it with `fugaro accounts add %s --repos owner/name`, or name one of the declared accounts; nothing was written",
+			stage, value, instead, config.DefaultClaudeAccount, value)
+	}
+	missing := []string{}
+	for _, repo := range slices.Sorted(maps.Keys(lc.Repos)) {
+		if !account.AllowsData(repo) {
+			missing = append(missing, repo)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return userErr("stages.%s.claude_account: the account %s does not cover every repository this project onboards: claude_accounts.%s.allow_data_to misses %s. The account a stage runs on is chosen for the repository a run is for, so a run on %s would be refused at the launch — widen the account with `fugaro accounts add %s --repos %s`, or name an account that covers every repository above; nothing was written",
+		stage, value, value, strings.Join(missing, ", "), strings.Join(missing, ", "), value, strings.Join(missing, ","))
 }
 
 // settingsHintRow reports whether a write's hint may name row: the rows
@@ -1468,6 +1555,13 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	}
 	sel, lc, err := settingsAimedSelection(o)
 	if err != nil {
+		return err
+	}
+	// The stage account's own rule, before the target is resolved and before a
+	// byte is read: a name this project does not declare, or one whose
+	// allow_data_to covers fewer repositories than the project onboards, is
+	// refused here with nothing attempted (settingsStageAccountRule).
+	if err := settingsStageAccountRule(key, value, lc); err != nil {
 		return err
 	}
 	target, err := settingsResolveTarget(cmd.Context(), row, o, lc, sel)
