@@ -66,8 +66,8 @@ graphify	graphify --version	all	harness
 # Fugaro-side tool on the harness tier, not a coding agent.
 #
 # dsh (DeepSeek Harness, @deepseek-ai/dsh, MIT) was never a row (design
-# base-image.md section 6, updated 2026-10-12): the Dockerfile's
-# harness-install loop never installed it either. Add "dsh	-	all	harness"
+# base-image.md section 6, updated 2026-10-12): the harness-install loop the
+# base then carried never installed it either. Add "dsh	-	all	harness"
 # (presence-only: its --version credential-safety is unverified) only in the
 # same change that installs it -- not before, or the base's own CI smoke
 # fails on tool:dsh.
