@@ -13,11 +13,16 @@ package main
 // line: the payload because bytes in an argv are bytes every local process
 // reads, and the signature because that is where gcloud writes it.
 //
-// Which algorithms a managed store offers is UNVERIFIED here (design
-// docs/design/key-signing-service.md §3.3, U9) and stays so until S3.5 confirms
-// it against the provider's documentation, which is why the algorithm is a flag
-// and not a default: a store that will not sign Ed25519 is then a store the
-// tool cannot mint with, rather than a signature a customer's verifier refuses.
+// The command names no algorithm. A key's algorithm is the key's own property,
+// set when the owner creates it, and the one this format reads is Ed25519, whose
+// signing is over the payload itself: gcloud's `--digest-algorithm` -- a sha256,
+// a sha384, a sha512 or an external-mu -- is what a digest-based key takes, and
+// it is left out so that the payload is signed raw, which is what a verifier
+// checks. Whether a managed store offers Ed25519 at all is UNVERIFIED here
+// (design docs/design/key-signing-service.md §3.3, U9) until S3.5 confirms it
+// against the provider's documentation; a store that will not is a store the
+// owner cannot mint with, and a key minted by one is refused by the check in
+// Mint rather than printed.
 
 import (
 	"bytes"
@@ -39,12 +44,14 @@ type Runner func(ctx context.Context, args ...string) error
 
 // KMS signs through one Cloud KMS asymmetric key's signing API.
 type KMS struct {
-	Project   string
-	Location  string
-	KeyRing   string
-	Key       string
-	Version   string
-	Algorithm string
+	Project  string
+	Location string
+	KeyRing  string
+	Key      string
+	// Version is the key version to sign with. It is not optional: an
+	// asymmetric key has no primary version for gcloud to fall back to, and
+	// `gcloud kms asymmetric-sign` refuses without one.
+	Version string
 	// Run runs gcloud. Nil is the real one, execRunner.
 	Run Runner
 }
@@ -69,12 +76,9 @@ func (k KMS) Sign(ctx context.Context, payload []byte) ([]byte, error) {
 		"--location", k.Location,
 		"--keyring", k.KeyRing,
 		"--key", k.Key,
-		"--algorithm", k.Algorithm,
+		"--version", k.Version,
 		"--input-file", input,
 		"--signature-file", output,
-	}
-	if k.Version != "" {
-		args = append(args, "--version", k.Version)
 	}
 	run := k.Run
 	if run == nil {

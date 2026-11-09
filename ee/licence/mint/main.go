@@ -14,7 +14,7 @@
 //
 //	go run ./ee/licence/mint -key-id ID -public-key PUBLIC -tier team \
 //	  -organisation example.com -seats 3 -days 365 \
-//	  -project P -location L -keyring R -key K -algorithm A
+//	  -project P -location L -keyring R -key K -version V
 //
 // Four rules give it its shape:
 //
@@ -91,8 +91,7 @@ func run(args []string, out io.Writer, runner Runner) error {
 	location := flags.String("location", "", "the signing key ring's location")
 	keyRing := flags.String("keyring", "", "the signing key ring's name")
 	key := flags.String("key", "", "the signing key's name")
-	version := flags.String("version", "", "the signing key's version; empty is the key's primary version")
-	algorithm := flags.String("algorithm", "", "the signing algorithm the key was created with, as `gcloud kms asymmetric-sign` names it (U9: what a managed store offers is unverified until S3.5)")
+	version := flags.String("version", "", "the signing key version to sign with: an asymmetric key has no primary version, and gcloud refuses without one")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -107,7 +106,7 @@ func run(args []string, out io.Writer, runner Runner) error {
 		{"location", *location},
 		{"keyring", *keyRing},
 		{"key", *key},
-		{"algorithm", *algorithm},
+		{"version", *version},
 	} {
 		if required.value == "" {
 			missing = append(missing, "-"+required.name)
@@ -148,13 +147,12 @@ func run(args []string, out io.Writer, runner Runner) error {
 		Issued:       now.Unix(),
 		Expires:      now.Add(term).Unix(),
 	}, KMS{
-		Project:   *project,
-		Location:  *location,
-		KeyRing:   *keyRing,
-		Key:       *key,
-		Version:   *version,
-		Algorithm: *algorithm,
-		Run:       runner,
+		Project:  *project,
+		Location: *location,
+		KeyRing:  *keyRing,
+		Key:      *key,
+		Version:  *version,
+		Run:      runner,
 	}, verifier(ring))
 	if err != nil {
 		return err

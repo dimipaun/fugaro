@@ -360,6 +360,13 @@ func localEd25519Name(file *ast.File) string {
 // API through a file rather than a command line, and answers the bytes the
 // signature file holds. Nothing here reaches gcloud -- the runner is the test's
 // own -- and no credential, no private key and no signing key is involved.
+//
+// The flags are the ones gcloud actually has: `gcloud kms asymmetric-sign
+// --help` lists --input-file, --signature-file, --digest-algorithm and
+// --skip-integrity-verification, and no --algorithm at all, and a flag it does
+// not know is a run that fails on every mint. No --digest-algorithm either:
+// that flag is what a digest-based key takes, and Ed25519 -- the one algorithm
+// this format reads -- signs the payload itself.
 func TestKMSHandsThePayloadToTheKeySigningAPI(t *testing.T) {
 	payload := []byte(`{"tier":"team"}`)
 	want := bytes.Repeat([]byte{7}, ed25519.SignatureSize)
@@ -368,12 +375,11 @@ func TestKMSHandsThePayloadToTheKeySigningAPI(t *testing.T) {
 		gotPayload []byte
 	)
 	signer := KMS{
-		Project:   "a-project",
-		Location:  "a-location",
-		KeyRing:   "a-key-ring",
-		Key:       "a-key",
-		Version:   "1",
-		Algorithm: "a-signing-algorithm",
+		Project:  "a-project",
+		Location: "a-location",
+		KeyRing:  "a-key-ring",
+		Key:      "a-key",
+		Version:  "1",
 		Run: func(_ context.Context, args ...string) error {
 			gotArgs = append([]string(nil), args...)
 			input, err := argValue(args, "--input-file")
@@ -404,9 +410,14 @@ func TestKMSHandsThePayloadToTheKeySigningAPI(t *testing.T) {
 	if slices.Contains(gotArgs, string(payload)) {
 		t.Errorf("the argv carries the payload itself: %v. Bytes in an argv are bytes every local process reads, so the payload travels as the input file", gotArgs)
 	}
-	for _, want := range []string{"kms", "asymmetric-sign", "--project", "a-project", "--location", "a-location", "--keyring", "a-key-ring", "--key", "a-key", "--version", "1", "--algorithm", "a-signing-algorithm"} {
+	for _, want := range []string{"kms", "asymmetric-sign", "--project", "a-project", "--location", "a-location", "--keyring", "a-key-ring", "--key", "a-key", "--version", "1"} {
 		if !slices.Contains(gotArgs, want) {
 			t.Errorf("the argv carries no %q: %v", want, gotArgs)
+		}
+	}
+	for _, unwanted := range []string{"--algorithm", "--digest-algorithm"} {
+		if slices.Contains(gotArgs, unwanted) {
+			t.Errorf("the argv carries %s: %v. gcloud's asymmetric-sign has no --algorithm, and a digest algorithm is not what a raw Ed25519 signature takes", unwanted, gotArgs)
 		}
 	}
 }
@@ -505,7 +516,7 @@ func runArgs(f *fakeSigner, extra ...string) []string {
 		"-location", "a-location",
 		"-keyring", "a-key-ring",
 		"-key", "a-key",
-		"-algorithm", "a-signing-algorithm",
+		"-version", "1",
 	}
 	return append(args, extra...)
 }
@@ -560,6 +571,10 @@ func TestRunRefusesWhatItCannotMint(t *testing.T) {
 		noSigning bool
 	}{
 		{"a flag that is missing", func(*fakeSigner) []string { return nil }, nil, true},
+		// An asymmetric key has no primary version, so there is nothing for the
+		// signer to fall back to and gcloud refuses the run: the flag is
+		// required rather than defaulted.
+		{"no key version", func(f *fakeSigner) []string { return runArgs(f, "-version", "") }, nil, true},
 		{"a term of no days", func(f *fakeSigner) []string { return runArgs(f, "-days", "0") }, nil, true},
 		{"a term that wraps to a negative one", func(f *fakeSigner) []string { return runArgs(f, "-days", "200000") }, nil, true},
 		// Wrapping round is not the same as wrapping negative: 213504 days land
