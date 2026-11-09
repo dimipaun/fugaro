@@ -46,7 +46,7 @@ a slice the owner does not want is simply not started.
 | --- | --- | --- | --- |
 | **L1** | **AK1**, **AK2**, **AK3** | the in-job path named and pinned: tests (**F5**), docs (**F9**), a field of the record's own for the credential a stage ran on (**F18**, **D1415**) | no shared file, no service change, no ordering between them |
 | **L2** | **AK4**, **AK5** | the cloud Anthropic-key half: the class may be served by the project's key (**F12**, **F13**, **F14**), and the runner admits it, so the review-only variant — already deployed and admitted for a project with no Claude account (**F17**) — is served by it (**F11**). **This was code for a launch E7 refused when it was written; the flip of 2026-11-08 admits it** (**F10**, **U6**) | AK4 is `internal/credsvc` + `internal/config` + `internal/projectpolicy` + `internal/localcfg`, with one refusal's sentence in `internal/infra` (§2's declared exception), and AK5 is `internal/runner` + `internal/cli` + `internal/infra`; the two share that one file, AK4 first |
-| **L3** | **AK6a**, **AK6b**, **AK7** | the OpenRouter half: the provider key gets its own value on the account axis, so a profile can publish it and a policy admit it (**F15**, **F25**), the bundle holds the key and the service forwards to the provider's endpoint (**F15**, **F16**, **F24**, **D1418**), and the review run's model path reaches it (**F22**) | **AK6a and AK6b share no file** — AK6a is `internal/config`, `internal/projectpolicy`, `internal/localcfg`, `internal/infra`, `internal/cli`, `internal/task`, `schemas/task.schema.json` and the module, and AK6b is `internal/credsvc`, `internal/creds` and `schemas/creds-bundle.schema.json` (§2 books both) — and AK6a is first because AK6b's offer rule matches the axis value AK6a defines; AK7 is `internal/runner` and nothing else, because the provider's base URL never leaves the bundle (**D1418**, **F26**) |
+| **L3** | **AK6a**, **AK6b**, **AK7** | the OpenRouter half: the provider key gets its own value on the account axis, so a profile can publish it and a policy admit it (**F15**, §6 item 9), the bundle holds the key and the service forwards to the provider's endpoint (**F15**, **F16**, **F24**, **D1418**), and the review run's model path reaches it (**F22**) | **No file is written by two of the three** — AK6a is `internal/config`, `internal/projectpolicy`, `internal/localcfg`, `internal/infra`, `internal/cli`, `internal/task`, `schemas/task.schema.json`, the installation module and the two `internal/credsvc` files §2 books for it (`review.go` and `review_test.go`, which CSR17's sketch named and AK6's six-file list did not); AK6b is the rest of `internal/credsvc`, `internal/creds` and `schemas/creds-bundle.schema.json`; AK7 is `internal/runner` and nothing else, because the provider's base URL never leaves the bundle (**D1418**) — and AK6a is first because AK6b's offer rule matches the axis value AK6a defines (§2 books all of them) |
 | **L4** | **AK8** | the live check, **Check 330** (§5) | owner-run, after everything else |
 
 **The critical path is `AK1 → AK4 → AK5 → AK6a → AK6b → AK7 → AK8`**, and it is the shortest chain the
@@ -588,8 +588,9 @@ intersects a repository's child with it), so a second value is a second admissio
 **D1418** — the provider's base URL and auth shape go **in the bundle** — **D1419**, answered "not at
 all in the Anthropic-key slice", which leaves the provider endpoint to this half, and **D1416**.
 **The other half of §6.7's CSR17**, and the half whose six-file list this plan already had: it is
-§6.7's sketch minus the axis value AK6a took, plus `internal/creds/select.go` and its test, which no
-sketch booked (§2).
+that list — `bundle.go` and its test, `cascade.go`, `forward.go` and its test and the bundle schema —
+plus `internal/credsvc/cascade_test.go` (the tier map's own test, which the six named no test for) and
+`internal/creds/select.go` and its test, the tier-C refusal no sketch booked (§2).
 
 **Files (9):** `internal/credsvc/bundle.go`, `internal/credsvc/bundle_test.go`,
 `internal/credsvc/cascade.go`, `internal/credsvc/cascade_test.go`, `internal/credsvc/forward.go`,
@@ -615,7 +616,8 @@ forwarding, and its own test asserts that the refusal still stands (**§6 item 1
 `servedRoute`'s closed set yields, the query is dropped where it carries a caller token, the client
 refuses redirects, the answer names the credential's name and tier and never its value, and it is
 chained through `gateway.NewRedactWriter` for the credential and every caller token — every one of
-those rules is the code on `main` today and this task moves none of them (§7's conditions). **No
+those rules is the code on `main` today and this task moves none of them (§7, and the conditions the
+review file's §5 lists). **No
 Terraform:** the service holds one secret document (Global Constraint 12), so a new credential kind is
 a bundle key and never a resource or a grant.
 
@@ -1037,9 +1039,10 @@ from `servedRoute`'s closed set, and the query is dropped where it carries a cal
 steer the credential (the pairing names exactly one, `offeredToReview` matches by name and tier with no
 fallback, and a repository's own file cannot choose the class's credential), the redirect is refused by
 the client, and the mint is scoped to the pairing's canonical repository under the read-only permission
-set. *What it can do with the base URL:* **nothing today** — the base URL is not in the bundle yet
-(**D1418**), so §6.7's and this plan's provider endpoint is a property of **AK6a/AK6b/AK7** rather
-than of the merged code, and §7 of the review file states the conditions those tasks keep: the base
+set. *What it can do with the base URL:* **nothing today** — no base URL is in the bundle, because
+**D1418** says where it goes and no task has written it yet, so §6.7's and this plan's provider
+endpoint is a property of **AK6a/AK6b/AK7** rather than of the merged code, and the review file's §5
+states the conditions those tasks keep: the base
 URL is the bundle's and never the runner's, an unknown provider fails closed, and the destination rule
 and the redaction stay where they are.
 

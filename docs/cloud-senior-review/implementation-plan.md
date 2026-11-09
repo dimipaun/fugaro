@@ -2665,7 +2665,7 @@ task rather than of its intent:
   own** beside `config.AnthropicKeyAccount`, which is a change to `internal/credsvc/review.go`'s own type and
   to the readers of the axis in `internal/config`, `internal/projectpolicy`, `internal/localcfg`,
   `internal/infra`, `internal/cli`, `internal/task`, the task schema and the project module. That work is
-  `docs/api-key-review`'s **AK6a**, and the offer rule, the bundle key and the forward above are its
+  `docs/api-key-review`'s **AK6a**, and the candidate list, the bundle key and the forward above are its
   **AK6b** — so this subsection's `CSR17` is two tasks there rather than one, and the "**6–8**" above
   covered the service half only. **Files, as it landed there:** AK6a's 24 and AK6b's 9, listed in
   `docs/api-key-review`'s implementation-plan §2, which books every one of them.
