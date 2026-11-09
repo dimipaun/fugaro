@@ -76,8 +76,11 @@ type Gain struct {
 type PathMeasure struct {
 	// Tasks is the plan's longest chain of dependencies, in tasks.
 	Tasks int `json:"tasks"`
-	// Weight is the same chain's weight: every task on it counted as its `size`,
-	// a task that carries none counting as one.
+	// Weight is the plan's heaviest chain of dependencies: every task on it
+	// counted as its `size`, a task that carries none counting as one. It is
+	// measured on its own rather than read off the chain Tasks names, so the two
+	// need not describe one chain — a plan whose longest chain runs through small
+	// tasks has a shorter, heavier one beside it.
 	Weight float64 `json:"weight"`
 }
 

@@ -155,6 +155,35 @@ func TestGainIsComputedNotRead(t *testing.T) {
 	}
 }
 
+// TestAPathMeasureCanDescribeTwoChains: the two figures are measured
+// independently — the longest chain in tasks, the heaviest one by size — so one
+// `before` or `after` object can name two chains at once. Here the long chain is
+// three tasks of weight 3 and the heavy one is two tasks of weight 10, and the
+// measure reports both: a reader who took `weight` for the chain under `tasks`
+// would be reading a chain nobody has.
+func TestAPathMeasureCanDescribeTwoChains(t *testing.T) {
+	weighed := func(n float64) *float64 { return &n }
+	nodes := []Node{
+		{ID: "A", Size: weighed(5)},
+		{ID: "B", Size: weighed(5)},
+		{ID: "C", Size: weighed(1)},
+		{ID: "D", Size: weighed(1)},
+		{ID: "E", Size: weighed(1)},
+	}
+	edges := []Edge{
+		{Task: "B", Needs: "A"}, // the heavy chain: two tasks, weight 10
+		{Task: "C", Needs: "D"}, // the long chain: three tasks, weight 3
+		{Task: "D", Needs: "E"},
+	}
+	got, err := measurePath("graph.json", nodes, edges)
+	if err != nil {
+		t.Fatalf("measurePath: %v", err)
+	}
+	if want := (PathMeasure{Tasks: 3, Weight: 10}); got != want {
+		t.Errorf("measurePath = %+v, want %+v: the longest chain and the heaviest one are not the same chain here", got, want)
+	}
+}
+
 // TestGainCountsAddedTasks: the figure F11's cost is stated in. Every contract,
 // integration and change-request node is a task the plan did not have before
 // the pass, and the before graph is those nodes removed, so the count is also
@@ -249,6 +278,39 @@ func TestGainRefusesABeforeGraphWithACycle(t *testing.T) {
 		t.Fatal("the read measured a before graph with a cycle in it")
 	} else if !strings.Contains(err.Error(), "restore a cycle") {
 		t.Errorf("Analyze's error = %v, want the before graph's cycle named", err)
+	}
+}
+
+// TestGainRefusesABreakRecordedOntoANodeOfThePass: the third schema checks that
+// a recorded `was` edge names two nodes of the graph and does not carry it in
+// `edges` -- it does not check that they are *tasks*, because the pass's own
+// nodes are ordinary nodes of the document. So a break recorded onto a contract
+// reaches the read, and the before graph has nowhere to restore it: the pass's
+// nodes are exactly what comes out of the reconstruction. Dropping the edge
+// quietly would measure a plan nobody wrote.
+func TestGainRefusesABreakRecordedOntoANodeOfThePass(t *testing.T) {
+	const recordedOntoTheContract = `{
+  "schema_version": 3,
+  "plan": "docs/plans/decoupled.md",
+  "nodes": [
+    {"id": "B", "title": "the dependent", "footprint": {"prediction": true, "paths": ["internal/b/**"]}},
+    {"id": "C1", "title": "the contract", "kind": "contract", "footprint": {"prediction": true, "paths": ["internal/contract/types.go"]}},
+    {"id": "I1", "title": "the integration", "kind": "integration", "footprint": {"prediction": true, "paths": ["internal/i/**"]}}
+  ],
+  "edges": [
+    {"task": "I1", "needs": "B", "reason": "the integration runs both sides"},
+    {"task": "I1", "needs": "C1", "reason": "the integration runs both sides"}
+  ],
+  "decoupling": [
+    {"contract": "C1", "was": {"task": "B", "needs": "C1"}, "integration": "I1", "reason": "B was built against the file C1 now names"}
+  ]
+}`
+	// Parse accepts it: both endpoints are nodes, and the edge is not carried.
+	doc := parseDoc(t, recordedOntoTheContract)
+	if _, err := Analyze("graph.json", doc, nil); err == nil {
+		t.Fatal("the read measured a before graph with a break recorded onto a node of the pass")
+	} else if !strings.Contains(err.Error(), "one of them is a node of the pass") {
+		t.Errorf("Analyze's error = %v, want the recorded edge named as untaskable", err)
 	}
 }
 
@@ -420,6 +482,27 @@ func TestStubsPresentIsRefusedOutsideTheCheckout(t *testing.T) {
 	// And the same document read where it belongs is read.
 	if _, err := Analyze("docs/plans/decoupled.graph.json", doc, nil); err != nil {
 		t.Errorf("a graph naming stubs was refused inside the checkout it is read in: %v", err)
+	}
+}
+
+// TestStubsPresentIsRefusedWithNoCheckout: the other half of "the tree is the
+// checkout the plan is read in" — a working directory with no checkout above it
+// has no tree to resolve a stub against, and a read that fell back on the
+// directory it happened to stand in would answer about a repository the plan
+// does not describe. The walk looks for a `.git` entry up to the filesystem
+// root, so the only place the absence is a fact rather than an accident is the
+// root itself; anywhere else the answer is whatever the machine has above it,
+// and the test says so instead of asserting something it did not set up.
+func TestStubsPresentIsRefusedWithNoCheckout(t *testing.T) {
+	t.Chdir("/")
+	if root := checkoutRoot("."); root != "" {
+		t.Skipf("this filesystem has a checkout at its root (%s), so there is no directory without one above it to read from", root)
+	}
+	doc := parseDoc(t, stubGraph(t))
+	if _, err := Analyze("docs/plans/decoupled.graph.json", doc, nil); err == nil {
+		t.Fatal("a graph naming stubs was read with the working directory in no checkout")
+	} else if !strings.Contains(err.Error(), "in no git checkout") {
+		t.Errorf("Analyze's error = %v, want the missing checkout named", err)
 	}
 }
 
