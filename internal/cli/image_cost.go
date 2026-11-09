@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	crand "crypto/rand"
 	"errors"
 	"fmt"
 	"maps"
@@ -9,9 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The CLI's half of the build lease (T8; D1543, D1548, D1550, F19, F22): the
@@ -61,6 +65,106 @@ import (
 // from this side of the package.
 type buildPricer interface {
 	Rate(ctx context.Context, machineType, region string) (budget.BuildRate, error)
+}
+
+// buildPricerFor is the real lookup, over one installation: the Cloud Billing
+// catalog, on the operator's own credentials, with the installation project as
+// the lookup's quota project (budget.CatalogCreds' own comment on the two
+// credential kinds). One Pricer per command, so the several builds of one
+// invocation pay for one read.
+//
+// It is a package-level seam because a price read is the one thing a hermetic
+// test cannot have: the catalog is Google's, and the estimator's own tests
+// hand the writer a book instead (fakePricer).
+var buildPricerFor = func(lc *localcfg.Config) buildPricer {
+	return budget.NewPricer(lc.GCPProject, budget.CatalogCreds{})
+}
+
+// buildLeaseID names one submission's lease. The id is drawn per build and not
+// per command: a lease already under an id refuses the next take (one id names
+// one submission), and the environment this runs in is not one an id can be
+// made deterministic in — two builds of one second, in two checkouts, must not
+// claim the same node.
+var buildLeaseID = func() (string, error) { return task.NewRunID(time.Now(), crand.Reader) }
+
+// buildLeases is the lease writer for the builds of one repository, or nil for
+// an installation that keeps no budget backend: a project whose budget mode is
+// off, or that names no database, has no caps for a lease to be judged
+// against, and builds exactly as it did before the leases existed. The
+// database is the budget half of that decision alone — the signer, the
+// Firebase project and the endpoints are a launch's business, not a build's.
+func buildLeases(ctx context.Context, lc *localcfg.Config, repo, slug string) (*imageCost, error) {
+	if lc.Budget == nil || lc.Budget.RTDBURL == "" || lc.BudgetMode() == localcfg.BudgetOff {
+		return nil, nil
+	}
+	_, db, err := budgetDBFor(ctx, lc)
+	if err != nil {
+		return nil, err
+	}
+	return newImageCost(lc, db, repo, slug, lc.User, buildPricerFor(lc)), nil
+}
+
+// reserveBuild takes the lease one submission is admitted under: what a CLI
+// that died mid-build left behind in this repository is given back first, then
+// the build's own reservation, and the cap refusal observe mode let through is
+// printed as the advisory it is (D1548). A nil cost is an installation with no
+// budget backend and returns the zero lease, which settles and releases to
+// nothing.
+//
+// The refusal is an error and the build is not submitted: nothing was
+// submitted, so nothing is owed, and the day is left as it was.
+func reserveBuild(ctx context.Context, cmd *cobra.Command, cost *imageCost) (budget.BuildLease, error) {
+	if cost == nil {
+		return budget.BuildLease{}, nil
+	}
+	if n, err := cost.reclaim(ctx); err != nil {
+		return budget.BuildLease{}, err
+	} else if n > 0 {
+		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: gave back %d abandoned build lease(s) of this repository, whose CLI died mid-build\n", n)
+	}
+	id, err := buildLeaseID()
+	if err != nil {
+		return budget.BuildLease{}, remote(err)
+	}
+	lease, advisory, err := cost.take(ctx, id)
+	if err != nil {
+		return budget.BuildLease{}, err
+	}
+	if advisory != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: this build reserves %s at most and the project's budget is in observe mode, so it is submitted anyway and the day counts the reservation: %s\n",
+			usdFixed(lease.Reserved.USD()), advisory.Detail)
+	}
+	return lease, nil
+}
+
+// settleBuild records what a submitted build spent and gives the rest of the
+// reservation back. A submission that went out is a build Cloud Build bills
+// for, and the result this program gets back carries no billed duration, so a
+// build that was submitted settles on the whole of what it reserved: the day
+// then counts at least what the build costs, which is the direction that
+// cannot let a later build past a cap. A settle that fails says so and does not
+// fail the command: the build is built either way, and an unsettled lease is
+// given back by the next build in this repository once its own deadline has
+// passed.
+func settleBuild(ctx context.Context, cmd *cobra.Command, cost *imageCost, l budget.BuildLease) {
+	if cost == nil || l.ID == "" {
+		return
+	}
+	if _, err := cost.settle(ctx, l, l.Reserved); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: the lease of this build was not settled (%v), so the day keeps counting the %s it reserved until a later build of this repository gives it back\n", oneLine(err.Error()), usdFixed(l.Reserved.USD()))
+	}
+}
+
+// releaseBuild gives the whole reservation back: the build was never
+// submitted, so Cloud Build billed nothing. A release that fails says so and
+// does not fail the command, for settleBuild's reason.
+func releaseBuild(ctx context.Context, cmd *cobra.Command, cost *imageCost, l budget.BuildLease) {
+	if cost == nil || l.ID == "" {
+		return
+	}
+	if _, err := cost.release(ctx, l); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: the lease of this build was not given back (%v), so the day counts the %s it reserved until a later build of this repository gives it back\n", oneLine(err.Error()), usdFixed(l.Reserved.USD()))
+	}
 }
 
 // imageCost is one command's build leases: one repository, one project's budget

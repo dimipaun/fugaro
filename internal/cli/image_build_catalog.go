@@ -41,14 +41,7 @@ func runImageBuildCatalogOrDerived(cmd *cobra.Command, name string, o imageBuild
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
 	}
-	// A Cloud Build is billable: the project's name typed at a real
-	// terminal, never --json, a pipe or a coding agent's session. A run that
-	// can't take it is refused first, before the local config, the bucket or
-	// anything else in the cloud is touched.
 	conds := initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), JSON: o.asJSON, Agent: agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))}
-	if !initflow.CanConfirm(initflow.Typed, conds) {
-		return catalogBuildNotConfirmable(conds, o, name)
-	}
 	env, err := openCloud(ctx, o.cloud)
 	if err != nil {
 		return err
@@ -76,24 +69,6 @@ func runImageBuildCatalogOrDerived(cmd *cobra.Command, name string, o imageBuild
 		return userErr("this project has no image catalog, so there is no entry %s to build: fugaro image add %s writes one and fugaro update publishes it, while fugaro image build --workflow builds a workflow's derived image", pluginwire.Printable(name), pluginwire.Printable(name))
 	}
 	return runImageBuildCloud(cmd, o)
-}
-
-// catalogBuildNotConfirmable is the refusal of a Cloud Build that cannot be
-// confirmed under conds, for the catalog arm: the same sentence the
-// per-workflow build refuses with, routing the operator at the entry they
-// named.
-func catalogBuildNotConfirmable(conds initflow.Conditions, o imageBuildOptions, name string) error {
-	if conds.Agent != "" {
-		return userErr("%s", initflow.AgentRefusal(conds.Agent))
-	}
-	cmd := "fugaro image build"
-	if o.repo != "" {
-		cmd += " --repo " + quoteWord(o.repo)
-	}
-	if name != "" {
-		cmd += " " + quoteWord(name)
-	}
-	return userErr("%s", buildNotConfirmableRoute(cmd))
 }
 
 // runImageBuildCatalog submits one Cloud Build per entry of cat (D1144):
@@ -272,21 +247,13 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		Account: rs.BuildServiceAccountEmail, Registry: registry, Machine: lc.Build.MachineType,
 		What: catalogBuildBanner(entries, lc.Build.MachineType, rs.BuildServiceAccountEmail, registry),
 	}
-	// The typed name, once, for every entry this command builds: it is what an
-	// unmanaged project is asked and what a session the gate does not stand in
-	// for has always been asked. A managed project's own terminal reads nothing
-	// here — each build is judged and noted on its own below, with D1013's
-	// bound and the kill switch re-read immediately before it.
+	// A managed project's own terminal reads nothing here — each build is
+	// judged and noted on its own below, with the kill switch re-read
+	// immediately before it.
 	m := openBuildManaged(ctx, env, conds)
-	if !m.standsIn(conds) {
-		if err := confirmBuild(cmd, lc.Name, lc.GCPProject, plan.What); err != nil {
-			return err
-		}
-	}
-	// The copies are written only now, after the confirmation (typed, or the
-	// gate's own in a managed project): like the layer copy the per-workflow
-	// path writes, a declined (or unconfirmable) build must leave no trace in
-	// the bucket.
+	// The copies are written only now, after the command's own judgement of the
+	// session (the gate above): like the layer copy the per-workflow path
+	// writes, a build the gate refused must leave no trace in the bucket.
 	rb, err := env.recordBucket(ctx)
 	if err != nil {
 		return remote(err)
@@ -314,91 +281,118 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	if err != nil {
 		return userErr("%v", err)
 	}
+	cost, err := buildLeases(ctx, lc, repo, rs.Slug)
+	if err != nil {
+		return err
+	}
 	for _, e := range entries {
-		// The gate's own answer about THIS entry, read and judged here rather
-		// than once per command (D1013, D1024): the bound and the kill switch
-		// are read before this build, and the verdict is spent by the record
-		// this build writes after its submission. It comes before the copy so
-		// that an entry the gate refused leaves no trace in the bucket.
-		if err := m.admitEntry(ctx, cmd, conds, cat, e, rs.Slug, plan); err != nil {
+		// One entry, in one scope, because the two things this build's lease
+		// owes are owed on every way out of it: a build whose submission never
+		// went out gives its whole reservation back, and one that went out
+		// settles on it.
+		if err := func() error {
+			// The gate's own answer about THIS entry, read and judged here rather
+			// than once per command (D1013, D1024): the kill switch is read before
+			// this build, and the verdict is spent by the record this build writes
+			// after its submission. It comes before the reservation and the copy,
+			// so that an entry the gate refused leaves no trace anywhere.
+			if err := m.admitEntry(ctx, cmd, conds, cat, e, rs.Slug, plan); err != nil {
+				return err
+			}
+			// The reservation comes before the copy for the same reason the copy
+			// waits for the judgement: a build the caps have no room for is a
+			// build that must not leave a Dockerfile behind in the bucket.
+			lease, err := reserveBuild(ctx, cmd, cost)
+			if err != nil {
+				return err
+			}
+			submitted := false
+			defer func() {
+				if !submitted {
+					releaseBuild(ctx, cmd, cost, lease)
+				}
+			}()
+			key, err := config.CatalogDockerfileKey(e.Name)
+			if err != nil {
+				return userErr("%v", err)
+			}
+			if err := writeCatalogDockerfile(ctx, rb, opener, env.repoProvider(e.Source.Repo, cfg), e); err != nil {
+				// A provider opened without the credential its environment did
+				// not carry fails here with its own sentence, which is left
+				// exactly as it is; the hint says where the token actually is
+				// and what reading it needs (catalogProviderEnv). No other
+				// failure carries it: providers.ErrNoCredential is only ever the
+				// missing token.
+				if providerHint != "" && errors.Is(err, providers.ErrNoCredential) {
+					return fmt.Errorf("%w%s", err, providerHint)
+				}
+				return err
+			}
+			// What the build pins and records is the copy itself: its bytes and
+			// its object generation, read back from the one object the build
+			// reads, so the request states what the bucket holds and not what
+			// this process resolved a moment earlier.
+			data, gen, err := rb.Read(ctx, key)
+			if err != nil {
+				return remote(err)
+			}
+			sum := sha256.Sum256(data)
+			imageRef, err := gcp.SharedCatalogImage(region, lc.GCPProject, e.Name)
+			if err != nil {
+				return userErr("%v", err)
+			}
+			res, err := b.SubmitCatalog(ctx, gcp.CatalogBuildSpec{
+				Entry: e.Name, Slug: rs.Slug,
+				GitProvider: rs.Provider, RepoURL: rs.RepoURL, BaseBranch: cmp.Or(rs.BaseBranch, "main"),
+				GitSecretID: gitID, GitUser: rs.GitUser, GitHubAppID: rs.GitHubAppID,
+				Base: base, Image: imageRef,
+				Definition:     gcp.CatalogDefinition{SourceCommit: commit, Generation: gen, SHA256: hex.EncodeToString(sum[:])},
+				ServiceAccount: rs.BuildServiceAccountEmail, MachineType: lc.Build.MachineType,
+				WorkflowSecrets: secrets,
+				Bucket:          lc.RecordBucketURL(), Selftest: selftestJSON, NoSmoke: o.noSmoke,
+			})
+			switch {
+			case errors.Is(err, gcp.ErrBadBuildSpec):
+				return userErr("%v", err)
+			case err != nil:
+				return remote(err)
+			}
+			submitted = true
+			settleBuild(ctx, cmd, cost, lease)
+			// The submission IS the write this build's record is about: once it is
+			// out the build happened and keeps billing, so the record is written
+			// whatever the wait after it did (D1014 on a write that cannot leave a
+			// trail).
+			if err := m.recorded(ctx); err != nil {
+				return err
+			}
+			if !o.noWait {
+				fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
+				done, waitErr := b.Wait(ctx, res.ID, 0)
+				if done.Image == "" {
+					done.Image = res.Image
+				}
+				if done.LogURL == "" {
+					done.LogURL = res.LogURL
+				}
+				res = done
+				if waitErr != nil {
+					return remote(waitErr)
+				}
+			}
+			switch {
+			case o.noWait:
+				fmt.Fprintf(cmd.OutOrStdout(), "submitted Cloud Build build %s of %s; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
+			case res.Digest == "":
+				// SUCCESS covers the promotion, so the content tag and latest
+				// are there; only the digest report is missing.
+				fmt.Fprintf(cmd.OutOrStdout(), "built %s, digest unknown: Cloud Build reported no pushed image (Cloud Build build %s)\n", oneLine(res.Image), oneLine(res.ID))
+			default:
+				fmt.Fprintf(cmd.OutOrStdout(), "built %s@%s (Cloud Build build %s)\n", oneLine(strings.TrimSuffix(res.Image, ":latest")), oneLine(res.Digest), oneLine(res.ID))
+			}
+			return nil
+		}(); err != nil {
 			return err
-		}
-		key, err := config.CatalogDockerfileKey(e.Name)
-		if err != nil {
-			return userErr("%v", err)
-		}
-		if err := writeCatalogDockerfile(ctx, rb, opener, env.repoProvider(e.Source.Repo, cfg), e); err != nil {
-			// A provider opened without the credential its environment did
-			// not carry fails here with its own sentence, which is left
-			// exactly as it is; the hint says where the token actually is
-			// and what reading it needs (catalogProviderEnv). No other
-			// failure carries it: providers.ErrNoCredential is only ever the
-			// missing token.
-			if providerHint != "" && errors.Is(err, providers.ErrNoCredential) {
-				return fmt.Errorf("%w%s", err, providerHint)
-			}
-			return err
-		}
-		// What the build pins and records is the copy itself: its bytes and
-		// its object generation, read back from the one object the build
-		// reads, so the request states what the bucket holds and not what
-		// this process resolved a moment earlier.
-		data, gen, err := rb.Read(ctx, key)
-		if err != nil {
-			return remote(err)
-		}
-		sum := sha256.Sum256(data)
-		imageRef, err := gcp.SharedCatalogImage(region, lc.GCPProject, e.Name)
-		if err != nil {
-			return userErr("%v", err)
-		}
-		res, err := b.SubmitCatalog(ctx, gcp.CatalogBuildSpec{
-			Entry: e.Name, Slug: rs.Slug,
-			GitProvider: rs.Provider, RepoURL: rs.RepoURL, BaseBranch: cmp.Or(rs.BaseBranch, "main"),
-			GitSecretID: gitID, GitUser: rs.GitUser, GitHubAppID: rs.GitHubAppID,
-			Base: base, Image: imageRef,
-			Definition:     gcp.CatalogDefinition{SourceCommit: commit, Generation: gen, SHA256: hex.EncodeToString(sum[:])},
-			ServiceAccount: rs.BuildServiceAccountEmail, MachineType: lc.Build.MachineType,
-			WorkflowSecrets: secrets,
-			Bucket:          lc.RecordBucketURL(), Selftest: selftestJSON, NoSmoke: o.noSmoke,
-		})
-		switch {
-		case errors.Is(err, gcp.ErrBadBuildSpec):
-			return userErr("%v", err)
-		case err != nil:
-			return remote(err)
-		}
-		// The submission IS the write this build's record is about: once it is
-		// out the build happened and keeps billing, so the record is written
-		// whatever the wait after it did (D1014 on a write that cannot leave a
-		// trail). The count moves with it, so the entry after this one is
-		// judged against the bound with this build in it.
-		if err := m.recorded(ctx); err != nil {
-			return err
-		}
-		if !o.noWait {
-			fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
-			done, waitErr := b.Wait(ctx, res.ID, 0)
-			if done.Image == "" {
-				done.Image = res.Image
-			}
-			if done.LogURL == "" {
-				done.LogURL = res.LogURL
-			}
-			res = done
-			if waitErr != nil {
-				return remote(waitErr)
-			}
-		}
-		switch {
-		case o.noWait:
-			fmt.Fprintf(cmd.OutOrStdout(), "submitted Cloud Build build %s of %s; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
-		case res.Digest == "":
-			// SUCCESS covers the promotion, so the content tag and latest
-			// are there; only the digest report is missing.
-			fmt.Fprintf(cmd.OutOrStdout(), "built %s, digest unknown: Cloud Build reported no pushed image (Cloud Build build %s)\n", oneLine(res.Image), oneLine(res.ID))
-		default:
-			fmt.Fprintf(cmd.OutOrStdout(), "built %s@%s (Cloud Build build %s)\n", oneLine(strings.TrimSuffix(res.Image, ":latest")), oneLine(res.Digest), oneLine(res.ID))
 		}
 	}
 	return nil

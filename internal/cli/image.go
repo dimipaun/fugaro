@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -23,7 +22,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -96,14 +94,12 @@ func newImageBuildCmd() *cobra.Command {
 			"then points latest at it and records what it was built from, unless a\n" +
 			"newer build is already recorded. Run it from the repository's checkout:\n" +
 			"the checkout's fugaro.yaml and origin say what to build.\n\n" +
-			"A Cloud Build is billable, so it asks for the project's name typed at a real\n" +
-			"terminal: --json, a pipe and a coding agent's session never confirm it (it\n" +
-			"prints the one line to run in your own terminal window and exits 1). One\n" +
-			"exception: building a catalog entry in a project whose marks say it is\n" +
-			"managed asks a person at a real terminal nothing, because the managed gate\n" +
-			"judges that build against the project's own bound on billable builds and\n" +
-			"records it. A derived image (--workflow, or a checkout with no catalog) is\n" +
-			"not that row and keeps the typed name.\n" +
+			"A Cloud Build is billable, and it asks nothing: the build's estimated cost is\n" +
+			"reserved against the project's budget caps before it is submitted, and settled\n" +
+			"after it, so what bounds it is the caps and not a question. A build the caps\n" +
+			"have no room for is not submitted, and says what it would have cost, the cap\n" +
+			"it met and the command that raises it; in observe mode it is submitted anyway\n" +
+			"and the day counts it.\n" +
 			"--local builds with your own Docker and costs nothing in the cloud.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -123,7 +119,7 @@ func newImageBuildCmd() *cobra.Command {
 	f.StringVar(&o.platform, "platform", "linux/amd64", "image platform; Cloud Run runs linux/amd64")
 	f.BoolVar(&o.noSmoke, "no-smoke", false, "skip the smoke test of the built image (on Cloud Build, latest is then promoted unsmoked)")
 	f.BoolVar(&o.noWait, "no-wait", false, "submit the Cloud Build build and return without waiting for it")
-	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output (--local only: a Cloud Build is never submitted with --json, nobody can type its confirmation)")
+	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output (--local only: a Cloud Build's own account is its log and its record, not this output)")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -200,14 +196,6 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	ctx := cmd.Context()
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
-	}
-	// A Cloud Build is billable: the project's name typed at a real
-	// terminal, never --json, a pipe or a coding agent's session. A run that
-	// can't take it is refused first, before the local config, the bucket or
-	// anything else in the cloud is touched.
-	conds := initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), JSON: o.asJSON, Agent: agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))}
-	if !initflow.CanConfirm(initflow.Typed, conds) {
-		return buildNotConfirmable(conds, o.repo, o.workflow)
 	}
 	env, err := openCloud(ctx, o.cloud)
 	if err != nil {
@@ -327,29 +315,44 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	case !exists:
 		return userErr("project %s has no image registry %s for %s yet, so the build would have nowhere to push. fugaro update --repo creates it: run that from this checkout first", lc.GCPProject, rs.RegistryPath, repo)
 	}
-	if err := confirmBuild(cmd, lc.Name, lc.GCPProject, cloudBuildBanner(repo, name, lc.Build.MachineType, rs.BuildServiceAccountEmail, rs.RegistryPath)); err != nil {
+	// The build's cost is reserved before anything of it is written anywhere
+	// (the layer copy below included): a build the caps have no room for is a
+	// build that leaves no trace, and the reservation is what the day counts
+	// from here on (T8, D1543).
+	cost, err := buildLeases(ctx, lc, repo, rs.Slug)
+	if err != nil {
+		return err
+	}
+	lease, err := reserveBuild(ctx, cmd, cost)
+	if err != nil {
 		return err
 	}
 	// Writes the repository's copy of the project layer only now, after the
-	// typed confirmation above: like the converge's own buildImages/
-	// submitAndWait, a declined (or unconfirmable) build must leave no
-	// trace in the bucket.
+	// reservation above: like the converge's own buildImages/submitAndWait, a
+	// build nothing has room for must leave no trace in the bucket.
 	if cfg.Layer != nil {
 		rb, err := env.recordBucket(ctx)
 		if err != nil {
+			releaseBuild(ctx, cmd, cost, lease)
 			return remote(err)
 		}
 		if spec.ProjectLayerSHA256, err = prepareLayerCopy(ctx, rb, rs.Slug, cfg.Layer, base); err != nil {
+			releaseBuild(ctx, cmd, cost, lease)
 			return err
 		}
 	}
 	res, err := b.Submit(ctx, spec)
 	switch {
 	case errors.Is(err, gcp.ErrBadBuildSpec):
+		releaseBuild(ctx, cmd, cost, lease)
 		return userErr("%v", err)
 	case err != nil:
+		releaseBuild(ctx, cmd, cost, lease)
 		return remote(err)
 	}
+	// The submission went out, so Cloud Build bills for this build whatever
+	// happens to the wait below.
+	settleBuild(ctx, cmd, cost, lease)
 	if !o.noWait {
 		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
 		done, waitErr := b.Wait(ctx, res.ID, 0)
@@ -388,48 +391,6 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 func cloudBuildBanner(repo, workflow, machineType, account, registry string) string {
 	return fmt.Sprintf("submits a Cloud Build for %s/%s on %s, as %s (billable per build-minute: a 13-minute build on E2_HIGHCPU_8 is about $0.21); it builds, smoke-tests and promotes the image into %s and records it",
 		repo, workflow, machineType, account, registry)
-}
-
-// buildNotConfirmable is the one-line refusal of a Cloud Build that cannot be
-// confirmed under conds: in a coding agent's session the agent refusal, else
-// the route to the typed confirmation.
-func buildNotConfirmable(conds initflow.Conditions, repo, workflow string) error {
-	if conds.Agent != "" {
-		return userErr("%s", initflow.AgentRefusal(conds.Agent))
-	}
-	cmd := "fugaro image build"
-	if repo != "" {
-		cmd += " --repo " + quoteWord(repo)
-	}
-	if workflow != "" {
-		cmd += " --workflow " + quoteWord(workflow)
-	}
-	return userErr("%s", buildNotConfirmableRoute(cmd))
-}
-
-// buildNotConfirmableRoute is the sentence buildNotConfirmable and the
-// catalog arm's refusal both end with, over the command each of them says to
-// run (cmd, without the leading words): stated once, so the two ways into
-// `fugaro image build` cannot refuse with two different sentences.
-func buildNotConfirmableRoute(cmd string) string {
-	return fmt.Sprintf("a Cloud Build is billable, so its confirmation (the project's name) is typed at a real terminal: --json, a pipe and a coding agent never give it; run %s in your own terminal window", cmd)
-}
-
-// confirmBuild shows the ⚠ CONFIRM banner on stderr and reads the project's
-// name from the terminal; anything else declines.
-func confirmBuild(cmd *cobra.Command, project, gcpProject, what string) error {
-	w := cmd.ErrOrStderr()
-	fmt.Fprintf(w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", project, gcpProject, what)
-	fmt.Fprintf(w, "Type %s to submit the build: ", project)
-	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return userErr("reading the confirmation: %v", err)
-	}
-	if strings.TrimSpace(line) != project {
-		return userErr("not confirmed (the project's name was not typed); no build was submitted")
-	}
-	noteIDETerminalCmd(cmd, w)
-	return nil
 }
 
 // buildRecordNote is a warning when bucket_url names a bucket other than
