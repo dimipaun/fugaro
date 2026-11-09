@@ -396,3 +396,67 @@ func TestRunRefusedEscalationKeepsAnOtherwiseReadyRunOutOfReady(t *testing.T) {
 		t.Fatal("the pull request was opened ready for review under a refused escalation")
 	}
 }
+
+// implementCredentialsUnverified is implementOnAListedPath without the verify
+// test: the escalation still fires at the post-implement seam on the path it
+// commits, and the missing verified test is what leaves the run — and so its
+// pull request — a draft, which is the state the next run's readiness
+// publishes.
+func implementCredentialsUnverified(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+	shell(t, req, "mkdir -p internal/creds && echo 'package creds' > internal/creds/state.go && git add -A && git commit -qm 'Work on the credentials tree'")
+	return agent.Result{CostUSD: 1}, nil
+}
+
+// TestFollowUpEscalatesOnThePullRequestsWholeDiff is the escalation's read for a
+// follow-up: the diff of the pull request, not the commits this run added to it
+// (securityBase, D1507).
+//
+// A follow-up resolves its levels fresh, and its readiness is what publishes the
+// pull request's state — the branch leaves draft on it (finalize). Read against
+// the commit the follow-up started from, the escalation classifies only the
+// follow-up's own work, so a pull request whose diff met the floor in the run
+// before is signed off by a run that touches nothing on the list, and the level
+// the diff asked for never runs over it. The run before is the one that matters
+// most: this one ended a draft, and the follow-up is what lifts it.
+func TestFollowUpEscalatesOnThePullRequestsWholeDiff(t *testing.T) {
+	cfg := modeCfg(t, "startup", 2, "  first_line_review: on\n") +
+		"followup:\n  trusted: [\"" + aliceID + "\", \"" + bobID + "\"]\n"
+	h := followUpHarness(t, cfg, nil,
+		implementCredentialsUnverified, // the pull request's diff meets the floor
+		review("ship", 0),              // review_first
+		review("ship", 0),              // review: level 2 ships, and the suite never ran
+	)
+	if pr := onlyPR(t, h.provider); !pr.Draft {
+		t.Fatalf("the first run's pull request is not a draft, so the follow-up cannot lift it: %+v", pr)
+	}
+	h.comment(t, "alice", aliceID, "Please carry on with the feature.")
+	h.followUp(t, followID, runID, "")
+	rec, err := h.run(t,
+		implement("feature"), // nothing on the list: the follow-up's own work misses it
+		review("ship", 0),    // review_first
+		review("ship", 0),    // review: level 2 ships
+		review("ship", 0),    // adversarial: the level the pull request's own diff asked for
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review_first", "review", "adversarial") {
+		t.Fatalf("stages = %v, want the adversarial step the pull request's whole diff buys", got)
+	}
+	if rec.Security == nil {
+		t.Fatal("the pull request's diff meets the floor and the follow-up recorded no escalation")
+	}
+	if rec.Security.At != runstore.SecurityAtImplement || rec.Security.Pattern != "credentials" {
+		t.Errorf("record's escalation = %+v, want the credentials row at the implement seam", rec.Security)
+	}
+	if rec.ChangedFiles == nil || !slices.Contains(rec.ChangedFiles.Paths, "feature.txt") ||
+		slices.Contains(rec.ChangedFiles.Paths, listedLeftoverPath) {
+		t.Errorf("the follow-up's own changed paths = %+v: the escalation is only about the pull request's diff while its own work misses the list", rec.ChangedFiles)
+	}
+	if rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("outcome = %s (reason %q), want ready: the level-3 round is the one that shipped", rec.Outcome, rec.Reason)
+	}
+	if pr := onlyPR(t, h.provider); pr.Draft {
+		t.Fatal("the pull request stayed a draft although the level the floor asked for ran over its diff and shipped")
+	}
+}

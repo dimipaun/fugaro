@@ -13,8 +13,10 @@ import (
 // SC6, D1507, D1508, D1509): the run's own diff is classified against the list
 // in force, and a diff that matches a row turns review level 3 on for the run.
 //
-// The read is roundRigor's own — (*Repo).ChangedFiles(ctx, r.workBase()) — and
-// deliberately not runstore.Record.ChangedFiles. That field is written by
+// The read is (*Repo).ChangedFiles against securityBase below — roundRigor's
+// own read, except that a follow-up is measured against its pull request's
+// base rather than the commit it started from — and deliberately not
+// runstore.Record.ChangedFiles. That field is written by
 // recordChangedFiles, whose every call site is inside finalize: at the
 // post-implement seam this runs at, it is still nil, so an escalation built on
 // the record would classify an empty list and never fire (F5).
@@ -44,10 +46,36 @@ import (
 // level's model, the same-model rule, a provider-served effort — because those
 // are about *which* model the level runs and not about whether it runs.
 
+// securityBase is the revision the escalation's read starts from: the run's
+// own work (workBase) for a first run, the base its pull request targets for a
+// follow-up, so the whole pull request is classified and never only the commits
+// the follow-up added to it.
+//
+// A follow-up resolves its levels fresh and it is this run's readiness that
+// publishes the pull request's state — the branch leaves draft on it
+// (runner.go's finalize). Were the read the follow-up's own commits, a pull
+// request whose diff met the floor in an earlier run would be signed off by a
+// follow-up that touched nothing on the list, and the level the floor asked for
+// would never run over the change that asked for it (D1507, D1509) — which is
+// the case that matters most: a run the floor refused leaves its pull request a
+// draft, and only the next run can lift it.
+//
+// The base is diffBase's — the branch the review stage already diffs the pull
+// request against, read from the provider at bootstrap and never the
+// checkout's own origin/<base>, which the agent's git could repoint — so the
+// range classified here is the range this run's reviewers were handed.
+func (r *run) securityBase() string {
+	if r.follow != nil {
+		return "origin/" + r.diffBase()
+	}
+	return r.workBase()
+}
+
 // escalateSecurity classifies the run's diff and, on a match, turns review
-// level 3 on and rebuilds the plan so the adversarial step is in it. at is the
-// moment it is decided at (runstore.SecurityAtImplement, SecurityAtFix), which
-// is what the record carries.
+// level 3 on and rebuilds the plan so the adversarial step is in it. The diff
+// is securityBase's: the run's own work, or the whole pull request for a
+// follow-up. at is the moment it is decided at (runstore.SecurityAtImplement,
+// SecurityAtFix), which is what the record carries.
 //
 // A run that already runs level 3 escalates nothing and records nothing: it is
 // already the level the escalation would reach, so nothing happened (D1509).
@@ -64,7 +92,7 @@ func (r *run) escalateSecurity(ctx context.Context, at string) {
 	if levelOn(r.levels, policy.LevelL3) {
 		return
 	}
-	paths, err := r.repo.ChangedFiles(ctx, r.workBase())
+	paths, err := r.repo.ChangedFiles(ctx, r.securityBase())
 	if err != nil {
 		r.d.Log.Warn("reading the run's changed paths for the security escalation failed; the levels stay where they are",
 			"at", at, "err", r.redact(err.Error()))
@@ -118,10 +146,10 @@ func (r *run) escalateSecurity(ctx context.Context, at string) {
 // escalateSecurityAtFinalize classifies the run's whole diff once finalize has
 // committed the work the agent left behind, and records a refusal when that
 // diff matches a row and the run never escalated: the escalation's two seams
-// read the committed diff, and a file the agent wrote without committing it is
-// invisible to both of them (gitops' ChangedFiles diffs workBase...HEAD), so
-// the row it matches reaches the run for the first time here — after the last
-// review round, when there is no level left to turn on (D1509).
+// read the committed diff (securityBase), and a file the agent wrote without
+// committing it is invisible to both of them, so the row it matches reaches the
+// run for the first time here — after the last review round, when there is no
+// level left to turn on (D1509).
 //
 // It records rather than escalates, and that is the whole of it: level 3 is the
 // round that would have to run, the rounds are over, and a member claiming the
@@ -142,7 +170,7 @@ func (r *run) escalateSecurityAtFinalize(ctx context.Context) {
 	if r.rec.Security != nil || levelOn(r.levels, policy.LevelL3) {
 		return
 	}
-	paths, err := r.repo.ChangedFiles(ctx, r.workBase())
+	paths, err := r.repo.ChangedFiles(ctx, r.securityBase())
 	if err != nil {
 		r.d.Log.Warn("reading the run's whole diff for the security escalation at finalize failed; nothing is recorded for it",
 			"at", runstore.SecurityAtFinalize, "err", r.redact(err.Error()))
