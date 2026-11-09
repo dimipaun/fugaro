@@ -60,6 +60,21 @@ func originlessCheckout(t *testing.T, dir string) {
 	testutil.Git(t, dir, "init", "--quiet")
 }
 
+// hostilePushCheckout makes dir a checkout of this run's own repository whose
+// push URL is another repository's: the fetch URL the guard reads is the run's
+// own, and `git push origin` would go elsewhere. The other repository is a bare
+// one this test makes and the push URL is a file:// URL of it, so a run that
+// gets as far as the push really lands its branch there — and a local path
+// would not do, because a path names no repository and passes the binding.
+func hostilePushCheckout(t *testing.T, h *harness, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, filepath.Dir(dir), "clone", "--quiet", h.remote, dir)
+	testutil.Git(t, dir, "config", "remote.origin.pushurl", "file://"+testutil.NewRemote(t, map[string]string{"README.md": "other\n"}))
+}
+
 // TestBakedCheckoutOriginMismatchRefuses (IS8): the job is for acme/app, and a
 // checkout the image already holds is another repository's — a shared image
 // built for someone else, or a warm container an earlier job or execution left
@@ -68,27 +83,40 @@ func originlessCheckout(t *testing.T, dir string) {
 // stops at bootstrap, before any git credential is requested and before a stage
 // runs.
 //
-// The two rows are the two places such a checkout can be: the work directory,
-// which the admission check reads too, and the per-slug directory the run would
-// adopt for its own repository on a shared image, which nothing else looks at.
+// The rows are the ways such a checkout can be another repository's — its
+// origin (the work directory, which the admission check reads too, and the
+// per-slug directory the run would adopt for its own repository on a shared
+// image, which nothing else looks at) and its push URL, which is where the
+// run's own branch actually lands (gitops' Push goes to origin's pushurl when
+// the checkout sets one, and the credential is scoped to the endpoint and not
+// to the path).
 //
 // Mutation (run, restore): drop the checkBakedCheckoutOrigin call — the run
 // opens another repository's checkout and fails further down (no fugaro.yaml,
 // then a fetch of a remote that does not resolve), with a git credential
 // already requested. Mutation (run, restore): return right after
 // openBakedCheckout sets r.d.WorkDir, checking only the work directory's own
-// checkout — the first row still passes and the second one fails.
+// checkout — the origin rows for the work directory still pass and the
+// per-slug ones fail. Mutation (run, restore): drop the PushURLs loop — the
+// push-URL rows fail while every origin row still passes.
 func TestBakedCheckoutOriginMismatchRefuses(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		plant func(t *testing.T, h *harness)
+		want  []string // what the refusal must name besides the shared substrings
 	}{
 		{"the work directory", func(t *testing.T, h *harness) {
 			otherRepositoryCheckout(t, h, h.deps.WorkDir)
-		}},
+		}, []string{otherRemote, "evil/other"}},
 		{"the directory the run would adopt", func(t *testing.T, h *harness) {
 			otherRepositoryCheckout(t, h, bakedDir(t, h, repoSlug))
-		}},
+		}, []string{otherRemote, "evil/other"}},
+		{"the work directory's push URL", func(t *testing.T, h *harness) {
+			hostilePushCheckout(t, h, h.deps.WorkDir)
+		}, []string{"pushes to file://"}},
+		{"the directory the run would adopt, by its push URL", func(t *testing.T, h *harness) {
+			hostilePushCheckout(t, h, bakedDir(t, h, repoSlug))
+		}, []string{"pushes to file://"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, "", nil)
@@ -102,7 +130,7 @@ func TestBakedCheckoutOriginMismatchRefuses(t *testing.T) {
 			if err == nil || rec == nil || rec.Status != runstore.StatusInfraError {
 				t.Fatalf("rec = %+v, err = %v: the run did not refuse another repository's checkout", rec, err)
 			}
-			for _, want := range []string{otherRemote, "evil/other", "acme/app", "not this run's repository"} {
+			for _, want := range append([]string{"acme/app", "not this run's repository"}, tc.want...) {
 				if !strings.Contains(rec.Reason, want) {
 					t.Errorf("reason %q lacks %q", rec.Reason, want)
 				}

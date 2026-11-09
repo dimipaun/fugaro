@@ -2304,3 +2304,44 @@ func TestNewPathsSeesANewFileThatLooksLikeARenameOfATrackedOne(t *testing.T) {
 		t.Fatalf("NewPaths = %q; want out.o listed although git sees a rename", got)
 	}
 }
+
+// TestPushURLs pins what a push to origin actually goes to, which is what the
+// runner holds a checkout's push URL to (checkBakedCheckoutOrigin): the remote's
+// pushurl entries when it has any, every one of them, and its fetch URL when it
+// has none — with insteadOf and pushInsteadOf applied, so the URL returned is
+// the one git opens at push time rather than the one written in the config.
+func TestPushURLs(t *testing.T) {
+	repo, remote := setup(t)
+	if got, err := repo.PushURLs(ctx); err != nil || !slices.Equal(got, []string{remote}) {
+		t.Fatalf("PushURLs with no pushurl = %q, %v; want the fetch URL %q", got, err, remote)
+	}
+	testutil.Git(t, repo.Dir, "config", "remote.origin.pushurl", "https://github.com/evil/other.git")
+	testutil.Git(t, repo.Dir, "config", "--add", "remote.origin.pushurl", "https://github.com/evil/second.git")
+	if got, want := mustPushURLs(t, repo), []string{"https://github.com/evil/other.git", "https://github.com/evil/second.git"}; !slices.Equal(got, want) {
+		t.Fatalf("PushURLs = %q, want %q", got, want)
+	}
+	// An empty pushurl is unset to git, not a push URL of its own.
+	testutil.Git(t, repo.Dir, "config", "--unset-all", "remote.origin.pushurl")
+	testutil.Git(t, repo.Dir, "config", "remote.origin.pushurl", "")
+	if got, err := repo.PushURLs(ctx); err != nil || !slices.Equal(got, []string{remote}) {
+		t.Fatalf("PushURLs with an empty pushurl = %q, %v; want the fetch URL %q", got, err, remote)
+	}
+	// pushInsteadOf is the other way a checkout sends a push elsewhere, and git
+	// resolves it here: the fetch URL is this repository's and the push URL is
+	// not, which is the case the runner refuses.
+	testutil.Git(t, repo.Dir, "config", "--unset-all", "remote.origin.pushurl")
+	testutil.Git(t, repo.Dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	testutil.Git(t, repo.Dir, "config", "url.ssh://git@github.com/evil/.pushInsteadOf", "https://github.com/acme/")
+	if got, want := mustPushURLs(t, repo), []string{"ssh://git@github.com/evil/app.git"}; !slices.Equal(got, want) {
+		t.Fatalf("PushURLs with pushInsteadOf = %q, want %q", got, want)
+	}
+}
+
+func mustPushURLs(t *testing.T, repo *Repo) []string {
+	t.Helper()
+	urls, err := repo.PushURLs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return urls
+}

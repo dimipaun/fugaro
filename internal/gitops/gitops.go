@@ -976,6 +976,26 @@ func (r *Repo) OriginURL(ctx context.Context) (string, error) {
 	return r.git(ctx, "remote", "get-url", "origin")
 }
 
+// PushURLs returns every URL a push to the checkout's origin remote would go
+// to (`git remote get-url --push --all origin`): the remote's pushurl entries
+// when it has any, and its fetch URL otherwise. git resolves insteadOf and
+// pushInsteadOf here, so each URL is one git opens at push time — and a remote
+// with several pushurls is pushed to at each of them, which is why this is
+// every URL and not the first.
+func (r *Repo) PushURLs(ctx context.Context) ([]string, error) {
+	out, err := r.git(ctx, "remote", "get-url", "--push", "--all", "origin")
+	if err != nil {
+		return nil, err
+	}
+	var urls []string
+	for _, line := range strings.Split(out, "\n") {
+		if line != "" {
+			urls = append(urls, line)
+		}
+	}
+	return urls, nil
+}
+
 // ShowFile returns the file at path in revision rev (`git show
 // rev:path`), whatever the working tree holds. path must be relative and
 // clean, without "." or ".." segments, and rev must not look like an
