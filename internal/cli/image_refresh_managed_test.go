@@ -96,6 +96,7 @@ func newManagedRefreshRig(t *testing.T, marker []byte) *managedRefresh {
 	// writes the pair: the ownership question the gate asks before it reads the
 	// marks needs both halves, and a loopback URL is the fake's own.
 	r.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: "+initProject+", rtdb_url: "+r.db.URL+" }\n")
+	seedBuildDatabase(t, r.db)
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{gcp.LabelManaged: gcp.ManagedValue})
 	labelled(r.crm, initProject)
 	r.gcs.Put(initRunsBucket, managed.MarkerObject, marker)

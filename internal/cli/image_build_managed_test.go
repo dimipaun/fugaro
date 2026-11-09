@@ -119,7 +119,21 @@ func managedBuildWorld(t *testing.T, f *cloudFixture, marker []byte) *buildWorld
 		"storage: "+gcs.URL+"/storage/v1/, resource_manager: "+c.URL+"/, iam: "+iam.URL+
 			"/, artifact_registry: "+ar.URL+"/, cloud_scheduler: "+sch.URL+"/, no_auth: true }")
 	f.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: "+initProject+", rtdb_url: "+db.URL+" }\n")
+	seedBuildDatabase(t, db)
 	return &buildWorld{gcs: gcs, crm: managedCRM(t, c), crmFake: c, db: db, s: managedStorage(t, gcs)}
+}
+
+// seedBuildDatabase gives a fixture's database the two nodes `fugaro update`
+// writes into every installation's and that a build now needs. One is the mark
+// that makes the database this installation's at all: every writer into it asks
+// first (budgetDBUnadopted), and a database holding data with no mark is
+// another product's. The other is the cap a lease is judged against, which is
+// the one that bites in observe mode (D1548) and the one that grants a lease at
+// all — absent, the predicate denies every build as unreservable.
+func seedBuildDatabase(t *testing.T, db *gcpfake.RTDB) {
+	t.Helper()
+	db.Set(budget.PathMark, auroraMark())
+	db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 5 * usd1})
 }
 
 // unmanagedBuildWorld is the ordinary installation: the runs bucket and the
@@ -139,6 +153,7 @@ func unmanagedBuildWorld(t *testing.T, f *cloudFixture) *buildWorld {
 		"storage: "+gcs.URL+"/storage/v1/, resource_manager: "+c.URL+"/, iam: "+iam.URL+
 			"/, artifact_registry: "+ar.URL+"/, cloud_scheduler: "+sch.URL+"/, no_auth: true }")
 	f.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: "+initProject+", rtdb_url: "+db.URL+" }\n")
+	seedBuildDatabase(t, db)
 	return &buildWorld{gcs: gcs, crm: managedCRM(t, c), crmFake: c, db: db, s: managedStorage(t, gcs)}
 }
 
