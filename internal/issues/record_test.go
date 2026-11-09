@@ -179,7 +179,18 @@ func TestRecordBugAndUnclearSaveRedacted(t *testing.T) {
 			v.Diagnosis = "the connection was refused: " + password
 			v.Steps = "1. run fugaro update from " + home
 			run := recordRun(store, nil)
-			run.Command = []string{"fugaro", "config", "set", "--token", known}
+			// The known value goes in as a bare argument, with no mark and no
+			// digit in it: RedactCommand's own shape rule leaves a value like
+			// this standing, so the failed command is a case the gate over the
+			// exact values this machine holds has to cover — a command whose
+			// only redaction is the shape rule would write this one down. The
+			// assertion below is what keeps the case honest: if the rule ever
+			// starts hiding it, this row stops testing the pass and must be
+			// given a value that reaches it again.
+			if !strings.Contains(RedactCommand([]string{"fugaro", "run", known}), known) {
+				t.Fatalf("the shape rule already hides %q, so this case proves nothing", known)
+			}
+			run.Command = []string{"fugaro", "run", known}
 			run.Logs = []string{email, "the value " + known + " was rejected"}
 			if _, err := Record(v, run, []string{known}); err != nil {
 				t.Fatalf("Record(%s): %v", outcome, err)
@@ -211,7 +222,7 @@ func TestRecordBugAndUnclearSaveRedacted(t *testing.T) {
 			if got.Status != StatusPending || got.Number != 0 || got.Uploaded {
 				t.Errorf("a saved issue is pending and unnumbered, got %q, %d, uploaded=%v", got.Status, got.Number, got.Uploaded)
 			}
-			if !strings.Contains(got.FailedCommand, "fugaro config set") || strings.Contains(got.FailedCommand, known) {
+			if !strings.Contains(got.FailedCommand, "fugaro run") || strings.Contains(got.FailedCommand, known) {
 				t.Errorf("failed command = %q, want the command with its values redacted", got.FailedCommand)
 			}
 		})
