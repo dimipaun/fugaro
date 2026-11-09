@@ -404,11 +404,18 @@ func (d *orchestratorDaemon) refreshCaps(ctx context.Context) {
 // loop is the daemon's life after start-up: beat, tick, write the cache, check
 // the unit's binary, wait.
 //
-// Every failure is the cycle's and not the daemon's, with three exceptions: a
-// lease that went to another machine stops it (Beat, and the tick's own write
-// behind Node.Save), a handover stops it cleanly, and so does the context
-// ending — Ctrl-C or the unit's SIGTERM — which releases the lease on the way
-// out rather than leaving the id claimed by a process that is gone.
+// A failure inside a cycle is the cycle's and not the daemon's: it is reported,
+// the wait runs, and the next cycle is the next try. The daemon's own beat is
+// the one place that is not true, because the beat is the lease and a lease
+// failure has one answer: a claim that went to another machine stops this one
+// without touching the node (and so does the tick's own write behind Node.Save),
+// and a beat that failed for any other reason — a database that answered an
+// error — is the process's failure, the unit's restart being the answer to it. A
+// handover stops it cleanly; so does the context ending — Ctrl-C or the unit's
+// SIGTERM. Each of those exits releases the lease on the way out, and so does
+// the failed beat above, rather than leaving the id claimed by a process that
+// is gone; the one exit that does not is the lost lease, where the claim is
+// somebody else's.
 func (d *orchestratorDaemon) loop(ctx context.Context) error {
 	for {
 		if err := d.lease.Beat(ctx); err != nil {
@@ -424,6 +431,13 @@ func (d *orchestratorDaemon) loop(ctx context.Context) error {
 				fmt.Fprintf(d.out, "orchestrator %s: the lease went to another daemon, so this one is stopping without touching the node\n", safetext.Field(d.id))
 				return nil
 			}
+			// The id goes back before the error does. The process is leaving
+			// with a claim of its own on the node, and the unit restarts it at
+			// once: a fresh claim refuses that restart's own Acquire ("driven
+			// by another daemon") for the whole TTL, so a restart loop faster
+			// than the TTL — systemd's RestartSec is 100ms — is a unit that
+			// gives up for good over one refused write.
+			d.release(ctx)
 			return dbErr(d.lc, err, false)
 		}
 		d.refreshCaps(ctx)

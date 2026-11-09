@@ -909,3 +909,36 @@ func TestDaemonGivesTheLeaseBackWhenItIsStopped(t *testing.T) {
 		t.Errorf("the daemon did not say what it did with the id: %q", out.String())
 	}
 }
+
+// TestDaemonGivesTheLeaseBackWhenItsBeatFails: a beat that failed for any
+// reason but a lost lease is the process's failure, and the id goes back with
+// it. A daemon that returned while still holding its own claim left the id held
+// by a process that is gone: the unit restarts the daemon at once (systemd's
+// RestartSec is 100ms), the restart's Acquire is refused as "driven by another
+// daemon" by that fresh claim, and after its start-limit burst the unit gives
+// up for good — an installation that stops driving its id over one refused
+// write. The second Acquire below is what the unit's next attempt does.
+func TestDaemonGivesTheLeaseBackWhenItsBeatFails(t *testing.T) {
+	f := newDaemonFixture(t)
+	d, _ := f.running(t, "")
+
+	// The next write the daemon makes is its own beat, and it is refused: a
+	// database answering an error is the one thing this loop cannot answer
+	// for itself.
+	f.db.DenyNext(1)
+	if err := d.loop(f.ctx); err == nil {
+		t.Fatal("a daemon whose beat the database refused returned no error, and a beat that failed is the process's failure")
+	}
+	ctx := context.Background()
+	state, err := d.lease.Read(ctx)
+	if err != nil {
+		t.Fatalf("reading the lease node: %v", err)
+	}
+	if state.Held || state.Holder != "" {
+		t.Errorf("the lease still names %q after the daemon stopped on a failed beat, so the unit's restart is refused for the whole TTL", state.Holder)
+	}
+	again, err := d.lease.Acquire(ctx)
+	if err != nil || !again.Held {
+		t.Fatalf("the restart the unit makes could not take the id: %+v, %v", again, err)
+	}
+}
