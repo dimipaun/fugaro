@@ -107,7 +107,7 @@ var rules = []rule{
 
 	// The Dockerfile's own presence is the signal, and its first FROM line is
 	// what the skill would build the project's image on.
-	{KindDockerfile, "Dockerfile", capture(dockerfileFrom)},
+	{KindDockerfile, "Dockerfile", dockerfileHint},
 
 	// CI is the signal — the runner is this package's constant — because a
 	// repository with a pipeline is one whose image has to carry what the
@@ -188,7 +188,16 @@ func Findings(files []File) []Finding {
 // the one failure that is the caller's own, and it stops the read.
 func Read(ctx context.Context, r gitprov.ContentsReader, ref string) ([]Finding, error) {
 	files := make([]File, 0, len(rules))
+	seen := make(map[string]bool, len(rules))
 	for _, rule := range rules {
+		// Two rules may share a path (package.json is a version file and a
+		// Testcontainers build file, requirements.txt a lockfile and one too),
+		// and a repository is read once per path however many rules judge it:
+		// a survey of 50+ repositories is 30-odd reads each, not one per rule.
+		if seen[rule.path] {
+			continue
+		}
+		seen[rule.path] = true
 		data, err := r.Contents(ctx, rule.path, ref)
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
@@ -218,6 +227,18 @@ func capture(re *regexp.Regexp) func([]byte) (string, bool) {
 		}
 		return string(m[1]), true
 	}
+}
+
+// dockerfileHint is the Dockerfile rule: the file's presence is the signal,
+// and the base image its first FROM line names is the value. A Dockerfile
+// whose FROM line is not a reference this package carries still answers — a
+// repository with a Dockerfile is one the skill has something to say about —
+// with the empty value and no text of that line.
+func dockerfileHint(data []byte) (string, bool) {
+	if m := dockerfileFrom.FindSubmatch(data); m != nil {
+		return string(m[1]), true
+	}
+	return "", true
 }
 
 // serviceHints is a compose rule: the services a compose file names, from the

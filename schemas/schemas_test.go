@@ -23,6 +23,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/digest"
 	"github.com/dimipaun/fugaro/internal/failure"
+	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/imagesurvey"
 	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/recipe"
@@ -5432,6 +5434,84 @@ func TestModelsLsSchema(t *testing.T) {
 			t.Errorf("required is %v, and the document always carries %q", req, key)
 		}
 	}
+}
+
+// TestImageSurveySchema holds schemas/image-survey.schema.json to the document
+// `fugaro image survey --json` prints and to the Go constants that document's
+// closed vocabulary is written as. The repositories, signals and catalog
+// entries are dynamic — one per line of the project's configuration — so the
+// schema cannot pin them by name; what it can pin, and what this test checks,
+// is that the schema loads (a broken $ref between $defs is exactly where a
+// hand edit breaks), that version is imageSurveyDocVersion, that a signal's
+// six kinds are the imagesurvey constants and that the four members a consumer
+// reads without a nil check are required. A seventh kind, or a renamed one, is
+// red here rather than in a consumer that branches on it.
+//
+// The document itself is validated against this schema by
+// TestSurveyJSONMatchesSchema in internal/cli, which is where the command that
+// writes it lives.
+func TestImageSurveySchema(t *testing.T) {
+	raw, err := os.ReadFile("image-survey.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	compile(t, "image-survey.schema.json")
+
+	consts := goConstValues(t, "../internal/cli/image_survey.go")
+	version := nodeOf(t, doc, "properties", "version")
+	if version["const"] != float64(1) {
+		t.Errorf("version: const = %v, and the document's first version is 1 (D784)", version["const"])
+	}
+	if got, _ := version["$comment"].(string); !strings.Contains(got, "imageSurveyDocVersion") || consts["imageSurveyDocVersion"] != "1" {
+		t.Errorf("version: $comment = %q, and imageSurveyDocVersion in internal/cli/image_survey.go is %q", got, consts["imageSurveyDocVersion"])
+	}
+	kinds := goConstValues(t, "../internal/imagesurvey/signals.go")
+	want := make([]string, 0, 6)
+	for _, name := range []string{
+		"KindLockfile", "KindVersion", "KindDockerfile", "KindCI", "KindCompose", "KindTestcontainers",
+	} {
+		if kinds[name] == "" {
+			t.Errorf("internal/imagesurvey/signals.go declares no %s", name)
+			continue
+		}
+		if !slices.Contains(imagesurveyKinds(t), kinds[name]) {
+			t.Errorf("%s = %q, and the package answers no signal with it", name, kinds[name])
+		}
+		want = append(want, kinds[name])
+	}
+	if got := stringsOf(t, doc, "$defs", "finding", "properties", "kind", "enum"); !slices.Equal(got, want) {
+		t.Errorf("$defs.finding.kind: the enum is %v, and the command writes %v", got, want)
+	}
+	// The providers a row can name are gitprov's own kinds, and the two the
+	// survey can read are the ones catalog.Readable admits; a third would have
+	// to be added to both.
+	if got := stringsOf(t, doc, "$defs", "repo", "properties", "provider", "enum"); !slices.Equal(got, []string{gitprov.KindGitHub, gitprov.KindBitbucket}) {
+		t.Errorf("$defs.repo.provider: the enum is %v, want the two readable kinds", got)
+	}
+	req := stringsOf(t, doc, "required")
+	for _, key := range []string{"version", "project", "repos", "setup"} {
+		if !slices.Contains(req, key) {
+			t.Errorf("required is %v, and the document always carries %q", req, key)
+		}
+	}
+}
+
+// imagesurveyKinds is every kind the survey's own rules answer with: the enum
+// above is checked against what the package does, not only against the
+// constants' names.
+func imagesurveyKinds(t *testing.T) []string {
+	t.Helper()
+	out := make([]string, 0, len(imagesurvey.Signals()))
+	for _, s := range imagesurvey.Signals() {
+		if !slices.Contains(out, s.Kind) {
+			out = append(out, s.Kind)
+		}
+	}
+	return out
 }
 
 // TestModelsSearchSchema holds schemas/models-search.schema.json to the

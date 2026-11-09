@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -269,7 +270,7 @@ func printImageSurvey(w io.Writer, out imageSurveyOut) error {
 		fmt.Fprintf(w, "  none: fugaro image add writes an entry, and fugaro update publishes the catalog\n")
 	}
 	for _, e := range out.Setup.Catalog {
-		line := fmt.Sprintf("  %s  %s  [%s]  %s", oneLine(e.Name), catalogDefaultWord(e.Default), oneLine(joinSpace(e.Tags)), oneLine(e.Source))
+		line := fmt.Sprintf("  %s  %s  [%s]  %s", oneLine(e.Name), catalogDefaultWord(e.Default), oneLine(strings.Join(e.Tags, " ")), oneLine(e.Source))
 		if e.Description != "" {
 			line += "  " + oneLine(e.Description)
 		}
@@ -282,26 +283,6 @@ func printImageSurvey(w io.Writer, out imageSurveyOut) error {
 	for _, repo := range slices.Sorted(maps.Keys(out.Setup.ImageMap)) {
 		fmt.Fprintf(w, "  %s  %s\n", oneLine(repo), oneLine(out.Setup.ImageMap[repo]))
 	}
-	fmt.Fprintf(w, "bake_repos: %s\n", yesNo(out.Setup.BakeRepos))
+	fmt.Fprintf(w, "bake_repos: %s\n", presentCell(out.Setup.BakeRepos))
 	return nil
-}
-
-// joinSpace is what a listing joins a row's own values with.
-func joinSpace(v []string) string {
-	out := ""
-	for i, s := range v {
-		if i > 0 {
-			out += " "
-		}
-		out += s
-	}
-	return out
-}
-
-// yesNo is a boolean as the report prints it.
-func yesNo(b bool) string {
-	if b {
-		return "yes"
-	}
-	return "no"
 }

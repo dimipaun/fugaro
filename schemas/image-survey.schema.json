@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/image-survey.schema.json",
+  "title": "Fugaro image survey",
+  "description": "The document `fugaro image survey --json` prints: one row per repository the project's configuration lists, with the image signals that repository carries (its lockfiles and version files, its Dockerfile and the base image it names, its CI file, and the services its compose or Testcontainers files name), and the setup the project has today — the catalog, the repository-to-image map and the bake setting. The read is read-only: each repository is read through the code host's own file API at a fixed list of paths, nothing is cloned and nothing is written, and every value here was bounded by the rule that took it out of a file before it reached this document. A repository the survey could not open is a row carrying unread and no signals, which is a different thing from a repository whose files name nothing. Members are only ever added within a version (D784), so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document, which D784 promises to keep readable under the same version.",
+  "type": "object",
+  "required": [
+    "version",
+    "project",
+    "repos",
+    "setup"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "$comment": "imageSurveyDocVersion in internal/cli/image_survey.go."
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The selected project's name, which is the config the repository list is read from."
+    },
+    "repos": {
+      "type": "array",
+      "description": "One row per repository the project config lists, in name order.",
+      "items": {
+        "$ref": "#/$defs/repo"
+      }
+    },
+    "setup": {
+      "$ref": "#/$defs/setup",
+      "description": "What a rerun of the setup compares against: the catalog the project has today, the repository-to-image map and the bake setting."
+    }
+  },
+  "$defs": {
+    "repo": {
+      "type": "object",
+      "required": [
+        "repo",
+        "signals"
+      ],
+      "properties": {
+        "repo": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The repository's owner/name, as the project config records it."
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "github",
+            "bitbucket"
+          ],
+          "description": "The git provider the repository was resolved to and read on (gitprov's own kinds). Absent on a row this machine could not resolve a provider for, which is then unread."
+        },
+        "unread": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why this row has no signals: the name is not a repository of this project, no provider could be resolved, the provider cannot read a file out of a repository, or opening it failed. Absent on every row the survey read — a repository whose files name nothing carries an empty signals list and no reason."
+        },
+        "signals": {
+          "type": "array",
+          "description": "The signals the repository carries, in the survey's own fixed order. Empty on a row the survey read whose files name none of them, and on a row it could not read (which then carries unread).",
+          "items": {
+            "$ref": "#/$defs/finding"
+          }
+        }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "required": [
+        "kind",
+        "path"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "lockfile",
+            "version",
+            "dockerfile",
+            "ci",
+            "compose",
+            "testcontainers"
+          ],
+          "description": "What the signal is (the Kind constants of internal/imagesurvey). A consumer branches on a kind only here, so a fifth kind is a new member of this enum and never a re-meant old one."
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The fixed repository-relative path the signal was read from: the survey's own constant, never a path the repository named."
+        },
+        "value": {
+          "type": "string",
+          "description": "What the rule bounded out of that file: a manager's name, a version, a base image reference, or the services a compose or Testcontainers file names, comma-separated. Absent when the signal is the file's own presence, which is the answer for a lockfile, a CI file, a Dockerfile whose FROM line is not a reference the survey carries, and a compose file naming no service Fugaro starts."
+        }
+      }
+    },
+    "setup": {
+      "type": "object",
+      "required": [
+        "catalog",
+        "image_map",
+        "bake_repos"
+      ],
+      "properties": {
+        "catalog": {
+          "type": "array",
+          "description": "The project's catalog entries, in the order the catalog lists them: this machine's own when its config states one, the published node's otherwise (D1140).",
+          "items": {
+            "$ref": "#/$defs/catalogEntry"
+          }
+        },
+        "image_map": {
+          "type": "object",
+          "description": "The repository-to-image map the project's published policy node carries (D1906), as written: an owner-authored map from a repository's owner/name to the catalog entry it is served by. Empty when the project publishes none.",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "bake_repos": {
+          "type": "boolean",
+          "description": "Whether the project bakes its repositories into its images (D1901). True when the published node sets it and when it sets nothing at all, which is the default the field is declared with."
+        }
+      }
+    },
+    "catalogEntry": {
+      "type": "object",
+      "required": [
+        "name",
+        "source"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tags": {
+          "type": "array",
+          "description": "The entry's tags, as written.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "default": {
+          "type": "boolean",
+          "description": "Whether this entry is the catalog's default (D1146). Absent on an entry that is not, which is every entry of a catalog that marks none."
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The entry's source as a person reads it: `dockerfile owner/name:path@branch`, `inline`, or `image <ref>` (image_catalog.go's catalogSourceLine)."
+        },
+        "description": {
+          "type": "string",
+          "description": "The entry's own description. Absent when it has none."
+        }
+      }
+    }
+  }
+}
