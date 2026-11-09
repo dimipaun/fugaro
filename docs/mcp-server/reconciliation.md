@@ -850,6 +850,22 @@ plan's open items carry a **revisit** entry and §6's owner-checks list carries 
   widening of `internal/gcpfake/run.go:973` existed only to let a fenced launch carry no `FUGARO_RUN`
   override, and with the fence declined **every launch carries the identity override and the fake's
   rule is unchanged**.
+- **M9's grant makes the cover name the front door's account**
+  ([implementation-plan.md](implementation-plan.md) §3 and §4): the binding is written in
+  `modules/project/iam.tf` as a **literal** member — the project module cannot reach the installation
+  module's account, so `member = each.value` carries the root's own string — and the cover classifies
+  a member it knows by its **spelling** (`internal/infra/tf/cover.go:1338-1400`), where `fugaro-mcp`
+  is neither a `FugaroAccounts` ID (`:415`) nor a job account (`:777`), so `fugaroAccount` (`:2061`)
+  refuses it and the plan is refused with "who is not on the review screen". **So
+  `internal/infra/tf/cover.go` joins M9's files** and the account is named there as a kind of its own
+  with the `fugaroJobRunner` row accepting it — the same kind the declined fence would have added, for
+  the launcher's role rather than a role of its own. **The plan said the cover needed no change while
+  the fence was the thing that would have touched it; the ruling is what makes that false**, and the
+  one-writer-per-file rule still holds, because M4's cover work is L0 and M9's is L5. **Letting the
+  member arrive unknown instead does not hold**: `modules/project` creates a service account, so the
+  cover accepts an unknown member there, but a value carried from the installation's output is
+  unknown only on the apply that creates the account — the review would admit the first plan and
+  refuse every later one.
 - **What stays the owner's, and it is now the whole of it**: the live IAM — that the front door's
   account holds **both** permissions in a real project — which is check 2's shape for a grant rather
   than a live step, and the **revisit** itself.

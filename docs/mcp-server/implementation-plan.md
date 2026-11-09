@@ -988,19 +988,35 @@ design item has to answer is written in §1 and §7 below**, and **nothing in th
 first slice starts a run, holds the launch grant or changes `internal/runner`**. The task is written
 here, unchanged, as the plan for when it is designed and the owner approves it.
 
-- **Files (12):** `ee/coordinator/mcpauth/tool_spawn.go`, `tool_spawn_test.go`,
+- **Files (13):** `ee/coordinator/mcpauth/tool_spawn.go`, `tool_spawn_test.go`,
   `ee/coordinator/mcpauth/tool_cancel.go`, `tool_cancel_test.go`,
   `ee/coordinator/mcpauth/launch.go`, `launch_test.go`, `internal/runner/spend.go`,
   `internal/runner/spend_test.go`, **the launch grant** —
   `deploy/terraform/gcp/modules/installation/coordinator.tf` (comments only: the account's "one
   grant" comment at `:301-320` and the "deliberately absent" comment at `:377` both describe a state
   this task ends), `deploy/terraform/gcp/modules/project/iam.tf` (the one job-scoped binding of the
-  launcher's own role to the front door's account, beside the launcher grant at `:7-14`) and
-  `deploy/terraform/gcp/modules/project/iam_test.go` (new: the binding's own text-level test) — and
-  `SECURITY.md`. **`internal/infra/tf/cover.go` needs no change**: the front door's account is a
-  service account M4's module creates, and the cover's existing acceptance of a `fugaroJobRunner`
-  grant to such an account is exactly the grant this task wants — it is the row the declined fence
-  would have narrowed to a role of its own.
+  launcher's own role to the front door's account, beside the launcher grant at `:7-14`),
+  `deploy/terraform/gcp/modules/project/iam_test.go` (new: the binding's own text-level test),
+  `SECURITY.md` — and **`internal/infra/tf/cover.go`, which does need a change and is the file a
+  planner is most likely to miss**: the member this task writes is a **literal** — `iam.tf` sets
+  `member = each.value` from the repository root's own variable and cannot reach the installation
+  module's account — and the cover classifies a member it knows by its **spelling**
+  (`internal/infra/tf/cover.go:1338-1400`), where the front door's account is neither a
+  `FugaroAccounts` ID (`:415`) nor a job account (`fugaro-<name>-<8 hex>`, `:777`), so
+  `fugaroAccount` (`:2061`) rejects it and the plan is refused with "who is not on the review
+  screen". **So the account is named in the cover as a kind of its own** — a `MCPServerAccountID` of
+  the cover's own carrying the ID `internal/infra/coordinator_service.go:23` sets (`fugaro-mcp`),
+  beside `CoordinatorAccountID` (`:375`), with its predicate read before the review screen's list for
+  the deployer's reason, and
+  the `fugaroJobRunner` row of `google_cloud_run_v2_job_iam_member` (`:249-252`) accepting that
+  kind. **Not by adding it to `FugaroAccounts`**: that list is what every `toAccounts` row accepts,
+  `roles/secretmanager.secretAccessor` among them (`:245`), so a member added there could be
+  granted the credentials service's bundle with no row of its own and no review-screen entry. **And
+  letting the member arrive unknown instead is not a fix that holds**: `modules/project` does create a
+  service account of its own, so the cover accepts an unknown member there — but a value carried from
+  the installation's output is unknown only on the apply that creates the account and is read from
+  state on every apply after, so the review would admit the first plan and refuse every later one.
+  Naming the account is the change that holds on both.
 - **Interface:** **`spawn_task`** (D931's answer of 2026-11-04 — the owner's name for the
   `submit_task` of the spec §0) starts the project's own job through `internal/backend` with the
   token's spend limit and the marker that a launch carries one written into **the execution's own
@@ -1044,7 +1060,12 @@ here, unchanged, as the plan for when it is designed and the owner approves it.
   `fugaro run` refuses `spawn_task`), `TestCancelOfAnotherProjectsRunIsRefused`, and
   `TestTheFrontDoorCanStartARun` (the module writes the job-scoped grant of the launcher's role to the
   front door's account and to no second member — the assertion a later edit that narrowed the grant
-  without a decision would fail).
+  without a decision would fail), and **`TestTheMCPAccountIsItsOwnPrincipalKind`** in
+  `internal/infra/tf/cover_grants_test.go`, in `TestCoordinatorAccountIsItsOwnPrincipalKind`'s shape
+  (`:709`): the literal `serviceAccount:fugaro-mcp@<project>.iam.gserviceaccount.com` is admitted on
+  the `fugaroJobRunner` row and **refused on every other row the `toAccounts` kind reaches** — the
+  credentials service's `roles/secretmanager.secretAccessor` (`:245`) is the one to assert — which is
+  the difference between naming the account and adding it to `FugaroAccounts`.
 - **A finding this task must close, and it is not optional for the task that spends money (2026-11-05).**
   **`tighterSpend` in `ee/coordinator/mcpauth/limits.go` treats `+Inf` as a value and not as a
   non-number** (`ee/coordinator/mcpauth/limits.go:298`): the helper reads a spend limit as unset when
@@ -1164,8 +1185,10 @@ a planner who finds two tasks in the same row in one release serialises them.
 with M1, M2, M7 and M10, so a planner who takes the first slice alone takes none of them, and what
 leaves the first slice is M9's own work and the half of M10's that names a spawned or cancelled run.
 **M11's rows are gone with the task**, which is declined (§3): `coordinator.tf` is M4's and M9's,
-`SECURITY.md`'s row is M4's, M9's and M10's, and `cover.go` is M4's alone again — so the table is
-shorter by two writers and one whole row, and nothing it lists is unowned.
+`SECURITY.md`'s row is M4's, M9's and M10's, and `cover.go` is M4's and M9's — **the declined M11's
+writer there is gone with it, and M9's is not**: M9 names the front door's account in the cover so the
+launcher's own role can be granted to it, which is the same kind the fence would have added for a role
+of its own. The table is shorter by one writer and no row, and nothing it lists is unowned.
 
 | File | Writers (level) | What each does to it |
 | --- | --- | --- |
@@ -1176,7 +1199,7 @@ shorter by two writers and one whole row, and nothing it lists is unowned.
 | `ee/coordinator/mcpauth/tools.go` | M7 (L3), M8 (L4), M9 (L5), M10 (L6) | the registry: each of the three tool tasks registers into it |
 | `ee/coordinator/service.go` | M4 (L0), M5 (L2), M7 (L3) | M4 creates the service's entry point; M5 and M7 mount handlers on it |
 | `deploy/terraform/gcp/modules/installation/coordinator.tf` | M4 (L0), M9 (L5) | M4 creates the service and the account; M9 rewrites the two comments (`:301-320`, `:377`) that describe the account's reach and the absent grant — **the grant itself is not written here**, because the job it goes on is not a resource of this module |
-| `internal/infra/tf/cover.go` | M4 (L0) | M4 adds the store's two resource types to the cover; **the declined M11 would have added the front door's principal kind and a role of its own, and nothing replaces it** — the account is a service account M4's module creates, so the cover accepts the launcher's grant to it as it does for every launcher |
+| `internal/infra/tf/cover.go` | M4 (L0), M9 (L5) | M4 adds the store's two resource types to the cover; **M9 names the front door's account in it** (`MCPServerAccountID`, `fugaro-mcp`) as a kind of its own, with the `fugaroJobRunner` row accepting that kind — **the literal member the project module writes is classified by its spelling and is refused without it** (§3, M9's files) |
 | `internal/runner/spend.go` | M9 (L5) alone, but **shared with every other runner task in its release** | the ceiling read out of the variable D924 names on the execution override and its merge; see §5 — which is why the release slot is chosen for the file's other writers, not only for this work |
 | `SECURITY.md` | M4 (L0), M9 (L5), M10 (L6) | a public endpoint, the store and the single grant that keeps it private, the launch grant the front door holds and the accepted v1 risk it carries, the ceiling a run resolves to and how it reaches it, and what the audit does not record — **the repository's standing rule is that a security-relevant change updates it in the same PR** |
 
@@ -1185,8 +1208,9 @@ shorter by two writers and one whole row, and nothing it lists is unowned.
 **Files deliberately not in this table**, because one writer is not a shared file and a row for one
 would read as a conflict: `deploy/terraform/gcp/modules/installation/mcpauth_store.tf` is M4's alone,
 and so is `deploy/terraform/gcp/modules/installation/outputs.tf` — the declined M11 would have added
-no module output (the root builds the fence role's name and the account's member from its own
-variables), and nothing replaces it, so M4 is its only writer.
+a module output (the fence role's name and the account's member), and **nothing replaces it**: M9's
+member is a literal the repository root's own variable carries, which is the spelling the cover has to
+be taught (§3), so no installation output is added and M4 is its only writer.
 
 **The wiring the declined M11 would have threaded the fence through is nobody's** — the second custom
 role (`modules/installation/iam.tf`), the closed `names.role_ids` object that would name it
@@ -1197,8 +1221,8 @@ poll (`internal/runstore/launch.go`, `internal/cli/exec.go`), the second launch 
 `internal/infra/spec.go`), its tests (`internal/infra/front_door_fence_test.go`, the
 `internal/infra/testdata/installation-*.tfvars.json` goldens a new key would regenerate) — **and the
 whole list stays in §3's M11 note, so a revisit picks it up rather than reconstructing it**. M9's own
-grant writes only the job-scoped binding in `modules/project/iam.tf` and the two comments in
-`coordinator.tf`, which are the two rows above. `ee/coordinator/mcpauth/store_bucket.go` is M2's alone,
+grant writes the job-scoped binding in `modules/project/iam.tf`, the two comments in
+`coordinator.tf` and the cover entry in `internal/infra/tf/cover.go`, which are the three rows above. `ee/coordinator/mcpauth/store_bucket.go` is M2's alone,
 and `internal/budget/rules/*` is M3's alone — the last one being the reason M3 can land at any point
 in the schedule rather than at a level.
 
