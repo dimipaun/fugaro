@@ -875,6 +875,42 @@ func TestRedactKeepsAnEscapedRecordReadable(t *testing.T) {
 	}
 }
 
+// TestRedactKeepsAConnectionStringRecordReadable: the same record with the
+// credential written as the URL of a connection string, which is a shape read
+// by its own spelling rather than by the name of the field it stands in. The
+// field's closing quote arrives escaped there, and a value that read the
+// backslash before it as a byte of its own left the quote it escapes bare —
+// the record behind the escaping stopped parsing.
+func TestRedactKeepsAConnectionStringRecordReadable(t *testing.T) {
+	password := fake(strings.Repeat("Qw3", 5))
+	inner := `{"severity":"ERROR","dsn":"postgres://app:` + password +
+		`","message":"quota exceeded for project foo","step":"terraform apply"}`
+	got := Text(`{"type":"result","content":`+strconv.Quote(inner)+`}`, nil)
+	if strings.Contains(got, password) {
+		t.Fatalf("Text = %q: the password survived the escaping", got)
+	}
+	var outer struct{ Content string }
+	if err := json.Unmarshal([]byte(got), &outer); err != nil {
+		t.Fatalf("Text = %q, which is no longer a JSON record: %v", got, err)
+	}
+	var rec map[string]string
+	if err := json.Unmarshal([]byte(outer.Content), &rec); err != nil {
+		t.Fatalf("the record inside it is %q, which no longer parses: %v", outer.Content, err)
+	}
+	for field, want := range map[string]string{
+		"severity": "ERROR",
+		"message":  "quota exceeded for project foo",
+		"step":     "terraform apply",
+	} {
+		if rec[field] != want {
+			t.Errorf("Text lost %s: %#v", field, rec)
+		}
+	}
+	if rec["dsn"] != "postgres://app:[REDACTED]" {
+		t.Errorf("dsn = %q, want the marker where the password stood", rec["dsn"])
+	}
+}
+
 // TestRedactKeepsAPasswordRecordReadable: the same two records read by the name
 // of the field rather than by a scheme word. A record's fields are the
 // diagnosis, and a password rule that read a value past the quote closing it —
