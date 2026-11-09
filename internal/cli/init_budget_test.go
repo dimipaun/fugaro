@@ -35,7 +35,7 @@ func newManagedCreateRig(t *testing.T) (*projectRig, string) {
 	r.gcs.AddProject(newProj, gcpfake.FirstCreatedProjectNumber)
 	r.gcs.AddBucket(bucket, gcpfake.FirstCreatedProjectNumber, managedBucketLabels)
 	roles := map[string]string{}
-	for _, role := range []string{"launcher", "job_runner", "build_submitter", "tag_mover"} {
+	for _, role := range []string{"launcher", "job_runner", "build_submitter", "tag_mover", "job_starter"} {
 		roles[role] = "projects/" + newProj + "/roles/fugaro" + strings.ToUpper(role[:1]) + role[1:]
 	}
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
@@ -296,7 +296,7 @@ func TestAResumedCreationIsMarkedManaged(t *testing.T) {
 	r.bill.AddAccount(billingAcc, true)
 	r.gcs.AddBucket(bucket, number, managedBucketLabels)
 	roles := map[string]string{}
-	for _, role := range []string{"launcher", "job_runner", "build_submitter", "tag_mover"} {
+	for _, role := range []string{"launcher", "job_runner", "build_submitter", "tag_mover", "job_starter"} {
 		roles[role] = "projects/" + newProj + "/roles/fugaro" + strings.ToUpper(role[:1]) + role[1:]
 	}
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
@@ -468,7 +468,7 @@ func TestAResumedCreationIsNeverMarkedWithoutATypedID(t *testing.T) {
 			r.bill.SetBilling(newProj, true)
 			r.gcs.AddBucket(bucket, number, managedBucketLabels)
 			roles := map[string]string{}
-			for _, role := range []string{"launcher", "job_runner", "build_submitter", "tag_mover"} {
+			for _, role := range []string{"launcher", "job_runner", "build_submitter", "tag_mover", "job_starter"} {
 				roles[role] = "projects/" + newProj + "/roles/fugaro" + strings.ToUpper(role[:1]) + role[1:]
 			}
 			r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{

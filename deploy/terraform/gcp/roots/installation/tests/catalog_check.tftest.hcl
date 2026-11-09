@@ -47,6 +47,7 @@ variables {
       job_runner      = "fugaroJobRunner"
       build_submitter = "fugaroBuildSubmitter"
       tag_mover       = "fugaroTagMover"
+      job_starter     = "fugaroJobStarter"
     }
     log = {
       bucket    = "fugaro"

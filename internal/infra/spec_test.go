@@ -90,6 +90,7 @@ func installationOutputs() InstallationOutputs {
 			JobRunner:      "projects/proj-1234/roles/" + RoleJobRunner,
 			BuildSubmitter: "projects/proj-1234/roles/" + RoleBuildSubmitter,
 			TagMover:       "projects/proj-1234/roles/" + RoleTagMover,
+			JobStarter:     "projects/proj-1234/roles/" + RoleJobStarter,
 		},
 		Launchers:             []string{},
 		Operators:             []string{},
@@ -1118,7 +1119,7 @@ func TestInstallationSpec(t *testing.T) {
 	}
 	n := s.Names
 	if n.SchedulerServiceAccountID != "fugaro-scheduler" || n.BaseRegistry != "fugaro-base" || n.GhcrRegistry != "fugaro-ghcr" || n.LegacyRegistry != "fugaro" ||
-		n.RoleIDs != (InstallationRoleIDs{Launcher: "fugaroLauncher", JobRunner: "fugaroJobRunner", BuildSubmitter: "fugaroBuildSubmitter", TagMover: "fugaroTagMover"}) ||
+		n.RoleIDs != (InstallationRoleIDs{Launcher: "fugaroLauncher", JobRunner: "fugaroJobRunner", BuildSubmitter: "fugaroBuildSubmitter", TagMover: "fugaroTagMover", JobStarter: "fugaroJobStarter"}) ||
 		n.Log != (LogNames{Bucket: "fugaro", View: "fugaro-runs", Sink: "fugaro-jobs", Exclusion: "fugaro-jobs-from-default"}) {
 		t.Errorf("names = %+v", n)
 	}

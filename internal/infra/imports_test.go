@@ -190,6 +190,7 @@ func TestSingletonMarksMatchModule(t *testing.T) {
 		{`google_project_iam_custom_role" "job_runner"`, "title", jobRunnerRoleTitle},
 		{`google_project_iam_custom_role" "build_submitter"`, "title", buildSubmitterRoleTitle},
 		{`google_project_iam_custom_role" "tag_mover"`, "title", tagMoverRoleTitle},
+		{`google_project_iam_custom_role" "job_starter"`, "title", jobStarterRoleTitle},
 		{`google_service_account" "scheduler"`, "display_name", schedulerDisplayName},
 	} {
 		re := regexp.MustCompile(`(?s)resource "` + m.resource + ` \{(.*?)\n\}`)

@@ -32,6 +32,27 @@ resource "google_project_iam_custom_role" "job_runner" {
   depends_on = [google_project_service.this]
 }
 
+# The start-only launcher role: run.jobs.run and no run.jobs.runWithOverrides,
+# which is the whole of the owner's ruling of 2026-11-09. It is the role the
+# coordinator starts a run with — per-launch data travels in the signed task in
+# the runs bucket, never in an execution override — and people keep
+# fugaroJobRunner above, unchanged, because a person launching from a terminal
+# is the one caller the override is for.
+#
+# Declared here and granted nowhere yet: M9's launch grant is deliberately
+# absent (coordinator.tf), so nothing in this tree starts a run, and the role
+# exists for the change that does. It is a names.role_ids entry and not a
+# literal like cloud_asset_reader's, because internal/infra names it
+# (infra.RoleJobStarter) and tf/cover.go pins it.
+resource "google_project_iam_custom_role" "job_starter" {
+  project     = var.project
+  role_id     = var.names.role_ids.job_starter
+  title       = "Fugaro job starter"
+  permissions = ["run.jobs.run"]
+
+  depends_on = [google_project_service.this]
+}
+
 resource "google_project_iam_custom_role" "build_submitter" {
   project     = var.project
   role_id     = var.names.role_ids.build_submitter

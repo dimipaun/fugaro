@@ -24,6 +24,7 @@ variables {
       job_runner      = "fugaroJobRunner"
       build_submitter = "fugaroBuildSubmitter"
       tag_mover       = "fugaroTagMover"
+      job_starter     = "fugaroJobStarter"
     }
     log = {
       bucket    = "fugaro"
@@ -78,8 +79,8 @@ run "root_passes_inputs" {
     error_message = "the root must pass log_isolation (default on) to the module and output the view"
   }
   assert {
-    condition     = keys(output.role_ids) == ["build_submitter", "cloud_asset_reader", "job_runner", "launcher", "tag_mover"]
-    error_message = "the root must output every custom role's full name, the tag mover's and the Cloud Asset reader's included"
+    condition     = keys(output.role_ids) == ["build_submitter", "cloud_asset_reader", "job_runner", "job_starter", "launcher", "tag_mover"]
+    error_message = "the root must output every custom role's full name, the tag mover's, the start-only launcher's and the Cloud Asset reader's included"
   }
 }
 
@@ -370,11 +371,28 @@ run "roles" {
     condition     = google_project_iam_custom_role.tag_mover.title == "Fugaro tag mover"
     error_message = "fugaroTagMover's title is its ownership mark, which discovery matches"
   }
+  // The start-only launcher role (the owner's ruling of 2026-11-09): the whole
+  // point of it is the permission it does NOT have, so the absence of
+  // run.jobs.runWithOverrides is asserted as loudly as the presence of
+  // run.jobs.run.
+  assert {
+    condition     = google_project_iam_custom_role.job_starter.permissions == toset(["run.jobs.run"])
+    error_message = "fugaroJobStarter must hold exactly run.jobs.run: the coordinator starts a run with it and never overrides one"
+  }
+  assert {
+    condition     = !contains(google_project_iam_custom_role.job_starter.permissions, "run.jobs.runWithOverrides")
+    error_message = "fugaroJobStarter must not hold run.jobs.runWithOverrides, which is the permission the owner's ruling of 2026-11-09 forbids the coordinator"
+  }
+  assert {
+    condition     = google_project_iam_custom_role.job_starter.title == "Fugaro job starter"
+    error_message = "fugaroJobStarter's title is its ownership mark, which discovery matches"
+  }
   assert {
     condition = (google_project_iam_custom_role.launcher.role_id == "fugaroLauncher" &&
       google_project_iam_custom_role.job_runner.role_id == "fugaroJobRunner" &&
       google_project_iam_custom_role.build_submitter.role_id == "fugaroBuildSubmitter" &&
-    google_project_iam_custom_role.tag_mover.role_id == "fugaroTagMover")
+      google_project_iam_custom_role.tag_mover.role_id == "fugaroTagMover" &&
+    google_project_iam_custom_role.job_starter.role_id == "fugaroJobStarter")
     error_message = "the role IDs must be the inputs"
   }
 }

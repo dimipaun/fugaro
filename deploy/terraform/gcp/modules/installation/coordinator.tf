@@ -379,6 +379,13 @@ resource "google_storage_bucket_iam_member" "mcp_server_runs_reader" {
 # change, and until it lands nothing here can start a run. When it lands it is
 # a grant on the project's own job, added here (the shared-files table), and
 # this comment is what says the service it is granted for already exists.
+#
+# The role it grants is the start-only launcher role
+# (google_project_iam_custom_role.job_starter, run.jobs.run alone) and never
+# fugaroJobRunner: the owner's ruling of 2026-11-09 is that the coordinator
+# must never hold run.jobs.runWithOverrides, because per-launch data travels in
+# the signed task in the runs bucket rather than in an execution override. The
+# role exists already; the grant is M9's.
 resource "google_cloud_run_v2_service" "coordinator_front_door" {
   count = local.mcp_server_on ? 1 : 0
 

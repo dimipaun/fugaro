@@ -24,7 +24,14 @@ const (
 	RoleJobRunner             = "fugaroJobRunner"
 	RoleBuildSubmitter        = "fugaroBuildSubmitter"
 	RoleTagMover              = "fugaroTagMover"
-	BaseRegistry              = "fugaro-base"
+	// RoleJobStarter is the start-only launcher role: run.jobs.run alone,
+	// with no run.jobs.runWithOverrides, which is the whole of the owner's
+	// ruling of 2026-11-09. It is the role the coordinator starts a run with
+	// (per-launch data travels in the signed task in the runs bucket, never
+	// in an execution override), and the role people keep is RoleJobRunner,
+	// unchanged.
+	RoleJobStarter = "fugaroJobStarter"
+	BaseRegistry   = "fugaro-base"
 	// GhcrRegistry is the remote (pull-through) repository over ghcr.io:
 	// the base image's pin goes through it (design §3.1).
 	GhcrRegistry   = "fugaro-ghcr"
@@ -1170,6 +1177,7 @@ type InstallationRoleIDs struct {
 	JobRunner      string `json:"job_runner"`
 	BuildSubmitter string `json:"build_submitter"`
 	TagMover       string `json:"tag_mover"`
+	JobStarter     string `json:"job_starter"`
 }
 
 // LogNames are the log bucket, view, sink and exclusion that keep Fugaro's
@@ -1222,7 +1230,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 			BaseRegistry:              BaseRegistry,
 			GhcrRegistry:              GhcrRegistry,
 			SchedulerServiceAccountID: SchedulerServiceAccountID,
-			RoleIDs:                   InstallationRoleIDs{Launcher: RoleLauncher, JobRunner: RoleJobRunner, BuildSubmitter: RoleBuildSubmitter, TagMover: RoleTagMover},
+			RoleIDs:                   InstallationRoleIDs{Launcher: RoleLauncher, JobRunner: RoleJobRunner, BuildSubmitter: RoleBuildSubmitter, TagMover: RoleTagMover, JobStarter: RoleJobStarter},
 			Log:                       LogNames{Bucket: LogBucket, View: LogView, Sink: LogSink, Exclusion: LogExclusion},
 		},
 		BucketLifecycle: BucketLifecycle{RunsDays: runsDays, CacheCustomTimeDays: cacheCustomTimeDays, CacheAgeDays: cacheAgeDays},

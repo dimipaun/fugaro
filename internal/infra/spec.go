@@ -317,6 +317,12 @@ type RoleIDs struct {
 	// TagMover is empty in the outputs of an installation applied before
 	// the role existed; fugaro update refuses those.
 	TagMover string `json:"tag_mover"`
+	// JobStarter is the start-only launcher role (the owner's ruling of
+	// 2026-11-09). It is empty in the outputs of an installation applied
+	// before the role existed, and withDefaults fills it with the name Go
+	// gives a new installation: nothing reads it to grant anything yet, so an
+	// installation one release behind converges under fugaro update alone.
+	JobStarter string `json:"job_starter"`
 }
 
 // ServiceAccount is an account to create or adopt.
@@ -611,7 +617,7 @@ func resolve(in Inputs) (*repoCtx, error) {
 	// Role IDs from a stale output of another project's state would grant
 	// that project's roles, so they must be this project's.
 	prefix := "projects/" + lc.GCPProject + "/roles/"
-	for _, r := range []string{c.inst.RoleIDs.Launcher, c.inst.RoleIDs.JobRunner, c.inst.RoleIDs.BuildSubmitter, c.inst.RoleIDs.TagMover} {
+	for _, r := range []string{c.inst.RoleIDs.Launcher, c.inst.RoleIDs.JobRunner, c.inst.RoleIDs.BuildSubmitter, c.inst.RoleIDs.TagMover, c.inst.RoleIDs.JobStarter} {
 		if id, ok := strings.CutPrefix(r, prefix); !ok || id == "" || strings.Contains(id, "/") {
 			return nil, userErr("the installation's role %s is not a custom role of project %s", r, lc.GCPProject)
 		}
@@ -826,6 +832,7 @@ func withDefaults(o InstallationOutputs, lc *localcfg.Config, bucket string) Ins
 	def(&o.RoleIDs.JobRunner, role(RoleJobRunner))
 	def(&o.RoleIDs.BuildSubmitter, role(RoleBuildSubmitter))
 	def(&o.RoleIDs.TagMover, role(RoleTagMover))
+	def(&o.RoleIDs.JobStarter, role(RoleJobStarter))
 	if o.Launchers == nil {
 		o.Launchers = slices.Clone(lc.Terraform.Launchers)
 	}

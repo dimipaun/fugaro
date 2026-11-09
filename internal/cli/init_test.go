@@ -244,6 +244,7 @@ func outputsJSONWith(t *testing.T, over map[string]any) string {
 			"launcher": "projects/proj-1234/roles/fugaroLauncher", "job_runner": "projects/proj-1234/roles/fugaroJobRunner",
 			"build_submitter": "projects/proj-1234/roles/fugaroBuildSubmitter",
 			"tag_mover":       "projects/proj-1234/roles/fugaroTagMover",
+			"job_starter":     "projects/proj-1234/roles/fugaroJobStarter",
 		},
 		"launchers":                []string{},
 		"operators":                []string{},

@@ -616,7 +616,7 @@ func TestDecodeOutputs(t *testing.T) {
 		"ghcr_registry":             json.RawMessage(`"fugaro-ghcr"`),
 		"legacy_registry":           json.RawMessage(`null`),
 		"scheduler_service_account": json.RawMessage(`"fugaro-scheduler@proj-1234.iam.gserviceaccount.com"`),
-		"role_ids":                  json.RawMessage(`{"launcher":"projects/proj-1234/roles/fugaroLauncher","job_runner":"projects/proj-1234/roles/fugaroJobRunner","build_submitter":"projects/proj-1234/roles/fugaroBuildSubmitter","tag_mover":"projects/proj-1234/roles/fugaroTagMover"}`),
+		"role_ids":                  json.RawMessage(`{"launcher":"projects/proj-1234/roles/fugaroLauncher","job_runner":"projects/proj-1234/roles/fugaroJobRunner","build_submitter":"projects/proj-1234/roles/fugaroBuildSubmitter","tag_mover":"projects/proj-1234/roles/fugaroTagMover","job_starter":"projects/proj-1234/roles/fugaroJobStarter"}`),
 		"launchers":                 json.RawMessage(`["user:a@example.com"]`),
 		"operators":                 json.RawMessage(`[]`),
 		"log_view":                  json.RawMessage(`"projects/proj-1234/locations/global/buckets/fugaro/views/fugaro-runs"`),
@@ -629,6 +629,7 @@ func TestDecodeOutputs(t *testing.T) {
 	if o.RunsBucket != "fugaro-runs-proj-1234" || o.LegacyRegistry != "" || o.RoleIDs.JobRunner != "projects/proj-1234/roles/fugaroJobRunner" ||
 		o.GhcrRegistry != GhcrRegistry ||
 		o.RoleIDs.TagMover != "projects/proj-1234/roles/fugaroTagMover" ||
+		o.RoleIDs.JobStarter != "projects/proj-1234/roles/fugaroJobStarter" ||
 		!slices.Equal(o.Launchers, []string{"user:a@example.com"}) || o.LogView == "" || o.RegistryCleanupDryRun == nil || !*o.RegistryCleanupDryRun {
 		t.Fatalf("outputs = %+v", o)
 	}

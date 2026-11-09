@@ -253,7 +253,7 @@ func TestCoverNamesAreTheCodes(t *testing.T) {
 		}
 		return false
 	}
-	for _, r := range []string{RoleLauncher, RoleJobRunner, RoleBuildSubmitter, RoleTagMover, MinterRoleID, "fugaroHistory"} {
+	for _, r := range []string{RoleLauncher, RoleJobRunner, RoleBuildSubmitter, RoleTagMover, RoleJobStarter, MinterRoleID, "fugaroHistory"} {
 		if !has(tf.FugaroRoles, r) {
 			t.Errorf("role %s is not in tf.FugaroRoles", r)
 		}

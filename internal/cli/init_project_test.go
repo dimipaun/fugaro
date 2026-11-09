@@ -1268,7 +1268,7 @@ func TestBillingLeftForTheAdminAndTheRerunResumes(t *testing.T) {
 	r.gcs.AddProject(newProj, number)
 	r.gcs.AddBucket(bucket, number, managedBucketLabels)
 	roles := map[string]string{}
-	for _, role := range []string{"launcher", "job_runner", "build_submitter", "tag_mover"} {
+	for _, role := range []string{"launcher", "job_runner", "build_submitter", "tag_mover", "job_starter"} {
 		roles[role] = "projects/" + newProj + "/roles/fugaro" + strings.ToUpper(role[:1]) + role[1:]
 	}
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{

@@ -168,6 +168,7 @@ func (f *cloud) m5Installation(inst InstallationSpec) {
 	f.iam.AddRole(inst.Project, RoleJobRunner, "Fugaro job runner", false)
 	f.iam.AddRole(inst.Project, RoleBuildSubmitter, "Fugaro build submitter", false)
 	f.iam.AddRole(inst.Project, RoleTagMover, "Fugaro tag mover", false)
+	f.iam.AddRole(inst.Project, RoleJobStarter, "Fugaro job starter", false)
 	f.iam.AddServiceAccount(inst.Project, SchedulerServiceAccountID+"@"+inst.Project+".iam.gserviceaccount.com", "Fugaro scheduler")
 	f.logs.AddBucket(inst.Project, "global", LogBucket, "ACTIVE", LogBucketDescription)
 }
@@ -527,6 +528,7 @@ func TestDiscoverInstallationAfterForget(t *testing.T) {
 		"module.installation.google_project_iam_custom_role.job_runner":      p + "roles/" + RoleJobRunner,
 		"module.installation.google_project_iam_custom_role.build_submitter": p + "roles/" + RoleBuildSubmitter,
 		"module.installation.google_project_iam_custom_role.tag_mover":       p + "roles/" + RoleTagMover,
+		"module.installation.google_project_iam_custom_role.job_starter":     p + "roles/" + RoleJobStarter,
 		"module.installation.google_service_account.scheduler":               p + "serviceAccounts/fugaro-scheduler@proj-1234.iam.gserviceaccount.com",
 		"module.installation.google_logging_project_bucket_config.fugaro[0]": p + "locations/global/buckets/" + LogBucket,
 	}

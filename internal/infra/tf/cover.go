@@ -411,7 +411,7 @@ const CatalogCheckAccountID = "fugaro-catalog-check"
 // project's catalog check job (CatalogCheckAccountID), for the same reason
 // (toCoordinator, toCatalogCheck).
 var (
-	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
+	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroJobStarter", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
 )
 
@@ -790,7 +790,13 @@ var (
 var RolePermissions = map[string][]string{
 	"fugaroLauncher": {"run.jobs.get", "run.jobs.list", "run.executions.get", "run.executions.list", "run.executions.cancel", "run.operations.get",
 		"secretmanager.secrets.list", "secretmanager.versions.list"},
-	"fugaroJobRunner":      {"run.jobs.run", "run.jobs.runWithOverrides"},
+	"fugaroJobRunner": {"run.jobs.run", "run.jobs.runWithOverrides"},
+	// The start-only launcher role (the owner's ruling of 2026-11-09): the
+	// coordinator starts a run with run.jobs.run alone, so per-launch data
+	// travels in the signed task in the runs bucket and never in an execution
+	// override. run.jobs.runWithOverrides is exactly what this role must not
+	// gain, which is why it is pinned here apart from fugaroJobRunner's pair.
+	"fugaroJobStarter":     {"run.jobs.run"},
 	"fugaroBuildSubmitter": {"cloudbuild.builds.create", "cloudbuild.builds.get"},
 	"fugaroTagMover":       {"artifactregistry.tags.delete"},
 	"fugaroTokenMinter":    {"iam.serviceAccounts.signJwt"},

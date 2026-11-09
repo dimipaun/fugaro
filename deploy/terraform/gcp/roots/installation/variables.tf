@@ -32,6 +32,7 @@ variable "names" {
       job_runner      = string
       build_submitter = string
       tag_mover       = string
+      job_starter     = string
     })
     log = object({
       bucket    = string

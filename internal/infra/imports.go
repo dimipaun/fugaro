@@ -77,6 +77,7 @@ const (
 	importJobRunnerRole      importKind = "job runner role"
 	importBuildSubmitterRole importKind = "build submitter role"
 	importTagMoverRole       importKind = "tag mover role"
+	importJobStarterRole     importKind = "start-only launcher role"
 	importSchedulerSA        importKind = "scheduler account"
 	importLogBucket          importKind = "log bucket"
 	// The Firebase root's singletons (DiscoverFirebase), whose create fails
@@ -109,6 +110,7 @@ var importTable = map[importKind]struct{ to, id string }{
 	importJobRunnerRole:      {"module.installation.google_project_iam_custom_role.job_runner", "projects/{project}/roles/{name}"},
 	importBuildSubmitterRole: {"module.installation.google_project_iam_custom_role.build_submitter", "projects/{project}/roles/{name}"},
 	importTagMoverRole:       {TagMoverRoleAddress, "projects/{project}/roles/{name}"},
+	importJobStarterRole:     {"module.installation.google_project_iam_custom_role.job_starter", "projects/{project}/roles/{name}"},
 	importSchedulerSA:        {"module.installation.google_service_account.scheduler", "projects/{project}/serviceAccounts/{name}"},
 	importLogBucket:          {LogBucketAddress, "projects/{project}/locations/global/buckets/{name}"},
 	importFirebaseDB:         {"module.firebase.google_firebase_database_instance.this", "projects/{project}/locations/{region}/instances/{name}"},

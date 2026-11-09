@@ -50,6 +50,11 @@ output "role_ids" {
     job_runner      = google_project_iam_custom_role.job_runner.name
     build_submitter = google_project_iam_custom_role.build_submitter.name
     tag_mover       = google_project_iam_custom_role.tag_mover.name
+    # The start-only launcher role (the owner's ruling of 2026-11-09), named
+    # here beside the launcher role it was split from. Empty in the outputs of
+    # an installation applied before the role existed; nothing reads it to
+    # grant anything yet, so fugaro update converges with no operator step.
+    job_starter = google_project_iam_custom_role.job_starter.name
     # The whole-project inventory's read role (Task 4.1a): a custom role of
     # this installation, so it is named here beside the others.
     cloud_asset_reader = google_project_iam_custom_role.cloud_asset_reader.name
