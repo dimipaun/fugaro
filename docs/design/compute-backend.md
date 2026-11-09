@@ -3456,12 +3456,19 @@ recipe — the one route it leaves, the gid baked into the image, is untested
   `google_project_iam_member` resources that name the accounts it creates, so
   Terraform orders the account before the binding — but ordering is not a
   wait, so the stage also retries: an apply that fails only on that gap —
-  which is one entry of the closed list every step of the converge retries on
-  (`tf.PropagationFailure`) — is planned, guarded and granted again, on the
-  same three waits the installation and repository steps use (20 s, 60 s,
-  120 s), and what is left is applied, and only when the new plan passes the
-  guard and the grant rules and holds nothing the confirmed plan did not
+  which is one entry of the closed list `tf.PropagationFailure` holds and
+  which the converge's three cloud roots retry on (`installRoot` for the
+  installation, `planRepo` for the repository, `computeStage.apply` here) — is
+  planned, guarded and granted again, on the same three waits the installation
+  and repository steps use (20 s, 60 s, 120 s), and what is left is applied,
+  and only when the new plan passes the guard and the grant rules and holds
+  nothing the confirmed plan did not
   (`computeStage.apply`, `propagationRetry`, `TestComputeStageRetriesIAMPropagation`).
+  The Firebase root (`applyRoot`) is **not** one of the three: it creates an
+  account and the bindings on it in one apply the same way, so a
+  `fugaro update --firebase-project` on a fresh project can still meet this gap
+  and still need a re-run — a hole this change leaves open rather than a claim
+  it makes.
   Which message GCP gives for the
   gap is what a live run (57b) has to confirm rather than a fake; a gap
   reported in other words is not on the list, fails the stage, and rerunning

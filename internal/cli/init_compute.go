@@ -208,7 +208,10 @@ func (s *computeStage) grants(plan *tf.Plan) error {
 //
 // The first pass applies the plan this stage already planned, guarded, granted
 // and had confirmed: it is not planned again for nothing. Every pass after it
-// is a new plan (s.plan), judged like the first.
+// plans and shows the root directly (s.t.Plan, s.t.Show) rather than through
+// s.plan: a failed apply leaves the workdir, the tfvars and the backend it was
+// run on, so prepare has nothing to redo, and the new plan is judged like the
+// first one all the same.
 func (s *computeStage) apply(ctx context.Context, confirmed *tf.Plan) error {
 	r := s.e.r
 	first := true

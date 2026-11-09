@@ -91,6 +91,66 @@ func TestApplyUsesSavedPlanOnly(t *testing.T) {
 	}
 }
 
+// The tail is all fugaro keeps of an apply's stderr, so what it holds is not
+// the whole of what terraform wrote and the closed list refuses to read it as
+// evidence that every error was one propagation error (propagation.go's
+// Truncated). That refusal rests on `run` marking the error, which no test of
+// the list itself can show: the list's own truncated row is an ExitError built
+// by hand (propagation_test). Here the same 404 is applied twice, once with
+// stderr short enough to be kept whole and once with a stderr long enough that
+// only its 4096-byte tail survives -- the tail that ends in the 404 either
+// way, so what separates the two answers is the marking and nothing else.
+func TestApplyReportsAStderrItHadToTruncate(t *testing.T) {
+	ctx := context.Background()
+	failure := withResource("module.installation.google_cloud_run_v2_service_iam_member.credentials_invoker", invoker404)
+	for _, tc := range []struct {
+		name string
+		// noise is what terraform printed before the failure: more than the
+		// tail holds, or nothing at all.
+		noise string
+		want  bool
+	}{
+		{name: "a stderr kept whole", want: true},
+		{name: "a stderr cut to its tail", noise: strings.Repeat("Refreshing module.installation.google_storage_bucket.runs...\n", 200)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRig(t)
+			r.script["apply"] = map[string]any{"exit": 1, "stderr": tc.noise + failure}
+			tf := r.tf(t, nil)
+			plan := filepath.Join(r.dir, "tfplan")
+			if _, err := tf.Plan(ctx, plan); err != nil {
+				t.Fatal(err)
+			}
+			err := tf.Apply(ctx, plan)
+			var ee *ExitError
+			if !errors.As(err, &ee) {
+				t.Fatalf("the failed apply = %v, want an ExitError", err)
+			}
+			if !strings.HasSuffix(ee.Stderr, failure) {
+				t.Fatalf("the error kept %q, want it to end in the apply's failure", ee.Stderr)
+			}
+			if tc.noise == "" {
+				if ee.Truncated {
+					t.Errorf("a stderr the tail held whole is marked truncated")
+				}
+				if len(ee.Stderr) != len(failure) {
+					t.Errorf("the kept stderr is %d bytes, want the whole %d", len(ee.Stderr), len(failure))
+				}
+			} else {
+				if !ee.Truncated {
+					t.Errorf("a stderr of %d bytes was kept as %d and not marked truncated", len(tc.noise+failure), len(ee.Stderr))
+				}
+				if len(ee.Stderr) != stderrTail {
+					t.Errorf("the kept stderr is %d bytes, want the %d-byte tail", len(ee.Stderr), stderrTail)
+				}
+			}
+			if got := PropagationFailure(err, credentialsServicePlan()); got != tc.want {
+				t.Errorf("PropagationFailure = %v, want %v: the 404 is the same in both cases, so only the truncation can decide", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestRunWritesProgressWithoutRacing covers a command whose Out is a
 // bytes.Buffer (as in the real-terraform test, and as the cli wires it up in
 // tests): os/exec copies stdout and stderr on two separate goroutines unless
