@@ -104,4 +104,16 @@ func newUpdateCmd() *cobra.Command { return newUpdateCmdWith(&initOptions{}) }
 // newUpdateCmdWith is newUpdateCmd over options the caller holds, the shape
 // newSetupCmdWith has for the same reason: the tests drive a door over an
 // options value they can read back.
-func newUpdateCmdWith(o *initOptions) *cobra.Command { return newInitCmdWith(o, updateDoor) }
+func newUpdateCmdWith(o *initOptions) *cobra.Command {
+	cmd := newInitCmdWith(o, updateDoor)
+	// The retry offer (update_retry.go, T-IS19) is the door's own last line,
+	// and this is the only point that is the door's own: cobra runs PostRunE
+	// when RunE returned nil and not otherwise, so a refusal, a step left for
+	// the person and a cloud failure offer nothing — the run that just
+	// installed the release that fixed an issue is the run that says so.
+	cmd.PostRunE = func(cmd *cobra.Command, _ []string) error {
+		updateRetryHint(cmd, o)
+		return nil
+	}
+	return cmd
+}
