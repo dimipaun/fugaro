@@ -210,8 +210,11 @@ func builtSoFar(err error, built []string) error {
 // terminal, or --yes, with the managed gate's admission replacing the typed
 // name for a managed project's own sessions. The prompts went with the policy,
 // and what bounds the build now is the lease its caller takes immediately
-// after this line (openBuildLease, D1543) — so all that is left of the
-// confirmation is the sentence a session reads instead of one.
+// after this line (openBuildLease, D1543) — where the installation has a
+// budget backend to lease against; on one that has none, nothing bounds the
+// build but Cloud Build's own timeout, and the lease prints the line that says
+// so — and all that is left of the confirmation is the sentence a session reads
+// instead of one.
 //
 // Why an agent's session is still refused here. What replaces a confirmation
 // in a coding agent's session is the gate's admission and nothing else (D55,
@@ -406,7 +409,11 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 		// The lease is taken before the submission and closed after it, and it
 		// is the whole of what bounds this build's cost (T4, D1543): an
 		// over-cap build fails here, before Cloud Build is handed anything, so
-		// the builds after it are never submitted either.
+		// the builds after it are never submitted either. On an installation
+		// with no budget backend there is no lease to take and this build is
+		// submitted uncounted, which is what keeps this step — step 4 of
+		// `fugaro update`'s checkout stage — from turning into an operator step
+		// (openBuildLease's own header).
 		lease, err := openBuildLease(ctx, r.w, t.lc, t.spec.Name, t.spec.Slug)
 		if err != nil {
 			notes()

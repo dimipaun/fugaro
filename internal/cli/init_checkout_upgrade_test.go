@@ -797,53 +797,82 @@ func TestUpdateBuildsEveryStaleWorkflowWithNoAnswer(t *testing.T) {
 // refresh may be what submits them instead — the run's own confirmation covers
 // the ordinary steps, and a billable build is not one of them.
 //
+// The second row is the installation whose owner never ran `fugaro update
+// --firebase-project`, whose config therefore carries no budget block and whose
+// builds take no lease at all (image_build_lease.go): they are submitted
+// uncounted, with the one line that says so, because what this stage runs IS
+// `fugaro update`'s checkout half — a build it could not run without the
+// backend would leave every stale image of such an installation unbuilt and
+// send its owner to an operator step the one upgrade command is not allowed to
+// need (HARD RULE).
+//
 // Mutation (run, restore): give the refresh's build loop a confirmation again
 // (confirmBuild, or the stage's own env.Yes standing in for one) and this test
-// fails: nothing is typed, so no build runs.
+// fails: nothing is typed, so no build runs. Let the backend-less row's build
+// lease its cost (drop openBuildLease's early return) and that row fails
+// instead, on the checkout's own error: it stops naming the flag to pass.
 func TestUpdateBuildsTheStaleWorkflowsWhenNobodyIsAsked(t *testing.T) {
-	r, root := upgradeRig(t)
-	buildBudgetForRig(t, r.initRig)
-	checkoutFile(t, filepath.Join(root, ".claude", "settings.json"), wiredAt("v0.5.0"))
-	f := testutil.NewClaudePluginFake(t, "[]", "[]")
-	f.On(t, "plugins", userInstall("0.5.1"), argsInstall...)
-	useFakeClaude(t, f)
-	// The base this release pins, already recorded, and two workflows whose
-	// records name an older one: the refresh's step 2 has nothing to pin, so
-	// the step this test is about is step 4's builds.
-	r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
-	putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.4.0"))
-	putWorkflowRecordFrom("api", "0.5.1", managedRef("base", "0.4.0"))
-	fb := useFakeBuilder(t)
-	// Steps 2 and 3 are stubbed (the registry and the Cloud Run Admin API are
-	// not what this test is about) and step 3's target is the rig's own
-	// workflows; step 4 is the refresh's own.
-	real := newRefreshSteps
-	newRefreshSteps = func(run *initRun, e *initEngine, p *refreshPlan) refreshSteps {
-		s := real(run, e, p)
-		s.base = func(context.Context) error { return nil }
-		s.checkJob = func(context.Context, *refreshTarget) error { return nil }
-		s.reload = func(context.Context) (*refreshTarget, error) {
-			return &refreshTarget{lc: p.lc, cfg: p.cfg, spec: infra.RepoSpec{Name: p.repo, Slug: p.slug,
-				RegistryPath: "r", BuildServiceAccountEmail: "b@x.iam",
-				Workflows: map[string]infra.WorkflowSpec{"app": {}, "api": {}}}}, nil
-		}
-		return s
-	}
-	t.Cleanup(func() { newRefreshSteps = real })
+	for _, tc := range []struct {
+		name    string
+		backend bool
+	}{
+		{"with a budget backend", true},
+		{"with no budget backend", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, root := upgradeRig(t)
+			if tc.backend {
+				buildBudgetForRig(t, r.initRig)
+			}
+			checkoutFile(t, filepath.Join(root, ".claude", "settings.json"), wiredAt("v0.5.0"))
+			f := testutil.NewClaudePluginFake(t, "[]", "[]")
+			f.On(t, "plugins", userInstall("0.5.1"), argsInstall...)
+			useFakeClaude(t, f)
+			// The base this release pins, already recorded, and two workflows whose
+			// records name an older one: the refresh's step 2 has nothing to pin, so
+			// the step this test is about is step 4's builds.
+			r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
+			putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.4.0"))
+			putWorkflowRecordFrom("api", "0.5.1", managedRef("base", "0.4.0"))
+			fb := useFakeBuilder(t)
+			// Steps 2 and 3 are stubbed (the registry and the Cloud Run Admin API are
+			// not what this test is about) and step 3's target is the rig's own
+			// workflows; step 4 is the refresh's own.
+			real := newRefreshSteps
+			newRefreshSteps = func(run *initRun, e *initEngine, p *refreshPlan) refreshSteps {
+				s := real(run, e, p)
+				s.base = func(context.Context) error { return nil }
+				s.checkJob = func(context.Context, *refreshTarget) error { return nil }
+				s.reload = func(context.Context) (*refreshTarget, error) {
+					return &refreshTarget{lc: p.lc, cfg: p.cfg, spec: infra.RepoSpec{Name: p.repo, Slug: p.slug,
+						RegistryPath: "r", BuildServiceAccountEmail: "b@x.iam",
+						Workflows: map[string]infra.WorkflowSpec{"app": {}, "api": {}}}}, nil
+				}
+				return s
+			}
+			t.Cleanup(func() { newRefreshSteps = real })
 
-	e, refreshOut := checkoutEngine(t, &initOptions{})
-	out := atTerminal(t, e, "")
-	res := stageOutcome(t, e, checkoutStageOf(t, e))
-	if res.Failed != nil {
-		t.Fatalf("the checkout stopped with nothing typed: %+v\n%s%s", res, out, refreshOut)
-	}
-	if len(fb.specs) != 2 {
-		t.Fatalf("built %+v, want both stale workflows", fb.specs)
-	}
-	for _, asked := range []string{"Type ", "⚠ CONFIRM", "real terminal"} {
-		if strings.Contains(out.String(), asked) {
-			t.Errorf("a build asked %q, which nothing is waiting to answer:\n%s", asked, out)
-		}
+			e, refreshOut := checkoutEngine(t, &initOptions{})
+			out := atTerminal(t, e, "")
+			res := stageOutcome(t, e, checkoutStageOf(t, e))
+			if res.Failed != nil {
+				t.Fatalf("the checkout stopped with nothing typed: %+v\n%s%s", res, out, refreshOut)
+			}
+			if len(fb.specs) != 2 {
+				t.Fatalf("built %+v, want both stale workflows", fb.specs)
+			}
+			for _, asked := range []string{"Type ", "⚠ CONFIRM", "real terminal"} {
+				if strings.Contains(out.String(), asked) {
+					t.Errorf("a build asked %q, which nothing is waiting to answer:\n%s", asked, out)
+				}
+			}
+			// An installation with no backend says so, once per build; the one
+			// that has a backend says nothing about a missing one.
+			said := strings.Contains(out.String()+refreshOut.String(), "has no Firebase budget backend")
+			if said != !tc.backend {
+				t.Errorf("the note about a missing budget backend was printed %v, and this installation has a budget backend: %v\n%s%s", said, tc.backend, out, refreshOut)
+			}
+		})
 	}
 }
 

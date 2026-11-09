@@ -2204,6 +2204,9 @@ day counts and the one command that raises it (fugaro budget show says what
 the project holds). A CLI that died mid-build leaves its reservation open
 and the next build gives it back. Pricing an image comes from the Cloud
 Billing catalog, so a build whose price cannot be read is not submitted.
+An installation whose project config sets no budget.rtdb_url has no budget
+backend and no lease to take: its builds are submitted uncounted, and
+fugaro update --firebase-project in the checkout adds the backend.
 --local builds with your own Docker and costs nothing in the cloud.
 
 Usage: `fugaro image build [name]`
@@ -2371,7 +2374,9 @@ Terraform; (4) rebuilds each selected workflow whose build record says it
 was built from another base, or that has no build record or one that
 cannot be read, each billable and asking no confirmation: it leases its
 estimated cost from the project's budget before it is submitted, and a build
-the cap has no room for is refused with the command that raises it);
+the cap has no room for is refused with the command that raises it — an
+installation with no budget backend (budget.rtdb_url unset) has no lease to
+take, and its builds are submitted uncounted);
 (5) names fugaro update --anchor when fugaro.yaml lacks gcp_project.
 
 A base_images entry that is neither this release's pin nor a release image
@@ -2388,8 +2393,10 @@ what is done. Exit codes: 0 done, 1 a refusal or a confirmation not given,
 Unattended use: pass --yes to run it from CI or a script, with no terminal.
 It confirms every step that asks — the base pin and the check-job update;
 the billable builds ask nothing in any session, and it is the budget lease
-each of them takes that bounds them: read the printed plan's build count
-first. --yes does not cover a coding agent's session (refused,
+each of them takes that bounds them, where the installation has a budget
+backend at all (with none, no build leases anything and none is counted).
+Read the printed plan's build count first. --yes does not cover a coding
+agent's session (refused,
 same as without it) or a custom, dev or hand-pushed base image (still
 refused with the one-line fix); there is still no --json or --plan-only.
 
@@ -2399,7 +2406,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmations this run would otherwise skip (the project's name typed at each step that asks) instead of applying on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the questions back. It cannot restore a confirmation the billable builds no longer have: those ask nothing in any session, and each leases its cost from the project's budget. Refused where nobody can answer them (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed; refused beside --yes |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmations this run would otherwise skip (the project's name typed at each step that asks) instead of applying on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the questions back. It cannot restore a confirmation the billable builds no longer have: those ask nothing in any session, and each leases its cost from the project's budget where the installation has one. Refused where nobody can answer them (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed; refused beside --yes |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--expect-digest` | stringArray | `[]` | no | cross-check the digest of a base image's release signature, KIND=sha256:<hex>, as for the converge (repeatable) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
@@ -2409,7 +2416,7 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | owner/name (or a path inside its checkout) of the repository; it must be this checkout's origin (refresh reads fugaro.yaml from the checkout) |
 | `--workflow` | stringArray | `[]` | no | a workflow to refresh (repeatable; default: every workflow in fugaro.yaml) |
-| `--yes` | bool | `false` | no | confirm every step that asks without asking (the base copy and the check-job update), and without a terminal: for CI or a script. The billable builds need no flag: they ask nothing in any session and each leases its cost from the project's budget. The plan is still printed first. Never confirmed in a coding agent's session (CLAUDECODE and the like): nothing is applied there, --yes included. Without --yes the steps that ask still need a real terminal, as always |
+| `--yes` | bool | `false` | no | confirm every step that asks without asking (the base copy and the check-job update), and without a terminal: for CI or a script. The billable builds need no flag: they ask nothing in any session and each leases its cost from the project's budget where the installation has one. The plan is still printed first. Never confirmed in a coding agent's session (CLAUDECODE and the like): nothing is applied there, --yes included. Without --yes the steps that ask still need a real terminal, as always |
 
 Subcommands:
 

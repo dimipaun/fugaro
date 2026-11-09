@@ -29,13 +29,28 @@ import (
 // proceeds (D1548), which is what makes `fugaro doctor`'s line about an
 // installation whose builds nothing refuses worth printing (doctor_build_budget.go).
 //
-// Why the lease is mandatory, with no path around it. A build this command
-// cannot reserve against — no budget database, no price, a database that would
-// not answer — is a build whose cost nothing bounds, and an unbounded billable
-// build is exactly what the confirmation used to be there to prevent. So the
-// refusal is the whole of the answer: it names the missing piece and the one
-// command that supplies it (D1550's rule for a missing price, and the budget
-// backend's own sentence for a database that is not there).
+// Why a build on an installation with no budget backend takes no lease at all.
+// The backend is optional: `--firebase-project` is what turns it on
+// (init_stages.go's own stage skips without it), and a project that never got
+// one has no ledger to write a reservation into, no cap to judge the build
+// against and no permission on the Billing catalog the price would be read from
+// (billing-price-spike.md §1.2) — so there the lookup must not run and there is
+// nothing to reserve. What that leaves is the build the confirmation used to
+// stand in front of, submitted with nothing counted, and it is the shape a run
+// has had on such an installation all along (launch_budget.go returns before
+// the call). The alternative is worse than the hole it would close: refusing
+// makes every build on a backend-less installation fail, which includes step 4
+// of `fugaro update`'s checkout stage — stale images would never be rebuilt and
+// the person would be sent to an operator step by the one command that is
+// meant to be the whole upgrade (HARD RULE). So the build proceeds and says so:
+// openBuildLease prints the one line, and the lease it returns is nil, which
+// every use of it here tolerates.
+//
+// Where that leaves the lease itself. A build this command CAN reserve against
+// has no path around it: no price, a database that would not answer, a cap with
+// no room — each refuses by name, with the one command that supplies what is
+// missing (D1550), because an unbounded billable build is exactly what the
+// confirmation used to be there to prevent.
 //
 // One lease per submission, and the lease is what a dead CLI leaves behind: a
 // process that died mid-build leaves its reservation open, and the next command
@@ -72,12 +87,16 @@ type buildLease struct {
 }
 
 // openBuildLease gives back what a CLI that died mid-build left open, and takes
-// this build's reservation.
+// this build's reservation. On an installation with no budget backend there is
+// nothing to give back and nothing to take: the build proceeds under a nil
+// lease, after the one line that says so (see this file's header for why that
+// is the answer rather than a refusal).
 //
-// w is where the two lines a person has to read go: the leases a dead CLI left
-// behind and this command closed, and the advisory of a cap the project's mode
-// does not let refuse the build (D1548). Both are notes about money, so they
-// are printed rather than left to the record.
+// w is where the lines a person has to read go: the leases a dead CLI left
+// behind and this command closed, the note that this installation has no
+// backend for a build to lease against, and the advisory of a cap the project's
+// mode does not let refuse the build (D1548). All of them are notes about
+// money, so they are printed rather than left to the record.
 //
 // The error is the whole of the refusal: an over-cap build is
 // *BuildOverCapError (estimate, cap, spent, the one command, exit 1), a missing
@@ -94,6 +113,15 @@ type buildLease struct {
 // write its reservation and its counters there — spend that installation never
 // made, which its own runs are then refused for.
 func openBuildLease(ctx context.Context, w io.Writer, lc *localcfg.Config, repo, slug string) (*buildLease, error) {
+	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
+		// The backend's own door (budgetDBFor) refuses with a sentence for an
+		// operator; here the answer is not a refusal but a build that runs
+		// uncounted, so the line is stated from the build's side: what this
+		// build is, and what would make it a leased one.
+		fmt.Fprintf(w, "fugaro: warning: project %s has no Firebase budget backend (budget.rtdb_url is not set in its project config), so this build takes no lease and nothing counts its cost: `fugaro update --firebase-project %s` in the checkout adds one (D1543)\n",
+			lc.Name, firebaseProjectIDWord(lc.GCPProject))
+		return nil, nil
+	}
 	_, db, err := budgetDBFor(ctx, lc)
 	if err != nil {
 		return nil, err
@@ -134,18 +162,29 @@ func openBuildLease(ctx context.Context, w io.Writer, lc *localcfg.Config, repo,
 }
 
 // settle records what the submitted build spent and gives the rest of the
-// reservation back. waited says whether this command watched the build: when it
-// did not (--no-wait), the whole reservation is recorded, because the build
-// will run and nothing here knows for how long — the other direction, releasing
-// it, would let a loop of --no-wait submissions run with nothing counted at all.
+// reservation back. waited says whether this command watched the build to a
+// terminal status: when it did not — --no-wait, or a watch it lost — the whole
+// reservation is recorded, because the build will run and nothing here knows for
+// how long — the other direction, releasing it, would let a loop of --no-wait
+// submissions run with nothing counted at all.
+//
+// A nil lease is the installation with no budget backend (openBuildLease):
+// nothing was reserved, so there is nothing to settle and no counters to move.
 func (b *buildLease) settle(ctx context.Context, waited bool) error {
+	if b == nil {
+		return nil
+	}
 	_, err := b.cost.settle(ctx, b.lease, buildSpend(b.lease, waited, time.Since(b.started)))
 	return err
 }
 
 // release gives the whole reservation back: nothing was submitted, so nothing
-// is billed.
+// is billed. A nil lease is the installation with no budget backend, where
+// nothing was reserved either.
 func (b *buildLease) release(ctx context.Context) error {
+	if b == nil {
+		return nil
+	}
 	_, err := b.cost.release(ctx, b.lease)
 	return err
 }

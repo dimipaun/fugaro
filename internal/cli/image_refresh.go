@@ -407,7 +407,9 @@ func newImageRefreshCmd() *cobra.Command {
 			"was built from another base, or that has no build record or one that\n" +
 			"cannot be read, each billable and asking no confirmation: it leases its\n" +
 			"estimated cost from the project's budget before it is submitted, and a build\n" +
-			"the cap has no room for is refused with the command that raises it);\n" +
+			"the cap has no room for is refused with the command that raises it — an\n" +
+			"installation with no budget backend (budget.rtdb_url unset) has no lease to\n" +
+			"take, and its builds are submitted uncounted);\n" +
 			"(5) names fugaro update --anchor when fugaro.yaml lacks gcp_project.\n\n" +
 			"A base_images entry that is neither this release's pin nor a release image\n" +
 			"an earlier fugaro copied (a development or hand-pushed image) stops it\n" +
@@ -422,8 +424,10 @@ func newImageRefreshCmd() *cobra.Command {
 			"Unattended use: pass --yes to run it from CI or a script, with no terminal.\n" +
 			"It confirms every step that asks — the base pin and the check-job update;\n" +
 			"the billable builds ask nothing in any session, and it is the budget lease\n" +
-			"each of them takes that bounds them: read the printed plan's build count\n" +
-			"first. --yes does not cover a coding agent's session (refused,\n" +
+			"each of them takes that bounds them, where the installation has a budget\n" +
+			"backend at all (with none, no build leases anything and none is counted).\n" +
+			"Read the printed plan's build count first. --yes does not cover a coding\n" +
+			"agent's session (refused,\n" +
 			"same as without it) or a custom, dev or hand-pushed base image (still\n" +
 			"refused with the one-line fix); there is still no --json or --plan-only.",
 		Args: cobra.NoArgs,
@@ -434,8 +438,8 @@ func newImageRefreshCmd() *cobra.Command {
 	f.StringArrayVar(&o.workflows, "workflow", nil, "a workflow to refresh (repeatable; default: every workflow in fugaro.yaml)")
 	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release base images come from, as for the converge (default ghcr.io/dimipaun)")
 	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "cross-check the digest of a base image's release signature, KIND=sha256:<hex>, as for the converge (repeatable)")
-	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmations this run would otherwise skip (the project's name typed at each step that asks) instead of applying on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the questions back. It cannot restore a confirmation the billable builds no longer have: those ask nothing in any session, and each leases its cost from the project's budget. Refused where nobody can answer them (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed; refused beside --yes")
-	f.BoolVar(&o.yes, "yes", false, "confirm every step that asks without asking (the base copy and the check-job update), and without a terminal: for CI or a script. The billable builds need no flag: they ask nothing in any session and each leases its cost from the project's budget. The plan is still printed first. Never confirmed in a coding agent's session (CLAUDECODE and the like): nothing is applied there, --yes included. Without --yes the steps that ask still need a real terminal, as always")
+	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmations this run would otherwise skip (the project's name typed at each step that asks) instead of applying on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the questions back. It cannot restore a confirmation the billable builds no longer have: those ask nothing in any session, and each leases its cost from the project's budget where the installation has one. Refused where nobody can answer them (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed; refused beside --yes")
+	f.BoolVar(&o.yes, "yes", false, "confirm every step that asks without asking (the base copy and the check-job update), and without a terminal: for CI or a script. The billable builds need no flag: they ask nothing in any session and each leases its cost from the project's budget where the installation has one. The plan is still printed first. Never confirmed in a coding agent's session (CLAUDECODE and the like): nothing is applied there, --yes included. Without --yes the steps that ask still need a real terminal, as always")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }

@@ -567,9 +567,13 @@ func buildTarget(t *testing.T, r *anchorModeRig) (*initEngine, *refreshTarget) {
 // the --yes tests).
 func buildTargetOpts(t *testing.T, r *anchorModeRig, o *initOptions) (*initEngine, *refreshTarget) {
 	t.Helper()
-	// The installation's budget database, its caps and the price lookup: every
-	// build refreshBuilds submits takes a lease of its estimated cost first
-	// (T4), so a target whose installation has no budget backend cannot build.
+	// The installation's budget database, its caps and the price lookup: what
+	// every build refreshBuilds submits leases its estimated cost against
+	// (T4). A rig without them is the installation of a test that means the
+	// backend-less one — there the build is submitted uncounted instead
+	// (image_build_lease.go's header, and init_checkout_upgrade_test.go's
+	// TestUpdateBuildsTheStaleWorkflowsWhenNobodyIsAsked, which drives that
+	// step with no backend at all).
 	buildBudgetForRig(t, r.initRig)
 	e := rigEngine(t, r.initRig, o)
 	lc, err := localcfg.Load(r.cfg)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/image"
@@ -436,6 +437,57 @@ func TestImageBuildCountsTheWholeReservationWhenTheWatchIsLost(t *testing.T) {
 		t.Fatalf("the build was submitted %d times, want the one the lost watch is about", buildPosts(fb))
 	}
 	wholeReservationCounted(t, f.db, mustSlug("bitbucket", "acme/app"), "for a build whose watch was lost")
+}
+
+// TestImageBuildWithoutABudgetBackendBuildsUncounted: the installation of an
+// owner who never ran `fugaro update --firebase-project` has no budget backend
+// at all, and its builds take no lease — there is no ledger to write a
+// reservation into, no cap to judge the build against, and no permission on the
+// Cloud Billing catalog the price is read from (billing-price-spike.md §1.2),
+// so the lookup must not run there. The build is still submitted: a run has
+// proceeded on such a project all along (launch_budget.go), and the command
+// that would otherwise refuse is `fugaro update`'s own checkout stage, whose
+// step 4 rebuilds stale images — a refusal there would be an operator step the
+// one upgrade command is not allowed to need (HARD RULE).
+//
+// Mutation (run, restore): let openBuildLease fall through to budgetDBFor on
+// this installation and the build fails with the operator sentence and 0 posts;
+// delete the note and the one line that says the build is uncounted is gone.
+func TestImageBuildWithoutABudgetBackendBuildsUncounted(t *testing.T) {
+	fb, f := cloudBuildCheckout(t, false)
+	dropBudgetBackend(t, f)
+	// What the spike's §1.2 forbids is the *call*, not a wrong answer from it:
+	// a lookup that ran here would be a request the installation holds no
+	// permission for, so the failure is the assertion.
+	was := newBuildPricer
+	newBuildPricer = func(*localcfg.Config) buildPricer {
+		t.Error("the Cloud Billing price lookup ran on an installation with no budget backend")
+		return fakePricer{book: pricedBook()}
+	}
+	t.Cleanup(func() { newBuildPricer = was })
+
+	_, stderr, err := executeBuild(t, "image", "build", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("a build on an installation with no budget backend failed: %v\n%s", err, stderr)
+	}
+	for _, want := range []string{"has no Firebase budget backend", "this build takes no lease and nothing counts its cost",
+		"fugaro update --firebase-project proj-1234"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, stderr)
+		}
+	}
+	if buildPosts(fb) != 1 {
+		t.Fatalf("the build was submitted %d times, want the one build this installation cannot lease", buildPosts(fb))
+	}
+	// The database the fixture's block pointed at is still up, and it is the
+	// one place a lease would have gone: nothing may be in it.
+	slug := mustSlug("bitbucket", "acme/app")
+	if v := f.db.Value(budget.PathBuildLeases(slug)); v != nil {
+		t.Errorf("a build with no lease to take wrote %v at %s", v, budget.PathBuildLeases(slug))
+	}
+	if v := f.db.Value(budget.PathSpendRepo(today(), slug)); v != nil {
+		t.Errorf("a build with nothing reserved counted %v at %s", v, budget.PathSpendRepo(today(), slug))
+	}
 }
 
 func TestImageBuildCloudDigestUnknown(t *testing.T) {

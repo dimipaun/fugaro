@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/budget"
@@ -14,8 +16,12 @@ import (
 // build needs now that a build leases its cost (T4): the price lookup, and the
 // caps the lease is judged against. Both are shared by the build tests in
 // image_test.go, image_gate_test.go, image_build_managed_test.go and
-// image_refresh_steps_test.go, because a world that submits a build without
-// them is a world whose build is refused before it is submitted.
+// image_refresh_steps_test.go, because they are what a build on an installation
+// with a budget backend leases against. A world whose config has no budget
+// block is a different one — an installation with no backend at all, where the
+// build is submitted uncounted (image_build_lease.go's header, and
+// dropBudgetBackend below) — and only a test that means that installation
+// leaves the block out.
 
 // stubBuildPricer prices every build of a test from this package's own book
 // (pricedBook), instead of reading the Cloud Billing catalog on the caller's
@@ -27,6 +33,16 @@ func stubBuildPricer(t *testing.T) {
 	was := newBuildPricer
 	newBuildPricer = func(*localcfg.Config) buildPricer { return fakePricer{book: pricedBook()} }
 	t.Cleanup(func() { newBuildPricer = was })
+}
+
+// budgetBlock is the local config's budget block for the fake db — the state
+// `fugaro update --firebase-project` leaves, and the only thing that makes an
+// installation's builds lease their cost (image_build_lease.go). It is one
+// function because buildBudgetWorld appends it and dropBudgetBackend takes it
+// back out: a test that means the backend-less installation has to remove
+// exactly this.
+func budgetBlock(db *gcpfake.RTDB) string {
+	return "budget: { mode: observe, per_run_usd: 50, firebase_project: proj-1234, rtdb_url: " + db.URL + " }\n"
 }
 
 // buildBudgetWorld makes a checkout's installation one whose builds can be
@@ -44,12 +60,36 @@ func buildBudgetWorld(t *testing.T, f *cloudFixture) *gcpfake.RTDB {
 		return f.db
 	}
 	db := gcpfake.NewRTDB(t)
-	f.appendConfig(t, "budget: { mode: observe, per_run_usd: 50, firebase_project: proj-1234, rtdb_url: "+db.URL+" }\n")
+	f.appendConfig(t, budgetBlock(db))
 	adoptBudgetFake(db)
 	buildBudgetCaps(db)
 	stubBuildPricer(t)
 	f.db = db
 	return db
+}
+
+// dropBudgetBackend takes the budget block back out of a fixture's config, and
+// with it the installation's backend: what is left is the project of an owner
+// who never ran `fugaro update --firebase-project`, which every build loads as
+// lc.Budget == nil (localcfg). The fake the block pointed at stays up, so a
+// test can still read it and assert that nothing wrote into it.
+func dropBudgetBackend(t *testing.T, f *cloudFixture) {
+	t.Helper()
+	if f.db == nil {
+		t.Fatal("dropBudgetBackend needs a fixture whose world has a budget database (buildBudgetWorld)")
+	}
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := budgetBlock(f.db)
+	if !strings.Contains(string(data), block) {
+		t.Fatalf("the config no longer carries the budget block this drops:\n%s", data)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(string(data), block, "", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // adoptBudgetFake marks a budget fake as this installation's own, the way
@@ -133,7 +173,7 @@ func buildBudgetForRig(t *testing.T, r *initRig) *gcpfake.RTDB {
 		return r.budget
 	}
 	db := gcpfake.NewRTDB(t)
-	r.appendConfig(t, "budget: { mode: observe, per_run_usd: 50, firebase_project: "+initProject+", rtdb_url: "+db.URL+" }\n")
+	r.appendConfig(t, budgetBlock(db))
 	adoptBudgetFake(db)
 	buildBudgetCaps(db)
 	stubBuildPricer(t)

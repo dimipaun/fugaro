@@ -101,6 +101,9 @@ func newImageBuildCmd() *cobra.Command {
 			"the project holds). A CLI that died mid-build leaves its reservation open\n" +
 			"and the next build gives it back. Pricing an image comes from the Cloud\n" +
 			"Billing catalog, so a build whose price cannot be read is not submitted.\n" +
+			"An installation whose project config sets no budget.rtdb_url has no budget\n" +
+			"backend and no lease to take: its builds are submitted uncounted, and\n" +
+			"fugaro update --firebase-project in the checkout adds the backend.\n" +
 			"--local builds with your own Docker and costs nothing in the cloud.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
