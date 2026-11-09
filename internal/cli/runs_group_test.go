@@ -166,6 +166,45 @@ func TestRunsGroupByShareIsRunsNotSpend(t *testing.T) {
 	}
 }
 
+// TestRunsGroupByShareCountsTheRunsThatDidNotFail: share is a share of the
+// **window's** runs (D1465), which are the totals line's runs -- not of the
+// runs that failed in it. A window of four runs where two failed prints 25%
+// twice and a totals line of four; a denominator of the failed runs alone
+// would print 50% twice and a block whose shares are read against a window
+// nobody printed. The window is the one thing a reader has both figures from,
+// so this is what holds the denominator.
+func TestRunsGroupByShareCountsTheRunsThatDidNotFail(t *testing.T) {
+	f := newCloudFixture(t)
+	f.run.Project, f.run.Region = "proj-1234", "us-east5"
+	seedClassedRun(t, f, recentRunID(t, time.Minute, "aaaa"), failure.TestsFailed, 1)
+	seedClassedRun(t, f, recentRunID(t, 2*time.Minute, "bbbb"), failure.BranchMoved, 1)
+	// Two runs of the same window that did not fail: one that finished its
+	// work, one that never launched.
+	succeeded := recentRunID(t, 3*time.Minute, "cccc")
+	seedRun(t, f, succeeded, "", "someone@example.com", false)
+	writeRecord(t, f, succeeded, &runstore.Record{Version: 1, RunID: succeeded, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusSucceeded, Stage: "writeback"})
+	seedRun(t, f, recentRunID(t, 4*time.Minute, "dddd"), "", "someone@example.com", false)
+
+	got, _ := groupJSON(t, "--since", "0")
+	if len(got.Rows) != 4 || got.Totals.Runs != 4 {
+		t.Fatalf("the window lists %d rows and totals %d, want the four runs seeded", len(got.Rows), got.Totals.Runs)
+	}
+	for _, g := range got.Groups {
+		if g.Share != 0.25 {
+			t.Errorf("%s's share is %v, want 0.25: share is a share of the window's runs, not of the runs that failed",
+				g.Class, g.Share)
+		}
+	}
+	human, _, err := execute(t, "runs", "ls", "--since", "0", "--group-by", "failure_class")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(human, "25%") {
+		t.Errorf("the printed table does not carry the window's share (25%%):\n%s", human)
+	}
+}
+
 // TestWatchDocumentCarriesNoGroups: the degraded `watch --json` document
 // embeds ls's own document, and the phone refuses an unknown key in it -- of
 // the whole document, not of the key -- so a groups block the watch path never
