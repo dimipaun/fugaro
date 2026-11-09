@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // Markdown is d as the report's file: the tables a person reads and the
@@ -30,6 +32,13 @@ func Markdown(d Digest) []byte {
 // again and again while rows are dropped.
 func markdownCore(d Digest) []byte {
 	var b strings.Builder
+	// The IDs this report prints, each shortened by the one collision rule
+	// over exactly the rows it prints (spec.md §3, D1706): the run table's
+	// rows and the failures table's example runs. The shortening is here and
+	// not in RunsTable because digestSubmitRuns renders that table too, with
+	// its rows renumbered -- a draft leaves the repository and carries no run
+	// ID at all.
+	ends := task.DisplayRuns(printed(d))
 	fmt.Fprintf(&b, "# Run digest: %s\n\n", d.Period.Key)
 	fmt.Fprintf(&b, "Runs of this repository that finished in %s (%s to %s): %d in all, %d shown, %d flagged. Billed %s, notional %s.\n\n",
 		d.Period.Key, d.Period.Start, d.Period.End, d.Total.Runs, len(d.Runs), d.Total.Flagged,
@@ -38,11 +47,27 @@ func markdownCore(d Digest) []byte {
 	if len(d.Runs) == 0 {
 		b.WriteString("No run of this repository finished in this period.\n\n")
 	} else {
-		b.WriteString(RunsTable(d.Runs))
+		rows := make([]Run, len(d.Runs))
+		for i, r := range d.Runs {
+			r.ID = ends[task.Ref{RunID: r.ID}]
+			rows[i] = r
+		}
+		b.WriteString(RunsTable(rows))
 	}
 	if d.Dropped > 0 {
 		fmt.Fprintf(&b, "Rows not shown: %d. The report is capped at %d bytes before extra sections, and the cheapest unflagged rows go first.\n\n",
 			d.Dropped, MaxBytes)
+	}
+
+	if len(d.Failures) > 0 {
+		b.WriteString("## Failures\n\n")
+		b.WriteString("Why the period's runs did not succeed, over every run of the period, not only the rows above.\n\n")
+		rows := make([]ClassCount, len(d.Failures))
+		for i, f := range d.Failures {
+			f.Example = ends[task.Ref{RunID: f.Example}]
+			rows[i] = f
+		}
+		b.WriteString(FailuresTable(rows))
 	}
 
 	if len(d.Stages) > 0 {
@@ -66,11 +91,27 @@ func markdownCore(d Digest) []byte {
 	return []byte(b.String())
 }
 
+// printed is every run ID the report's tables print: the run table's rows and
+// the failures table's example runs. The collision rule is computed over
+// exactly this set, because a collision is a property of what is shown
+// together and not of the bucket (F15).
+func printed(d Digest) []task.Ref {
+	refs := make([]task.Ref, 0, len(d.Runs)+len(d.Failures))
+	for _, r := range d.Runs {
+		refs = append(refs, task.Ref{RunID: r.ID})
+	}
+	for _, f := range d.Failures {
+		refs = append(refs, task.Ref{RunID: f.Example})
+	}
+	return refs
+}
+
 // RunsTable is the report's run table: its header, one row per run, and the
 // blank line after it. Every cell is a figure or a closed vocabulary, and the
-// first one is the run's own ID -- so a caller that must not print an ID (a
-// draft that leaves the repository) renumbers its copy before handing it here,
-// and the two renderings of one set of figures cannot drift apart.
+// first one is the ID the caller put in the row -- the run's short ID in the
+// report (markdownCore), a renumbered one in a draft that leaves the
+// repository -- so the two renderings of one set of figures cannot drift
+// apart.
 func RunsTable(runs []Run) string {
 	var b strings.Builder
 	b.WriteString("| run | status | pr | base | reviews | billed | notional | flags |\n")
@@ -79,6 +120,21 @@ func RunsTable(runs []Run) string {
 		fmt.Fprintf(&b, "| `%s` | %s | %s | %s | %d | %s | %s | %s |\n",
 			r.ID, r.Status, pr(r.PR), yesNo(r.Base), r.Reviews,
 			USD(r.Billed), USD(r.Notional), flagCell(r.Flags))
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// FailuresTable is the report's failure table: one row per class, the class
+// itself and its figures. Every cell is a figure or a value of the closed
+// vocabulary, and the run ID is the example the digest picked out of its own
+// records, so a row can hold no word a record chose (G1).
+func FailuresTable(failures []ClassCount) string {
+	var b strings.Builder
+	b.WriteString("| class | runs | billed | example |\n")
+	b.WriteString("| --- | --- | --- | --- |\n")
+	for _, f := range failures {
+		fmt.Fprintf(&b, "| `%s` | %d | %s | `%s` |\n", f.Class, f.Runs, USD(f.Billed), f.Example)
 	}
 	b.WriteString("\n")
 	return b.String()
@@ -106,6 +162,16 @@ type Summary struct {
 	// other period writes it.
 	Months int            `json:"months,omitempty"`
 	Flags  map[string]int `json:"flags,omitempty"`
+	// Failures is how many of the period's runs each class holds, by the
+	// class's own name (design §6.2): the two failure-class rules read counts,
+	// and money per class stays out of a block whose discipline is flat maps
+	// and exact strings.
+	//
+	// A block written before the field shipped carries no key at all, which is
+	// not the same fact as a period of no failures: the two rules read the
+	// key's presence, so a period whose runs all succeeded carries none either
+	// (G5).
+	Failures map[string]int `json:"failures,omitempty"`
 	// Recipes is each recipe's median cost over the period's runs, by the
 	// name the report writes: a catalog recipe's own, "other" for the runs no
 	// catalog recipe names. The pattern rules read it month over month, and a
@@ -126,6 +192,12 @@ func (d Digest) Summary() Summary {
 			s.Flags = map[string]int{}
 		}
 		s.Flags[f.Name] = f.Count
+	}
+	for _, f := range d.Failures {
+		if s.Failures == nil {
+			s.Failures = map[string]int{}
+		}
+		s.Failures[string(f.Class)] = f.Runs
 	}
 	for name, med := range d.Recipes {
 		if s.Recipes == nil {

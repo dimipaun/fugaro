@@ -57,6 +57,14 @@ func newRig(t *testing.T) *fakeRig {
 	if err := os.MkdirAll(r.dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// A root always plans with its variables file in place: the CLI writes
+	// terraform.tfvars.json into the workdir before it plans (Workdir.WriteVars),
+	// Plan is handed the relative -var-file=terraform.tfvars.json, and the fake
+	// refuses a file that is not there as terraform itself does. A rig with none
+	// would be testing a plan no run makes.
+	if err := os.WriteFile(filepath.Join(r.dir, "terraform.tfvars.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	return r
 }
 

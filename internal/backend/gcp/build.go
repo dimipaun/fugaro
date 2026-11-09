@@ -230,7 +230,14 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 	}
 	b.Options.MachineType = s.MachineType
 	b.Options.Logging = "CLOUD_LOGGING_ONLY"
+	// The timeout is what the estimator prices the build at, and it counts
+	// from the moment the build starts; the queue TTL is how long the build
+	// may wait for a worker before that, and the lease's deadline covers both
+	// (internal/budget's MaxBuildSeconds and MaxBuildQueueSeconds, each pinned
+	// equal to these two by a test). Both are set rather than left to Cloud
+	// Build's defaults, which the deadline's arithmetic would depend on.
 	b.Timeout = "3600s"
+	b.QueueTtl = "3600s"
 	return b, nil
 }
 

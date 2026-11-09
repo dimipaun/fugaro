@@ -45,6 +45,7 @@ import {
   CONSOLE_CLI_UPGRADE_COMMAND,
   HIDDEN_VIEW_WORDS,
   LAUNCH_CLI_FLOOR,
+  LICENCE_KEY_CLI_FLOOR,
   NOTICE_REASONS,
   REDUCED_VIEWS,
   RUNS_LIST_PAGE_CLI_FLOOR,
@@ -56,6 +57,7 @@ import {
   compareMinors,
   hidesView,
   launchSupported,
+  licenceKeySupported,
   parseCliVersion,
   renderVersionSkew,
   runsListPageSupported,
@@ -492,6 +494,45 @@ describe('budgetComputeSupported', () => {
     const inRange = SUPPORTED_CLI_MINORS.includes(`${floorMajor}.${String(floorMinor)}`)
     expect(atFloor.mode).toBe(inRange ? 'ok' : 'reduced')
     expect(hidesView(atFloor, 'caps')).toBe(!inRange)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The licence-key floor.
+// ---------------------------------------------------------------------------
+
+describe('licenceKeySupported', () => {
+  it('refuses every version while no release takes the key back out of its own environment', () => {
+    // The constant is unset today, and that is the whole state of the hand-off:
+    // the registration point that calls `ee/licence`'s `TakeEnvironmentKey` has
+    // no caller on this tree, so no release of the CLI removes the variable from
+    // its own environment -- and a key handed to a CLI that does not remove it
+    // is inherited by every program that CLI starts, which is the leak F41
+    // exists to forbid (`src/main/spawn.ts`'s `LICENCE_KEY_VAR`). An unset floor
+    // is therefore a refusal for every line, including one no CLI will print.
+    expect(LICENCE_KEY_CLI_FLOOR).toBeNull()
+    for (const line of ['0.11.2', '0.16.0', '0.22.0', '1.4.2', '99.99.99']) {
+      expect(licenceKeySupported(line), line).toBe(false)
+    }
+  })
+
+  it('is the patch comparison the other floors are, once a release names itself', () => {
+    // The branch a release takes: the constant becomes the version whose
+    // registration point lands, and the comparison is `meetsCliFloor`'s, so the
+    // boundaries are the same ones `launchSupported` and `budgetComputeSupported`
+    // hold -- below the floor is a refusal however close, the floor itself and
+    // everything above it are not, and a line that cannot be placed at all is a
+    // refusal. The floor is driven as an argument here because the constant is
+    // unset; that parameter exists for this case (`licenceKeySupported`'s note).
+    const floor = '0.23.0'
+    expect(licenceKeySupported('0.22.9', floor)).toBe(false)
+    expect(licenceKeySupported('0.23.0', floor)).toBe(true)
+    expect(licenceKeySupported('0.23.1', floor)).toBe(true)
+    expect(licenceKeySupported('0.24.0', floor)).toBe(true)
+    expect(licenceKeySupported('0.23.0+build.7', floor)).toBe(true)
+    expect(licenceKeySupported('0.23.0-rc.1', floor)).toBe(false)
+    expect(licenceKeySupported('dev', floor)).toBe(false)
+    expect(licenceKeySupported('', floor)).toBe(false)
   })
 })
 

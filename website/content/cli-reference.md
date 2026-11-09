@@ -43,9 +43,11 @@ Subcommands:
 - `fugaro graph` -- Print the project's dependency graph
 - `fugaro help` -- Help about any command
 - `fugaro image` -- Build and inspect a workflow's derived container image
+- `fugaro issue` -- Read and dismiss the issues saved on this machine
 - `fugaro logs` -- Print a run's logs from Cloud Logging
 - `fugaro managed` -- Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
 - `fugaro models` -- Show the models this project can run, and where each is served
+- `fugaro orchestrator` -- Read and patch the project's orchestrator state
 - `fugaro pair` -- Pair a phone with this installation
 - `fugaro plan` -- Read a plan's graph artifact
 - `fugaro project` -- The project's policy, its allow-list and the repositories enrolled
@@ -1823,7 +1825,7 @@ NAME is a credential the service can issue, in the document's own spelling:
   claude-oauth-token-<account>       a named Claude account's OAuth token (tier A)
   anthropic-api-key                the project's Anthropic API key (tier B)
   github-app-key                  the GitHub App's private key (no tier: the mint signs with it)
-  bitbucket-token                   the upstream Bitbucket token (no tier: held for the git proxy a later release adds; a Bitbucket run's job still uses its own mounted token)
+  bitbucket-token                   the upstream Bitbucket token (no tier: the git proxy issues this entry for the repositories the published node admits with proxy: true, and every other Bitbucket run's job still uses its own mounted copy until the flip)
   bitbucket-read-consumer             the Bitbucket read consumer (no tier: the service's read mint exchanges it for a read-scoped token): a YAML mapping of key, secret and workspace, one field per line, so redirect it from a file — the hidden prompt takes one line
   claude-oauth-token--review-signing  the default account's review-signing key (no tier: the service's sign
                                      route computes a MAC with it; written by --generate below)
@@ -2491,6 +2493,124 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro issue`
+
+Read and dismiss the issues saved on this machine
+
+Read the issues saved on this machine.
+
+An issue is one Markdown file under the user's state directory, holding
+the whole issue: a strict header and the diagnosis' own words. `list`
+shows what is saved, `show` prints one, and `dismiss` sets one aside so
+nothing is filed for it. An issue is named by its local ID
+(`local-<run stem>`) until it has been uploaded, and by its number
+(`#0007`) from then on; `show` and `dismiss` take either.
+
+Nothing here is uploaded: the issue stays on this machine, and the text
+of a record is printed as data — it comes from log text this machine did
+not write.
+
+Usage: `fugaro issue`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for issue |
+
+Subcommands:
+
+- `fugaro issue dismiss` -- Mark an issue as not worth filing
+- `fugaro issue list` -- List the issues saved on this machine
+- `fugaro issue show` -- Print one issue: its number (#0007) or its local ID
+
+## `fugaro issue dismiss`
+
+Mark an issue as not worth filing
+
+Mark one saved issue as not worth filing.
+
+REF is the issue's number — `7`, or the `#0007` a listing prints — or
+its local ID `local-<run stem>`, the same argument `show` takes. The
+status is written in the issue's own file and nothing else changes: the
+record stays where it is, so a listing still shows what was set aside
+and who did it, and nothing is filed.
+
+An issue that has already been filed is refused: it is open on GitHub,
+and setting it aside here would not close it.
+
+A coding agent's session may not dismiss an issue: a steered diagnosis
+could otherwise bury a real bug, so a person sets one aside (D1730).
+
+Usage: `fugaro issue dismiss REF`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for dismiss |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro issue list`
+
+List the issues saved on this machine
+
+List the issues saved on this machine, one row each.
+
+A row names the issue the way `show` and `dismiss` take it —
+its number once it has been uploaded, its local ID before — with the
+class the diagnosis gave it, where it stands, and its one-line summary.
+Nothing is uploaded and nothing is filed: the listing is this machine's
+own folder, read.
+
+--json prints the records themselves, in the shape
+schemas/issue-record.schema.json describes, which is the document a
+reader outside this binary consumes.
+
+Usage: `fugaro issue list`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for list |
+| `--json` | bool | `false` | no | print machine-readable output |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro issue show`
+
+Print one issue: its number (#0007) or its local ID
+
+Print one issue the machine saved.
+
+REF is the issue's number — `7`, or the `#0007` a listing prints — or
+`local-<run stem>`, which is what it is called until it has been
+uploaded. The header a listing shows and the body a person reads are
+printed as data: the text came from a diagnosis that read log text this
+machine did not write, so no escape sequence in it reaches the terminal.
+
+--json prints the record itself, in the shape
+schemas/issue-record.schema.json describes.
+
+Usage: `fugaro issue show REF`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for show |
+| `--json` | bool | `false` | no | print machine-readable output |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro logs`
 
 Print a run's logs from Cloud Logging
@@ -2998,6 +3118,135 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for use |
 | `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro orchestrator`
+
+Read and patch the project's orchestrator state
+
+Read the project's orchestrator state, its audit log, and write the typed
+patch a person or a session may write. The state is the document the
+project's daemon keeps in its Firebase Realtime Database
+(orchestrator/<project>/{state,lease,audit}), and this command acts as
+the person the Application Default Credentials belong to, so the
+database's own roles decide what it may read and write.
+
+state prints the generated summary of the live node; --brief prints only
+that summary, and --brief --offline prints the brief the daemon cached at
+session start instead, reaching no network at all. events reads the audit
+log. patch applies one document from -f, and the ops only a person may
+land (approving a work item, setting the goal, closing a decision that
+waits on a person) are confirmed at a real terminal with the project's
+name typed, never by --yes: a session that has none writes nothing.
+
+Usage: `fugaro orchestrator`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for orchestrator |
+
+Subcommands:
+
+- `fugaro orchestrator events` -- Read the orchestrator's audit log
+- `fugaro orchestrator patch` -- Apply one typed patch document to the orchestrator's state
+- `fugaro orchestrator state` -- Print the orchestrator's state: the generated summary of its live node
+
+## `fugaro orchestrator events`
+
+Read the orchestrator's audit log
+
+Read the project's orchestrator audit log in the order the server stamped it,
+oldest first. --since takes a duration (1h, 30m) and keeps the entries the
+database's own clock puts inside it. --json prints a versioned document
+(schemas/orchestrator-output.schema.json).
+
+Usage: `fugaro orchestrator events`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for events |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--since` | string | "" | no | only entries newer than this duration, such as 1h or 30m |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro orchestrator patch`
+
+Apply one typed patch document to the orchestrator's state
+
+Apply one patch document (schemas/orchestrator-patch.schema.json) to the
+project's orchestrator state, from -f's file or from stdin with -f -. The
+document is validated and applied by the state model's own code, and the write
+is conditional on the revision this run read, so a patch built from a state
+somebody else has since changed is refused rather than landed on top of it.
+
+A run acts as a session. The ops only a person may land — approving a work
+item, setting the goal, and closing a decision that waits on a person — are
+confirmed at a real terminal, where the project's name is typed over the write
+that lands: the spec an approval binds, and every op the document carries,
+because the whole of it lands as the person who confirms it. Every other
+session, --json, a pipe and a coding agent's environment are refused and write
+nothing, and --yes never covers them.
+No flag, environment variable or field of the document makes this command the
+daemon or the decision agent: the daemon's bookkeeping is the daemon's.
+
+Usage: `fugaro orchestrator patch`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `-f`, `--file` | string | "" | no | the patch document to apply, or - to read it from stdin |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for patch |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro orchestrator state`
+
+Print the orchestrator's state: the generated summary of its live node
+
+Print the state of the project's orchestrator as the generated summary of its
+live node, with everything it prints out of the document fenced as data. --brief
+prints the summary alone, which is the form the daemon caches for the
+session-start print. --brief --offline prints that cache instead and reaches no
+network at all, showing the stamp the daemon wrote it with; with no cache yet it
+says so rather than reading the node. --json prints a versioned document
+(schemas/orchestrator-output.schema.json).
+
+Usage: `fugaro orchestrator state`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--brief` | bool | `false` | no | print only the generated summary |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for state |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--offline` | bool | `false` | no | print the brief the daemon cached at session start, reaching no network (goes with --brief) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -4154,6 +4403,20 @@ carries: the `halted (run_cap)` cell is --state halted, and --help lists the
 states the flag takes. A run's state is in its result.json, so this filter
 reads every run it filters -- it narrows the listing, never the reads.
 
+--debt lists only the runs filed from a triage deferral: a task whose own spec
+is marked debt, which is work a run's review left behind rather than work
+somebody asked for. Like --state it reads the runs it filters, since the
+mark is in the run's task.json; a run whose task.json is unreadable is
+left out rather than guessed in, because nothing there says it is one.
+
+--group-by failure_class adds a block to the listing: one row per class of the
+closed vocabulary, with the runs of the window that ended in it, their share
+of the window's runs, and what they cost. It groups the rows the listing has
+already read and reads nothing new, and it moves nothing: the rows and the
+totals are the ones without it, and --json gains the `groups` block beside
+them. A page of a grouped listing is a page's total, so --group-by doesn't go
+with --limit, --after or --watch.
+
 --pr N lists the runs on pull request N of one repository (the first run and
 its follow-ups), over the last 90d unless --since says otherwise; the totals
 line is then the PR's total cost.
@@ -4168,7 +4431,9 @@ Flags:
 | `--all` | bool | `false` | no | every repository in the runs bucket |
 | `--batch` | string | "" | no | only runs of this batch |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--debt` | bool | `false` | no | only runs filed from a triage deferral (a task marked debt) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `--group-by` | string | "" | no | group the listing by one field (failure_class) |
 | `-h`, `--help` | bool | `false` | no | help for ls |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--limit` | int | `0` | no | print only the newest N rows (0, the default, is every row of the window; the totals stay the window's) |

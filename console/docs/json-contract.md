@@ -575,6 +575,7 @@ int64, none `omitempty`.
 | `project` | string | no | the Fugaro project |
 | `runs` | `[]runview.Row` | no | `[]` when none |
 | `totals` | `runview.Totals` | no | below |
+| `groups` | `[]object` | **yes** | **only under `runs ls --group-by failure_class`** (`internal/cli/runs_group.go`): the window's failures grouped, one object per class of the closed vocabulary of `docs/design/failure-classes.md` §3 that some run of the window ended in, beside the `runs` array rather than instead of it. Each group carries `class` (one of the nineteen names), `runs` (how many of the window's runs ended in it), `share` (that count's share **of the window's runs**, never of the spend — D1465) and `spend_usd` (what those runs cost). The order is the vocabulary's own (`failure.Classes()`), so two readers of one window read the same block. **`omitempty` is what keeps the phone's degraded feed alive**: the degraded watch document embeds this shape and the app refuses a key it does not know, so a block printed by a listing that never grouped would break the degraded screen (`internal/cli/watch.go`) |
 | `warnings` | `[]string` | no | the lines a human listing prints before its table |
 
 `runview.Row` (`internal/runview/runview.go`) is the run shape behind
@@ -609,6 +610,7 @@ reads:
 | `started_at` | `*time.Time` | **yes** | null = not started |
 | `base_branch`, `previous_run` | string | **yes** | |
 | `follow_up` | bool | no | |
+| `follow_up_of` | `*task.FollowUpOf` | **yes** | the parent a triage follow-up was filed from (docs/post-review-triage D1843, T-TR11), from the run's own `task.json` (`task.Spec.FollowUpOf`): the parent's `run` and the deferred findings' `keys` it settles. **CLI 0.22.0.** It is its own fact beside `follow_up` and not a second spelling of it: that one says the run continues a pull request's branch, this one says it was filed out of a review's deferral, and a run can be either without the other. **Absent for every run that is not one of those** — every run somebody asked for, and every task written before the field existed — so absence reads as "not filed from a deferral" and never as "filed for no finding". **Task-derived and not sanitized**, like `title`, `batch` and `requested_by` beside it: the display layer sanitizes it (design §5.1 rule 7) |
 | `draft_fallback` | bool | **yes** | the host has no draft PRs, so the PR is an ordinary one with `[DRAFT]` in its title |
 | `pr_status_at` | `*time.Time` | **yes** | when the runner last wrote the PR's status section — **null = never** |
 | `stale_draft` | bool | **yes** | the record is not final but its draft's status section is old, or the execution is gone: the run probably died |
@@ -746,8 +748,9 @@ compute is unknown: their `compute_usd` 0 means "not estimated", so the sums
 are a lower bound** — the console renders that, it does not hide it).
 
 **Flags** (`f := cmd.Flags()`, `newLsCmd`): `--repo`, `--all`, `--mine`, `--since`, `--batch`,
-`--limit`, `--after`, `--state`, `--pr`, `--watch`, `--interval` (hidden), `--json`, plus the cloud
-flags. The allow-list excludes `--watch` (it is `watch` under another name).
+`--limit`, `--after`, `--state`, `--group-by`, `--pr`, `--watch`, `--interval` (hidden), `--json`, plus the cloud
+flags. The allow-list excludes `--watch` (it is `watch` under another name); `--group-by` is no row's
+argument either, so no spawn emits it and the block it adds waits for the screen that reads it.
 
 **`--limit=N` and `--after=RUN-ID` are the page and its cursor, and they are the two
 flags the console's `runs ls` row adds to the list above** (D818, the console
@@ -3082,11 +3085,14 @@ the repository, and no list can speak about it. The spellings are the ones
 `TestSecurityPathsCheckFailsClosedOnAnUnplaceablePath` holds, drawn from
 `sensitivity`'s own table (`pattern_test.go`'s
 `TestUnplaceablePathMatchesNoRuleAndClassifiesSensitive`): `/etc/passwd` is
-absolute, `docs/../website/src/x.md` escapes, the empty string is no path at
-all, and a bare `.` and a bare `..` are the repository root as a directory
-reference and the tree above it — the pair the matcher's own rule *accepts*,
-since `path.Clean` leaves both exactly as they are, and that this command
-refuses where it composes the answer. The two are told apart by `matched`:
+absolute, `../SECURITY.md`, `../../etc/passwd` and a bare `..` escape the
+checkout, `docs/../website/src/x.md` is rewritten by `path.Clean`, and the empty
+string is no path at all — the matcher's own rule refuses every one of them, a
+leading `..` included, so no row can name them. A bare `.` is the one spelling
+that rule *accepts*, since `path.Clean` leaves it exactly as it is, and it names
+the repository root as a directory reference rather than a file of it: this
+command refuses it where it composes the answer. The two are told apart by
+`matched`:
 `sensitive: true` with `matched: null` is exactly that unplaceable case, and
 `docs/pending-workflows/console-tests.yml` is `true` **with** the floor's
 `pending-workflows` row.
@@ -3247,14 +3253,23 @@ table against the live constructors.
    exceptions, and both are writes the console's own confirmation windows
    answer**: the launch (§6.14, design §5.1 rule 11), which was the console's
    **first write**, and the settings edit (§6.20, design §5.1 rule 12, the
-   settings-edit plan's C3), which is its **second write**. The allow-list is by
+   settings-edit plan's C3), which is its **second write**. **A third write
+   reads no document of this file at all**, so it neither widens nor narrows
+   this sentence: `licence.save` (design §5.1 rule 5, the subscriptions plan's
+   S2.7) keeps the licence key the operator pasted in the console's own store
+   (design §5.1 rule 10), spawns nothing, consumes none of the documents below,
+   and needs no confirmation window because there is no child and no cloud
+   object to confirm — what it writes is a file of the console's own, and what
+   it refuses is a key that does not verify. The allow-list is by
    exact argv (design §5.1 rule 6), and both are on it: `run.launch` and
-   `settings.edit` are the two operations of the surface that write (V2.5.1a,
+   `settings.edit` are the two **spawning** operations of the surface that write
+   — `licence.save` is the third that writes and spawns nothing, which is why
+   there is no row of §8 for it (V2.5.1a,
    2026-10-28/29, took the surface to twenty-four; K2a's
    `link.openPullRequest` took it to twenty-five and writes nothing, and C4c's
    `coordinator.intents` took it to twenty-six and writes nothing — **the
    counts in this parenthesis are the history up to that commit, and rule 5's
-   thirty-one is today's**), and no other argv that writes is reachable
+   thirty-six is today's**), and no other argv that writes is reachable
    from a renderer. Two further commands this file
    describes are writes, and **neither is in the console's set**: `fugaro cancel
    RUN --json` (§6.3), which is on the design's "never" table and which no v1
