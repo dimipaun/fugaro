@@ -338,6 +338,15 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 		_ = r.printResult()
 		return err
 	}
+	// And D1548's, on the same path and for the same reason: the converge has
+	// applied everything it had, and the mode a managed project's runs read is
+	// raised here or on no run at all (update_budget_mode.go). It returns no
+	// error — every state that leaves the mode as it is is a warning or
+	// silence, because nothing may fail an update the HARD RULE makes the
+	// whole upgrade — so it is a statement and not a branch, and it is before
+	// printResult for the reason the two above are: what it printed and
+	// recorded belongs to this run's result.
+	e.raiseBudgetMode(ctx)
 	if err := r.printResult(); err != nil {
 		return err
 	}

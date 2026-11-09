@@ -1214,6 +1214,31 @@ func buildEdits(ctx context.Context, db *rtdb.Client, p *setPlan, slug string) (
 			e.raise = cur == budget.ModeEnforce && p.mode == budget.ModeObserve
 		}
 		edits = append(edits, e)
+
+		// And the record of who chose it beside the mode (D1548, task T16):
+		// `fugaro update` raises a *seeded* mode to enforce and may never touch
+		// one a person chose, so the node beside the mode says which this is. A
+		// mode given on this command line is the owner's own choice — this
+		// command is theirs, and D1542 fences every way of raising from a
+		// coding agent's session — so it is recorded as such even when the mode
+		// itself does not change.
+		var curSet string
+		setEtag, setFound, err := read(budget.PathModeSet, &curSet)
+		if err != nil {
+			return nil, err
+		}
+		se := &nodeEdit{path: budget.PathModeSet, etag: setEtag, newVal: budget.ModeSetOwner}
+		if setFound && curSet == budget.ModeSetOwner {
+			se.noop = true
+			se.lines = []string{"mode choice: the owner's (unchanged)"}
+		} else {
+			shown := curSet
+			if !setFound {
+				shown = "not set"
+			}
+			se.lines = []string{fmt.Sprintf("mode choice: %s -> the owner's", oneLine(shown))}
+		}
+		edits = append(edits, se)
 	}
 
 	if p.reserve != nil {

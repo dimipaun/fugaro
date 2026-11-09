@@ -690,6 +690,10 @@ func TestMarkAndProjectWritten(t *testing.T) {
 
 func TestBudgetModeSeedsRTDB(t *testing.T) {
 	mode := func(r *fbRig) any { return r.db.Value("config/mode") }
+	// modeSet records WHO chose the mode: the flag the operator passed, or
+	// nobody, and the difference is what `fugaro update` reads before it
+	// raises a seeded observe to enforce (D1548, task T16).
+	modeSet := func(r *fbRig) any { return r.db.Value("config/modeSet") }
 
 	// Without the flag an absent mode is seeded observe, and the jobs'
 	// mode (the local config) is left alone.
@@ -700,6 +704,9 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 	}
 	if mode(r) != "observe" || r.localConfig(t).BudgetMode() != localcfg.BudgetOff {
 		t.Errorf("mode %v, local %s", mode(r), r.localConfig(t).BudgetMode())
+	}
+	if s := modeSet(r); s != nil {
+		t.Errorf("%s = %v: the seed of an absent mode is nobody's choice, and a node here would make `fugaro update` leave it observing for ever", budget.PathModeSet, s)
 	}
 	if !strings.Contains(out, "budget.mode is off") {
 		t.Errorf("no word that jobs don't use the backend yet:\n%s", out)
@@ -720,6 +727,10 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 	}
 	if mode(r) != "observe" || r.localConfig(t).BudgetMode() != localcfg.BudgetObserve {
 		t.Errorf("mode %v, local %s", mode(r), r.localConfig(t).BudgetMode())
+	}
+	if s := modeSet(r); s != budget.ModeSetOwner {
+		t.Errorf("%s = %v, want %q: a mode the operator asked for is the operator's own, and no later update may raise it",
+			budget.PathModeSet, s, budget.ModeSetOwner)
 	}
 
 	// enforce needs the per-run cap the jobs enforce; refused before any apply.
@@ -753,6 +764,10 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 	}
 	if mode(r) != "enforce" || r.localConfig(t).BudgetMode() != localcfg.BudgetEnforce {
 		t.Errorf("mode %v, local %s", mode(r), r.localConfig(t).BudgetMode())
+	}
+	if s := modeSet(r); s != budget.ModeSetOwner {
+		t.Errorf("%s = %v, want %q: --budget-mode enforce is the operator's own choice too",
+			budget.PathModeSet, s, budget.ModeSetOwner)
 	}
 	if strings.Contains(out, "every run halts") {
 		t.Errorf("a warning about missing caps with caps set:\n%s", out)

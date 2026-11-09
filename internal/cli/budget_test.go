@@ -495,6 +495,32 @@ func TestSetLowerNoConfirmation(t *testing.T) {
 	}
 }
 
+// TestSetModeRecordsTheOwner: a mode given on this command line is the
+// installation owner's own choice, and the node beside it says so
+// (config/modeSet = owner, D1548). It is what `fugaro update` reads before it
+// raises a seeded observe to enforce, so without it the next update would undo
+// the owner's setting — and it is the CHOICE that is recorded, not a change of
+// value: a mode the owner sets to what it already is is theirs just the same.
+func TestSetModeRecordsTheOwner(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedCaps(f, 100, 20)
+	if _, _, err := execute(t, "budget", "set", "--global", "--mode", "observe", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.db.Value(budget.PathMode); got != budget.ModeObserve {
+		t.Errorf("%s = %v, want %s", budget.PathMode, got, budget.ModeObserve)
+	}
+	if got := f.db.Value(budget.PathModeSet); got != budget.ModeSetOwner {
+		t.Errorf("%s = %v, want %q: the mode this command set is the owner's own, and `fugaro update` may never raise it", budget.PathModeSet, got, budget.ModeSetOwner)
+	}
+	if _, _, err := execute(t, "budget", "set", "--global", "--mode", "enforce", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.db.Value(budget.PathModeSet); got != budget.ModeSetOwner {
+		t.Errorf("%s = %v after a second choice: the record is the owner's either way", budget.PathModeSet, got)
+	}
+}
+
 // TestSetMaxReserveKeepsOtherLimitKeys: config/limits is a read-modify-written
 // node that holds more than the largest lease — init writes the
 // rules-generation marker (projectpolicy.PathRulesMarker) beside it after a
