@@ -43,12 +43,13 @@ git rm docs/pending-workflows/console-linux-comments.md
 **That commit also owes `docs/pending-workflows/README.md` its references back.**
 This fragment is named in that page's opening line and in its section
 `## The comment-only fragments`, whose three reference edits are written out
-there as exact text. Two of them are this file's, and they go in the same commit:
-the opening line's second sentence goes back from *Four further files here are
-not workflows at all* to *Three*, and the exception paragraph under that
-section's numbered list goes with this file. No test can see a dangling reference
-here, because the fragments are `.md` and neither `internal/cli`'s docs tests nor
-`website/test/readme.mjs` enumerates them.
+there as exact text. **One** of them is this file's, and it goes in the same
+commit: the opening line's second sentence goes back from *Four further files
+here are not workflows at all* to *Three*. The exception paragraph under that
+section's numbered list is **not** one of the three, and it goes with this file
+too, because it describes this fragment alone and nothing else. No test can see
+a dangling reference here, because the fragments are `.md` and neither
+`internal/cli`'s docs tests nor `website/test/readme.mjs` enumerates them.
 
 ## The count of pinned hashes
 
