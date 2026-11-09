@@ -2471,6 +2471,25 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// resolved — the last of them by checkReviewPRs just above — and before
 	// the prefetch reads them.
 	r.fetchDiffBases(ctx)
+	if r.follow != nil {
+		// The commit the pull request's base is at, read locally off the
+		// fetch above and before any stage runs: the security escalation
+		// measures the pull request's whole diff against it (security.go's
+		// securityBase), and that read must start from a SHA, never from the
+		// ref it came from, which the agent's own git could repoint at its
+		// tip once a stage runs (refused.go's workBase; the same read a
+		// first run's checkpoints make of their base, above). A failure
+		// leaves the field empty, and the escalation then classifies the
+		// follow-up's own commits alone — which the warning says, because
+		// the commits the pull request's earlier runs added are lost with
+		// it.
+		if sha, err := repo.CommitOf(ctx, "refs/remotes/origin/"+r.diffBase()); err != nil {
+			r.d.Log.Warn("resolving the pull request's base commit failed; the security escalation classifies the follow-up's own commits only",
+				"base", r.diffBase(), "err", r.redact(err.Error()))
+		} else {
+			r.follow.baseSHA = sha
+		}
+	}
 	// A follow-up's and a review run's agent has no git credentials of its
 	// own, and a blobless clone fetches file contents lazily through
 	// origin: the runner brings in what the agent's own git will read while

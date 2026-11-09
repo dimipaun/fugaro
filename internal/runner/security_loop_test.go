@@ -460,3 +460,61 @@ func TestFollowUpEscalatesOnThePullRequestsWholeDiff(t *testing.T) {
 		t.Fatal("the pull request stayed a draft although the level the floor asked for ran over its diff and shipped")
 	}
 }
+
+// repointTheBase is the escape the test below exists for, run from inside the
+// follow-up's own stage: the checkout's origin/<base> is moved to the run's own
+// tip, so a read through that ref — what securityBase used to be — takes an
+// empty range. The step checks that the repoint really did that: git diff
+// --quiet exits 0 only while origin/main...HEAD holds nothing.
+func repointTheBase(t *testing.T, req agent.Request) {
+	t.Helper()
+	shell(t, req, "git update-ref refs/remotes/origin/main HEAD && git diff --quiet origin/main...HEAD")
+}
+
+// TestFollowUpEscalatesWhenTheBaseRefIsRepointed is securityBase's other half:
+// what the follow-up is measured against is the commit bootstrap read, never
+// the ref it was read from.
+//
+// The agent controls the checkout while a stage runs, so it can repoint
+// origin/<base> at its own tip — refused.go's workBase and checkpoint.go's C6a
+// both say so — and a read through that ref is then an empty range: the whole
+// pull request, the change the floor is about, invisible to the escalation and
+// to the finalize refusal, with the run free to publish the pull request as
+// ready. Read through the SHA bootstrap resolved before the agent ever ran,
+// the same repoint changes nothing.
+//
+// Mutation (securityBase returning "origin/" + r.diffBase() for a follow-up,
+// as it did before this): the test fails, stages = [implement review_first
+// review] — no escalation, and the pull request out of draft.
+func TestFollowUpEscalatesWhenTheBaseRefIsRepointed(t *testing.T) {
+	cfg := modeCfg(t, "startup", 2, "  first_line_review: on\n") +
+		"followup:\n  trusted: [\"" + aliceID + "\", \"" + bobID + "\"]\n"
+	h := followUpHarness(t, cfg, nil,
+		implementCredentialsUnverified, // the pull request's diff meets the floor
+		review("ship", 0),              // review_first
+		review("ship", 0),              // review: level 2 ships, and the suite never ran
+	)
+	h.comment(t, "alice", aliceID, "Please carry on with the feature.")
+	h.followUp(t, followID, runID, "")
+	rec, err := h.run(t,
+		then(implement("feature"), repointTheBase), // feature work, and the base ref moved to this run's tip
+		review("ship", 0),                          // review_first
+		review("ship", 0),                          // review: level 2 ships
+		review("ship", 0),                          // adversarial: the level the repointed ref cannot hide
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review_first", "review", "adversarial") {
+		t.Fatalf("stages = %v: the repointed ref took the pull request's diff out of the escalation's read", got)
+	}
+	if rec.Security == nil || rec.Security.Pattern != "credentials" || rec.Security.At != runstore.SecurityAtImplement {
+		t.Fatalf("record's escalation = %+v, want the credentials row at the implement seam", rec.Security)
+	}
+	if rec.Outcome != runstore.OutcomeReady || rec.Reason != "" {
+		t.Fatalf("outcome = %s (reason %q), want ready: the level-3 round shipped", rec.Outcome, rec.Reason)
+	}
+	if pr := onlyPR(t, h.provider); pr.Draft {
+		t.Fatal("the pull request stayed a draft although the level the floor asked for ran over its diff and shipped")
+	}
+}

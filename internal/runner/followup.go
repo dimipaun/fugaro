@@ -34,8 +34,15 @@ import (
 
 // followState is what a follow-up carries from bootstrap to finalize.
 type followState struct {
-	pr       gitprov.PRInfo     // the pull request as bootstrap read it
-	startSHA string             // the branch's head when the run started
+	pr       gitprov.PRInfo // the pull request as bootstrap read it
+	startSHA string         // the branch's head when the run started
+	// baseSHA is the commit the pull request's base branch was at, read
+	// locally right after bootstrap's own fetch of it and before the agent
+	// ever ran: the security escalation measures the pull request's whole
+	// diff against it (security.go's securityBase), and the ref it came from
+	// is a name the agent's own git could repoint at its tip, which would
+	// leave that read with an empty range. Empty when that read failed.
+	baseSHA  string
 	wasReady bool               // the pull request was not a draft: at bootstrap, then right before finalize's push
 	sel      followup.Selection // the comments the agent gets
 	nonce    string             // the comments block's delimiter nonce

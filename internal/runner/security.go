@@ -47,9 +47,9 @@ import (
 // are about *which* model the level runs and not about whether it runs.
 
 // securityBase is the revision the escalation's read starts from: the run's
-// own work (workBase) for a first run, the base its pull request targets for a
-// follow-up, so the whole pull request is classified and never only the commits
-// the follow-up added to it.
+// own work (workBase) for a first run, the commit the pull request's base was
+// at when the run started (follow.baseSHA) for a follow-up, so the whole pull
+// request is classified and never only the commits the follow-up added to it.
 //
 // A follow-up resolves its levels fresh and it is this run's readiness that
 // publishes the pull request's state — the branch leaves draft on it
@@ -60,13 +60,19 @@ import (
 // the case that matters most: a run the floor refused leaves its pull request a
 // draft, and only the next run can lift it.
 //
-// The base is diffBase's — the branch the review stage already diffs the pull
-// request against, read from the provider at bootstrap and never the
-// checkout's own origin/<base>, which the agent's git could repoint — so the
-// range classified here is the range this run's reviewers were handed.
+// Both are full commit SHAs read before the agent ever ran — the commit the
+// run was cut from, and the base branch bootstrap fetched — and never a ref
+// name: the agent controls the checkout while a stage runs and could repoint
+// origin/<base> at its own tip, which would leave this read with an empty
+// range, and so the escalation with nothing to classify at all (refused.go's
+// workBase, checkpoint.go's C6a).
+//
+// A bootstrap that could not resolve the base leaves only workBase, the
+// follow-up's own commits: the escalation still classifies everything this run
+// added itself, and bootstrap says what is missing.
 func (r *run) securityBase() string {
-	if r.follow != nil {
-		return "origin/" + r.diffBase()
+	if r.follow != nil && r.follow.baseSHA != "" {
+		return r.follow.baseSHA
 	}
 	return r.workBase()
 }
