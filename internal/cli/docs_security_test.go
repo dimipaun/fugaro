@@ -594,13 +594,23 @@ func TestSecurityMdStatesTheBitbucketGitProxy(t *testing.T) {
 		}
 	}
 	// The overclaims a rewrite drifts into: the proxy is not a sandbox, the
-	// token is not out of the job on this tree, and the reach is not "no
-	// reach". Read out of the whole document, because a bullet that points
-	// here is as wrong as the section.
+	// token is not out of the job on this tree, the job is not tokenless,
+	// and the reach is not "no reach". Read out of the whole document,
+	// because a bullet that points here is as wrong as the section.
+	//
+	// Every one of them was written into this section once and is false
+	// while `config.ProxiedGitSecretNames` is empty: the mount stays, so the
+	// agent can read the token out of the runner's `/proc` and use the
+	// token's own reach, workspace-wide where the token is a workspace one.
+	// What the proxy narrows is the job's **own git traffic**, and the
+	// job-wide reach ends only once the flip lands.
 	for _, banned := range []string{
 		"the agent cannot reach Bitbucket at all",
 		"the Bitbucket token is out of the job",
 		"a proxied run is sandboxed",
+		"no real token in reach",
+		"instead of holding a token",
+		"that reach ends **for that repository**",
 	} {
 		if strings.Contains(flattenDoc(s), banned) {
 			t.Errorf("SECURITY.md says %q: the proxy narrows the run, and the flip that takes the mount has not landed on this tree", banned)
