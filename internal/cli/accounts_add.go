@@ -168,7 +168,11 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// here — before the login is screened and before the diff is shown — so a
 	// refusal leaves the file exactly as it was. Everywhere else it answers the
 	// zero Managed, which is every fence below unchanged.
-	m, gate, err := accountsAddGate(cmd.Context(), cmd, lc, o, name, profile, beyond, next)
+	// allow is the document's OWN list, read back from the parse above rather
+	// than the --repos that was passed: re-declaring an account adds to the list
+	// it already carries, so the repositories the owner is asked about are the
+	// ones the file will hold (accounts_managed.go).
+	m, gate, err := accountsAddGate(cmd.Context(), cmd, lc, o, name, profile, beyond, after.ClaudeAccounts[name].AllowDataTo, next)
 	if err != nil {
 		return err
 	}
@@ -257,7 +261,7 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// the declaration and nothing else, and with the sentence naming the command
 	// its owner runs at their own terminal (spec §4.2).
 	if marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); marker != "" {
-		return accountsAddTokenStep(marker, name, command)
+		return accountsAddTokenStep(name)
 	}
 	if profile == "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "no profile serves %s yet: this project's jobs do not select it until one does\n", name)

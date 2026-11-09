@@ -60,6 +60,11 @@ type addRig struct {
 	*initRig
 	db *gcpfake.RTDB
 	fs *gcpfake.Firestore
+	// managed is whether the project this rig's marks describe is one the gate
+	// proves is managed. It is the one fact `add` cannot read back off the
+	// filesystem — the two marks live in the fakes — and it decides whether the
+	// run it makes is asked the owner's own confirmation (accounts_managed_test.go).
+	managed bool
 }
 
 // newAddRig is the fixture, ready: the local config is selected (FUGARO_CONFIG,
@@ -168,11 +173,32 @@ func addPolicyNode() map[string]any {
 // against them is about, and no assertion of this file prints it.
 func addToken() string { return strings.Repeat("k", 48) }
 
-// add runs the command the way the owner does — the token on stdin, `--yes`
-// for the confirmation, no terminal — and returns what it printed.
+// add runs the command the way the OWNER does — a real terminal on both
+// streams, the project's own name typed at the one confirmation, the token at
+// the hidden prompt — and returns what it printed.
+//
+// It is the owner's run and not a scripted one because a managed project's
+// `accounts add` is refused to every caller that is not that person (the
+// owner's ruling of 2026-11-09): a fixture that seeded one through --yes or
+// through a pipe would be seeding it through a door the step has closed, and
+// would pass only on a build with that door open.
 func (r *addRig) add(t *testing.T, name string, args ...string) (string, string) {
 	t.Helper()
-	out, errOut, err := executeStdin(t, addToken()+"\n", append([]string{"accounts", "add", name, "--yes"}, args...)...)
+	// What is typed, and where the run reads it, is what the project asks for.
+	// A managed project asks its owner to confirm the account first, and only a
+	// person at a real terminal is asked — so the fixture stands at both
+	// streams and answers the confirmation. An ordinary installation has no
+	// gate to answer and no question at all: it keeps the scripted shape it has
+	// always had, --yes for the installation stages below.
+	typed := addToken() + "\n"
+	argv := append([]string{"accounts", "add", name}, args...)
+	if r.managed {
+		ownerAtTheTerminal(t)
+		typed = initProjectName + "\n" + typed
+	} else {
+		argv = append(argv, "--yes")
+	}
+	out, errOut, err := executeOwnerStdin(t, typed, argv...)
 	if err != nil {
 		t.Fatalf("accounts add %s: %v\nstdout:\n%s\nstderr:\n%s", name, err, out, errOut)
 	}

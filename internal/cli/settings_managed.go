@@ -148,8 +148,11 @@ func settingsWriteOwnTerminal(cmd *cobra.Command) bool {
 // ownerOnly is the class the terminal term does not cover: the step the gate
 // refuses outright, whose door D1552 and D1555 name as the owner's own terminal
 // and no session. It is `settings set`'s `typed` (settingsOwnerOnlyRule refuses
-// every such edit, D1026) and `accounts add`'s declaration this command's own
-// rules refuse (accountsAddOwnerOnly: D868's widening, D1026's token). Reading
+// every such edit, D1026). It was `accounts add`'s too, for the declaration its
+// own rules refuse (D868's widening, D1026's token); that command reads the
+// marks for every caller now and asks its own confirmation at the owner's own
+// terminal (accounts_managed.go, the owner's ruling of 2026-11-09), so it no
+// longer has a class to name here and no longer calls this function. Reading
 // the marks for one of those at that terminal is what takes the door away: the
 // gate answers the person standing there with the refusal it keeps for a
 // session, so the step is written only by the flag that answers for it and

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
@@ -561,6 +563,28 @@ func noTerminal(t *testing.T) {
 	old := stdinIsTerminal
 	stdinIsTerminal = func(io.Reader) bool { return false }
 	t.Cleanup(func() { stdinIsTerminal = old })
+}
+
+// executeOwnerStdin is executeStdin for a run that reads MORE THAN ONE line
+// from its input — a command whose confirmation and whose value are both typed
+// at the same terminal. The input is handed out one byte at a time, so a reader
+// that buffers (confirmTypedStrict's bufio.Reader, which reads ahead of the line
+// it returns) cannot swallow the value behind the answer.
+//
+// It is a property of the harness and not of the product: on a terminal, a read
+// returns the one line that has been typed and never what has not been typed
+// yet, so the two reads of one terminal cannot collide there. Over a string the
+// whole input is already available, and only a reader that rations it says so.
+func executeOwnerStdin(t *testing.T, stdin string, args ...string) (string, string, error) {
+	t.Helper()
+	cmd := NewRootCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetIn(iotest.OneByteReader(strings.NewReader(stdin)))
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs(NormalizeArgs(args))
+	err := cmd.Execute()
+	return out.String(), errOut.String(), err
 }
 
 // The two helpers above are what every terminal-dependent test says with, and
