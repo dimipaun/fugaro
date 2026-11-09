@@ -107,7 +107,7 @@ function b64url(text: string): string {
 function mint(s: Signer, claims: LicenceClaims, payloadText = JSON.stringify(claims)): string {
   const payload = Buffer.from(payloadText, 'utf8')
   return [
-    b64url(s.id),
+    s.id,
     payload.toString('base64url'),
     Buffer.from(edSign(null, payload, s.privateKey)).toString('base64url'),
   ].join('.')
