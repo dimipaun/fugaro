@@ -202,6 +202,12 @@ type ExitError struct {
 	Command string // the subcommand, such as "plan" or "state rm"
 	Code    int
 	Stderr  string // the tail of terraform's stderr
+	// Truncated is whether Stderr is only the tail of what terraform wrote:
+	// the bytes before it were dropped, so the first line it starts with may
+	// be half of a message that began earlier. A reader that has to account
+	// for every diagnostic terraform printed (PropagationFailure) needs the
+	// difference between "there were no others" and "they are not here".
+	Truncated bool
 }
 
 func (e *ExitError) Error() string {
@@ -513,7 +519,7 @@ func (t *TF) run(ctx context.Context, args []string, stdout io.Writer) (int, err
 	err := cmd.Run()
 	var xe *exec.ExitError
 	if errors.As(err, &xe) {
-		return xe.ExitCode(), &ExitError{Command: name, Code: xe.ExitCode(), Stderr: stderr.String()}
+		return xe.ExitCode(), &ExitError{Command: name, Code: xe.ExitCode(), Stderr: stderr.String(), Truncated: stderr.dropped}
 	}
 	if err != nil {
 		return -1, fmt.Errorf("terraform %s: %w", name, err)
@@ -534,13 +540,19 @@ func (s *syncWriter) Write(p []byte) (int, error) {
 	return s.w.Write(p)
 }
 
-// tailBuffer keeps the last stderrTail bytes written to it.
-type tailBuffer struct{ b []byte }
+// tailBuffer keeps the last stderrTail bytes written to it, and records
+// whether it had to drop any: what it holds is then a tail rather than the
+// whole of what was written.
+type tailBuffer struct {
+	b       []byte
+	dropped bool
+}
 
 func (t *tailBuffer) Write(p []byte) (int, error) {
 	t.b = append(t.b, p...)
 	if len(t.b) > stderrTail {
 		t.b = append([]byte(nil), t.b[len(t.b)-stderrTail:]...)
+		t.dropped = true
 	}
 	return len(p), nil
 }
