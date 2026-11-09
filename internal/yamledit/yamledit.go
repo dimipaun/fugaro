@@ -354,7 +354,10 @@ func UpsertSeqItemByKey(src []byte, path []string, keyField, keyValue string, fi
 // field when the sequence does not have it, the field is written beside the
 // fields the item already carries when it does not have that one yet, and the
 // list is replaced where it stands when it does — so the item keeps its place,
-// its other fields and their lines.
+// its other fields and their lines, and the field keeps the comment block above
+// it, the comment beside its key and whatever trails its last item. A comment
+// written between the items themselves goes with them: the list the caller
+// asked for replaces that one whole.
 //
 // UpsertSeqItemByKey writes scalar fields only, and a field whose value is a
 // list of its own — a pool's members — has no writer there: this is that half.
@@ -953,6 +956,40 @@ func upsertListField(op string, src []byte, path []string, keyField, keyValue, f
 	if fe.value.Style&yaml.FlowStyle != 0 {
 		return nil, refuse(op, at, ReasonFlowCollection)
 	}
+	// The list's own items are replaced, and no more than they: the field's key
+	// line stays as the document wrote it — the comment beside it with it — and
+	// so does the comment block above the key, which belongs to the file rather
+	// than to the list. The replacement starts where the first item's line does
+	// and ends where the last item's written text does, so whatever follows that
+	// text on its line, a trailing comment above all, stays where it was; the
+	// line break is no part of it either, because the document's own is still
+	// there.
+	list := fe.value
+	empty, err := d.emptyValue(list)
+	if err != nil {
+		return nil, withOp(err, op)
+	}
+	if empty {
+		// The key is written with nothing under it: the items go in under the
+		// key it already has, which openChild writes after the key's own line —
+		// its comment, if the document put one beside it, above them.
+		return d.openChild(op, fe, listValueLines(fieldIndent, d.step, values))
+	}
+	if list.Kind == yaml.SequenceNode {
+		end, err := d.nodeEnd(op, list)
+		if err != nil {
+			return nil, err
+		}
+		first, err := d.offset(list.Content[0])
+		if err != nil {
+			return nil, withOp(err, op)
+		}
+		start := d.lines.start(d.lines.lineOf(first))
+		return splice(d.src, start, end, []byte(strings.Join(listValueLines(fieldIndent, d.step, values), d.eol))), nil
+	}
+	// A field written with no list yet — a scalar the caller is retyping — has
+	// no item lines to replace: the whole entry goes, its own comment block with
+	// it, because the entry is what the list takes the place of.
 	start, end, err := d.entrySpan(op, fe)
 	if err != nil {
 		return nil, err

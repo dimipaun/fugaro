@@ -51,17 +51,19 @@ crafts:
 `
 
 // accountsPoolPools is the pools block, written the block way so the writes
-// have bytes to splice into. The comment above the first pool is the fixture's
-// evidence that an edit goes through internal/yamledit: a write that
-// round-tripped the decoded config would drop it.
+// have bytes to splice into. The comments — above the first pool, above the
+// members it walks and beside its last one — are the fixture's evidence that an
+// edit goes through internal/yamledit and touches nothing but the lines it
+// rewrites: a write that round-tripped the decoded config would drop them.
 const accountsPoolPools = `
 pools:
   # the owner's pool: a subscription and then the key
   - name: claude
     strategy: failover
+    # the order it walks them: the subscription first
     members:
       - oauth-one
-      - key-one
+      - key-one   # the paid one
   - name: routes
     members:
       - router-one
@@ -131,10 +133,11 @@ func TestPoolAddReplacesTheWholeMemberListInPlace(t *testing.T) {
   # the owner's pool: a subscription and then the key
   - name: claude
     strategy: failover
+    # the order it walks them: the subscription first
     members:
       - key-one
       - oauth-two
-      - oauth-one
+      - oauth-one   # the paid one
   - name: routes
     members:
       - router-one

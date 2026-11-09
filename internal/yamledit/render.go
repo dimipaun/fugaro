@@ -205,7 +205,14 @@ func itemListLines(indent, step int, keyField, keyValue, field string, values []
 // listLines is a list-valued field as a block sequence: the key on its own line
 // and one item per line under it.
 func listLines(indent, step int, field string, values []string) []string {
-	lines := []string{indentOf(indent) + renderKey(field) + ":"}
+	return append([]string{indentOf(indent) + renderKey(field) + ":"}, listValueLines(indent, step, values)...)
+}
+
+// listValueLines is a block sequence's items alone, at the indentation a list
+// under a key at `indent` writes them: the shape a list being replaced needs,
+// where the field's own key line is one the document already has and keeps.
+func listValueLines(indent, step int, values []string) []string {
+	lines := make([]string, 0, len(values))
 	for _, v := range values {
 		lines = append(lines, indentOf(indent+step)+"- "+renderValue(v, 0))
 	}

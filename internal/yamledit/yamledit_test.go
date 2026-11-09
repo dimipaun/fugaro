@@ -1305,6 +1305,13 @@ func TestEveryOperationKeepsTheCommentsAroundIt(t *testing.T) {
 				return yamledit.RemoveSeqItemByKey(d, []string{"rigor", "areas"}, "path", "internal/one/**")
 			},
 		},
+		{
+			"UpsertSeqItemListByKey", []string{"rigor", "areas"},
+			func(d []byte) ([]byte, error) {
+				return yamledit.UpsertSeqItemListByKey(d, []string{"rigor", "areas"}, "name", "two", "allow_data_to",
+					[]string{"owner/repo-a", "owner/repo-c"})
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			doc := readFixture(t, "commented-project.yaml")
@@ -1324,6 +1331,54 @@ func TestEveryOperationKeepsTheCommentsAroundIt(t *testing.T) {
 			reparses(t, got)
 		})
 	}
+}
+
+// TestUpsertSeqItemListByKeyKeepsTheCommentsAroundTheField is the promise above
+// held to the shape a pool is written in: replacing a list-valued field replaces
+// its items and nothing else, so the comment above the field and the comment
+// trailing its last item are still in the file afterwards.
+func TestUpsertSeqItemListByKeyKeepsTheCommentsAroundTheField(t *testing.T) {
+	const doc = "pools:\n" +
+		"  - name: claude\n" +
+		"    # oauth first, the key as the fallback\n" +
+		"    members:   # walked in this order\n" +
+		"      - oauth-one\n" +
+		"      - key-one  # the paid one\n"
+	got, err := yamledit.UpsertSeqItemListByKey([]byte(doc), []string{"pools"}, "name", "claude", "members",
+		[]string{"oauth-two", "key-one"})
+	if err != nil {
+		t.Fatalf("UpsertSeqItemListByKey: %v", err)
+	}
+	const want = "pools:\n" +
+		"  - name: claude\n" +
+		"    # oauth first, the key as the fallback\n" +
+		"    members:   # walked in this order\n" +
+		"      - oauth-two\n" +
+		"      - key-one  # the paid one\n"
+	if string(got) != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	reparses(t, got)
+
+	// A field written with its key alone has no items to replace: the list goes
+	// in under the key the document already has, and the comment beside that key
+	// stays where it was.
+	const bare = "pools:\n" +
+		"  - name: claude\n" +
+		"    members:   # walked in this order\n"
+	got, err = yamledit.UpsertSeqItemListByKey([]byte(bare), []string{"pools"}, "name", "claude", "members",
+		[]string{"oauth-one"})
+	if err != nil {
+		t.Fatalf("UpsertSeqItemListByKey (a bare key): %v", err)
+	}
+	const bareWant = "pools:\n" +
+		"  - name: claude\n" +
+		"    members:   # walked in this order\n" +
+		"      - oauth-one\n"
+	if string(got) != bareWant {
+		t.Fatalf("got %q, want %q", got, bareWant)
+	}
+	reparses(t, got)
 }
 
 // TestAFlowCollectionElsewhereIsUntouched: a flow collection this package will
