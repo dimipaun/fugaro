@@ -127,11 +127,11 @@ longer window, five months): `cost_per_run_rising`, the billed cost per run risi
 months running, which is the long view the four rules cannot give — two of them read weeks and two
 read one month against the one before it. Like the others it is a signal to look, never a verdict.
 
-The failure classes add **two more rules of this same kind** — **D326** is their idea and the
-detector's: a fixed, documented rule over the periods' committed blocks, not a search
-(`docs/task-governance/reconciliation.md`) — read over a closed vocabulary of causes instead of over
-free text ([failure-classes.md](../design/failure-classes.md) §6.2, built by FC7 of
-[the failure-classes plan](../failure-classes/implementation-plan.md)):
+The failure classes add **two more rules of this same kind, read over a closed vocabulary of causes
+instead of over free text** ([failure-classes.md](../design/failure-classes.md) §6.2, built by FC7 of
+[the failure-classes plan](../failure-classes/implementation-plan.md)). They are **D326**'s idea,
+which is the detector's: a fixed, documented rule over the periods' committed blocks, not a search
+(`docs/task-governance/reconciliation.md`).
 
 | Rule | Fires when |
 | --- | --- |
