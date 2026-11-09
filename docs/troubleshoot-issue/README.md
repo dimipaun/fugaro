@@ -1,6 +1,8 @@
 # Troubleshoot findings to `fugaro issue`
 
-**Status: plan only; nothing is implemented; no task approved.** Spec owner: Dimi Paun. Written 2026-11-08. Two independent review rounds ran; see the pull request.
+**Status (2026-11-09, later still): one task of the plan below is written — T-IS2, the issue redaction gate (`internal/redact/redact.go` and `redact_test.go`, `internal/issues/redact.go` and `redact_test.go`, on the branch `fugaro/20261108-174015-f89c`, where its red step has run) — and T-IS1, T-IS3, T-IS4, T-IS5, T-IS10, T-IS13, T-IS14, T-IS15 and T-IS17 have merged on `main` while that branch was open (T-IS1 and T-IS10 already run the gate, over the record's header and over the text the shared store holds, which is not the post; T-IS4 is the diagnose prompt's fourth outcome and its signature, and T-IS17 the launcher's `issues/` grant, whose release note is "run `fugaro update`"); everything else the folder holds is plan only, and no other task is written.** Spec owner: Dimi Paun. Written 2026-11-08. Two independent review rounds ran; see the pull request.
+
+*The status as first written, kept:* **Status: plan only; nothing is implemented; no task approved.** Spec owner: Dimi Paun. Written 2026-11-08. Two independent review rounds ran; see the pull request.
 
 - [spec.md](spec.md): the spec as received.
 - [reconciliation.md](reconciliation.md): findings F1–F27, decisions D1720–D1736 (the writer of `resolved_in` is another spec) (all answered 2026-11-08, all as recommended; D1720, D1721 and D1605 (D1728) amended after review), open items, UNVERIFIED. Wins over the spec.
