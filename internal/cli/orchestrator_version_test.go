@@ -69,7 +69,12 @@ func TestDaemonRestartsWhenTheUnitBinaryDiffers(t *testing.T) {
 }
 
 // TestDaemonKeepsRunningWhileTheUnitBinaryIsTheSame: an unchanged binary is no
-// handover, however many cycles pass, and the daemon keeps its lease.
+// handover, however many cycles pass, and the daemon keeps driving the id until
+// something stops it. What is pinned is that it never handed over: the cycles it
+// waited and the line it did not print. The lease is free at the end because the
+// stop this test uses is the cancelled context, which gives the id back like
+// every other exit (TestDaemonGivesTheLeaseBackWhenItIsStopped) — waiting for
+// the TTL is the very cost that release exists to avoid.
 func TestDaemonKeepsRunningWhileTheUnitBinaryIsTheSame(t *testing.T) {
 	f := newDaemonFixture(t)
 	binary := stubBinary(t, t.TempDir(), "fugaro", "echo "+runningVersion)
@@ -96,8 +101,8 @@ func TestDaemonKeepsRunningWhileTheUnitBinaryIsTheSame(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !held.Held {
-		t.Error("the daemon gave up a lease it should still hold")
+	if held.Held || held.Holder != "" {
+		t.Errorf("the daemon was stopped and the lease still names %q for the whole TTL", held.Holder)
 	}
 }
 
@@ -107,7 +112,10 @@ const runningVersion = "v1.2.3"
 // TestDaemonSurvivesAnUnreadableUnitBinary: a read that fails, or a version
 // this cannot parse, is logged and is never a reason to exit. A broken
 // package-manager link must not stop the daemon: a daemon that exited on one
-// would leave the id unclaimed with nothing to restart it.
+// would leave the id unclaimed with nothing to restart it. The cycles counted
+// and the handover line that is absent are what say it kept going; the lease is
+// free at the end because the test ends the loop by cancelling its context, and
+// that exit gives the id back (TestDaemonGivesTheLeaseBackWhenItIsStopped).
 func TestDaemonSurvivesAnUnreadableUnitBinary(t *testing.T) {
 	for _, tc := range []struct{ name, body, want string }{
 		{"a binary that fails", "exit 3", "could not be read"},
@@ -143,8 +151,8 @@ func TestDaemonSurvivesAnUnreadableUnitBinary(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !held.Held {
-				t.Error("the daemon gave up a lease over a binary it could not read")
+			if held.Held || held.Holder != "" {
+				t.Errorf("the daemon was stopped and the lease still names %q for the whole TTL", held.Holder)
 			}
 		})
 	}

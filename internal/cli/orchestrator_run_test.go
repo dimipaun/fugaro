@@ -736,3 +736,37 @@ func TestDaemonGivesTheLeaseBackWhenItCannotStart(t *testing.T) {
 		t.Errorf("a daemon whose start-up failed left the lease as %q, so nothing else can drive the id for the whole TTL", state.Holder)
 	}
 }
+
+// TestDaemonGivesTheLeaseBackWhenItIsStopped: Ctrl-C at a terminal and the
+// unit's SIGTERM at a shutdown are the same thing to this loop — its context
+// ends — and the lease goes back with it. A daemon that exited and left its
+// claim behind keeps everything that would take the id over out for the whole
+// TTL, refused with the name of a process that is not there: the unit's own
+// restart, a person's `fugaro orchestrator run`, a harness's `--once` pass.
+func TestDaemonGivesTheLeaseBackWhenItIsStopped(t *testing.T) {
+	f := newDaemonFixture(t)
+	d, out := f.running(t, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// The stop itself: the loop's own context ends while it waits, which is
+	// what the signal handler in cmd/fugaro does to it.
+	d.wake = func(ctx context.Context) error {
+		cancel()
+		<-ctx.Done()
+		return ctx.Err()
+	}
+
+	if err := d.loop(ctx); err != nil {
+		t.Fatalf("a daemon stopped by its own context returned %v, and a stop is a clean exit", err)
+	}
+	state, err := d.lease.Read(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Held || state.Holder != "" {
+		t.Errorf("the daemon is gone and the lease still names %q, so nothing else can drive the id for the whole TTL", state.Holder)
+	}
+	if !strings.Contains(out.String(), "the lease is released") {
+		t.Errorf("the daemon did not say what it did with the id: %q", out.String())
+	}
+}

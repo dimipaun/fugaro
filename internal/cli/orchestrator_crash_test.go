@@ -227,6 +227,44 @@ func TestRunViewFoldsARunThePlatformHasEnded(t *testing.T) {
 	}
 }
 
+// TestRunViewFoldsAHaltedRunAsRefused: a run a spend cap, the kill switch or a
+// governance tripwire halted got as far as starting and was then refused the
+// work. A refusal is not a failure (G4): the design never retries one, and the
+// difference is the one thing that happens next — the item's approval is still
+// the standing one, so an attempt folded as failed is immediately one the plan
+// covers again, and the next cycle relaunches work that was just refused. What
+// the record's halted status means to the state is therefore refused, the item
+// lands failed, and nothing starts a second run for it.
+func TestRunViewFoldsAHaltedRunAsRefused(t *testing.T) {
+	f, d, cs := crashDaemon(t, true, true)
+	rec := &runstore.Record{
+		Version: 1, RunID: cs.runID, Execution: "exec-1", Status: runstore.StatusHalted,
+		Stage: "run", Outcome: runstore.OutcomeNone, StartedAt: f.now,
+		Halt: &runstore.Halt{Reason: runstore.HaltRunCap, Scope: "run", At: f.now},
+	}
+	if err := f.runStore(t, cs.runID).WriteRecord(context.Background(), rec); err != nil {
+		t.Fatalf("writing the record a halted run carries: %v", err)
+	}
+
+	rep, err := d.tick.Step(context.Background())
+	if err != nil {
+		t.Fatalf("a cycle over a halted run: %v", err)
+	}
+	if rep.Folded == 0 {
+		t.Fatalf("the cycle folded nothing over a run the platform halted: %+v", rep)
+	}
+	it := f.intent(t, orchestrator.IntentID(cs.item.ID, 1))
+	if it.Outcome != orchestrator.OutcomeRefused {
+		t.Errorf("the attempt whose run was halted carries %q, and a run stopped by a cap is a refusal", it.Outcome)
+	}
+	if after := f.item(t, cs.item.ID); after.Phase != orchestrator.PhaseFailed {
+		t.Errorf("the item is %q after a run was halted under it, want failed", after.Phase)
+	}
+	if execs := f.run.Executions(); len(execs) != 1 {
+		t.Errorf("a halted run was answered with %d execution(s) in all, want the one the crash left: a refusal is never retried", len(execs))
+	}
+}
+
 // TestRecoveryBeforeTaskJSONAfterAnEditAbandonsTheIntent: a person edited the
 // item after the crash and before the task existed, so the spec the intent was
 // committed for is not the item's any more. Nothing may start under it: the

@@ -376,12 +376,17 @@ func (d *orchestratorDaemon) refreshCaps(ctx context.Context) {
 // loop is the daemon's life after start-up: beat, tick, write the cache, check
 // the unit's binary, wait.
 //
-// Every failure is the cycle's and not the daemon's, with two exceptions: a
+// Every failure is the cycle's and not the daemon's, with three exceptions: a
 // lease that went to another machine stops it (Beat, and the tick's own write
-// behind Node.Save), and a handover stops it cleanly.
+// behind Node.Save), a handover stops it cleanly, and so does the context
+// ending — Ctrl-C or the unit's SIGTERM — which releases the lease on the way
+// out rather than leaving the id claimed by a process that is gone.
 func (d *orchestratorDaemon) loop(ctx context.Context) error {
 	for {
 		if err := d.lease.Beat(ctx); err != nil {
+			if ctx.Err() != nil {
+				return d.cancelled(ctx)
+			}
 			if d.once {
 				// One pass by its own contract, and a pass that could not take
 				// its lease ran nothing: exit 0 would tell the caller it did.
@@ -416,7 +421,7 @@ func (d *orchestratorDaemon) loop(ctx context.Context) error {
 		}
 		if err := d.wait(ctx); err != nil {
 			if ctx.Err() != nil {
-				return nil
+				return d.cancelled(ctx)
 			}
 			return err
 		}
@@ -474,11 +479,25 @@ func (d *orchestratorDaemon) abandon(ctx context.Context, err error) error {
 	return err
 }
 
+// orchestratorReleaseGrace is how long a release waits for its write. It is
+// short on purpose: there is nothing left to do with a lease whose release is
+// still hanging, and a person pressing Ctrl-C twice must not have to wait for
+// the second press.
+const orchestratorReleaseGrace = 5 * time.Second
+
 // release gives the id back, and a lease that could not be released is a
-// warning and not a failure: the TTL ends it, and the two exits that call this
-// (a clean stop and a --once pass) have already decided what they are.
+// warning and not a failure: the TTL ends it, and the exits that call this (a
+// clean stop, a cancelled run, a --once pass) have already decided what they
+// are.
+//
+// The write gets a grace of its own rather than the caller's context, because
+// two of those exits arrive as that context ending — Ctrl-C at a terminal, the
+// unit's SIGTERM — and a release the cancellation aborted would leave a process
+// that is gone holding the id for the whole TTL.
 func (d *orchestratorDaemon) release(ctx context.Context) {
-	if _, err := d.lease.Release(ctx); err != nil {
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), orchestratorReleaseGrace)
+	defer cancel()
+	if _, err := d.lease.Release(rctx); err != nil {
 		fmt.Fprintf(d.warn, "orchestrator %s: the lease could not be released: %s\n", safetext.Field(d.id), safetext.OneLine(err.Error()))
 	}
 }
@@ -499,6 +518,20 @@ func (d *orchestratorDaemon) oneCycle(ctx context.Context, cycleErr error) error
 	}
 	d.release(ctx)
 	return cycleErr
+}
+
+// cancelled is the daemon stopped from outside: Ctrl-C at a terminal, the
+// unit's SIGTERM at a shutdown. It is a clean exit like the handover's, and the
+// lease goes back with it — a process that exited and left its claim behind
+// keeps the next daemon, the unit's own restart and a person's `--once`, out
+// for the whole TTL with a holder that is not there.
+//
+// The release itself is made with a grace rather than with the context that
+// just ended (release), so the line below is the truth even here.
+func (d *orchestratorDaemon) cancelled(ctx context.Context) error {
+	fmt.Fprintf(d.out, "orchestrator %s: stopping where the context ended; the lease is released\n", safetext.Field(d.id))
+	d.release(ctx)
+	return nil
 }
 
 // stop is the clean exit: the lease is released, so the next daemon starts at
@@ -703,6 +736,14 @@ func (v *orchestratorRunView) executionOver(ctx context.Context, slug, runID str
 // A status this release cannot place, including one from a newer release, is a
 // finished failure: the attempt is over and the item must not stay running for
 // ever, and a failed attempt is the one a person looks at.
+//
+// A halted run is the exception, and it is the one case where the two outcomes
+// differ in what happens next: a spend cap, the kill switch or a governance
+// tripwire stopped a run that started, which is a refusal and not a failure
+// (G4), and a refusal is never retried. Folded as failed it would be: the
+// attempt would be one a person's standing approval still covers, so the very
+// next cycle would relaunch work that was refused, and it would only stop when
+// it ran out of allowance.
 func orchestratorOutcome(rec *runstore.Record) (bool, orchestrator.Outcome) {
 	if rec == nil {
 		return false, ""
@@ -714,6 +755,8 @@ func orchestratorOutcome(rec *runstore.Record) (bool, orchestrator.Outcome) {
 		return true, orchestrator.OutcomeSucceeded
 	case runstore.StatusCancelled:
 		return true, orchestrator.OutcomeCancelled
+	case runstore.StatusHalted:
+		return true, orchestrator.OutcomeRefused
 	}
 	return true, orchestrator.OutcomeFailed
 }
