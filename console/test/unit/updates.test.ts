@@ -598,7 +598,7 @@ describe('the request carries no identifier', () => {
   })
 
   it('gives the updater an empty, writable header table', async () => {
-    // Empty, and deliberately not frozen. Nothing in 6.8.10 writes into this
+    // Empty, and deliberately not frozen. Nothing in 6.8.11 writes into this
     // table -- `addAuthHeader` reassigns the field, `computeFinalHeaders` builds
     // the object it hands out -- so a frozen one would not throw today; what the
     // writable table is for is a later version that does write in place, which
@@ -891,7 +891,7 @@ describe('the install-on-quit flag, which no path turns on', () => {
     // notice's "Restart to update" action. The accepted download is the moment
     // the write of `true` used to happen, so the flag and the client's own
     // install call are both read here -- and the pair in
-    // `updater-electron.test.ts` is what the flag means to 6.8.10.
+    // `updater-electron.test.ts` is what the flag means to 6.8.11.
     const { controller, updater, ready, timers } = harness()
     await controller.start()
     updater.emit('update-downloaded', { version: '0.120.0' })

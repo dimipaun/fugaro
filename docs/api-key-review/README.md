@@ -1,27 +1,38 @@
 # The api-key review path — the independent review served by an API key instead of a subscription account
 
-**Status: plan only; nothing is implemented; the decisions D1410–D1429 are answered 2026-11-07 and
-all tasks are approved 2026-11-07 (owner: "All tasks approved. Jobmax").** Every answer is the
-recommendation, and the ones that decide the shape are worth a line: **D1410 both slices** — the
-in-job half and the cloud half; **D1411 and D1412 Path A, and no second Anthropic key**; **D1413 the
-key wins when the owner asks for it explicitly**; **D1414 no** — an `oauth` run's review does not
-move onto an API key; and **D1415 a new additive field** on `StageTiming`, never a new value on
-`credential`. This is a design for the owner to read. It adds no code, no schema, no config key and
-no Terraform; it edits no file outside `docs/`. **The decisions are answered and every task is
-approved (2026-11-07), and items 1–5 of [implementation-plan.md](implementation-plan.md) §6 are
-satisfied.** Three things are still owed, none of them a further answer from the owner, and each is
-named where it stands: **items 6 and 7 of that list** — the mandatory security review owed before
-**AK4–AK7** land, and **E7**, not met, so those four tasks may not start and the cloud half stays
-unlaunchable — and **D1413's spelling**, which that section records as design work this plan still
-owes because no task names it yet.
+**Status: AK1–AK5 are implemented on `main` and no task past AK5 is started; the decisions
+D1410–D1429 are answered 2026-11-07 and all tasks are approved 2026-11-07 (owner: "All tasks
+approved. Jobmax") — except AK9 and AK10, which the security review added and which are written and
+not approved.** Every answer is the recommendation, and the ones that decide the shape are worth a
+line: **D1410 both slices** — the in-job half and the cloud half; **D1411 and D1412 Path A, and no
+second Anthropic key**; **D1413 the key wins when the owner asks for it explicitly**; **D1414 no** —
+an `oauth` run's review does not move onto an API key; **D1415 a new additive field** on
+`StageTiming`, never a new value on `credential`; and **D1418, answered 2026-11-09: a provider's base
+URL and auth shape go in the bundle**, as additive optional fields. This folder is a design for the
+owner to read, and the five tasks that have landed are its first two levels. **Items 1–5 of
+[implementation-plan.md](implementation-plan.md) §6 are satisfied; item 6 is open and item 7's gate is
+lifted.** What the folder has for item 6 is **the author's own pass** over the merged AK4 and AK5
+([security-review.md](security-review.md)) — **not the independent review the SEC tier and
+`.claude/rules/credentials-service.md` require, as that file says of itself** — so item 6 is open for
+AK4 and AK5 (which landed under it, not past it) and stands for **AK6a**, **AK6b** and **AK7**. Three
+things are still owed, and each is named where it stands: **the independent security review**, for the
+merged AK4 and AK5 and then for the three tasks that have not landed — **D1413's spelling**, which §6
+records as design work this plan still owes because no task names it yet — and **the owner's approval
+of AK10, without which AK6b's release may not ship** (§6 item 11: the credential write that can outrun
+the deployed service is guarded in the same release). **E7 is met as of 2026-11-08** (the flip below),
+so a `fugaro review --pr N` is
+admitted where it was refused; what no live installation has measured is either cloud path, which is
+**Check 330**.
 
 **Asked by:** the repository owner, in a message of **2026-11-07** — "the api-key review path: let's
 start a design". The role is the one the ask's own clauses describe: the person who owns the
 installation and the account the review runs on. No `@handle` and no name is recorded anywhere in
 this folder, by this repository's rule. The ask is reproduced verbatim in [spec.md](spec.md).
 
-**What it is.** The tree has **two** independent reviews, and both run on a Claude **subscription**
-account today. The **in-job** one is the mixed run's stage-scoped account
+**What it is.** The tree has **two** independent reviews, and both were designed around a Claude
+**subscription** account — and **since AK4 and AK5 the cloud one may instead be served by the
+project's own Anthropic API key**: the policy's pairing names the sentinel
+`config.AnthropicKeyAccount`, the job for it mounts nothing, and the class's own door admits it. The **in-job** one is the mixed run's stage-scoped account
 (`docs/design/mixed-credentials.md` §11, `internal/runner/agentenv.go` `resolveMixedStages`, whose
 live check is **Check 290** — written, and **not run**: the register records it as "USER-RUN, NOT
 RUN" and `docs/multi-model.md` and `docs/releases/v0.20.0.md` agree, so the configuration is
@@ -72,8 +83,9 @@ measurement (Check 330) rather than the code path.
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The owner's ask of **2026-11-07**, verbatim, with a header naming the owner by role and the status line. Where this file and the others disagree about what the ask *says*, this file wins |
-| [reconciliation.md](reconciliation.md) | Every clause of the ask against the code on `main`, read by path and symbol: the findings **F1–F24** (Wrong / Exists / Gap / Rule / Open), what the **in-job** path does today end to end (§1), what the **cloud** path does today end to end (§2), the two readings of "the api-key review" (§4), **the security analysis as an attacker would see it** (§5), an **UNVERIFIED** section (§6), the decisions **D1410–D1429** each with a recommendation, an alternative and **the owner's answer of 2026-11-07** (§7), the number block and how it was read (§8), and the owner's **Open items**, each with the answer it now carries (§9). **Where it disagrees with [spec.md](spec.md) about the code, it wins** |
-| [implementation-plan.md](implementation-plan.md) | The tasks **AK1–AK8**, each with its files (at most six), its interfaces, its named tests and command, its **red step**, its **mutation**, its **reviewer tier**, its dependencies and its commit; the levels, the critical path and the shared-files table proving no level has two writers of one file (§1–§2), what is deliberately not in the plan (§3), the release slot — **after 0.20.0**, from D1421 (§4) — the owner-run live check **Check 330** (§5) and the gates a task may not start without — the five the answers of 2026-11-07 satisfy, and the two that stand (§6) |
+| [reconciliation.md](reconciliation.md) | Every clause of the ask against the code on `main`, read by path and symbol: the findings **F1–F27** (Wrong / Exists / Gap / Rule / Open), what the **in-job** path does today end to end (§1), what the **cloud** path does today end to end (§2), the two readings of "the api-key review" (§4), **the security analysis as an attacker would see it** (§5), an **UNVERIFIED** section (§6), the decisions **D1410–D1429** each with a recommendation, an alternative and **the owner's answer** — 2026-11-07, except **D1418**, answered 2026-11-09 — (§7), the number block and how it was read (§8), and the owner's **Open items**, each with the answer it now carries (§9). **Where it disagrees with [spec.md](spec.md) about the code, it wins** |
+| [implementation-plan.md](implementation-plan.md) | The tasks **AK1–AK10** — including **AK6a** and **AK6b**, the two the reconciliation of 2026-11-09 split the old AK6 into — each with its files, its interfaces, its named tests and command, its **red step**, its **mutation**, its **reviewer tier**, its dependencies and its commit; the levels, the critical path and the shared-files table proving no level has two writers of one file (§1–§2), what is deliberately not in the plan (§3), the release slot — **after 0.20.0**, from D1421 (§4) — the owner-run live check **Check 330** (§5), the gates a task may not start without — the five the answers of 2026-11-07 satisfy, the independent security review's own state (item 6, **open**), the two the reconciliation added (items 9 and 10) and AK6b's release precondition (§6 item 11) — and the author's own security pass over the merged AK4 and AK5 in summary (§7) |
+| [security-review.md](security-review.md) | **The author's own security pass** over the merged **AK4** and **AK5**, written **2026-11-09** and **awaiting the independent review item 6 asks for** — it says so itself: what was read, the properties it verified, the three attack questions (the bundle, the forwarded key, the base URL), its findings **F25–F27** and the tasks they became (**AK9**, **AK10**, both unapproved), the conditions it places on **AK6a**, **AK6b** and **AK7**, and that AK10 is a release precondition of AK6b. **It is not a second design**: it reviews code that is already on `main` |
 | `README.md` | This file: the status, the shape in one paragraph, the numbers, and what a reader should not take from here |
 
 ## The two things to read first
@@ -111,20 +123,25 @@ upstreams in one run and asserts the reviewer's call reached Anthropic (**F4**).
   [implementation-plan.md](implementation-plan.md) is written to, and **§3** of that file says what
   the instruction rules out.
 - **It is not a substitute for the security review.** AK4–AK7 touch a model credential the service
-  attaches to a caller's request, and are written as **SEC** tasks — opus, with the independent
-  review mandatory. That review is owed before those tasks land, not after.
+  attaches to a caller's request, and are written as **SEC** tasks — opus, with the **independent**
+  review mandatory. That review is owed before those tasks land, not after, and **it is not written
+  yet**: what exists is **the author's own pass** over the merged AK4 and AK5
+  ([security-review.md](security-review.md)), which says of itself that it is not the independent
+  review the tier asks for. So **§6 item 6 stays open** for AK4 and AK5 and for **AK6a**, **AK6b** and
+  **AK7**, and no release note may present any of them as reviewed.
 - **It claims no number of another work.** The decision block is read above every allocation on
-  `main` (§8) and the live check is well above the register's highest written section; the
-  register's own file is not this task's to write (implementation-plan §5).
+  `main` (§8), and **Check 330 collides with no other work's claim** — the register's written
+  sections have moved above it since it was taken, and no document claims 330 — so the number stays
+  this work's; the register's own file is not this task's to write (implementation-plan §5).
 
 ## Numbers this work holds
 
 | Block | State |
 | --- | --- |
-| **D1410–D1429** | this work's block, read on 2026-11-07 over `origin/main` (`aa26f322f`) and every open pull request's head. The highest decision written anywhere on `main` is **D1409** (`docs/catalog-build-context`, merged as #1805), and a `git grep` for the decision numbers in the `D141x` and `D142x` ranges over `main` and over all open heads returns **no path at all**, with positive controls run so that "nothing" is not a broken command. **D1410–D1429 are all written** in [reconciliation.md](reconciliation.md) §7 and **every one of them is answered, as recommended, on 2026-11-07**; none is reserved unused. The reading, with its commands, is §8 |
-| **Check 330** | this work's live check (implementation-plan §5), far above the register's highest **written** `## Check` section: **290** at this folder's own reading ([reconciliation.md](reconciliation.md) §8, `origin/main` at `aa26f322f`, 2026-11-07) and **291** since `docs/image-env`'s check was written (`docs/gcp-live-checklist.md`, the image-`ENV` work's check: what a catalog image's `ENV` does in a run, itself **NOT RUN**). **292 is claimed** by `docs/catalog-build-context` (merged on `main` as #1805); **293–299** are claimed by nobody; `docs/stateless-orchestrator` claims 300–309 and `docs/cli-output-console-graph` claims 310–314, both below this block. Like every claim above the highest written section, 330 is **claimed, not reserved**: the register's rule is that a claim is settled at its merge, and whichever of two claims merges second renumbers itself. The register's own row and section are written by the task that implements the check, under the number free **at that merge** |
-| **Findings F1–F24** | this folder's own numbering, in [reconciliation.md](reconciliation.md) §1 and §2, taking no number any other work reads |
-| **AK1–AK8** | this folder's task series, in [implementation-plan.md](implementation-plan.md). Distinct from `docs/cloud-senior-review`'s **CSR1–CSR18** and from `docs/in-job-review`'s **Q1–Q17** on purpose: two series in one tree that share letters would be read as one |
+| **D1410–D1429** | this work's block, read on 2026-11-07 over `origin/main` (`aa26f322f`) and every open pull request's head. The highest decision written anywhere on `main` is **D1409** (`docs/catalog-build-context`, merged as #1805), and a `git grep` for the decision numbers in the `D141x` and `D142x` ranges over `main` and over all open heads returns **no path at all**, with positive controls run so that "nothing" is not a broken command. **D1410–D1429 are all written** in [reconciliation.md](reconciliation.md) §7 and **every one of them is answered, as recommended: all on 2026-11-07 except D1418, which the owner answered on 2026-11-09** (the base URL and the auth shape go in the bundle); none is reserved unused. The reading, with its commands, is §8 |
+| **Check 330** | this work's live check (implementation-plan §5), **claimed and not written**: the register carries no `## Check 330` section. The register's highest **written** `## Check` section is **360** (`docs/console-managed-screens`'s, written by its CM12), with **340** (`docs/periodic-reviews`, under its §P8), **291** (`docs/image-env`) and **290** (the mixed-credentials run) written beside it — 330 was taken when the highest written section was **290** and the register has moved above it since, so the number now sits in the gap between `docs/cli-output-console-graph`'s **310–314** and the periodic-reviews block **340–349**, where **315–329** are written by nobody. The claims around it are **292** (`docs/catalog-build-context`, merged as #1805), **306–309** (reserved by `docs/stateless-orchestrator`, whose 300–305 are written), **310–314** (`docs/cli-output-console-graph`), **341–349** (`docs/periodic-reviews`: 341 and 342 taken, 343–349 reserved), **350–359** (`docs/failure-classes`), **361–369** (`docs/console-managed-screens`'s available numbers) and **370** (`docs/security-classification`, with 371–379 available) — and **none of them is 330**, nor does any other document claim it. Like every claim it is **claimed, not reserved**: the register's rule is that a claim is settled at its merge and the later of two **colliding** claims renumbers itself, which 330 does not do. The register's own row and section are written by the task that implements the check (**AK8**), under the number free **at that merge** |
+| **Findings F1–F27** | this folder's own numbering, in [reconciliation.md](reconciliation.md) §1, §2 and §5 — **F25–F27** are the security review's ([security-review.md](security-review.md), 2026-11-09) — taking no number any other work reads |
+| **AK1–AK10** | this folder's task series, in [implementation-plan.md](implementation-plan.md) — the two halves of the old AK6 take the letters **AK6a** and **AK6b** rather than renumbering AK7 and AK8. **AK9 and AK10 are unapproved**, and **AK10 gates AK6b's release** (§6 item 11). Distinct from `docs/cloud-senior-review`'s **CSR1–CSR18** and from `docs/in-job-review`'s **Q1–Q17** on purpose: two series in one tree that share letters would be read as one |
 
 ## Open items
 
@@ -146,10 +163,11 @@ recommended.** The full text, with the reason each one existed and the answer it
    stage account for `review` takes the stage **off** the gateway and onto the account (**F7**) — so
    the answer fixes which of the two wins; the spelling of that explicit request is the plan's to
    design.
-4. **D1416 / D1417 — answered: the Anthropic key first, paired to the project's own key.** The
-   Anthropic-key half needs the pairing to name the project's own key (**F12**, **F13**); the
-   OpenRouter half needs the provider-key apparatus of §6.7 (**F15**), and the answer is that one
-   design does not carry both.
+4. **D1416 / D1417 — answered: the Anthropic key first, paired to the project's own key**, and
+   **D1418, answered 2026-11-09: that half's provider endpoint is the bundle's** — a base URL and an
+   auth shape as additive optional fields. The Anthropic-key half needs the pairing to name the
+   project's own key (**F12**, **F13**); the OpenRouter half needs the provider-key apparatus of §6.7
+   (**F15**), and the answer is that one design does not carry both.
 5. **D1414 — answered: no.** Under `agent.auth: oauth` the gateway is refused
    (`internal/runner/routing.go` `GatewayOn`), so a subscription-coder run can never have an api-key
    review (**F8**), and it stays that way.

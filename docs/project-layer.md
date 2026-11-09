@@ -249,6 +249,7 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `followup.allow_public` | repo | it decides whose comments steer a run with the repository's credentials |
 | `rigor.default` | project, repo |  |
 | `rigor.areas` | project, repo |  |
+| `planning.decoupling` | project, repo |  |
 | `security.patterns` | project, repo | it is a guardrail: the project layer states the rows every repository of the project treats as security-sensitive and a repository can only add to them — the list in force is the engine's floor, then the project's rows, then the repository's, unioned by row name (D1506) — so neither layer can drop what another said, and `**` is refused in both because that is the layer's `always_level_3`. 0.22.0 decodes and validates both halves, but no run resolves a list from them yet: what a run matches, and what `fugaro security paths` prints, is the engine's floor alone until SC9 and SC10 |
 <!-- scope-table:end -->
 

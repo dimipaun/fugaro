@@ -159,11 +159,11 @@ that wants it, so the test's list and the stylesheet's selectors move together. 
 deliberately the subset a rule is written against rather than a second copy of the code.
 **`data-hidden`** (every view the mode withholds) and **`data-skew`** (the compatibility
 handshake), both stamped by `console/src/shared/version.ts`, are the two the inventory test
-refuses by name; the graph screen's nine unlisted attributes are §2.11's own, and seven of
+refuses by name; the graph screen's ten unlisted attributes are §2.11's own, and eight of
 those the test refuses by name too. They are the examples the rule holds for: they are
 emitted, no rule needs them, and a rule that suddenly wants one adds it to this table first.
 The test's licence is by attribute **name**, not by name and screen, so the two of §2.11's
-nine that are hooks here as well — `data-key` for the spend screen (§2.3, §2.4) and
+ten that are hooks here as well — `data-key` for the spend screen (§2.3, §2.4) and
 `data-view` for the navigation and the people panel (§2.1, §2.5) — stay licensed, and §2.11
 says so.
 
@@ -1359,10 +1359,11 @@ every word already and carries neither kind of line.
 | `graph-empty` | `p` | no plan to draw, no layout to draw, or a coordinator scope that answered with no node: three different sentences, one hook |
 | `graph-scope-notice` | `p` | the sentence a **chosen** scope was refused with: the drawing the console already has stays under it, and the control stays with it (T3) |
 | `graph-sources`, `graph-source` | `div`, one per source | the coordinator scope's source list: `role="group"` with the one name the rows share |
-| `graph-source-name`, `graph-source-reason` | `span`s inside a source row | the source's name (monospaced) and the reason it gave; the row's own `data-state` is the source's state word, and the word is drawn beside it — a source that is down is a fact a reader must be able to read off a greyscale screenshot |
+| `graph-source-name`, `graph-source-reason`, `graph-source-asof` | `span`s inside a source row | the source's name (monospaced), the reason it gave, and the time its figures are worth (`as of HH:MM`, `section.ts`'s own wording and clock, drawn only where the source named an `as_of` — a source that named none is drawn with no time rather than with the console's own clock); the row's own `data-state` is the source's state word, and the word is drawn beside it — a source that is down is a fact a reader must be able to read off a greyscale screenshot. The `stale` word says the figures are old and this stamp says **how** old. No rule selects `graph-source-asof` yet: the stamp is text beside the source's own row, and a rule for it lands with the rule that tones a kept row (below) |
 | `graph-scope-release`, `graph-scope-heading` | `section` + `h2` | one release's group in the coordinator scope, with the release in `data-release` |
 | `graph-scope-nodes`, `graph-scope-node` | `ul` + `li` | the nodes in that group: the row carries `data-key` (the document's source-qualified key) and `data-state`, and draws the title, the kind, the repository and the state word |
 | `graph-scope-title`, `graph-scope-kind`, `graph-scope-repo`, `graph-scope-pr` | `span`s inside the row | the four facts a coordinator node draws; the pull request cell is the document's `id` for the node, because this document carries no number field of its own, drawn as **text** with `GRAPH_PR_NO_LINK_REASON` in its `title` and no URL, exactly as a card's number is. It goes through the `id` wire key's own class (`label`, `WIRE_TEXT_CLASSES`), a free-text class, and a node is **never cut down or reformatted** here: a source that spells its ids its own way draws its own spelling. A coordinator id is `<repo>#<number>` (`ee/graph/source_coordinator.go`), and the name-placeholder pass of that class placeholders the `<owner>/<name>` it begins with, so the row for `acme/widgets#42` draws `[redacted]#42` — the repository half beside it is the `repository` class, which is anchored and refuses that spelling, so `graph-scope-repo` draws `acme/widgets` whole while the id cell does not. Keeping the id whole would take a class that keeps a repository path, and that is a decision about the sanitizer rather than about this drawing |
+| `graph-scope-kept` | `span` inside a node row | the console's own word (`last read`, `graph/model.ts`'s `GRAPH_SCOPE_KEPT`) for a figure the **last read** drew: the row is one of a source the document does not call `up`, and `data-kept="true"` on the row beside it is the same fact as a hook. It is drawn immediately after the title so that "these figures are not this document's" is a thing a reader reads rather than a tone they have to notice (H10). No rule selects `graph-scope-kept` or `data-kept` yet: the word is the channel the fact travels in, and a rule that dims a kept row is the follow-up that promotes `data-kept` out of §2.11's own list of attributes no rule needs |
 | `graph-warning` | `p` | a warning the coordinator's document carried, in `--warn`, above the not-shown sentence |
 | `graph-scope-back` | `button` | the no-checkout card's door back to the coordinator scope (`screens/nocheckout.ts`): the card is drawn *instead of* the Graph, so this is the one control that leaves the plan scope, and it is drawn in every state of the card |
 
@@ -1379,20 +1380,25 @@ every word already and carries neither kind of line.
 | `data-edge` | `dependency` \| `critical` | `span.graph-legend-swatch` — the two kinds of line, and the only two |
 
 **The attributes no rule needs**, and §2's rule read the other way: the graph also emits
-nine. `data-key` (a card's, a row's and an inspector button's layout key), `data-run-id` (the
+ten. `data-key` (a card's, a row's and an inspector button's layout key), `data-run-id` (the
 run a gesture would open), `data-tab` (a filter segment's own value), `data-chip` (a chip's
 release key),
 `data-view` (the view switch's own value), `data-stream` (the stream a chip group **and a
 band** are drawn for), `data-release` (a box's key), `data-word` (the word an element
-draws, beside the text it draws) and `data-source` (the coordinator scope's own source, on a
+draws, beside the text it draws), `data-source` (the coordinator scope's own source, on a
 source row and on a node row, which the document's source-qualified `data-key` already
-names). They are the screen's own bookkeeping — the entry reads
+names) and `data-kept` (a coordinator node row that is the **last read's** figure rather than
+this document's, which `span.graph-scope-kept` above says in words). They are the screen's
+own bookkeeping — the entry reads
 `data-key`, `data-run-id`, `data-tab` and `data-chip` back off the drawn tree to route a
-click, and the other five name only what the screen itself knows (which drawing is showing,
+click, and the other six name only what the screen itself knows (which drawing is showing,
 which stream a group or a band belongs to, which release a box is, which word an element
-draws, which source a row came from) — and no stylesheet rule may select one without adding it above first. Seven of the nine are refused by name in
+draws, which source a row came from, which rows are the previous read's) — and no stylesheet rule may select one without adding it above first. Eight of the ten are refused by name in
 the inventory test with `data-hidden` and `data-skew`; the other two, `data-key` and
 `data-view`, are §2's hooks on other screens and stay licensed (§2's licence paragraph).
+`data-kept` sits here and not in the table above because the word beside the figure is what
+tells a reader the row is the last read's, and a rule that tones the row is a rule nobody has
+written: the PR that writes one moves it above in the same commit (§2's licence paragraph).
 
 **How each state is marked** (§3.5: a word, and the tone second):
 

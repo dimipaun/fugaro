@@ -103,7 +103,16 @@ below assumes a reader who has the intake's code fully in hand.
 ### 3.1 The intake
 
 One Cloud Run service, publicly invokable, that terminates TLS, serves the forms' endpoints, receives
-the merchant's events, serves the admin page, and answers with a uniform page (§7.1). It holds:
+the merchant's events, serves the admin page, and answers with a uniform page (§7.1).
+
+**It answers on the site's own domain's `keys.` subdomain** — `https://keys.fugaro.dev` today, `keys.`
+plus the canonical host in `website/data/site.yaml`. That is the address the site's key request page
+posts its three forms to and the one host the deployed policy admits under `form-action` (D451
+option (a), settled 2026-11-07; S3.3), and nothing on the site loads from it. **The mapping is
+infrastructure and is not written yet:** S3.5's Terraform has to attach the custom domain to this
+service for the address to answer, and S3.7 applies it — so the host is a contract between the site
+and the service, and the site's half of it is one line (`website/src/lib/keys-intake.mjs` derives
+the origin from the domain rather than typing it). It holds:
 
 - the verification-token store and the outbound mail path (§4.1);
 - the free-mail list, the paid-domain lookup and the eligibility checks (§4);
@@ -390,8 +399,9 @@ Three rules, and each answers a threat rather than a best practice:
   wire.
 
 **All of it has to work inside the site's CSP.** The website serves one Content-Security-Policy
-(`website/test/origins.mjs:659`): `script-src 'self'` plus named hosts, `connect-src 'self'` plus
-named hosts, and **`form-action 'self'`**. Two consequences the forms' task inherits:
+(`website/test/origins.mjs:712`): `script-src 'self'` plus named hosts, `connect-src 'self'` plus
+named hosts, and **`form-action 'self'`** — widened, since S3.3, to the intake's one exact host,
+which is D451's answer below. Two consequences the forms' task inherits:
 
 - a **third-party challenge widget** (a captcha vendor) is not admissible without the owner widening
   `script-src`, `connect-src` and probably `frame-src` — an owner decision (`.claude/rules/website.md`),
@@ -399,10 +409,13 @@ named hosts, and **`form-action 'self'`**. Two consequences the forms' task inhe
   against. A **same-origin** challenge is admissible (`'self'` is a script the site serves itself),
   and so is the intake's own throttle;
 - a form **posting to the intake's own origin** is blocked by `form-action 'self'` unless the owner
-  widens that directive to the intake's exact host. The plan expects that widening (S3.3's Files
+  widens that directive to the intake's exact host. The plan expected that widening (S3.3's Files
   name "the CSP tests the owner approves changing"), and the alternative — a same-origin path that
-  forwards to the intake — is **D451**. Either way the visitor's personal data reaches the intake,
-  and §7.3's notice has to say so.
+  forwards to the intake — is **D451**, which **the owner settled on 2026-11-07** as option (a).
+  S3.3 carried it: `firebase.json`'s `form-action` carries the intake origin, `website/test/origins.mjs`
+  admits a form action for this site or that one host and for no other, and the intake is admitted
+  in no other directive. The visitor's personal data still reaches the intake, so §7.3's notice has
+  to say so — that half is S7.3's and is not written.
 
 ### 7.3 The issuance record, retention and the privacy notice
 
@@ -563,6 +576,11 @@ Restated with its source, so that nothing below is read as open that is not.
 - **D432, D439, D440, D442** — one free seat per organisation (an individual being one); seats are
   compared and never enforced; the evaluation key is three months and the open-source key a year;
   Paddle is the merchant of record for Team and Enterprise is invoiced directly.
+- **D451 (2026-11-07)** — the site's forms reach the intake the owner's way: option (a), the policy's
+  `form-action 'self'` widened to the intake's one exact host, and no page loads from it. The
+  approval is recorded in
+  [reconciliation.md](../subscriptions/reconciliation.md)'s §"Rulings" (S3.3 is the task that
+  carries it). (§7.2; the notice it obliges §7.3 to say is S7.3's, still unwritten.)
 - **R2 as amended by D440** — no phone-home at runtime; the service is reached when a person asks for
   a key, never by the product. (§1.)
 - **R5 as amended by D440** — the record lives in the service's store and the private business
@@ -579,7 +597,6 @@ Restated with its source, so that nothing below is read as open that is not.
 | --- | --- | --- | --- | --- | --- |
 | D449 | Which `tier`, `features` and `seats` does a Free Plan key carry, and does the key record the plan it was issued under? | (a) all three free keys carry the Team plan's features, with the seats the plan allows and the plan's own name in the record only; (b) a `community` tier for the evaluation seat and the Team features for the open-source and academic keys; (c) a fourth tier for free keys | (a) | (a) §10.2(b) and (c) grant "the Team plan's features" and §10.3 makes the free seat a single-seat trial, so the key states what the customer gets, and the plan's name stays out of a format S2.1 fixed; (b) makes the console show a different tier for two keys that turn on the same features; (c) a new tier in three verifiers and a format change, decided in a design that does not own the format | open |
 | D450 | What shape is the minter? | (a) a second Cloud Run **service** with no public invoker, called by the intake with an ID token; (b) a Cloud Run **job** the intake triggers, drained from a queue; (c) one service, two credentials inside it | (a) | (a) two identities the platform enforces and the smallest thing an IAM audit can hold — but a second deployed service to keep alive; (b) a queue drain is right for the admin's approvals and wrong for a form's answer, which then has to poll; (c) one process's identity is one, so the signer role would sit on the internet-facing service, which is what T13 splits | open |
-| D451 | How do the site's forms reach the intake under `form-action 'self'`? | (a) the owner widens `form-action` to the intake's one exact host; (b) a same-origin path on the site's host that forwards to the intake; (c) no form on the site — the request is made by the CLI or by mail | (a) | (a) one directive, one exact host, and the plan already expects it (S3.3) — but the visitor's browser posts their data straight to the intake, and the privacy notice has to say so; (b) the form stays same-origin and the intake is not named in the CSP, at the cost of a proxy in the website's project that becomes the intake's front door and its own surface to defend; (c) one less thing to defend and a worse experience for exactly the individual T15 protects | open |
 | D452 | What counts as **proof of control** of a repository for the open-source check? | (a) a token the applicant commits to a repository the check can read; (b) an application installation that shows control of the organisation; (c) a commit signed by a key the applicant publishes | (a) | (a) one file in one of the repositories already named, readable through the same API, and it works for an individual with no organisation; (b) proves the organisation and asks an individual maintainer to install an app on their own account; (c) proves a key, not the project, and asks the applicant to hold one | open |
 | D453 | Where does the free-mail list come from and who keeps it? | (a) a pinned list of domains committed under `ee/keyservice/`, updated by a task of its own; (b) a public list fetched at build time; (c) a hand-kept list in the service's configuration | (a) | (a) the check is hermetic, testable and reviewable in the public repository, and it is stale until someone updates it — which is why the update is a task rather than a habit; (b) a network fetch at build and a licence question about the list's own terms; (c) a change to the running service that nothing in the tree records | open |
 | D454 | What are the per-tier mint limits, and what does a limit do? | (a) a cap per tier per window that **queues** the excess; (b) a hard refusal; (c) no cap until abuse is seen | (a) | (a) an honest burst (a batch of renewals) is seen and answered and a drain is stopped; (b) one mistyped renewal becomes a refusal for a paying customer; (c) the caps are what Check 173 measures, and "no cap" is not a limit to measure | open |

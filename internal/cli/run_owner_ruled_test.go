@@ -46,7 +46,7 @@ func TestRunPRRefusesAFollowUpWaitingOnTheOwner(t *testing.T) {
 	}
 	got := err.Error() + errOut
 	for _, want := range []string{
-		rootID, "PR #7", "2 owner decisions",
+		task.ShortRun(rootID), "PR #7", "2 owner decisions",
 		"`LICENSE.md`: the licence text needs counsel's clearance",
 		"`internal/approval/flow.go`: the approval flow is a product decision",
 		"--owner-ruled <text-or-file>",
@@ -124,7 +124,7 @@ func TestRunOwnerRuledIsRefusedWhenNothingIsWaiting(t *testing.T) {
 		t.Fatal("the launch went through; a ruling nothing answers must be refused")
 	}
 	got := err.Error() + errOut
-	for _, want := range []string{rootID, "PR #7", "no decisions to answer", "launch again without it"} {
+	for _, want := range []string{task.ShortRun(rootID), "PR #7", "no decisions to answer", "launch again without it"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the refusal does not name %q:\n%s", want, got)
 		}
@@ -148,7 +148,7 @@ func TestRunOwnerRuledIsRefusedWhenTheLastRunsRecordIsGone(t *testing.T) {
 		t.Fatal("the launch went through; a ruling over a record nobody can read must be refused")
 	}
 	got := err.Error() + errOut
-	for _, want := range []string{rootID, "has no record left", "start a new run instead"} {
+	for _, want := range []string{task.ShortRun(rootID), "has no record left", "start a new run instead"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the refusal does not name %q:\n%s", want, got)
 		}

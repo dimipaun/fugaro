@@ -330,39 +330,58 @@ repos:
 `
 
 // TestAccountsRmSaysTheTokenIsNotRevokedAtTheProvider is D866, and it is about
-// the confirmation rather than the run: the secret's ID is named before the
-// secret goes, and the block says plainly that deleting it does not revoke the
-// token at the provider. The run below is the one that never happens — no
-// terminal and no --yes — so what it prints is printed while the secret is
-// still there, which is the order the sentence is about.
+// the sentence rather than the run: the secret's ID is named before the secret
+// goes, and the block says plainly that deleting it does not revoke the token
+// at the provider. Nothing waits for an answer to that sentence any more
+// (D1540), so what makes the order true is where it is printed: above the
+// report of the removal, in the run that is about to make it — and this is the
+// run, no terminal and no --yes, that used to stop at the question.
 func TestAccountsRmSaysTheTokenIsNotRevokedAtTheProvider(t *testing.T) {
 	r := newAddRig(t)
 	r.add(t, "team-a", "--repos", "owner/repo-a")
-	before, err := os.ReadFile(r.cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
 	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
 
-	out, _, rmErr := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
-	if rmErr == nil {
-		t.Fatalf("a run with no terminal and no --yes removed the account:\n%s", out)
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
 	}
+	assertNoPrompt(t, out)
 	if !strings.Contains(out, id) {
-		t.Errorf("the confirmation does not name the secret's ID %s, which is the credential it deletes:\n%s", id, out)
+		t.Errorf("the sentence does not name the secret's ID %s, which is the credential it deletes:\n%s", id, out)
 	}
 	if !strings.Contains(out, "does not revoke") || !strings.Contains(out, "Anthropic") {
-		t.Errorf("the confirmation does not say that deleting the secret leaves the token valid at the provider:\n%s", out)
+		t.Errorf("the sentence does not say that deleting the secret leaves the token valid at the provider:\n%s", out)
 	}
-	if got := r.sm.Deleted(); len(got) != 0 {
-		t.Errorf("the secret was deleted by a run that was not confirmed: %v", got)
+	if named, gone := strings.Index(out, "does not revoke"), strings.Index(out, "is gone from this installation"); named < 0 || gone < 0 || named > gone {
+		t.Errorf("the sentence naming the credential does not come before the run reports the removal (named at %d, reported at %d):\n%s", named, gone, out)
 	}
-	after, err := os.ReadFile(r.cfg)
+	if got := r.sm.Deleted(); !slices.Equal(got, []string{id}) {
+		t.Errorf("the secret deletes were %v, want %v", got, id)
+	}
+}
+
+// TestAccountsRmAsksNothing is the removal with nobody to ask (D1540): the
+// declaration, the profile entry and the secret are named in one sentence and
+// then removed, with neither --yes nor a terminal — the invocation below is
+// the one that used to be refused for want of an answer.
+func TestAccountsRmAsksNothing(t *testing.T) {
+	r := newAddRig(t)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
+
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v\n%s", err, out)
 	}
-	if !bytes.Equal(before, after) {
-		t.Errorf("the unconfirmed run wrote %s:\n%s", r.cfg, after)
+	assertNoPrompt(t, out)
+	if !strings.Contains(out, "remove claude_accounts.team-a") || !strings.Contains(out, "delete the secret "+id) {
+		t.Errorf("the sentence does not name both halves of the removal:\n%s", out)
+	}
+	if got := r.sm.Deleted(); !slices.Equal(got, []string{id}) {
+		t.Errorf("the secret deletes were %v, want %v", got, id)
+	}
+	if lc := r.addLocal(t); func() bool { _, ok := lc.ClaudeAccounts["team-a"]; return ok }() {
+		t.Errorf("claude_accounts.team-a is still declared after the removal")
 	}
 }
 
@@ -713,11 +732,11 @@ func TestAccountsRmManagedRefusesWhileARepositoryStillNamesIt(t *testing.T) {
 // D783's shape): the file belongs to a repository this command cannot write, so
 // the owner's own edit is not stopped by it — they are told which repository
 // breaks with the removal and what its next run does — and the removal they
-// confirmed goes through.
+// asked for goes through.
 //
-// The warning is printed BEFORE the confirmation and not after it, which is the
-// order this test pins: the break it names is one the removal makes, so the
-// moment it can still be declined is the moment it belongs in.
+// The warning is printed BEFORE the sentence that names what goes and not after
+// it, which is the order this test pins: the break it names is one the removal
+// makes, so it belongs above the write rather than below it.
 //
 // The checkout's working tree has the line deleted and its commit still has it:
 // the reference is the COMMIT — the file the repository's next run resolves its
@@ -737,8 +756,8 @@ func TestAccountsRmWarnsWhileARepositoryStillNamesIt(t *testing.T) {
 	if !strings.Contains(out, "stops at launch") || !strings.Contains(out, "fugaro accounts add ") {
 		t.Errorf("the warning does not say what that repository's next run does once the declaration is gone, and how to put the account back:\n%s", out)
 	}
-	if i, j := strings.Index(out, "warning:"), strings.Index(out, "CONFIRM"); i < 0 || j < 0 || i > j {
-		t.Errorf("the warning is not printed while the confirmation can still be declined (warning at %d, confirm at %d):\n%s", i, j, out)
+	if i, j := strings.Index(out, "warning:"), strings.Index(out, "does not revoke"); i < 0 || j < 0 || i > j {
+		t.Errorf("the warning is not printed above the sentence that names what the run removes (warning at %d, sentence at %d):\n%s", i, j, out)
 	}
 	// The warning is not a refusal: what the person confirmed is what ran.
 	if got := r.sm.Deleted(); !slices.Equal(got, []string{id}) {

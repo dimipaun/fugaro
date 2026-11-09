@@ -166,7 +166,7 @@ no plan shows (§5).
 ### 3.3 `fugaro accounts rm`, and `allow_data_to` (D1172)
 
 `fugaro accounts` has `ls`, `add` and `clear` and **no `rm`**
-(`internal/cli/accounts.go:25`, `internal/cli/accounts_add.go:41`).
+(`internal/cli/accounts.go:24`, `internal/cli/accounts_add.go:41`).
 `clear` writes a project-DB mark and no config. The registry names `accounts` the owner of
 `claude_accounts.*.allow_data_to` (`internal/settings/registry.go:627`), which `add`
 writes and **nothing can remove**.

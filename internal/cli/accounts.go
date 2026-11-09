@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -429,9 +428,9 @@ could take off a hold a newer release placed.
 The write is one node — creds/marks/NAME, in this installation's own database —
 and it is conditional on the value read (PutIfMatch), so a mark the service
 changed at the same moment is not lost: the write re-reads the mark and clears
-it only while its state is still the one the confirmation named, so a 401 the
+it only while its state is still the one this run announced, so a 401 the
 service recorded while you were reading is left for its own decision rather
-than taken off with the hold you confirmed.
+than taken off with the hold you asked for.
 
 NAME is "default" (the repository's own unnamed claude-oauth-token secret), a
 claude_accounts name of the selected project config, or an account the database
@@ -522,8 +521,8 @@ func accountsClear(cmd *cobra.Command, o accountsClearOptions, name string) erro
 	// What is there now, read the same way `fugaro accounts ls` reads it: the
 	// whole subtree, decoded strictly, so a node this release does not model
 	// fails the read rather than being taken for an available credential
-	// (creds.RTDBStore.Marks). The state decides both what the confirmation
-	// says and whether the clear is allowed at all.
+	// (creds.RTDBStore.Marks). The state decides both what the sentence this
+	// run prints says and whether the clear is allowed at all.
 	marks, err := store.Marks(ctx)
 	if err != nil {
 		return remote(err)
@@ -548,26 +547,33 @@ func accountsClear(cmd *cobra.Command, o accountsClearOptions, name string) erro
 	// The run's account is opened here and not at the top of the command: the
 	// refusals above decide whether there is a mark to clear at all, and a
 	// refused clear writes nothing — not even a log (D1352). The step is
-	// abandoned on every path that leaves the write unmade, which is what a
-	// declined confirmation is.
+	// abandoned on every path that leaves the write unmade, which is a declined
+	// --ask: the typed name this command used to ask for is gone (D1540), and the
+	// states judged above are what refuses everything else.
 	run := stepRunFor(cmd, "accounts-clear", cmd.OutOrStdout())
 	defer run.close()
 	st := run.rep.Step("Clearing the " + stateText(accountStateOf(prev)) + " mark of " + pluginwire.Printable(name))
 	defer st.Abandon()
 
+	// The ask wrapper is the frame's here and not a prompt's: the sentence below
+	// is what a person reads about this write, and the question that may follow
+	// it is the one --ask puts back (announceSettingsWrite). It stays wrapped
+	// because a line in flight drawn over either swallows it (G1). This command
+	// registers no --ask, so no gate answer is passed with it: there is no flag
+	// for a managed project's verdict to stand in for.
 	what := fmt.Sprintf("clear the %s mark of Claude account %s, putting it back in the cascade's rotation",
 		stateText(accountStateOf(prev)), pluginwire.Printable(name))
 	if err := run.ask(func() error {
-		return confirmTyped(cmd, bufio.NewReader(cmd.InOrStdin()), lc, o.yes, what)
+		return announceSettingsWrite(cmd, false, what)
 	}); err != nil {
 		return err
 	}
 
 	written, err := store.UpdateMark(ctx, name, func(cur creds.Mark, _ bool) (creds.Mark, error) {
 		// The state is judged again here, on the value this write is
-		// conditional on: the read above is only what the confirmation said,
-		// and a service that marked the credential between the two must not
-		// have its change overwritten by a clear meant for another state.
+		// conditional on: the read above is only what the sentence named, and a
+		// service that marked the credential between the two must not have its
+		// change overwritten by a clear meant for another state.
 		//
 		// "Another state" includes the other clearable one. Broken and
 		// exhausted are two different holds — one ends by itself at the reset
@@ -576,11 +582,11 @@ func accountsClear(cmd *cobra.Command, o accountsClearOptions, name string) erro
 		// creds.Break takes no previous mark, so the 401 path writes broken
 		// over whatever is there, and an exhausted mark the operator read can
 		// be broken by the time this callback runs. Clearing "one of the two"
-		// here would let a clear the operator confirmed for an exhausted mark
-		// wipe a broken one recorded meanwhile, putting a refused token back
-		// in the cascade's rotation — which is the failure this re-decision
-		// exists to prevent, and the confirmation's own words ("clear the
-		// exhausted mark of …") are what it must be held to.
+		// here would let a clear the operator ran against an exhausted mark wipe
+		// a broken one recorded meanwhile, putting a refused token back in the
+		// cascade's rotation — which is the failure this re-decision exists to
+		// prevent, and the sentence this clear printed ("clear the exhausted
+		// mark of …") is what it must be held to.
 		//
 		// The other direction is not a transition this release makes and this
 		// guard does not depend on it: Exhaust returns a broken mark unchanged
@@ -588,12 +594,12 @@ func accountsClear(cmd *cobra.Command, o accountsClearOptions, name string) erro
 		// backed-off mark. That refusal is what keeps a 429, or a probe, from
 		// taking a 401 off (C1.21), and nothing here may be read as
 		// contradicting it — a broken mark that reaches this callback is
-		// refused below, whichever state the confirmation named.
+		// refused below, whichever state the sentence named.
 		switch {
 		case cur.State == prev.State:
 			return creds.Cleared(), nil
 		case cur.State == creds.StateBroken || cur.State == creds.StateExhausted:
-			return creds.Mark{}, userErr("account %q is %s while this ran, and this clear was confirmed for its %s mark: the service recorded that hold after the read above, and taking it off is its own decision; nothing was written", name, stateText(accountStateOf(cur)), stateText(accountStateOf(prev)))
+			return creds.Mark{}, userErr("account %q is %s while this ran, and this clear was for its %s mark: the service recorded that hold after the read above, and taking it off is its own decision; nothing was written", name, stateText(accountStateOf(cur)), stateText(accountStateOf(prev)))
 		case cur.State == "" || cur.State == creds.StateAvailable:
 			return creds.Mark{}, userErr("account %q became available while this ran, so there is nothing to clear; nothing was written", name)
 		default:

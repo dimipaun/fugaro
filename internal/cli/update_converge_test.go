@@ -231,7 +231,11 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 // a test that has to look at the database the run left behind — the rules it
 // deployed, the markers it wrote — reaches it through here rather than building
 // a rig of its own and then running the door against another one.
-func convergeOn(t *testing.T, r *convergeRig, stale []string) {
+//
+// It returns the run's own stdout, so a test that is about what the door SAID —
+// the line it prints about the runs in flight — reads the transcript the person
+// read rather than running the door a second time.
+func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 	t.Helper()
 	currentRelease(t)
 
@@ -275,6 +279,7 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) {
 	if !strings.Contains(out, convergeRelease) {
 		t.Errorf("the run never names the release it converged to:\n%s", out)
 	}
+	return out
 }
 
 // TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration: an
