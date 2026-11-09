@@ -780,7 +780,8 @@ from 3 to 4 and the image-skew constants from 31 to 32. Amended 2026-11-09:
 key service's Terraform suite and docs/pending-workflows/README.md's `## ci.yml`
 section on it (S3.5), moved the table's row from 114 to 115: the section's claim
 that no job runs that suite is a claim about `.github/workflows/ci.yml`, so the
-pin holds the two to each other in both directions.) They
+pin holds the section, the design doc's status line and the workflow to one
+another in both directions.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.

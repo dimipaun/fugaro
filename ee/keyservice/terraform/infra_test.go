@@ -662,9 +662,17 @@ func tfRingEnvironments(t *testing.T, dir string) []string {
 }
 
 // tfMapKeys answers the entry names of a map value, in the order it writes them:
-// the names at the map's own depth, outside any nested bracket, so a key of a
-// nested map is not one and neither is a name written inside a string or a
-// heredoc.
+// the keys at the map's own depth, in every spelling HCL gives a key — a bare
+// name, a quoted one, which are the same key, and a computed one — and read
+// outside any nested bracket, so a key of a nested map is not one and neither is
+// a name written inside a string or a heredoc.
+//
+// A key whose name this reader cannot know — a computed key, `(var.environment)`,
+// or an interpolated one, `"${var.environment}"` — is reported as the text it is
+// written with, and a map written as a for-expression reports the name it binds:
+// none of those is an environment this tree pins, so the rule that calls this
+// fails on them rather than passing quietly, which is what a key set no reader
+// can read should do.
 func tfMapKeys(value string) []string {
 	body, ok := tfBlockBody("map " + value)
 	if !ok {
@@ -679,11 +687,23 @@ func tfMapKeys(value string) []string {
 			if !ok {
 				return out
 			}
+			if depth == 0 && tfKeyFollows(body, j) {
+				out = append(out, body[i+1:j-1])
+			}
 			i = j
 		case c == '<' && strings.HasPrefix(body[i:], "<<"):
 			j, ok := tfSkipHeredoc(body, i)
 			if !ok {
 				return out
+			}
+			i = j
+		case depth == 0 && c == '(':
+			j, ok := tfSkipBrackets(body, i)
+			if !ok {
+				return out
+			}
+			if tfKeyFollows(body, j) {
+				out = append(out, body[i:j])
 			}
 			i = j
 		case c == '{' || c == '[' || c == '(':
@@ -697,11 +717,7 @@ func tfMapKeys(value string) []string {
 			for j < len(body) && tfIdentChar(body[j]) {
 				j++
 			}
-			k := j
-			for k < len(body) && (body[k] == ' ' || body[k] == '\t' || body[k] == '\n' || body[k] == '\r') {
-				k++
-			}
-			if k < len(body) && body[k] == '=' {
+			if tfKeyFollows(body, j) {
 				out = append(out, body[i:j])
 			}
 			i = j
@@ -710,6 +726,16 @@ func tfMapKeys(value string) []string {
 		}
 	}
 	return out
+}
+
+// tfKeyFollows answers whether only whitespace separates i from an `=`, which is
+// what makes the token that ended at i a key rather than a value: `staging = "…"`
+// and `"staging" = "…"` are one entry, and what follows the `=` is its value.
+func tfKeyFollows(body string, i int) bool {
+	for i < len(body) && (body[i] == ' ' || body[i] == '\t' || body[i] == '\n' || body[i] == '\r') {
+		i++
+	}
+	return i < len(body) && body[i] == '='
 }
 
 // tfVarBlockEnds are the markers that end a `variable` block in these roots: the
@@ -1325,7 +1351,8 @@ func TestTheMinterHasNoPublicInvoker(t *testing.T) {
 // grant and a key naming what a check looks for in free text, a grant written
 // under a string whose interpolation holds a quote — which a reader that ended
 // the string at the first quote it saw did not see at all — a second key beside
-// the one block the checks read, and the third root above, which is not.
+// the one block the checks read, the environments of `keys`' default in the
+// spellings a map key has, and the third root above, which is not.
 func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -1584,6 +1611,31 @@ func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 			"  default = {\n    production = \"fugaro-licence-production\"\n    staging    = \"fugaro-licence-staging\"\n    dev        = \"fugaro-licence-dev\"\n  }\n}\n")
 		if got := tfRingEnvironments(t, root); slices.Equal(got, held) {
 			t.Errorf("a third entry in `keys`' default reads as %v, which is the held set: the key block's for_each makes one signing key per entry, so the third environment is a third key the minter's ring-level role reaches and no check reads", got)
+		}
+	})
+
+	// And the spellings a map key has, over a tree this test writes: `"staging"
+	// = …` is the entry `staging = …` is, so the two environments written with
+	// quotes are the held set — a reader that skipped quoted keys read an empty
+	// key set — while a THIRD environment written with quotes, or as a computed
+	// key, whose name only the apply knows, is not the held set and is refused.
+	t.Run("an environment written as a quoted key", func(t *testing.T) {
+		root := t.TempDir()
+		tfWrite(t, root, "keyring/variables.tf", "variable \"keys\" {\n"+
+			"  default = {\n    \"production\" = \"fugaro-licence-production\"\n    \"staging\"    = \"fugaro-licence-staging\"\n  }\n}\n")
+		held := []string{"production", "staging"}
+		if got := tfRingEnvironments(t, root); !slices.Equal(got, held) {
+			t.Errorf("the environments read as %v, want %v: a quoted key is the same key as a bare one, so a reader that skipped it read a ring of no keys, which both refuses a tree whose ring is the one it says it is and lets a third quoted environment through", got, held)
+		}
+		for _, written := range []string{
+			"    \"dev\"     = \"fugaro-licence-dev\"\n",
+			"    (var.dev) = \"fugaro-licence-dev\"\n",
+		} {
+			tfWrite(t, root, "keyring/variables.tf", "variable \"keys\" {\n"+
+				"  default = {\n    \"production\" = \"fugaro-licence-production\"\n    \"staging\"    = \"fugaro-licence-staging\"\n"+written+"  }\n}\n")
+			if got := tfRingEnvironments(t, root); slices.Equal(got, held) {
+				t.Errorf("a third environment written as %q reads as %v, which is the held set: the key block's for_each makes one signing key per entry whatever the entry is spelled with, and the signer role is granted on the ring, so the third one is a key the minter can sign with that no check reads", strings.TrimSpace(written), got)
+			}
 		}
 	})
 
