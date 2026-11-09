@@ -66,35 +66,3 @@ func meMember(me string) string {
 func adminOf(lc *localcfg.Config, me string) bool {
 	return adminMember(meMember(me), lc.Terraform.Admins)
 }
-
-// launcherOnly is an installation's launcher list without the admins the
-// roles' own lists put beside them: the members the COMPUTE root grants its
-// launcher roles to, and the set `fugaro doctor`'s Batch check reads a
-// launcher's reach off.
-//
-// The two roots are not the same list, and the difference is deliberate. The
-// installation and repository roots write launchersWithOperators into their
-// own tfvars (infra.tfvars.go), because an operator runs, watches and cancels
-// runs too: `var.launchers` there is the two lists unioned. The compute root
-// takes the two lists apart — its var.launchers alone is what
-// roles/batch.jobsEditor and serviceAccountUser on the run accounts are for,
-// and its var.operators hold actAs on the preload account and nothing else
-// (modules/compute/iam.tf, design compute-backend §8.1 task 6) — so an admin
-// is not a compute-root launcher, and a run of `fugaro update` may not widen
-// the Batch grant by deriving the lists the way the installation's are
-// (D1589: the rename moves the words, not the IAM).
-//
-// The list it subtracts from is the local config's terraform.operators, which
-// is the launcher list the derive builds and which holds the admins too
-// (update_access.go's deriveAccess keeps them there: an admin operates too).
-// The comparison is the members as written, the way the lists are compared
-// everywhere else (sameUserMembers).
-func launcherOnly(launchers, admins []string) []string {
-	out := make([]string, 0, len(launchers))
-	for _, m := range launchers {
-		if !slices.Contains(admins, m) {
-			out = append(out, m)
-		}
-	}
-	return out
-}

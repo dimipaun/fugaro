@@ -377,14 +377,27 @@ func (s *computeStage) prepare(ctx context.Context) error {
 		Subnetwork:      infra.DefaultSubnetwork(e.spec.Project, e.spec.Region),
 		Names:           infra.ComputeNamesFor(),
 		ManageAPIs:      e.spec.ManageAPIs,
-		// The launchers alone, and not the admins the roles' lists put beside
-		// them: this root's var.launchers is what roles/batch.jobsEditor and
-		// serviceAccountUser on the run accounts are for, and its var.operators
-		// hold actAs on the preload account and nothing else (modules/compute/
-		// iam.tf). The installation's own spec.Launchers is the union the
-		// derive builds, which is what the installation and repository roots
-		// want and what this one must not take (roles.go's launcherOnly).
-		Launchers:          launcherOnly(e.spec.Launchers, e.spec.Operators),
+		// The launchers, and beside them the admins: this root's var.launchers
+		// is what roles/batch.jobsEditor and serviceAccountUser on the run
+		// accounts are for, and its var.operators hold actAs on the preload
+		// account and nothing else (modules/compute/iam.tf, design
+		// compute-backend §8.1 task 6). spec.Launchers is the list this run
+		// treats as launchers — the operators the derive builds, admins
+		// included, because an admin operates too — which is the same pair the
+		// installation and repository roots take and union themselves
+		// (infra.tfvars.go's launchersWithOperators).
+		//
+		// The admins are NOT subtracted back out of it. A member on both lists
+		// — what defaultMembers writes for a one-person installation, and
+		// where the migration's collapse to the highest role leaves every
+		// launcher who was also an operator — would lose roles/batch.jobsEditor
+		// relative to the shape before the rename, and an installation whose
+		// two lists hold the same person would provision a launcher list of
+		// nobody. The widening the other way (an admin who was not a launcher
+		// gaining the grant) is what the roles' own rank says, and this stage
+		// never applies it on --yes: it prints the plan and asks for the
+		// project's name typed at a real terminal.
+		Launchers:          e.spec.Launchers,
 		Operators:          e.spec.Operators,
 		RunAccounts:        runAccounts,
 		RegistryRepository: registryRepository(e.lc, outs),

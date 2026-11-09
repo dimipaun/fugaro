@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
@@ -59,6 +61,13 @@ import (
 // the run's confirmation and before the guard, and a run that is declined or
 // refused may not have changed the installation's roles on its way to applying
 // nothing.
+//
+// A coding agent's session writes no node at all, and that is the one refusal of
+// this step (refuseAgentAccess): the migration runs before the loop's first
+// confirmation and the fold can follow a plan with nothing in it, so a session
+// that must write nothing would otherwise land a change to the installation's
+// roles and stop at the first stage's AgentError afterwards, with the node
+// already changed.
 
 // syncAccess is the run's roles step, called once by the converge before its
 // first stage so that every spec this run builds carries the lists the node
@@ -72,7 +81,11 @@ import (
 // caller's own IAM refuses (only the implicit admins hold the database write,
 // F22/D1592) leaves the node absent for a project Owner's next update rather
 // than stopping the one command the user runs. Everything else is the run's own
-// error: a node that cannot be read is not a node that grants nothing.
+// error: a node that cannot be read is not a node that grants nothing, and a
+// migration this step is about to write is never written in a coding agent's
+// session — that refusal is the session's own (refuseAgentAccess), which applies
+// nothing at all, so the installation is left exactly where it was for the
+// person's next `fugaro update` to migrate.
 func (e *initEngine) syncAccess(ctx context.Context) error {
 	lc := e.lc
 	if lc == nil || lc.Budget == nil || lc.Budget.RTDBURL == "" {
@@ -358,6 +371,24 @@ func (e *initEngine) migrateAccess(ctx context.Context, db *rtdb.Client, node ac
 	return e.seedAccess(ctx, db, node, outs.Launchers, outs.Operators)
 }
 
+// refuseAgentAccess is the check both of this file's writes to the grants node
+// make before they are attempted: a coding agent's session writes no node.
+//
+// Every other write of the converge is behind a confirmation that session
+// refuses (init_review.go's askOrdinary and askPlanned), while this step runs
+// before the loop (init_stages.go's syncAccess) and the fold can follow a plan
+// with nothing in it — so without this check the session would change who the
+// installation's operators and admins are, and only then stop at the first
+// stage's AgentError. The refusal is the session's own, and it is not a drift
+// refusal: the session applies nothing at all, and the installation's next
+// `fugaro update`, run by the person, migrates the lists as it would have here.
+func (e *initEngine) refuseAgentAccess() error {
+	if m := agentMarker(os.Getenv, e.r.stdinTerminal()); m != "" {
+		return &initflow.AgentError{Marker: m}
+	}
+	return nil
+}
+
 // seedAccess turns two IAM member lists into grants and writes them, printing
 // the roster it wrote so the migration is a thing the operator can see rather
 // than a silent rewrite of who may do what.
@@ -370,6 +401,9 @@ func (e *initEngine) seedAccess(ctx context.Context, db *rtdb.Client, node acces
 		// Nothing to hold: an empty grants list is not a node (WriteIfMatch),
 		// and the installation's own forms are legacy members the lists carry.
 		return accesslib.Node{}, nil
+	}
+	if err := e.refuseAgentAccess(); err != nil {
+		return accesslib.Node{}, err
 	}
 	err = accesslib.WriteIfMatch(ctx, db, grants, node.ETag)
 	switch {
@@ -448,6 +482,9 @@ func (e *initEngine) foldFlagLists(ctx context.Context, db *rtdb.Client, node ac
 		}
 		if sameGrants(folded.Grants, node.Grants) {
 			return node, nil
+		}
+		if err := e.refuseAgentAccess(); err != nil {
+			return accesslib.Node{}, err
 		}
 		err = accesslib.WriteIfMatch(ctx, db, folded.Grants, node.ETag)
 		switch {

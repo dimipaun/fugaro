@@ -368,32 +368,34 @@ func logBucketPath(lc *localcfg.Config) string {
 // The same wording covers a grant that is absent for any other reason -- what
 // doctor can say is what it read.
 func doctorBatchLauncherIAM(ctx context.Context, lc *localcfg.Config, c *crm.Service) []doctorCheck {
-	// Only the launcher list, and not the admins the roles' lists put beside
-	// them: the two lists reach the compute root as two separate variables
-	// (infra.ComputeSpec.Launchers/Operators, roots/compute/main.tf), and the
-	// module's launcher_jobs_editor is for_each over var.launchers alone --
-	// the installation's admins hold actAs on the preload account there and
-	// nothing else (modules/compute/iam.tf, design §8.1 task 6). That is
-	// narrower than the installation and repository roots, which write
-	// launchersWithOperators into their own tfvars because an operator
-	// launches too (infra.tfvars.go); the Batch grant is not widened the same
-	// way. Reading the union here would therefore warn about a member the
-	// module deliberately does not grant, and no run of `fugaro update` could
-	// clear that warning: the Fix it prints is the state the installation is
-	// already in. What the config holds under terraform.operators is that
-	// union (the derive keeps the admins in it), so the list this check reads
-	// is the same subtraction the compute root's own apply makes
-	// (roles.go's launcherOnly).
-	launchers := launcherOnly(lc.Terraform.Operators, lc.Terraform.Admins)
-	slices.Sort(launchers)
-	launchers = slices.Compact(launchers)
-	if len(launchers) == 0 || c == nil {
-		// No launchers are recorded, so there is no member the grant is about;
-		// an installation with no launchers cannot start a run at all, which
-		// is a fact about the config and not about IAM.
+	// The launcher list is terraform.operators, and it is the WHOLE of it: the
+	// list the compute root hands var.launchers (init_compute.go) and the one
+	// the module's launcher_jobs_editor is for_each over, admins included,
+	// because an admin operates too. The two lists reach the root as two
+	// separate variables (infra.ComputeSpec.Launchers/Operators,
+	// roots/compute/main.tf), and its var.operators hold actAs on the preload
+	// account and nothing else (modules/compute/iam.tf, design §8.1 task 6).
+	//
+	// Subtracting the admins here (roles.go's launcherOnly, removed) read a
+	// different list from the one the module grants: a member on both lists
+	// was reported as missing a grant the module does write, and an
+	// installation whose two lists held the same person was read as having no
+	// launchers at all, so the check returned nothing about the one member it
+	// was about.
+	launchers := sortedMembers(lc.Terraform.Operators)
+	if c == nil {
 		return nil
 	}
 	const id = "batch-launcher-iam"
+	if len(launchers) == 0 {
+		// Nobody is recorded as a launcher, so no member holds the Batch grant
+		// this check is about and no run can start. The config is where that
+		// is fixed, and the Fix names the door that writes it: silence here is
+		// what left the empty list invisible.
+		return []doctorCheck{{ID: id, Severity: "warning",
+			Problem: "terraform.operators in this machine's config holds no member, so nobody holds the launchers' roles/batch.jobsEditor grant in " + lc.GCPProject + " and no run can start there",
+			Fix:     "name who may start and watch runs: run fugaro update --operator user:<address> (a whole list, which writes the roles' node and the config)"}}
+	}
 	p, err := c.Projects.GetIamPolicy(lc.GCPProject, &crm.GetIamPolicyRequest{
 		Options: &crm.GetPolicyOptions{RequestedPolicyVersion: 3},
 	}).Context(ctx).Do()
