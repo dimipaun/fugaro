@@ -817,8 +817,16 @@ func TestRunsDigestPrintsIssuesSectionOnTerminal(t *testing.T) {
 	dir := t.TempDir()
 	digestClock(t, "2026-10-27")
 	seedDigestRun(t, f, "20261025-120000-abcd", time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC), "acme/app")
-	up := seedDigestIssue(t, f, "run-20261025120000-48213", "the review stage starts twice",
+	// The summary is a teammate's own text, and this one ends in `]` and spells
+	// the reference out: the section prints it as data, in every block it
+	// appears in, and never takes it for the reference it appends itself.
+	summary := "the review stage starts twice [fugaro issue submit 999]"
+	up := seedDigestIssue(t, f, "run-20261025120000-48213", summary,
 		time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC))
+	// One more report of it, a day later: the store merges the duplicate by
+	// fingerprint, which is what makes the issue recurring (F21).
+	seedDigestIssue(t, f, "run-20261020120000-48213", summary,
+		time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC))
 	bothTerminals(t)
 	args := []string{"runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir}
 
@@ -839,27 +847,55 @@ func TestRunsDigestPrintsIssuesSectionOnTerminal(t *testing.T) {
 			t.Errorf("the terminal section does not carry %q:\n%s", want, out)
 		}
 	}
-	// Every pending line of the section names `fugaro issue submit`, and it is
-	// printed only where this build answers it: the command is a later slice,
-	// so this tree prints the section without a reference a reader could not
-	// type (the rule `fugaro issue`'s own help follows). The tree's own answer
-	// is what the run has to agree with.
+	// The reference T-IS14 appends is that issue's own, and the section carries
+	// it only where this build answers `fugaro issue submit`: the command is a
+	// later slice, so this tree prints the section without a reference a reader
+	// could not type (the rule `fugaro issue`'s own help follows). The tree's own
+	// answer is what the run has to agree with, and the reference is checked by
+	// its exact text: the summary above spells one out, and that one is the
+	// reporter's data rather than this program naming a command.
 	submit, _, _ := NewRootCmd().Find([]string{"issue", "submit"})
 	answers := submit != nil && submit.Name() == "submit"
-	if ref := strings.Contains(out, "fugaro issue submit"); ref != answers {
-		t.Errorf("the section names `fugaro issue submit` %v, but this build answers it %v:\n%s", ref, answers, out)
+	ref := fmt.Sprintf("[fugaro issue submit %d]", up.Number)
+	if got := strings.Contains(out, ref); got != answers {
+		t.Errorf("the section names %q %v, but this build answers `issue submit` %v:\n%s", ref, got, answers, out)
+	}
+	// And no block but the pending one gets a reference cut out of it: the
+	// Recurring line ends in the reporter's summary, which is what that summary
+	// ending in `]` would cost if the cut went by the line's shape instead of
+	// by the block the reference is written in.
+	recurring := false
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, "reported 2 times") {
+			continue
+		}
+		recurring = true
+		if !strings.HasSuffix(line, summary) {
+			t.Errorf("the Recurring line does not end in the reporter's own summary:\n%s", out)
+		}
+	}
+	if !recurring {
+		t.Errorf("the section has no Recurring line for the issue reported twice (F21):\n%s", out)
+	}
+	// And the reader behind that answer, on paths whose existence does not
+	// change when a later slice arrives: this build's own `runs digest` is
+	// answered, and a name it never had is not. A reader that answered the same
+	// thing for both would strip the reference in a build that has the command,
+	// which no test above could tell before that command lands.
+	if root := NewRootCmd(); !digestAnswersCommand(root, "runs", "digest") || digestAnswersCommand(root, "runs", "no-such-command") {
+		t.Error("the command reader does not tell a path this build answers from one it does not")
 	}
 	// A build that does answer it prints the reference T-IS14 writes: the seam
 	// stands in for the tree T-IS7 registers the command in.
-	oldAnswers := digestAnswersSubmit
-	digestAnswersSubmit = func(*cobra.Command) bool { return true }
-	t.Cleanup(func() { digestAnswersSubmit = oldAnswers })
+	oldAnswers := digestAnswersCommand
+	digestAnswersCommand = func(*cobra.Command, ...string) bool { return true }
+	t.Cleanup(func() { digestAnswersCommand = oldAnswers })
 	out, errOut, err = execute(t, args...)
 	if err != nil {
 		t.Fatalf("runs digest in a build that answers issue submit: %v (%s)", err, errOut)
 	}
-	if want := fmt.Sprintf("[fugaro issue submit %d]", up.Number); !strings.Contains(out, want) {
-		t.Errorf("a build that answers the command printed no %q:\n%s", want, out)
+	if !strings.Contains(out, ref) {
+		t.Errorf("a build that answers the command printed no %q:\n%s", ref, out)
 	}
 	// After the digest's own output, which is what "after runs digest" means.
 	if wrote := strings.Index(out, "wrote "); wrote < 0 || wrote > strings.Index(out, "## Issues") {

@@ -357,38 +357,53 @@ func digestIssuesSection(cmd *cobra.Command, ctx context.Context, env *cloudEnv)
 	}
 	th := issues.Thresholds{AfterDays: env.lc.NudgeAfterDays(), Recurrence: env.lc.NudgeRecurrence()}
 	section := issues.Section(digestSectionRows(rows), digestNow().UTC(), th)
-	if !digestAnswersSubmit(cmd.Root()) {
+	if !digestAnswersCommand(cmd.Root(), "issue", "submit") {
 		section = digestWithoutSubmitRefs(section)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "\n%s", section)
 }
 
-// digestAnswersSubmit reports whether this build answers `fugaro issue submit`,
-// which the section names on every pending line (T-IS14, F23). Tests replace
-// it: the answer is the command tree's, and it becomes true the day T-IS7
-// registers the command.
-var digestAnswersSubmit = func(root *cobra.Command) bool {
-	found, _, err := root.Find([]string{"issue", "submit"})
-	return err == nil && found != nil && found.Name() == "submit"
+// digestAnswersCommand reports whether this build answers the command at path.
+// It is how the section knows whether it may print the reference T-IS14 adds to
+// every pending line: the command is a later slice, so the answer turns true
+// the day T-IS7 registers it, and tests replace it to check both sides of that
+// turn on one tree.
+var digestAnswersCommand = func(root *cobra.Command, path ...string) bool {
+	found, _, err := root.Find(path)
+	return err == nil && found != nil && len(path) > 0 && found.Name() == path[len(path)-1]
 }
 
-// digestSubmitRefLead opens the reference T-IS14 appends to a pending line.
-const digestSubmitRefLead = " [fugaro issue submit "
+// digestSubmitRefLead opens the reference T-IS14 appends to a pending line, and
+// digestPendingHead is the heading of the block whose lines carry it.
+const (
+	digestSubmitRefLead = " [fugaro issue submit "
+	digestPendingHead   = "Pending, oldest first:"
+)
 
-// digestWithoutSubmitRefs is the section with that reference taken out of every
-// line it ends. The lines are internal/issues' own, so this reads the shape
-// they are written in and its test fails if that shape changes.
+// digestWithoutSubmitRefs is the section with that reference taken out of the
+// pending block's lines, which are the only ones it is appended to. The New
+// and Recurring lines end in the reporter's own summary, which may itself end
+// in `]` and spell the reference out: cutting whatever looks like one out of
+// every line would print a teammate's text short. The lines are
+// internal/issues' own, so this reads the shape they are written in and its
+// test fails if that shape changes.
 func digestWithoutSubmitRefs(section string) string {
-	lines := strings.Split(section, "\n")
-	for i, line := range lines {
-		if !strings.HasSuffix(line, "]") {
+	blocks := strings.Split(section, "\n\n")
+	for i, b := range blocks {
+		if !strings.HasPrefix(b, digestPendingHead) {
 			continue
 		}
-		if at := strings.LastIndex(line, digestSubmitRefLead); at >= 0 {
-			lines[i] = line[:at]
+		lines := strings.Split(b, "\n")
+		for j, line := range lines {
+			// The appended reference is the last thing on the line, so the
+			// last lead on it opens the reference and never the summary's own.
+			if at := strings.LastIndex(line, digestSubmitRefLead); at >= 0 {
+				lines[j] = line[:at]
+			}
 		}
+		blocks[i] = strings.Join(lines, "\n")
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(blocks, "\n\n")
 }
 
 // digestSectionRows is the shared store's rows as the section prints them. An
