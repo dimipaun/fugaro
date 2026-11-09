@@ -132,10 +132,30 @@ func TestStatusIsAnIconAndAColouredWord(t *testing.T) {
 			t.Errorf("NO_COLOR drew %q, want the plain status", line)
 		}
 	})
+	t.Run("the log's copy is never coloured", func(t *testing.T) {
+		var out bytes.Buffer
+		r := New(Options{Out: &out, Getenv: noEnv, IsTerminal: aTerminal})
+		for _, c := range kinds {
+			line := r.PlainStatus(c.k, c.word, 14)
+			want := c.mark + " " + c.word + strings.Repeat(" ", 14-len([]rune(c.mark+" "+c.word)))
+			if strings.Contains(line, "\x1b[") || line != want {
+				t.Errorf("the log's copy of %s is %q, want %q: a log is read with a pager", c.word, line, want)
+			}
+		}
+		// The alphabet is still the run's: --ascii keeps the marks ASCII in the
+		// log exactly as it does on the screen.
+		ascii := New(Options{Out: &out, Getenv: noEnv, IsTerminal: aTerminal, ASCII: true})
+		if got := ascii.PlainStatus(KindDone, "done", 14); !strings.HasPrefix(got, glyphDone.ascii+" ") {
+			t.Errorf("--ascii's log copy drew %q, want the ASCII mark", got)
+		}
+	})
 	t.Run("a nil reporter is plain", func(t *testing.T) {
 		var r *Reporter
 		if got := r.Status(KindWaiting, "waiting", 0); got != glyphWaiting.sym+" waiting" {
 			t.Errorf("a run with no reporter drew %q", got)
+		}
+		if r.IsBrief() {
+			t.Error("a nil reporter is brief: a run with no reporter has no log to keep the rest of a reason in")
 		}
 	})
 }

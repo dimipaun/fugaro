@@ -311,6 +311,13 @@ func TestCreateResumesItsOwnProject(t *testing.T) {
 	if row := planRowOf(out, "project"); !strings.HasPrefix(row, markDone+" done") || !strings.Contains(row, "exists") {
 		t.Errorf("the project stage is not reported done with the project it found: %q\n%s", row, out)
 	}
+	// The row is one clause on the screen and the whole reason in the run's log
+	// (report.Brief), and this row is cut before what billing is left as: a
+	// plan-only run prints no step for the stage, so the log's copy of the row
+	// is the only whole one there is.
+	if log := newestLog(t, "setup"); !strings.Contains(log, "billing is already linked") {
+		t.Errorf("the log does not hold the reason the row was cut at:\n%s", log)
+	}
 	_, _, _ = r.run(t, true, newProj+"\n"+billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
 	r.nothingDone(t, "a resumed project")
 }

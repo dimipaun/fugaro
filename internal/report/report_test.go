@@ -508,6 +508,10 @@ func TestShortIsOneClauseAndTheLogKeepsTheWholeOfIt(t *testing.T) {
 			if log := sink.String(); log != "– firebase "+reason+"\n" {
 				t.Errorf("the log holds %q, want the whole reason", log)
 			}
+			// A caller that prints its own lines cuts one only on this answer.
+			if got := r.IsBrief(); got != o.brief {
+				t.Errorf("IsBrief() = %v, want %v", got, o.brief)
+			}
 		})
 	}
 }

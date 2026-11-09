@@ -98,16 +98,40 @@ var marks = [...]struct {
 // termenv writes are not counted, which is the whole reason the padding is
 // added here and not by the caller.
 func (r *Reporter) Status(k Kind, word string, width int) string {
+	return r.status(k, word, width, true)
+}
+
+// PlainStatus is Status as a log keeps it: the same mark in the same alphabet,
+// the same word and the same padding, with no colour. A caller that prints its
+// own lines writes the log's copy of a row with it, because a log is read with
+// a pager, where the colour that helps a person watching is noise (D1352).
+func (r *Reporter) PlainStatus(k Kind, word string, width int) string {
+	return r.status(k, word, width, false)
+}
+
+// status is the one renderer behind the two: paint is whether the mark and the
+// word are drawn in their colour. A nil reporter never is, so a caller driving
+// the converge with no reporter at all (--print-vars, a test's hand-built
+// engine) gets the plain text it printed before one existed.
+func (r *Reporter) status(k Kind, word string, width int, paint bool) string {
 	m := marks[k]
-	plain := m.g.text(false) + " " + word
-	pad := ""
-	if n := width - len([]rune(plain)); n > 0 {
-		pad = strings.Repeat(" ", n)
+	mark := m.g.text(r != nil && r.o.ASCII)
+	pad := statusPad(mark, word, width)
+	if !paint || r == nil {
+		return mark + " " + word + pad
 	}
-	if r == nil {
-		return plain + pad
+	return r.painted(mark+" "+word, m.c) + pad
+}
+
+// statusPad is the spaces that line a caller's columns up: width minus the
+// status's visible text, which is the mark, the space and the word. The escape
+// sequences termenv writes are not counted, which is the whole reason the
+// padding is added here and not by the caller.
+func statusPad(mark, word string, width int) string {
+	if n := width - len([]rune(mark)) - 1 - len([]rune(word)); n > 0 {
+		return strings.Repeat(" ", n)
 	}
-	return r.painted(m.g.text(r.o.ASCII)+" "+word, m.c) + pad
+	return ""
 }
 
 // text is the glyph in the alphabet the --ascii decision picked.

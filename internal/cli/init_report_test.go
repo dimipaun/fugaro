@@ -234,6 +234,99 @@ func TestUpdatePlanOnlyKeepsThePlanOnTheTerminal(t *testing.T) {
 	}
 }
 
+// TestPlanOnlyKeepsTheWholeReasonInTheLog: the plan view's row is one clause on
+// the screen and the whole reason in the run's log (report.Brief), and a
+// plan-only run is where that matters most — it prints no step for any stage, so
+// the view is the whole of its account, and a reason the screen cut has nowhere
+// else to be whole. The reason a stage leaves the person is an instruction, and
+// half an instruction is not one.
+func TestPlanOnlyKeepsTheWholeReasonInTheLog(t *testing.T) {
+	r := newProjectRig(t)
+	r.existing(true)
+	r.bill.AddAccount(billingAcc, true)
+	out, _, _ := r.run(t, true, newProj+"\n"+billingAcc+"\n", "--create-project", "--link-billing", billingAcc, "--plan-only")
+	_, log := onlyLog(t, "setup")
+	cut := 0
+	for _, l := range reportLines(out) {
+		i := strings.Index(l, "…")
+		if !strings.HasPrefix(l, "  ") || i < 0 {
+			continue
+		}
+		cut++
+		head := strings.TrimRight(l[:i], " ")
+		whole := logRowOf(log, head)
+		if whole == "" {
+			t.Errorf("the log does not hold the row the screen cut:\n%s\n%s", l, log)
+			continue
+		}
+		if len(whole) <= len(l) {
+			t.Errorf("the log's row is no longer than the screen's, so what the screen cut is nowhere whole:\n%s\n%s", l, whole)
+		}
+	}
+	if cut == 0 {
+		t.Fatalf("the plan view cut nothing, so this test proves nothing:\n%s", out)
+	}
+}
+
+// logRowOf is the plan-view row a screen line was cut from: the row in the run's
+// log that begins where the screen's row does, before the ellipsis.
+func logRowOf(log, head string) string {
+	for _, l := range strings.Split(log, "\n") {
+		if strings.HasPrefix(l, head) {
+			return l
+		}
+	}
+	return ""
+}
+
+// noLogStateDir makes this test's state directory one OpenLog cannot keep a log
+// in — a link where its own directory belongs, which is one of the refusals CL3
+// names and the one no uid can write around (G5) — and returns the directory
+// behind the link, so a test can check that nothing was filed there.
+func noLogStateDir(t *testing.T) string {
+	t.Helper()
+	state, err := localcfg.UserDir(os.Getenv, runtime.GOOS, localcfg.DirState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := t.TempDir()
+	if err := os.RemoveAll(filepath.Join(state, "fugaro")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(state, "fugaro")); err != nil {
+		t.Fatal(err)
+	}
+	return elsewhere
+}
+
+// TestUpdateWithoutALogKeepsItsWholeAccount: the brief account is one clause on
+// the screen *because* the whole of the reason is in the log (report.Brief), so
+// a run that could not open one cuts nothing: the step's reason is the whole of
+// it, and the plan's own account — the addresses of what the person is about to
+// confirm — reaches the terminal, where it is the only place left for it
+// (D1352, G5, G8).
+func TestUpdateWithoutALogKeepsItsWholeAccount(t *testing.T) {
+	applyingRig(t)
+	noLogStateDir(t)
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	all := out + errOut
+	if !strings.Contains(all, "create module.installation.google_storage_bucket.runs") {
+		t.Errorf("the run kept Terraform's own plan out of the only account it has:\n%s", all)
+	}
+	if strings.Contains(all, "…") {
+		t.Errorf("a run with no log cut a reason it had nowhere to keep whole:\n%s", all)
+	}
+	if strings.Contains(all, "full output: ") {
+		t.Errorf("a run that opened no log printed a path to one:\n%s", all)
+	}
+}
+
 // TestUpdateFailurePrintsContextAndLogPath: a failed step prints its name, the
 // error, the lines of context behind it and the path of the log the rest is in
 // — on the screen, because an agent's session with a read-only home cannot
@@ -276,22 +369,7 @@ func TestUpdateFailurePrintsContextAndLogPath(t *testing.T) {
 // failure is the last thing a run may drop (G8).
 func TestUpdateWithoutALogKeepsTheStreamOnScreen(t *testing.T) {
 	applyingRig(t)
-	state, err := localcfg.UserDir(os.Getenv, runtime.GOOS, localcfg.DirState)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(state, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	// A link where the log's own directory belongs is one of OpenLog's
-	// refusals (CL3), and the one no uid can write around.
-	elsewhere := t.TempDir()
-	if err := os.RemoveAll(filepath.Join(state, "fugaro")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(elsewhere, filepath.Join(state, "fugaro")); err != nil {
-		t.Fatal(err)
-	}
+	elsewhere := noLogStateDir(t)
 	out, errOut, err := executeStdin(t, "", "update", "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)

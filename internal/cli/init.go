@@ -1384,13 +1384,15 @@ func (r *initRun) progress() io.Writer {
 // the address they may need — --allow-delete takes one — is in the log beside
 // what refused it (the owner's feedback of 2026-11-09).
 //
-// A run with no reporter is a run with no log (CL3's OpenLog or an engine a
-// test drove by hand), and there the whole plan goes to the terminal exactly as
+// A run with no log is a run with nowhere to keep Terraform's own account: it
+// could not open one (CL3's OpenLog: a state directory that is a link,
+// foreign-owned or read-only, G5), or it never had a reporter at all (an engine
+// a test drove by hand). There the whole plan goes to the terminal exactly as
 // it always did: it is the person's own plan, --allow-delete and
 // --allow-job-delete take the addresses it names, and a screen with nowhere
 // else to send them must not swallow them.
 func (r *initRun) planBlock(plan *tf.Plan) {
-	if r.rep == nil {
+	if r.rep == nil || r.repLog == nil {
 		fmt.Fprint(r.w, tf.Summary(plan))
 		return
 	}

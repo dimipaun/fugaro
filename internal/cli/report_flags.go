@@ -64,7 +64,8 @@ func convergeReporter(cmd *cobra.Command, name string, secrets func() []string) 
 	return openReporter(cmd, name, secrets, true)
 }
 
-// openReporter builds one reporter for one command's run.
+// openReporter builds one reporter for one command's run, and turns the brief
+// account on only for a run that got a log: what Brief cuts, the log holds.
 func openReporter(cmd *cobra.Command, name string, secrets func() []string, converge bool) (*report.Reporter, report.Sink) {
 	o := report.Options{
 		Out:        cmd.OutOrStdout(),
@@ -75,13 +76,16 @@ func openReporter(cmd *cobra.Command, name string, secrets func() []string, conv
 		JSON:       boolFlag(cmd, "json"),
 		NoColor:    boolFlag(cmd, "no-color"),
 		ASCII:      boolFlag(cmd, "ascii"),
-		Brief:      converge,
 	}
 	sink, err := report.OpenLog(name, os.Getenv, runtime.GOOS, time.Now, secrets)
 	if err != nil {
 		return report.New(o), nil
 	}
-	o.Sink = sink
+	// The brief account is one clause on the screen *because* the whole of the
+	// reason is in the log (Options.Brief). A run that could not open one — a
+	// state directory that is a link, foreign-owned or read-only, G5 — cuts
+	// nothing: what it printed is all there is.
+	o.Brief, o.Sink = converge, sink
 	return report.New(o), sink
 }
 

@@ -166,6 +166,25 @@ func New(o Options) *Reporter {
 	return r
 }
 
+// KeepsLog reports whether this run keeps a log (Options.Sink): the file a
+// failure prints the path of, and the place a reason the screen shortened is
+// whole. A caller that prints a sentence promising a log — the converge's
+// refusal block says the whole of its sentence is in one — asks first, because
+// a log that could not be opened (G5) must be promised by nobody. A nil
+// reporter keeps none.
+func (r *Reporter) KeepsLog() bool {
+	return r != nil && r.o.Sink != nil
+}
+
+// IsBrief reports whether this run is on the brief account (Options.Brief): a
+// step's reason is one clause on the screen, with the whole of it in the log.
+// A caller that prints its own lines — the converge's plan view — asks before
+// it cuts one, so a run whose account is not brief keeps its reasons whole. A
+// nil reporter is never brief.
+func (r *Reporter) IsBrief() bool {
+	return r != nil && r.o.Brief
+}
+
 // Step starts a step named name and returns it, to be ended by exactly one of
 // Done, Skipped, Failed, Left and Abandon. Ending it twice does nothing, so a
 // caller that reports twice cannot print two lines for one step.
