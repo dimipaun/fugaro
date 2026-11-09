@@ -1282,7 +1282,7 @@ describe('crash', () => {
   it('no minidump, no session, no client report and no loader hook', () => {
     // Each option is pinned by name, because the wiring's whole safety is that
     // the SDK is told these things rather than trusted to default to them. The
-    // names are the pinned SDK's own (@sentry/core 11.7.0, @sentry/node 11.7.0):
+    // names are the pinned SDK's own (@sentry/core 11.8.0, @sentry/node 11.8.0):
     // `sendDefaultPii` is `dataCollection.userInfo` there, `autoSessionTracking`
     // no longer exists at all -- a session now arrives only through the
     // `mainProcessSessionIntegration` that `defaultIntegrations: false` keeps

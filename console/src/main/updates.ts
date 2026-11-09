@@ -326,7 +326,7 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
     deps.updater.autoDownload = true
     // Off, and it is the policy's statement of the owner's ruling of 2026-10-30:
     // an update is installed only through the notice's "Restart to update", so
-    // the client's own install-on-quit -- `true` by default in 6.8.10 -- is
+    // the client's own install-on-quit -- `true` by default in 6.8.11 -- is
     // turned off before any check can run. Nothing here turns it on again, and
     // the adapter turns it off on the client it hands over as well, because a
     // policy that never configures (no check ever allowed) must still not leave
@@ -334,7 +334,7 @@ export function createUpdateController(deps: UpdatePolicyDeps): UpdateController
     deps.updater.autoInstallOnAppQuit = false
     deps.updater.allowDowngrade = false
     deps.updater.allowPrerelease = false
-    // Empty, and a plain object rather than a frozen one. Nothing in 6.8.10
+    // Empty, and a plain object rather than a frozen one. Nothing in 6.8.11
     // writes into this table -- `addAuthHeader` reassigns the field and
     // `computeFinalHeaders` builds the object it hands out -- so a frozen `{}`
     // would not throw today, and freezing buys nothing an empty table does not
