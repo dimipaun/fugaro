@@ -16,11 +16,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 )
 
-// planMarker is what faketerraform puts in every plan file it writes with -out=
-// (its own PlanMarker, which is the fake's main package's and so is not
-// importable from here).
-const planMarker = "fake-terraform-plan\n"
-
 // update_lock_test.go is the installation half of the workdir lock: two
 // `fugaro update` runs on one installation. internal/infra's own
 // workdirlock_test.go holds the lock itself (the refusal's sentence, the
@@ -30,6 +25,17 @@ const planMarker = "fake-terraform-plan\n"
 // in terraform plan with "Failed to write plan file: open fugaro.tfplan: no
 // such file or directory" because 114035's PrepareWorkdir had removed
 // <workdir>/gcp under it.
+//
+// The two runs are a goroutine and a second process of this binary: the lock
+// is the kernel's between processes, so the exclusion between two of them is
+// what the test has to be made of. TestMain dispatches the second one
+// (main_test.go), and the first one is held inside terraform by the rig's own
+// wrapper.
+
+// planMarker is what faketerraform puts in every plan file it writes with -out=
+// (its own PlanMarker, which is the fake's main package's and so is not
+// importable from here).
+const planMarker = "fake-terraform-plan\n"
 
 // convergeChildEnv marks the re-executed test binary as the second fugaro
 // update process, and convergeChildHome carries the XDG homes it must work in
@@ -279,6 +285,11 @@ func TestTwoUpdatesOnOneInstallationDoNotClobberEachOther(t *testing.T) {
 func TestTheWorkdirLockIsOnlyTheConverges(t *testing.T) {
 	newCloudFixture(t)
 	baseBranchCheckout(t, "acme/app", baseBranchYAML("git: { provider: github, base_branch: develop }\n"), "")
+	// doctor answers what it finds on the machine, so its own answer before the
+	// lock is taken is what the answer after it is compared with.
+	dir := t.TempDir()
+	_, _, withoutLock := execute(t, "doctor", "--json", "--dir", dir)
+
 	lock, err := infra.LockWorkdirs(os.Getenv, initProject, "fugaro update")
 	if err != nil {
 		t.Fatal(err)
@@ -291,11 +302,6 @@ func TestTheWorkdirLockIsOnlyTheConverges(t *testing.T) {
 	if out, _, err := execute(t, "runs", "ls", "--since", "0", "--json"); err != nil {
 		t.Fatalf("fugaro runs ls was refused by a converge's lock: %v\n%s", err, out)
 	}
-	// doctor answers what it finds on the machine, so the comparison is with
-	// its own answer without the lock: the same exit code, and never this
-	// refusal.
-	dir := t.TempDir()
-	_, _, withoutLock := execute(t, "doctor", "--json", "--dir", dir)
 	out, errOut, err := execute(t, "doctor", "--json", "--dir", dir)
 	if got := ExitCode(err); got != ExitCode(withoutLock) {
 		t.Errorf("fugaro doctor exited %d with a converge's lock held, %d without it", got, ExitCode(withoutLock))
