@@ -91,13 +91,49 @@ func TestPromptAsksForSignature(t *testing.T) {
 	if !strings.Contains(block, SignatureField+":") {
 		t.Errorf("the prompt's block does not ask for a %q line", SignatureField)
 	}
-	// And it says what a signature is, because a line that only names the field
-	// leaves the agent to invent a shape: the same failure signed in other words
-	// is a second issue rather than the occurrence the match was for.
-	for _, want := range []string{"error class", "the same words for the same failure"} {
+	// One template, spelled the same way in the prompt and in the guide: the
+	// agent reads both as one set of instructions, and two wordings for one line
+	// is how one failure comes back signed two ways and filed as two issues
+	// (D1724). The guide is checked here rather than in guide_test.go because the
+	// template is this file's constant.
+	for _, where := range []struct{ name, text string }{{"the prompt", body}, {"the guide", Guide()}} {
+		if !strings.Contains(where.text, signatureTemplate) {
+			t.Errorf("%s does not spell the signature template %q", where.name, signatureTemplate)
+		}
+	}
+	// And the prompt says what goes in each half, because a template with
+	// placeholders leaves the agent to invent the words: the same failure signed
+	// in other words is a second issue rather than the occurrence the match was
+	// for.
+	for _, want := range []string{"error class", "the same words for the same failure", "as this prompt named it"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the prompt does not say %q about the signature", want)
 		}
+	}
+}
+
+func TestPromptStatesTheRedactionRuleForEveryReport(t *testing.T) {
+	body := promptBody(testEvidence())
+	// One rule, stated once, over every report and the signature line. The log
+	// carries Terraform and gcloud error bodies, which name a project ID and a
+	// repository as readily as they name a path: a rule that stops at paths, user
+	// names and host names lets the person's project and repository ride into a
+	// public issue, and a rule stated per outcome is one the next outcome does
+	// not inherit.
+	for _, want := range []string{
+		"One redaction rule covers every report and the signature line",
+		"no local path, user name, host name or secret",
+		"no GCP project ID or repository name",
+		"redacted and should be read before it is posted",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the prompt does not state the redaction rule %q", want)
+		}
+	}
+	// The bug bullet carries no rule of its own: two rules, the narrower one
+	// first, is how the project ID and the repository name were missed.
+	if strings.Contains(body, "Leave out local paths, user names and host names") {
+		t.Error("the bug bullet still carries a redaction rule of its own")
 	}
 }
 

@@ -134,15 +134,18 @@ from, and what you could not check.
   run blindly. Prefer one command over a list, and say what it will change.
 - **A bug answer** gives an issue report the person can post: a summary, the
   steps that led to the failure, the shortest log extract that shows it, and the
-  version and commit. It carries no local paths, no user names, no host names
-  and no secrets, and it says that it was redacted and should be read before it
-  is posted.
+  version and commit.
 - **A fixed-in-a-newer-release answer** names the version that fixes it and the
   release notes' own words for the fix, so the person can decide whether to
   upgrade.
 - **An unclear answer** says which side you could not rule out and the one thing
   that would settle it, so the person can check what the evidence could not
-  reach. It carries the same kind of report a bug answer does.
+  reach. It carries the same report a bug answer does.
+
+Every report, and the signature line, follows one redaction rule: no local path,
+user name, host name or secret, and no GCP project ID or repository name the
+log's Terraform and gcloud messages carried. Say that the report was redacted
+and should be read before it is posted.
 
 ## The block
 
@@ -155,11 +158,12 @@ prompt gives you:
 - the first line names the outcome, as `outcome: configuration` or `outcome:
   bug` or `outcome: fixed_in_newer_release` or `outcome: unclear`. Fugaro reads
   the outcome from this line, so it comes first and holds nothing else.
-- the second line is the signature, as `signature: <the failing command> <the
-  error class>`. Fugaro hashes it to recognise a bug it already knows about, so
-  write the same words for the same failure: a version, a path or the whole
-  error message in it files one bug twice instead of matching the report that is
-  already there, and an issue's report is attached to the one it matches.
+- the second line is the signature, one template exactly:
+  `signature: <the failing command> <the error class>`. Fugaro hashes it to
+  recognise a bug it already knows about, so write the same words for the same
+  failure: the failing command as the prompt named it, then the error class. A
+  version, a path or the whole error message in either half files one bug twice
+  instead of matching the report that is already there.
 - then the answer: the cause, the fix or the issue report, the evidence you read
   it from, and what you could not check.
 
