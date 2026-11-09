@@ -43,7 +43,9 @@
 //     searched -- a count and never the paths themselves, because no path is ever
 //     drawn on this console (the `path` class, `sanitize.ts`) -- and the three WSL
 //     pages draw a sentence each instead, because their remedy is not a command
-//     this console can run for the operator. They are drawn where a caller hands
+//     this console can run for the operator: each names the CLI's own install
+//     procedure (`docs/windows-cli/wsl.md`) rather than copying its commands into
+//     the page (F32, D9(a)). They are drawn where a caller hands
 //     one of those kinds to `renderUnavailable` (`refusedState` is the union's
 //     other half), and the screen a first run actually meets is
 //     `src/main/onboarding.ts`'s `installCliState`, which this file does not draw.
@@ -119,10 +121,26 @@ export const NO_FUGARO_IN_DISTRO_HEADLINE = 'no fugaro inside the distribution'
 export const INSTALL_LEAD = 'install it with'
 /** SEARCHED_LEAD says what the number beside it counts. */
 export const SEARCHED_LEAD = 'places the console looked in for a fugaro binary'
+/** WSL_PROCEDURE is the document that owns the CLI's install procedure on the
+ * WSL route, and it is **named** by the three remedies below rather than
+ * retyped (F32, D9(a)).
+ *
+ * The console cannot open it -- the renderer holds no link but the website's
+ * getting-started page, and the repository's documents are not shipped with the
+ * app -- so the remedies spell the path for the operator to find, which is what
+ * "point at the procedure" means here. The alternative D9(b) refuses is a second
+ * copy of the four commands (download the linux archive, verify it, `tar -xzf`,
+ * put it on `~/.local/bin`) in this screen's `<code>` block: a copy that goes
+ * stale silently the day the procedure changes. It is written once, so the three
+ * remedies cannot disagree about where the procedure is. */
+const WSL_PROCEDURE = 'docs/windows-cli/wsl.md'
 /** NO_WSL_REMEDY, and the two beside it, are what to do about each of the three
  * failures an install line for the CLI cannot answer: `brew install` on a
  * machine with no WSL installs nothing the console can then run, and installing
- * WSL does not put `fugaro` on a distribution's `PATH`.
+ * WSL does not put `fugaro` on a distribution's `PATH`. They are the WSL route's
+ * install lines, one per failure, and each ends by naming `WSL_PROCEDURE` --
+ * which is the whole of what the host route's `brew install` line cannot be
+ * here.
  *
  * They are this file's own sentences and not the resolution's, for the reason
  * `degraded.ts`'s header gives: the renderer may not import a module that
@@ -131,9 +149,9 @@ export const SEARCHED_LEAD = 'places the console looked in for a fugaro binary'
  * (`§2.8`: the console asks the operator for no path and draws no control that
  * wires nothing), so the operator is told what to do and not where in this app
  * to click. */
-export const NO_WSL_REMEDY = 'install WSL and a distribution to run the CLI in'
-export const NO_DISTRO_REMEDY = 'choose or add a WSL distribution to run the CLI in'
-export const NO_FUGARO_IN_DISTRO_REMEDY = 'install the CLI inside the distribution'
+export const NO_WSL_REMEDY = `install WSL and a distribution to run the CLI in, then follow ${WSL_PROCEDURE}`
+export const NO_DISTRO_REMEDY = `choose or add a WSL distribution to run the CLI in, then follow ${WSL_PROCEDURE}`
+export const NO_FUGARO_IN_DISTRO_REMEDY = `install the CLI inside the distribution by following ${WSL_PROCEDURE}`
 /** REFUSED_HEADLINE is the refused-read screen's heading. */
 export const REFUSED_HEADLINE = 'the CLI refused this read'
 
@@ -608,7 +626,9 @@ export interface NoInstallationState {
   readonly reason: string
   /** the install line for the kinds whose remedy is a command, and the empty
    * string for the three WSL ones, whose remedy is this file's own sentence --
-   * see `NO_WSL_REMEDY`. */
+   * see `NO_WSL_REMEDY`. The line is **per route** (F32): this field carries the
+   * host route's `brew install`, and the WSL route's line is the procedure the
+   * three remedies name rather than a second command drawn beside them. */
   readonly installCommand: string
   /** the host places the resolution walked, which only `no-binary` did: the WSL
    * route asks `wsl.exe` and the distribution, and walks no directory here. */
