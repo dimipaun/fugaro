@@ -11,6 +11,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -143,6 +144,10 @@ func catalogBuildCheckoutFor(t *testing.T, repo, catalog, provider, appID string
 	t.Cleanup(func() { openRecordBucket = prev })
 	f.appendConfig(t, catalog)
 	fb.AddRegistry("proj-1234", "us-east5", gcp.SharedRegistryRepoID())
+	// A catalog entry's build is billable and leases its cost before it is
+	// submitted (T4), so this checkout's installation has the budget database,
+	// the caps and the price lookup a submission needs.
+	buildBudgetWorld(t, f)
 	return fb, gcs, f
 }
 
@@ -471,24 +476,29 @@ func TestCatalogBuildNeverPutsASecretInALogOrAnError(t *testing.T) {
 	}
 }
 
-// TestCatalogBuildCopiesNothingWithoutConfirmation: the copies are written
-// after the typed confirmation, so a run that cannot give it — a pipe here,
-// with a name that only a catalog has — submits nothing and leaves the bucket
-// as it found it.
-func TestCatalogBuildCopiesNothingWithoutConfirmation(t *testing.T) {
-	fb, gcs, _ := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+// TestCatalogBuildCopiesNothingOverCap: the copies are written after the lease
+// the build takes (T4), so a build a cap refuses — here the repository's own
+// daily cap, with the entry's copy still to be written — submits nothing to
+// Cloud Build and leaves the bucket as it found it.
+//
+// Mutation (run, restore): move the copy of the entry's Dockerfile above
+// openBuildLease in runImageBuildCatalog, and this test fails: the copy lands
+// in the bucket for a build that was never submitted.
+func TestCatalogBuildCopiesNothingOverCap(t *testing.T) {
+	fb, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
 	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
 	noTerminal(t)
+	f.db.Set(budget.PathCapsRepo(mustSlug("bitbucket", "acme/app")), map[string]any{"dailyMicros": usd1 / 2})
 
 	_, _, err := executeStdin(t, "aurora\n", "image", "build", "tools", "--base", "b:1")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "tools") || !strings.Contains(err.Error(), "terminal") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro budget set") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	if buildPosts(fb) != 0 {
-		t.Errorf("an unconfirmable build reached Cloud Build: %d posts", buildPosts(fb))
+		t.Errorf("a build over the repository's cap reached Cloud Build: %d posts", buildPosts(fb))
 	}
 	if !catalogCopyAbsent(t, gcs, "tools") {
-		t.Errorf("an unconfirmable build copied the entry's Dockerfile")
+		t.Errorf("a refused build copied the entry's Dockerfile")
 	}
 }
 

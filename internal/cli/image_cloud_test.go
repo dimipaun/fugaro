@@ -16,6 +16,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/image"
@@ -73,22 +74,21 @@ func TestImageBuildCloudNeedsRegistry(t *testing.T) {
 	}
 }
 
-// Review fix: a declined (or unconfirmable) billable build must leave no
-// trace in the bucket. prepareLayerCopy both writes
-// builds/<slug>/project-layer.yaml and validates the base image's release,
-// so running it before confirmBuild would publish the copy (and could even
-// refuse the build on the base-image gate) before the user ever typed
-// anything.
+// A billable build this command does not submit must leave no trace in the
+// bucket. prepareLayerCopy both writes builds/<slug>/project-layer.yaml and
+// validates the base image's release, so it runs after the lease the build
+// takes (T4), never before it: a build a cap refuses must not publish the copy
+// first, and must not pay the base-image gate's refusal either.
 //
 // Mutation (run, restore): move the cfg.Layer != nil { ... prepareLayerCopy
-// ... } block in runImageBuildCloud back above confirmBuild, and this test
-// fails: the copy is written even though "not-aurora" never confirms the
-// build.
-func TestImageBuildCloudDeclinedConfirmationWritesNoLayerCopy(t *testing.T) {
+// ... } block in runImageBuildCloud back above openBuildLease, and this test
+// fails: the copy is written even though the build was refused.
+func TestImageBuildOverCapWritesNoLayerCopy(t *testing.T) {
 	fb := gcpfake.NewBuild(t)
 	sm := gcpfake.NewSecrets(t)
 	f := newCloudFixture(t, "cloud_build: "+fb.URL+"/", "secret_manager: "+sm.URL+"/")
 	f.sm = sm
+	db := buildBudgetWorld(t, f)
 	publishedLayer(t, f, testProjectLayer)
 	path := os.Getenv("FUGARO_CONFIG")
 	data, err := os.ReadFile(path)
@@ -106,16 +106,19 @@ func TestImageBuildCloudDeclinedConfirmationWritesNoLayerCopy(t *testing.T) {
 	slug := mustSlug("github", "acme/other")
 	fb.AddRegistry("proj-1234", "us-east5", gcp.RegistryRepoID(slug))
 	layerCheckout(t, f, minimalAnchored)
-	fakeTerminal(t)
-	_, _, err = executeStdin(t, "not-aurora\n", "image", "build", "--base", "b:1")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "not confirmed") {
-		t.Fatalf("err = %v", err)
+	// A daily cap one build's own reservation cannot fit under: the day
+	// already counts all but half a dollar of it (the world's caps make the
+	// build $0.94, image_build_lease_test.go).
+	db.Set(budget.PathCapsRepo(slug), map[string]any{"dailyMicros": usd1 / 2})
+	_, _, err = executeBuild(t, "image", "build", "--base", "b:1")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	if buildPosts(fb) != 0 {
-		t.Fatal("a declined build still reached Cloud Build")
+		t.Fatal("a build over the repository's cap still reached Cloud Build")
 	}
 	if bucketText(t, f, config.LayerCopyKey(slug)) != "" {
-		t.Fatal("a declined build still wrote the project layer copy")
+		t.Fatal("a refused build still wrote the project layer copy")
 	}
 }
 
@@ -216,9 +219,14 @@ func TestImageBuildCloudUsesTheSelectedProjectsLayer(t *testing.T) {
 	}
 
 	cfgPath := filepath.Join(dir, "selected.yaml")
+	db := gcpfake.NewRTDB(t)
+	adoptBudgetFake(db)
+	buildBudgetCaps(db)
+	stubBuildPricer(t)
 	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: fugaro-runs-proj-1234\nbucket_url: file://" + runs +
 		"\nuser: someone@example.com\nmax_parallel: 2\n" +
-		"endpoints: { run: " + run.URL + "/, logging: " + logging.URL + "/, cloud_build: " + fb.URL + "/, secret_manager: " + sm.URL + "/, no_auth: true }\n"
+		"endpoints: { run: " + run.URL + "/, logging: " + logging.URL + "/, cloud_build: " + fb.URL + "/, secret_manager: " + sm.URL + "/, no_auth: true }\n" +
+		"budget: { mode: observe, per_run_usd: 50, firebase_project: proj-1234, rtdb_url: " + db.URL + " }\n"
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -238,6 +246,7 @@ func TestImageBuildCloudGitHub(t *testing.T) {
 	smsrv := gcpfake.NewSecrets(t)
 	f := newCloudFixture(t, "cloud_build: "+fb.URL+"/", "secret_manager: "+smsrv.URL+"/")
 	f.sm = smsrv
+	buildBudgetWorld(t, f)
 	path := os.Getenv("FUGARO_CONFIG")
 	data, err := os.ReadFile(path)
 	if err != nil {

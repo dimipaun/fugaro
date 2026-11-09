@@ -380,9 +380,11 @@ func TestRefreshPlanSaysKeptForANewerCopy(t *testing.T) {
 	}
 }
 
-// The plan's build line names how the builds are confirmed: typed, or
-// --yes with no prompt.
-func TestRefreshPlanBuildConfirmationWording(t *testing.T) {
+// The plan's build line says what bounds a build now: it asks nothing, and it
+// leases its estimated cost from the project's budget before it is submitted
+// (T4). --yes no longer changes that line — no build asks anything in any
+// session.
+func TestRefreshPlanBuildLeaseWording(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
 	r := newAnchorModeRig(t, refreshYAML, true)
@@ -394,10 +396,12 @@ func TestRefreshPlanBuildConfirmationWording(t *testing.T) {
 		}
 		var out bytes.Buffer
 		p.print(&out)
-		typed := strings.Contains(out.String(), "confirmed by typing the project's name")
-		viaYes := strings.Contains(out.String(), "confirmed by --yes (no prompt)")
-		if typed == yes || viaYes != yes {
-			t.Errorf("yes=%v plan:\n%s", yes, out.String())
+		got := out.String()
+		if !strings.Contains(got, "each billable and asking no confirmation: each one leases its estimated cost") {
+			t.Errorf("yes=%v plan:\n%s", yes, got)
+		}
+		if strings.Contains(got, "confirmed by typing the project's name") || strings.Contains(got, "confirmed by --yes (no prompt)") {
+			t.Errorf("yes=%v plan still names a confirmation for the builds:\n%s", yes, got)
 		}
 	}
 }

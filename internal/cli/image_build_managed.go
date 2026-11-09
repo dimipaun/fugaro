@@ -8,13 +8,10 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	crm "google.golang.org/api/cloudresourcemanager/v1"
-	storage "google.golang.org/api/storage/v1"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
-	inframanaged "github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
@@ -86,14 +83,14 @@ import (
 // admission — not the absence of a prompt — is what the record carries.
 
 // buildManaged is `fugaro image build`'s own door: the installation the gate
-// read, the gate itself, and the two reads D1013 asks for before every build.
+// read, the gate itself, and the client the kill switch is re-read with before
+// every build.
 //
 // nil is the whole of the difference for every other session. A nil
-// *buildManaged answers standsIn false, admitEntry and recorded do nothing, and
-// the command keeps the typed confirmation it has always had — which is the
-// answer for an unmanaged project, a mark that cannot be read, an agent's
-// session, a pipe and a project whose clients or budget database cannot be
-// opened.
+// *buildManaged answers standsIn false, and admitEntry and recorded do nothing
+// — which is the answer for an unmanaged project, a mark that cannot be read,
+// an agent's session, a pipe and a project whose clients or budget database
+// cannot be opened.
 type buildManaged struct {
 	// lc is the installation the gate read, and the one this command already
 	// acts on: the note's project name, the recorded project and the rules'
@@ -104,16 +101,9 @@ type buildManaged struct {
 	// (D1015), and the second read D1024 asks for is the gate's own, made
 	// inside admit immediately before each build's write.
 	gate *managedGate
-	// s, crm and db are the clients the read used, kept because the bound and
-	// the kill switch are re-read with them before every build.
-	s   *storage.Service
-	crm *crm.Service
-	db  *rtdb.Client
-	// started is how many builds this invocation has submitted, and it is what
-	// the bound is counted against: M5's bound is per invocation of this
-	// command (ImageBuilds' own comment), so a rerun gets the count again
-	// rather than inheriting the previous run's.
-	started int64
+	// db is the client the read used, kept because the kill switch is re-read
+	// with it before every build.
+	db *rtdb.Client
 }
 
 // openBuildManaged is the door: the gate's read, made once per command, in the
@@ -151,7 +141,7 @@ func openBuildManaged(ctx context.Context, env *cloudEnv, c initflow.Conditions)
 	if err != nil || !gate.managed {
 		return nil
 	}
-	return &buildManaged{lc: env.lc, gate: &gate, s: cl.Storage, crm: cl.CRM, db: db}
+	return &buildManaged{lc: env.lc, gate: &gate, db: db}
 }
 
 // standsIn is whether this session's builds are judged by the gate rather than
@@ -191,10 +181,10 @@ func buildGateFacts() managedGateFacts {
 // that is not the checkout's origin, as canonical paths) and the rule restates
 // it at the moment of the write, which is what a rule in this package is for.
 //
-// Bound, Started and KillSwitch are filled in per build rather than once: they
-// are the three facts D1013 re-reads before each one, so a document that
-// carried the command's first read would say the verdict was reached on a bound
-// and a switch that were not in force when this build was judged.
+// KillSwitch is filled in per build rather than once: it is the fact the
+// rules re-read before each one, so a document that carried the command's
+// first read would say the verdict was reached on a switch that was not in
+// force when this build was judged.
 type buildPlan struct {
 	Version    int      `json:"version"`
 	Repo       string   `json:"repo"`
@@ -206,17 +196,17 @@ type buildPlan struct {
 	Account    string   `json:"build_account"`
 	Registry   string   `json:"registry"`
 	Machine    string   `json:"machine_type"`
-	Bound      int64    `json:"max_image_builds"`
-	Started    int64    `json:"builds_started"`
 	KillSwitch string   `json:"kill_switch,omitempty"`
 	What       string   `json:"what"`
 }
 
-// buildDocumentVersion is the document's own version. It is 1 because a
-// record's plan_digest is what an owner checks a document against months later,
-// and a document whose shape changed under the same version would make that
-// check pass for bytes nobody judged.
-const buildDocumentVersion = 1
+// buildDocumentVersion is the document's own version. It moved from 1 to 2
+// when the build-count bound went (T4, D1543): max_image_builds and
+// builds_started were removed from the document, and a record's plan_digest is
+// what an owner checks a document against months later, so a document whose
+// shape changed under the same version would make that check pass for bytes
+// nobody judged.
+const buildDocumentVersion = 2
 
 // bytes renders the document, and it is deterministic: a struct's fields in
 // their declared order and the caller's own entry order, so the same plan
@@ -251,17 +241,13 @@ func (m *buildManaged) admitEntry(ctx context.Context, cmd *cobra.Command, c ini
 	if !m.standsIn(c) {
 		return nil
 	}
-	bound, err := m.imageBuildBound(ctx)
-	if err != nil {
-		return err
-	}
 	killed, killRule := m.killSwitch(ctx, slug)
-	p.Entry, p.Bound, p.Started, p.KillSwitch = e.Name, bound.Count(), m.started, killed
+	p.Entry, p.KillSwitch = e.Name, killed
 	doc, err := p.bytes()
 	if err != nil {
 		return err
 	}
-	rules, refused := buildRules(m.lc, cat, e, p, bound, killRule)
+	rules, refused := buildRules(m.lc, cat, e, p, killRule)
 	conv := managedmode.ConvergeAdmitted(doc, initflow.YesOrTyped, rules)
 	if len(refused) > 0 {
 		conv = managedmode.ConvergeRefused(doc, initflow.YesOrTyped, refused)
@@ -270,12 +256,16 @@ func (m *buildManaged) admitEntry(ctx context.Context, cmd *cobra.Command, c ini
 	if err != nil {
 		return err
 	}
-	if !initflow.ConfirmsByGate(initflow.YesOrTyped, c, adm) {
-		return confirmBuild(cmd, m.lc.Name, m.lc.GCPProject, p.What)
+	// The verdict is the record of what was judged, not a permission: what
+	// bounds this build is the lease the caller takes immediately after it,
+	// and a gate that did not stand in for this session — the second read
+	// found the project is not managed any more, or this is not the class it
+	// covers — leaves the build to that lease exactly as it leaves an agent's
+	// session's. The sentence is printed only where the gate DID stand in, so
+	// it says what is true of the build it precedes.
+	if initflow.ConfirmsByGate(initflow.YesOrTyped, c, adm) {
+		fmt.Fprintf(cmd.ErrOrStderr(), "  %s\n", initflow.GateProceeded())
 	}
-	w := cmd.ErrOrStderr()
-	fmt.Fprintf(w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", m.lc.Name, m.lc.GCPProject, p.What)
-	fmt.Fprintf(w, "  %s\n", initflow.GateProceeded())
 	return nil
 }
 
@@ -285,24 +275,20 @@ func (m *buildManaged) admitEntry(ctx context.Context, cmd *cobra.Command, c ini
 // command that submitted nothing (a gate that did not stand in, a build that
 // failed before the submission) has nothing to record.
 //
-// The count moves with the record, so the next entry of this command is judged
-// against the bound with this build in it (refreshBuilds' own pairing of the
-// two). One record per build: the catalog arm judges and records each entry
+// One record per build: the catalog arm judges and records each entry
 // separately, so a command that submits three builds leaves three records and
 // no entry is built under another entry's verdict.
 func (m *buildManaged) recorded(ctx context.Context) error {
 	if m == nil || m.gate == nil {
 		return nil
 	}
-	m.started++
 	return m.gate.recorded(ctx)
 }
 
 // buildRules is the row's own rules over this one build, in the order
 // docs/repo-image-removal/spec.md §6 states them for this command: the entry
 // exists in the effective catalog, the build account is the project's own for
-// that entry's source repository, and the count is within D1013's bound — plus
-// the two reads that bound stands on (the kill switch) and the restatements
+// that entry's source repository — plus the kill switch and the restatements
 // every rule set in this package carries.
 //
 // Every rule here restates something the command has already enforced by the
@@ -313,7 +299,7 @@ func (m *buildManaged) recorded(ctx context.Context) error {
 // verdict was reached on, so they are written over the values that are actually
 // submitted (infra.Repo's spec) and never over the inputs that produced them,
 // and the gate is the last place a drift between the two would be seen.
-func buildRules(lc *localcfg.Config, cat *config.Catalog, e config.Entry, p buildPlan, bound managedmode.ImageBuilds, killRule string) (rules, refused []string) {
+func buildRules(lc *localcfg.Config, cat *config.Catalog, e config.Entry, p buildPlan, killRule string) (rules, refused []string) {
 	host, err := infra.RegistryHost(lc)
 	if err != nil {
 		// A host this installation's own config cannot state is not a build
@@ -351,28 +337,14 @@ func buildRules(lc *localcfg.Config, cat *config.Catalog, e config.Entry, p buil
 	} else {
 		rules = append(rules, "the build runs as this project's own build account ("+safetext.Field(p.Account)+")")
 	}
-	// The count is within D1013's bound, and the switch that stops it is off.
-	// The two are stated in this order because they are read in it: an
-	// unreadable switch is a switch this program honours (killSwitch), and a
-	// build that is past the bound is refused whatever the switch says.
+	// The switch that stops every build of this project is off. It is the one
+	// bound left in this document: what a build costs is bounded by the lease
+	// the caller takes immediately after this judgement (T4, D1543), not by a
+	// count in the project's marker.
 	if killRule != "" {
 		refused = append(refused, killRule)
 	} else {
 		rules = append(rules, "the project's kill switch is off")
-	}
-	if p.Started < bound.Count() {
-		rules = append(rules, fmt.Sprintf("the build is within the bound the project's marker records (%d per invocation, %d already submitted)", bound.Count(), p.Started))
-	} else {
-		// The refused sentence names the one way past the bound a person can
-		// actually take. The bound is per invocation and one is what every
-		// marker this program writes records, so "a larger max_image_builds in
-		// the project's marker" is not a command anyone can run, and "a
-		// project that is not managed" is not a build that reaches this line
-		// at all (openBuildManaged leaves it to the typed name). A refusal
-		// that sent the owner after either would be a dead end in the one
-		// place a build has just been stopped.
-		refused = append(refused, fmt.Sprintf("the build is past the bound the project's marker records (max_image_builds is %d per invocation, and %d builds have already been submitted by this one), so this invocation stops here and the rest of the catalog is left unbuilt: while this project is managed, the owner's own terminal is asked no per-build question either — the gate answers it — so the same bound holds there, and the way past it is one entry per invocation (`fugaro image build <entry>`), each of which is judged against the bound afresh",
-			bound.Count(), p.Started))
 	}
 	// The repository rule is the command's own guard restated, and it is
 	// stated over canonical forms for the same reason that guard is
@@ -397,31 +369,6 @@ func buildRules(lc *localcfg.Config, cat *config.Catalog, e config.Entry, p buil
 		rules = append(rules, "the build pushes into this installation's own registry ("+safetext.Field(p.Registry)+")")
 	}
 	return rules, refused
-}
-
-// imageBuildBound is the bound in force right now, read from the project's
-// creation fact through M5's read and put to M5's decision: the figure the
-// marker records, the default of one for the versions that record none, and a
-// refusal for everything else (an unknown version, a figure outside the
-// marker's own range, a project that stopped being managed). It is the same
-// pair of calls managed_apply.go's budget gate makes, over the same object and
-// the same project-number proof.
-func (m *buildManaged) imageBuildBound(ctx context.Context) (managedmode.ImageBuilds, error) {
-	a, err := inframanaged.ReadImageBuilds(ctx, m.s, m.crm, m.lc.Name, m.lc.GCPProject)
-	read := managedmode.ImageBuildsRead{Project: m.lc.Name, Builds: a.Builds, OK: a.OK, Default: a.Default, Invalid: a.Invalid, Err: err}
-	if !a.OK && !a.Invalid && err == nil {
-		// The read that cannot tell a managed creation which recorded no bound
-		// from a project that is not managed at all: the default of one is
-		// only for the first, so the second question is asked (and only then),
-		// exactly as the budget gate asks it.
-		isManaged, reason, _ := inframanaged.IsManaged(ctx, m.s, m.crm, m.lc.Name, m.lc.GCPProject)
-		read.Managed, read.ManagedReason = isManaged, reason
-	}
-	bound, err := managedmode.ImageBuildsBound(read)
-	if err != nil {
-		return managedmode.ImageBuilds{}, userErr("the bound on this project's billable image builds was not read, so no build of %s is started: %v", m.lc.Name, err)
-	}
-	return bound, nil
 }
 
 // killSwitch is the project's two kill switches as they stand right now, and

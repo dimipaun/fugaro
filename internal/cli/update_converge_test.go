@@ -78,7 +78,13 @@ func newConvergeRigYAML(t *testing.T, node map[string]any, yaml string) *converg
 	t.Helper()
 	fakeTerraform(t) // built with go, which upgradeEnv takes off PATH
 	upgradeEnv(t, convergeRelease)
+	// The checkout stage's cloud step builds the stale workflows, and a build
+	// leases its estimated cost before it is submitted (T4): its lease needs
+	// the caps below and the price of a build, which a hermetic test reads
+	// from its own book rather than the Cloud Billing catalog.
+	stubBuildPricer(t)
 	r := newImagesRig(t, convergeRelease)
+	buildBudgetCaps(r.db)
 	r.installationState(t)
 	// The installation is there and nothing about it has to change: the plan
 	// reads back empty, so the run is about the stale things alone.

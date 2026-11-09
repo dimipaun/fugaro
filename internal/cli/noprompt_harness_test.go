@@ -90,7 +90,7 @@ const closedStdinDeadline = 10 * time.Second
 // prompt the tree writes.
 //
 // The ⚠ CONFIRM banner is the first: every typed step prints it before it reads
-// the project's name (confirmTyped, confirmTypedStrict, confirmBuild,
+// the project's name (confirmTyped, confirmTypedStrict,
 // confirmRemoval, the initflow steps, managed apply). It is matched anywhere,
 // because it is a line of its own and the question comes after it.
 //
@@ -276,10 +276,10 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro creds ls":          "prints the no-project-config refusal",
 	"fugaro doctor":            "runs its whole check and reports what this world lacks",
 	"fugaro graph":             "refuses: the edition is not in this build",
-	"fugaro image build":       "refuses before the build: a billable build's confirmation needs a real terminal",
+	"fugaro image build":       "refuses before the build: the budget database a build's lease is taken from is not in this world",
 	"fugaro image check":       "prints the no-project-config refusal",
 	"fugaro image ls":          "prints the no-project-config refusal",
-	"fugaro image refresh":     "refuses before its steps: each asks for the project's name at a real terminal",
+	"fugaro image refresh":     "refuses before its steps: the two cloud steps that ask need a real terminal",
 	"fugaro image render":      "refuses outside a git checkout, which is what the world is",
 	"fugaro image selftest":    "reads its spec from the closed stdin and returns on the EOF",
 	"fugaro image status":      "prints the no-project-config refusal",
@@ -375,15 +375,14 @@ var closedStdinUnreached = map[string]closedStdinUnreachedAsk{
 		file: "managed_apply.go", marker: "func managedAsk(cmd *cobra.Command, lc *localcfg.Config)",
 		task: "T9", why: "asks inside an apply, which needs a saved plan this world does not build",
 	},
-	// A build's confirmation stands behind the rig that builds a real image:
-	// the registry, the build record and the Cloud Build API it submits to.
-	"fugaro image build": {
-		file: "image.go", marker: "func confirmBuild(cmd *cobra.Command, project, gcpProject, what string) error {",
-		task: "T4", why: "confirms at the submit, which needs the build rig's registry and Cloud Build fake",
-	},
+	// The refresh's own two cloud steps — the base pin and the daily image check
+	// job's config — ask from inside the run, and reaching one needs the jobs and
+	// the registry this world does not fake. Its billable builds asked here too
+	// until T4 removed the build's confirmation: what is left of this entry is
+	// T7's, which is the task that removes the two asks above it.
 	"fugaro image refresh": {
 		file: "image_refresh_steps.go", marker: "r.confirm(",
-		task: "T4", why: "asks from the refresh's own plan, which needs the jobs this world does not fake",
+		task: "T7", why: "asks from the refresh's own plan, which needs the jobs this world does not fake",
 	},
 	// The published policy's own two writes ask before they replace rules
 	// nothing can read back after them; both stand behind a deployed-rules read.

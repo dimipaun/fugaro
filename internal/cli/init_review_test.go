@@ -923,10 +923,11 @@ func TestCloudBuildConfirmationStaysOutsideTheCoveredPath(t *testing.T) {
 			t.Errorf("image.go uses %s", bad)
 		}
 	}
-	// Review fix: prepareLayerCopy writes builds/<slug>/project-layer.yaml
-	// (billable confirmation aside, a mutation of its own), so
-	// runImageBuildCloud must not reach it before confirmBuild, or a
-	// declined build would still publish the copy.
+	// Review fix, kept under T4's own door: prepareLayerCopy writes
+	// builds/<slug>/project-layer.yaml (billable build aside, a mutation of
+	// its own), so runImageBuildCloud must not reach it before the lease the
+	// build takes, or a build under a cap it cannot fit would still publish
+	// the copy.
 	imgSrc := string(img)
 	rb := func(sig string) string {
 		i := strings.Index(imgSrc, sig)
@@ -940,8 +941,8 @@ func TestCloudBuildConfirmationStaysOutsideTheCoveredPath(t *testing.T) {
 		return body
 	}
 	ib := rb("func runImageBuildCloud(")
-	if cf, pc := strings.Index(ib, "confirmBuild("), strings.Index(ib, "prepareLayerCopy("); cf < 0 || pc < 0 || cf > pc {
-		t.Errorf("runImageBuildCloud must confirm (at %d) before prepareLayerCopy (at %d)", cf, pc)
+	if bl, pc := strings.Index(ib, "openBuildLease("), strings.Index(ib, "prepareLayerCopy("); bl < 0 || pc < 0 || bl > pc {
+		t.Errorf("runImageBuildCloud must lease its cost (at %d) before prepareLayerCopy (at %d)", bl, pc)
 	}
 
 	// Review fix: the common no-op re-run (nothing infra.NeedsBuild lists)

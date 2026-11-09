@@ -70,15 +70,20 @@ func fakeTerraform(t *testing.T) string {
 type initRig struct {
 	dir, cfg, log, scriptPath string
 	script                    map[string]any
-	gcs                       *gcpfake.GCS
-	ar                        *gcpfake.ArtifactRegistry
-	iam                       *gcpfake.IAM
-	crm                       *gcpfake.CRM
-	run                       *gcpfake.Run
-	sm                        *gcpfake.Secrets
-	logs                      *gcpfake.Logging
-	sched                     *gcpfake.Scheduler
-	su                        *gcpfake.ServiceUsage
+	// budget is the fake Realtime Database this rig's installation points at
+	// when a test needs one (buildBudgetForRig), kept here so that two targets
+	// built out of one rig's file share it: the config block naming it is
+	// appended once.
+	budget *gcpfake.RTDB
+	gcs    *gcpfake.GCS
+	ar     *gcpfake.ArtifactRegistry
+	iam    *gcpfake.IAM
+	crm    *gcpfake.CRM
+	run    *gcpfake.Run
+	sm     *gcpfake.Secrets
+	logs   *gcpfake.Logging
+	sched  *gcpfake.Scheduler
+	su     *gcpfake.ServiceUsage
 }
 
 const initConfig = `version: 1

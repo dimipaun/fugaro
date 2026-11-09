@@ -229,6 +229,10 @@ func cloudBuildCheckout(t *testing.T, bare bool) (*gcpfake.Build, *cloudFixture)
 	if !bare {
 		fb.AddRegistry("proj-1234", "us-east5", gcp.RegistryRepoID(mustSlug("bitbucket", "acme/app")))
 	}
+	// Every build of this fixture leases its cost before it is submitted (T4),
+	// so the installation's budget database, its caps and the price lookup are
+	// part of what a checkout that can build is.
+	buildBudgetWorld(t, f)
 	return fb, f
 }
 

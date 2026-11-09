@@ -760,84 +760,63 @@ func TestUpgradeStillWorks(t *testing.T) {
 }
 
 // The checkout stage's cloud half is the refresh's step 4, where a billable
-// build is asked for one build at a time. Under fugaro update the loop's
-// steps are stubbed (there is no GCP project in a test), so this drives that
-// very step the way the stage does, at a terminal and without --yes: two
-// stale workflows are two questions, and a question answered with something
-// other than the project's name submits no build at all. One confirmation
-// for several billable builds is one confirmation too few, and the check
-// reads it as the user having approved builds nobody asked about.
+// build used to be asked for one build at a time. It asks nothing now (T4):
+// the builds are bounded by the lease each one takes from the project's budget,
+// so every stale workflow is submitted with no terminal, no --yes and nobody
+// asked — under fugaro update the loop's steps are stubbed (there is no GCP
+// project in a test), and this drives that very step the way the stage does.
 //
-// Mutation (run, restore): ask once, before the loop over the workflows,
-// and this test fails: two billable builds, one question.
-func TestUpdateAsksBeforeEachBillableBuild(t *testing.T) {
-	t.Run("one confirmation per billable build", func(t *testing.T) {
-		useVersion(t, "0.5.1")
-		r := newAnchorModeRig(t, refreshYAML, true)
-		fb := useFakeBuilder(t)
-		e, tg := buildTarget(t, r)
-		p := &refreshPlan{workflows: []string{"app", "api"}}
-		putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.4.0"))
-		putWorkflowRecordFrom("api", "0.5.1", managedRef("base", "0.4.0"))
-		out := atTerminal(t, e, initProjectName+"\n"+initProjectName+"\n")
-		if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
-			t.Fatalf("%v\n%s", err, out.String())
+// Mutation (run, restore): put a confirmation back in front of the build loop
+// (confirmBuild, or one typed question for the whole loop), and this test
+// fails: nothing is typed and no terminal is there, so no build runs.
+func TestUpdateBuildsEveryStaleWorkflowWithNoAnswer(t *testing.T) {
+	useVersion(t, "0.5.1")
+	r := newAnchorModeRig(t, refreshYAML, true)
+	fb := useFakeBuilder(t)
+	e, tg := buildTarget(t, r)
+	p := &refreshPlan{workflows: []string{"app", "api"}}
+	putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.4.0"))
+	putWorkflowRecordFrom("api", "0.5.1", managedRef("base", "0.4.0"))
+	out := atTerminal(t, e, "")
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(fb.specs) != 2 {
+		t.Fatalf("built %+v, want both stale workflows", fb.specs)
+	}
+	for _, asked := range []string{"Type ", "⚠ CONFIRM", "[y/N]", "real terminal"} {
+		if strings.Contains(out.String(), asked) {
+			t.Errorf("a build asked %q, which no session is refused for answering:\n%s", asked, out.String())
 		}
-		if len(fb.specs) != 2 {
-			t.Fatalf("built %+v, want both stale workflows", fb.specs)
-		}
-		if got := strings.Count(out.String(), "Type "+initProjectName+" to confirm"); got != 2 {
-			t.Errorf("two billable builds were asked for %d time(s), want one confirmation each:\n%s", got, out.String())
-		}
-	})
-
-	// The answer to the FIRST question decides the first build alone: a
-	// wrong name stops the run there, with nothing submitted, which is what
-	// "answering no runs no build" has to mean for a user who said no.
-	t.Run("a wrong name runs no build", func(t *testing.T) {
-		useVersion(t, "0.5.1")
-		r := newAnchorModeRig(t, refreshYAML, true)
-		fb := useFakeBuilder(t)
-		e, tg := buildTarget(t, r)
-		p := &refreshPlan{workflows: []string{"app", "api"}}
-		putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.4.0"))
-		putWorkflowRecordFrom("api", "0.5.1", managedRef("base", "0.4.0"))
-		out := atTerminal(t, e, "nope\n")
-		err := e.r.refreshBuilds(t.Context(), p, tg)
-		if err == nil || !strings.Contains(err.Error(), "not confirmed") {
-			t.Fatalf("a declined build was not a refusal: %v\n%s", err, out.String())
-		}
-		if len(fb.specs) != 0 {
-			t.Errorf("a declined build submitted %+v", fb.specs)
-		}
-	})
+	}
 }
 
-// TestUpdateRunsNoBuildWhenTheBuildIsDeclined is that same decline with the
-// stage in front of it: a terminal, no --yes, an answer that is not the
-// project's name, and the build nobody approved is never submitted. Nothing
-// above the refresh may confirm it instead — the run's own confirmation covers
+// TestUpdateBuildsTheStaleWorkflowsWhenNobodyIsAsked is that same step with
+// the stage in front of it: a terminal with nothing typed at it, no --yes, and
+// the stale workflows' builds are submitted all the same. Nothing above the
+// refresh may be what submits them instead — the run's own confirmation covers
 // the ordinary steps, and a billable build is not one of them.
 //
-// Mutation (run, restore): hand the refresh --yes (ro.yes = u.o.yes, dropped,
-// or the stage's own env.Yes) and this test fails: a build is submitted with
-// nobody asked.
-func TestUpdateRunsNoBuildWhenTheBuildIsDeclined(t *testing.T) {
+// Mutation (run, restore): give the refresh's build loop a confirmation again
+// (confirmBuild, or the stage's own env.Yes standing in for one) and this test
+// fails: nothing is typed, so no build runs.
+func TestUpdateBuildsTheStaleWorkflowsWhenNobodyIsAsked(t *testing.T) {
 	r, root := upgradeRig(t)
+	buildBudgetForRig(t, r.initRig)
 	checkoutFile(t, filepath.Join(root, ".claude", "settings.json"), wiredAt("v0.5.0"))
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
 	f.On(t, "plugins", userInstall("0.5.1"), argsInstall...)
 	useFakeClaude(t, f)
 	// The base this release pins, already recorded, and two workflows whose
 	// records name an older one: the refresh's step 2 has nothing to pin, so
-	// the step this test is about is step 4's question.
+	// the step this test is about is step 4's builds.
 	r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
 	putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.4.0"))
 	putWorkflowRecordFrom("api", "0.5.1", managedRef("base", "0.4.0"))
 	fb := useFakeBuilder(t)
 	// Steps 2 and 3 are stubbed (the registry and the Cloud Run Admin API are
 	// not what this test is about) and step 3's target is the rig's own
-	// workflows; step 4 is the refresh's, question and all.
+	// workflows; step 4 is the refresh's own.
 	real := newRefreshSteps
 	newRefreshSteps = func(run *initRun, e *initEngine, p *refreshPlan) refreshSteps {
 		s := real(run, e, p)
@@ -853,54 +832,51 @@ func TestUpdateRunsNoBuildWhenTheBuildIsDeclined(t *testing.T) {
 	t.Cleanup(func() { newRefreshSteps = real })
 
 	e, refreshOut := checkoutEngine(t, &initOptions{})
-	out := atTerminal(t, e, "not the project's name\n")
+	out := atTerminal(t, e, "")
 	res := stageOutcome(t, e, checkoutStageOf(t, e))
-	if res.Failed == nil || !strings.Contains(res.Failed.Error, "not confirmed") {
-		t.Fatalf("a declined build did not stop the checkout: %+v\n%s%s", res, out, refreshOut)
+	if res.Failed != nil {
+		t.Fatalf("the checkout stopped with nothing typed: %+v\n%s%s", res, out, refreshOut)
 	}
-	// The refresh's own writer is the stage's: the refresh's run is given what
-	// the stage's steps print through (refreshOptions.out), which atTerminal
-	// hands a buffer of its own, and the question the step asks is the
-	// refresh's. Without seeing it asked, a run that never reached step 4
-	// would pass this test too.
-	if !strings.Contains(out.String(), "Type aurora to confirm") {
-		t.Fatalf("the stage reached the build without asking for it:\n%s", out)
+	if len(fb.specs) != 2 {
+		t.Fatalf("built %+v, want both stale workflows", fb.specs)
 	}
-	if len(fb.specs) != 0 || strings.Contains(out.String(), "is done") {
-		t.Errorf("a declined build ran: %+v\n%s", fb.specs, out)
+	for _, asked := range []string{"Type ", "⚠ CONFIRM", "real terminal"} {
+		if strings.Contains(out.String(), asked) {
+			t.Errorf("a build asked %q, which nothing is waiting to answer:\n%s", asked, out)
+		}
 	}
 }
 
-// TestUpdateCheckoutBuildConfirmationIsNeverDrawnOver: the same build
-// confirmation, with the converge's own reporter drawing the step in flight.
-// The cloud step is fugaro image refresh run as a command of its own
-// (runImageRefresh -> newInitRun), and that run printed and asked where its own
-// command said — a stream that draws nothing — while the spinner redrew the
-// checkout step over it every 100ms (G1). A billable build's confirmation is
-// the one line in this step a person has to be able to read, and the name typed
-// under it.
+// TestUpdateCheckoutBuildLinesAreNeverDrawnOver: the same build step, with the
+// converge's own reporter drawing the step in flight. The cloud step is fugaro
+// image refresh run as a command of its own (runImageRefresh -> newInitRun), and
+// that run printed where its own command said — a stream that draws nothing —
+// while the spinner redrew the checkout step over it every 100ms (G1). What a
+// build says about itself is the one line in this step a person has to be able
+// to read, and the lease and the submission print it.
 //
 // Mutation (run, restore): drop the stage's writer from the refresh's options
-// (refreshOptions.out), and this test fails on the frame drawn over the banner
-// and on the redraws over the prompt being answered.
-func TestUpdateCheckoutBuildConfirmationIsNeverDrawnOver(t *testing.T) {
+// (refreshOptions.out), and this test fails: the build's own lines went to a
+// stream the stage never draws on.
+func TestUpdateCheckoutBuildLinesAreNeverDrawnOver(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	clearAgentMarkers(t)
 	fakeTerminal(t)
 	writerAsTerminal(t)
 	r, root := upgradeRig(t)
+	buildBudgetForRig(t, r.initRig)
 	checkoutFile(t, filepath.Join(root, ".claude", "settings.json"), wiredAt("v0.5.0"))
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
 	f.On(t, "plugins", userInstall("0.5.1"), argsInstall...)
 	useFakeClaude(t, f)
 	// One workflow whose record names an older base: step 2 has nothing to pin
-	// and step 4 has one build to ask about.
+	// and step 4 has one build to run.
 	r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
 	putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.4.0"))
 	putWorkflowRecordFrom("api", "0.5.1", pinnedRef("base", "0.5.1"))
 	fb := useFakeBuilder(t)
-	// Steps 2 and 3 are stubbed, as in the declined-build test above: the
-	// registry and the Cloud Run Admin API are not what this test is about.
+	// Steps 2 and 3 are stubbed, as in the test above: the registry and the
+	// Cloud Run Admin API are not what this test is about.
 	real := newRefreshSteps
 	newRefreshSteps = func(run *initRun, e *initEngine, p *refreshPlan) refreshSteps {
 		s := real(run, e, p)
@@ -923,13 +899,17 @@ func TestUpdateCheckoutBuildConfirmationIsNeverDrawnOver(t *testing.T) {
 	e.r.w = runWriter{r: e.r, out: out}
 	step := e.r.rep.Step(checkoutStageName)
 	st := checkoutStageOf(t, e)
-	answerAQuestionMidStage(t, e.r, out, "⚠ CONFIRM (project "+initProjectName+", GCP project ", func() error {
-		_, err := st.Apply(context.Background(), initflow.Env{Interactive: true})
-		return err
-	})
+	if _, err := st.Apply(context.Background(), initflow.Env{Interactive: true}); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
 	step.Done("")
 	if len(fb.specs) != 1 {
-		t.Errorf("the confirmed build submitted %+v, want the one build that was asked about", fb.specs)
+		t.Errorf("the build submitted %+v, want the one stale workflow", fb.specs)
+	}
+	// The build's own line is what the run said it does before it did it, and
+	// the stage's stream is where a person reads the step.
+	if !strings.Contains(out.String(), "submits a Cloud Build for acme/app/app") {
+		t.Errorf("the step's stream carries nothing of the build it submitted:\n%s", out)
 	}
 }
 

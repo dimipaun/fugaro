@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"net"
 	"net/http"
 	"os"
@@ -16,10 +15,12 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
@@ -566,6 +567,10 @@ func buildTarget(t *testing.T, r *anchorModeRig) (*initEngine, *refreshTarget) {
 // the --yes tests).
 func buildTargetOpts(t *testing.T, r *anchorModeRig, o *initOptions) (*initEngine, *refreshTarget) {
 	t.Helper()
+	// The installation's budget database, its caps and the price lookup: every
+	// build refreshBuilds submits takes a lease of its estimated cost first
+	// (T4), so a target whose installation has no budget backend cannot build.
+	buildBudgetForRig(t, r.initRig)
 	e := rigEngine(t, r.initRig, o)
 	lc, err := localcfg.Load(r.cfg)
 	if err != nil {
@@ -583,8 +588,9 @@ func buildTargetOpts(t *testing.T, r *anchorModeRig, o *initOptions) (*initEngin
 }
 
 // Step 4 rebuilds the stale workflow only, from the base the base step
-// recorded, after the typed name; a declined build stops it. No step here
-// touches Terraform.
+// recorded, and asks nothing: the billable build leases its cost from the
+// project's budget before it is submitted (T4, D1543). No step here touches
+// Terraform.
 func TestRefreshBuildsStartFromTheNewBase(t *testing.T) {
 	useVersion(t, "0.5.1")
 	r := newAnchorModeRig(t, refreshYAML, true)
@@ -593,11 +599,7 @@ func TestRefreshBuildsStartFromTheNewBase(t *testing.T) {
 	p := &refreshPlan{workflows: []string{"api", "app"}}
 	putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.5.1"))
 	putWorkflowRecordFrom("api", "0.4.0", managedRef("base", "0.4.0"))
-	atTerminal(t, e, "nope\n")
-	if err := e.r.refreshBuilds(t.Context(), p, tg); err == nil || !strings.Contains(err.Error(), "not confirmed") || len(fb.specs) != 0 {
-		t.Fatalf("declined: %v, %d builds", err, len(fb.specs))
-	}
-	out := atTerminal(t, e, initProjectName+"\n")
+	out := atTerminal(t, e, "nope\n")
 	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
@@ -696,6 +698,10 @@ func TestRefreshBuildsOnTheBaseKind(t *testing.T) {
 	r := newAnchorModeRig(t, yaml, true)
 	fb := useFakeBuilder(t)
 	e := rigEngine(t, r.initRig, &initOptions{})
+	// This test builds its target out of the rig's own file rather than
+	// buildTarget's, so it states the budget block a submission leases from
+	// itself (T4).
+	buildBudgetForRig(t, r.initRig)
 	lc, err := localcfg.Load(r.cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -719,19 +725,43 @@ func TestRefreshBuildsOnTheBaseKind(t *testing.T) {
 	}
 }
 
-// A decline on the first of several stale workflows stops the loop: the
-// builds after it are never submitted (D9).
-func TestRefreshBuildsDeclineStopsSubsequentBuilds(t *testing.T) {
+// A build the budget has no room for stops the loop before Cloud Build is
+// handed anything: the refusal is the lease's own (T4, D1543 — the estimator's
+// over-cap error, with the cap, what the day counts and the one command that
+// raises it), it exits non-zero, and the builds after it are never submitted
+// (D9, which a decline used to pin here).
+//
+// Mutation (run, restore): take the lease after the submission instead of
+// before it — or drop the lease and submit — and the fake's request list holds
+// a build the cap refused.
+func TestRefreshBuildsOverCapStopsTheLoop(t *testing.T) {
 	useVersion(t, "0.5.1")
 	r := newAnchorModeRig(t, refreshYAML, true)
 	fb := useFakeBuilder(t)
 	e, tg := buildTarget(t, r)
+	// The repository's own daily cap, below what one build reserves: the first
+	// build of the list is refused, and nothing is counted for it.
+	db := rigBudgetClient(t, e)
+	slug := mustSlug("github", "acme/app")
+	if err := db.Patch(t.Context(), "", map[string]any{budget.PathCapsRepo(slug) + "/dailyMicros": usd1 / 2}); err != nil {
+		t.Fatal(err)
+	}
 	p := &refreshPlan{workflows: []string{"api", "app"}}
-	// Neither has a build record: both are todo.
 	out := atTerminal(t, e, "nope\n")
 	err := e.r.refreshBuilds(t.Context(), p, tg)
-	if err == nil || !strings.Contains(err.Error(), "api") || len(fb.specs) != 0 {
-		t.Fatalf("%v, %d builds\n%s", err, len(fb.specs), out.String())
+	if err == nil {
+		t.Fatalf("a build over the repository's daily cap was submitted\n%s", out.String())
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v: the operator can raise the cap", ExitCode(err), err)
+	}
+	for _, want := range []string{"reserves $0.94", "$0.50", "fugaro budget set --repo acme/app --daily", "built before this: none"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if len(fb.specs) != 0 {
+		t.Fatalf("%d builds were submitted under a cap the first one met: %+v", len(fb.specs), fb.specs)
 	}
 }
 
@@ -873,6 +903,7 @@ const mixedCloneYAML = "version: 1\nproject: aurora\ngit: { provider: github }\n
 func TestRefreshCloneMoveDoesNotBlockBakedRebuilds(t *testing.T) {
 	useVersion(t, "0.5.1")
 	r := newAnchorModeRig(t, mixedCloneYAML, true)
+	buildBudgetForRig(t, r.initRig)
 	fb := useFakeBuilder(t)
 	e := rigEngine(t, r.initRig, &initOptions{})
 	lc, err := localcfg.Load(r.cfg)
@@ -896,9 +927,10 @@ func TestRefreshCloneMoveDoesNotBlockBakedRebuilds(t *testing.T) {
 		Workflows: map[string]infra.WorkflowSpec{"app": {Job: jobName}, "api": {}}}}
 	p := &refreshPlan{workflows: []string{"api", "app"}}
 	putWorkflowRecordFrom("api", "0.4.0", managedRef("base", "0.4.0"))
-	// Both sides ask: the clone move for the project's name, the baked
-	// rebuild for it too.
-	out := atTerminal(t, e, initProjectName+"\n"+initProjectName+"\n")
+	// The clone move asks for the project's name; the baked rebuild beside it
+	// asks nothing at all (T4), so this one line is every answer the refresh
+	// waits for.
+	out := atTerminal(t, e, initProjectName+"\n")
 	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
@@ -983,10 +1015,18 @@ func TestRefreshBuildsRecordReadErrorStopsBuilds(t *testing.T) {
 	}
 }
 
-// The build confirmation is askBuild's (the project's name typed, or --yes:
-// 2026-10-08 decision), never the run's own confirmation or a plain,
-// un-gated ask.
-func TestRefreshBuildsConfirmationIsTypedOrYes(t *testing.T) {
+// Step 4's billable builds ask nothing (T4): what stood here was askBuild —
+// the project's name typed at a real terminal, or --yes — and the policy
+// removed the prompt. What replaces it is the lease refreshBuilds takes
+// immediately before each submission (openBuildLease, D1543), so this test
+// pins both halves of the replacement: the loop calls announceBuild (the line
+// a session reads instead of a question) and openBuildLease, and it reaches
+// no confirmation helper of any kind.
+//
+// It is a structural test on purpose, like the one it replaces: "asked
+// nothing" is a claim about an absence, and the build tests around it would
+// pass just as well with a prompt in front of them — they answer one.
+func TestRefreshBuildsAsksNothing(t *testing.T) {
 	src, err := os.ReadFile("image_refresh_steps.go")
 	if err != nil {
 		t.Fatal(err)
@@ -1000,50 +1040,56 @@ func TestRefreshBuildsConfirmationIsTypedOrYes(t *testing.T) {
 	if j := strings.Index(body[1:], "\nfunc "); j >= 0 {
 		body = body[:j+1]
 	}
-	if !strings.Contains(body, "r.askBuild(") {
-		t.Error("refreshBuilds does not ask through askBuild")
+	for _, want := range []string{"r.announceBuild(", "openBuildLease(ctx, r.w,"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("refreshBuilds does not go through %s", want)
+		}
 	}
-	for _, bad := range []string{"confirmOrdinary", "askOrdinary", "runCovers", "r.confirm(", "r.ask(", "r.askTyped("} {
+	for _, bad := range []string{"askBuild", "confirmOrdinary", "askOrdinary", "runCovers", "r.confirm(", "r.ask(", "r.askTyped("} {
 		if strings.Contains(body, bad) {
-			t.Errorf("refreshBuilds uses %s directly (should go through askBuild)", bad)
+			t.Errorf("refreshBuilds asks through %s, and a billable build asks nothing (T4)", bad)
 		}
 	}
 }
 
-// askBuild itself: without --yes it is exactly askTyped (a real terminal,
-// never auto-confirmed); with --yes it confirms without one, printing its
-// own "confirmed by --yes" line, same as the ordinary steps' r.ask.
-func TestAskBuild(t *testing.T) {
-	r := newInitRig(t)
-	e := rigEngine(t, r, &initOptions{})
-	out := atNoTerminal(e)
-	// A zero initflow.Managed is every session this command had before the
-	// managed gate: the confirmation below is the one it has always had.
-	ok, reachable, err := e.r.askBuild("do the thing", initflow.Managed{})
-	if err != nil || ok || reachable {
-		t.Fatalf("no --yes, no terminal: ok=%v reachable=%v err=%v", ok, reachable, err)
-	}
-	if strings.Contains(out.String(), "confirmed by --yes") {
-		t.Errorf("confirmed without --yes:\n%s", out.String())
-	}
-
-	e = rigEngine(t, r, &initOptions{yes: true})
-	out = atNoTerminal(e)
-	ok, reachable, err = e.r.askBuild("do the thing", initflow.Managed{})
-	if err != nil || !ok || !reachable {
-		t.Fatalf("--yes, no terminal: ok=%v reachable=%v err=%v", ok, reachable, err)
-	}
-	for _, want := range []string{"⚠ CONFIRM", "do the thing", "confirmed by --yes"} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("output lacks %q:\n%s", want, out.String())
-		}
+// announceBuild is what is left of the build confirmation: the banner line,
+// and the gate's own sentence instead of a typed name. It reads nothing from
+// the person's stdin in any session (the caller here gives it an
+// unreadStdin), which is the whole of "a build asks nothing".
+func TestAnnounceBuildAsksNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		g    initflow.Managed
+		want []string
+	}{
+		{name: "no gate at all", g: initflow.Managed{}, want: []string{"do the thing"}},
+		{name: "the gate's verdict", g: initflow.Managed{Managed: true, Admitted: true}, want: []string{"do the thing", initflow.GateProceeded()}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newInitRig(t)
+			e := rigEngine(t, r, &initOptions{})
+			out := atTerminal(t, e, "aurora\n")
+			if err := e.r.announceBuild("do the thing", tc.g); err != nil {
+				t.Fatalf("%v\n%s", err, out.String())
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("output lacks %q:\n%s", want, out.String())
+				}
+			}
+			for _, bad := range []string{"⚠ CONFIRM", "Type ", "confirmed by --yes", "not confirmed"} {
+				if strings.Contains(out.String(), bad) {
+					t.Errorf("the build asked %q:\n%s", bad, out.String())
+				}
+			}
+		})
 	}
 }
 
-// Defence in depth: askBuild refuses an agent's session itself, --yes
-// included, even if the up-front refusal were bypassed (it is called
-// directly here). Mutation: drop the agent check and --yes confirms.
-func TestAskBuildRefusesAnAgentSession(t *testing.T) {
+// Defence in depth: announceBuild refuses an agent's session itself, --yes
+// included, even if the up-front refusal were bypassed (it is called directly
+// here). Mutation: drop the agent check and --yes submits the build.
+func TestAnnounceBuildRefusesAnAgentSession(t *testing.T) {
 	for _, marker := range agentMarkers {
 		t.Run(marker, func(t *testing.T) {
 			for _, k := range agentMarkers {
@@ -1053,28 +1099,30 @@ func TestAskBuildRefusesAnAgentSession(t *testing.T) {
 			r := newInitRig(t)
 			e := rigEngine(t, r, &initOptions{yes: true})
 			out := atNoTerminal(e)
-			ok, _, err := e.r.askBuild("do the thing", initflow.Managed{})
+			err := e.r.announceBuild("do the thing", initflow.Managed{})
 			var ae *initflow.AgentError
-			if !errors.As(err, &ae) || ae.Marker != marker || ok {
-				t.Fatalf("ok=%v err=%v", ok, err)
+			if !errors.As(err, &ae) || ae.Marker != marker {
+				t.Fatalf("err=%v", err)
 			}
-			if strings.Contains(out.String(), "confirmed by --yes") {
-				t.Errorf("confirmed in an agent session:\n%s", out.String())
+			if strings.Contains(out.String(), "do the thing") {
+				t.Errorf("the build's own line was printed for a session that is refused:\n%s", out.String())
 			}
 		})
 	}
 }
 
-// 2026-10-08 decision: --yes confirms every stale build with no terminal and
-// no cap on how many run (here, both workflows).
+// --yes used to be what confirmed every stale build where no terminal could:
+// since T4 the confirmation is gone, so a run with --yes and no terminal
+// submits both workflows and reads the line that replaced the question, once
+// per build.
 func TestRefreshBuildsYesNoTerminalNoCap(t *testing.T) {
 	useVersion(t, "0.5.1")
 	r := newAnchorModeRig(t, refreshYAML, true)
 	fb := useFakeBuilder(t)
 	e, tg := buildTargetOpts(t, r, &initOptions{yes: true})
 	p := &refreshPlan{workflows: []string{"api", "app"}}
-	// Neither has a build record: both are todo, and --yes confirms both,
-	// with no cap on the count.
+	// Neither has a build record: both are todo, both are submitted, and
+	// nothing bounds their count any more (D1543: the lease does).
 	out := atNoTerminal(e)
 	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
@@ -1082,13 +1130,16 @@ func TestRefreshBuildsYesNoTerminalNoCap(t *testing.T) {
 	if len(fb.specs) != 2 {
 		t.Fatalf("builds %+v, want both (no cap)", fb.specs)
 	}
-	if n := strings.Count(out.String(), "confirmed by --yes"); n != 2 {
-		t.Errorf("%d \"confirmed by --yes\" lines, want 2 (one per build):\n%s", n, out.String())
+	if n := strings.Count(out.String(), "submits a Cloud Build for"); n != 2 {
+		t.Errorf("%d build lines, want 2 (one per build):\n%s", n, out.String())
+	}
+	if strings.Contains(out.String(), "confirmed by --yes") {
+		t.Errorf("the build still reads as confirmed by --yes:\n%s", out.String())
 	}
 }
 
-// 2026-10-08 decision: under --yes a failed build still stops the ones
-// after it, and names what finished, exactly as without --yes.
+// Under --yes a failed build still stops the ones after it, and names what
+// finished, exactly as it does in any other session.
 func TestRefreshBuildsYesFailureStopsTheLoop(t *testing.T) {
 	useVersion(t, "0.5.1")
 	r := newAnchorModeRig(t, refreshYAML, true)
@@ -1103,8 +1154,8 @@ func TestRefreshBuildsYesFailureStopsTheLoop(t *testing.T) {
 	if !strings.Contains(err.Error(), "quota") || !strings.Contains(err.Error(), "built before this: none") {
 		t.Errorf("error %q", err)
 	}
-	if !strings.Contains(out.String(), "confirmed by --yes") {
-		t.Errorf("output lacks the --yes confirmation of the one build that started:\n%s", out.String())
+	if !strings.Contains(out.String(), "submits a Cloud Build for") {
+		t.Errorf("output lacks the line over the build that started:\n%s", out.String())
 	}
 }
 
@@ -1260,7 +1311,7 @@ func TestRefreshBuildsFailureStopsTheLoop(t *testing.T) {
 	fb := useFailingBuilder(t, 1)
 	e, tg := buildTarget(t, r)
 	p := &refreshPlan{workflows: []string{"api", "app"}}
-	out := atTerminal(t, e, initProjectName+"\n"+initProjectName+"\n")
+	out := atTerminal(t, e, "")
 	err := e.r.refreshBuilds(t.Context(), p, tg)
 	if ExitCode(err) != ExitRemoteError || len(fb.specs) != 1 || fb.specs[0].Workflow != "api" {
 		t.Fatalf("exit %d, err %v, builds %+v", ExitCode(err), err, fb.specs)
@@ -1275,47 +1326,46 @@ func TestRefreshBuildsFailureStopsTheLoop(t *testing.T) {
 	}
 }
 
-// A failure or a decline after a finished build names it, and keeps the
-// notes.
+// A failure after a finished build names it, and keeps the notes. (The
+// "declined" case this table used to carry went with the prompt: nothing
+// declines a build any more, T4 — a build that is not submitted is one a
+// rule refuses, and that is TestRefreshBuildsOverCapStopsTheLoop.)
 func TestRefreshBuildsNameWhatFinished(t *testing.T) {
-	for _, tc := range []struct {
-		name, second string
-		failOn       int
-		want         string
-	}{
-		{"failed", initProjectName + "\n", 2, "quota"},
-		{"declined", "nope\n", 0, "not confirmed"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			useVersion(t, "0.5.1")
-			r := newAnchorModeRig(t, refreshYAML, true)
-			useFailingBuilder(t, tc.failOn)
-			e, tg := buildTarget(t, r)
-			p := &refreshPlan{workflows: []string{"api", "app"}}
-			out := atTerminal(t, e, initProjectName+"\n"+tc.second)
-			err := e.r.refreshBuilds(t.Context(), p, tg)
-			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "built before this: api") {
-				t.Fatalf("err %v\n%s", err, out.String())
-			}
-			if !strings.Contains(out.String(), "built acme/app/api") || !strings.Contains(out.String(), "note: app had no build record") {
-				t.Errorf("output:\n%s", out.String())
-			}
-		})
+	useVersion(t, "0.5.1")
+	r := newAnchorModeRig(t, refreshYAML, true)
+	useFailingBuilder(t, 2)
+	e, tg := buildTarget(t, r)
+	p := &refreshPlan{workflows: []string{"api", "app"}}
+	out := atNoTerminal(e)
+	err := e.r.refreshBuilds(t.Context(), p, tg)
+	if err == nil || !strings.Contains(err.Error(), "quota") || !strings.Contains(err.Error(), "built before this: api") {
+		t.Fatalf("err %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "built acme/app/api") || !strings.Contains(out.String(), "note: app had no build record") {
+		t.Errorf("output:\n%s", out.String())
 	}
 }
 
-// Without a terminal the refusal says a terminal is required, not that the
-// name was not typed (D2).
-func TestRefreshBuildsNoTerminalSaysSo(t *testing.T) {
+// A session with no terminal and no --yes submits every stale build too: the
+// refusal that stood here ("needs a terminal") was the typed name's, and T4
+// removed the question. A whole `fugaro image refresh` in a pipe is refused
+// earlier still (refuseRefreshHere), which is the command's own rule about
+// applying anything in a session nobody is at, not this step's.
+func TestRefreshBuildsNoTerminalSaysNothing(t *testing.T) {
 	useVersion(t, "0.5.1")
 	r := newAnchorModeRig(t, refreshYAML, true)
 	fb := useFakeBuilder(t)
 	e, tg := buildTarget(t, r)
 	p := &refreshPlan{workflows: []string{"api", "app"}}
-	e.r.w = &syncBuf{}
-	err := e.r.refreshBuilds(t.Context(), p, tg)
-	if err == nil || !strings.Contains(err.Error(), "needs a terminal") || strings.Contains(err.Error(), "was not typed") || len(fb.specs) != 0 {
-		t.Fatalf("err %v, %d builds", err, len(fb.specs))
+	out := atNoTerminal(e)
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(fb.specs) != 2 {
+		t.Fatalf("builds %+v, want both", fb.specs)
+	}
+	if strings.Contains(out.String(), "needs a terminal") {
+		t.Errorf("the removed prompt's refusal is still printed:\n%s", out.String())
 	}
 }
 

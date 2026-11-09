@@ -2142,6 +2142,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	checks := doctorRulesSkew(ctx, db, lc)
 	checks = append(checks, doctorCredsBroken(ctx, db)...)
 	checks = append(checks, doctorBudgetMode(ctx, db)...)
+	checks = append(checks, doctorBuildBudget(ctx, db)...)
 	// The node is read through projectpolicy.Read, the reader a run uses
 	// (design §5(3)), not with a plain Get: with no marker, or one below
 	// PolicyRulesVersion, no run reads the policy however the node is written, and a

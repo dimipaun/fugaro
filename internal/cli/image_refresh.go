@@ -25,7 +25,10 @@ import (
 // fugaro image refresh (design image-refresh.md): one repository onto this
 // release's base image, in five steps, each with the confirmation it has
 // today, or, with --yes, confirmed unattended (2026-10-08 owner decision,
-// superseding design decision D2's "no --yes"; see askBuild).
+// superseding design decision D2's "no --yes"). The billable build of step 4
+// is the one step that asks nothing at all (T4 of docs/no-prompt-policy,
+// D1543): its cost is bounded by the lease it takes from the project's budget
+// before the submission (image_build_lease.go), not by a question.
 
 type refreshOptions struct {
 	cloud         cloudOptions
@@ -41,7 +44,7 @@ type refreshOptions struct {
 	// half): in a project whose marks say it is managed, where this command
 	// asks nothing — the owner's ruling of 2026-11-01 — the flag asks the
 	// confirmations it has always asked instead: the typed project's name at
-	// steps 2 and 3 and before every billable build. Unmanaged, it says so and
+	// steps 2 and 3. Unmanaged, it says so and
 	// changes nothing; a run that could not answer refuses rather than
 	// proceeding (managed_ask.go). It is refused beside --yes.
 	ask bool
@@ -82,7 +85,7 @@ type refreshOptions struct {
 	// and asks under a screen somebody else owns — so every line this refresh
 	// prints would be written while the converge's spinner kept redrawing the
 	// step in flight, over the line just printed and over the prompt under it
-	// (G1), a billable build's confirmation included. Given the caller's
+	// (G1), a build's own banner and its lease's lines included. Given the caller's
 	// writer, each line takes that step down and puts it back, exactly as the
 	// stage's own lines do. Nil for the command, whose own writer the refresh
 	// uses.
@@ -363,11 +366,8 @@ func (p *refreshPlan) print(w io.Writer) {
 		fmt.Fprintf(w, "  2. base %s: this release's base image is resolved at its -pinned tag, its signature is verified, and base_images.%s is pinned to the digest the remote repository serves (nothing is copied; step 2 prints the reference and confirms it)\n", k, k)
 	}
 	fmt.Fprintln(w, "  3. the daily image check job: its image and FUGARO_CHECK_SPEC's base images follow the local config's, through the Cloud Run Admin API after its own confirmation (no Terraform; No changes when current)")
-	how := "confirmed by typing the project's name"
-	if p.yes {
-		how = "confirmed by --yes (no prompt)"
-	}
-	fmt.Fprintf(w, "  4. builds: %d of %d workflow(s), each billable, %s:\n", len(p.builds), len(p.workflows), how)
+	fmt.Fprintf(w, "  4. builds: %d of %d workflow(s), each billable and asking no confirmation: each one leases its estimated cost from this project's budget before it is submitted, and a build the cap has no room for is refused with the command that raises it (in observe mode it is recorded and submitted all the same)\n",
+		len(p.builds), len(p.workflows))
 	for _, wf := range p.workflows {
 		fmt.Fprintf(w, "     %s: %s\n", wf, p.why[wf])
 	}
@@ -405,7 +405,9 @@ func newImageRefreshCmd() *cobra.Command {
 			"FUGARO_CHECK_SPEC's base images) through the Cloud Run Admin API, with no\n" +
 			"Terraform; (4) rebuilds each selected workflow whose build record says it\n" +
 			"was built from another base, or that has no build record or one that\n" +
-			"cannot be read (billable: the project's name typed for each, or --yes);\n" +
+			"cannot be read, each billable and asking no confirmation: it leases its\n" +
+			"estimated cost from the project's budget before it is submitted, and a build\n" +
+			"the cap has no room for is refused with the command that raises it);\n" +
 			"(5) names fugaro update --anchor when fugaro.yaml lacks gcp_project.\n\n" +
 			"A base_images entry that is neither this release's pin nor a release image\n" +
 			"an earlier fugaro copied (a development or hand-pushed image) stops it\n" +
@@ -418,9 +420,10 @@ func newImageRefreshCmd() *cobra.Command {
 			"what is done. Exit codes: 0 done, 1 a refusal or a confirmation not given,\n" +
 			"2 a cloud failure.\n\n" +
 			"Unattended use: pass --yes to run it from CI or a script, with no terminal.\n" +
-			"It confirms every step, the base pin, the check-job update and EACH\n" +
-			"billable build, with no cap on how many builds run: read the printed plan's\n" +
-			"build count first. --yes does not cover a coding agent's session (refused,\n" +
+			"It confirms every step that asks — the base pin and the check-job update;\n" +
+			"the billable builds ask nothing in any session, and it is the budget lease\n" +
+			"each of them takes that bounds them: read the printed plan's build count\n" +
+			"first. --yes does not cover a coding agent's session (refused,\n" +
 			"same as without it) or a custom, dev or hand-pushed base image (still\n" +
 			"refused with the one-line fix); there is still no --json or --plan-only.",
 		Args: cobra.NoArgs,
@@ -431,8 +434,8 @@ func newImageRefreshCmd() *cobra.Command {
 	f.StringArrayVar(&o.workflows, "workflow", nil, "a workflow to refresh (repeatable; default: every workflow in fugaro.yaml)")
 	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release base images come from, as for the converge (default ghcr.io/dimipaun)")
 	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "cross-check the digest of a base image's release signature, KIND=sha256:<hex>, as for the converge (repeatable)")
-	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmations this run would otherwise skip (the project's name typed at each step, and before each billable build) instead of applying on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the questions back. Refused where nobody can answer them (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed; refused beside --yes")
-	f.BoolVar(&o.yes, "yes", false, "confirm every step without asking (the base copy, the check-job update and each billable build, with no cap on how many run), and without a terminal: for CI or a script. The plan is still printed first. Never confirmed in a coding agent's session (CLAUDECODE and the like): nothing is applied there, --yes included. Without --yes nothing changes: a real terminal and the typed confirmations are still required, as always")
+	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmations this run would otherwise skip (the project's name typed at each step that asks) instead of applying on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the questions back. It cannot restore a confirmation the billable builds no longer have: those ask nothing in any session, and each leases its cost from the project's budget. Refused where nobody can answer them (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed; refused beside --yes")
+	f.BoolVar(&o.yes, "yes", false, "confirm every step that asks without asking (the base copy and the check-job update), and without a terminal: for CI or a script. The billable builds need no flag: they ask nothing in any session and each leases its cost from the project's budget. The plan is still printed first. Never confirmed in a coding agent's session (CLAUDECODE and the like): nothing is applied there, --yes included. Without --yes the steps that ask still need a real terminal, as always")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -447,9 +450,10 @@ func newImageRefreshCmd() *cobra.Command {
 // exactly the one this command has always printed — a project that is not
 // managed, a mark that could not be read and a session with no installation to
 // read about all arrive here as nil. Without yes, anything but a real terminal
-// still cannot type the confirmations every step needs, exactly as before;
-// with yes, no terminal is required (it may run from CI or a script). There is
-// still no --json or --plan-only.
+// still cannot type the confirmations steps 2 and 3 need, exactly as before
+// (the billable builds ask nothing either way, T4); with yes, no terminal is
+// required (it may run from CI or a script). There is still no --json or
+// --plan-only.
 func refuseRefreshHere(cmd *cobra.Command, yes bool, g *refreshManaged) error {
 	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
 		if g != nil {
@@ -461,7 +465,7 @@ func refuseRefreshHere(cmd *cobra.Command, yes bool, g *refreshManaged) error {
 		return nil
 	}
 	if !stdinIsTerminal(cmd.InOrStdin()) {
-		return userErr("fugaro image refresh asks for the project's name at each step and before each billable build, so it needs a real terminal: %s", initflow.NoTerminalAdvice)
+		return userErr("fugaro image refresh asks for the project's name at each step that asks, so it needs a real terminal: %s", initflow.NoTerminalAdvice)
 	}
 	return nil
 }
@@ -534,8 +538,9 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
 		return err
 	}
-	// yes carries --yes to r.confirm/r.ask (steps 2 and 3) and to
-	// refreshBuilds (step 4, which keeps its own rule: see askBuild). The steps
+	// yes carries --yes to r.confirm/r.ask (steps 2 and 3). Step 4 consumes
+	// it no longer: the billable builds ask nothing in any session (T4), and a
+	// build is bounded by the lease it takes, not by an answer. The steps
 	// behind r.confirm/r.ask ask the gate beside it: in a managed project's own
 	// terminal the marks are read and the typed name is replaced
 	// (refreshManaged.asksNothing, and r.refresh below).
