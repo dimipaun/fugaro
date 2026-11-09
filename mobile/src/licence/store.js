@@ -100,8 +100,13 @@ export class LicenceStore {
    * The tail of the queue `install` runs on. An install reads the entry and then
    * writes it, so two of them interleaved could each write a set that misses the
    * other's key -- and the cap of two would then drop the older of the two rather
-   * than keep both. The reading half is not queued and needs no queue: `keys` and
-   * `active` change nothing.
+   * than keep both.
+   *
+   * A read is not queued with them, and it is not because a read writes nothing:
+   * `#read` clears an entry that does not decode. It is because that clear cannot
+   * cost a key. An install beside it reads the same damaged entry -- only this
+   * store writes it -- so the two clear one entry between them, and an install
+   * that lands after the clear reads the no-key state and writes its key onto it.
    */
   #queue = Promise.resolve();
 
@@ -119,8 +124,11 @@ export class LicenceStore {
   }
 
   /**
-   * install keeps one pasted key, if it verifies, and answers the claims and the
-   * state it puts the installation in.
+   * install keeps one pasted key, if it verifies, and answers the verifier's
+   * reading of the key that was pasted -- its claims and its state. That state is
+   * the pasted key's own, which is not always the one `active` reports: an older
+   * key pasted beside a newer one verifies and its claims are shown, while T26
+   * still makes the newer one the key that applies.
    *
    * The text is stored as it is read: trimmed, because surrounding whitespace
    * is what a paste brings and the verifier reads the trimmed text, so the store

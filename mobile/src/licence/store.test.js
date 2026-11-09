@@ -276,6 +276,51 @@ test('a port that fails answers a refusal rather than the no-key state', async (
   assert.deepEqual(refused.keys(), [], 'nothing was written');
 });
 
+test('a port that cannot write refuses rather than reporting the key as kept', async () => {
+  const port = new MemoryStore();
+  port.setItem = async () => {
+    throw new Error('the platform store is unavailable');
+  };
+  const production = signer('prod-2026');
+  const licence = store(port, [production]);
+  const key = mint(production, claimsFor());
+
+  // The verifier's answer is `{ ok: true, claims, state }`, and the caller that
+  // got it would draw the key as installed. Nothing was stored, so what comes
+  // back is the store's own refusal -- the one an install that could not keep
+  // the key has to answer with, or the app tells the owner a key is in place
+  // that the next open will not find.
+  assert.deepEqual(
+    await licence.install(key, at(ISSUED)),
+    { ok: false, code: LICENCE_STORE_CODES.STORE_FAILED, field: 'keys' },
+    'an install that cannot write does not report the key as kept',
+  );
+  assert.deepEqual(port.keys(), [], 'and nothing was written');
+});
+
+test('a port that cannot clear a damaged entry refuses rather than answering no key', async () => {
+  const port = new MemoryStore();
+  await port.setItem(LICENCE_KEYS_ENTRY, '{"not":"a list of keys"}');
+  port.deleteItem = async () => {
+    throw new Error('the platform store is unavailable');
+  };
+  const production = signer('prod-2026');
+  const licence = store(port, [production]);
+
+  // The entry neither decodes nor can be removed. `keys: []` would be the
+  // no-key state, which a screen draws as "no key yet" and invites the owner to
+  // paste one -- while the blob that failed to decode is still the entry the
+  // next open will read. The refusal is the answer that says so, and the case
+  // asserts the entry is still there rather than quietly cleared.
+  assert.deepEqual(await licence.keys(), { ok: false, code: LICENCE_STORE_CODES.STORE_FAILED, field: 'keys' });
+  assert.deepEqual(port.keys(), [LICENCE_KEYS_ENTRY], 'the entry was not cleared');
+  assert.deepEqual(
+    await licence.active(at(ISSUED)),
+    { ok: false, code: LICENCE_STORE_CODES.STORE_FAILED, field: 'keys' },
+    'and reading what applies says the same',
+  );
+});
+
 test('the app’s two credentials are still exactly idToken and macKey', async () => {
   // D111's list, the one this task could have widened, and D232's ruling of
   // 2026-10-29 keeps it at two -- the telemetry plan's four-item proposal was
