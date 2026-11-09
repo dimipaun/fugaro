@@ -1828,6 +1828,7 @@ var coordinatorCheckBlocks = []coordinatorNumberBlock{
 	{"100–109", coordinatorMobileReadme, "| **Checks 100–109** | **the functional spec v0.1**", "**100–109** the mobile functional spec, written **Checks 100–109**"},
 	{"100–104", coordinatorMobilePlan, "**6 — APPROVED 2026-10-18 (functional spec v0.1)**", "**100–104** are **approved 2026-10-18**"},
 	{"105–109", coordinatorMobileReadme, "**105–109 reserved and unused**", "**105–109** are **reserved and unused**"},
+	{"170–179", coordinatorChecklist, "**Checks 170–179 are the subscriptions work's, and all ten are written below**", "**170–179** the subscriptions work's, all ten written and **NOT RUN**"},
 	{"", coordinatorChecklist, "**Numbering ruling (owner's assistant, 2026-10-13).**", "the numbering ruling of 2026-10-13"},
 	{"", coordinatorMobileReadme, "Checks 70–79 are unused and deliberately not taken", "records them as unused and not taken"},
 }

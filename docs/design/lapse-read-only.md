@@ -429,7 +429,8 @@ the plan says. Nothing else gains a check:
 
 ## 7. What measures this
 
-Checks **176** and **177** (owner-run, S6.4, not yet written into the register) are the plan's
+Checks **176** and **177** (owner-run, S6.4, written into
+[docs/gcp-live-checklist.md](../gcp-live-checklist.md)) are the plan's
 measure of this document, one product each: within grace everything works; after grace the reads and
 cancel remain while the launch and the configuration write are refused in the console's main process;
 with no key the console behaves as §5.3 says and with an expired evaluation key as §5.5 says; the app
