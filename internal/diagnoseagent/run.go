@@ -130,7 +130,10 @@ func (s *syncWriter) do(f func()) {
 // for Fugaro's own configuration (localcfg reads it from APPDATA there), gh's
 // hosts.yml, gcloud's configuration, rclone's, Terraform's plugin directory
 // and GnuPG's keyring; and the netrc curl and Python read on Windows
-// is `_netrc`, with no leading dot. A name that matches nothing on the
+// is `_netrc`, with no leading dot. Those are the default spellings of a
+// variable that can be set to somewhere else, so the payload follows APPDATA
+// where it is set as it follows the XDG and tool variables (childStoresByVar)
+// rather than assuming the default. A name that matches nothing on the
 // platform in hand (every directory under ~/AppData on a Linux or macOS
 // machine) closes nothing and costs nothing. The client's own state file is a
 // name *beside* its directory rather than inside it, so ~/.claude.json and the
@@ -213,12 +216,19 @@ var childSettings = struct {
 // Each name is the store's own variable, not Fugaro's: gh reads GH_CONFIG_DIR
 // before the XDG directory, gcloud reads CLOUDSDK_CONFIG and no XDG variable
 // at all (internal/cli/adcpath.go, F29), and Fugaro and rclone follow the XDG
-// config home. A variable that is unset, relative or not a path leaves the
-// rule above as the answer.
+// config home. APPDATA is the same story on Windows, where it is what the
+// ~/AppData/Roaming rules above stand in for: they name the default, and a
+// roaming profile that is redirected elsewhere moves the whole set with it.
+// A variable that is unset, relative or not a path leaves the rule above as
+// the answer.
 var childStoresByVar = []struct{ env, sub string }{
 	{"XDG_CONFIG_HOME", "fugaro"},
 	{"XDG_CONFIG_HOME", "gh"},
 	{"XDG_CONFIG_HOME", "rclone"},
+	{"APPDATA", "fugaro"},
+	{"APPDATA", "GitHub CLI"},
+	{"APPDATA", "gcloud"},
+	{"APPDATA", "rclone"},
 	{"GH_CONFIG_DIR", ""},
 	{"CLOUDSDK_CONFIG", ""},
 }

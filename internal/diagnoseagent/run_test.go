@@ -640,6 +640,12 @@ func TestRunDeniesAStoreTheEnvironmentMoved(t *testing.T) {
 		{"$XDG_CONFIG_HOME/fugaro", "XDG_CONFIG_HOME", filepath.Join("fugaro", "projects", "aurora.yaml"), false},
 		{"$XDG_CONFIG_HOME/rclone", "XDG_CONFIG_HOME", filepath.Join("rclone", "rclone.conf"), false},
 		{"$GH_CONFIG_DIR", "GH_CONFIG_DIR", "hosts.yml", false},
+		// The Windows rules are the default spelling of APPDATA, so a set
+		// APPDATA is one more directory the payload has to follow.
+		{"$APPDATA/fugaro", "APPDATA", filepath.Join("fugaro", "projects", "aurora.yaml"), false},
+		{"$APPDATA/GitHub CLI", "APPDATA", filepath.Join("GitHub CLI", "hosts.yml"), false},
+		{"$APPDATA/gcloud", "APPDATA", filepath.Join("gcloud", "application_default_credentials.json"), false},
+		{"$APPDATA/rclone", "APPDATA", filepath.Join("rclone", "rclone.conf"), false},
 		// gcloud reads no XDG variable at all (internal/cli/adcpath.go, F29),
 		// which is why its own variable is the one resolved for it.
 		{"$CLOUDSDK_CONFIG", "CLOUDSDK_CONFIG", "application_default_credentials.json", false},
