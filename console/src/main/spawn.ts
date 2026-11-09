@@ -908,9 +908,10 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // `isSafeArgumentValue` on the way into the argv -- and the words are the
     // row's own fixed three, so no other word of the command line is reachable.
     //
-    // It is §5.1 rule 6's `graph --json` row; `--json` is fixed, and the CLI's
-    // `--watch` form is not on the table at all (CG9b is the row that will
-    // carry it, and it will carry it as its own argv).
+    // It is §5.1 rule 6's `graph --json` row; `--json` is fixed, and the
+    // CLI's `--watch` form is the row below rather than a word of this one
+    // (CG9b landed it as its own argv, because a flag here would be a word a
+    // renderer could turn a long-lived child on with).
     operation: 'graph.read',
     words: ['graph', '--json'],
     takesProject: true,

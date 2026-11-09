@@ -238,11 +238,11 @@ import {
 const CONSOLE_ROOT = join(__dirname, '..', '..')
 
 /**
- * READ_METHODS is the nineteen reads `entry.ts` may reach for (`ReadBridge`'s
- * own list less `summaryRuns`, which `queueBridge` answers with its own
- * recorder), by the name the preload exposes. Every one of them is on the
- * fake bridge below, and every one records its call -- so "this read was never
- * made" is a claim this suite can make about any of them.
+ * READ_METHODS is the twenty reads `entry.ts` may reach for (`ReadBridge`'s own
+ * list less `summaryRuns`, which `queueBridge` answers with its own recorder),
+ * by the name the preload exposes. Every one of them is on the fake bridge
+ * below, and every one records its call -- so "this read was never made" is a
+ * claim this suite can make about any of them.
  *
  * `graphRead` is the graph plan's CG9a read, and it is the fifteenth: the
  * Graph's second scope is read through it, and a case that drove the Graph with
@@ -250,9 +250,13 @@ const CONSOLE_ROOT = join(__dirname, '..', '..')
  * remaining scope is the plan's. `managedStatus`, `policyShow` and
  * `environmentReport` are the managed-project screens plan's CM4 rows: the
  * Project tab's later sections read them (CM10). `readLicence` is the
- * subscriptions plan's S2.7 row and the last: the Project tab's licence key,
- * which is the one read here whose answer is not a `Snapshot` around a CLI
- * document -- that operation spawns no child at all.
+ * subscriptions plan's S2.7 row: the Project tab's licence key, which is the one
+ * read here whose answer is not a `Snapshot` around a CLI document -- that
+ * operation spawns no child at all. `graphWatch` is the graph plan's CG9b row
+ * and the last: the Graph tab's own live feed, which is why a case that drives
+ * the Graph and never leaves it is a case that keeps a `fugaro graph --watch`
+ * child alive -- so this bridge answers it, and the call it records is how the
+ * tab's own lifetime is asserted below.
  */
 const READ_METHODS = [
   'subscribeLive',
@@ -274,6 +278,7 @@ const READ_METHODS = [
   'policyShow',
   'environmentReport',
   'readLicence',
+  'graphWatch',
 ] as const
 
 /** A_REPLY is a bridge method's answer. */
@@ -3302,6 +3307,50 @@ describe('the graph’s live frame', () => {
     await vi.advanceTimersByTimeAsync(LIVE_POLL_MS)
     await flush()
     expect(state(), 'a live feed left the rail on silent').toBe('running')
+  })
+
+  it('holds the tab’s own feed while the tab is on screen, and gives it up when it is left', async () => {
+    // H6, at the wiring: the graph feed is a subscription the CLI holds open on
+    // the project's scope subtree, so the console asks for it when the Graph
+    // becomes the view and gives it up when the operator walks away. **The stop
+    // names the scope the subscription was made with**, because that argv is the
+    // feed's key in the main process (`src/source/cli.ts`): a stop with a
+    // different `source` would name a feed that is not running and leave this
+    // one's child alive until quit.
+    const { bridge, calls } = graphBridge({
+      // The plan scope needs a checkout this installation does not record, so
+      // the tab opens on the coordinator scope -- which is the scope this feed
+      // draws (`all`) and therefore the one whose document reaches the panel.
+      planStatus: () => ({ ok: false, reason: NO_PLAN_CHECKOUT }),
+      graphRead: () => graphReply(),
+      graphWatch: () => graphReply(),
+    })
+    const document = await openGraph(bridge)
+    expect(calls.filter((call) => call.name === 'graphWatch')).toEqual([
+      { name: 'graphWatch', args: { source: GRAPH_SCOPE_ALL } },
+    ])
+    // The subscription's own answer is a drawing: the call that starts the child
+    // is also `current()`, so the picture is up before the first tick -- and it
+    // is the coordinator scope's, which is the drawing the feed's document lays
+    // out (`all`), so the plan the tab opened on is not what is on screen.
+    expect(classed(panelOf(document), 'graph-scope-node').map((each) => each.attributes.get('data-key'))).toEqual([
+      'coordinator:acme/widgets#42',
+    ])
+
+    buttonFor(document, 'live').click()
+    await flush()
+    expect(calls.filter((call) => call.name === 'graphWatch')).toEqual([
+      { name: 'graphWatch', args: { source: GRAPH_SCOPE_ALL } },
+      { name: 'graphWatch', args: { source: GRAPH_SCOPE_ALL, visible: false } },
+    ])
+
+    // And a second visit subscribes again rather than trusting a child the
+    // window gave up: nothing is held while nobody is looking at the graph.
+    buttonFor(document, 'graph').click()
+    await flush()
+    const feeds = calls.filter((call) => call.name === 'graphWatch')
+    expect(feeds).toHaveLength(3)
+    expect(feeds[2]).toEqual({ name: 'graphWatch', args: { source: GRAPH_SCOPE_ALL } })
   })
 })
 
