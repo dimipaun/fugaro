@@ -104,7 +104,7 @@ func buildLeases(ctx context.Context, lc *localcfg.Config, repo, slug string) (*
 	return newImageCost(lc, db, repo, slug, lc.User, buildPricerFor(lc)), nil
 }
 
-// reserveBuild takes the lease one submission is admitted under: what a CLI
+// reserveBuildLease takes the lease one submission is admitted under: what a CLI
 // that died mid-build left behind in this repository is given back first, then
 // the build's own reservation, and the cap refusal observe mode let through is
 // printed as the advisory it is (D1548). A nil cost is an installation with no
@@ -113,7 +113,7 @@ func buildLeases(ctx context.Context, lc *localcfg.Config, repo, slug string) (*
 //
 // The refusal is an error and the build is not submitted: nothing was
 // submitted, so nothing is owed, and the day is left as it was.
-func reserveBuild(ctx context.Context, cmd *cobra.Command, cost *imageCost) (budget.BuildLease, error) {
+func reserveBuildLease(ctx context.Context, cmd *cobra.Command, cost *imageCost) (budget.BuildLease, error) {
 	if cost == nil {
 		return budget.BuildLease{}, nil
 	}
@@ -137,7 +137,7 @@ func reserveBuild(ctx context.Context, cmd *cobra.Command, cost *imageCost) (bud
 	return lease, nil
 }
 
-// settleBuild records what a submitted build spent and gives the rest of the
+// settleBuildLease records what a submitted build spent and gives the rest of the
 // reservation back. A submission that went out is a build Cloud Build bills
 // for, and the result this program gets back carries no billed duration, so a
 // build that was submitted settles on the whole of what it reserved: the day
@@ -146,7 +146,7 @@ func reserveBuild(ctx context.Context, cmd *cobra.Command, cost *imageCost) (bud
 // fail the command: the build is built either way, and an unsettled lease is
 // given back by the next build in this repository once its own deadline has
 // passed.
-func settleBuild(ctx context.Context, cmd *cobra.Command, cost *imageCost, l budget.BuildLease) {
+func settleBuildLease(ctx context.Context, cmd *cobra.Command, cost *imageCost, l budget.BuildLease) {
 	if cost == nil || l.ID == "" {
 		return
 	}
@@ -155,10 +155,10 @@ func settleBuild(ctx context.Context, cmd *cobra.Command, cost *imageCost, l bud
 	}
 }
 
-// releaseBuild gives the whole reservation back: the build was never
+// releaseBuildLease gives the whole reservation back: the build was never
 // submitted, so Cloud Build billed nothing. A release that fails says so and
-// does not fail the command, for settleBuild's reason.
-func releaseBuild(ctx context.Context, cmd *cobra.Command, cost *imageCost, l budget.BuildLease) {
+// does not fail the command, for settleBuildLease's reason.
+func releaseBuildLease(ctx context.Context, cmd *cobra.Command, cost *imageCost, l budget.BuildLease) {
 	if cost == nil || l.ID == "" {
 		return
 	}

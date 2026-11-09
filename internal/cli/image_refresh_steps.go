@@ -136,9 +136,13 @@ func (r *initRun) refreshCheckJob(ctx context.Context, t *refreshTarget) error {
 	}
 	fmt.Fprintf(r.w, "  %s: image %s -> %s\n  %s base_images:\n%s  no other field of %s or the job changes; its execution tokens (startExecutionToken, runExecutionToken) are not sent back\n", pluginwire.Printable(u.Job()),
 		pluginwire.Printable(u.OldImage()), pluginwire.Printable(u.NewImage()), infra.CheckSpecEnv, diff, infra.CheckSpecEnv)
-	if err := r.confirm(fmt.Sprintf("updates the daily image check job %s in place through the Cloud Run Admin API, as you: its image and %s's base images, as listed above; no other field of %s or the job changes; its execution tokens (startExecutionToken, runExecutionToken) are not sent back, and the next fugaro update --repo from this local config is designed to plan no change to it (not yet verified against the real API: see docs/gcp-live-checklist.md Check 30)",
-		pluginwire.Printable(u.Job()), infra.CheckSpecEnv, infra.CheckSpecEnv), "the daily image check job was not updated"); err != nil {
+	ok, err := askConfirm(r.cmd, fmt.Sprintf("update the daily image check job %s in place through the Cloud Run Admin API, as you: its image and %s's base images, as listed above; no other field of %s or the job changes; its execution tokens (startExecutionToken, runExecutionToken) are not sent back, and the next fugaro update --repo from this local config is designed to plan no change to it (not yet verified against the real API: see docs/gcp-live-checklist.md Check 30)?",
+		pluginwire.Printable(u.Job()), infra.CheckSpecEnv, infra.CheckSpecEnv))
+	if err != nil {
 		return err
+	}
+	if !ok {
+		return userErr("not confirmed; the daily image check job was not updated")
 	}
 	if err := infra.ApplyCheckJob(ctx, c, u); err != nil {
 		return remote(err)
@@ -205,50 +209,53 @@ func builtSoFar(err error, built []string) error {
 	return fmt.Errorf("%w; built before this: %s", err, list)
 }
 
-// askBuild is step 4's confirmation of one billable build: the project's
-// name typed at a real terminal, or, with --yes, confirmed without one
-// (2026-10-08 owner decision: --yes now covers every build here, with no
-// cap, superseding D2's "no --yes" for this command only; askTyped's own
-// Typed class, used elsewhere, still never takes --yes). A coding agent's
-// session is refused here too, before the --yes shortcut, even though
-// refuseRefreshHere already refused before any step ran (defence in depth)
-// — unless g is the admission the managed gate gave THIS build, in which
-// case the session proceeds on the gate's answer and the line it prints says
-// so (initflow.AgentProceeded, the one sentence for it). A zero Managed is
-// every session this command has ever had: the refusal above is what
+// askBuild is step 4's own admission of one billable build, and the name is
+// what --ask puts back rather than what the run does: with no flag nothing is
+// asked (T4, the no-prompt policy — every confirmation this command used to
+// take, the project's name typed at a real terminal and --yes's shortcut over
+// it, is gone), and the two things that still decide something here are the
+// agent fence and the gate's note.
+//
+// A coding agent's session is refused here too, even though refuseRefreshHere
+// already refused before any step ran (defence in depth) — unless g is the
+// admission the managed gate gave THIS build, in which case the session
+// proceeds on the gate's answer and the line it prints says so
+// (initflow.AgentProceeded, the one sentence for it). A zero Managed is every
+// session this command has ever had: the refusal above is what
 // CanConfirmManaged answers for one.
 //
 // The owner's own terminal is the second session the gate answers here
 // (2026-11-01: a managed project asks nothing). g is the gate's answer about
-// THIS build and it is non-nil in a person's run only where that run was going
-// to be asked — the marks are read by openRefreshManaged exactly then — so the
-// typed confirmation is replaced by the verdict, the cost line and the
-// admission the gate recorded. Nothing else moves: a project that is not
-// managed and a mark that did not answer arrive here as the zero value, which
-// is the typed question this command has always asked. A build the gate refused
-// does not arrive here at all: admitBuild returns that refusal and the loop
-// stops on it before this call (refreshBuilds, builtSoFar), so the zero value
-// above is never a refused document being asked again.
-func (r *initRun) askBuild(what string, g initflow.Managed) (confirmed, reachable bool, err error) {
+// THIS build and it is non-nil in a person's run only where that run read the
+// marks — openRefreshManaged's own door — so the note says where the admission
+// was recorded, in the place the confirmation used to be. Nothing else moves: a
+// project that is not managed and a mark that did not answer arrive here as the
+// zero value and submit their build with nothing printed. A build the gate
+// refused does not arrive here at all: admitBuild returns that refusal and the
+// loop stops on it before this call (refreshBuilds, builtSoFar), so the zero
+// value above is never a refused document being admitted again.
+//
+// askConfirm is last so that --ask is the one thing that can still put a
+// question here, and it is the answer in a managed project too: a run that
+// passed the flag is not PersonAtTheTerminal (the flag is one of the facts that
+// predicate reads), so the gate's note above is not reached and the owner who
+// asked to be asked is asked — the flag is the owner's own override of the
+// gate's sentence (managed_ask.go's own comment on the flag).
+func (r *initRun) askBuild(what string, g initflow.Managed) (bool, error) {
 	if marker := agentMarker(os.Getenv, r.stdinTerminal()); marker != "" {
 		if !initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Agent: marker}, g) {
-			return false, false, &initflow.AgentError{Marker: marker}
+			return false, &initflow.AgentError{Marker: marker}
 		}
 		fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 		fmt.Fprintf(r.w, "  %s\n", initflow.AgentProceeded(marker))
-		return true, true, nil
+		return true, nil
 	}
 	if initflow.ConfirmsByGate(initflow.YesOrTyped, r.conditions(), g) {
 		fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 		fmt.Fprintf(r.w, "  %s\n", initflow.GateProceeded())
-		return true, true, nil
+		return true, nil
 	}
-	if r.o.yes {
-		fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
-		fmt.Fprintln(r.w, "  confirmed by --yes")
-		return true, true, nil
-	}
-	return r.askTyped(what)
+	return askConfirm(r.cmd, what)
 }
 
 // refreshCloneJobs is part of step 4: a checkout: clone workflow has no
@@ -321,9 +328,13 @@ func (r *initRun) refreshCloneJobs(ctx context.Context, p *refreshPlan, t *refre
 			continue
 		}
 		fmt.Fprintf(r.w, "  %s: image %s -> %s\n", wf, pluginwire.Printable(u.OldImage()), pluginwire.Printable(u.NewImage()))
-		if err := r.confirm(fmt.Sprintf("updates the checkout: clone workflow %s's job %s in place through the Cloud Run Admin API, as you: its container image moves to %s; no Cloud Build runs, and no other field of the job changes",
-			wf, pluginwire.Printable(u.Job()), pluginwire.Printable(u.NewImage())), "the job was not updated"); err != nil {
+		ok, err := askConfirm(r.cmd, fmt.Sprintf("update the checkout: clone workflow %s's job %s in place through the Cloud Run Admin API, as you: its container image moves to %s; no Cloud Build runs, and no other field of the job changes?",
+			wf, pluginwire.Printable(u.Job()), pluginwire.Printable(u.NewImage())))
+		if err != nil {
 			return err
+		}
+		if !ok {
+			return userErr("not confirmed; the job was not updated")
 		}
 		if err := infra.ApplyWorkflowJob(ctx, c, u); err != nil {
 			return remote(err)
@@ -413,27 +424,38 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 				return builtSoFar(err, built)
 			}
 		}
-		ok, reachable, err := r.askBuild(cloudBuildBanner(t.spec.Name, wf, t.lc.Build.MachineType, t.spec.BuildServiceAccountEmail, t.spec.RegistryPath), g)
+		ok, err := r.askBuild(cloudBuildBanner(t.spec.Name, wf, t.lc.Build.MachineType, t.spec.BuildServiceAccountEmail, t.spec.RegistryPath), g)
 		if err != nil {
-			return err
-		}
-		if !reachable {
 			notes()
-			return builtSoFar(userErr("the build of %s/%s needs a terminal where the project's name can be typed (pass --yes to confirm builds without one, from CI or a script; a coding agent's session never confirms one), so it and the builds after it were not submitted", t.spec.Name, wf), built)
+			return builtSoFar(err, built)
 		}
 		if !ok {
 			notes()
-			return builtSoFar(userErr("the build of %s/%s was not confirmed (the project's name was not typed), so it and the builds after it were not submitted", t.spec.Name, wf), built)
+			return builtSoFar(userErr("the build of %s/%s was not confirmed, so it and the builds after it were not submitted", t.spec.Name, wf), built)
+		}
+		// The build's cost is reserved before the submission that spends it
+		// (D1543), and given back if the submission never happened: what a
+		// build settles at is the whole of what it reserved, because Cloud
+		// Build reports no billed duration here (image_cost.go's own rule).
+		cost, err := buildLeases(ctx, t.lc, t.spec.Name, t.spec.Slug)
+		if err != nil {
+			return builtSoFar(err, built)
+		}
+		lease, err := reserveBuildLease(ctx, r.cmd, cost)
+		if err != nil {
+			return builtSoFar(err, built)
 		}
 		id, err := r.submitAndWait(ctx, b, t.lc, t.cfg, t.spec, wf, t.lc.BaseImage(t.cfg.Workflows[wf].BaseKind()), gitID)
+		if id == "" && err != nil {
+			releaseBuildLease(ctx, r.cmd, cost, lease)
+		} else {
+			settleBuildLease(ctx, r.cmd, cost, lease)
+		}
 		if p.managed != nil && (id != "" || err == nil) {
 			// The submission IS the write this build's record is about: once
 			// it is out, the build happened and keeps billing, so its record
 			// is written whatever the wait after it did — and a record that
-			// could not be written fails the command (D1014). The count moves
-			// with it, so the next build is judged against the bound with this
-			// one in it.
-			p.managed.started++
+			// could not be written fails the command (D1014).
 			if werr := p.managed.gate.recorded(ctx); werr != nil {
 				err = errors.Join(err, werr)
 			}

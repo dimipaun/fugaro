@@ -302,14 +302,14 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			// The reservation comes before the copy for the same reason the copy
 			// waits for the judgement: a build the caps have no room for is a
 			// build that must not leave a Dockerfile behind in the bucket.
-			lease, err := reserveBuild(ctx, cmd, cost)
+			lease, err := reserveBuildLease(ctx, cmd, cost)
 			if err != nil {
 				return err
 			}
 			submitted := false
 			defer func() {
 				if !submitted {
-					releaseBuild(ctx, cmd, cost, lease)
+					releaseBuildLease(ctx, cmd, cost, lease)
 				}
 			}()
 			key, err := config.CatalogDockerfileKey(e.Name)
@@ -358,7 +358,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 				return remote(err)
 			}
 			submitted = true
-			settleBuild(ctx, cmd, cost, lease)
+			settleBuildLease(ctx, cmd, cost, lease)
 			// The submission IS the write this build's record is about: once it is
 			// out the build happened and keeps billing, so the record is written
 			// whatever the wait after it did (D1014 on a write that cannot leave a

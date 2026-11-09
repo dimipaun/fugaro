@@ -323,7 +323,7 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	if err != nil {
 		return err
 	}
-	lease, err := reserveBuild(ctx, cmd, cost)
+	lease, err := reserveBuildLease(ctx, cmd, cost)
 	if err != nil {
 		return err
 	}
@@ -333,26 +333,26 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	if cfg.Layer != nil {
 		rb, err := env.recordBucket(ctx)
 		if err != nil {
-			releaseBuild(ctx, cmd, cost, lease)
+			releaseBuildLease(ctx, cmd, cost, lease)
 			return remote(err)
 		}
 		if spec.ProjectLayerSHA256, err = prepareLayerCopy(ctx, rb, rs.Slug, cfg.Layer, base); err != nil {
-			releaseBuild(ctx, cmd, cost, lease)
+			releaseBuildLease(ctx, cmd, cost, lease)
 			return err
 		}
 	}
 	res, err := b.Submit(ctx, spec)
 	switch {
 	case errors.Is(err, gcp.ErrBadBuildSpec):
-		releaseBuild(ctx, cmd, cost, lease)
+		releaseBuildLease(ctx, cmd, cost, lease)
 		return userErr("%v", err)
 	case err != nil:
-		releaseBuild(ctx, cmd, cost, lease)
+		releaseBuildLease(ctx, cmd, cost, lease)
 		return remote(err)
 	}
 	// The submission went out, so Cloud Build bills for this build whatever
 	// happens to the wait below.
-	settleBuild(ctx, cmd, cost, lease)
+	settleBuildLease(ctx, cmd, cost, lease)
 	if !o.noWait {
 		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
 		done, waitErr := b.Wait(ctx, res.ID, 0)

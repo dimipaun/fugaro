@@ -438,30 +438,27 @@ func newImageRefreshCmd() *cobra.Command {
 }
 
 // refuseRefreshHere is decision D2, as reversed in part by the owner's
-// 2026-10-08 decision and in part by the managed gate (M4, D1011): it still
-// runs before anything else (git, the credentials, the network — the gate's
-// own read is the one exception, and where it is made is openRefreshManaged's
-// business). A coding agent's session applies nothing, --yes included, UNLESS the
-// project is managed and the gate admitted every step it reaches: g is that
-// gate, and it is nil for every other session, so the sentence below is
-// exactly the one this command has always printed — a project that is not
-// managed, a mark that could not be read and a session with no installation to
-// read about all arrive here as nil. Without yes, anything but a real terminal
-// still cannot type the confirmations every step needs, exactly as before;
-// with yes, no terminal is required (it may run from CI or a script). There is
-// still no --json or --plan-only.
-func refuseRefreshHere(cmd *cobra.Command, yes bool, g *refreshManaged) error {
+// 2026-10-08 decision, in part by the managed gate (M4, D1011) and in part by
+// T4's no-prompt policy: it still runs before anything else (git, the
+// credentials, the network — the gate's own read is the one exception, and
+// where it is made is openRefreshManaged's business). A coding agent's session
+// applies nothing, --yes included, UNLESS the project is managed and the gate
+// admitted every step it reaches: g is that gate, and it is nil for every other
+// session, so the sentence below is exactly the one this command has always
+// printed — a project that is not managed, a mark that could not be read and a
+// session with no installation to read about all arrive here as nil.
+//
+// Nothing else is refused here any more. The confirmations that used to need a
+// real terminal are gone (T4: this command asks nothing, in a pipe and from CI
+// as much as at a terminal), and the one question it can still ask is --ask's,
+// which refuses in its own sentence where nobody can answer it (askDecide,
+// askConfirm). There is still no --json or --plan-only.
+func refuseRefreshHere(cmd *cobra.Command, g *refreshManaged) error {
 	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
 		if g != nil {
 			return nil
 		}
 		return userErr("fugaro image refresh applies cloud changes: %s", initflow.AgentRefusal(m))
-	}
-	if yes {
-		return nil
-	}
-	if !stdinIsTerminal(cmd.InOrStdin()) {
-		return userErr("fugaro image refresh asks for the project's name at each step and before each billable build, so it needs a real terminal: %s", initflow.NoTerminalAdvice)
 	}
 	return nil
 }
@@ -534,11 +531,11 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
 		return err
 	}
-	// yes carries --yes to r.confirm/r.ask (steps 2 and 3) and to
-	// refreshBuilds (step 4, which keeps its own rule: see askBuild). The steps
-	// behind r.confirm/r.ask ask the gate beside it: in a managed project's own
-	// terminal the marks are read and the typed name is replaced
-	// (refreshManaged.asksNothing, and r.refresh below).
+	// yes travels with the run to the steps that still take a confirmation
+	// from the run itself — the base step's images stage (refreshBase), and
+	// the stages of a caller's own converge (init_checkout_upgrade.go). The
+	// refresh's own three steps decide nothing from it any more: their
+	// questions are gone, and --ask is what puts one back (T4).
 	iopts := &initOptions{cloud: o.cloud, imageSource: o.imageSource, expectDigests: o.expectDigests, yes: o.yes, ask: o.ask}
 	o.managed = openRefreshManaged(ctx, cmd, o, iopts)
 	// --ask answers for the marks, and it answers before the command's own
@@ -550,7 +547,7 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask, yes: o.yes}, o.managed != nil, askConditions(cmd, false, false)); err != nil {
 		return err
 	}
-	if err := refuseRefreshHere(cmd, o.yes, o.managed); err != nil {
+	if err := refuseRefreshHere(cmd, o.managed); err != nil {
 		return err
 	}
 	r := newInitRun(cmd, iopts)
