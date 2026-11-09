@@ -436,3 +436,39 @@ func validExchangeURL(raw string) error {
 	}
 	return nil
 }
+
+// MemberAdmitsShared is the member side of D1298's intersection: whether the
+// member's OWN published policy admits a credential of the workspace's pool,
+// for the repository the run is on (spec.md §4: "the member's own policy, which
+// may refuse a provider or a credential the workspace holds").
+//
+// **It is the member's existing vocabulary and not a second one.** A credential
+// is admitted the way every other credential of the member's installation is: the
+// member's own `claude_accounts` names it — which is the block `fugaro project
+// policy publish` derives into the node's `accounts` (DeriveAccounts) — the
+// account's own allow-list names this repository, and the project's allow_repos
+// admits it at all. The workspace's pool therefore adds credentials to a member
+// without inventing a key a member has to learn: an administrator who wants a
+// shared credential used here writes the same declaration they write for a
+// credential of their own, and one who writes nothing is served nothing from the
+// workspace.
+//
+// **A refusal is the member's, and naming it so is the point.** D1298's whole
+// safety property is that the member's policy is the tighter side, so a
+// credential the member has not admitted is refused with the member's policy as
+// the reason and never with the workspace's — the operator is not sent to the
+// workspace for a refusal the member made. The three legs are the same
+// intersection admittedAccounts makes for the member's own credentials, read
+// here without the per-repository node: a repository's own node is the
+// member's administrator's admission of that repository, and the workspace's
+// credential is not in it.
+func MemberAdmitsShared(p *Policy, name, repo string) bool {
+	if p == nil {
+		return false
+	}
+	acct, ok := p.Accounts[name]
+	if !ok {
+		return false
+	}
+	return AdmitRepo(acct.AllowRepos, repo) && AdmitRepo(p.AllowRepos, repo)
+}

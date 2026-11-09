@@ -223,3 +223,38 @@ func TestWorkspaceCredentialsNodeIsAbsentNotRefused(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkspaceMemberPolicyAdmitsOnlyWhatItNames: the member side of D1298's
+// intersection, read from the member's own published policy. It is the member's
+// existing vocabulary — the accounts block `fugaro project policy publish`
+// derives from the member's own claude_accounts — rather than a key the
+// workspace invents, and every leg of it refuses alone: a credential the
+// member's admin never declared, an account not allowed to this repository, a
+// repository the project does not admit, and a policy that could not be read are
+// each a refusal the member made.
+func TestWorkspaceMemberPolicyAdmitsOnlyWhatItNames(t *testing.T) {
+	const repo = "github/owner/repo-a"
+	p := &Policy{
+		AllowRepos: []string{repo},
+		Accounts:   map[string]Account{"claude-oauth-token-team": {AllowRepos: []string{repo}}},
+	}
+	if !MemberAdmitsShared(p, "claude-oauth-token-team", repo) {
+		t.Error("MemberAdmitsShared refused a credential the member's own policy names for this repository")
+	}
+	if MemberAdmitsShared(p, "claude-oauth-token-other", repo) {
+		t.Error("MemberAdmitsShared admitted a credential the member's own policy does not name: a workspace cannot admit what the member's policy never declared")
+	}
+	if MemberAdmitsShared(p, "claude-oauth-token-team", "github/owner/repo-b") {
+		t.Error("MemberAdmitsShared admitted the credential for a repository the account's own allow-list does not name")
+	}
+	unadmitted := &Policy{
+		AllowRepos: []string{"github/owner/repo-b"},
+		Accounts:   map[string]Account{"claude-oauth-token-team": {AllowRepos: []string{repo}}},
+	}
+	if MemberAdmitsShared(unadmitted, "claude-oauth-token-team", repo) {
+		t.Error("MemberAdmitsShared admitted a credential in a project whose own allow_repos does not admit the repository")
+	}
+	if MemberAdmitsShared(nil, "claude-oauth-token-team", repo) {
+		t.Error("MemberAdmitsShared admitted a credential with no policy at all: a policy that could not be read is not one that admits everything")
+	}
+}
