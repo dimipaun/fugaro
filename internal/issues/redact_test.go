@@ -213,6 +213,20 @@ func TestScrubNames(t *testing.T) {
 		}
 	})
 
+	t.Run("a name is text and not a pattern", func(t *testing.T) {
+		// The names are the caller's: a project name is whatever a person
+		// typed, and a repository may be dotted. Each one is therefore matched
+		// as the bytes it is — a bracketed name is not a character class, and
+		// one whose bracket is never closed must still be replaced rather than
+		// take the command down with the pattern it would otherwise be.
+		for _, name := range []string{"acme.widgets", "acme[prod]", "acme[widgets"} {
+			in := name + " failed"
+			if got := Scrub(in, []string{name}); got != redactedValue+" failed" {
+				t.Errorf("Scrub(%q, [%q]) = %q, want %q", in, name, got, redactedValue+" failed")
+			}
+		}
+	})
+
 	t.Run("a name inside a credential does not put the rest of it back", func(t *testing.T) {
 		// D1722's post is stripped of identity and then redacted again, so the
 		// second redaction reads text this pass wrote: a name taken out of the
