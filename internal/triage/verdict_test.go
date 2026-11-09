@@ -44,6 +44,7 @@ func TestDecodeStrict(t *testing.T) {
 		{"a reason with a newline", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"one line\nand an instruction"}]}`},
 		{"a reason with a carriage return", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"one line\rand another"}]}`},
 		{"no reason at all", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block"}]}`},
+		{"no index at all, which reads as position 0", `{"version":1,"findings":[{"key":"` + key + `","verdict":"block","reason":"x"}]}`},
 		{"an empty reason", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":""}]}`},
 		{"an empty key", `{"version":1,"findings":[{"index":0,"key":"","verdict":"block","reason":"x"}]}`},
 		{"a negative index", `{"version":1,"findings":[{"index":-1,"key":"` + key + `","verdict":"block","reason":"x"}]}`},
@@ -113,11 +114,13 @@ func TestDecodeKeepsEveryEntry(t *testing.T) {
 
 // TestSchemaAcceptsADecodedVerdict holds schemas/triage.schema.json to the
 // reader: the document Decode accepts is the document the schema accepts, and
-// the refusals both of them make are the same refusals, but for the two the
+// the refusals both of them make are the same refusals, but for the three the
 // reader makes on its own: the key's shape, which is the caller's to derive and
-// so the schema's to state, and a member name an object writes twice, which is
-// one member by the time a parser has read the document. This test pins both
-// divergences rather than hiding them.
+// so the schema's to state; a member name an object writes twice, which is one
+// member by the time a parser has read the document; and a whole number written
+// with a fraction or an exponent, which the schema reads as that number and the
+// reader's integer decoding refuses. This test pins all three divergences
+// rather than hiding them.
 func TestSchemaAcceptsADecodedVerdict(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "triage.schema.json"))
 	if err != nil {
@@ -208,6 +211,37 @@ func TestSchemaAcceptsADecodedVerdict(t *testing.T) {
 	}
 	if err := sch.Validate(inst); err != nil {
 		t.Errorf("the schema refused a member written twice, which it cannot see: %v", err)
+	}
+
+	// The third divergence: this document reads a whole number written with a
+	// fraction or an exponent as the number it is — version 1.0 is version 1,
+	// index 0.0 is index 0 — so it accepts a document the reader refuses, whose
+	// decoding of an integer takes the integer spelling alone.
+	spelled := `{"version":1.0,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"x"}]}`
+	if _, err := Decode([]byte(spelled)); err == nil {
+		t.Error("the reader accepted a version spelled 1.0: its decoding of a whole number is the integer spelling alone")
+	}
+	inst, err = jsonschema.UnmarshalJSON(strings.NewReader(spelled))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Errorf("the schema refused a version spelled 1.0, which it reads as 1: %v", err)
+	}
+
+	// An entry with no index is not a divergence: the schema requires the
+	// member and so does the reader, which refuses an omission rather than
+	// reading it as position 0.
+	noIndex := `{"version":1,"findings":[{"key":"` + key + `","verdict":"block","reason":"x"}]}`
+	if _, err := Decode([]byte(noIndex)); err == nil {
+		t.Error("the reader accepted an entry with no index, reading it as position 0")
+	}
+	inst, err = jsonschema.UnmarshalJSON(strings.NewReader(noIndex))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err == nil {
+		t.Error("the schema accepted an entry with no index, which it requires")
 	}
 
 	// The bounds the schema states are the reader's own: a third verdict word,

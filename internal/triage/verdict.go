@@ -86,13 +86,13 @@ type Entry struct {
 
 // Decode reads one verdict from a judge's answer, strictly: an unknown member
 // of the document or of an entry, a member name that is not spelled exactly as
-// the schema spells it or that an object writes twice, a version this reader
-// does not know, a verdict word outside the two, a missing findings array, a
-// reason that is empty, over MaxLine bytes or on more than one line, and an
-// empty key or a negative index are all refused. Anything refused here is a
-// call the runner records as failed, which blocks every finding (D1846): the
-// refusals are the strict direction, so an answer this reader cannot place
-// never becomes a deferral.
+// the schema spells it, that an object writes twice, or that an object must
+// carry and does not, a version this reader does not know, a verdict word
+// outside the two, a missing findings array, a reason that is empty, over
+// MaxLine bytes or on more than one line, and an empty key or a negative index
+// are all refused. Anything refused here is a call the runner records as
+// failed, which blocks every finding (D1846): the refusals are the strict
+// direction, so an answer this reader cannot place never becomes a deferral.
 func Decode(data []byte) (Verdict, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
@@ -153,43 +153,68 @@ func checkLine(field, s string, required bool) error {
 	return nil
 }
 
-// verdictNames and entryNames are the members each object of a verdict may
-// carry, spelled exactly as schemas/triage.schema.json spells them.
+// members is one object's member rule: the names it may carry, the names it
+// must carry, the member that holds the objects of the level below it, and what
+// a refusal calls it. Both levels are schemas/triage.schema.json's own lists —
+// the same names and the same required ones — which is what makes "a document
+// one accepts, the other accepts" true of every member but the two the reader
+// settles on its own.
+type members struct {
+	allowed  map[string]bool
+	required []string
+	nested   string
+	subject  string
+}
+
+// verdictMembers and entryMembers are the verdict's two objects: the document,
+// and one entry of its findings array.
 var (
-	verdictNames = map[string]bool{"version": true, "findings": true}
-	entryNames   = map[string]bool{"index": true, "key": true, "verdict": true, "reason": true, "group": true}
+	verdictMembers = members{
+		allowed:  map[string]bool{"version": true, "findings": true},
+		required: []string{"version", "findings"},
+		nested:   "findings",
+		subject:  "the verdict",
+	}
+	entryMembers = members{
+		allowed:  map[string]bool{"index": true, "key": true, "verdict": true, "reason": true, "group": true},
+		required: []string{"index", "key", "verdict", "reason"},
+		subject:  "an entry",
+	}
 )
 
-// checkNames refuses a member name the verdict does not spell exactly, and one
-// an object spells twice. encoding/json matches a name whatever its case — it
-// reads {"VERSION":1,"FINDINGS":[]} whole — and keeps the last of a repeated
-// one, so neither DisallowUnknownFields nor the decode above would stop
-// {"verdict":"block","VERDICT":"defer"}: the runner would read a deferral where
-// schemas/triage.schema.json, and any reader that takes the exact name or the
-// first one, sees a block. A verdict two readers place differently is refused
-// as a whole, like every other refusal here (D1846).
+// checkNames refuses a member name the verdict does not spell exactly, one an
+// object spells twice, and one an object must carry and does not. encoding/json
+// matches a name whatever its case — it reads {"VERSION":1,"FINDINGS":[]} whole
+// — and keeps the last of a repeated one, so neither DisallowUnknownFields nor
+// the decode above would stop {"verdict":"block","VERDICT":"defer"}: the runner
+// would read a deferral where schemas/triage.schema.json, and any reader that
+// takes the exact name or the first one, sees a block. Nor would it stop an
+// entry with no index member, which decodes as position 0 — the first finding
+// of the round — where the schema requires the member. A verdict two readers
+// place differently is refused as a whole, like every other refusal here
+// (D1846).
 //
 // It runs over the bytes after the decode above, so it settles names alone:
 // the syntax, the shapes and the members the document does not know at all are
 // that decoder's refusals, and this pass never sees a document it refused.
 func checkNames(data []byte) error {
-	entries, err := memberValues(data, verdictNames, "findings")
+	entries, err := readMembers(data, verdictMembers)
 	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
-		if _, err := memberValues(entry, entryNames, ""); err != nil {
+		if _, err := readMembers(entry, entryMembers); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// memberValues reads the members of the JSON object raw holds, refusing a name
-// the object may not carry and a name it carries twice, and returns the raw
-// values of the member named nested — empty when it is absent, and for a value
-// that is not an array, a shape the decode above already refused.
-func memberValues(raw []byte, allowed map[string]bool, nested string) ([]json.RawMessage, error) {
+// readMembers reads the members of the JSON object raw holds against m's rule,
+// and returns the raw values of the member named nested — empty when it is
+// absent, and for a value that is not an array, shapes the decode above already
+// refused.
+func readMembers(raw []byte, m members) ([]json.RawMessage, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	tok, err := dec.Token()
 	if err != nil {
@@ -208,24 +233,29 @@ func memberValues(raw []byte, allowed map[string]bool, nested string) ([]json.Ra
 		}
 		name, ok := tok.(string)
 		if !ok {
-			return nil, errors.New("triage: a member of the verdict has no name")
+			return nil, fmt.Errorf("triage: %s has a member with no name", m.subject)
 		}
 		switch {
-		case !allowed[name]:
-			return nil, fmt.Errorf("triage: %q is not a member of the verdict: names are matched exactly", name)
+		case !m.allowed[name]:
+			return nil, fmt.Errorf("triage: %q is not a member of %s: names are matched exactly", name, m.subject)
 		case seen[name]:
-			return nil, fmt.Errorf("triage: the member %q is written twice", name)
+			return nil, fmt.Errorf("triage: %q is written twice in %s", name, m.subject)
 		}
 		seen[name] = true
 		var value json.RawMessage
 		if err := dec.Decode(&value); err != nil {
 			return nil, fmt.Errorf("triage: %w", err)
 		}
-		if name == nested {
+		if name == m.nested {
 			var list []json.RawMessage
 			if err := json.Unmarshal(value, &list); err == nil {
 				entries = list
 			}
+		}
+	}
+	for _, name := range m.required {
+		if !seen[name] {
+			return nil, fmt.Errorf("triage: %s has no %q member, which it must carry", m.subject, name)
 		}
 	}
 	return entries, nil

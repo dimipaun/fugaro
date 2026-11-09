@@ -30,6 +30,14 @@ const (
 	forgedLookalike   = "fugaro-triage-findings-0123456789abcdef"
 )
 
+// testIndent is the indentation every line of quoted data is written with,
+// spelled here as a literal rather than read from the package's own indent:
+// the guard these tests hold is that a reviewer's line cannot pass for a
+// delimiter or for the brief's own words, and a test that asserted that through
+// the constant it guards would pass on an indent of "" — the guard gone and the
+// test green with it.
+const testIndent = "    "
+
 // blockNonce returns the nonce the named block of p is delimited with, and
 // fails unless the block is opened exactly once, closed exactly once, and both
 // with the same nonce: a block whose ends a quoted finding wrote would have an
@@ -117,7 +125,7 @@ func TestPromptFencesFindingsAsData(t *testing.T) {
 			if !strings.Contains(line, tc.instruction) {
 				continue
 			}
-			if !strings.HasPrefix(line, indent) {
+			if !strings.HasPrefix(line, testIndent) {
 				t.Errorf("%s instruction reached the brief as a line of its own: %q", tc.what, line)
 			}
 			if tc.home != "" && !strings.Contains(line, tc.home) {
@@ -142,7 +150,7 @@ func TestPromptCarriesTheTaskGoal(t *testing.T) {
 		}
 	}
 	for _, line := range strings.Split(p, "\n") {
-		if strings.Contains(line, injected) && !strings.HasPrefix(line, indent) {
+		if strings.Contains(line, injected) && !strings.HasPrefix(line, testIndent) {
 			t.Errorf("an injected instruction reached the brief as a line of its own: %q", line)
 		}
 	}
