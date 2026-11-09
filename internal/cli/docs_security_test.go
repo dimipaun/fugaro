@@ -540,6 +540,14 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 // Mutation (verified, run and restored): the R3 sentence removed from the
 // section -- "The agent can act as the run at the proxy (R3, O1)." -- fails
 // this on that pin and on the "one repository" sentence that follows it.
+//
+// Second mutation (verified, run and restored), from the review of B1.10: the
+// D504 paragraph put back as it was written first -- cancel "cancels the
+// execution" once the run has launched, and "a cancelled run still finishes
+// what it was launched to do" -- fails this on every cancel pin and on both
+// banned spellings of that claim, and on nothing else (internal/cli/cancel.go
+// writes the marker; a run stopped through Cloud Run after --grace or with
+// --now never reaches finalize).
 func TestSecurityMdStatesTheBitbucketGitProxy(t *testing.T) {
 	s := readDoc(t, "SECURITY.md")
 	const heading = "### The Bitbucket git proxy"
@@ -578,9 +586,20 @@ func TestSecurityMdStatesTheBitbucketGitProxy(t *testing.T) {
 		"scales to zero",
 		"cold start",
 		"no redundancy",
-		// D504: what stops the proxy, and what a cancel does not end.
+		// D504: what stops the proxy, and what a cancel does not end. A cancel
+		// writes the marker and the runner finalizes a **draft** through the
+		// proxy; only a run still in a stage after --grace (or one cancelled
+		// with --now) has its execution stopped, and such a run never reaches
+		// finalize -- internal/cli/cancel.go's own description.
 		"fugaro cancel",
 		"kill switch",
+		"writes the run's cancel marker",
+		"finalizes a **draft** pull request",
+		"still in a stage after `--grace`",
+		"`--now`",
+		"never reaches finalize and opens no pull request",
+		"a cancelled run does not finish its task",
+		"the forwarder is closed only after finalize",
 		"until the run's write-once outcome exists",
 		"at most the ID token's hour",
 		// O6: only this run's repository is fetched.
@@ -624,6 +643,12 @@ func TestSecurityMdStatesTheBitbucketGitProxy(t *testing.T) {
 		// command is several proxied requests.
 		"every refusal is audited with **names only**, one line per proxied request",
 		"one line per proxied request",
+		// The cancel wording that was false on this tree: cancel does not
+		// itself cancel the execution once the run has launched, and a stopped
+		// run reaches no finalize, so it opens no pull request at all
+		// (internal/cli/cancel.go:76-84, 235-321).
+		"once the run has launched, cancels the execution",
+		"a cancelled run still finishes what it was launched to do",
 	} {
 		if strings.Contains(flattenDoc(s), banned) {
 			t.Errorf("SECURITY.md says %q: the proxy narrows the run, and the flip that takes the mount has not landed on this tree", banned)
