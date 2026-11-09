@@ -129,8 +129,14 @@ standard.
   `launchers`→operator@project, `operators`→admin@project, `budget_admins` and the project's owners
   and editors stay implicit admins (F17.3), then retires the old keys in the same update.
 - **Also:** the migration reads the old lists **from the installation's outputs**, refuses on drift from the machine's copy, and **retires the old keys only after the node write has landed**; the IAM-list derive is taken **after the Terraform state lock is held**, from a fresh read of the node (F29a), pinned by `TestRevokeIsNotUndoneByAStaleDerive`; and the same outputs are what the review screen announces — a member the node holds and the installation's outputs do not entered the node outside this run, so the screen does not list them and a plan granting them is **not covered**: the step asks for the project's name typed at a terminal, which `--yes` does not answer, and a managed project's gate refuses the plan. group:/domain:/serviceAccount: members stay **legacy IAM-only members** (F25; the migration test covers each form); an **older CLI's** `update` refuses against a node it does not know, with a floor naming `brew upgrade` (F27; RS3's first step reads how an older CLI treats an unknown `config/admin` member).
+- **The one carve-out from the empty plan is the compute root** (`--provision-batch`): it is handed the derived
+  launcher list whole — the config's `terraform.operators` with the admins, because an admin operates too, the
+  union the installation and repository roots already take (`launchersWithOperators`) — so a Batch-provisioned
+  installation that only renames plans new `roles/batch.jobsEditor` grants for its admins on its next
+  `--provision-batch` (`internal/cli/init_compute.go`, pinned by `TestComputeRootTakesTheLaunchersTheModuleGrants`;
+  the stage is opt-in, prints its plan and asks for the project's name typed at a terminal). D1589 carries it too.
 - **Tests:** `TestUpdateMigratesListsToAccessNode` (an installation at the previous shape converges), `TestLegacyMemberFormsKeepTheirGrants`,
-  `TestPlanIsEmptyForAPureRename`, `TestAGrantTheInstallationNeverHeldIsNotCoveredByYes`, the plugin lint, `go test ./internal/cli -run Docs`.
+  `TestPlanIsEmptyForAPureRename` (the installation and repository roots), `TestAGrantTheInstallationNeverHeldIsNotCoveredByYes`, the plugin lint, `go test ./internal/cli -run Docs`.
 - **Command:** `GOFLAGS=-p=1 go test ./internal/cli/ -run 'Migrat|Roles|Docs' ./plugin/ -count=1`
 - **Depends on:** RS2. **Commit:** `update: launchers/operators become operator/admin grants`.
 - **Red step:** the converge test fails with the old keys still read. **Tier:** opus + level 3.

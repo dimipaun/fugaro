@@ -29,9 +29,9 @@ Five things already name people, and none of them is a role model.
 
 | List | Where it lives | Who is on it |
 | --- | --- | --- |
-| `terraform.launchers` | `internal/localcfg/localcfg.go:510`, `fugaro setup --launcher` (`internal/cli/init.go:362`) | IAM members who start runs |
-| `terraform.operators` | `internal/localcfg/localcfg.go:511`, `fugaro setup --operator` (`internal/cli/init.go:363`) | IAM members who onboard repositories and apply Terraform |
-| The project's owners and editors (`admins`) | read from the project's IAM policy into `deploy/terraform/gcp/modules/firebase/variables.tf:92` | whoever Google Cloud already trusts with the whole project |
+| `terraform.operators` | `internal/localcfg/localcfg.go:1023`, `fugaro setup --operator` (`internal/cli/init.go:451`) | IAM members who start runs |
+| `terraform.admins` | `internal/localcfg/localcfg.go:1029`, `fugaro setup --admin` (`internal/cli/init.go:452`) | IAM members who onboard repositories and apply Terraform |
+| The project's owners and editors (implicit admins) | read from the project's IAM policy into `deploy/terraform/gcp/modules/firebase/variables.tf:92` | whoever Google Cloud already trusts with the whole project |
 | `terraform.budget_admins` | `internal/localcfg/localcfg.go:515`, `fugaro setup --budget-admin` (`internal/cli/init.go:372`) | further people who may change caps and kill switches; refuses `domain:` members (`internal/localcfg/localcfg_test.go:981`) |
 | The device allowlist `config/admin/devices/<uid>` | `internal/budget/rules/rules.go:458` (`PathDevices`), written over IAM by `fugaro pair` and `fugaro pair revoke` | paired phones; each entry carries a `role` child (`internal/mobileauth/mobileauth.go:117`, `NodeFieldRole`) |
 
@@ -69,7 +69,7 @@ is checked against a role anywhere.
 | RTDB | `roles/firebasedatabase.viewer` (`:44`) | same | `roles/firebasedatabase.admin` (`:53`), which *writes* `/config`, bypassing the rules |
 | Firestore (spend history) | `roles/datastore.viewer` (`:65`) | same | same |
 | Launch a job (Cloud Run) | the `job_runner` custom role, `run.jobs.run` and `run.jobs.runWithOverrides` (`modules/installation/iam.tf:26`), on the project's job (`modules/project/iam.tf:7`) and each workflow job (`modules/workflow/job.tf:97`) | — | — |
-| Launch a job (the opt-in Batch backend, `--provision-batch`) | `roles/batch.jobsEditor`, conditioned to Fugaro-shaped job names (`modules/compute/iam.tf:140`), and `roles/iam.serviceAccountUser` on each run account, never on the project (`:159`) | — | — |
+| Launch a job (the opt-in Batch backend, `--provision-batch`) | `roles/batch.jobsEditor`, conditioned to Fugaro-shaped job names (`modules/compute/iam.tf:140`), and `roles/iam.serviceAccountUser` on each run account, never on the project (`:159`). The compute root's `var.launchers` is handed the derived launcher list whole — the operators **with the admins among them**, because an admin operates too, the union the installation and repository roots already take (`launchersWithOperators`, `internal/infra/tfvars.go`; `internal/cli/init_compute.go`) | — | — |
 | Cancel a run, read job/execution status | the `fugaroLauncher` custom role: `run.jobs.get/list`, `run.executions.get/list/cancel`, `run.operations.get` (`modules/installation/iam.tf:8`) | — | — |
 | Run logs | `roles/logging.viewAccessor` on the isolated log view (`modules/installation/logging.tf:106`) | same | — |
 | Runs bucket | read the whole bucket (`objectViewer`, `modules/installation/iam.tf:156`); write `runs/`, `tokens/` and `issues/` only (`objectUser`, conditioned, `:172`) | read and write **all** of it (`objectAdmin`, `:141`) | — |

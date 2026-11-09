@@ -49,7 +49,7 @@ The 0.6.0 guard `config publish --executable-changes` is a CLI check. It binds o
 
 The bucket has `uniform_bucket_level_access = true` and `public_access_prevention = "enforced"`. It has **no versioning** and no retention policy (`modules/installation/bucket.tf`). The Terraform state is in a separate bucket, where only operators hold `objectAdmin`.
 
-People are made launchers or operators by `fugaro init --launcher/--operator`, stored in the local config's `terraform.launchers` and `terraform.operators`. A new config defaults both to the person running `init` ([gcp-setup.md](../gcp-setup.md), "Setup checks these for you"). So on a one-person installation, which is the case for both of the owner's installations, every launcher is also an operator.
+People are made operators or admins by `fugaro init --operator/--admin`, stored in the local config's `terraform.operators` and `terraform.admins`. A new config defaults both to the person running `init` ([gcp-setup.md](../gcp-setup.md), "Setup checks these for you"). So on a one-person installation, which is the case for both of the owner's installations, every operator is also an admin.
 
 ### 2.2 Who reads and writes which objects
 
@@ -83,7 +83,7 @@ People are made launchers or operators by `fugaro init --launcher/--operator`, s
 - **The install guard (`internal/infra/tf/cover.go`)** has these properties:
   - `grantRules` covers `roles/storage.objectAdmin` only to people, and `objectUser` and `objectViewer` only to accounts.
   - It checks the bucket of a bucket grant, but **not its condition**. An `objectUser` grant to a Fugaro account with no condition, or with any other condition, would be covered. This is a gap today, independent of this design.
-  - `tf.Guard` refuses every delete or replace unless `--allow-delete` names it, and `infra.DeleteHints` blames a missing `--launcher`/`--operator` for any deleted bucket grant.
+  - `tf.Guard` refuses every delete or replace unless `--allow-delete` names it, and `infra.DeleteHints` blames a missing `--operator`/`--admin` for any deleted bucket grant.
 - **doctor** already reads the project's IAM policy (`preflight.IAMPolicy`) and service accounts' policies (`doctor_signers.go`). Each degrades to a warning when it is refused.
 
 ## 3. The end state
@@ -189,7 +189,7 @@ bucket access (0.7.0): these launchers keep reading the runs bucket and writing 
   user:b@example.com
 ```
 
-`DeleteHints` already skips allowed addresses, so the misleading "pass --launcher again" hint never appears for these deletes.
+`DeleteHints` already skips allowed addresses, so the misleading "pass --operator again" hint never appears for these deletes.
 
 Veto alternative: no automatic allow. The operator passes `--allow-delete 'module.installation.google_storage_bucket_iam_member.runs["user:a@example.com"]'` once per launcher, as the refusal prints.
 

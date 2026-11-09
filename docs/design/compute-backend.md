@@ -4134,7 +4134,13 @@ senior reviewer before merge, not just the normal one.
    `internal/cli/init_stages.go` only when `--provision-batch` is given and
    registered `noYes` in `internal/initflow/stage.go`, so `--yes` never
    covers it: it is confirmed by the project's name typed at a real terminal,
-   like the project's creation and the secrets. It is a root, a workdir and a
+   like the project's creation and the secrets. Its `var.launchers` is the
+   derived launcher list whole — this machine's `terraform.operators` with the
+   admins, because an admin operates too, the union the installation and
+   repository roots are handed (`internal/infra/tfvars.go`'s
+   `launchersWithOperators`) — so the root's `roles/batch.jobsEditor` grant
+   reaches the admins wherever it is provisioned (roles.md §1.2; D1589's
+   carve-out). It is a root, a workdir and a
    state prefix of its own (`fugaro/compute`), so the installation's tfvars,
    imports and saved plan are never rewritten by it, every apply passes
    `tf.Guard` with `--allow-delete`, and an empty plan is "No changes" rather
