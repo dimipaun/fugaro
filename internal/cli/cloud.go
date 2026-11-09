@@ -517,8 +517,11 @@ func resolveRun(ctx context.Context, env *cloudEnv, ref string, o resolveRunOpti
 			return strings.Compare(b.Slug, a.Slug)
 		})
 		cands := env.runCandidates(ctx, matches)
-		fmt.Fprintf(o.out, "%q names %d active runs:\n%s", ref, len(cands), fullRows(cands))
-		return "", "", userErr("%q is an ending; pass one of the full run IDs above", ref)
+		// The list is part of the refusal and not a write to o.out: a
+		// command's stdout is its document when --json is set, so `cancel
+		// --json <ending>` must leave it empty. endingRefusal carries its
+		// own candidates the same way (D1700).
+		return "", "", userErr("%q names %d active runs:\n%spass one of the full run IDs above", ref, len(cands), fullRows(cands))
 	}
 
 	// The feed is read once per lookup and only for an ending: a full ID never

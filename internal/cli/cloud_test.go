@@ -725,24 +725,30 @@ func TestResolveRunActiveOnlyRefusesAndLists(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Errorf("the refusal = %v, want a user error", err)
 	}
-	if !strings.Contains(out.String(), appSlug+"/"+live) || !strings.Contains(out.String(), "the running run") {
-		t.Errorf("the refusal does not print the full ID to paste and its title:\n%s", out.String())
+	if !strings.Contains(err.Error(), appSlug+"/"+live) || !strings.Contains(err.Error(), "the running run") {
+		t.Errorf("the refusal does not name the full ID to paste and its title:\n%v", err)
 	}
-	if strings.Contains(out.String(), finished) {
-		t.Errorf("the refusal lists a run that is not active:\n%s", out.String())
+	if strings.Contains(err.Error(), finished) {
+		t.Errorf("the refusal lists a run that is not active:\n%v", err)
+	}
+	// The list is part of the refusal, so nothing reaches stdout: `cancel
+	// --json` prints its document there, and an ending is not one.
+	if out.Len() != 0 {
+		t.Errorf("the refusal wrote %q on stdout, want nothing there", out.String())
 	}
 
 	// A second active run sharing the ending is listed too, in full.
 	second := recentRunID(t, 3*time.Minute, "3bb2")
 	seedTitledRun(t, f.cloudFixture, second, "the other running run")
 	f.db.Set(budget.PathAgent(appSlug, second), map[string]any{"run_id": second, "title": "the other running run"})
-	o, out = opts()
+	o, _ = opts()
 	if _, _, err := resolveRun(ctx, env, "3bb2", o); ExitCode(err) != ExitUserError {
 		t.Fatalf("two active matches = %v, want a user error", err)
-	}
-	for _, want := range []string{appSlug + "/" + live, appSlug + "/" + second, "the other running run"} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("the refusal does not list %q:\n%s", want, out.String())
+	} else {
+		for _, want := range []string{appSlug + "/" + live, appSlug + "/" + second, "the other running run"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not list %q:\n%v", want, err)
+			}
 		}
 	}
 

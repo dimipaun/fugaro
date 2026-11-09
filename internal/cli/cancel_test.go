@@ -968,10 +968,14 @@ func TestCancelDoesNotClaimAPullRequestForAnArtifactRun(t *testing.T) {
 
 // TestCancelEndingListsAndNeverActs: `cancel` acts only on a run named in
 // full (D1710). Given an ending it looks the ending up among the active runs
-// only, prints each match as <slug>/<full run ID> beside its title so the run
-// to cancel is one paste away, and cancels nothing — whether the ending names
-// one active run or several. Mutation caught: resolving a unique ending to
-// its active run and cancelling it, and acting on an ending at all.
+// only, names each match as <slug>/<full run ID> beside its title in the
+// refusal so the run to cancel is one paste away, and cancels nothing —
+// whether the ending names one active run or several. With --json stdout is
+// the command's document and the ending never becomes one, so the list goes
+// into the error and the machine stream stays empty. Mutation caught:
+// resolving a unique ending to its active run and cancelling it, acting on an
+// ending at all, and printing the list on stdout where a --json reader would
+// take it for the document.
 func TestCancelEndingListsAndNeverActs(t *testing.T) {
 	for _, n := range []int{1, 2} {
 		t.Run(fmt.Sprintf("%d active match(es)", n), func(t *testing.T) {
@@ -983,19 +987,24 @@ func TestCancelEndingListsAndNeverActs(t *testing.T) {
 				seedTitledRun(t, f.cloudFixture, ids[i], title)
 				f.db.Set(budget.PathAgent(appSlug, ids[i]), map[string]any{"run_id": ids[i], "title": title})
 			}
-			out, _, err := execute(t, "cancel", "3bb2")
-			if ExitCode(err) != ExitUserError {
-				t.Fatalf("cancel 3bb2 = %v, want a user error and nothing cancelled", err)
-			}
-			for i, id := range ids {
-				if want := appSlug + "/" + id; !strings.Contains(out, want) {
-					t.Errorf("the refusal does not print the full ID %s to paste:\n%s", want, out)
+			for _, args := range [][]string{{"cancel", "3bb2"}, {"cancel", "--json", "3bb2"}} {
+				out, _, err := execute(t, args...)
+				if ExitCode(err) != ExitUserError {
+					t.Fatalf("%v = %v, want a user error and nothing cancelled", args, err)
 				}
-				if want := fmt.Sprintf("title %d", i); !strings.Contains(out, want) {
-					t.Errorf("the refusal does not print %s:\n%s", want, out)
+				if out != "" {
+					t.Errorf("%v wrote %q on stdout, want nothing there: the ending's candidates belong to the refusal", args, out)
 				}
-				if cancelled(t, f.cloudFixture, id) {
-					t.Errorf("cancel 3bb2 acted on the ending and cancelled %s", id)
+				for i, id := range ids {
+					if want := appSlug + "/" + id; !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not print the full ID %s to paste:\n%v", want, err)
+					}
+					if want := fmt.Sprintf("title %d", i); !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not print %s:\n%v", want, err)
+					}
+					if cancelled(t, f.cloudFixture, id) {
+						t.Errorf("%v acted on the ending and cancelled %s", args, id)
+					}
 				}
 			}
 		})
