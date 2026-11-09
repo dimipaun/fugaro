@@ -185,15 +185,23 @@ build.
 
 **Why `spawn_task` is deferred, in one paragraph.** It needs **three privileges, not one**:
 `signJwt` to mint the run's custom token; **write to the runs bucket**, which the coordinator does not
-hold (F3 is `roles/storage.objectViewer`); and **`run.jobs.runWithOverrides`**, which can override
-**container args** — the base image's entrypoint is `tini --` (`images/base_test.go:59`), so an
-override can run **any command beside the job's mounted git and model credentials**. That contradicts
-the answer's own "the coordinator mints nothing" (D923) and M6's
-`TestTheCoordinatorMintsNoCustomToken`. The first slice keeps that sentence true by not needing
-`spawn_task` at all. **What a later `spawn_task` design item has to answer** is written in
+hold (F3 is `roles/storage.objectViewer`); and a privilege on the project's own job. **The review of
+2026-11-04 read that third one as `run.jobs.runWithOverrides`** — which can override **container
+args**, the base image's entrypoint being `tini --` (`images/base_test.go:59`), so an override can run
+**any command beside the job's mounted git and model credentials** — **and the owner's ruling of
+2026-11-09 replaced it with the start-only `run.jobs.run`**: the front door's account never holds
+`runWithOverrides` at all (§4a of [reconciliation.md](reconciliation.md)), so **the third privilege
+this design is built on is the ability to start an execution and nothing else**, and the two
+statements are not in conflict: the review priced what a launcher holds, the ruling gives the front
+door a role of its own. That is what deferred the tool: the review's finding contradicts the answer's
+own "the coordinator mints nothing" (D923) and M6's `TestTheCoordinatorMintsNoCustomToken`, **which a
+launcher that cannot override no longer does**. The first slice keeps that sentence true by not
+needing `spawn_task` at all. **What a later `spawn_task` design item has to answer** is written in
 [reconciliation.md](reconciliation.md) §4b and in §7 below; the four requirements are: no
 `runWithOverrides` (use `run.jobs.run` with per-run input under a bucket prefix only the coordinator
-writes); run-token minting moved out of the public service; an argument allowlist (no
+writes — with the per-launch data itself on the run's task, since the account can set no override, and
+with the identity the launch binding M11 carries); run-token minting moved out of the public service;
+an argument allowlist (no
 `--no-budget-check` at `internal/cli/run.go:325`, no `--token` at `internal/cli/run.go:313`, no
 free-form `--run-id`); and `mode = max(requested, the token's minimum)` always.
 
@@ -1027,16 +1035,24 @@ here, unchanged, as the plan for when it is designed and the owner approves it.
   (`internal/runstore/launch.go:112`, `ClaimKey`, `ClaimTTL` at `:117`) so one submit is one run and
   a repeat answers about the run in flight, the same **budget pre-check** of kill switches, caps and
   headroom (`internal/budget/precheck.go:58`, `budget.Precheck`, which
-  `internal/cli/launch_budget.go:283` is the CLI's own call to), and the front door's own
+  `internal/cli/launch_budget.go:302` is the CLI's own call to), and the front door's own
   **concurrency and rate** limits enforced at that same point. `launch.go` is the one file that
   reaches the job, and a second route to `internal/backend` in any later task is a finding rather
   than a convenience. **It sends no execution override at all, and that is a change this task carries
-  rather than inherits**: `fugaro run`'s own pre-launch code sets `FUGARO_RUN` as an override today
-  (`internal/backend/gcp/run.go:172-178`) because a shared project job's name says nothing about which
-  run it is, and the front door's account cannot set one — so M9's `launch.go` writes the **launch
-  binding** M11 builds (the run named by the execution Cloud Run injects itself,
-  `internal/backend/codec.go:113`) and the runner resolves its run from it, with M11's bounded poll
-  and its orphan refusal. Its **own ceiling and marker reach the run through the task**, which is the
+  rather than inherits.** `fugaro run`'s own pre-launch code puts **three** per-launch values there
+  today, all of them overrides on a shared project job: the run's identity (`FUGARO_RUN`,
+  `internal/backend/gcp/run.go:173`) — because the job's name says nothing about which run it is — the
+  budget token's seal key when the launch mints (`FUGARO_BUDGET_TOKEN`, a *secret* override, the sealed
+  token itself going into the runs bucket, `internal/cli/run.go:3956`,
+  `internal/cli/launch_budget.go:708`, `internal/backend/backend.go:136`), and the review-job marker
+  (`FUGARO_REVIEW_JOB=1`, `internal/cli/run.go:3977`). **The front door's account can set none of
+  them**, and this task's own channel — the task — carries the ceiling and the marker of D924 and
+  nothing else. So: the identity moves to the **launch binding** M11 builds (the run named by the
+  execution Cloud Run injects itself, `internal/backend/codec.go:113`), with M11's bounded poll and its
+  orphan refusal; and **the seal key and the review-job marker have no named channel yet** — they are
+  the third part of the question §4b's **D937** puts back to the owner, because a launch that carries a
+  minted budget token and cannot hand the run the one thing that opens it is a paid-for run that dies
+  at bootstrap, and a marker that rides no override is a review job the front door cannot ask for. Its **own ceiling and marker reach the run through the task**, which is the
   point of the move, and **the task is input and not authenticated input**: the front door holds the
   runs-bucket write, so a compromised coordinator can still choose the task's `repo`, `prompt`,
   `workflow` and `recipe` — the fence bounds the override surface and not the content, and what

@@ -56,7 +56,7 @@ safe to build.
 | F13 | **Reading a run's logs goes through the Cloud Logging API today**: `internal/backend/gcp/logs.go:29`, on `google.golang.org/api/logging/v2`. |
 | F14 | **A run's transcripts land in the runs bucket**, which the coordinator already reads: `internal/runner/session.go:185` writes `session/<id>.jsonl`, and F3's read-only object viewer reaches it. |
 | F15 | **`golang.org/x/oauth2` is already a dependency** (`go.mod:16`). There is **no** MCP SDK and **no** OIDC library in `go.mod`. |
-| F19 | **The launcher can already set an environment variable for one execution.** `internal/backend/backend.go:124-144`: `Env` (`:133`) and `SecretEnv` (`:144`) are "extra `NAME=value` variables **for this execution only**, merged into the job's own environment (the Cloud Run v2 API merges override env into the job's)", with the budget-token channel as the precedent that already uses one. **Exists** — D924's mechanism needs no new plumbing, only the value and the rule that reads it. |
+| F19 | **The launcher can already set an environment variable for one execution.** `internal/backend/backend.go:124-144`: `Env` (`:133`) and `SecretEnv` (`:144`) are "extra `NAME=value` variables **for this execution only**, merged into the job's own environment (the Cloud Run v2 API merges override env into the job's)", with the budget-token channel as the precedent that already uses one. **Exists** — the plumbing D924's first answer needed, and only the value and the rule that reads it were missing. **Amended 2026-11-09** (the launch-override fence's ruling, §4a): **this channel is the front door's no longer** — the account that starts a run holds no `run.jobs.runWithOverrides` and can set no override at all, so D924's ceiling and the launch marker ride the run's own task, **and the one thing that does need new plumbing is the run's identity**, which travels as the `FUGARO_RUN` override here (`internal/backend/gcp/run.go:173`): it moves to the launch binding keyed by the execution, and M11 and M9 carry it. |
 
 ## 2. What is missing
 
@@ -732,7 +732,21 @@ Cloud Run injects the execution's own name into the container itself (`CLOUD_RUN
 `internal/backend/codec.go:113`'s `ExecutionFromEnv`, which needs no override), so the launcher writes a
 **launch binding** into the runs bucket named by the execution — after `jobs.run` returns the execution
 name — and the runner resolves `<slug>/<run-id>` from that binding at bootstrap instead of from
-`FUGARO_RUN`. **Its race is named rather than hidden:** the execution starts as soon as the call
+`FUGARO_RUN`.
+
+**And the identity is not the only value a launch carries this way.** A launch that minted puts the
+budget token's **seal key** in a *secret* override — `FUGARO_BUDGET_TOKEN`, whose value is the key
+that opens the sealed token the launcher writes into the runs bucket (`internal/cli/run.go:3956`,
+`internal/cli/launch_budget.go:708`; `internal/backend/backend.go:136` is why it is a fact about the
+launch and cannot come from the job's deploy-time environment) — and a review job carries
+`FUGARO_REVIEW_JOB=1` as a plain override (`internal/cli/run.go:3977`). **An account that can set no
+override can carry neither**, so the per-launch data this design moves is **three things and not
+one**: the ceiling and the marker, which the task takes; the identity, which the launch binding
+takes; and **the seal key and the review-job marker, for which this design names no channel at
+all** — the third part of D937, and the reason a front door that mints a budget token cannot hand
+the run the one thing that opens it.
+
+**Its race is named rather than hidden:** the execution starts as soon as the call
 returns, so the runner can reach the bucket before the binding lands, which the runner answers by
 polling for a bounded window (the shape `internal/runstore/launch.go:117`'s `ClaimTTL` already sets),
 and a binding that never arrives is a named bootstrap refusal; a launcher that dies between the start
@@ -819,17 +833,17 @@ not a shrug:
 table (§4 of the plan) and the release slot (§5) are re-cut; and **the plan's own statement of the
 tool set is narrower** — the first slice serves the read tools and no run starts from the front door.
 
-### D937 — The premise the ruling got wrong, and the content the fence does not cover
+### D937 — The premise the ruling got wrong, the two values it cannot carry, and the content the fence does not cover
 
 **D937 is raised here rather than answered**, because it reopens a premise of the owner's ruling of
-2026-11-09 and only the owner closes it. It has two halves, and both are corrections of an
-overstatement this folder carried, not a new requirement.
+2026-11-09 and only the owner closes it. It has three parts, and every one is a correction of an
+overstatement this folder carried rather than a new requirement.
 
 | D | The question | This folder's recommendation (2026-11-09) | Why |
 | --- | --- | --- | --- |
-| **D937** | **Can the split launcher role start a run at all, and does the fence cover what the run is told to do?** | **The goal stands — the front door's account never holds `run.jobs.runWithOverrides` — and two corrections follow.** (a) **The identity moves out of the override too**, along with D924's ceiling and the marker: the launcher writes a **launch binding** into the runs bucket named by the execution, and the runner resolves `<slug>/<run-id>` from it at bootstrap, reading the execution name Cloud Run injects itself (`CLOUD_RUN_EXECUTION` through `internal/backend/codec.go:113`) — because `FUGARO_RUN` as an override (`internal/backend/gcp/run.go:172-178`) is the one thing `run.jobs.run` alone cannot set. (b) **The fence is stated for what it is**: an override-surface fence, which does not authenticate `task.json` and does not confine what a compromised coordinator writes into it | §4a's "The premise the ruling got wrong" has the mechanism, its race (the binding lands after the execution starts, so the runner polls for a bounded window; a launcher that dies in between leaves a paid-for execution the operator must be able to see) and its files; (b) is why **`task.json` is unsigned text the launcher wrote** (`docs/design/bucket-iam.md:412`) and why M9's runs-bucket write means the fence bounds the channel and not the content |
+| **D937** | **Can the split launcher role start a run at all, and does the fence cover what the run is told to do?** | **The goal stands — the front door's account never holds `run.jobs.runWithOverrides` — and three corrections follow.** (a) **The identity moves out of the override too**, along with D924's ceiling and the marker: the launcher writes a **launch binding** into the runs bucket named by the execution, and the runner resolves `<slug>/<run-id>` from it at bootstrap, reading the execution name Cloud Run injects itself (`CLOUD_RUN_EXECUTION` through `internal/backend/codec.go:113`) — because `FUGARO_RUN` as an override (`internal/backend/gcp/run.go:173`) is the one thing `run.jobs.run` alone cannot set. (b) **Two further per-launch values have no channel in this design at all**: the budget token's **seal key**, which a minting launch sends as a *secret* override (`FUGARO_BUDGET_TOKEN` — `internal/cli/run.go:3956`, `internal/cli/launch_budget.go:708`, and `internal/backend/backend.go:136` on why it is a fact about the launch), and the **review-job marker** (`FUGARO_REVIEW_JOB=1`, `internal/cli/run.go:3977`), so a fenced launch that minted a token could not hand the run the key that opens it and could not ask for a review job. (c) **The fence is stated for what it is**: an override-surface fence, which does not authenticate `task.json` and does not confine what a compromised coordinator writes into it | §4a's "The premise the ruling got wrong" has the mechanism, its race (the binding lands after the execution starts, so the runner polls for a bounded window; a launcher that dies in between leaves a paid-for execution the operator must be able to see) and its files; (b) is why the design's channel list is short by two entries and why M9's launch path cannot simply send nothing; (c) is why **`task.json` is unsigned text the launcher wrote** (`docs/design/bucket-iam.md:412`) and why M9's runs-bucket write means the fence bounds the channel and not the content |
 
-**What (b) means, in one sentence**: with the fence built, a compromised coordinator **cannot rewrite
+**What (c) means, in one sentence**: with the fence built, a compromised coordinator **cannot rewrite
 the job's environment, its template or its arguments**, and it **can still write a task whose
 `repo`, `prompt`, `workflow` and `recipe` it chose** — which is the same thing it can do today, and
 which the fence was never going to close, because the front door has to be able to say what the run

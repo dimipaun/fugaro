@@ -182,7 +182,7 @@ free by default:
 | **This work's block** | **D920–D934** — the fifteen decisions of [reconciliation.md](reconciliation.md) §4, **kept because they do not collide**: "D920" and "D934" appear on `main` only as other works' inventories of this pull request's block (`docs/managed-agent-converge/reconciliation.md`:248, `docs/run-limit-carry-over/README.md`:54) |
 | **Used on 2026-11-04** | **D936** (the first MCP slice, and `spawn_task` deferred — finding H2), from [reconciliation.md](reconciliation.md) §4b. **An amendment takes no number**: a decision's answer is amended in place, with a dated note beside it, so the number keeps one meaning |
 | Taken from this work's own reservation | **D935** — the answer of 2026-11-05, written here and not on `main` before it, so the same non-collision holds |
-| Used on 2026-11-09 | **D937** — the premise the ruling of 2026-11-09 got wrong (the run's identity is an override, so the fence costs the runner a change) and the content the fence does not cover, from [reconciliation.md](reconciliation.md) §4b |
+| Used on 2026-11-09 | **D937** — the premise the ruling of 2026-11-09 got wrong (the run's identity is an override, so the fence costs the runner a change), the two per-launch values the design gives no channel at all (the budget token's seal key and the review-job marker), and the content the fence does not cover, from [reconciliation.md](reconciliation.md) §4b |
 | Reserved, unused | **D938–D939** |
 | A later task takes | **D1310**, the first number above every allocation above, and re-checks the facts rather than this conclusion |
 
