@@ -432,6 +432,24 @@ func checkout(t *testing.T) string {
 	return dir
 }
 
+// TestAGraphReadRunsInACheckoutTheTestOwns: the helper every inline graph read
+// goes through puts the test in a tree it made rather than in the repository
+// the test happens to be run in. The marker is what tells the two apart, and
+// the difference is the whole point: the read resolves a graph's stubs against
+// the checkout it stands in, so a read that took whatever tree it was run in
+// answers one way in a checkout and fails in a copy of the source with no
+// `.git` above it (CLAUDE.md, "hermetic tests").
+func TestAGraphReadRunsInACheckoutTheTestOwns(t *testing.T) {
+	analyze(t, v3Graph)
+	root := checkoutRoot(".")
+	if root == "" {
+		t.Fatal("the read left the test in no checkout at all")
+	}
+	if _, err := os.Lstat(filepath.Join(root, ".git", checkoutMarker)); err != nil {
+		t.Errorf("the read resolved its stubs against %s, a checkout no test made", root)
+	}
+}
+
 // written is a file of the checkout at a repository-relative path.
 func written(t *testing.T, root, repoPath string) string {
 	t.Helper()
