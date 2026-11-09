@@ -132,34 +132,67 @@ func definition(e config.Entry, data []byte) ([]byte, error) {
 // the value from --build-arg) is refused on the name alone because the value
 // reaches the layer either way.
 //
+// The heuristic's limits are named rather than left to be found. The guard
+// reads instructions whose name is ARG, ENV or ONBUILD of either, and not a
+// RUN that exports a variable itself: a credential written into an image by a
+// build step is a scan's to catch (images/scan.sh is one), and a scan of the
+// built image is the layer this one does not pretend to be. It reads the
+// definition's `\` continuations; a definition that changes the parser's
+// escape character with `# escape=` is read line by line, and a name split
+// across a backtick is not seen. All of it holds for a definition whose author
+// is not looking for the guard — an author who is can name the ARG anything,
+// which no reading of the text can prevent.
+//
 // The refusal never repeats what it found. A URL with userinfo holds the
 // credential itself, and a refusal that echoed it would leak it into the log
 // the rule keeps it out of; the ARG or ENV name is printed instead, through
 // pluginwire.Printable like every other value this package prints.
 func refuseCredentialIn(e config.Entry, data []byte) error {
-	for _, line := range dockerfileLines(data) {
-		inst, rest := splitInstruction(line)
-		if inst != "ARG" && inst != "ENV" {
-			continue
-		}
-		for _, name := range instructionNames(inst, rest) {
-			if credentialShaped(name) {
-				return fmt.Errorf("the catalog entry %s: its Dockerfile sets %s %s, a name a credential is carried in; a build argument or an environment variable with a secret in it reaches the image, so mount the value with RUN --mount=type=secret instead",
-					nameOf(e), inst, pluginwire.Printable(name))
-			}
+	lines := dockerfileLines(data)
+	for _, line := range lines {
+		if err := refuseCredentialNames(e, line); err != nil {
+			return err
 		}
 	}
-	if urlUserinfoRE.Match(data) {
+	// The URL is read on the logical lines too, and not on the raw bytes: a
+	// clone URL whose credential is split across a continuation is the URL a
+	// build carries into the layer, so it is the joined one that is read.
+	if urlUserinfoRE.MatchString(strings.Join(lines, "\n")) {
 		return fmt.Errorf("the catalog entry %s: its Dockerfile carries a URL with a credential in its userinfo, the part between // and @; a clone URL with a token in it reaches the image, so mount the credential with RUN --mount=type=secret instead",
 			nameOf(e))
 	}
 	return nil
 }
 
+// refuseCredentialNames checks one logical line's ARG and ENV names, and the
+// ARG and ENV an ONBUILD line defers to a child image: both are instructions
+// whose variable reaches a layer, so both are read.
+func refuseCredentialNames(e config.Entry, line string) error {
+	inst, rest := splitInstruction(line)
+	if inst == "ONBUILD" {
+		inst, rest = splitInstruction(rest)
+	}
+	if inst != "ARG" && inst != "ENV" {
+		return nil
+	}
+	for _, name := range instructionNames(inst, rest) {
+		if credentialShaped(name) {
+			return fmt.Errorf("the catalog entry %s: its Dockerfile sets %s %s, a name a credential is carried in; a build argument or an environment variable with a secret in it reaches the image, so mount the value with RUN --mount=type=secret instead",
+				nameOf(e), inst, pluginwire.Printable(name))
+		}
+	}
+	return nil
+}
+
 // dockerfileLines returns a definition's logical lines: an instruction whose
 // physical line ends in a backslash continues on the next one, and what a
-// person reads as one instruction is what the guard below must read as one too
+// person reads as one instruction is what the guard above must read as one too
 // (ARG \ followed by GIT_TOKEN is one ARG).
+//
+// The join is the parser's own and inserts nothing: the space before the
+// backslash is the space Docker keeps, so ARG NPM_\ / TOKEN is the one name
+// NPM_TOKEN to a build and is read as one here. A join that inserted a space
+// of its own would split exactly the name this guard is looking for.
 func dockerfileLines(data []byte) []string {
 	var lines []string
 	var cont strings.Builder
@@ -167,7 +200,6 @@ func dockerfileLines(data []byte) []string {
 		line := strings.TrimSpace(strings.TrimSuffix(physical, "\r"))
 		if strings.HasSuffix(line, `\`) && !strings.HasSuffix(line, `\\`) {
 			cont.WriteString(strings.TrimSuffix(line, `\`))
-			cont.WriteByte(' ')
 			continue
 		}
 		cont.WriteString(line)
@@ -270,7 +302,11 @@ func envValue(s string) string {
 // covered by the shape they are written in — AWS_SECRET_ACCESS_KEY and
 // AWS_ACCESS_KEY_ID are here through secret and accesskey, GITHUB_TOKEN and
 // NPM_TOKEN through token, and a GPG_KEY is a public key as often as a private
-// one.
+// one. Two entries cost something and are kept anyway: pwd is how a password is
+// written short (DB_PWD), and it refuses the shell's own PWD and OLDPWD, which
+// a definition has no reason to set and Docker maintains itself; secret
+// refuses a name a tokenizer's variables carry too, and the refusal says what
+// to do about it.
 var credentialMarkers = []string{
 	"token", "secret", "passwd", "password", "passphrase", "pwd",
 	"credential", "credentials", "creds",
