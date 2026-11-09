@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
-// The update client: electron-updater 6.8.10 behind the `UpdaterPort` the
+// The update client: electron-updater 6.8.11 behind the `UpdaterPort` the
 // policy in `./updates.ts` is written against (desktop-console plan Task 4.4,
 // "Auto-update -- SECURITY-SENSITIVE"; design section 7.4 for "no update check
 // that carries an identifier", section 5.2 for the pinned supply chain).
 //
 // **The identifier this module exists to remove.** U1's review of 2026-10-30
-// found that 6.8.10 sends and stores an identifier of its own:
+// found that 6.8.11 sends and stores an identifier of its own:
 // `AppUpdater.getUpdateInfoAndProvider` (out/AppUpdater.js ~380-392) calls
 // `client.setRequestHeaders(this.computeFinalHeaders({ "x-user-staging-id":
 // stagingUserId }))` on every feed request, and `stagingUserIdPromise`
@@ -15,7 +15,7 @@
 // (~332-338) merges `requestHeaders` *on top*, so the policy setting
 // `requestHeaders = {}` cannot take the header back off: the library adds it
 // after. `hardenUpdater` is the whole answer, and it is deliberately
-// fail-closed -- a client whose members are not where 6.8.10 has them is a
+// fail-closed -- a client whose members are not where 6.8.11 has them is a
 // client this module refuses to start at all, because the failure it guards
 // against is silent and the thing it would leak is the operator's.
 //
@@ -27,7 +27,7 @@
 // dirName)`), and this bundle sets `publish: null`, so there is no such file:
 // unhardened, every download fails with ENOENT at the last step, after the feed
 // has been read and the release offered. That name is written here instead.
-// `autoInstallOnAppQuit` is 6.8.10's own install-on-quit, and on macOS it is
+// `autoInstallOnAppQuit` is 6.8.11's own install-on-quit, and on macOS it is
 // read in one place -- `MacUpdater.doDownloadUpdate` (~220-227) tells Squirrel
 // to fetch the file only `if (this.autoInstallOnAppQuit)`, and Squirrel installs
 // it when the app quits. The owner's ruling of 2026-10-30 is that an update is
@@ -64,7 +64,7 @@ export const UPDATER_CACHE_DIR_NAME = 'fugaro-console-updater'
  * it was written against, because the only reason to see it is that this
  * dependency moved. */
 const HARDENING_FAILED =
-  'fugaro console: electron-updater 6.8.10 no longer has the members this app rewrites; the update check is not started'
+  'fugaro console: electron-updater 6.8.11 no longer has the members this app rewrites; the update check is not started'
 
 /** UPDATES_OFF is the one line the console logs when it cannot harden the
  * client, and it is the whole of the message: the failure names a member of a
@@ -104,7 +104,7 @@ function setLazy(holder: { value: unknown }, value: unknown): void {
   if (holder.value !== value) throw new Error(HARDENING_FAILED)
 }
 
-/** hardenUpdater rewrites an electron-updater client where 6.8.10 would
+/** hardenUpdater rewrites an electron-updater client where 6.8.11 would
  * otherwise leak, write or install something this app does not, and throws
  * rather than returning when it cannot.
  *
@@ -280,7 +280,7 @@ export function createUpdateDeps(options: UpdateAdapterOptions & { readonly onRe
   // the only thing that ever writes it and it writes `{}`.
   const updater = options.updater ?? (autoUpdater as unknown as UpdaterPort)
   hardenUpdater(updater)
-  // 6.8.10 ships this on (AppUpdater.js ~114), and on macOS it is what lets a
+  // 6.8.11 ships this on (AppUpdater.js ~114), and on macOS it is what lets a
   // finished download reach Squirrel to be installed when the app quits
   // (MacUpdater.doDownloadUpdate, ~220-227). The console installs only through
   // the notice's "Restart to update", so the client is handed over with the flag

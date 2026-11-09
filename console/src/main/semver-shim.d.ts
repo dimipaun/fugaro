@@ -3,7 +3,7 @@
 // The one declaration `semver` needs, and nothing else (desktop-console plan
 // Task 4.4; design section 5.2's pinning rule).
 //
-// `electron-updater` 6.8.10's `out/AppUpdater.d.ts` line 4 imports `SemVer`
+// `electron-updater` 6.8.11's `out/AppUpdater.d.ts` line 4 imports `SemVer`
 // from `semver`, and the `semver` it nests (7.7.4, under its own
 // `node_modules/`) ships no declarations: its `package.json` has no `types`
 // field and the package carries no `.d.ts`. `skipLibCheck` is deliberately off

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
-// The crash reporter's wiring: @sentry/electron 8.2.0 behind the gate and the
+// The crash reporter's wiring: @sentry/electron 8.3.0 behind the gate and the
 // scrubber in `./crash` (desktop-console plan Task 2.1, the SDK slice; the
 // owner's rulings D733 and D734 of 2026-10-30, which design section 7.4 does
 // not describe yet -- it still carries the promise they supersede, and Task 2.2
@@ -155,7 +155,7 @@ function toSdkEvent(event: ErrorEvent, appRoot: string): ErrorEvent {
  * its name. `index.ts` asks the same question (`optedIn === true`) before it
  * decides to load this module at all.
  *
- * The options are `CRASH_CLIENT_OPTIONS` corrected against 8.2.0, plus the five
+ * The options are `CRASH_CLIENT_OPTIONS` corrected against 8.3.0, plus the five
  * this file owns: the DSN, the release, `NO_IPC`, the non-offline transport, and
  * `beforeSend`.
  * `scrubCrashEvent` is handed the event the SDK built and returns the event that
@@ -172,7 +172,7 @@ function toSdkEvent(event: ErrorEvent, appRoot: string): ErrorEvent {
  * doing. `beforeSend` above is the third and the one that matters most.
  *
  * **What actually keeps transactions out today, and why it is not that line.**
- * The pinned `@sentry/core` 11.7.0 -- the version `@sentry/electron` 8.2.0
+ * The pinned `@sentry/core` 11.8.0 -- the version `@sentry/electron` 8.3.0
  * depends on, and the one that implements this callback -- ignores
  * `beforeSendTransaction` unless `traceLifecycle` is
  * `'static'`; it streams spans by default and says so out loud -- setting the
@@ -189,7 +189,7 @@ function toSdkEvent(event: ErrorEvent, appRoot: string): ErrorEvent {
  * a new line beside these; the unit test pins both mechanisms in the types of
  * the pinned version.
  *
- * `enableLogs` is deliberately *not* among them: the pinned 8.2.0 does not have
+ * `enableLogs` is deliberately *not* among them: the pinned 8.3.0 does not have
  * it. `@sentry/electron`'s renderer JSDoc says logs "require `enableLogs` to be
  * enabled in the Electron main process", but neither `ElectronMainOptions`,
  * `@sentry/node`'s `NodeOptions` nor `@sentry/core`'s `Options` declares that

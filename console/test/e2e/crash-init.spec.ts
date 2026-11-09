@@ -12,7 +12,7 @@
 // is registered, and that the profile is untouched by a report that was sent.
 // Each of them could only ever assert what the fake had been told to do, so each
 // of them passed by construction. They are one test here, and it runs the pinned
-// `@sentry/electron/main` 8.2.0 inside the pinned Electron 45 in a real main
+// `@sentry/electron/main` 8.3.0 inside the pinned Electron 45 in a real main
 // process, over a sink this spec starts on loopback.
 //
 // What the real SDK is asked, and what each answer is:

@@ -208,8 +208,8 @@ describe('the notices file lists what ships, for every platform', () => {
     // true and mean nothing.
     const shipped = shippedOn(['darwin', 'arm64'])
     expect(shipped.length).toBeGreaterThan(25)
-    expect(shipped).toContain('electron-updater 6.8.10')
-    expect(shipped).toContain('@sentry/electron 8.2.0')
+    expect(shipped).toContain('electron-updater 6.8.11')
+    expect(shipped).toContain('@sentry/electron 8.3.0')
     // `semver` is the case that says the walk **resolves** rather than lists:
     // the copy that ships is the one nested under `electron-updater` (7.7.4),
     // not the tree root's (7.8.5) which only a development dependency needs, and
@@ -237,7 +237,7 @@ describe('the notices file lists what ships, for every platform', () => {
     for (const gone of [
       'sentry 0.45.0',
       'oxc-parser 0.152.0',
-      '@sentry/bundler-plugins 11.7.0',
+      '@sentry/bundler-plugins 11.8.0',
       'glob 13.0.6',
       'supports-color 8.1.1',
       'has-flag 4.0.0',

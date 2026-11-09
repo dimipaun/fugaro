@@ -190,7 +190,7 @@ export async function startCrashReportingSafely<Handle>(options: {
  * The names are the SDK's own and are not checked here, since this module
  * imports nothing: the slice that adds the dependency confirms each one against
  * the pinned version before it initialises anything, and two of them moved in
- * the two major versions between here and 11.7.0 -- `sendDefaultPii` is
+ * the two major versions between here and 11.8.0 -- `sendDefaultPii` is
  * `dataCollection.userInfo` there, and `autoSessionTracking` is gone, because
  * v8's sessions arrive only through the `mainProcessSessionIntegration` that
  * `defaultIntegrations: false` refuses to install. Both corrections are the SDK

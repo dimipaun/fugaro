@@ -6,7 +6,7 @@
 //
 // The module under test is the console's only importer of `@sentry/electron`,
 // and the SDK it imports is replaced here by a fake that models the one part of
-// 8.2.0 this wiring depends on: `init` builds the client's transport from the
+// 8.3.0 this wiring depends on: `init` builds the client's transport from the
 // factory it was handed, and `beforeSend` runs before an envelope reaches that
 // transport. Everything else the fake does not model is a thing this file
 // asserts the adapter never asked for.

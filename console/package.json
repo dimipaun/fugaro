@@ -83,9 +83,9 @@
     "npmRebuild": false,
     "electronDownload": {
       "checksums": {
-        "electron-v45.0.0-darwin-arm64.zip": "896c3a50b148e89a158dca08a6996a022ddf39b23aac871e107f5b4087f8caa9",
-        "electron-v45.0.0-darwin-x64.zip": "7877c282e74a52f8d87949536a25735cf9982de1265b544c9cd258dd14eff4de",
-        "electron-v45.0.0-linux-x64.zip": "22f6a10bd3f7fef987ddbb379d3375ce664ad0c98a9a50f80c89f1718a0c3e3a"
+        "electron-v45.2.3-darwin-arm64.zip": "4d7c429064087a47b855d9bd06c76ead4819b7f02b385de232d4a5c37ecef55f",
+        "electron-v45.2.3-darwin-x64.zip": "d87323533cc8750ef177e5b48058f7a8b381f677d4e103cc63360006c08829c2",
+        "electron-v45.2.3-linux-x64.zip": "a87fe741f6d121285117e574da6c9a2e65210d410123bbc04713b099add0263b"
       }
     },
     "mac": {
@@ -126,15 +126,15 @@
     "@electron/fuses": "2.1.3",
     "@playwright/test": "1.64.1",
     "@sentry/cli": "3.8.2",
-    "@types/node": "26.6.5",
-    "electron": "45.0.0",
+    "@types/node": "26.6.6",
+    "electron": "45.2.3",
     "electron-builder": "26.18.0",
     "elkjs": "0.11.0",
     "typescript": "7.0.2",
-    "vitest": "5.0.5"
+    "vitest": "5.1.0"
   },
   "dependencies": {
-    "@sentry/electron": "8.2.0",
-    "electron-updater": "6.8.10"
+    "@sentry/electron": "8.3.0",
+    "electron-updater": "6.8.11"
   }
 }
