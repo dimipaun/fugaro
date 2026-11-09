@@ -64,9 +64,10 @@ func tfSource(t *testing.T, rel string) string {
 }
 
 // tfStripComments removes `#` and `//` to the end of their line, and `/* */`
-// wherever it starts, while leaving quoted strings and the line structure alone:
-// a `#` inside a string is text, and a whole-line comment leaves its newline
-// behind so that the block cuts every sweep makes still hold.
+// wherever it starts, while leaving quoted strings, heredocs and the line
+// structure alone: a `#` inside a string or a heredoc is text, and a whole-line
+// comment leaves its newline behind so that the block cuts every sweep makes
+// still hold.
 func tfStripComments(src string) string {
 	var b strings.Builder
 	b.Grow(len(src))
@@ -74,6 +75,14 @@ func tfStripComments(src string) string {
 		switch c := src[i]; {
 		case c == '"':
 			j, ok := tfSkipString(src, i)
+			if !ok {
+				b.WriteString(src[i:])
+				return b.String()
+			}
+			b.WriteString(src[i:j])
+			i = j
+		case c == '<' && strings.HasPrefix(src[i:], "<<"):
+			j, ok := tfSkipHeredoc(src, i)
 			if !ok {
 				b.WriteString(src[i:])
 				return b.String()
@@ -108,6 +117,39 @@ func tfSkipString(src string, i int) (int, bool) {
 			j++
 		case '"':
 			return j + 1, true
+		}
+	}
+	return len(src), false
+}
+
+// tfSkipHeredoc answers the index just past the line that closes the heredoc
+// starting at i, and whether there was one. A heredoc — `<<EOT`, or `<<-EOT`
+// whose closing marker may be indented — is a string in another spelling, and its
+// text is not configuration: without this, a description written as a heredoc
+// carrying the line `default = "fugaroKeySigner"` reads as a default, which is
+// the same text-read-as-a-value fault as a comment, one form further on.
+func tfSkipHeredoc(src string, i int) (int, bool) {
+	j := i + 2
+	if j < len(src) && src[j] == '-' {
+		j++
+	}
+	start := j
+	for j < len(src) && tfIdentChar(src[j]) {
+		j++
+	}
+	if j == start {
+		return 0, false
+	}
+	delim := src[start:j]
+	for j < len(src) {
+		k := strings.IndexByte(src[j:], '\n')
+		if k < 0 {
+			return len(src), false
+		}
+		line, next := src[j:j+k], j+k+1
+		j = next
+		if strings.TrimSpace(line) == delim {
+			return j, true
 		}
 	}
 	return len(src), false
@@ -453,10 +495,10 @@ var tfVarBlockEnds = []string{"\nvariable \"", "\nresource \"", "\ndata \"", "\n
 
 // tfDefaultLiteral answers a variable block's default as the quoted literal it is
 // written with, so that `default = "a"` and `default="a"` are one value. A
-// default in another shape (a number, a list, a reference) is returned as the
-// rest of its line, which no literal compared against it can equal — the shape
-// these roots use is a string, and anything else fails rather than passing
-// quietly. A variable that writes no default reads as the empty string.
+// default in another shape (a number, a list, a reference, a heredoc) is
+// returned as the start of its line, which no literal compared against it can
+// equal — the shape these roots use is a string, and anything else fails rather
+// than passing quietly. A variable that writes no default reads as empty.
 func tfDefaultLiteral(block string) string {
 	value, _ := tfAttr(block, "default")
 	return value
@@ -464,11 +506,12 @@ func tfDefaultLiteral(block string) string {
 
 // tfAttr answers the value written for one of a block's own top-level
 // attributes. It is a read of the block rather than a search of its text: `attr`
-// is matched at word boundaries and only outside quoted strings, so a word merely
-// ending in the name, a `default = ` inside a `description` string, and a
-// `default` written in a nested block are none of them the attribute — each of
-// which a plain substring search reads as it, and reading a comment or a sentence
-// as a value is how a rule about what a block MEANS stops holding anything.
+// is matched at word boundaries and only outside quoted strings, heredocs and
+// nested blocks, so a word merely ending in the name, a `default = ` inside a
+// `description` string or heredoc, and a `default` written in a nested block are
+// none of them the attribute — each of which a plain substring search reads as
+// it, and reading a sentence as a value is how a rule about what a block MEANS
+// stops holding anything.
 func tfAttr(block, name string) (string, bool) {
 	body, ok := tfBlockBody(block)
 	if !ok {
@@ -479,6 +522,12 @@ func tfAttr(block, name string) (string, bool) {
 		switch c := body[i]; {
 		case c == '"':
 			j, ok := tfSkipString(body, i)
+			if !ok {
+				return "", false
+			}
+			i = j
+		case c == '<' && strings.HasPrefix(body[i:], "<<"):
+			j, ok := tfSkipHeredoc(body, i)
 			if !ok {
 				return "", false
 			}
@@ -1054,24 +1103,24 @@ func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 	})
 
 	// The same rule against a block that says the wanted literal somewhere other
-	// than in its default: a comment (in each of the three forms HCL has) and a
-	// description string holding `default = `. Both are places a search of the
-	// block's text finds "default" first and reads as the value — with only `#`
-	// stripped and `default=` looked for anywhere, a `//` line above the real
-	// default is what this suite pins while the apply reads the other one. The
-	// block's own default is the value, and it is the one that has to be held.
-	t.Run("a decoy default in a comment or a string", func(t *testing.T) {
+	// than in its default: a comment (in each of the three forms HCL has), a
+	// description string, and a heredoc description, each holding `default = `.
+	// All are places a search of the block's text finds "default" first and reads
+	// as the value — with only `#` stripped and `default=` looked for anywhere, a
+	// `//` line above the real default is what this suite pins while the apply
+	// reads the other one, and a heredoc is the same fault one form further on.
+	// The block's own default is the value, and it is the one that has to be held.
+	t.Run("a decoy default in a comment, a string or a heredoc", func(t *testing.T) {
 		root := t.TempDir()
 		tfWrite(t, root, "keyring/variables.tf", "variable \"signer_role\" {\n  default = \"fugaroKeySigner\"\n}\n\n"+
 			"variable \"keyring\" {\n  /* default = \"attacker-ring\" */\n  default = \"fugaro-licence\"\n}\n")
 		tfWrite(t, root, "services/variables.tf", "variable \"signer_role\" {\n"+
-			"  description = \"The default = of this variable is the role the minter holds.\"\n"+
-			"  //default = \"fugaroKeySigner\"\n"+
-			"  default    = \"editor\"\n}\n\n"+
+			"  description = <<-EOT\n    The default = of this variable is the role the minter holds.\n    // default = \"fugaroKeySigner\"\n  EOT\n"+
+			"  default = \"editor\"\n}\n\n"+
 			"variable \"keyring\" {\n  #default = \"fugaro-licence\"\n  default = \"fugaro-licence\"\n}\n")
 		want := []string{tfNames(servicesRoot, `variable "signer_role"`) + ` = "editor"`}
 		if got := tfUnheldDefaults(t, root); !slices.Equal(got, want) {
-			t.Errorf("a block whose default names another role reads as %v, want %v: a comment and a description are not the value, and reading either as one pins the literal an apply does not use", got, want)
+			t.Errorf("a block whose default names another role reads as %v, want %v: a comment, a description string and a heredoc are not the value, and reading any of them as one pins the literal an apply does not use", got, want)
 		}
 	})
 
