@@ -223,7 +223,7 @@ func TestNewIssueURLCutsLongBody(t *testing.T) {
 		if got := q.Get("body"); got != p.Body {
 			t.Errorf("body = %q, want the whole post:\n%s", got, p.Body)
 		}
-		if strings.Contains(q.Get("body"), "Full text:") {
+		if strings.Contains(q.Get("body"), newIssueURLCutNotice) {
 			t.Error("a body that was not cut points at the rest of itself")
 		}
 	})
