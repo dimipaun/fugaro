@@ -425,3 +425,99 @@ func TestAbandonTakesAStoppedRunsLineDown(t *testing.T) {
 		t.Errorf("a result after Abandon printed a line:\n%q", s)
 	}
 }
+
+// TestShortIsOneClauseAndTheLogKeepsTheWholeOfIt: the converge's account is
+// the brief one (Brief), and what makes it brief is this — a reason longer
+// than one line is cut at the clause the reason itself carries, and the step's
+// whole reason is still written to the log, which is where the command already
+// sends a person for the rest. A command that leaves Brief false prints the
+// reason it was given, byte for byte.
+func TestShortIsOneClauseAndTheLogKeepsTheWholeOfIt(t *testing.T) {
+	const reason = "not in a checkout of a repository: run `fugaro update` there to take the repository's own steps, and `fugaro setup --repo` in a checkout to enrol one"
+	want := "not in a checkout of a repository: run `fugaro update` there to take…"
+	if got := Short(reason); got != want {
+		t.Errorf("Short(%q) = %q, want %q", reason, got, want)
+	}
+	if n := len([]rune(want)); n > shortMax+1 {
+		t.Errorf("Short gave %d runes, want at most %d and the ellipsis", n, shortMax+1)
+	}
+	for _, o := range []struct {
+		name  string
+		brief bool
+		want  string
+	}{
+		{"the converge's account", true, "– firebase " + want + "\n"},
+		{"every other command's", false, "– firebase " + reason + "\n"},
+	} {
+		t.Run(o.name, func(t *testing.T) {
+			var out bytes.Buffer
+			sink := &fakeSink{path: "/tmp/x.log"}
+			r := New(Options{Out: &out, Getenv: noEnv, Sink: sink, Brief: o.brief})
+			r.Step("firebase").Skipped(reason)
+			if got := out.String(); got != o.want {
+				t.Errorf("the step line is %q, want %q", got, o.want)
+			}
+			if log := sink.String(); log != "– firebase "+reason+"\n" {
+				t.Errorf("the log holds %q, want the whole reason", log)
+			}
+		})
+	}
+}
+
+// TestShortLeavesAShortReasonAlone: most reasons are short phrases and must not
+// move — not a character, not a trailing space.
+func TestShortLeavesAShortReasonAlone(t *testing.T) {
+	for _, reason := range []string{
+		"",
+		"No changes",
+		"applied",
+		"14 to create",
+		"no --firebase-project given",
+		"the project layer's bucket could not be read",
+		strings.Repeat("a", shortMax-1),
+	} {
+		if got := Short(reason); got != reason {
+			t.Errorf("Short(%q) = %q, want it unchanged", reason, got)
+		}
+	}
+	// A reason that carries a clause boundary inside the window stops there
+	// rather than at the window's own edge.
+	long := "the given reason is long enough to be cut at the clause (and there is more of it after that)"
+	if got := Short(long); got != "the given reason is long enough to be cut at the clause…" {
+		t.Errorf("Short cut at %q, want the clause", got)
+	}
+}
+
+// TestWaitsIsOneLineForARunOfStages: a run that stopped at a stage leaves every
+// stage behind it saying the same thing, and the account says it once: at most
+// three stages are named and the rest are counted, the verb agrees with the
+// subject, and the summary still counts the stages rather than the lines.
+func TestWaitsIsOneLineForARunOfStages(t *testing.T) {
+	var out bytes.Buffer
+	r := New(Options{Out: &out, Getenv: noEnv, Sink: &fakeSink{path: "/tmp/x.log"}})
+	r.Waits([]string{"firebase", "images", "secrets", "plugin", "repository"}, "installation")
+	got := lines(out.String())
+	if len(got) != 1 {
+		t.Fatalf("the waiting account is %d lines, want one:\n%q", len(got), out.String())
+	}
+	if want := "↳ firebase, images, secrets and 2 more wait for installation"; got[0] != want {
+		t.Errorf("the waiting line is %q, want %q", got[0], want)
+	}
+	if o := r.Summary(); o.Steps != 5 {
+		t.Errorf("the run reported %d steps, want the 5 stages the one line stands for", o.Steps)
+	}
+
+	var one bytes.Buffer
+	r = New(Options{Out: &one, Getenv: noEnv})
+	r.Waits([]string{"repository"}, "secrets")
+	if want := "↳ repository waits for secrets"; lines(one.String())[0] != want {
+		t.Errorf("one stage's line is %q, want %q", lines(one.String())[0], want)
+	}
+
+	var none bytes.Buffer
+	r = New(Options{Out: &none, Getenv: noEnv})
+	r.Waits(nil, "secrets")
+	if none.String() != "" {
+		t.Errorf("a run with no waiting stage printed %q", none.String())
+	}
+}

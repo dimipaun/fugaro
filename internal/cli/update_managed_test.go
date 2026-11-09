@@ -122,6 +122,22 @@ func leftFor(got, stage string, kind initflow.LeftKind) string {
 	return ""
 }
 
+// stepLineInLog is a step's own line as the log holds it, whole: the terminal
+// gets the brief account (report.Brief), one clause of a reason, and the log
+// the step points at holds the rest — so a test asserting what a refusal says
+// reads it there, on the same step's line.
+func stepLineInLog(t *testing.T, got, head string) string {
+	t.Helper()
+	log := namedLog(t, got)
+	for _, l := range strings.Split(log, "\n") {
+		if strings.HasPrefix(l, head) {
+			return l
+		}
+	}
+	t.Fatalf("the log holds no line starting %q, so the step's whole sentence is out of reach:\n%s", head, log)
+	return ""
+}
+
 // M1's red step. A managed project, a coding agent's session, and a plan that
 // removes an address the owner's list does not name: today the run is refused
 // before the stage is reached — the session reads the coding agent's own
@@ -1528,12 +1544,16 @@ func TestUpdateManagedRefusesASessionWideningFlag(t *testing.T) {
 			if n := len(r.ran(t, "apply")); n != 0 {
 				t.Errorf("%d terraform apply(s) ran under a flag no gate may open a stage for:\n%s", n, got)
 			}
-			if !strings.Contains(got, initflow.AgentRefusal("CLAUDECODE")) {
-				t.Errorf("the session did not read the refusal it has always read:\n%s", got)
+			// The log holds the refusal whole; the terminal's line is its first
+			// clause (report.Brief). Both are read, because "a step was judged"
+			// is a claim about a sentence that must appear nowhere at all.
+			log := namedLog(t, got)
+			if !strings.Contains(log, initflow.AgentRefusal("CLAUDECODE")) {
+				t.Errorf("the session did not read the refusal it has always read:\n%s", log)
 			}
-			if strings.Contains(got, initflow.AgentProceeded("CLAUDECODE")) ||
-				strings.Contains(got, managedmode.NotConverged) {
-				t.Errorf("a step was judged under a flag that shapes the installation:\n%s", got)
+			if strings.Contains(log, initflow.AgentProceeded("CLAUDECODE")) ||
+				strings.Contains(log, managedmode.NotConverged) {
+				t.Errorf("a step was judged under a flag that shapes the installation:\n%s", log)
 			}
 			if recs := audits(t, r); len(recs) != 0 {
 				t.Errorf("a run no gate judged left %+v", recs)
@@ -1734,10 +1754,7 @@ func TestUpdateManagedPolicyStageRefusesTheTypedLoosening(t *testing.T) {
 	if !strings.Contains(got, head) {
 		t.Fatalf("the run did not reach the policy stage, so nothing here was judged:\n%s", got)
 	}
-	line := got[strings.Index(got, head):]
-	if i := strings.IndexByte(line, '\n'); i >= 0 {
-		line = line[:i]
-	}
+	line := stepLineInLog(t, got, head)
 	if !strings.Contains(line, managedmode.NotConverged) {
 		t.Errorf("the policy step is the user's in a sentence that is not the gate's: %s", line)
 	}
@@ -1807,10 +1824,7 @@ func TestUpdateManagedPolicyStageRefusesTheAccountChoiceKeys(t *testing.T) {
 	if !strings.Contains(got, head) {
 		t.Fatalf("the run did not reach the policy stage, so nothing here was judged:\n%s", got)
 	}
-	line := got[strings.Index(got, head):]
-	if i := strings.IndexByte(line, '\n'); i >= 0 {
-		line = line[:i]
-	}
+	line := stepLineInLog(t, got, head)
 	if !strings.Contains(line, managedmode.NotConverged) {
 		t.Errorf("the policy step is the user's in a sentence that is not the gate's: %s", line)
 	}
@@ -2013,10 +2027,7 @@ func TestUpdateManagedWorkspaceStageRefusesTheTypedWidening(t *testing.T) {
 	if !strings.Contains(got, head) {
 		t.Fatalf("the run did not reach the workspace stage, so nothing here was judged:\n%s", got)
 	}
-	line := got[strings.Index(got, head):]
-	if i := strings.IndexByte(line, '\n'); i >= 0 {
-		line = line[:i]
-	}
+	line := stepLineInLog(t, got, head)
 	if !strings.Contains(line, managedmode.NotConverged) {
 		t.Errorf("the workspace step is the user's in a sentence that is not the gate's: %s", line)
 	}
@@ -2075,10 +2086,7 @@ func TestUpdateManagedRefusesTheFirstWorkspacePublish(t *testing.T) {
 	if !strings.Contains(got, head) {
 		t.Fatalf("the run did not reach the workspace stage, so nothing here was judged:\n%s", got)
 	}
-	line := got[strings.Index(got, head):]
-	if i := strings.IndexByte(line, '\n'); i >= 0 {
-		line = line[:i]
-	}
+	line := stepLineInLog(t, got, head)
 	if !strings.Contains(line, "the step's confirmation class is Typed, which no plan gate admits (D1026)") {
 		t.Errorf("the refusal does not name the class rule that refused the first record: %s", line)
 	}

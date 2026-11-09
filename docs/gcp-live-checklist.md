@@ -9785,10 +9785,12 @@ that surprises an owner, and it is a fact about the tree rather than a defect of
 fugaro setup --plan-only --provision-batch --project fugaro
 ```
 
-**FACT:** the whole output. **expected output:** the **installation root's** plan — its own
-`Plan: N to import, N to create, N to update, N to forget` line, `Other changes:` and its
-`create …` lines — and then `--plan-only: nothing applied; the plan is <path>`, and **no
-`module.compute.` address anywhere in it**. The plan-only stop is `installRoot`'s
+**FACT:** the whole output. **expected output:** the **installation root's** plan — its counts line,
+`Plan: N to create.`, and nothing else of it: since the owner's feedback of 2026-11-09 the terminal
+gets the counts and, for what must be reviewed first, one plain-words line per item (`tf.Brief`),
+while the whole plan, every address and attribute path, is in the run's log and on the terminal
+under `--verbose` (`tf.Summary`) — and then `--plan-only: nothing applied; the plan is <path>`, and
+**no `module.compute.` address anywhere on the terminal**. The plan-only stop is `installRoot`'s
 (`internal/cli/init.go`), reached inside the installation stage, and the compute stage is registered
 *after* the repository stage (`internal/cli/init_stages.go`) — so **this form cannot show the Batch
 plan**: an owner who reads it as "the Batch resources are not planned" has read a stop as a result.
@@ -9805,25 +9807,24 @@ fugaro setup --provision-batch --project fugaro
 plan and its own ordinary confirmations first (nothing about them is this check's business), and
 then, from the compute stage — **once**: a `Plan` pass runs only under `--plan-only`
 (`internal/initflow`'s `preview` calls `Plan` there and nowhere else), so an applying run prints the
-compute root's summary from its `Apply` alone:
+compute root's plan from its `Apply` alone, and what reaches the terminal is the counts:
 
 ```
-Plan: 0 to import, N to create, 0 to update, 0 to forget
-Other changes:
-  create module.compute.google_project_service.this["compute.googleapis.com"]
-  create module.compute.google_project_service.this["batch.googleapis.com"]
-  …
+Plan: N to create.
 ⚠ CONFIRM (project fugaro, GCP project fugaro-dev): provisions the Batch compute backend in GCP project fugaro-dev: the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router (billable while they exist), and a preloaded boot image built by a scheduled Cloud Build (0 imports, N creates, 0 updates)
 Type fugaro to confirm: 
 ```
 
-**Nothing is applied before that prompt**, and `--yes` does not cover the step: the stage's
+The stage's own summary — every address, with the two APIs' among them — is in the run's log the
+failure block prints the path of, and on the terminal under `--verbose`; the terminal gets no
+`module.` address. **Nothing is applied before that prompt**, and `--yes` does not cover the step: the stage's
 confirmation is `Typed` in both front doors (`internal/cli/init_compute.go`, `askTyped`), so
 `--yes`, `--non-interactive`, `--json`, a pipe and a coding agent's session never confirm it.
 
 The addresses the plan must carry, and why each is the design's (§8.1 task 6; the module's own
 files are the authority and this list is the reading of it): the **two APIs**
-(`module.compute.google_project_service.this`), the **run accounts' IAM**
+(`module.compute.google_project_service.this["compute.googleapis.com"]` and
+`module.compute.google_project_service.this["batch.googleapis.com"]`), the **run accounts' IAM**
 (`module.compute.google_project_iam_member`,
 `module.compute.google_artifact_registry_repository_iam_member`, and the launcher's conditioned
 `module.compute.google_project_iam_member`), the **reaper's** account, custom role and binding
