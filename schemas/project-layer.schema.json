@@ -71,7 +71,7 @@
               }
             },
             "adversarial_rounds": { "type": "integer", "minimum": 1, "maximum": 10, "description": "Review level 3's round count for every repository of the project (L1.3, D726): 1 to 10, and absent leaves the resolved rigor mode's own senior row (rigor.AdversarialDefault). A repository's own agent.adversarial_rounds replaces it. Needs fugaro 0.16.0." },
-            "review_stop_fraction": { "type": "number", "exclusiveMinimum": 0, "maximum": 1, "description": "The share of a run's total time budget (workflows.<name>.timeouts.total) after which the review loop starts no further round, for every repository of the project; the owner's ruling of 2026-11-08. Greater than 0 and at most 1, and absent leaves the default of 0.8 (config.DefaultReviewStopFraction). A repository's own agent.review_stop_fraction replaces it. Needs fugaro 0.22.0: Fugaro before that release refuses the key, in every repository of the project." },
+            "review_stop_fraction": { "type": "number", "minimum": 0, "maximum": 1, "description": "The share of a run's total time budget (workflows.<name>.timeouts.total) after which the review loop starts no further round, for every repository of the project; the owner's ruling of 2026-11-08. 0 or a share greater than 0 and at most 1: 0 asks for the default, 0.8 (config.DefaultReviewStopFraction), which is the state a layer writing no key leaves, since the key is judged as written rather than by the value it holds. A repository's own agent.review_stop_fraction replaces it. Needs fugaro 0.22.0: Fugaro before that release refuses the key, in every repository of the project." },
             "recipe": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$" }
           }
         },

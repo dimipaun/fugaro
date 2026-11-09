@@ -78,34 +78,67 @@ func TestCatalogSchemaAcceptsTheNewKeys(t *testing.T) {
 // absent (config.DefaultReviewStopFraction) and the key's own gate refuses the
 // key whatever it says, for the same reason. A schema that refused 0 while the
 // decoder admitted it would be the red check nobody can reproduce the doctrine
-// above names, on the one value a repository writing the key out in full is
-// most likely to write.
+// above names, on the one value a file writing the key out in full is most
+// likely to write.
+//
+// Both files that may write the key are read, each against its own decoder and
+// its own published schema (fugaro.yaml against Parse and fugaro.schema.json,
+// a project layer against ParseProjectLayer and project-layer.schema.json): the
+// layer's key resolves into the same Agent.ReviewStopFraction the repository's
+// does, so a 0 there asks for the same default, and the surfaces an author
+// checks the file with have to admit it for the same reason the repository's
+// do.
 func TestStopFractionSchemaAgreesOnZero(t *testing.T) {
-	sch := compileABSchema(t, "fugaro.schema.json")
-	const head = minimalRepo + "git: { provider: github }\nagent:\n  auth: api-key\n"
-	const tail = "workflows:\n  app:\n    commands: { build: make, test: make test }\n"
-	for _, tc := range []struct {
-		name string
-		body string
-		ok   bool
+	for _, s := range []struct {
+		name, schema, head, indent, tail string
+		parse                            func([]byte) []Problem
 	}{
-		{"nothing set", "", true},
-		{"zero, the default", "  review_stop_fraction: 0\n", true},
-		{"a part of the budget", "  review_stop_fraction: 0.5\n", true},
-		{"the whole budget", "  review_stop_fraction: 1\n", true},
-		{"more than the whole budget", "  review_stop_fraction: 1.5\n", false},
-		{"a negative share", "  review_stop_fraction: -0.1\n", false},
+		{
+			name:   "fugaro.yaml",
+			schema: "fugaro.schema.json",
+			head:   minimalRepo + "git: { provider: github }\nagent:\n  auth: api-key\n",
+			indent: "  ",
+			tail:   "workflows:\n  app:\n    commands: { build: make, test: make test }\n",
+			parse:  func(b []byte) []Problem { _, ps := Parse(b); return ps },
+		},
+		{
+			name:   "project-layer.yaml",
+			schema: "project-layer.schema.json",
+			// A sibling key of the same block, so the row under test is the
+			// only thing a case changes and an absent one is a block the
+			// decoder still reads as a mapping.
+			head:   layerHead + "defaults:\n  agent:\n    review_rounds: 3\n",
+			indent: "    ",
+			parse:  func(b []byte) []Problem { _, ps := ParseProjectLayer(b, testAnchor); return ps },
+		},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			text := head + tc.body + tail
-			_, ps := Parse([]byte(text))
-			if got := len(ps) == 0; got != tc.ok {
-				t.Fatalf("the decoder accepted = %v, want %v (problems: %v)", got, tc.ok, ps)
-			}
-			if got := abSchemaAccepts(t, sch, text); got != tc.ok {
-				t.Errorf("fugaro.schema.json accepted = %v, want %v: the schema and the decoder disagree", got, tc.ok)
-			}
-		})
+		sch := compileABSchema(t, s.schema)
+		for _, tc := range []struct {
+			name string
+			body string
+			ok   bool
+		}{
+			{"nothing set", "", true},
+			{"zero, the default", "review_stop_fraction: 0\n", true},
+			{"a part of the budget", "review_stop_fraction: 0.5\n", true},
+			{"the whole budget", "review_stop_fraction: 1\n", true},
+			{"more than the whole budget", "review_stop_fraction: 1.5\n", false},
+			{"a negative share", "review_stop_fraction: -0.1\n", false},
+		} {
+			t.Run(s.name+"/"+tc.name, func(t *testing.T) {
+				text := s.head
+				if tc.body != "" {
+					text += s.indent + tc.body
+				}
+				text += s.tail
+				if ps := s.parse([]byte(text)); (len(ps) == 0) != tc.ok {
+					t.Fatalf("the decoder accepted = %v, want %v (problems: %v)", len(ps) == 0, tc.ok, ps)
+				}
+				if got := abSchemaAccepts(t, sch, text); got != tc.ok {
+					t.Errorf("%s accepted = %v, want %v: the schema and the decoder disagree", s.schema, got, tc.ok)
+				}
+			})
+		}
 	}
 }
 
