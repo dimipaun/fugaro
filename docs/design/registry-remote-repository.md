@@ -159,7 +159,7 @@ Everything downstream is unchanged in structure: `fugaro image refresh`'s own la
 
 - The check job's container image: `CheckSpec.Image = bases[kind]` (`internal/infra/spec.go:903-905`) → the pinned remote reference.
 - `FUGARO_CHECK_SPEC`'s `base_images` (`spec.go:888-891`) → the same string, per kind.
-- Cloud Build's `_FUGARO_BASE` substitution (`internal/backend/gcp/build.go:190`) → the same string, used as the derived build's step image and as `--build-arg FUGARO_BASE` (`images/derived/cloudbuild.yaml:94,123,153,182,234,261`).
+- Cloud Build's `_FUGARO_BASE` substitution (`internal/backend/gcp/build.go:221`) → the same string, used as the derived build's step image and as `--build-arg FUGARO_BASE` (`images/derived/cloudbuild.yaml:94,123,153,182,234,261`).
 - Clone workflows' job images (`spec.go:607-609`, `refreshCloneJobs`) → the same string.
 
 **There is still exactly one representation of "what base was this built from", and it is Artifact-Registry-shaped**, which is why the fifth review's blocker in #318 does not reappear here (that review's two-representation problem was created by a ghcr.io-shaped value). Concretely, unchanged:
@@ -320,7 +320,7 @@ Two forms are possible and the design chooses the first (§10.1), with the cost 
 
 ## 6. The derived-image build
 
-Images build **FROM the base**, through the same one value. `_FUGARO_BASE` (`internal/backend/gcp/build.go:190`) is `base_images.base`, and `images/derived/cloudbuild.yaml` uses it as the image of its own `fugaro`-running steps (`:83`, `:112`, `:223`, `:250`), as `FUGARO_BASE` in the environment (`:139`, `:252`), for `docker image inspect … RepoDigests` (`:155`) and as `--build-arg FUGARO_BASE=$$base` (`:171`).
+Images build **FROM the base**, through the same one value. `_FUGARO_BASE` (`internal/backend/gcp/build.go:221`) is `base_images.base`, and `images/derived/cloudbuild.yaml` uses it as the image of its own `fugaro`-running steps (`:94`, `:123`, `:234`, `:261`), as `FUGARO_BASE` in the environment (`:153`, `:263`), for `docker image inspect … RepoDigests` (`:167`) and as `--build-arg FUGARO_BASE=$$base` (`:182`).
 
 So a derived build pulls the pinned remote reference **twice**: once as the step image and once as the `FROM` — both as the build account, through the remote repository, from the same cached manifest and the same cached layers, once warm.
 

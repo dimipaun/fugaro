@@ -319,7 +319,7 @@ All three paths submit through the Go Cloud Build client with the caller's Appli
 Credentials (`internal/backend/gcp/build.go:417-429` `NewBuilder`, `:502` `Submit`, `:515` `create`),
 and **the build always runs as the repository's own build account**, never the project default and
 never a person: `internal/backend/gcp/build.go:239` sets
-`b.ServiceAccount = projects/<p>/serviceAccounts/<s.ServiceAccount>`, and `:363` refuses any account
+`b.ServiceAccount = projects/<p>/serviceAccounts/<s.ServiceAccount>`, and `:382` refuses any account
 that is not `fugaro-b-<repo>@<project>.iam.gserviceaccount.com`.
 
 | Path | Submit identity (the credential the API call carries) | Build runs as | Submitting today | What a billing read would add |

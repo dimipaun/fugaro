@@ -108,7 +108,7 @@ The service's routes are the model path, the review sign/verify routes and the G
 **closed** — model credentials, the GitHub App key, the Bitbucket credential, the review-signing key
 (`internal/credsvc/bundle.go:30-52`). Workflow build secrets travel a **different** path today: the
 workflow's `secrets:` (`internal/config/config.go:607`) are declared in `_SECRET_ENVS`
-(`internal/backend/gcp/build.go:192`), added to `availableSecrets`/`secretEnv`, and mounted as
+(`internal/backend/gcp/build.go:223`), added to `availableSecrets`/`secretEnv`, and mounted as
 BuildKit **file** secrets (`docs/design/v1.md` §7.2; `internal/image/render.go:132`), because Cloud
 Build's docker refuses `env=` secret mounts. *Consequence:* the spec's "build secrets come from the
 project's security service" is **not** how build secrets reach a build today; the owner's answer is
@@ -304,7 +304,7 @@ evaluated per catalog entry:
 
 | Trigger | Fires when |
 | --- | --- |
-| `catalog-definition` (**new**) | the entry's definition changed: its `source` (a Dockerfile's blob, or an inline definition's hash), its `tags`, its `base`, or the engine's template salt (`internal/backend/gcp/build.go:81`'s `TemplateSalt`) |
+| `catalog-definition` (**new**) | the entry's definition changed: its `source` (a Dockerfile's blob, or an inline definition's hash), its `tags`, its `base`, or the engine's template salt (`internal/backend/gcp/build.go:106-109`'s `TemplateSalt`) |
 | `base` (**exists**) | the entry's base image digest changed (`docs/design/v1.md` §7.2) |
 | `lockfiles` (**exists**) | a **baked** repository's dependency files changed — the blobs `imagecheck.KeyFiles` already returns (`internal/imagecheck/record.go:237`) |
 | `max-age` (**exists**) | the image is older than the workflow's `rebuild.max_age` (default 14 days until the published base images land, then 7 — `docs/design/v1.md` §7.2). This is the **scheduled security rebuild** D1148 answers (2026-11-03) |
