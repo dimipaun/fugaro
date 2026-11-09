@@ -19,7 +19,7 @@ project config** — a sentence it prints and exits on — so the figures below
 are counted from the registry in this tree through the same predicate the write path uses, which is
 what the guard at the end of this section re-runs.
 
-- **F1 — the registry is 381 rows and the generic writer carries 164 of them.** 88 by name
+- **F1 — the registry is 382 rows and the generic writer carries 164 of them.** 88 by name
   (`internal/cli/settings_set.go:81`), made of the thirteen §4.4 names (the four budget scalars,
   `base_branch`, `max_parallel`, `update_check`, `commit_name`, `commit_email`, `layer.default_profile`
   and D873's three account keys), the two budget keys D1179 hands this path, and the wildcard blocks
@@ -27,7 +27,7 @@ what the guard at the end of this section re-runs.
   the layer's five `ab.*` rows are listed beside them, but the models family owns them, so this count
   does not carry them — and 76 through the nine prefixes
   (`internal/cli/settings_set.go:195`: `agent.`, `git.`, `followup.`, `governance.`, `watch.`,
-  `layer.defaults.`, `layer.governance.`, `credentials.`, `clone_urls.`). **217 rows have no generic
+  `layer.defaults.`, `layer.governance.`, `credentials.`, `clone_urls.`). **218 rows have no generic
   writer**, and the audit's whole subject is which of them are a defect and which are the
   installation's own plumbing (F13, D1182).
 - **F2 — `fugaro rigor` does not exist.** There is no `newRigorCmd` in `internal/cli`, no `rigor` cobra

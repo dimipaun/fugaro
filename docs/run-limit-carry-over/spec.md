@@ -61,7 +61,7 @@ chain limit whose source reads `branch` — a place the number did not come from
 **A per-launch limit that cannot reach the job is not written.** `task.Parse` decodes with
 `DisallowUnknownFields` (`internal/task/task.go:863`), so a job image whose runner predates these fields
 refuses the whole task. The launcher therefore gates a launch that writes any of them behind
-`checkImageSince` (`internal/cli/recipes_skew.go:700`) with this work's own `*Since` constant, exactly as
+`checkImageSince` (`internal/cli/recipes_skew.go:711`) with this work's own `*Since` constant, exactly as
 the project layer, the named tokens, the title, the plan task, the rigor request and the governance block
 are gated today (`internal/cli/run.go:727-801`). A refused launch names `fugaro image refresh`, and that
 command stays the operator's, in their own terminal — never a step `fugaro update` hides (D1041).

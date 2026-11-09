@@ -385,6 +385,12 @@ type WorkflowSpec struct {
 	// readiness asks this rather than the image.
 	CatalogEntry    string `json:"-"`
 	CatalogPrebuilt bool   `json:"-"`
+	// CatalogContext is whether that entry's source names a build context.
+	// It carries the fact and not the path, because the one reader that has
+	// it is readiness's skew gate (imageContextShipped): the release that
+	// first reads a context is the release that flips that gate, and until
+	// then every job whose image comes from such an entry is held back.
+	CatalogContext bool `json:"-"`
 }
 
 // Registry is the repository's own image registry.
@@ -1231,6 +1237,7 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 		Warnings:            warnings,
 		CatalogEntry:        entry.Name,
 		CatalogPrebuilt:     entry.Name != "" && entry.Source.Kind == config.SourceImage,
+		CatalogContext:      entry.Name != "" && entry.Source.Context != "",
 	}
 	if lc.Registry != "" {
 		ws.LegacyImage = gcp.ImageName(lc.Registry, slug, name)
