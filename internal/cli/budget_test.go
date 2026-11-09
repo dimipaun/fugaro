@@ -137,6 +137,35 @@ func TestShowSanitizesRegistryText(t *testing.T) {
 	}
 }
 
+// TestShowEndingsSpanTheRepositories pins the running blocks' ending rule over a
+// collision between two repositories: the blocks are one screen's listing, so
+// two runs that share their last four characters are told apart by the ending
+// the CLI resolves for that screen, exactly as `runs ls --all` tells them apart
+// (spec.md §3, F15), and neither block falls back to the bare four.
+func TestShowEndingsSpanTheRepositories(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	// The hours tell the two IDs apart, so the shared `3bb2` is extended to the
+	// first character that does: `80000-3bb2` and `90000-3bb2`.
+	for _, e := range []struct{ slug, repo, id string }{
+		{mustSlug("github", "acme/app"), "acme/app", "20261109-080000-3bb2"},
+		{mustSlug("github", "acme/other"), "acme/other", "20261109-090000-3bb2"},
+	} {
+		f.db.Set(budget.PathAgent(e.slug, e.id), map[string]any{
+			"repo": e.repo, "title": "a run of " + e.repo, "stage": "code", "workflow": "web",
+			"updatedAt": time.Now().UnixMilli(), "startedAt": time.Now().UnixMilli(),
+		})
+	}
+	out, _, err := execute(t, "budget", "show", "--all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"80000-3bb2", "90000-3bb2"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("budget show names no run by the ending %q: two repositories' running blocks are one listing, so a collision across them extends both (spec.md §3, F15):\n%s", want, out)
+		}
+	}
+}
+
 func TestShowJSONProject(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.db.Set("config/mode", "enforce")

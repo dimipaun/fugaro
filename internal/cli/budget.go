@@ -901,6 +901,19 @@ func repoScope(r showRepo) string {
 	return r.Slug + "'s"
 }
 
+// runningEndings is the ending each of a document's running entries is shown
+// by, resolved over the whole document: the blocks under the repositories are
+// one screen's listing, so an entry is named by the shortest ending that tells
+// it from every other entry on that screen, whichever repository that entry
+// belongs to (spec.md §3, F15, task.DisplayRuns).
+func runningEndings(runs []showRun) map[task.Ref]string {
+	refs := make([]task.Ref, 0, len(runs))
+	for _, e := range runs {
+		refs = append(refs, task.Ref{Slug: e.Slug, RunID: e.Run})
+	}
+	return task.DisplayRuns(refs)
+}
+
 func printShow(w io.Writer, d *budgetShowDoc, showCompute bool) {
 	mode := d.Mode
 	if mode == "" {
@@ -920,6 +933,13 @@ func printShow(w io.Writer, d *budgetShowDoc, showCompute bool) {
 	fmt.Fprintf(w, "  today: counted %s, spent %s, notional %s (subscription, not billed)\n", usdVal(g.CountedUSD), usdVal(g.SpentUSD), usdVal(g.NotionalUSD))
 	fmt.Fprintf(w, "  headroom: %s\n  kill switch: %s\n", usdText(g.HeadroomUSD), killText(g.Kill))
 	fmt.Fprintf(w, "defaults for repositories without a cap of their own: daily %s, per-run %s\n", usdText(d.Defaults.RepoDailyCapUSD), usdText(d.Defaults.RepoPerRunCapUSD))
+	// The running blocks are one screen's listing of runs, so their endings are
+	// resolved over every entry the screen prints and not block by block: two
+	// repositories whose runs share their last four characters are told apart
+	// here exactly as `runs ls --all` tells them apart, and the pair that
+	// collides is the pair the reader has in front of them (spec.md §3, F15).
+	// --json's own rows keep the full ID (D1705).
+	endings := runningEndings(d.Running)
 	for _, r := range d.Repos {
 		name := r.Slug
 		if r.Repo != "" {
@@ -948,14 +968,6 @@ func printShow(w io.Writer, d *budgetShowDoc, showCompute bool) {
 			continue
 		}
 		fmt.Fprintln(w, "  running:")
-		// The block is a listing of runs like any other, so its runs are shown
-		// by the ending the CLI resolves (spec.md §1, task.DisplayRuns), while
-		// --json's own rows keep the full ID (D1705).
-		refs := make([]task.Ref, 0, len(r.Running))
-		for _, e := range r.Running {
-			refs = append(refs, task.Ref{Slug: e.Slug, RunID: e.Run})
-		}
-		endings := task.DisplayRuns(refs)
 		tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 		for _, e := range r.Running {
 			state := oneLine(clipRunes(e.Stage, 200))
