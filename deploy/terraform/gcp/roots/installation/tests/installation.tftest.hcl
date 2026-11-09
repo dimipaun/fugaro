@@ -923,6 +923,10 @@ run "budget_off_has_no_history" {
     condition     = output.history_service_account == null && output.history_job == null
     error_message = "without enable_budget the history outputs are null"
   }
+  assert {
+    condition     = !contains(keys(google_project_service.this), "cloudbilling.googleapis.com")
+    error_message = "without enable_budget there is no ledger to reserve against, so the image-build price read is not enabled either"
+  }
 }
 
 run "budget_token_objects_expire" {
@@ -965,6 +969,10 @@ run "budget_token_objects_expire" {
   assert {
     condition     = length(google_storage_bucket.runs.lifecycle_rule) == 4
     error_message = "with enable_budget the runs bucket has the bootstrap's three lifecycle rules and one for untaken budget tokens"
+  }
+  assert {
+    condition     = contains(keys(google_project_service.this), "cloudbilling.googleapis.com")
+    error_message = "with enable_budget the image builds lease their estimated cost, and the estimate is read from the Cloud Billing catalog, so that API must be enabled"
   }
   assert {
     condition = anytrue([for r in google_storage_bucket.runs.lifecycle_rule :
