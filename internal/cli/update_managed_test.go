@@ -905,11 +905,14 @@ func TestUpdateReadsTheGateBeforeAnyWrite(t *testing.T) {
 			if n := len(r.ran(t, "apply")); n != 0 {
 				t.Errorf("%d terraform apply(s) ran in a session whose gate was never opened:\n%s", n, got)
 			}
-			if !strings.Contains(got, initflow.AgentRefusal("CLAUDECODE")) {
-				t.Errorf("the session did not read the refusal it has always read:\n%s", got)
+			// The step's line carries one clause of the refusal and the log the
+			// whole of it (report.Brief); the run says it either way.
+			whole := got + namedLog(t, got)
+			if !strings.Contains(whole, initflow.AgentRefusal("CLAUDECODE")) {
+				t.Errorf("the session did not read the refusal it has always read:\n%s", whole)
 			}
-			if strings.Contains(got, initflow.AgentProceeded("CLAUDECODE")) {
-				t.Errorf("the step proceeded on a mark that is not the fact:\n%s", got)
+			if strings.Contains(whole, initflow.AgentProceeded("CLAUDECODE")) {
+				t.Errorf("the step proceeded on a mark that is not the fact:\n%s", whole)
 			}
 			if recs := audits(t, r); len(recs) != 0 {
 				t.Errorf("a step nothing judged left %+v: the record is the gate's", recs)

@@ -109,9 +109,14 @@ func TestUpdateWithoutAnInstallationNamesSetup(t *testing.T) {
 // TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne: a checkout whose
 // repository the project does not list is not update's to enrol **by asking**
 // (D5). Update's converge never puts the typed owner/name question and never
-// offers --onboard-repo, so the run leaves one line naming `fugaro setup`,
-// exit code 1, and never the typed owner/name: there is nothing for this run
-// to type. The repository engine is never reached. --yes is a different
+// offers --onboard-repo, so the run states in one clause that the repository
+// is not the project's, leaves the step for the user, exits 1, and never puts
+// the typed owner/name: there is nothing for this run to type. The door that
+// does enrol it (`fugaro setup`) is the left-for-you line, which the run
+// reaches only at that stage — the second half of this test, over the stages
+// themselves, pins that line, because an apply that stops at the installation
+// prints no left-for-you at all (report.Brief keeps one clause of a step's
+// reason; the whole of it is in the log the run names). --yes is a different
 // matter, and TestUpdateAppliesTheFourStepsItOwns pins it: D12 makes the step
 // a covered one, which is why the sentence above says "by asking".
 func TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne(t *testing.T) {
@@ -132,8 +137,8 @@ func TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne(t *testing.T) {
 		t.Errorf("exit %d, want %d", got, ExitUserError)
 	}
 	all := out + errOut + ErrorText(err)
-	if !strings.Contains(all, selfCommand()+" setup") {
-		t.Errorf("the line does not name the door that enrols a repository:\n%s", all)
+	if !strings.Contains(all, "is not one of project "+initProjectName+"'s yet") {
+		t.Errorf("the run does not say the checkout's repository is not the project's:\n%s", all)
 	}
 	if strings.Contains(all, "Type acme/app") {
 		t.Errorf("update asked the typed repository question:\n%s", all)

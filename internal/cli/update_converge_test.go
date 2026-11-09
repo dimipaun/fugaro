@@ -353,9 +353,12 @@ func TestUpdateRefusesToRewindTheOrchestratorMarker(t *testing.T) {
 	if err == nil {
 		t.Fatalf("fugaro update deployed this binary's rules over a newer orchestrator generation:\n%s", out)
 	}
-	if !strings.Contains(out+errOut, rules.PathOrchestratorRulesMarker()) {
-		t.Errorf("the refusal does not name the marker it read (%s), so the owner cannot tell which generation refused:\n%s\n%s",
-			rules.PathOrchestratorRulesMarker(), out, errOut)
+	// The step's line is the first clause of its reason and the log the whole of
+	// it (report.Brief), so the marker the refusal read is read back from there.
+	whole := out + errOut + namedLog(t, out+errOut)
+	if !strings.Contains(whole, rules.PathOrchestratorRulesMarker()) {
+		t.Errorf("the refusal does not name the marker it read (%s), so the owner cannot tell which generation refused:\n%s",
+			rules.PathOrchestratorRulesMarker(), whole)
 	}
 	if got := r.db.Value(rules.PathOrchestratorRulesMarker()); fmt.Sprint(got) != fmt.Sprint(ahead) {
 		t.Errorf("the refusal wrote the marker: %s = %v, want the newer %d left alone", rules.PathOrchestratorRulesMarker(), got, ahead)
