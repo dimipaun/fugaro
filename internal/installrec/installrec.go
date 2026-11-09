@@ -8,8 +8,9 @@
 // which is the only caller of Advance. It answers one question — which two
 // releases the last update spanned — so the update summary and the daily
 // report can list the issues fixed in that window. It is not a lock and
-// not a schedule: an absent or unreadable record means "no window", never
-// an error a caller must handle.
+// not a schedule: an absent record means "no window", which is a normal
+// state, and a write this machine may not make is a skip; a record that
+// cannot be read is an error rather than something to repair in place.
 package installrec
 
 import (
@@ -85,11 +86,12 @@ var _ Writer = (*blobx.Bucket)(nil)
 
 // Read returns the record, and the zero Record when there is none: an
 // installation that has never updated with a build that writes this object
-// has no window, which is a normal state and not an error.
+// has no window, which is a normal state and not an error. A release is
+// returned in the canonical form updatecheck reads one in.
 //
 // A record this build cannot read is an error: an unknown field, a format
-// other than Format, data after the object, a release that is not a strict
-// X.Y.Z, an object past maxBytes, or a bucket that could not answer. Nothing
+// other than Format, data after the object, a release that is not a version,
+// an object past maxBytes, or a bucket that could not answer. Nothing
 // repairs it — a wrong value that is itself well-formed has no way to be
 // told from a right one — so the answer is the operator's: delete the object
 // and the next update writes it again.
@@ -131,13 +133,22 @@ func parse(data []byte) (Record, error) {
 	if rec.Format != Format {
 		return Record{}, fmt.Errorf("%s: format %d is not supported (this build reads %d)", Object, rec.Format, Format)
 	}
-	if _, ok := updatecheck.CanonicalRelease(rec.Release); !ok {
+	release, ok := updatecheck.CanonicalRelease(rec.Release)
+	if !ok {
 		return Record{}, fmt.Errorf("%s: %q is not a release version", Object, rec.Release)
 	}
+	// A release is read the one way updatecheck reads one, so the form this
+	// package hands back is the canonical one the object's schema publishes
+	// and the form Advance writes into previous_release: an optional v is the
+	// same release, and a record that carried one must not put a v into a
+	// field the schema has no room for.
+	rec.Release = release
 	if rec.PreviousRelease != "" {
-		if _, ok := updatecheck.CanonicalRelease(rec.PreviousRelease); !ok {
+		previous, ok := updatecheck.CanonicalRelease(rec.PreviousRelease)
+		if !ok {
 			return Record{}, fmt.Errorf("%s: %q is not a release version", Object, rec.PreviousRelease)
 		}
+		rec.PreviousRelease = previous
 	}
 	return rec, nil
 }

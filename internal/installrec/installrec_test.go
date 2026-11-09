@@ -243,6 +243,38 @@ func TestReadAbsentIsNoWindow(t *testing.T) {
 	}
 }
 
+// TestReadCanonicalisesTheRelease: updatecheck reads v0.21.1 as the release
+// 0.21.1, and the object's schema publishes no v — so the form this package
+// hands back, and the form Advance writes into previous_release, is the
+// canonical one. A record that carried a v must not put one in a field the
+// schema has no room for.
+func TestReadCanonicalisesTheRelease(t *testing.T) {
+	ctx := context.Background()
+	fake := gcpfake.NewGCS(t)
+	b := fake.Bucket(t, testBucket)
+	seed(t, fake, `{"format":1,"release":"v0.21.1","previous_release":""}`)
+
+	rec, err := Read(ctx, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Record{Format: Format, Release: "0.21.1"}); rec != want {
+		t.Errorf("record = %+v, want %+v", rec, want)
+	}
+
+	got, err := Advance(ctx, b, "0.22.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Record{Format: Format, Release: "0.22.0", PreviousRelease: "0.21.1"}
+	if got != want {
+		t.Errorf("record = %+v, want %+v", got, want)
+	}
+	if onObject, _ := stored(t, b); onObject != want {
+		t.Errorf("the object holds %+v, want %+v", onObject, want)
+	}
+}
+
 // TestRecordMatchesTheSchema holds the record this package writes to the
 // published schema of the object: the schema is what a reader outside this
 // binary (an operator reading the object, a second machine's tooling) reads
