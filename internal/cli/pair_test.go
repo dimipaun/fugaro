@@ -596,16 +596,21 @@ func TestPairRefusalCodesNameTheCase(t *testing.T) {
 // console has no terminal to lend the command — it asks the operator for the
 // code itself and hands it back as one stdin line (§4.1: "the typed code is
 // read as one stdin line"). So a --json pairing whose input is a pipe and never
-// a terminal reads the code and pairs, and the events carry the whole run.
+// a terminal reads the code and pairs, and the events carry the whole run. It
+// asks nothing there either: a console owns the question, so the command prints
+// no prompt of its own for a --json caller to answer.
 func TestPairJSONReadsTheCodeFromAPipe(t *testing.T) {
 	f := newPairFixture(t, pairMe)
 	uid := pairFixedRand(t)
 	f.pairSeedRequest(uid, pairKey)
 	fingerprint := token.Fingerprint(pairKeyBytes)
 
-	out, _, err := pairRunSession(t, context.Background(), fingerprint, false, "--json")
+	out, errOut, err := pairRunSession(t, context.Background(), fingerprint, false, "--json")
 	if err != nil {
 		t.Fatalf("a --json pairing driven over a pipe: %v", err)
+	}
+	if strings.Contains(errOut, "Type the code") {
+		t.Errorf("a --json pairing put the question to its caller:\n%s", errOut)
 	}
 	events := pairLines(t, out)
 	if len(events) != 4 || events[3].Event != pairEventDone {

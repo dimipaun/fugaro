@@ -475,6 +475,41 @@ func TestFirstRunAsksWithSuggestions(t *testing.T) {
 	}
 }
 
+// A question that suggests an answer takes it from an empty line and from
+// nothing else: an input that ends on the question is a question nobody
+// answered, and the suggestion is not taken in the person's place — Ctrl-D at
+// the project ID question must not create the suggested project. The value
+// entry is what tells the two apart (readValue: a read that ended with nothing
+// on the line is io.EOF), and this is the question's own rule about it.
+func TestPromptChoiceEndedInputIsNoAnswer(t *testing.T) {
+	fakeTerminal(t)
+	spec := valueSpec{what: "the GCP project ID"}
+	var out strings.Builder
+	r := &initRun{o: &initOptions{}, w: &out, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
+	v, err := r.promptChoice(spec, "fugaro-aurora", "", "", func(string) error { return nil })
+	var na *noAnswerError
+	if !errors.As(err, &na) {
+		t.Fatalf("an ended input: err = %v, want noAnswer", err)
+	}
+	if !strings.Contains(err.Error(), "the input ended") {
+		t.Errorf("the refusal does not say the input ended: %v", err)
+	}
+	if v != "" {
+		t.Errorf("an ended input answered %q, want no answer", v)
+	}
+	if !strings.Contains(out.String(), "[fugaro-aurora]") {
+		t.Errorf("the question did not offer its suggestion:\n%s", out.String())
+	}
+
+	// The empty line is the other answer, and it is the person taking the
+	// suggestion rather than the run taking it for them.
+	out.Reset()
+	r = &initRun{o: &initOptions{}, w: &out, in: bufio.NewReader(strings.NewReader("\n")), cmd: NewRootCmd()}
+	if v, err = r.promptChoice(spec, "fugaro-aurora", "", "", func(string) error { return nil }); err != nil || v != "fugaro-aurora" {
+		t.Fatalf("an empty line: %v, %q, want the suggestion", err, v)
+	}
+}
+
 // --non-interactive never asks and names every missing flag in one error:
 // the three inputs, and the GitHub App's ID of a GitHub checkout whose
 // default branch has its fugaro.yaml.

@@ -259,6 +259,29 @@ func TestPickerSingleAccountIsTheDefault(t *testing.T) {
 	}
 }
 
+// TestPickerEndedInputLinksNothing: the same run as the default test with the
+// input ending at the billing question instead of an empty line there. An input
+// that ends is a question nobody answered, so the run stops with nothing linked
+// rather than linking the only account the operator was shown (T7, D1540: the
+// suggestion is what Enter takes, and only a person may take it).
+func TestPickerEndedInputLinksNothing(t *testing.T) {
+	f := gcpfake.NewBilling(t)
+	only := pickerAccountID(t, "only")
+	f.AddAccountNamed(only, "the operator's own account", true)
+	r, out := pickerRun(t, true, "proj-1234\n\n\n", nil)
+	pickerSources(t, f)
+	err := r.gatherInputs(t.Context())
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("ended input: exit %d, %v\n%s", ExitCode(err), err, out)
+	}
+	if !strings.Contains(err.Error(), "the input ended") {
+		t.Errorf("the refusal does not say the input ended: %v", err)
+	}
+	if r.o.linkBilling != "" {
+		t.Errorf("an ended input linked %q, want nothing\n%s", r.o.linkBilling, out)
+	}
+}
+
 // TestPickerNoAccountsNamesTheConsoleAndTheGuidedLine: a source answered and
 // there is nothing to offer — no account at all, or only closed ones. The
 // question says the one clear thing about an account that does not exist yet
