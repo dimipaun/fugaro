@@ -92,7 +92,7 @@ func TestRerunPlansNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(r.ran(t, "apply")) != 0 || !strings.Contains(out, "[done]") || !strings.Contains(out, "No changes") {
+	if len(r.ran(t, "apply")) != 0 || !strings.Contains(out, markDone+" done") || !strings.Contains(out, "No changes") {
 		t.Errorf("calls %q\n%s", r.calls(t), out)
 	}
 }

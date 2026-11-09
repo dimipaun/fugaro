@@ -156,7 +156,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 	if err != nil {
 		return false, false, remote(err)
 	}
-	fmt.Fprint(r.w, tf.Summary(plan))
+	r.planBlock(plan)
 	counts := infra.CountPlan(plan)
 	// The managed gate first, and the guard and the confirmation only when it
 	// does not admit this plan (D1016, update_managed.go).

@@ -451,10 +451,10 @@ func TestUpdateConvergesTwiceAndSaysNoChanges(t *testing.T) {
 		if err != nil {
 			t.Fatalf("run %d: %v\n%s", i, err, out)
 		}
-		if !strings.Contains(out, "[done]") || !strings.Contains(out, "No changes") {
+		if !strings.Contains(out, markDone+" done") || !strings.Contains(out, "No changes") {
 			t.Errorf("run %d does not report a converged installation:\n%s", i, out)
 		}
-		if strings.Contains(out, "[needs-you]") || strings.Contains(out, "[todo]") {
+		if strings.Contains(out, markLeft+" ") || strings.Contains(out, markWaiting+" ") {
 			t.Errorf("run %d leaves something for the user:\n%s", i, out)
 		}
 	}

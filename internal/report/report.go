@@ -12,8 +12,10 @@ package report
 import (
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/muesli/termenv"
 )
@@ -44,6 +46,13 @@ type Options struct {
 	// ASCII keeps the markers to ASCII, for a console or a font that cannot
 	// draw the symbols. The watch screen has the same flag.
 	ASCII bool
+	// Brief is the converge's account: a step's reason is one clause on the
+	// terminal, with the whole of it in the log. The converge is the one
+	// command family that prints reasons a paragraph long — what a stage
+	// leaves alone, and why — and its reader asked for one line per step
+	// (the owner's feedback of 2026-11-09). A command that prints its own
+	// short phrases leaves this false and prints exactly what it did before.
+	Brief bool
 	// Now is the clock the summary's elapsed time is read from.
 	Now func() time.Time
 	// Sink is the run's log, when it has one: every byte of the run's own
@@ -260,21 +269,13 @@ type Step struct {
 // anything to say: a stage that did nothing and one that changed something
 // are both a tick.
 func (s *Step) Done(detail string) {
-	s.end(glyphDone, colourDone, Done, after(detail), nil)
+	s.end(glyphDone, colourDone, Done, " ", detail, nil)
 }
 
 // Skipped ends the step without a tick: the work was not needed, and reason
 // is why. A skipped step is neither a failure nor a step the user owes.
 func (s *Step) Skipped(reason string) {
-	s.end(glyphSkipped, colourSkipped, Done, after(reason), nil)
-}
-
-// after is the tail of a result line that says more, or nothing.
-func after(text string) string {
-	if text == "" {
-		return ""
-	}
-	return " " + text
+	s.end(glyphSkipped, colourSkipped, Done, " ", reason, nil)
 }
 
 // Failed ends the step with a cross and prints the error, the last lines of
@@ -284,7 +285,7 @@ func after(text string) string {
 func (s *Step) Failed(err error, context []string) {
 	lines := append([]string(nil), context...)
 	s.r.appendLogLine(&lines)
-	s.end(glyphFailed, colourFailed, Failed, ": "+err.Error(), lines)
+	s.end(glyphFailed, colourFailed, Failed, ": ", err.Error(), lines)
 }
 
 // Left ends the step with its own marker: the work needs the user before the
@@ -293,7 +294,7 @@ func (s *Step) Failed(err error, context []string) {
 func (s *Step) Left(text string) {
 	var lines []string
 	s.r.appendLogLine(&lines)
-	s.end(glyphLeft, colourLeft, Left, ": "+text, lines)
+	s.end(glyphLeft, colourLeft, Left, ": ", text, lines)
 }
 
 // Abandon ends the step without a line and without counting it: the run never
@@ -313,7 +314,14 @@ func (s *Step) Abandon() {
 
 // end prints the step's one result line and the lines under it, and records
 // what the result means for the run. Only the first result counts.
-func (s *Step) end(g glyph, c termenv.ANSIColor, state State, tail string, under []string) {
+//
+// sep and reason build the tail: sep is " " for a result that carries a
+// detail and ": " for one that carries the error or the instruction the step
+// is left with. Under Brief the reason is shortened to its first clause on
+// the screen and kept whole in the log — the log is what a person goes to for
+// the rest, and its path is under a failure and under a step left for the
+// user (D1352) — so `under` and the log line stay exactly as they were.
+func (s *Step) end(g glyph, c termenv.ANSIColor, state State, sep, reason string, under []string) {
 	r := s.r
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -327,18 +335,110 @@ func (s *Step) end(g glyph, c termenv.ANSIColor, state State, tail string, under
 	if state > r.state {
 		r.state = state
 	}
+	tail := ""
+	human := ""
+	if reason != "" {
+		tail, human = sep+reason, sep+reason
+		if r.o.Brief {
+			human = sep + Short(reason)
+		}
+	}
 	// The log gets the same line unstyled: a log is read with a pager, where the
 	// colour that helps a person watching is noise, and a reader comparing two
 	// runs should not have to look past it. Each line goes in one write,
 	// because the sink's redaction is by line and a line split across two could
 	// carry half a value.
 	r.logLine(g.text(r.o.ASCII) + " " + s.name + tail + "\n")
-	line := r.painted(g.text(r.o.ASCII), c) + " " + s.name + tail
+	line := r.painted(g.text(r.o.ASCII), c) + " " + s.name + human
 	fmt.Fprintln(r.human, line)
 	for _, l := range under {
 		r.logLine("    " + l + "\n")
 		fmt.Fprintf(r.human, "    %s\n", l)
 	}
+}
+
+// shortMax is the longest reason a step's line carries on the screen under
+// Brief: one clause, which is what a person reads while a run goes past. The
+// log keeps the whole of it.
+const shortMax = 70
+
+// Short is a reason as the one line a person reads it on: the first clause,
+// no longer than shortMax, with an ellipsis where the rest was left to the
+// log.
+//
+// The cut prefers a boundary the reason itself carries — a sentence end, a
+// dash, a semicolon or a comma — so the line stops where the reason does
+// rather than mid-thought, and only falls back to a word boundary inside the
+// window when there is none. A reason that already fits is returned exactly
+// as it is, byte for byte: most of them are short phrases and must not move.
+func Short(reason string) string {
+	trimmed := strings.TrimSpace(reason)
+	if len([]rune(trimmed)) <= shortMax {
+		return trimmed
+	}
+	cut := shortMax
+	for _, sep := range []string{". ", " — ", "; ", ", ", " ("} {
+		if i := strings.Index(trimmed, sep); i > 0 {
+			if n := len([]rune(trimmed[:i])); n < cut {
+				cut = n
+			}
+		}
+	}
+	runes := []rune(trimmed)
+	if cut == shortMax {
+		// No boundary inside the window: stop at the last whole word rather
+		// than in the middle of one.
+		for cut > 0 && !unicode.IsSpace(runes[cut-1]) {
+			cut--
+		}
+		if cut == 0 {
+			cut = shortMax
+		}
+	}
+	return strings.TrimRight(string(runes[:cut]), " ,;—-") + "…"
+}
+
+// Waits prints one line for a run of stages that wait: the whole run of them,
+// because a run that stopped at a stage leaves every stage behind it saying
+// the same thing, and eleven lines saying it eleven times is not a view of
+// anything (the owner's feedback of 2026-11-09). The summary still counts the
+// stages rather than the lines, so the account's "N steps" is what it was.
+//
+// names are the stages, in the run's canonical order; target is what they
+// wait for, in the words the loop's own detail used. At most three names are
+// printed and the rest are counted, so the line stays one line however many
+// stages are behind the stop.
+func (r *Reporter) Waits(names []string, target string) {
+	if len(names) == 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.stopSpinner()
+	r.spinName, r.spinPaused = "", false
+	r.steps += len(names)
+	text := waitText(names, target)
+	r.logLine(glyphWaiting.text(r.o.ASCII) + " " + text + "\n")
+	fmt.Fprintln(r.human, r.painted(glyphWaiting.text(r.o.ASCII), colourSkipped)+" "+text)
+}
+
+// waitText is the one waiting line: the stages, and what they wait for. The
+// verb agrees with the subject, because one stage behind a stop is as common
+// a line as eleven.
+func waitText(names []string, target string) string {
+	shown, rest := names, 0
+	if len(shown) > 3 {
+		shown, rest = shown[:3], len(shown)-3
+	}
+	list := strings.Join(shown, ", ")
+	verb := " wait for "
+	if len(names) == 1 {
+		verb = " waits for "
+	}
+	if rest > 0 {
+		list += fmt.Sprintf(" and %d more", rest)
+	}
+	return list + verb + target
 }
 
 // logLine keeps one of the run's own lines — a step's result, the lines under

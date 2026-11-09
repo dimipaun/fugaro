@@ -955,7 +955,7 @@ func runInit(r *initRun) error {
 		// progress goes to its Stream — the log always, the terminal under
 		// --verbose. The log is closed here, on the run's way out, so its last
 		// partial line is written.
-		r.rep, r.repLog = reporterFor(cmd, o.doorName(), e.redaction())
+		r.rep, r.repLog = convergeReporter(cmd, o.doorName(), e.redaction())
 		if r.repLog != nil {
 			defer func() { _ = r.repLog.Close() }()
 		}
@@ -1369,6 +1369,33 @@ func (r *initRun) progress() io.Writer {
 		return r.rep.Stream()
 	}
 	return r.cmd.ErrOrStderr()
+}
+
+// planBlock prints a plan for the person who has to confirm it, and keeps the
+// whole of it for the run's own record: the counts and the changes they must
+// look at first, in Fugaro's words, on the terminal (tf.Brief), and Terraform's
+// own account of every change — its addresses and the attribute paths an
+// update moves — in the log and on the terminal under --verbose, which is the
+// reporter's Stream exactly (D1352).
+//
+// So no `module.` address, no attribute path and no resource type reaches the
+// terminal from a plan, in any state and refused or not: what a person reads
+// there names the thing ("the catalog check job's configuration changes"), and
+// the address they may need — --allow-delete takes one — is in the log beside
+// what refused it (the owner's feedback of 2026-11-09).
+//
+// A run with no reporter is a run with no log (CL3's OpenLog or an engine a
+// test drove by hand), and there the whole plan goes to the terminal exactly as
+// it always did: it is the person's own plan, --allow-delete and
+// --allow-job-delete take the addresses it names, and a screen with nowhere
+// else to send them must not swallow them.
+func (r *initRun) planBlock(plan *tf.Plan) {
+	if r.rep == nil {
+		r.planBlock(plan)
+		return
+	}
+	fmt.Fprint(r.w, tf.Brief(plan))
+	fmt.Fprint(r.rep.Stream(), tf.Summary(plan))
 }
 
 // gcpOptions are the Google API options of lc's project and endpoints.
@@ -2639,7 +2666,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		if err != nil {
 			return outs, false, remote(err)
 		}
-		fmt.Fprint(r.w, tf.Summary(plan))
+		r.planBlock(plan)
 		// The 0.7.0 bucket hardening deletes launchers' old objectAdmin
 		// grants; exactly those are allowed, and named (bucket-iam.md H7).
 		// A delete is never covered, so the step still asks its own name.
@@ -3460,7 +3487,7 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 		if err != nil {
 			return remote(err)
 		}
-		fmt.Fprint(r.w, tf.Summary(plan))
+		r.planBlock(plan)
 		if err := infra.CheckForgetPlan(plan); err != nil {
 			return initErr(err)
 		}
@@ -4589,7 +4616,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	if opts.AllowJobDelete {
 		fmt.Fprintln(r.w, "⚠ --allow-job-delete: this plan lowers the deletion protection of "+spec.Name+"'s jobs, for offboarding")
 	}
-	fmt.Fprint(r.w, tf.Summary(plan))
+	r.planBlock(plan)
 	fmt.Fprintln(r.w, im.Bindings.String())
 	counts := infra.CountPlan(plan)
 	// The managed gate first, and the guard and the confirmation only when it

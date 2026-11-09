@@ -308,8 +308,8 @@ func TestCreateResumesItsOwnProject(t *testing.T) {
 	r.bill.AddAccount(billingAcc, true)
 	out, _, _ := r.run(t, true, newProj+"\n"+billingAcc+"\n", "--create-project", "--link-billing", billingAcc, "--plan-only")
 	r.nothingDone(t, "a resumed project (plan)")
-	if !strings.Contains(out, "[done]") || !strings.Contains(out, "billing is already linked") {
-		t.Errorf("the project stage is not reported done, with billing left as it is:\n%s", out)
+	if row := planRowOf(out, "project"); !strings.HasPrefix(row, markDone+" done") || !strings.Contains(row, "exists") {
+		t.Errorf("the project stage is not reported done with the project it found: %q\n%s", row, out)
 	}
 	_, _, _ = r.run(t, true, newProj+"\n"+billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
 	r.nothingDone(t, "a resumed project")

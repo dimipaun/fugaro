@@ -1629,14 +1629,14 @@ func TestUpdateManagedPlanOnlyStillAppliesNothing(t *testing.T) {
 	}
 	// The step is the read-only account it always was: the plan is shown, the
 	// table says it would apply it, and the run ends by naming the plan file
-	// instead of a write. A step that never reached its plan reads as [needs
-	// you] or as blocked, and both fail here.
-	for _, want := range []string{"[will do]", "installation", "1 creates", "--plan-only: nothing applied; the plan is"} {
+	// instead of a write. A step that never reached its plan reads as left for
+	// the user or as waiting, and both fail here.
+	for _, want := range []string{"will do", "installation", "1 creates", "--plan-only: nothing applied; the plan is"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the step is not reported as one that would be applied, missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "[needs you]") {
+	if strings.Contains(got, "left for you") {
 		t.Errorf("a plan-only run in a managed project left a step for the owner, though it applies nothing:\n%s", got)
 	}
 }

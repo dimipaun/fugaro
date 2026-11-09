@@ -920,8 +920,14 @@ func TestGuardListsRemovedAdminGrant(t *testing.T) {
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), addr) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
-	if !strings.Contains(out, "⚠ Review these first:\n  ⚠ delete "+addr) {
-		t.Errorf("the removed grant is not listed under Review:\n%s", out)
+	// The screen names the grant in Fugaro's words and never in Terraform's:
+	// the module address is what --allow-delete takes, and the log is where a
+	// person reads it (the owner's feedback of 2026-11-09).
+	if !strings.Contains(out, "Plan: 1 to delete.\n\n⚠ Review these first:\n  ⚠ the admin grant to user:old@example.com is removed\n") {
+		t.Errorf("the removed grant is not listed under Review, in Fugaro's words:\n%s", out)
+	}
+	if _, log := onlyLog(t, "setup"); !strings.Contains(log, addr) {
+		t.Errorf("the log does not carry the address --allow-delete takes:\n%s", log)
 	}
 	if !strings.Contains(err.Error(), "owners and editors") || !strings.Contains(err.Error(), "--budget-admin") {
 		t.Errorf("no hint on why a grant is removed: %v", err)

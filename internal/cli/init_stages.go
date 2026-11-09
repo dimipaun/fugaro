@@ -880,7 +880,7 @@ func (e *initEngine) fillCredentialsAudience(ctx context.Context) (bool, error) 
 	if err != nil {
 		return false, remote(err)
 	}
-	fmt.Fprint(r.w, tf.Summary(plan))
+	r.planBlock(plan)
 	// The managed gate judges this plan exactly as it judges the installation
 	// root's own: it is a second apply inside the same stage, and a session the
 	// gate let through may not make one it never read. It is handed no imports

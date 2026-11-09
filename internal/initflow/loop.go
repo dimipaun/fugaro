@@ -236,6 +236,12 @@ type loop struct {
 	// it belongs to. Both are nil when no reporter is drawing one.
 	step      *report.Step
 	stepStage string
+	// waits holds the stages that wait for a stop, in the order the loop
+	// reached them: one line prints for the whole run of them, when the run of
+	// them ends (flushWaits). A run that stopped at a stage leaves every stage
+	// behind it saying the same thing, and the account is not eleven copies of
+	// it (the owner's feedback of 2026-11-09).
+	waits []StageResult
 }
 
 // defaultProgram is what the run's lines name when the caller names no
@@ -783,7 +789,57 @@ func (l *loop) record(r StageResult) {
 	if l.o.Report == nil || !l.executing {
 		return
 	}
+	if waitingState(r.State) {
+		l.waits = append(l.waits, r)
+		return
+	}
+	l.flushWaits()
 	l.endStep(r)
+}
+
+// waitingState is a stage that did not run and is not this run's to give: it
+// waits for a stop ahead of it. Those are the stages the account prints as
+// one line.
+func waitingState(s State) bool {
+	return s == Blocked || s == WaitingForBilling
+}
+
+// flushWaits prints the buffered waiting stages as one line per run of them
+// that waits for the same thing: the stage names and what they wait for. The
+// loop's own detail names it ("waits for installation"), and the line reads
+// "… wait for installation"; billing, which the loop records as its own
+// state, is the one wait that is not a stage.
+func (l *loop) flushWaits() {
+	if len(l.waits) == 0 {
+		return
+	}
+	waits := l.waits
+	l.waits = nil
+	for len(waits) > 0 {
+		target := waitTarget(waits[0])
+		n := 1
+		for n < len(waits) && waitTarget(waits[n]) == target {
+			n++
+		}
+		names := make([]string, 0, n)
+		for _, r := range waits[:n] {
+			names = append(names, r.Name)
+		}
+		l.o.Report.Waits(names, target)
+		waits = waits[n:]
+	}
+}
+
+// waitTarget is what a waiting stage says it waits for, in the words the
+// account's waiting line uses.
+func waitTarget(r StageResult) string {
+	if t, ok := strings.CutPrefix(r.Detail, "waits for "); ok {
+		return t
+	}
+	if r.State == WaitingForBilling {
+		return "the billing account"
+	}
+	return r.Detail
 }
 
 // openStep starts the stage's line in flight, before the stage is even looked
@@ -808,26 +864,54 @@ func (l *loop) closeStep() {
 	l.step, l.stepStage = nil, ""
 }
 
+// stateLabel is the word each state prints in the plan view. "waiting" is
+// what Blocked says and not "blocked": what the state means to its reader is
+// that something ahead of it has to happen first, and "waiting" is the word
+// the account's own waiting line uses, so a stage reads the same in both
+// views of one run.
 var stateLabel = map[State]string{
-	Done: "done", Changed: "changed", Todo: "will do", Blocked: "blocked",
-	NeedsYou: "needs you", Skipped: "skipped", Failed: "failed",
+	Done: "done", Changed: "changed", Todo: "will do", Blocked: "waiting",
+	NeedsYou: "left for you", Skipped: "skipped", Failed: "failed",
 	BillingPending: "billing pending", WaitingForBilling: "waiting for billing",
 }
 
-// view prints the plan view: one line per stage.
+// stateKind is the mark and colour each state's word is drawn in: a step's
+// four ends, plus the two a plan view has of its own (a stage with something
+// to do, and one that waits). The reporter owns the alphabet; the words above
+// are the converge's.
+var stateKind = map[State]report.Kind{
+	Done: report.KindDone, Changed: report.KindDone, Todo: report.KindTodo,
+	Blocked: report.KindWaiting, WaitingForBilling: report.KindWaiting,
+	NeedsYou: report.KindLeft, BillingPending: report.KindLeft,
+	Skipped: report.KindSkipped, Failed: report.KindFailed,
+}
+
+// statusWidth is the column the plan view's status is padded to: wide enough
+// for the longest word it prints ("waiting for billing" overflows it, which
+// costs one line's alignment and not a character), so the stage names below
+// it line up.
+const statusWidth = 14
+
+// view prints the plan view: one line per stage, its status as the mark and
+// the coloured word the reporter draws (the plan view is not a run, and a
+// run that reported no step prints no closing line), the stage's own name and
+// a short reason — one clause, with the whole of it left to the log the run
+// keeps (report.Short). The reporter is nil-safe, so a caller driving the
+// loop with no reporter at all prints the plain text it printed before.
 func (l *loop) view(rs []StageResult) {
 	if l.o.Project != "" {
 		fmt.Fprintf(l.o.Out, "%s: project %s (GCP %s, %s)\n", l.program(), l.o.Project, l.o.GCPProject, l.o.Region)
 	}
 	for _, r := range rs {
-		line := fmt.Sprintf("  %-12s %-16s", "["+stateLabel[r.State]+"]", r.Name)
+		line := "  " + l.o.Report.Status(stateKind[r.State], stateLabel[r.State], statusWidth) +
+			" " + fmt.Sprintf("%-16s", r.Name)
 		switch {
 		case r.After != "" && r.Detail != "":
-			line += " " + r.Detail + " (after " + r.After + ")"
+			line += " " + report.Short(r.Detail) + " (after " + r.After + ")"
 		case r.After != "":
 			line += " after " + r.After
 		case r.Detail != "":
-			line += " " + r.Detail
+			line += " " + report.Short(r.Detail)
 		}
 		fmt.Fprintln(l.o.Out, strings.TrimRight(line, " "))
 	}
@@ -907,7 +991,9 @@ func (l *loop) finish() {
 	} else if l.o.Report != nil {
 		// The account is already on the screen: every step printed as its
 		// stage ended (record), so what is left is the closing line below
-		// and the blocks a run owes the user.
+		// and the blocks a run owes the user — and the stages still waiting
+		// at the end, which no result behind them flushed (record).
+		l.flushWaits()
 		l.closeStep()
 	} else {
 		fmt.Fprintf(l.o.Out, "%s: result\n", l.program())

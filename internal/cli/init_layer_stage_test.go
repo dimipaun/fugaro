@@ -338,11 +338,11 @@ func TestUpdateLayerStageSkipsWithNoLocalFileAndNoPublishedLayer(t *testing.T) {
 		t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
 	}
 	all := out + errOut
-	if !strings.Contains(all, "[skipped]    layer") {
-		t.Errorf("the layer stage is not skipped:\n%s", all)
+	if row := planRowOf(all, "layer"); !strings.HasPrefix(row, markSkipped+" skipped") {
+		t.Errorf("the layer stage is not skipped: %q\n%s", row, all)
 	}
-	if !strings.Contains(all, "no local layer file at "+localLayerPath(t)) {
-		t.Errorf("the stage does not say why it did nothing:\n%s", all)
+	if _, log := onlyLog(t, "update"); !strings.Contains(log, "no local layer file at "+localLayerPath(t)) {
+		t.Errorf("the stage's whole reason is not in the log:\n%s", log)
 	}
 }
 
@@ -581,8 +581,11 @@ func TestUpdateLayerStageSkipsAGSBucketOnFakeEndpoints(t *testing.T) {
 		t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
 	}
 	all := out + errOut
-	if !strings.Contains(all, "[skipped]    layer") || !strings.Contains(all, "could not be read") {
-		t.Errorf("the layer stage did not skip the fake-endpoint bucket:\n%s", all)
+	if row := planRowOf(all, "layer"); !strings.HasPrefix(row, markSkipped+" skipped") {
+		t.Errorf("the layer stage did not skip the fake-endpoint bucket: %q\n%s", row, all)
+	}
+	if _, log := onlyLog(t, "update"); !strings.Contains(log, "could not be read") {
+		t.Errorf("the stage's whole reason is not in the log:\n%s", log)
 	}
 	if _, rerr := os.Stat(localLayerPath(t)); !errors.Is(rerr, os.ErrNotExist) {
 		t.Errorf("a local layer file was written with no bucket read: %v", rerr)

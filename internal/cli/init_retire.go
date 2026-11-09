@@ -440,7 +440,7 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 	r.res.Changes = &counts
 	// 4. The real plan, in front of the user, and a second typed
 	//    confirmation that --yes, --json, a pipe and an agent cannot give.
-	fmt.Fprint(r.w, tf.Summary(plan))
+	r.planBlock(plan)
 	fmt.Fprintln(r.w, im.Bindings.String())
 	if err := r.guard(ctx, c, plan, retireAllowDelete(plan, rets, r.o.allowDelete)); err != nil {
 		return leftover(err)

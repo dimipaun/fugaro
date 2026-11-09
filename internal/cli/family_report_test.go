@@ -404,7 +404,7 @@ func TestAccountsAddDefaultIsShort(t *testing.T) {
 	// The happenings the run still owes the person are not steps and are not
 	// hidden by them (G1): the review screen, and the confirmation the run
 	// answered with --yes.
-	for _, want := range []string{"fugaro accounts add: project aurora", "[will do]", "CONFIRM"} {
+	for _, want := range []string{"fugaro accounts add: project aurora", "will do", "CONFIRM"} {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("the run's own reading of itself is gone with the account: %q is not on stderr:\n%s", want, errOut)
 		}

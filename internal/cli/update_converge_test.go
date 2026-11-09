@@ -381,7 +381,7 @@ func generatedRules(t *testing.T) []byte {
 // command.
 func stoppedStage(out string) string {
 	for _, line := range strings.Split(out, "\n") {
-		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "[failed]"); ok {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), markFailed+" failed"); ok {
 			return strings.TrimSpace(rest)
 		}
 	}

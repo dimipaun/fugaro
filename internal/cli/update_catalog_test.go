@@ -271,7 +271,8 @@ func TestUpdateDeploysTheCatalogCheckJobFromAFlaggedBase(t *testing.T) {
 // TestUpdateSaysWhenItCannotPinTheCatalogBase: a run that cannot pin the base
 // image — a development build here, and any run that does not name base — has
 // to say so. The catalog is the user's, its entries are buildable, and nothing
-// deploys the check job that builds them: reporting [skipped] without a word
+// deploys the check job that builds them: reporting the stage as skipped
+// without a word
 // about the base image would be an update that exits 0 in the issue's state.
 func TestUpdateSaysWhenItCannotPinTheCatalogBase(t *testing.T) {
 	r := catalogUpdateRigAt(t, "dev")
@@ -279,7 +280,10 @@ func TestUpdateSaysWhenItCannotPinTheCatalogBase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a development build's run: %v\n%s\n%s", err, out, errOut)
 	}
-	whole := out + errOut
+	// The stage's reason is one clause on the screen (report.Brief) and the
+	// whole of it in the log, which is where the base image is named.
+	_, log := onlyLog(t, "update")
+	whole := out + errOut + log
 	for _, want := range []string{"installation-2", "image catalog builds its entries FROM base_images." + config.BaseKind, "this run does not pin"} {
 		if !strings.Contains(whole, want) {
 			t.Errorf("the run left the catalog's entries built by nothing without saying %q:\n%s", want, whole)

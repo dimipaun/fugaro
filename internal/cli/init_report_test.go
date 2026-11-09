@@ -40,6 +40,7 @@ const (
 	markFailed  = "✖"
 	markLeft    = "!"
 	markSkipped = "–"
+	markWaiting = "↳"
 )
 
 // convergeNoise is what the fake Terraform prints on stdout and stderr: the
@@ -841,17 +842,53 @@ func stepNames(out string) []string {
 	return names
 }
 
-// planViewRows counts the plan view's own rows: the indented "[state] stage"
-// lines a plan-only run ends on, which are not steps (nothing was opened for
-// them) and so are not counted by stepNames.
+// planViewRows counts the plan view's own rows: the indented "mark status
+// stage" lines a plan-only run ends on, which are not steps (nothing was
+// opened for them) and so are not counted by stepNames.
 func planViewRows(out string) int {
 	n := 0
 	for _, l := range reportLines(out) {
-		if strings.HasPrefix(l, "  [") {
+		if strings.HasPrefix(l, "  "+markDone) || strings.HasPrefix(l, "  "+markSkipped) ||
+			strings.HasPrefix(l, "  "+markWaiting) || strings.HasPrefix(l, "  "+markFailed) ||
+			strings.HasPrefix(l, "  "+markLeft) {
 			n++
 		}
 	}
 	return n
+}
+
+// namedLog reads back the log a run's own output points at — the path under a
+// failure or a step left for the user — for a test that has to read the whole
+// of a reason the step's line carries one clause of (report.Brief).
+func namedLog(t *testing.T, out string) string {
+	t.Helper()
+	m := fullOutputRE.FindString(out)
+	if m == "" {
+		t.Fatalf("the run names no log, so a reason it shortened is out of reach:\n%s", out)
+	}
+	b, err := os.ReadFile(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(m), "full output:")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// planRowOf is the plan view's row for one stage, without the view's own
+// indent: the row starts with a marker and the status word, which is what a
+// test asserting one stage's state reads. It is "" when the view has none.
+func planRowOf(out, stage string) string {
+	for _, l := range reportLines(out) {
+		row, ok := strings.CutPrefix(l, "  ")
+		if !ok {
+			continue
+		}
+		for _, f := range strings.Fields(row) {
+			if f == stage {
+				return row
+			}
+		}
+	}
+	return ""
 }
 
 // TestUpdateUnderAgentMarkerPrintsTheSameSteps: a coding agent's session sees
@@ -874,8 +911,20 @@ func TestUpdateUnderAgentMarkerPrintsTheSameSteps(t *testing.T) {
 	agent := applyingRig(t)
 	outAgent, errAgentOut, errAgent := executeStdin(t, "", "update", "--yes")
 
-	if strings.Join(stepNames(outPerson), " ") != strings.Join(stepNames(outAgent), " ") {
-		t.Errorf("the marker changed the account's steps:\nperson:\n%s\nagent:\n%s", outPerson, outAgent)
+	// The marker changes what the run may do, not which stages it reached: the
+	// stages the agent's account names are the person's own, up to the stage
+	// the run stopped at. A run that stops leaves every stage behind it saying
+	// the same thing, and those are one waiting line (report.Waits) rather than
+	// a line each, so the agent's account names fewer of them than the
+	// person's -- the ones it does name are in the same order.
+	personStages := stepNames(outPerson)
+	agentStages := stepNames(outAgent)
+	if len(agentStages) == 0 || len(personStages) < len(agentStages) {
+		t.Fatalf("the runs' accounts name %v and %v, want the agent's the person's own up to the stop:\nperson:\n%s\nagent:\n%s",
+			personStages, agentStages, outPerson, outAgent)
+	}
+	if strings.Join(personStages[:len(agentStages)], " ") != strings.Join(agentStages, " ") {
+		t.Errorf("the marker changed the account's steps:\nperson: %v\nagent: %v", personStages, agentStages)
 	}
 	for _, out := range []string{outPerson, outAgent} {
 		lines := reportLines(out)
@@ -890,7 +939,10 @@ func TestUpdateUnderAgentMarkerPrintsTheSameSteps(t *testing.T) {
 		t.Errorf("the marker permitted %d applies, want none", n)
 	}
 	all := outAgent + errAgentOut
-	if !strings.Contains(all, "CLAUDECODE is set") || !strings.Contains(all, "left for you (installation") {
+	if !strings.Contains(all, "left for you (installation") || !strings.Contains(all, markLeft+" installation: ") {
 		t.Errorf("the refusal is not the one it was before the account moved:\n%s", all)
+	}
+	if !strings.Contains(namedLog(t, all), "CLAUDECODE is set") {
+		t.Errorf("the log does not hold the whole of the reason the step's line shortened:\n%s", all)
 	}
 }

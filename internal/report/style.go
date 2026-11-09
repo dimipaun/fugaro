@@ -1,6 +1,10 @@
 package report
 
-import "github.com/muesli/termenv"
+import (
+	"strings"
+
+	"github.com/muesli/termenv"
+)
 
 // NoColor is the CLI's one rule for turning colour off: --no-color, NO_COLOR
 // set to anything at all (the no-color.org rule is "present and not an empty
@@ -25,7 +29,9 @@ type glyph struct{ sym, ascii string }
 
 var (
 	glyphDone    = glyph{"✔", "+"}
+	glyphTodo    = glyph{"○", "o"}
 	glyphSkipped = glyph{"–", "-"}
+	glyphWaiting = glyph{"↳", ">"}
 	glyphFailed  = glyph{"✖", "x"}
 	glyphLeft    = glyph{"!", "!"}
 )
@@ -37,10 +43,72 @@ var (
 const (
 	colourRunning = termenv.ANSIColor(6)
 	colourDone    = termenv.ANSIColor(2)
+	colourTodo    = termenv.ANSIColor(6)
 	colourSkipped = termenv.ANSIColor(8)
 	colourFailed  = termenv.ANSIColor(1)
 	colourLeft    = termenv.ANSIColor(3)
 )
+
+// Kind is the status a line of the account carries: the mark it starts with
+// and the colour that mark and its word are drawn in.
+//
+// The four ends of a step are Done, Skipped, Failed and Left; the converge's
+// plan view adds two a step's own outcomes cannot say — a stage with something
+// to do (Todo) and one that waits for another (Waiting) — because its rows
+// stand for work not done yet and are not runs (see initflow's view). The word
+// beside the kind is the caller's: the converge names its states ("done",
+// "will do", "waiting", "left for you"), and the reporter owns only the
+// alphabet they are drawn in.
+type Kind uint8
+
+const (
+	KindDone Kind = iota
+	KindTodo
+	KindSkipped
+	KindWaiting
+	KindFailed
+	KindLeft
+)
+
+// marks is the alphabet one status is drawn in, indexed by Kind: the symbol
+// and the ASCII fallback, and the colour. Waiting and Skipped are the same
+// dim, because both are "not this run's work" — neither a success nor a
+// failure nor something the user owes.
+var marks = [...]struct {
+	g glyph
+	c termenv.ANSIColor
+}{
+	KindDone:    {glyphDone, colourDone},
+	KindTodo:    {glyphTodo, colourTodo},
+	KindSkipped: {glyphSkipped, colourSkipped},
+	KindWaiting: {glyphWaiting, colourSkipped},
+	KindFailed:  {glyphFailed, colourFailed},
+	KindLeft:    {glyphLeft, colourLeft},
+}
+
+// Status renders one line's status for a caller that prints its own line: the
+// mark in the run's alphabet and colour, the word beside it, and the padding
+// that lines the caller's columns up.
+//
+// It is a method on the reporter and not a free function because the reporter
+// is the one place that decides whether colour is on (T4(a), D1355) — and it
+// is nil-safe, so a caller driving the converge with no reporter at all
+// (--print-vars, a test's hand-built engine) gets the plain text it printed
+// before one existed. width pads to the visible text; the escape sequences
+// termenv writes are not counted, which is the whole reason the padding is
+// added here and not by the caller.
+func (r *Reporter) Status(k Kind, word string, width int) string {
+	m := marks[k]
+	plain := m.g.text(false) + " " + word
+	pad := ""
+	if n := width - len([]rune(plain)); n > 0 {
+		pad = strings.Repeat(" ", n)
+	}
+	if r == nil {
+		return plain + pad
+	}
+	return r.painted(m.g.text(r.o.ASCII)+" "+word, m.c) + pad
+}
 
 // text is the glyph in the alphabet the --ascii decision picked.
 func (g glyph) text(ascii bool) string {

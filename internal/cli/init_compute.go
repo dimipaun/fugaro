@@ -109,7 +109,7 @@ func (s *computeStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan,
 		s.changes = &infra.PlanCounts{}
 		return s.e.planned(s.changes), nil
 	}
-	fmt.Fprint(s.e.r.w, tf.Summary(plan))
+	s.e.r.planBlock(plan)
 	if err := s.e.r.guard(ctx, s.e.c, plan, s.e.r.o.allowDelete); err != nil {
 		return initflow.Plan{}, err
 	}
@@ -135,7 +135,7 @@ func (s *computeStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outc
 		fmt.Fprintln(r.w, "No changes: the compute backend's provisioning matches the plan.")
 		return initflow.Outcome{Detail: "No changes"}, nil
 	}
-	fmt.Fprint(r.w, tf.Summary(plan))
+	r.planBlock(plan)
 	if err := r.guard(ctx, e.c, plan, r.o.allowDelete); err != nil {
 		return initflow.Outcome{}, err
 	}
