@@ -581,15 +581,19 @@ func validateSchema3(path string, doc Document) error {
 				if integration && stubbed[f] {
 					continue
 				}
+				// One pair for the literal lookup and one for each pattern, so
+				// the count covers the rule's work whatever shape the graph's
+				// footprints have: a graph of literal paths is a lookup per
+				// pair, and the lookups are the read when there are millions.
+				pairs += 1 + len(ix.globs)
+				if pairs > maxFootprintPairs {
+					return refuse(path, "the graph's contracts and tasks ask for more than %d footprint pairs to check that no task's footprint covers a contract's file; a graph that large is refused rather than read slowly (F10)",
+						maxFootprintPairs)
+				}
 				covered := ix.literals[f]
 				for _, g := range ix.globs {
 					if covered {
 						break
-					}
-					pairs++
-					if pairs > maxFootprintPairs {
-						return refuse(path, "the graph's contracts and tasks ask for more than %d footprint pairs to check that no task's footprint covers a contract's file; a graph that large is refused rather than read slowly (F10)",
-							maxFootprintPairs)
 					}
 					if !g.couldMatch(f) {
 						continue
@@ -609,16 +613,16 @@ func validateSchema3(path string, doc Document) error {
 }
 
 // maxFootprintPairs bounds the work the contract-file rule does on one graph.
-// Every other task's pattern is tried against every file of every contract, and
-// every pair is counted here — the ones the cheap tests drop as much as the ones
-// doublestar is asked — because a graph of pairs that all leave on a prefix is
-// the shape a count of matches would not see, and those tests are the rule's
-// work when there are enough of them. A pair costs two string comparisons and
-// the pairs that survive cost a glob match, so a graph at the bound is a
-// fraction of a second of read, and one past it is refused rather than read
-// slowly. The count is what makes the cost of the rule a property of the rule
-// rather than of the file, and a graph a person would write does not come near
-// it.
+// Every other task's footprint is tried against every file of every contract,
+// and every pair is counted here — the literal lookups and the pairs a cheap
+// test drops as much as the ones doublestar is asked — because a graph of pairs
+// that are all lookups, or all leave on a prefix, is the shape a count of
+// matches would not see, and those are the rule's work when there are enough of
+// them. A pair costs a lookup and a couple of string comparisons, and the pairs
+// that survive cost a glob match, so a graph at the bound is a fraction of a
+// second of read, and one past it is refused rather than read slowly. The count
+// is what makes the cost of the rule a property of the rule rather than of the
+// file, and a graph a person would write does not come near it.
 const maxFootprintPairs = 1 << 21
 
 // nodeFootprint is one node's footprint in the shape the contract-file rule asks
@@ -685,6 +689,15 @@ func newGlobPath(pattern string) globPath {
 	}
 	if last >= 0 {
 		g.suffix = pattern[last+1:] // every metacharacter is one byte
+	}
+	// A `**` element matches no directory as readily as several, and the
+	// separator after it goes with it: doublestar matches `**/types.go` against a
+	// root-level `types.go`, so the text after the last wildcard is a suffix of
+	// the file only from its first element on — a `**` that matched nothing
+	// leaves the file no slash to carry, and a suffix that required one would
+	// drop a pair the match accepts, which is the rule failing open.
+	if strings.Contains(pattern, "**") {
+		g.suffix = strings.TrimLeft(g.suffix, "/")
 	}
 	// A `**` matches any number of elements and a brace group may carry a `/`
 	// of its own, so the count is only a bound when neither is there.
@@ -772,12 +785,14 @@ func respelledInBraces(p string) bool {
 		if depth == 0 {
 			return false
 		}
-		// The text that runs into a group's own brace is not an element: a group
-		// opens and closes *inside* an element, so `internal/{a,{b,c}}/x.go`
-		// writes the empty text between the comma and the inner brace without
-		// spelling an empty element, and the empty text after the inner group is
-		// the rest of the outer one. Only a separator ends an element.
-		if start == end && end > 0 && (p[end-1] == '{' || p[end-1] == '}') {
+		// Empty text is an empty alternative only where an alternative can be
+		// empty. Text that runs into a closing brace which just closed a nested
+		// group is the rest of the enclosing group and no element at all — that
+		// is what `internal/{a,{b,c}}/x.go` writes — while text that begins at a
+		// group's own opening brace or right after one of its commas *is* the
+		// alternative it sits in, and an empty one is refused: `internal/{,x}/y.go`
+		// and `{a,{}}` spell the empty element the rule is about.
+		if start == end && end > 0 && p[end-1] == '}' {
 			return false
 		}
 		switch p[start:end] {

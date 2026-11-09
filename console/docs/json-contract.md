@@ -1429,9 +1429,9 @@ an element carrying a `*` stands for a name of any length, so `*.*`, `docs/.*`
 and `**/.*` are ordinary multi-extension globs and are read. A graph inside the
 artifact's own cap can still ask for more work than a read should take —
 every contract's files against every other task's patterns is a product of two
-sides that both come from the file — so the rule counts every pair it asks,
-the ones it drops on a pattern's own shape as much as the ones it hands to a
-match, and **refuses a graph past the bound** rather than read it slowly. The
+sides that both come from the file — so the rule counts every pair it asks — a
+literal lookup as much as a pattern it drops on its own shape or hands to a
+match — and **refuses a graph past the bound** rather than read it slowly. The
 console shows the CLI's sentence in each case, like every other refusal here.
 
 **What the read computes, and why the done set is passed in.** `level`, `done`,

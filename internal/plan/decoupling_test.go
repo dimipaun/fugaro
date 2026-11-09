@@ -457,16 +457,36 @@ func TestContractFilesBelongToTheContractAndItsChanges(t *testing.T) {
 		})
 	}
 
+	t.Run("a root-level contract file covered through a doublestar", func(t *testing.T) {
+		// `**/types.go` matches a root-level types.go: doublestar's `**` matches
+		// no directory as readily as several, so the separator after it is one
+		// the file need not carry. A prefilter whose suffix is the text after the
+		// last wildcard, read as written, demanded that separator — the pair was
+		// dropped before the match that accepts it, and the rule failed open on
+		// a file the contract names.
+		refused(t, v3Doc(t,
+			`"paths": ["internal/contract/types.go", "internal/contract/stub.go"]`,
+			`"paths": ["types.go", "internal/contract/stub.go"]`,
+			`{"id": "B", "title": "the dependent", "footprint": {"prediction": true, "paths": ["internal/dep/**"]}}`,
+			`{"id": "B", "title": "the dependent", "footprint": {"prediction": true, "paths": ["**/types.go"]}}`),
+			`node "B"'s footprint covers "types.go"`, "F10")
+	})
+
 	// A brace group is the fourth spelling, and the one `path.Clean` cannot
 	// read into: it cleans a pattern as one string, so a `.` or a `..` element
 	// standing inside `{…}` survives it. `{./internal/contract/types.go}` and
 	// `internal/{dep/..,}/contract/types.go` are the contract's one file to
 	// anyone reading the pattern, and the rule below reads neither of them —
 	// doublestar matches neither against the file, so nothing above refuses
-	// them. Refused by name, like the two before this.
+	// them. Refused by name, like the two before this — an empty alternative
+	// included: `internal/contract/{,dep}/types.go` spells the contract's file
+	// as its empty alternative, and `internal/{dep,{}}/types.go` as a group with
+	// nothing in it.
 	for _, spelling := range []string{
 		"{./internal/contract/types.go}",
 		"internal/{dep/..,}/contract/types.go",
+		"internal/contract/{,dep}/types.go",
+		"internal/{dep,{}}/types.go",
 	} {
 		t.Run("a footprint pattern that is not a checkout path: a brace respelling "+spelling, func(t *testing.T) {
 			refused(t, v3Doc(t, `{"id": "B", "title": "the dependent", "footprint": {"prediction": true, "paths": ["internal/dep/**"]}}`,
@@ -569,9 +589,9 @@ func TestContractFilesBelongToTheContractAndItsChanges(t *testing.T) {
 // sides that both come from the file — every contract's files against every
 // other task's patterns — so a graph well inside the artifact's own cap can
 // still ask for minutes of work. A graph under the bound reads whatever shape
-// its pairs have; a graph past it is refused, and the pairs that leave on a
-// cheap test count towards the bound like the ones doublestar is asked, because
-// those tests are the rule's work when a graph is nothing but them.
+// its pairs have; a graph past it is refused, and every pair counts towards the
+// bound — the ones a cheap test drops, the ones doublestar is asked, and the
+// literal lookups, which are the rule's whole work on a graph of literal paths.
 func TestContractFileMatchingIsBounded(t *testing.T) {
 	build := func(files, tasks int, pattern string) string {
 		var b strings.Builder
@@ -605,10 +625,13 @@ func TestContractFileMatchingIsBounded(t *testing.T) {
 		}
 	}
 
-	// Both halves of the count: a graph of pairs that no file can carry, and one
-	// of pairs that survive every cheap test and fail at doublestar. Neither is
-	// read past the bound, and the refusal is the same sentence either way.
-	for _, pattern := range []string{"zz%04d/**", "*/*/x%04d*.go"} {
+	// Both halves of the count: a graph of pairs that no file can carry, one of
+	// pairs that survive every cheap test and fail at doublestar, and one of
+	// pairs with no glob at all — a contract of literal files against tasks of
+	// literal footprints is a lookup per pair, and the lookups are the read when
+	// there are millions of them. None of the three is read past the bound, and
+	// the refusal is the same sentence every time.
+	for _, pattern := range []string{"zz%04d/**", "*/*/x%04d*.go", "internal/dep/k%04d.go"} {
 		_, err := Parse("graph.json", []byte(build(files, tasks, pattern)))
 		if err == nil {
 			t.Fatalf("the graph of %q pairs past the bound was read", pattern)
