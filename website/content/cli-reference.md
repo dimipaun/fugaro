@@ -43,6 +43,7 @@ Subcommands:
 - `fugaro graph` -- Print the project's dependency graph
 - `fugaro help` -- Help about any command
 - `fugaro image` -- Build and inspect a workflow's derived container image
+- `fugaro issue` -- Read, dismiss and file the issues fugaro troubleshoot saved
 - `fugaro logs` -- Print a run's logs from Cloud Logging
 - `fugaro managed` -- Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
 - `fugaro models` -- Show the models this project can run, and where each is served
@@ -2487,6 +2488,120 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout, as the local config's repos has it) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro issue`
+
+Read, dismiss and file the issues fugaro troubleshoot saved
+
+Read the issues `fugaro troubleshoot` saved on this machine.
+
+An issue is one Markdown file under the user's state directory, holding
+the whole issue: a strict header and the diagnosis' own words. `list`
+shows what is saved, `show` prints one, and `dismiss` sets one aside so
+nothing is filed for it. An issue is named by its local ID
+(`local-<run stem>`) until it has been uploaded, and by its number
+(`#0007`) from then on; `show` and `dismiss` take either.
+
+Nothing here files anything: the issue stays on this machine until a
+person runs the submit command, and the text of a record is printed as
+data — it comes from log text this machine did not write.
+
+Usage: `fugaro issue`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for issue |
+
+Subcommands:
+
+- `fugaro issue dismiss` -- Mark an issue as not worth filing
+- `fugaro issue list` -- List the issues saved on this machine
+- `fugaro issue show` -- Print one issue: its number (#0007) or its local ID
+
+## `fugaro issue dismiss`
+
+Mark an issue as not worth filing
+
+Mark one saved issue as not worth filing.
+
+REF is the issue's number (`7`) or its local ID `local-<run stem>`, the
+same argument `show` takes. The status is written in the issue's own file
+and nothing else changes: the record stays where it is, so a listing still
+shows what was set aside and who did it, and nothing is filed.
+
+A coding agent's session may not dismiss an issue: a steered diagnosis
+could otherwise bury a real bug, so a person sets one aside (D1730).
+
+Usage: `fugaro issue dismiss REF`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for dismiss |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro issue list`
+
+List the issues saved on this machine
+
+List the issues saved on this machine, one row each.
+
+A row names the issue the way `show`, `dismiss` and `submit` take it —
+its number once it has been uploaded, its local ID before — with the
+class the diagnosis gave it, where it stands, and its one-line summary.
+Nothing is uploaded and nothing is filed: the listing is this machine's
+own folder, read.
+
+--json prints the records themselves, in the shape
+schemas/issue-record.schema.json describes, which is the document a
+reader outside this binary consumes.
+
+Usage: `fugaro issue list`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for list |
+| `--json` | bool | `false` | no | print machine-readable output |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro issue show`
+
+Print one issue: its number (#0007) or its local ID
+
+Print one issue the machine saved.
+
+REF is the issue's number as a plain number (`7`), or its local ID
+`local-<run stem>`, which is what it is called until it has been
+uploaded. The header a listing shows and the body a person reads are
+printed as data: the text came from a diagnosis that read log text this
+machine did not write, so no escape sequence in it reaches the terminal.
+
+--json prints the record itself, in the shape
+schemas/issue-record.schema.json describes.
+
+Usage: `fugaro issue show REF`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for show |
+| `--json` | bool | `false` | no | print machine-readable output |
 
 Subcommands:
 
