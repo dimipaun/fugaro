@@ -7,8 +7,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
 // TestTheStoreConvergesWithTheFrontDoorsOptIn is D935's convergence test, and
@@ -114,7 +117,7 @@ func TestTheStoreConvergesWithTheFrontDoorsOptIn(t *testing.T) {
 			if len(rc.Actions) != 1 || rc.Actions[0] != "create" {
 				t.Errorf("%s: the plan's actions are %v, want [create]: the store is created by this installation with the owner's own rights, and anything else is a name taken rather than made (D935, 2026-11-05)", rc.Address, rc.Actions)
 			}
-			if len(rc.Importing) != 0 {
+			if rc.Importing != nil {
 				t.Errorf("%s: the plan imports the resource (%v): a bucket that already exists under the store's name fails the apply rather than being adopted, and an import is the adoption", rc.Address, rc.Importing)
 			}
 		}
@@ -135,15 +138,53 @@ func TestTheStoreConvergesWithTheFrontDoorsOptIn(t *testing.T) {
 	})
 }
 
+// TestTheStoreIsNotWhatRefusesTheFrontDoorsPlan is the other half of D935's
+// migration, and the half `fugaro update`'s own rule lives on: the store the
+// release that turns the front door on creates must not be what the run's one
+// confirmation refuses, or that release's installation step asks its own typed
+// confirmation for a command that is meant to be one confirmation.
+//
+// The store's grant is why this had to be said. roles/storage.objectAdmin on a
+// bucket was a people-only row and the front door's own account (`fugaro-mcp`)
+// was no kind the table knew, so the plan that creates the store was refused
+// item by item. The table now reads that account as a kind of its own (toMCP)
+// and narrows the row to D935's one grant — the account, that role, the store's
+// bucket, no condition — and TestMCPAccountIsItsOwnPrincipalKind in
+// internal/infra/tf is what keeps the row from growing past it, with the runs
+// bucket's objectAdmin, another member on the store and a condition as the
+// cases it refuses.
+//
+// What the plan still carries is the FRONT DOOR's first half, and none of it is
+// the store: the service runs as `fugaro-mcp` (a module-created account, but
+// not the credentials service's, which is the account the service check knows),
+// D920's public invoker binding is `allUsers` (a member the cover never admits,
+// for a public endpoint by design), and the runs bucket's read is D932's. Those
+// rows are #1716's, they are refused before and after this change, and the
+// release that turns the front door on is where the owner decides them — this
+// test fails if the STORE joins them, and the case below says what "the store"
+// means: any item naming it at all.
+func TestTheStoreIsNotWhatRefusesTheFrontDoorsPlan(t *testing.T) {
+	const storeBucket = "fugaro-mcpauth-proj-1234"
+	spec := specWithTheFrontDoor(t)
+	plan, _ := installationPlan(t, spec)
+	for _, item := range theRunsConfirmation(t, spec).NotCovered(plan, nil) {
+		if strings.Contains(item, storeBucket) || strings.Contains(item, "mcpauth_store") {
+			t.Errorf("the run's one confirmation refuses the store: %s\n`fugaro update --mcp-server` creates D935's bucket and its one grant, so that step must not ask the owner for a confirmation of its own over them", item)
+		}
+	}
+}
+
 // plannedResource is one entry of a plan's resource_changes, in the shape these
 // tests read: the address, the type, the action, the planned values and
 // whether the change imports.
 type plannedResource struct {
-	Address   string         `json:"address"`
-	Type      string         `json:"type"`
-	Actions   []string       `json:"actions"`
-	After     map[string]any `json:"after"`
-	Importing map[string]any `json:"importing"`
+	Address string         `json:"address"`
+	Type    string         `json:"type"`
+	Actions []string       `json:"actions"`
+	After   map[string]any `json:"after"`
+	// Importing is the plan's own importing block, nil for a create: D935's
+	// bucket is made here and never adopted.
+	Importing *tf.Importing `json:"importing"`
 }
 
 // json is the resource as one string, for the "no row names this bucket"
@@ -207,6 +248,16 @@ func specWithoutIt(t *testing.T) InstallationSpec {
 // download.
 func installationPlanFor(t *testing.T, spec InstallationSpec) map[string]plannedResource {
 	t.Helper()
+	_, rows := installationPlan(t, spec)
+	return rows
+}
+
+// installationPlan is installationPlanFor with the plan itself, which the
+// plan review reads (tf.Cover.NotCovered): what an update applies is the plan,
+// and whether its one confirmation covers it is a question about the whole
+// document rather than about the rows these tests pick out of it.
+func installationPlan(t *testing.T, spec InstallationSpec) (*tf.Plan, map[string]plannedResource) {
+	t.Helper()
 	bin, err := exec.LookPath("terraform")
 	if err != nil {
 		t.Fatalf("this test needs terraform on PATH: %v", err)
@@ -265,17 +316,10 @@ func installationPlanFor(t *testing.T, spec InstallationSpec) map[string]planned
 	)
 	run(planEnv, "plan", "-input=false", "-no-color", "-out=plan.bin", "-var-file=terraform.tfvars.json")
 	show := run(planEnv, "show", "-json", "plan.bin")
-	var plan struct {
-		ResourceChanges []struct {
-			Address string `json:"address"`
-			Type    string `json:"type"`
-			Change  struct {
-				Actions   []string       `json:"actions"`
-				After     map[string]any `json:"after"`
-				Importing map[string]any `json:"importing"`
-			} `json:"change"`
-		} `json:"resource_changes"`
-	}
+	// tf.Plan is the package's own decoding of the document (its
+	// UnmarshalJSON keeps the top-level keys beside the fields), so what the
+	// review reads here is the same parse `fugaro update` gives it.
+	var plan tf.Plan
 	if err := json.Unmarshal(show, &plan); err != nil {
 		t.Fatal(err)
 	}
@@ -286,5 +330,26 @@ func installationPlanFor(t *testing.T, spec InstallationSpec) map[string]planned
 			After: rc.Change.After, Importing: rc.Change.Importing,
 		}
 	}
-	return out
+	return &plan, out
+}
+
+// theRunsConfirmation is the cover the run's one confirmation judges this
+// installation's plans by: internal/cli's initEngine.cover for the run that
+// would write spec — the project, the region, the runs bucket, the registry,
+// the owner of the base images and the people the review screen lists. It is
+// built here rather than read out of internal/cli because that one is a method
+// on the run, and what this asks is the table's own answer about a real plan of
+// the embedded root.
+func theRunsConfirmation(t *testing.T, spec InstallationSpec) tf.Cover {
+	t.Helper()
+	lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectProfilesLCBlock)
+	c := tf.Cover{
+		Projects: []string{spec.Project}, Region: spec.Region, Buckets: []string{spec.RunsBucket},
+		Ghcr: GhcrRegistry, Listed: slices.Concat(spec.Launchers, spec.Operators),
+	}
+	if host, err := RegistryHost(lc); err == nil {
+		c.Registry, _, _ = strings.Cut(host, "/")
+	}
+	_, c.Owner, _ = strings.Cut(lc.ImageSource, "/")
+	return c
 }
