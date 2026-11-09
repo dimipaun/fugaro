@@ -2630,14 +2630,28 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// default puts it back in dry-run.
 		r.warn("registry cleanup is on (or off) in the installation, and this plan puts it back to dry-run: pass --registry-cleanup=on or off to keep it")
 	}
-	changed, err := t.Plan(ctx, infra.PlanFile)
-	if err != nil {
-		return outs, false, remote(err)
-	}
-	if changed {
+	// The cycle the retry runs again (propagationRetry): plan, the managed
+	// gate (or the guard and the confirmation), apply. Every pass plans
+	// afresh, so a retry after an API Google has not caught up with applies
+	// what the new plan holds and never the saved plan of the failed attempt.
+	// stop (the caller's own) is a cycle that ended without applying:
+	// --plan-only's two ways out.
+	cycle := func(ctx context.Context) (*tf.Plan, error) {
+		changed, err := t.Plan(ctx, infra.PlanFile)
+		if err != nil {
+			return nil, remote(err)
+		}
+		if !changed {
+			r.res.Changes = &infra.PlanCounts{}
+			fmt.Fprintln(r.w, "No changes: the installation matches the plan.")
+			if r.o.planOnly {
+				stop = true
+			}
+			return nil, nil
+		}
 		plan, err := t.Show(ctx, infra.PlanFile)
 		if err != nil {
-			return outs, false, remote(err)
+			return nil, remote(err)
 		}
 		fmt.Fprint(r.w, tf.Summary(plan))
 		// The 0.7.0 bucket hardening deletes launchers' old objectAdmin
@@ -2659,31 +2673,32 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// path prints or records stays where it was, on the path that runs it.
 		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), upgrade)
 		if err != nil {
-			return outs, false, err
+			return plan, err
 		}
 		if gated {
 			r.res.Changes = &counts
 		} else {
 			if err := r.guard(ctx, c, plan, allowed); err != nil {
-				return outs, false, err
+				return plan, err
 			}
 			fmt.Fprint(r.w, infra.HardeningBanner(hardening))
 			fmt.Fprint(r.w, infra.LauncherGrantUpgradeBanner(upgrade))
 			r.res.Changes = &counts
 			if r.o.planOnly {
 				fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
-				return outs, true, nil
+				stop = true
+				return plan, nil
 			}
 			// 6. Confirm, 7. apply the plan shown.
 			if err := r.confirmOrdinary("applies "+counts.String()+r.installLabel, "nothing was applied", r.notCovered(plan, im.Keys())); err != nil {
-				return outs, false, err
+				return plan, err
 			}
 		}
 		if err := t.Apply(ctx, infra.PlanFile); err != nil {
-			return outs, false, remote(err)
+			return plan, remote(err)
 		}
 		if err := r.gateApplied(ctx); err != nil {
-			return outs, false, err
+			return plan, err
 		}
 		r.res.Applied = true
 		if !im.AdoptsRunsBucket() {
@@ -2691,20 +2706,21 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			// project Viewer access; it is ours only if discovery says so.
 			after, err := infra.DiscoverInstallation(ctx, c, spec)
 			if err != nil {
-				return outs, false, initErr(err)
+				return plan, initErr(err)
 			}
 			if after.AdoptsRunsBucket() {
 				if err := r.runsBucketViewers(ctx, c, spec); err != nil {
-					return outs, false, err
+					return plan, err
 				}
 			}
 		}
-	} else {
-		r.res.Changes = &infra.PlanCounts{}
-		fmt.Fprintln(r.w, "No changes: the installation matches the plan.")
-		if r.o.planOnly {
-			return outs, true, nil
-		}
+		return plan, nil
+	}
+	if err := propagationRetry(ctx, r.w, "the installation step", cycle); err != nil {
+		return outs, false, err
+	}
+	if stop {
+		return outs, true, nil
 	}
 	raw, err := t.Output(ctx)
 	if err != nil {
