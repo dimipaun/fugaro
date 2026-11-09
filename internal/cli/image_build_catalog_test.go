@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -501,6 +502,31 @@ func TestCatalogBuildCopiesNothingOverCap(t *testing.T) {
 	if !catalogCopyAbsent(t, gcs, "tools") {
 		t.Errorf("a refused build copied the entry's Dockerfile")
 	}
+}
+
+// TestCatalogBuildCountsTheWholeReservationWhenTheWatchIsLost: an entry whose
+// build is submitted and whose watch then gives up — here the first status read
+// is refused, which Wait does not retry — goes on billing without this command,
+// so the day counts the whole reservation. The catalog arm settles with the same
+// rule as the per-workflow one (image.go, image_build_catalog.go: both settle
+// what gcp.TerminalStatus says of the result the wait returned).
+//
+// Mutation (run, restore): `lease.settle(ctx, gcp.TerminalStatus(done.Status))`
+// back to `lease.settle(ctx, true)` in runImageBuildCatalog: this test fails
+// with 15600 µ$ on the counters, the first minute of a build still running.
+func TestCatalogBuildCountsTheWholeReservationWhenTheWatchIsLost(t *testing.T) {
+	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
+	fb.FailGets, fb.FailGetCode = 1, http.StatusForbidden
+
+	_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
+	if err == nil || ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, err %v: want the lost watch's own error (%s)", ExitCode(err), err, stderr)
+	}
+	if buildPosts(fb) != 1 {
+		t.Fatalf("the entry's build was submitted %d times, want the one the lost watch is about", buildPosts(fb))
+	}
+	wholeReservationCounted(t, f.db, mustSlug("bitbucket", "acme/app"), "for a catalog build whose watch was lost")
 }
 
 // TestCatalogBuildMountsEveryWorkflowsSecrets: an entry is not a workflow

@@ -412,13 +412,17 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 			notes()
 			return builtSoFar(err, built)
 		}
-		id, err := r.submitAndWait(ctx, b, t.lc, t.cfg, t.spec, wf, t.lc.BaseImage(t.cfg.Workflows[wf].BaseKind()), gitID)
+		id, ended, err := r.submitAndWait(ctx, b, t.lc, t.cfg, t.spec, wf, t.lc.BaseImage(t.cfg.Workflows[wf].BaseKind()), gitID)
 		if id == "" && err != nil {
 			// Nothing was submitted, so nothing is billed: the reservation goes
 			// back rather than being recorded as a spend.
 			err = errors.Join(err, lease.release(ctx))
 		} else {
-			if werr := lease.settle(ctx, true); werr != nil {
+			// ended, not "the wait returned": a build whose watch was lost — a
+			// failed status read, a cancelled context — may still be running,
+			// and the whole reservation is what the day counts for one
+			// (buildLease.settle).
+			if werr := lease.settle(ctx, ended); werr != nil {
 				err = errors.Join(err, werr)
 			}
 		}

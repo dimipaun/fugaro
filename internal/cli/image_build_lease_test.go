@@ -85,6 +85,42 @@ func buildBudgetCaps(db *gcpfake.RTDB) {
 	db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 100 * usd1})
 }
 
+// wholeReservationCounted fails the test unless the day counts the WHOLE of a
+// build's reservation: the repository's and the project's day counters and the
+// repository's spent leaf all hold what the lease reserved, priced here from the
+// same book the fixture sizes every build with. It is what a build that is out
+// and unbounded by this command's watch has to leave — the whole thing, not the
+// minutes a watch saw before it was lost and not nothing at all. why names the
+// build the caller is asserting about, so a failure reads as its own case.
+func wholeReservationCounted(t *testing.T, db *gcpfake.RTDB, slug, why string) {
+	t.Helper()
+	rate, err := budget.BuildCost(pricedBook(), "E2_HIGHCPU_8", "us-east5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := rate.Estimate()
+	client, err := newBudgetClient(context.Background(), db.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, err := budget.ReadBuildState(context.Background(), client, slug, today())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		what string
+		got  budget.Micros
+	}{
+		{"the repository's day counter", read.State.Repo.Counted},
+		{"the project's day counter", read.State.Global.Counted},
+		{"the repository's day spend", read.State.Repo.Spent},
+	} {
+		if c.got != want {
+			t.Errorf("%s is %d µ$ %s, want the whole %d µ$ reservation: a build nothing here watched records all of it, and the first minute of it is what the other direction leaves", c.what, c.got, why, want)
+		}
+	}
+}
+
 // buildBudgetForRig is buildBudgetWorld for an init rig, whose config lives at
 // r.cfg rather than in a cloud fixture: the refresh tests build a target out of
 // the rig's loaded config, so the budget block has to be in it before the load.

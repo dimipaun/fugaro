@@ -537,6 +537,17 @@ func retryable(ctx context.Context, err error) bool {
 // terminal are the build statuses Wait stops at.
 var terminal = []string{"SUCCESS", "FAILURE", "INTERNAL_ERROR", "TIMEOUT", "CANCELLED", "EXPIRED"}
 
+// TerminalStatus reports whether status is one of those: the build is over,
+// whatever its outcome. Wait's two kinds of error are not one fact and a caller
+// that measures what a build spent has to tell them apart — a build that ended
+// FAILURE (or TIMEOUT, or CANCELLED) is finished, and its status says so, while
+// a status read that failed or a cancelled wait is a build that may still be
+// running, which is what Wait's own sentence says when it gives up. The status
+// of a result Wait returned with the first kind of error is the terminal one;
+// with the second it is the last one it read (or the empty status of a read
+// that never succeeded).
+func TerminalStatus(status string) bool { return slices.Contains(terminal, status) }
+
 // stepOutputs reads a finished build's step outputs: the build step's is
 // the candidate's pushed digest, and promote's says "superseded" when the
 // gate found a newer record, so latest stayed. ok is false without a
@@ -573,7 +584,9 @@ func stepOutputs(bd *cloudbuild.Build) (digest string, superseded, ok bool) {
 // the build's pushed-image results (a SUCCESS without either leaves Digest
 // empty). A transient failure to read the status is retried (see
 // waitRetries); when Wait gives up, the build may still be running, and
-// the error says so.
+// the error says so — the returned result's Status is terminal exactly when
+// the build really ended (TerminalStatus), which is how a caller tells the
+// two failures apart.
 func (b *Builder) Wait(ctx context.Context, id string, poll time.Duration) (BuildResult, error) {
 	if poll == 0 {
 		poll = 10 * time.Second

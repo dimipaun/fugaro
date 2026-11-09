@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -407,6 +408,36 @@ func TestImageBuildCloudFailureIsRemote(t *testing.T) {
 // TestImageBuildCloudDigestUnknown: a SUCCESS without pushed-image results
 // still built and pushed the tag, so it is a success, but the output says
 // the digest is unknown rather than printing an empty one.
+// TestImageBuildCountsTheWholeReservationWhenTheWatchIsLost: a wait that gives
+// up is not a build that ended. Wait fails both for a build that finished badly
+// — whose status is terminal — and for one whose status could not be read, and
+// the second is a build that may still be running, which is what its own error
+// says (internal/backend/gcp's Wait). The lease has to settle that one like
+// --no-wait: the whole reservation, because Cloud Build goes on billing and the
+// minute this command watched is not what the build costs.
+//
+// Mutation (run, restore): settle on "the wait returned an error" (waited true,
+// which is what all three arms did) and this test fails with 15 600 µ$ counted —
+// one minute at the lease's rate, with the rest of the reservation handed back
+// to the day's caps while the build is still spending it.
+func TestImageBuildCountsTheWholeReservationWhenTheWatchIsLost(t *testing.T) {
+	fb, f := cloudBuildCheckout(t, false)
+	// The first status read is refused, and a 403 is not something Wait retries:
+	// the watch gives up at once, over a build Cloud Build is still running.
+	fb.FailGets, fb.FailGetCode = 1, http.StatusForbidden
+	_, stderr, err := executeBuild(t, "image", "build", "--base", "b:1")
+	if err == nil {
+		t.Fatalf("a build whose status could not be read succeeded:\n%s", stderr)
+	}
+	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "may still be running") {
+		t.Fatalf("exit %d, err %v: want the lost watch's own error", ExitCode(err), err)
+	}
+	if buildPosts(fb) != 1 {
+		t.Fatalf("the build was submitted %d times, want the one the lost watch is about", buildPosts(fb))
+	}
+	wholeReservationCounted(t, f.db, mustSlug("bitbucket", "acme/app"), "for a build whose watch was lost")
+}
+
 func TestImageBuildCloudDigestUnknown(t *testing.T) {
 	fb, _ := cloudBuildCheckout(t, false)
 	fb.NoResults = true

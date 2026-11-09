@@ -374,7 +374,15 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	// a build Cloud Build billed, and the day counts what it spent. A settle
 	// that fails is the error the person sees, because an unrecorded spend
 	// is what the next build's reservation is judged against.
-	if err := lease.settle(ctx, true); err != nil {
+	//
+	// What the day counts is decided by whether the build ended, not by
+	// whether the wait returned an error: Wait fails both for a build that
+	// finished badly — its status is terminal — and for a watch this command
+	// lost (a status read that failed, a cancelled context), where the build
+	// may still be running. The lost watch records the whole reservation, like
+	// --no-wait and for the same reason: nothing here knows what the minutes
+	// after the last status read cost.
+	if err := lease.settle(ctx, gcp.TerminalStatus(res.Status)); err != nil {
 		return withLease(waitErr, err)
 	}
 	if waitErr != nil {

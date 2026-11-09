@@ -1393,4 +1393,10 @@ func TestRefreshBuildsWaitFailureSaysTheBuildKeepsRunning(t *testing.T) {
 			t.Errorf("error lacks %q: %v", want, err)
 		}
 	}
+	// The build goes on billing, and the day has to say so: a wait that gives up
+	// (here a cancelled context, an empty last status) is not a build that ended,
+	// so the lease settles the whole reservation rather than the minutes it
+	// watched (image.go and image_build_catalog.go make the same call for their
+	// own waits).
+	wholeReservationCounted(t, r.budget, tg.spec.Slug, "for a build whose watch was lost")
 }

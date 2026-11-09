@@ -378,7 +378,12 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			}
 			res = done
 			if waitErr != nil {
-				return withLease(remote(waitErr), lease.settle(ctx, true))
+				// Watched only when the build really ended: a wait that failed
+				// on a status read, or on a cancelled context, leaves a build
+				// that may still be running, and the whole reservation is what
+				// the day counts for one (buildLease.settle, and the same
+				// decision image.go makes for its own wait).
+				return withLease(remote(waitErr), lease.settle(ctx, gcp.TerminalStatus(done.Status)))
 			}
 		}
 		switch {
