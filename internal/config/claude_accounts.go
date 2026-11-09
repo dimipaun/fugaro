@@ -85,19 +85,20 @@ const MaxClaudeAccountNameLen = 31
 // segment is the sentinel's (internal/runner's checkReviewClassModelPath, D1417
 // and D1422). The value is admitted at those two reference sites and nowhere
 // else: it is still no claude_accounts KEY (ValidateClaudeAccounts) and still no
-// account a choice key may name (AnthropicKeyAccountChoiceMessage), because a
-// stage's account is a token the job's environment carries and this credential
-// is fetched per call from the platform's own store.
+// account a choice key may name (NonAccountChoiceMessage, whose sentence for
+// this value is AnthropicKeyAccountChoiceMessage), because a stage's account is
+// a token the job's environment carries and this credential is fetched per call
+// from the platform's own store.
 //
 // The account-CHOICE keys stand beside those readers and are the same claim
 // from the other side — a profile entry says which account a repository's runs
 // may use, a choice key says which account a run's stages choose — so they
-// refuse the value too, in this file's one sentence for them
-// (AnthropicKeyAccountChoiceMessage): localcfg's choiceRefProblem (the
-// default_claude_account and stages.<s>.claude_account keys) and
-// projectpolicy's decoder (default_claude_account and claude_account_stages) —
-// the entry lookup's own sentence would otherwise prescribe the claude_accounts
-// entry ValidateClaudeAccounts refuses.
+// refuse the value too, in this value's own sentence
+// (AnthropicKeyAccountChoiceMessage through NonAccountChoiceMessage): localcfg's
+// choiceRefProblem (the default_claude_account and stages.<s>.claude_account
+// keys) and projectpolicy's decoder (default_claude_account and
+// claude_account_stages) — the entry lookup's own sentence would otherwise
+// prescribe the claude_accounts entry ValidateClaudeAccounts refuses.
 //
 // Which repositories it may serve is decided where every other axis value's is
 // (projectpolicy's accounts block, D3), and its own source is the profiles that
@@ -107,10 +108,13 @@ const MaxClaudeAccountNameLen = 31
 // repository says its reviews are served by the project's own key.
 //
 // It is no longer the axis's only such value: the project's provider key
-// (ProviderKeyAccount) is the second, and every reader of the axis answers the
-// two the same way — the predicate the readers share is AxisNonAccountValue,
-// and the one sentence the choice keys answer them with is
-// NonAccountChoiceMessage.
+// (ProviderKeyAccount) is the second. The readers that must answer both the
+// same way share AxisNonAccountValue — no token mounted for either, neither
+// defined in claude_accounts, neither resolved against the account blocks —
+// and the choice keys share NonAccountChoiceMessage, one sentence per value.
+// The readers that must keep them APART read the value itself instead, because
+// the value is the admission unit: the published accounts block is keyed by it
+// (projectpolicy's DeriveAccounts) and a service row carries it verbatim.
 const AnthropicKeyAccount = AnthropicSecret + "--project"
 
 // ProviderKeySecret is the logical name of the project's provider key: the
@@ -433,8 +437,10 @@ const providerKeyAccountNameMessage = `this is the account axis's value for the 
 // forbids, which is no remedy at all.
 //
 // It is declared once, beside the sentinel itself, because two packages ask the
-// question (localcfg's choiceRefProblem, projectpolicy's decoder): a second
-// wording for one rule is a second rule.
+// question (localcfg's choiceRefProblem, projectpolicy's decoder, both through
+// NonAccountChoiceMessage, which answers this sentence for the sentinel and
+// providerKeyAccountChoiceMessage for the second value): a second wording for
+// one rule is a second rule.
 const AnthropicKeyAccountChoiceMessage = `the project's own Anthropic API key is not a Claude account and no job this installation deploys mounts it: its credential is the project's own copy, held by the platform, so a key that chooses a run's account cannot name it — drop the key`
 
 // providerKeyAccountChoiceMessage is the same sentence for the axis's second

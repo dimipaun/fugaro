@@ -145,16 +145,20 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 		// the one function the deployer, the launcher and the runner compute
 		// the axis with): the profile's no-account job, whose name, service
 		// account and mounts are byte for byte what this deployer built before
-		// accounts existed (D9), plus one per account the profile lists. One
-		// of those values is no Claude account at all — the project's own
-		// Anthropic API key (config.AnthropicKeyAccount), which a profile may
-		// list and which config.ValidClaudeAccountRef admits there — and its
-		// job is deployed like any other value of the axis: it mounts no token
-		// (projectAccountMount) and its review-only variant is the one the
-		// credentials service serves the key from (D1417, F17). Nothing
-		// refuses it: the value carries no credential of the installation's,
-		// so there is no mount to get wrong, and a job this deployer skipped
-		// is a review the launcher would ask Cloud Run for and never find.
+		// accounts existed (D9), plus one per account the profile lists. Two
+		// of those values are no Claude account at all — the project's own
+		// Anthropic API key (config.AnthropicKeyAccount) and the project's
+		// provider key (config.ProviderKeyAccount), which a profile may list
+		// and which config.ValidClaudeAccountRef admits there — and each
+		// one's job is deployed like any other value of the axis: it mounts no
+		// token (projectAccountMount) and its review-only variant is the one
+		// the credentials service serves that credential from (D1417, F17).
+		// Nothing refuses them: neither value carries a credential of the
+		// installation's, so there is no mount to get wrong, and a job this
+		// deployer skipped is a review the launcher would ask Cloud Run for
+		// and never find. The loop is the axis itself, so the two are
+		// deployed without this function naming them: it builds one job per
+		// value config.ProjectJobAccounts yields, whichever value that is.
 		//
 		// Each account's job gets its own copy of the profile's mounts — the
 		// token of one account must never ride on another's job — its own copy
