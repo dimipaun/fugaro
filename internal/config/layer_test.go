@@ -4,11 +4,14 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 )
 
 const testLayer = `version: 1
@@ -1049,5 +1052,78 @@ func TestProjectLayerJobsIsTopLevel(t *testing.T) {
 	}
 	if (*ProjectLayer)(nil).SetsJobs() {
 		t.Error("SetsJobs = true for no layer at all")
+	}
+}
+
+// TestProjectLayerSecurityDecodesStrictly: the project layer's security: block
+// (docs/security-classification, D1501, D1502) is a top-level key of the layer
+// file, and it is the same shape a repository's own block carries — rows of
+// {name, match, category}, validated by sensitivity.Pattern.Validate — plus
+// always_level_3, which the layer's alone carries (D1517): the switch that puts
+// every run of the project at level 3, and where D1503's refused `**` pattern
+// points instead.
+//
+// The rows are the reason the block is decoded strictly rather than read out of
+// a tree: a pattern the matcher cannot read, a category outside the seven-value
+// vocabulary or a name the engine's own floor already spends is a rule that
+// would silently never fire, and it is refused here, at the row's own index,
+// rather than at the run that trusted it (F21).
+func TestProjectLayerSecurityDecodesStrictly(t *testing.T) {
+	const block = `security:
+  patterns:
+    - { name: payments, match: "internal/payments/**", category: credentials }
+    - { name: deploy, match: "deploy/terraform/**", category: targets }
+  always_level_3: true
+`
+	l := mustLayer(t, layerHead+block)
+	if l.Security == nil {
+		t.Fatal("security: decoded to no block")
+	}
+	rows := l.Security.Patterns
+	if len(rows) != 2 || rows[0].Name != "payments" || rows[0].Match != "internal/payments/**" ||
+		rows[0].Category != sensitivity.Credentials || rows[1].Name != "deploy" || rows[1].Category != sensitivity.Targets {
+		t.Fatalf("security patterns = %+v", rows)
+	}
+	if !l.Security.AlwaysLevel3 {
+		t.Error("always_level_3 = false for a layer whose text writes it true")
+	}
+
+	for _, tc := range []struct{ name, block string }{
+		{"no block", ""},
+		{"a null block", "security:\n"},
+	} {
+		if l := mustLayer(t, layerHead+tc.block); l.Security != nil {
+			t.Errorf("%s: security = %+v, want no block", tc.name, l.Security)
+		}
+	}
+	// An empty block is a layer that adds nothing and a switch that is off,
+	// which is what a project that means "the floor and my repositories' rows
+	// alone" writes.
+	if l := mustLayer(t, layerHead+"security: {}\n"); l.Security == nil || l.Security.AlwaysLevel3 || len(l.Security.Patterns) != 0 {
+		t.Errorf("security: {} = %+v, want an empty block", l.Security)
+	}
+	if l := mustLayer(t, layerHead+"security:\n  always_level_3: false\n"); l.Security == nil || l.Security.AlwaysLevel3 {
+		t.Errorf("always_level_3: false = %+v, want the switch off", l.Security)
+	}
+	if l := mustLayer(t, layerHead+block+"defaults:\n  agent:\n    review_rounds: 2\n"); len(l.Security.Patterns) != 2 {
+		t.Errorf("the block beside defaults: = %+v", l.Security)
+	}
+
+	floor := sensitivity.Floor()[0].Name
+	for _, tc := range []struct{ name, block, want string }{
+		{"an unknown key of the block", "security:\n  severity: high\n", "field severity not found"},
+		{"an unknown key of a row", "security:\n  patterns:\n    - { name: deploy, match: \"deploy/**\", category: targets, mode: pro }\n", "field mode not found"},
+		{"a category outside the vocabulary", "security:\n  patterns:\n    - { name: deploy, match: \"deploy/**\", category: deployment }\n", "category must be one of " + sensitivity.CategoryList()},
+		{"a pattern that matches everything", "security:\n  patterns:\n    - { name: all, match: \"**\", category: targets }\n", "must name a tree, not the whole repository"},
+		{"a name the engine's floor already carries", "security:\n  patterns:\n    - { name: " + floor + ", match: \"deploy/**\", category: targets }\n", "repeats the name " + strconv.Quote(floor) + " of the engine's own floor"},
+		{"a name repeated in one list", "security:\n  patterns:\n    - { name: deploy, match: \"deploy/**\", category: targets }\n    - { name: deploy, match: \"deploy/terraform/**\", category: targets }\n", "repeats the name \"deploy\""},
+		{"a glob doublestar cannot read", "security:\n  patterns:\n    - { name: deploy, match: \"deploy/[\", category: targets }\n", "is not a valid glob pattern"},
+		{"the block under defaults", "defaults:\n  security:\n    patterns:\n      - { name: deploy, match: \"deploy/**\", category: targets }\n", "field security not found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := layerProblems(t, layerHead+tc.block); !strings.Contains(got, tc.want) {
+				t.Errorf("problems %q, want one containing %q", got, tc.want)
+			}
+		})
 	}
 }
