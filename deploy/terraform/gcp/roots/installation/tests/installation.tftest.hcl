@@ -36,8 +36,8 @@ variables {
   launchers              = ["user:launcher@example.com"]
   operators              = ["user:operator@example.com"]
   launcher_bucket_condition = {
-    title      = "fugaro-launchers-runs-tokens"
-    expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")"
+    title      = "fugaro-launchers-runs-tokens-issues"
+    expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/issues/\")"
   }
 }
 
@@ -408,14 +408,14 @@ run "people" {
   }
   assert {
     condition     = keys(google_storage_bucket_iam_member.runs_launcher) == ["user:launcher@example.com"]
-    error_message = "launchers who are not operators write runs/ and tokens/"
+    error_message = "launchers who are not operators write runs/, tokens/ and issues/"
   }
   assert {
     condition = alltrue([for m in google_storage_bucket_iam_member.runs_launcher :
       m.role == "roles/storage.objectUser" && m.bucket == "fugaro-runs-proj-1234" &&
-      one(m.condition).title == "fugaro-launchers-runs-tokens" &&
-    one(m.condition).expression == "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")"])
-    error_message = "the launchers' write grant is objectUser on runs/ and tokens/ only"
+      one(m.condition).title == "fugaro-launchers-runs-tokens-issues" &&
+    one(m.condition).expression == "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/issues/\")"])
+    error_message = "the launchers' write grant is objectUser on runs/, tokens/ and issues/ only"
   }
   assert {
     condition     = keys(google_storage_bucket_iam_member.state) == ["user:operator@example.com"] && google_storage_bucket_iam_member.state["user:operator@example.com"].bucket == "fugaro-tfstate-proj-1234"
@@ -458,7 +458,8 @@ run "launcher_who_is_an_operator" {
   }
 }
 
-# A condition that is not runs/ and tokens/ of this bucket fails the plan.
+# A condition that is not runs/, tokens/ and issues/ of this bucket fails the
+# plan.
 run "launcher_condition_must_be_this_buckets_runs" {
   command = plan
 
@@ -468,7 +469,7 @@ run "launcher_condition_must_be_this_buckets_runs" {
 
   variables {
     launcher_bucket_condition = {
-      title      = "fugaro-launchers-runs-tokens"
+      title      = "fugaro-launchers-runs-tokens-issues"
       expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/\")"
     }
   }
@@ -497,8 +498,15 @@ run "launcher_condition_must_cover_tokens" {
   expect_failures = [google_storage_bucket_iam_member.runs_launcher]
 }
 
-# Widened past tokens/ (a third prefix) fails the plan too.
-run "launcher_condition_not_past_tokens" {
+# The condition one release behind this one — runs/ and tokens/ under the
+# title 0.9.0 wrote, which is what an installation not re-applied since the
+# shared issue store moved to issues/ holds in its own state — fails the plan
+# when it is passed as the desired condition: the launcher files issues under
+# issues/ (docs/troubleshoot-issue/reconciliation.md D1727), and the
+# precondition is where the Terraform and gcp.LauncherBucketCondition must
+# agree. It is the input `fugaro update` replaces, never a condition this
+# release writes.
+run "launcher_condition_must_cover_issues" {
   command = plan
 
   module {
@@ -508,7 +516,25 @@ run "launcher_condition_not_past_tokens" {
   variables {
     launcher_bucket_condition = {
       title      = "fugaro-launchers-runs-tokens"
-      expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/fugaro/\")"
+      expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")"
+    }
+  }
+
+  expect_failures = [google_storage_bucket_iam_member.runs_launcher]
+}
+
+# Widened past issues/ (a fourth prefix) fails the plan too.
+run "launcher_condition_not_past_issues" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    launcher_bucket_condition = {
+      title      = "fugaro-launchers-runs-tokens-issues"
+      expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/issues/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/builds/\")"
     }
   }
 
@@ -527,7 +553,7 @@ run "launcher_condition_title_must_match" {
   variables {
     launcher_bucket_condition = {
       title      = "other"
-      expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")"
+      expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\") || resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/issues/\")"
     }
   }
 
@@ -728,7 +754,7 @@ run "bad_launcher_bucket_condition" {
 
   variables {
     launcher_bucket_condition = {
-      title      = "fugaro-launchers-runs-tokens"
+      title      = "fugaro-launchers-runs-tokens-issues"
       expression = "true"
     }
   }

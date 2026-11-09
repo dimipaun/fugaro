@@ -6,7 +6,7 @@ A launcher or an operator in a checkout of an onboarded repository can run `fuga
 
 An operator publishes the project's config to the runs bucket: `fugaro setup`, `fugaro update` and `fugaro update --repo` each do it after they write the local config, and `fugaro update --publish-config` does it and stops.
 
-It is `fugaro/config.yaml` in `gs://fugaro-runs-<gcp-project>`. It holds the project config except what is owner-only, personal or derived, and it never holds a secret, the `terraform:` section, `user:`, `endpoints:`, `providers:`, `project_secrets:` or a repository's `base_branch`. Launchers read the runs bucket, and write only `runs/` and `tokens/`; only operators write the shared file. A publish merges into what is published, so a machine that lacks another's repositories does not erase them — to remove an entry, edit the object by hand.
+It is `fugaro/config.yaml` in `gs://fugaro-runs-<gcp-project>`. It holds the project config except what is owner-only, personal or derived, and it never holds a secret, the `terraform:` section, `user:`, `endpoints:`, `providers:`, `project_secrets:` or a repository's `base_branch`. Launchers read the runs bucket, and write only `runs/`, `tokens/` and `issues/`; only operators write the shared file. A publish merges into what is published, so a machine that lacks another's repositories does not erase them — to remove an entry, edit the object by hand.
 
 ## The `gcp_project:` line (**per repository**)
 
