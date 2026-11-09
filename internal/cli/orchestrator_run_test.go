@@ -74,7 +74,8 @@ func (f *daemonFixture) daemon(t *testing.T, binary string) (*orchestratorDaemon
 	var out strings.Builder
 	d := &orchestratorDaemon{
 		lc: lc, id: id, db: db, env: env, node: node, lease: lease, holder: daemonHolder,
-		interval: time.Minute, binary: binary, running: "v1.2.3",
+		interval: time.Minute, beat: orchestrator.LeaseBeat,
+		binary: binary, running: "v1.2.3",
 		out: &out, warn: &out, launched: &launchInFlight{},
 	}
 	d.cache = &orchestrator.BriefCacheWriter{Getenv: os.Getenv, GOOS: runtime.GOOS, ID: id, Log: func(err error) {
@@ -423,6 +424,61 @@ func TestWaitEndsItsStreamAndWakesOnAChange(t *testing.T) {
 	}
 	if got := runtime.NumGoroutine(); got > baseline+2 {
 		t.Errorf("goroutines went from %d to %d over seven waits, so each wait leaves its stream connected", baseline, got)
+	}
+}
+
+// TestWaitBeatsTheLeaseWhileTheIntervalRuns: the wait refreshes the claim while
+// it runs, on the lease's own cadence. --interval is a person's value and the
+// claim expires at orchestrator.LeaseTTL, so a wait that honoured the flag
+// alone would leave the id un-beaten for a whole interval — an interval a
+// little under the TTL is a claim that lapses under the daemon holding it, and
+// a second daemon takes that id while this one is still driving it. The
+// interval still ends the wait: the cycle comes no sooner than the person asked
+// for, however many beats it took.
+//
+// The fake's Date header has one-second resolution, so the server's clock is
+// the test's own here: the only thing that writes the lease node is a beat, so
+// a stamp moved forward is a beat the wait itself made.
+func TestWaitBeatsTheLeaseWhileTheIntervalRuns(t *testing.T) {
+	f := newDaemonFixture(t)
+	d, _ := f.running(t, "")
+	d.wake = nil
+	d.interval = 300 * time.Millisecond
+	d.beat = 50 * time.Millisecond
+	before, err := d.lease.Read(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	later := before.At.Add(5 * time.Second)
+	f.db.SetClock(func() time.Time { return later })
+
+	start := time.Now()
+	if err := d.wait(context.Background()); err != nil {
+		t.Fatalf("a wait longer than the lease's own beat: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < d.interval {
+		t.Errorf("the wait came back after %s with nothing moving and an interval of %s", elapsed, d.interval)
+	}
+	after, err := d.lease.Read(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.At.After(before.At) {
+		t.Errorf("the lease was stamped %s before a %s wait and %s after it, so the claim went the whole interval without a beat and a daemon waiting longer than its own lease would have it taken",
+			before.At, d.interval, after.At)
+	}
+}
+
+// TestRunRefusesAnIntervalLongerThanTheLease: the flag is bounded by the claim
+// it drives, and a value the daemon cannot serve is refused rather than quietly
+// shortened — before anything is opened, so a mistyped duration costs nothing.
+func TestRunRefusesAnIntervalLongerThanTheLease(t *testing.T) {
+	_, _, err := execute(t, "orchestrator", "run", "--interval", (orchestrator.LeaseTTL + time.Second).String())
+	if err == nil {
+		t.Fatal("an interval longer than the lease the daemon holds was accepted")
+	}
+	if !strings.Contains(err.Error(), "no longer than the lease") {
+		t.Errorf("the refusal is not the interval's own bound: %v", err)
 	}
 }
 

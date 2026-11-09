@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -24,7 +25,17 @@ type launcherFixture struct {
 
 func newLauncherFixture(t *testing.T) *launcherFixture {
 	t.Helper()
-	return &launcherFixture{launchBudgetFixture: newLaunchBudget(t, "enforce")}
+	f := &launcherFixture{launchBudgetFixture: newLaunchBudget(t, "enforce")}
+	// The installation the daemon runs in is this release's, so its job image
+	// is built from a base that knows every field one of its launches carries:
+	// the daemon's launch passes the same gates `fugaro run` passes
+	// (freshLaunchGates), and the budget fixture's own record is a release old
+	// enough that the tier and the title would be refused — which is a fact
+	// about those tests and not about this one. The base is a release past the
+	// newest skew gate rather than a literal, so the next gate does not turn
+	// every daemon test into a refusal.
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, securitySince, 1))
+	return f
 }
 
 // launcher is the real launcher over the fixture's own environment, the way
@@ -143,6 +154,45 @@ func TestRunLauncherRunsThePolicyGate(t *testing.T) {
 	}
 	if _, err := f.runStore(t, runID).ReadTask(ctx); err == nil {
 		t.Fatal("a refused launch stored a task, and the gate refuses before anything is written")
+	}
+}
+
+// TestRunLauncherRefusesAJobImageTheTaskOutgrew: the daemon's launch is
+// `fugaro run`'s launch, so it passes that command's gates before anything of it
+// is written, the per-field image gates included. The item's tier is the one
+// field the daemon cannot drop — a person approved the item carrying it — so an
+// installation whose job image predates the release that ships the field is a
+// refusal, and what must not happen is a start: the run would reach a runner
+// older than the field, which refuses the whole task at bootstrap (task.Parse
+// decodes with DisallowUnknownFields), and the approved attempt would be spent
+// on a run that never did any work. Nothing of the launch is left behind: no
+// task, no claim, no execution.
+func TestRunLauncherRefusesAJobImageTheTaskOutgrew(t *testing.T) {
+	f := newLauncherFixture(t)
+	// The fixture's own image is this release's; this one is the release before
+	// the tier was shipped.
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, governanceSince, -1))
+	ctx := context.Background()
+	l := f.launcher(t)
+	spec := orchestrator.Spec{ItemID: "wi-1", Title: "land the daemon", Repo: "acme/app", Recipe: "standard", RigorTier: "medium", Brief: "This is the launch the image gate refuses."}
+	const runID = "20261109-101500-abcd"
+
+	_, err := l.Launch(ctx, spec, runID)
+	if err == nil {
+		t.Fatal("a launch onto a job image that cannot read the tier the item carries went through")
+	}
+	if !strings.Contains(err.Error(), "tier") {
+		t.Fatalf("the refusal is not the tier's own gate: %v", err)
+	}
+	s := f.runStore(t, runID)
+	if _, err := s.ReadTask(ctx); err == nil {
+		t.Error("a refused launch stored a task, so a run the job would refuse at bootstrap is on record")
+	}
+	if _, err := s.ReadClaim(ctx); !errors.Is(err, runstore.ErrNotFound) {
+		t.Errorf("a refused launch took the launch claim: %v", err)
+	}
+	if execs := f.run.Executions(); len(execs) != 0 {
+		t.Errorf("a refused launch started %d execution(s): %v", len(execs), execs)
 	}
 }
 

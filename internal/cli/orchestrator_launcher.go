@@ -18,13 +18,13 @@ import (
 // can start the same run id twice, is a hole `fugaro run` does not have. So
 // this implements orchestrator.Launcher over the same steps the command takes
 // — the spec is built by the command's own resolveAttemptPlan and
-// buildAttemptSpec, the task is stored once by createTask, the budget
-// pre-check runs before anything is claimed, and the run is started by
-// launchRun, whose claim is what makes it at most once. What it deliberately
-// does not reach is the command's own flags: `--attach`, the image and
-// compression gates, the seal a person's launch asks for. Those are a person's
-// asks, and a work item carries none of them; a run started by the daemon is
-// the plain launch these steps make.
+// buildAttemptSpec, the task is stored once by createTask, and the run is
+// started by launchRun, whose claim is what makes it at most once — and over
+// the command's own gate block, which the daemon's launch shape passes whole
+// (freshLaunchGates). What it deliberately does not reach is the flags no work
+// item carries: `--attach` above all, whose upload is the command's and whose
+// spec fields are empty here, so the daemon starts the plain launch these steps
+// make and nothing else.
 //
 // The run id is the state's: the starter mints it, commits the intent that
 // records it and only then calls Launch, so the id here is one the node
@@ -90,21 +90,22 @@ func (l *orchestratorLauncher) prepare(ctx context.Context, spec orchestrator.Sp
 	if _, err := embedProjectLayer(ctx, l.env, ts, l.stderr); err != nil {
 		return "", nil, err
 	}
-	// The budget pre-check, before the task is stored and before the claim:
-	// a launch the budget refuses costs no claim to release, which is the
-	// order `fugaro run` refuses in too. It fails closed, so an unreachable
-	// database stops the launch rather than starting a run nothing counts.
-	if err := l.env.budgetPrecheck(ctx, slug, ts, l.stderr); err != nil {
-		return "", nil, err
-	}
-	// The policy gate, after the pre-check and before anything of this launch
-	// is written (run.go's finishLaunch refuses in this order): the repository
-	// must be admitted and the policy must not be newer than this binary, so a
-	// launch the policy refuses leaves no task behind and no claim to release.
-	if err := launchPolicyGates(ctx, l.env, slug, ts); err != nil {
-		return "", nil, err
-	}
+	// The gates `fugaro run` passes before it writes anything of a launch, in
+	// its own order and from its own code (freshLaunchGates): the budget
+	// pre-check, the workflow's image and per-field gates, the author, the
+	// seal, the proxy, the parallel cap, the artifact caps and the policy.
+	// The daemon's launch is that same shape, so it is that same block — a
+	// launch path that ran only the pre-check and the policy started runs the
+	// command refuses, onto a runner that cannot read the sealed token or a
+	// field the task carries, and the run then died at bootstrap with the
+	// approved attempt spent. Before the task is stored and before the claim,
+	// like every gate there: a refusal leaves no task, no token, no claim and
+	// no execution behind.
+	compression, _ := compressionRequested(ctx, l.env, ts)
 	s := runstore.Open(l.env.bucket.Bucket, slug, ts.RunID)
+	if _, err := freshLaunchGates(ctx, l.env, o, slug, s, ts, compression || ts.CompressionOff, l.stderr, false); err != nil {
+		return "", nil, err
+	}
 	if err := createTask(ctx, s, ts); err != nil {
 		return "", nil, err
 	}

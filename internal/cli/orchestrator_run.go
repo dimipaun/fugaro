@@ -51,7 +51,11 @@ type orchestratorRunOptions struct {
 	binary string
 	// interval is how long a cycle waits when the node says nothing moved.
 	// The stream is the other half of the wait, so this is the ceiling on how
-	// stale a tick can be, not the usual delay.
+	// stale a tick can be, not the usual delay. A wait beats the lease while it
+	// runs, so the interval is not what keeps the claim fresh; it is still
+	// capped at the claim's own life (orchestrator.LeaseTTL), because a daemon
+	// that holds an id and beats it between cycles further apart than the claim
+	// is worth is not a cadence this command offers.
 	interval time.Duration
 	// once is one cycle and exit. It is what a person (or a harness that holds
 	// every command to returning with its stdin closed) can run: the lease is
@@ -93,6 +97,15 @@ func runOrchestratorRun(cmd *cobra.Command, o *orchestratorRunOptions) error {
 	if o.interval <= 0 {
 		return userErr("--interval takes a positive duration such as 30s, and %s is not one", o.interval)
 	}
+	// The wait beats the lease while it runs, on the lease's own cadence and
+	// not on this flag, so the claim is never left to lapse between cycles.
+	// What the bound refuses is the cadence itself: a daemon that holds an
+	// orchestrator id and drives it with cycles further apart than the claim is
+	// worth is not a shape this command offers, and a value it cannot serve is
+	// refused rather than quietly shortened.
+	if o.interval > orchestrator.LeaseTTL {
+		return userErr("--interval takes a wait no longer than the lease this daemon holds (%s), and %s is longer", orchestrator.LeaseTTL, o.interval)
+	}
 	lc, db, err := openBudget(ctx, o.cloudOptions)
 	if err != nil {
 		return err
@@ -119,7 +132,8 @@ func runOrchestratorRun(cmd *cobra.Command, o *orchestratorRunOptions) error {
 	}
 	d := &orchestratorDaemon{
 		lc: lc, id: id, db: db, env: env, node: node, lease: lease, holder: holder,
-		interval: o.interval, binary: o.binary, running: Version, once: o.once,
+		interval: o.interval, beat: orchestrator.LeaseBeat,
+		binary: o.binary, running: Version, once: o.once,
 		out: cmd.OutOrStdout(), warn: cmd.ErrOrStderr(),
 		launched: &launchInFlight{},
 	}
@@ -145,6 +159,11 @@ type orchestratorDaemon struct {
 	interval time.Duration
 	binary   string
 	running  string
+	// beat is how often the wait refreshes the claim while it runs. It is the
+	// lease's own cadence (orchestrator.LeaseBeat) and never a flag: a value
+	// below it is a claim that lapses between beats, and the person's own knob
+	// is the interval.
+	beat time.Duration
 	// once is --once: one cycle, then the clean exit.
 	once     bool
 	tick     *orchestrator.Tick
@@ -568,12 +587,31 @@ func (d *orchestratorDaemon) report(rep orchestrator.Report, err error) {
 // and a 64KiB scanner buffer for as long as its context lives, and the stream
 // of a wait that left its context behind would still be connected to the node
 // a day later: one per cycle is a leak with no bound at all.
+//
+// The wait beats the claim while it runs, on the lease's own cadence. The
+// interval is a person's value and the claim expires at LeaseTTL, so a wait
+// that honoured the flag alone would leave the id un-beaten for a whole
+// interval: an interval a little under the TTL is a claim that lapses under the
+// daemon holding it, and a second daemon takes that id while this one is still
+// driving it. A beat that failed is not answered here — it ends the wait, and
+// the loop's own Beat at the top of the cycle decides it, because a lease
+// failure has one answer and it is not this function's (a claim that went to
+// another machine stops the daemon, a database error is the process's).
 func (d *orchestratorDaemon) wait(ctx context.Context) error {
 	if d.wake != nil {
 		return d.wake(ctx)
 	}
 	timer := time.NewTimer(d.interval)
 	defer timer.Stop()
+	// A wait no longer than the lease's own beat needs no ticker: the loop's
+	// Beat at the top of the next cycle is that beat, which is also what keeps
+	// the default interval — the beat itself — from beating twice a cycle.
+	var beats <-chan time.Time
+	if d.beat > 0 && d.beat < d.interval {
+		ticker := time.NewTicker(d.beat)
+		defer ticker.Stop()
+		beats = ticker.C
+	}
 	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	events := d.db.Stream(sctx, d.node.Path())
@@ -597,6 +635,10 @@ func (d *orchestratorDaemon) wait(ctx context.Context) error {
 				return nil
 			case "keep-alive":
 				continue
+			}
+		case <-beats:
+			if err := d.lease.Beat(ctx); err != nil {
+				return nil
 			}
 		case <-timer.C:
 			return nil

@@ -758,406 +758,8 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		}
 	}
 	if prior == nil {
-		// The cascade's own gate, first: nothing about a run this launch
-		// cannot carry is worth an --attach upload, a cap check or a claim
-		// (cascadeLaunchRefusal).
-		if err := cascadeLaunchRefusal(ctx, env, spec); err != nil {
-			return launchResult{}, err
-		}
-		// --attach, before the gates below: its recipe refusal, its caps,
-		// D9's line and its image gate (design §4, plan P7/P9). It uploads
-		// nothing here — attachUpload does that below, after the last gate
-		// that can still refuse this launch, so a refused launch leaves
-		// nothing in the bucket under a run id that never gets a task. A
-		// launch with no --attach does nothing here at all.
-		agentRecipe, kind, clone, shared := "", "", false, false
-		// mode is the same answer for baseBranchSkew, and nil where clone is
-		// false for the other gates because nothing was read: a launch for
-		// another repository from a checkout that is not its own reads no
-		// workflow of it, and baseBranchSkew asks both judges there rather
-		// than take the one a derived workflow would use (its comment has why).
-		var mode *bool
-		if co := checkoutConfig(ctx, spec.Repo); co != nil {
-			agentRecipe = co.Agent.Recipe
-			if w, ok := co.Workflows[spec.Workflow]; ok {
-				kind = w.BaseKind()
-				clone = w.Checkout == config.CheckoutClone
-				shared = w.Checkout == config.CheckoutShared
-				m := clone
-				mode = &m
-			}
-		}
-		caps, err := attachLaunch(ctx, env, slug, spec, s.Prefix(), o.attach, kind, clone, warn)
+		caps, err := freshLaunchGates(ctx, env, o, slug, s, spec, compressionGate, warn, skipBudget)
 		if err != nil {
-			return launchResult{}, err
-		}
-		// The base branch's own gate, before anything is written: a runner
-		// older than baseBranchSince cannot read the field and would refuse
-		// the whole task, so the field is dropped rather than the launch
-		// (baseBranchSkew). Here, and not with the gates below, because it
-		// decides what the task createTask writes.
-		baseBranchSkew(ctx, env, slug, spec, mode, warn)
-		// What this launch asks of its job image's runner about review
-		// levels, resolved once for the two branches below (a derived image
-		// and a checkout: clone workflow), the way compressionGate is: a
-		// launch that asks nothing is never gated, whatever its image is.
-		levelsRecipe, levelsRecipeUnknown := launchRecipeForLevels(ctx, spec)
-		// The launch is refused on the resolution's own refusal (L3.2): a run
-		// whose levels cannot be resolved — the same model at level 1 and 2, a
-		// level turned off under the owner's floor, an effort a provider route
-		// would drop — is refused here, before the task is written, rather
-		// than by the job it was launched into (G2, D721, D722).
-		// The configuration this launch can read of the run's own — the file
-		// at the ref, with the project layer it resolves over, or the layer
-		// the task carries where no file can be read — resolved once for both
-		// readers below: the levels the launch asks about, and the level one of
-		// the two writes with its model named none (checkNoneModelImage,
-		// launchLevelsConfig).
-		fileCfg := launchLevelsConfig(ctx, env, spec)
-		levelsAsk, err := launchReviewLevelsAsk(ctx, env, spec, fileCfg, levelsRecipe, levelsRecipeUnknown)
-		if err != nil {
-			return launchResult{}, err
-		}
-		// checkRecipeImage and checkImageSince judge a workflow's derived
-		// image by its build record, which a checkout: clone workflow never
-		// has (it runs the installation's base image directly, not a
-		// per-repository build): checkCloneImageSince judges base_images.base
-		// itself instead. cloneSince is unconditional: a clone workflow needs
-		// the runner's own blobless-clone bootstrap (plan Task 17,
-		// FUGARO_CHECKOUT) whether or not it uses a recipe or a project
-		// layer, and nothing else here enforces that base_images.base is
-		// actually that recent: fugaro-base could first be published from an
-		// older release, or --image-source could mirror one.
-		if clone {
-			if err := checkCloneImageSince(env.lc, spec, cloneSince, "this checkout: clone workflow", "how to provision a blobless clone (FUGARO_CHECKOUT)", "", warn); err != nil {
-				return launchResult{}, err
-			}
-			if needsRecipeImage(spec, agentRecipe) {
-				if err := checkCloneRecipeImage(ctx, env.lc, spec, warn); err != nil {
-					return launchResult{}, err
-				}
-			}
-			if spec.ProjectLayer != nil {
-				if err := checkCloneImageSince(env.lc, spec, layeredSince, "the project layer", "the project layer", "", warn); err != nil {
-					return launchResult{}, err
-				}
-			}
-			if spec.OAuthToken != "" {
-				if err := checkCloneImageSince(env.lc, spec, namedTokensSince,
-					"Claude account "+pluginwire.Printable(spec.OAuthToken), "named Claude accounts", "", warn); err != nil {
-					return launchResult{}, err
-				}
-			}
-			if spec.Title != "" {
-				if err := checkCloneImageSince(env.lc, spec, titlesSince,
-					"a job title (--title, kept by --pr follow-ups and --retry)", "the job title", "", warn); err != nil {
-					return launchResult{}, err
-				}
-			}
-			if spec.PlanTask != "" {
-				if err := checkCloneImageSince(env.lc, spec, planTaskSince,
-					"a plan task (--plan-task)", "the plan task", "", warn); err != nil {
-					return launchResult{}, err
-				}
-			}
-			// The compression gate: a runner older than compressionSince knows
-			// neither the key nor the field and refuses whichever it meets at
-			// bootstrap, so the launch is judged on both (compressionGate
-			// above). It fires whether or not --no-compression is set, since
-			// the override turns the sidecar off and not the key the old
-			// runner cannot read.
-			if compressionGate {
-				if err := checkCloneImageSince(env.lc, spec, compressionSince,
-					"agent.compression", "context compression", "", warn); err != nil {
-					return launchResult{}, err
-				}
-			}
-			// The rigor: gate, judged on the file the run will read rather
-			// than on a task field: see checkRigorImage. Unconditional, since
-			// the repository's file alone can carry the key.
-			if err := checkCloneRigorImage(ctx, env, spec, warn); err != nil {
-				return launchResult{}, err
-			}
-			// The governance: gate, judged the same way and for the same
-			// reason: see checkGovernanceImage.
-			if err := checkCloneGovernanceImage(ctx, env, spec, warn); err != nil {
-				return launchResult{}, err
-			}
-			// The project layer's jobs: block, the same shape and the same
-			// reason again: see jobsSince. The key is the layer's alone, so
-			// there is no repository half here.
-			if err := checkCloneJobsImage(ctx, env, spec, warn); err != nil {
-				return launchResult{}, err
-			}
-			// The security: block, the same shape as the rigor: gate above
-			// and for the same reason: see checkSecurityImage.
-			if err := checkCloneSecurityImage(ctx, env, spec, warn); err != nil {
-				return launchResult{}, err
-			}
-			// The run's own rigor request, gated on the field the same way:
-			// a runner older than rigorRequestSince refuses a task carrying
-			// rigor or paths outright (task.Parse decodes with
-			// DisallowUnknownFields). A launch that carries neither field is
-			// never gated — but a follow-up that passed no flag still carries
-			// one when its PR recorded a mode (T5.2), which is what
-			// rigorGateSubject says in the refusal.
-			if asksForRigor(spec) {
-				if err := checkCloneImageSince(env.lc, spec, rigorRequestSince,
-					rigorGateSubject(o, spec), "the rigor request", "", warn); err != nil {
-					return launchResult{}, err
-				}
-			}
-			// The tier a task carries, judged on the field like the request
-			// above and under the release that ships both the field and the
-			// governance: block its expectation comes from (governanceSince):
-			// a runner older than that refuses a task carrying a tier outright
-			// (task.Parse decodes with DisallowUnknownFields). A launch that
-			// carries none is never gated — but a follow-up that passed no
-			// flag still carries one when its PR recorded a tier, which is
-			// what tierGateSubject says in the refusal.
-			if spec.Tier != "" {
-				if err := checkCloneImageSince(env.lc, spec, governanceSince,
-					tierGateSubject(o, spec), "the tier", "", warn); err != nil {
-					return launchResult{}, err
-				}
-			}
-			// The review levels' gate, judged on the run this launch
-			// resolves rather than on a task field: a mode's own level 3, a
-			// level the run inserts (O7) and the owner's floor all reach a
-			// run with no field and no configuration key, and a runner older
-			// than reviewLevelsSince drops every one of them in silence
-			// (reviewLevelsAsk).
-			if err := checkCloneReviewLevelsImage(env.lc, spec, levelsAsk, warn); err != nil {
-				return launchResult{}, err
-			}
-			// The spelling's own gate, on the same configuration read and
-			// beside the one above: a runner older than noneModelSince reads
-			// `model: none` as a model ID rather than as the level's switch
-			// (checkCloneNoneModelImage), the task's own layer included.
-			if err := checkCloneNoneModelImage(env.lc, spec, fileCfg, warn); err != nil {
-				return launchResult{}, err
-			}
-		} else {
-			if needsRecipeImage(spec, agentRecipe) {
-				if err := checkRecipeImage(ctx, env, slug, spec, kind, warn); err != nil {
-					return launchResult{}, err
-				}
-			}
-			if spec.ProjectLayer != nil {
-				if err := checkImageSince(ctx, env, slug, spec, kind, layeredSince, "the project layer", "the project layer", "", warn); err != nil {
-					return launchResult{}, err
-				}
-			}
-			if spec.OAuthToken != "" {
-				if err := checkImageSince(ctx, env, slug, spec, kind, namedTokensSince,
-					"Claude account "+pluginwire.Printable(spec.OAuthToken), "named Claude accounts", "", warn); err != nil {
-					return launchResult{}, err
-				}
-			}
-			// The job title's own gate, for the same reason as the two
-			// above: task.Parse decodes with DisallowUnknownFields, so a
-			// runner older than titlesSince refuses a task carrying a title
-			// outright. A launch with no --title carries no such field (the
-			// spec is byte-identical to what the previous release wrote) and
-			// is never gated: the check is the field's, not the flag's.
-			if spec.Title != "" {
-				if err := checkImageSince(ctx, env, slug, spec, kind, titlesSince,
-					"a job title (--title, kept by --pr follow-ups and --retry)", "the job title", "", warn); err != nil {
-					return launchResult{}, err
-				}
-			}
-			// The plan task's own gate, for the same reason as the three
-			// above: task.Parse decodes with DisallowUnknownFields, so a
-			// runner older than planTaskSince refuses a task carrying one
-			// outright, and the run would die at bootstrap over a field that
-			// changes nothing about what it does. A launch with no
-			// --plan-task carries no such field (the spec is byte-identical
-			// to what the previous release wrote) and is never gated: the
-			// check is the field's, not the flag's.
-			if spec.PlanTask != "" {
-				if err := checkImageSince(ctx, env, slug, spec, kind, planTaskSince,
-					"a plan task (--plan-task)", "the plan task", "", warn); err != nil {
-					return launchResult{}, err
-				}
-			}
-			// The compression gate: the same gate as the clone branch's above,
-			// and for the same reason. It is judged from the deployed job's
-			// build record because that record names the base image the image
-			// runs the binary of.
-			if compressionGate {
-				if err := checkImageSince(ctx, env, slug, spec, kind, compressionSince,
-					"agent.compression", "context compression", "", warn); err != nil {
-					return launchResult{}, err
-				}
-			}
-			// The rigor: gate, judged on the file the run will read rather
-			// than on a task field: see checkRigorImage. Unconditional, since
-			// the repository's file alone can carry the key.
-			if err := checkRigorImage(ctx, env, slug, spec, kind, warn); err != nil {
-				return launchResult{}, err
-			}
-			// The governance: gate, the same shape as the clone branch's
-			// above and for the same reason.
-			if err := checkGovernanceImage(ctx, env, slug, spec, kind, warn); err != nil {
-				return launchResult{}, err
-			}
-			// The project layer's jobs: block, the same shape and the same
-			// reason again: see jobsSince.
-			if err := checkJobsImage(ctx, env, slug, spec, kind, warn); err != nil {
-				return launchResult{}, err
-			}
-			// The security: block, the same shape as the rigor: gate above and
-			// for the same reason: see checkSecurityImage.
-			if err := checkSecurityImage(ctx, env, slug, spec, kind, warn); err != nil {
-				return launchResult{}, err
-			}
-			// The same gate as the clone branch's above, and for the same
-			// reason: the request is a new task field, and a runner that
-			// predates it refuses the whole spec at bootstrap — bytes in the
-			// bucket under a run that never starts. Judged from the deployed
-			// job's build record, and never reached by a launch that carries
-			// no such field at all.
-			if asksForRigor(spec) {
-				if err := checkImageSince(ctx, env, slug, spec, kind, rigorRequestSince,
-					rigorGateSubject(o, spec), "the rigor request", "", warn); err != nil {
-					return launchResult{}, err
-				}
-			}
-			// The same gate as the clone branch's above, and for the same
-			// reason: the tier is a new task field, a runner older than
-			// governanceSince refuses the whole spec at bootstrap, and a
-			// launch that carries none is never gated.
-			if spec.Tier != "" {
-				if err := checkImageSince(ctx, env, slug, spec, kind, governanceSince,
-					tierGateSubject(o, spec), "the tier", "", warn); err != nil {
-					return launchResult{}, err
-				}
-			}
-			// The review levels' gate, the same as the clone branch's above
-			// and for the same reason: see reviewLevelsAsk.
-			if err := checkReviewLevelsImage(ctx, env, slug, spec, kind, levelsAsk, warn); err != nil {
-				return launchResult{}, err
-			}
-			// The same gate as the clone branch's above, and for the same
-			// reason: see checkNoneModelImage.
-			if err := checkNoneModelImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
-				return launchResult{}, err
-			}
-			// The digest drift, last of this branch's image reads, and the
-			// only one that never refuses: a checkout: clone workflow has no
-			// derived image and so no record to compare (the branch above),
-			// and nothing here can stop a launch D619 ruled may not be
-			// pinned.
-			warnImageDigestDrift(ctx, env, slug, spec, warn)
-		}
-		// A checkout: shared workflow's job runs a shared dependency-layer
-		// image, not a per-repository one: it is judged on the image the lock
-		// says its job is on (checkSharedImageSince), in neither branch above —
-		// the clone branch's judge is the local config's base image, which is
-		// not what built the shared one, and the other branch's is a build
-		// record a repository that adopted a sibling's image never wrote.
-		if shared {
-			if err := checkSharedImageSince(ctx, env, slug, spec, sharedSince, warn); err != nil {
-				return launchResult{}, err
-			}
-		}
-		if spec.Mode == recipe.ModeArtifact {
-			// The mode: artifact gate: a task carrying mode is refused
-			// outright by a runner older than artifactsSince (task.Parse
-			// decodes with DisallowUnknownFields), so the launch must not
-			// reach such a job at all. Judged from the deployed job's build
-			// record exactly as the project layer's and the named token's
-			// gates above are, and for an artifact recipe launched with
-			// nothing attached just as much as for one launched with
-			// --attach.
-			if clone {
-				if err := checkCloneImageSince(env.lc, spec, artifactsSince, "a mode: artifact recipe", "mode: artifact", "", warn); err != nil {
-					return launchResult{}, err
-				}
-			} else if err := checkImageSince(ctx, env, slug, spec, kind, artifactsSince, "a mode: artifact recipe", "mode: artifact", "", warn); err != nil {
-				return launchResult{}, err
-			}
-		}
-		if spec.Mode == recipe.ModeReview {
-			// The review job's gate: a review launch starts the review-only
-			// variant, and an image older than reviewJobSince cannot serve
-			// one — below the variant's release there is no such job beside
-			// its coding job, and between the two (0.19.0) there is one with
-			// no model path for the tokenless container it is. Judged from
-			// the deployed job's build record as
-			// the gates above are, and on the mode alone — the field only
-			// `fugaro review` writes — so a review never reaches a job that
-			// would run it on the coder's container.
-			if clone {
-				if err := checkCloneReviewJobImage(env.lc, spec, warn); err != nil {
-					return launchResult{}, err
-				}
-			} else if err := checkReviewJobImage(ctx, env, slug, spec, kind, warn); err != nil {
-				return launchResult{}, err
-			}
-			// The installation's half of the same gate, and the half no job
-			// image can show: the review job mounts no credential, so its
-			// account comes from the credentials service, and only a service
-			// from reviewAdmissionSince on admits the review job's own
-			// caller. Judged on the installation rather than on the job,
-			// because the job's image and the service's release are pinned by
-			// different things (checkReviewAdmission).
-			if err := checkReviewAdmission(env.lc, warn); err != nil {
-				return launchResult{}, err
-			}
-		}
-		// The author, last of the fields this launch decides: the key that
-		// opted the repository in is judged first and refuses an image that
-		// cannot read it, the field is dropped rather than refused where the
-		// image is not known to read it (authorSkew), and only then is the
-		// identity resolved from this machine's local config.
-		if err := authorGates(ctx, env, slug, spec, kind, mode, warn); err != nil {
-			return launchResult{}, err
-		}
-		// The seal's gate (D19): a launch that mints hands its execution the
-		// seal key in the marker, which only a runner at sealSince or later
-		// parses without echoing and reads the token for. Judged here, before
-		// the claim, the mint or the object, like the gates above.
-		if err := env.sealGate(ctx, slug, spec, kind, clone, warn); err != nil {
-			return launchResult{}, err
-		}
-		// The proxy's gate (G14): a run of a repository whose Bitbucket
-		// access is brokered is launched neither onto a job image whose
-		// runner predates the proxy nor on the Batch backend. Judged beside
-		// the seal's, from the same build record and the same local config,
-		// and before the claim and the task like every gate here — a launch
-		// that is not proxied is not judged at all (G9).
-		if err := env.proxyGate(ctx, slug, spec, kind, clone, warn); err != nil {
-			return launchResult{}, err
-		}
-		if err := checkMaxParallel(ctx, env); err != nil {
-			return launchResult{}, err
-		}
-		// The artifact gate: locally computable (a recipe's caps against
-		// the workflow's memory, a render or probe step against the
-		// commands they need), so it runs before the budget read below and
-		// before createTask writes anything at all.
-		if err := checkArtifactLaunch(ctx, env, spec); err != nil {
-			return launchResult{}, err
-		}
-		if !skipBudget {
-			if err := env.budgetPrecheck(ctx, slug, spec, warn); err != nil {
-				return launchResult{}, err
-			}
-		}
-		// The project's policy, read with the operator's own credentials
-		// before anything of this launch is written (plan task 1.5 step 4):
-		// the repository must be admitted, and the policy must not be newer
-		// than this binary. Before createTask and before the launch claim, so
-		// a refused launch leaves no task, no token and no execution behind.
-		// Outside the --no-budget-check branch, which is deliberate: neither
-		// check is a budget check, so neither is an operator's to skip. After
-		// the budget pre-check, so an unreachable database is refused by the
-		// pre-check's own fail-closed message when that check runs; the gate
-		// refuses it itself, with the node named, when it does not. Before the
-		// attach upload below as well, so a repository the policy does not
-		// admit never gets its inputs into the bucket either.
-		if err := launchPolicyGates(ctx, env, slug, spec); err != nil {
 			return launchResult{}, err
 		}
 		// The upload, last of everything an --attach launch does and still
@@ -1197,6 +799,427 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		res.ProjectLayer = &launchProjectLayer{SHA256: spec.ProjectLayer.SHA256, Generation: spec.ProjectLayer.Generation}
 	}
 	return res, nil
+}
+
+// freshLaunchGates is the block of gates a fresh launch passes before anything
+// of it is written, and it is one function because the daemon's own launch path
+// (orchestrator_launcher.go) is that same launch shape and must pass the same
+// block: a daemon that ran only the budget pre-check and the policy gate started
+// runs `fugaro run` refuses — onto a job image whose runner cannot read the
+// sealed token or a field the task carries, which is a start that spends an
+// approved attempt on a run the platform then refuses at bootstrap.
+//
+// It judges the spec and the installation and nothing a person typed beyond the
+// task the launch writes, and it resolves the workflow's kind and checkout mode
+// itself, so both callers judge the same reads. Everything it can refuse, it
+// refuses before the claim and before the task: a launch it refuses leaves no
+// task, no token, no claim and no execution behind. What it returns is the
+// attach launch's own caps, which the caller's upload needs; the upload itself
+// is the caller's, because the daemon never carries attachments.
+func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug string, s *runstore.Store, spec *task.Spec, compressionGate bool, warn io.Writer, skipBudget bool) (config.Inputs, error) {
+	// The cascade's own gate, first: nothing about a run this launch
+	// cannot carry is worth an --attach upload, a cap check or a claim
+	// (cascadeLaunchRefusal).
+	if err := cascadeLaunchRefusal(ctx, env, spec); err != nil {
+		return config.Inputs{}, err
+	}
+	// --attach, before the gates below: its recipe refusal, its caps,
+	// D9's line and its image gate (design §4, plan P7/P9). It uploads
+	// nothing here — attachUpload does that below, after the last gate
+	// that can still refuse this launch, so a refused launch leaves
+	// nothing in the bucket under a run id that never gets a task. A
+	// launch with no --attach does nothing here at all.
+	agentRecipe, kind, clone, shared := "", "", false, false
+	// mode is the same answer for baseBranchSkew, and nil where clone is
+	// false for the other gates because nothing was read: a launch for
+	// another repository from a checkout that is not its own reads no
+	// workflow of it, and baseBranchSkew asks both judges there rather
+	// than take the one a derived workflow would use (its comment has why).
+	var mode *bool
+	if co := checkoutConfig(ctx, spec.Repo); co != nil {
+		agentRecipe = co.Agent.Recipe
+		if w, ok := co.Workflows[spec.Workflow]; ok {
+			kind = w.BaseKind()
+			clone = w.Checkout == config.CheckoutClone
+			shared = w.Checkout == config.CheckoutShared
+			m := clone
+			mode = &m
+		}
+	}
+	caps, err := attachLaunch(ctx, env, slug, spec, s.Prefix(), o.attach, kind, clone, warn)
+	if err != nil {
+		return config.Inputs{}, err
+	}
+	// The base branch's own gate, before anything is written: a runner
+	// older than baseBranchSince cannot read the field and would refuse
+	// the whole task, so the field is dropped rather than the launch
+	// (baseBranchSkew). Here, and not with the gates below, because it
+	// decides what the task createTask writes.
+	baseBranchSkew(ctx, env, slug, spec, mode, warn)
+	// What this launch asks of its job image's runner about review
+	// levels, resolved once for the two branches below (a derived image
+	// and a checkout: clone workflow), the way compressionGate is: a
+	// launch that asks nothing is never gated, whatever its image is.
+	levelsRecipe, levelsRecipeUnknown := launchRecipeForLevels(ctx, spec)
+	// The launch is refused on the resolution's own refusal (L3.2): a run
+	// whose levels cannot be resolved — the same model at level 1 and 2, a
+	// level turned off under the owner's floor, an effort a provider route
+	// would drop — is refused here, before the task is written, rather
+	// than by the job it was launched into (G2, D721, D722).
+	// The configuration this launch can read of the run's own — the file
+	// at the ref, with the project layer it resolves over, or the layer
+	// the task carries where no file can be read — resolved once for both
+	// readers below: the levels the launch asks about, and the level one of
+	// the two writes with its model named none (checkNoneModelImage,
+	// launchLevelsConfig).
+	fileCfg := launchLevelsConfig(ctx, env, spec)
+	levelsAsk, err := launchReviewLevelsAsk(ctx, env, spec, fileCfg, levelsRecipe, levelsRecipeUnknown)
+	if err != nil {
+		return config.Inputs{}, err
+	}
+	// checkRecipeImage and checkImageSince judge a workflow's derived
+	// image by its build record, which a checkout: clone workflow never
+	// has (it runs the installation's base image directly, not a
+	// per-repository build): checkCloneImageSince judges base_images.base
+	// itself instead. cloneSince is unconditional: a clone workflow needs
+	// the runner's own blobless-clone bootstrap (plan Task 17,
+	// FUGARO_CHECKOUT) whether or not it uses a recipe or a project
+	// layer, and nothing else here enforces that base_images.base is
+	// actually that recent: fugaro-base could first be published from an
+	// older release, or --image-source could mirror one.
+	if clone {
+		if err := checkCloneImageSince(env.lc, spec, cloneSince, "this checkout: clone workflow", "how to provision a blobless clone (FUGARO_CHECKOUT)", "", warn); err != nil {
+			return config.Inputs{}, err
+		}
+		if needsRecipeImage(spec, agentRecipe) {
+			if err := checkCloneRecipeImage(ctx, env.lc, spec, warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
+		if spec.ProjectLayer != nil {
+			if err := checkCloneImageSince(env.lc, spec, layeredSince, "the project layer", "the project layer", "", warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
+		if spec.OAuthToken != "" {
+			if err := checkCloneImageSince(env.lc, spec, namedTokensSince,
+				"Claude account "+pluginwire.Printable(spec.OAuthToken), "named Claude accounts", "", warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
+		if spec.Title != "" {
+			if err := checkCloneImageSince(env.lc, spec, titlesSince,
+				"a job title (--title, kept by --pr follow-ups and --retry)", "the job title", "", warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
+		if spec.PlanTask != "" {
+			if err := checkCloneImageSince(env.lc, spec, planTaskSince,
+				"a plan task (--plan-task)", "the plan task", "", warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
+		// The compression gate: a runner older than compressionSince knows
+		// neither the key nor the field and refuses whichever it meets at
+		// bootstrap, so the launch is judged on both (compressionGate
+		// above). It fires whether or not --no-compression is set, since
+		// the override turns the sidecar off and not the key the old
+		// runner cannot read.
+		if compressionGate {
+			if err := checkCloneImageSince(env.lc, spec, compressionSince,
+				"agent.compression", "context compression", "", warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
+		// The rigor: gate, judged on the file the run will read rather
+		// than on a task field: see checkRigorImage. Unconditional, since
+		// the repository's file alone can carry the key.
+		if err := checkCloneRigorImage(ctx, env, spec, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The governance: gate, judged the same way and for the same
+		// reason: see checkGovernanceImage.
+		if err := checkCloneGovernanceImage(ctx, env, spec, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The project layer's jobs: block, the same shape and the same
+		// reason again: see jobsSince. The key is the layer's alone, so
+		// there is no repository half here.
+		if err := checkCloneJobsImage(ctx, env, spec, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The security: block, the same shape as the rigor: gate above
+		// and for the same reason: see checkSecurityImage.
+		if err := checkCloneSecurityImage(ctx, env, spec, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The run's own rigor request, gated on the field the same way:
+		// a runner older than rigorRequestSince refuses a task carrying
+		// rigor or paths outright (task.Parse decodes with
+		// DisallowUnknownFields). A launch that carries neither field is
+		// never gated — but a follow-up that passed no flag still carries
+		// one when its PR recorded a mode (T5.2), which is what
+		// rigorGateSubject says in the refusal.
+		if asksForRigor(spec) {
+			if err := checkCloneImageSince(env.lc, spec, rigorRequestSince,
+				rigorGateSubject(o, spec), "the rigor request", "", warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
+		// The tier a task carries, judged on the field like the request
+		// above and under the release that ships both the field and the
+		// governance: block its expectation comes from (governanceSince):
+		// a runner older than that refuses a task carrying a tier outright
+		// (task.Parse decodes with DisallowUnknownFields). A launch that
+		// carries none is never gated — but a follow-up that passed no
+		// flag still carries one when its PR recorded a tier, which is
+		// what tierGateSubject says in the refusal.
+		if spec.Tier != "" {
+			if err := checkCloneImageSince(env.lc, spec, governanceSince,
+				tierGateSubject(o, spec), "the tier", "", warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
+		// The review levels' gate, judged on the run this launch
+		// resolves rather than on a task field: a mode's own level 3, a
+		// level the run inserts (O7) and the owner's floor all reach a
+		// run with no field and no configuration key, and a runner older
+		// than reviewLevelsSince drops every one of them in silence
+		// (reviewLevelsAsk).
+		if err := checkCloneReviewLevelsImage(env.lc, spec, levelsAsk, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The spelling's own gate, on the same configuration read and
+		// beside the one above: a runner older than noneModelSince reads
+		// `model: none` as a model ID rather than as the level's switch
+		// (checkCloneNoneModelImage), the task's own layer included.
+		if err := checkCloneNoneModelImage(env.lc, spec, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
+	} else {
+		if needsRecipeImage(spec, agentRecipe) {
+			if err := checkRecipeImage(ctx, env, slug, spec, kind, warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
+		if spec.ProjectLayer != nil {
+			if err := checkImageSince(ctx, env, slug, spec, kind, layeredSince, "the project layer", "the project layer", "", warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
+		if spec.OAuthToken != "" {
+			if err := checkImageSince(ctx, env, slug, spec, kind, namedTokensSince,
+				"Claude account "+pluginwire.Printable(spec.OAuthToken), "named Claude accounts", "", warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
+		// The job title's own gate, for the same reason as the two
+		// above: task.Parse decodes with DisallowUnknownFields, so a
+		// runner older than titlesSince refuses a task carrying a title
+		// outright. A launch with no --title carries no such field (the
+		// spec is byte-identical to what the previous release wrote) and
+		// is never gated: the check is the field's, not the flag's.
+		if spec.Title != "" {
+			if err := checkImageSince(ctx, env, slug, spec, kind, titlesSince,
+				"a job title (--title, kept by --pr follow-ups and --retry)", "the job title", "", warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
+		// The plan task's own gate, for the same reason as the three
+		// above: task.Parse decodes with DisallowUnknownFields, so a
+		// runner older than planTaskSince refuses a task carrying one
+		// outright, and the run would die at bootstrap over a field that
+		// changes nothing about what it does. A launch with no
+		// --plan-task carries no such field (the spec is byte-identical
+		// to what the previous release wrote) and is never gated: the
+		// check is the field's, not the flag's.
+		if spec.PlanTask != "" {
+			if err := checkImageSince(ctx, env, slug, spec, kind, planTaskSince,
+				"a plan task (--plan-task)", "the plan task", "", warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
+		// The compression gate: the same gate as the clone branch's above,
+		// and for the same reason. It is judged from the deployed job's
+		// build record because that record names the base image the image
+		// runs the binary of.
+		if compressionGate {
+			if err := checkImageSince(ctx, env, slug, spec, kind, compressionSince,
+				"agent.compression", "context compression", "", warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
+		// The rigor: gate, judged on the file the run will read rather
+		// than on a task field: see checkRigorImage. Unconditional, since
+		// the repository's file alone can carry the key.
+		if err := checkRigorImage(ctx, env, slug, spec, kind, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The governance: gate, the same shape as the clone branch's
+		// above and for the same reason.
+		if err := checkGovernanceImage(ctx, env, slug, spec, kind, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The project layer's jobs: block, the same shape and the same
+		// reason again: see jobsSince.
+		if err := checkJobsImage(ctx, env, slug, spec, kind, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The security: block, the same shape as the rigor: gate above and
+		// for the same reason: see checkSecurityImage.
+		if err := checkSecurityImage(ctx, env, slug, spec, kind, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The same gate as the clone branch's above, and for the same
+		// reason: the request is a new task field, and a runner that
+		// predates it refuses the whole spec at bootstrap — bytes in the
+		// bucket under a run that never starts. Judged from the deployed
+		// job's build record, and never reached by a launch that carries
+		// no such field at all.
+		if asksForRigor(spec) {
+			if err := checkImageSince(ctx, env, slug, spec, kind, rigorRequestSince,
+				rigorGateSubject(o, spec), "the rigor request", "", warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
+		// The same gate as the clone branch's above, and for the same
+		// reason: the tier is a new task field, a runner older than
+		// governanceSince refuses the whole spec at bootstrap, and a
+		// launch that carries none is never gated.
+		if spec.Tier != "" {
+			if err := checkImageSince(ctx, env, slug, spec, kind, governanceSince,
+				tierGateSubject(o, spec), "the tier", "", warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
+		// The review levels' gate, the same as the clone branch's above
+		// and for the same reason: see reviewLevelsAsk.
+		if err := checkReviewLevelsImage(ctx, env, slug, spec, kind, levelsAsk, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The same gate as the clone branch's above, and for the same
+		// reason: see checkNoneModelImage.
+		if err := checkNoneModelImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The digest drift, last of this branch's image reads, and the
+		// only one that never refuses: a checkout: clone workflow has no
+		// derived image and so no record to compare (the branch above),
+		// and nothing here can stop a launch D619 ruled may not be
+		// pinned.
+		warnImageDigestDrift(ctx, env, slug, spec, warn)
+	}
+	// A checkout: shared workflow's job runs a shared dependency-layer
+	// image, not a per-repository one: it is judged on the image the lock
+	// says its job is on (checkSharedImageSince), in neither branch above —
+	// the clone branch's judge is the local config's base image, which is
+	// not what built the shared one, and the other branch's is a build
+	// record a repository that adopted a sibling's image never wrote.
+	if shared {
+		if err := checkSharedImageSince(ctx, env, slug, spec, sharedSince, warn); err != nil {
+			return config.Inputs{}, err
+		}
+	}
+	if spec.Mode == recipe.ModeArtifact {
+		// The mode: artifact gate: a task carrying mode is refused
+		// outright by a runner older than artifactsSince (task.Parse
+		// decodes with DisallowUnknownFields), so the launch must not
+		// reach such a job at all. Judged from the deployed job's build
+		// record exactly as the project layer's and the named token's
+		// gates above are, and for an artifact recipe launched with
+		// nothing attached just as much as for one launched with
+		// --attach.
+		if clone {
+			if err := checkCloneImageSince(env.lc, spec, artifactsSince, "a mode: artifact recipe", "mode: artifact", "", warn); err != nil {
+				return config.Inputs{}, err
+			}
+		} else if err := checkImageSince(ctx, env, slug, spec, kind, artifactsSince, "a mode: artifact recipe", "mode: artifact", "", warn); err != nil {
+			return config.Inputs{}, err
+		}
+	}
+	if spec.Mode == recipe.ModeReview {
+		// The review job's gate: a review launch starts the review-only
+		// variant, and an image older than reviewJobSince cannot serve
+		// one — below the variant's release there is no such job beside
+		// its coding job, and between the two (0.19.0) there is one with
+		// no model path for the tokenless container it is. Judged from
+		// the deployed job's build record as
+		// the gates above are, and on the mode alone — the field only
+		// `fugaro review` writes — so a review never reaches a job that
+		// would run it on the coder's container.
+		if clone {
+			if err := checkCloneReviewJobImage(env.lc, spec, warn); err != nil {
+				return config.Inputs{}, err
+			}
+		} else if err := checkReviewJobImage(ctx, env, slug, spec, kind, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The installation's half of the same gate, and the half no job
+		// image can show: the review job mounts no credential, so its
+		// account comes from the credentials service, and only a service
+		// from reviewAdmissionSince on admits the review job's own
+		// caller. Judged on the installation rather than on the job,
+		// because the job's image and the service's release are pinned by
+		// different things (checkReviewAdmission).
+		if err := checkReviewAdmission(env.lc, warn); err != nil {
+			return config.Inputs{}, err
+		}
+	}
+	// The author, last of the fields this launch decides: the key that
+	// opted the repository in is judged first and refuses an image that
+	// cannot read it, the field is dropped rather than refused where the
+	// image is not known to read it (authorSkew), and only then is the
+	// identity resolved from this machine's local config.
+	if err := authorGates(ctx, env, slug, spec, kind, mode, warn); err != nil {
+		return config.Inputs{}, err
+	}
+	// The seal's gate (D19): a launch that mints hands its execution the
+	// seal key in the marker, which only a runner at sealSince or later
+	// parses without echoing and reads the token for. Judged here, before
+	// the claim, the mint or the object, like the gates above.
+	if err := env.sealGate(ctx, slug, spec, kind, clone, warn); err != nil {
+		return config.Inputs{}, err
+	}
+	// The proxy's gate (G14): a run of a repository whose Bitbucket
+	// access is brokered is launched neither onto a job image whose
+	// runner predates the proxy nor on the Batch backend. Judged beside
+	// the seal's, from the same build record and the same local config,
+	// and before the claim and the task like every gate here — a launch
+	// that is not proxied is not judged at all (G9).
+	if err := env.proxyGate(ctx, slug, spec, kind, clone, warn); err != nil {
+		return config.Inputs{}, err
+	}
+	if err := checkMaxParallel(ctx, env); err != nil {
+		return config.Inputs{}, err
+	}
+	// The artifact gate: locally computable (a recipe's caps against
+	// the workflow's memory, a render or probe step against the
+	// commands they need), so it runs before the budget read below and
+	// before createTask writes anything at all.
+	if err := checkArtifactLaunch(ctx, env, spec); err != nil {
+		return config.Inputs{}, err
+	}
+	if !skipBudget {
+		if err := env.budgetPrecheck(ctx, slug, spec, warn); err != nil {
+			return config.Inputs{}, err
+		}
+	}
+	// The project's policy, read with the operator's own credentials
+	// before anything of this launch is written (plan task 1.5 step 4):
+	// the repository must be admitted, and the policy must not be newer
+	// than this binary. Before createTask and before the launch claim, so
+	// a refused launch leaves no task, no token and no execution behind.
+	// Outside the --no-budget-check branch, which is deliberate: neither
+	// check is a budget check, so neither is an operator's to skip. After
+	// the budget pre-check, so an unreachable database is refused by the
+	// pre-check's own fail-closed message when that check runs; the gate
+	// refuses it itself, with the node named, when it does not. Before the
+	// attach upload below as well, so a repository the policy does not
+	// admit never gets its inputs into the bucket either.
+	if err := launchPolicyGates(ctx, env, slug, spec); err != nil {
+		return config.Inputs{}, err
+	}
+	return caps, nil
 }
 
 // warnImageDigestDrift warns, once, when the workflow's image is no longer at
