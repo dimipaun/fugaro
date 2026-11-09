@@ -2,6 +2,7 @@ package plan
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -228,6 +229,50 @@ func TestGainCountsAddedTasks(t *testing.T) {
 	}
 	if withKept.Broken != 1 || withKept.AddedTasks != 2 {
 		t.Errorf("broken = %d and added_tasks = %d, want 1 and 2", withKept.Broken, withKept.AddedTasks)
+	}
+}
+
+// TestGainCountsADependencyWrittenTwiceOnce: a dependency written twice is one
+// dependency, and both figures are counted that way — the edges of the graph
+// that were kept as much as the `was` edges the record names. Normalize does not
+// de-duplicate either list and the third schema admits a repeated `was` entry,
+// so the two are the document's own text and a count that took it at face value
+// would state the pass's work in terms of how often a planner repeated itself.
+func TestGainCountsADependencyWrittenTwiceOnce(t *testing.T) {
+	const twice = `{
+	  "schema_version": 3,
+	  "plan": "docs/plans/decoupled.md",
+	  "nodes": [
+	    {"id": "A", "title": "the base", "footprint": {"prediction": true, "paths": ["internal/a/**"]}},
+	    {"id": "B", "title": "the dependent", "footprint": {"prediction": true, "paths": ["internal/b/**"]}},
+	    {"id": "D", "title": "kept", "footprint": {"prediction": true, "paths": ["internal/d/**"]}},
+	    {"id": "E", "title": "also kept", "footprint": {"prediction": true, "paths": ["internal/e/**"]}},
+	    {"id": "C1", "title": "the contract", "kind": "contract", "footprint": {"prediction": true, "paths": ["internal/contract/types.go"]}},
+	    {"id": "I1", "title": "the integration", "kind": "integration", "footprint": {"prediction": true, "paths": ["internal/i/**"]}}
+	  ],
+	  "edges": [
+	    {"task": "E", "needs": "D", "reason": "ordinary work"},
+	    {"task": "E", "needs": "D", "reason": "ordinary work"},
+	    {"task": "B", "needs": "C1", "reason": "B is built against the contract"},
+	    {"task": "I1", "needs": "A", "reason": "the integration runs both sides"},
+	    {"task": "I1", "needs": "B", "reason": "the integration runs both sides"}
+	  ],
+	  "decoupling": [
+	    {"contract": "C1", "was": {"task": "B", "needs": "A"}, "integration": "I1", "reason": "B needed A's interface only"},
+	    {"contract": "C1", "was": {"task": "B", "needs": "A"}, "integration": "I1", "reason": "B needed A's interface only"}
+	  ]
+	}`
+	gain := gainOf(t, twice)
+	if gain.Broken != 1 {
+		t.Errorf("broken = %d, want 1: the record names the one edge twice", gain.Broken)
+	}
+	if gain.Kept != 1 {
+		t.Errorf("kept = %d, want 1: E waits for D once, however many times the edge is written", gain.Kept)
+	}
+	// The measure is a property of the graph rather than of its text, so the
+	// repeated entries do not lengthen the path either.
+	if want := (PathMeasure{Tasks: 2, Weight: 2}); gain.Before != want {
+		t.Errorf("before = %+v, want %+v: B waits for A", gain.Before, want)
 	}
 }
 
@@ -482,6 +527,91 @@ func TestStubsPresentIsRefusedOutsideTheCheckout(t *testing.T) {
 	// And the same document read where it belongs is read.
 	if _, err := Analyze("docs/plans/decoupled.graph.json", doc, nil); err != nil {
 		t.Errorf("a graph naming stubs was refused inside the checkout it is read in: %v", err)
+	}
+}
+
+// TestStubsPresentDoesNotReadANestedCheckoutsParent: the tree the stubs are
+// resolved in is the artifact's own git top level, not the one the working
+// directory happens to sit in. A plan under a nested checkout is a plan of that
+// tree, and a stub of the same path in the checkout above it is a different
+// file: the parent's answer would be "this stub is still there" about a
+// repository the plan does not describe.
+func TestStubsPresentDoesNotReadANestedCheckoutsParent(t *testing.T) {
+	outer := checkout(t)
+	written(t, outer, "internal/contract/stub.go")
+	nested := filepath.Join(outer, "nested")
+	if err := os.MkdirAll(filepath.Join(nested, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(nested, "decoupled.graph.json")
+	doc := parseDoc(t, stubGraph(t))
+	if _, err := Analyze(artifact, doc, nil); err == nil {
+		t.Fatal("a graph read from a nested checkout answered about the checkout above it")
+	} else if !strings.Contains(err.Error(), "outside the working directory's checkout") {
+		t.Errorf("Analyze's error = %v, want the artifact's own checkout named", err)
+	}
+}
+
+// TestBeforeGraphEdgesAreBounded: the rewrite is a product of two sides that
+// both come from the file — every edge onto an integration node against every
+// endpoint that node re-joins — so a graph well inside the artifact's own cap
+// can ask for gigabytes of them. A graph past the bound is refused, with the
+// figure named, rather than read slowly; one under it is measured.
+func TestBeforeGraphEdgesAreBounded(t *testing.T) {
+	// builder builds a graph of `breaks` broken edges over one integration node
+	// and `waiters` tasks that wait on it, so the before graph asks for
+	// 2*breaks*waiters edges plus the restores.
+	build := func(breaks, waiters int) string {
+		var b strings.Builder
+		b.WriteString(`{"schema_version":3,"plan":"p.md","nodes":[` +
+			`{"id":"C1","title":"the contract","kind":"contract","footprint":{"prediction":true,"paths":["internal/contract/types.go"]}},` +
+			`{"id":"I1","title":"the integration","kind":"integration","footprint":{"prediction":true,"paths":["internal/i/**"]}}`)
+		for i := 0; i < breaks; i++ {
+			for _, side := range []string{"P", "Q"} {
+				fmt.Fprintf(&b, `,{"id":"%s%04d","title":"a side of a break","footprint":{"prediction":true,"paths":["internal/s/%s%04d/**"]}}`, side, i, side, i)
+			}
+		}
+		for i := 0; i < waiters; i++ {
+			fmt.Fprintf(&b, `,{"id":"W%04d","title":"a task that waits on the integration","footprint":{"prediction":true,"paths":["internal/w%04d/**"]}}`, i, i)
+		}
+		b.WriteString(`],"edges":[`)
+		first := true
+		edge := func(task, needs string) {
+			if !first {
+				b.WriteString(",")
+			}
+			first = false
+			fmt.Fprintf(&b, `{"task":%q,"needs":%q,"reason":"the integration covers what it re-joins"}`, task, needs)
+		}
+		for i := 0; i < breaks; i++ {
+			edge("I1", fmt.Sprintf("P%04d", i))
+			edge("I1", fmt.Sprintf("Q%04d", i))
+		}
+		for i := 0; i < waiters; i++ {
+			edge(fmt.Sprintf("W%04d", i), "I1")
+		}
+		b.WriteString(`],"decoupling":[`)
+		for i := 0; i < breaks; i++ {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			fmt.Fprintf(&b, `{"contract":"C1","was":{"task":"P%04d","needs":"Q%04d"},"integration":"I1","reason":"each side needed the other's interface only"}`, i, i)
+		}
+		b.WriteString(`]}`)
+		return b.String()
+	}
+	// Under the bound: 20,000 rewritten edges. The graph is measured, which is
+	// what the pass is read for.
+	small := parseDoc(t, build(100, 100))
+	if _, err := Analyze("graph.json", small, nil); err != nil {
+		t.Fatalf("a before graph under the bound was refused: %v", err)
+	}
+	// Past it: the same shape at 320,000 rewritten edges, from a file of a few
+	// hundred kilobytes. The refusal names the figure rather than the memory.
+	if _, err := Analyze("graph.json", parseDoc(t, build(400, 400)), nil); err == nil {
+		t.Fatal("the read built a before graph past the bound")
+	} else if !strings.Contains(err.Error(), "more than 262144 edges in the before graph") {
+		t.Errorf("Analyze's error = %v, want the bound named", err)
 	}
 }
 

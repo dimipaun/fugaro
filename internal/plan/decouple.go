@@ -164,6 +164,11 @@ func countPairs(edges []Edge) int {
 // the pass's own scaffolding is: the edge a consumer gained onto the contract
 // stands where the restored `was` edge used to, and counting both would count
 // one dependency twice.
+//
+// The rewrite is a product of two sides that both come from the file — every
+// edge onto an integration node against every endpoint that node re-joins — so
+// the edges are counted as they are built and the graph is refused past
+// maxBeforeEdges, the way the contract-file rule counts its own pairs (F10).
 func beforePath(path string, doc Document) (PathMeasure, error) {
 	kinds := make(map[string]string, len(doc.Nodes))
 	for _, n := range doc.Nodes {
@@ -192,6 +197,9 @@ func beforePath(path string, doc Document) (PathMeasure, error) {
 				edges = append(edges, Edge{Task: e.Task, Needs: endpoint, Reason: e.Reason})
 			}
 		}
+		if len(edges) > maxBeforeEdges {
+			return PathMeasure{}, refuse(path, "the graph's edges onto integration nodes ask for more than %d edges in the before graph, one per endpoint each of them re-joins; a graph that large is refused rather than read slowly", maxBeforeEdges)
+		}
 	}
 	for _, d := range doc.Decoupling {
 		// The edge is restored onto the two tasks that stood on either side of
@@ -207,6 +215,18 @@ func beforePath(path string, doc Document) (PathMeasure, error) {
 	}
 	return measurePath(path, nodes, edges)
 }
+
+// maxBeforeEdges bounds the before graph's edges. An artifact inside the
+// one-megabyte cap can state a product of tens of millions of them from a few
+// thousand decoupling entries and a few hundred edges onto one integration
+// node — a 541 KB file of that shape was measured allocating 2.4 GB — and the
+// read is local: a console spawns it, so the process a product that size would
+// take the memory of is the one the person who asked for a graph is looking at.
+// beforePath counts the edges as it builds them, so what the read holds never
+// passes the bound, and a plan an operator wrote does not come near it: the
+// before graph is the plan that stood before the pass, so it is the size of a
+// plan rather than of a product.
+const maxBeforeEdges = 1 << 18
 
 // measurePath is one graph's critical path, in tasks and weighted.
 //
@@ -348,30 +368,33 @@ func stubsPresent(path string, doc Document) (map[string][]string, error) {
 }
 
 // stubsRoot is the checkout the stubs are read in: the git top level of the
-// working directory, which is also the top level of the graph artifact when the
-// artifact is where a plan is read.
+// graph artifact, which is the tree the plan describes and the one the
+// integration task deletes them in.
 //
-// A graph that names stubs and was read from outside that checkout is refused,
-// and the alternative is the reason: the same stub path exists in every
-// checkout of the repository, so a read that resolved it against whatever tree
-// it happened to stand in would report "this stub is gone" about a repository
-// the plan does not describe. A working directory in no checkout at all has no
-// tree to read them in either, and is refused the same way.
+// A graph that names stubs and stands in a checkout of its own is refused
+// rather than read against the working directory's, and the alternative is the
+// reason: every checkout of a repository has the same stub paths, so a read
+// that resolved them against another tree would report "this stub is gone"
+// about a repository the plan does not describe. The tree the artifact is in is
+// therefore asked for by name rather than assumed from the working directory,
+// and the two are required to be one checkout: a checkout nested inside the
+// working directory's is a tree of its own, and the parent's answer about a stub
+// the plan's own checkout does not carry is exactly the wrong one. A working
+// directory, or an artifact, in no checkout at all has no tree to read them in
+// either, and is refused the same way.
 func stubsRoot(path string) (string, error) {
 	root := checkoutRoot(".")
 	if root == "" {
 		return "", refuse(path, "the graph names stubs and the working directory is in no git checkout; a stub is a file of the checkout its plan is read in, and there is none here to report against")
 	}
-	artifact := root
 	if strings.TrimSpace(path) != "" {
 		abs, err := filepath.Abs(path)
 		if err != nil {
 			return "", refuse(path, "the graph names stubs and its own path could not be resolved: %v", err)
 		}
-		artifact = abs
-	}
-	if artifact != root && !strings.HasPrefix(artifact, root+string(filepath.Separator)) {
-		return "", refuse(path, "the graph names stubs and %s is outside the working directory's checkout at %s; a stub is a file of the checkout its plan is read in, and one read from another tree is refused rather than reported against the wrong one", path, root)
+		if here := checkoutRoot(filepath.Dir(abs)); here != root {
+			return "", refuse(path, "the graph names stubs and %s is outside the working directory's checkout at %s; a stub is a file of the checkout its plan is read in, and one read from another tree is refused rather than reported against the wrong one — a checkout nested inside this one included", path, root)
+		}
 	}
 	return root, nil
 }
