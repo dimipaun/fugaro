@@ -2711,7 +2711,8 @@ func TestRetryTagPushAfterATransientFailure(t *testing.T) {
 // maintenance branch so it carries the fix and nothing merged since. The gate
 // accepts such a commit only when every condition holds, and refuses each
 // other shape by the same "not on main" refusal: a commit on main is accepted
-// as before, and nothing else is.
+// as before, and nothing else is. A patch of an older line is refused by its
+// own message, because it would be published as the latest release.
 func TestReleaseGateAcceptsAPatchOnItsMaintenanceBranch(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks())
@@ -2724,12 +2725,30 @@ func TestReleaseGateAcceptsAPatchOnItsMaintenanceBranch(t *testing.T) {
 	git("commit", "--quiet", "--allow-empty", "-m", "the fix")
 	fix := git("rev-parse", "HEAD")
 	git("push", "--quiet", "origin", "release/1.2")
+	git("checkout", "--quiet", "main")
+
+	// While 1.2 is the newest line: accepted on its branch, and a commit on main
+	// is accepted exactly as before.
+	accepted := runGate(t, r, g, fix, "v1.2.1")
+	accepted.requireSuccess(t)
+	if !strings.Contains(accepted.out, "maintenance branch release/1.2") || !strings.Contains(accepted.out, "gate passed for v1.2.1") {
+		t.Errorf("the gate did not say it took the maintenance path:\n%s", accepted.out)
+	}
+	runGate(t, r, g, git("rev-parse", "main"), "v1.2.1").requireSuccess(t)
 
 	// A commit on a branch that is not the line's own, cut from the same tag.
 	git("checkout", "--quiet", "-b", "scratch", "v1.2.0")
 	git("commit", "--quiet", "--allow-empty", "-m", "unrelated work")
 	scratch := git("rev-parse", "HEAD")
 	git("push", "--quiet", "origin", "scratch")
+
+	// A tag named like the line's remote-tracking branch, on a commit that is not
+	// on the branch: an unqualified ref would resolve the tag first and treat the
+	// commit as being on the branch.
+	git("commit", "--quiet", "--allow-empty", "-m", "impersonator")
+	impostor := git("rev-parse", "HEAD")
+	git("tag", "origin/release/1.2", impostor)
+	git("checkout", "--quiet", "main")
 
 	// A line whose first release was never on main: v1.4.0 exists only on its branch.
 	git("checkout", "--quiet", "-b", "release/1.4", "main")
@@ -2750,18 +2769,11 @@ func TestReleaseGateAcceptsAPatchOnItsMaintenanceBranch(t *testing.T) {
 	git("push", "--quiet", "origin", "release/1.6")
 	git("checkout", "--quiet", "main")
 
-	accepted := runGate(t, r, g, fix, "v1.2.1")
-	accepted.requireSuccess(t)
-	if !strings.Contains(accepted.out, "maintenance branch release/1.2") || !strings.Contains(accepted.out, "gate passed for v1.2.1") {
-		t.Errorf("the gate did not say it took the maintenance path:\n%s", accepted.out)
-	}
-	// A commit on main is accepted exactly as before.
-	runGate(t, r, g, git("rev-parse", "main"), "v1.2.1").requireSuccess(t)
-
 	for name, tc := range map[string]struct{ sha, tag string }{
 		"a patch of another line":                              {fix, "v1.3.1"},
 		"the line's own first release (Z of 0)":                {fix, "v1.2.0"},
 		"a commit on a branch that is not the line's":          {scratch, "v1.2.1"},
+		"a tag named like the remote-tracking branch":          {impostor, "v1.2.1"},
 		"a line whose vX.Y.0 is not on main":                   {other, "v1.4.1"},
 		"an unrelated history named like the line":             {orphan, "v1.6.1"},
 		"the app's mobile tag":                                 {fix, "mobile-v1.2.1"},
@@ -2776,5 +2788,16 @@ func TestReleaseGateAcceptsAPatchOnItsMaintenanceBranch(t *testing.T) {
 		if !strings.Contains(res.out, "is not on main") {
 			t.Errorf("%s: refused for the wrong reason:\n%s", name, res.out)
 		}
+	}
+
+	// v1.6.0 now exists, so line 1.2 is no longer the newest: the same commit that
+	// was accepted above is refused, by its own message, because a patch of an
+	// older line would be published as the latest release.
+	backport := runGate(t, r, g, fix, "v1.2.1")
+	if backport.err == nil {
+		t.Fatalf("the gate accepted a patch of the older line v1.2 while v1.6.0 exists:\n%s", backport.out)
+	}
+	if !strings.Contains(backport.out, "a newer line exists (v1.6.0)") {
+		t.Errorf("the backport was refused for the wrong reason:\n%s", backport.out)
 	}
 }
