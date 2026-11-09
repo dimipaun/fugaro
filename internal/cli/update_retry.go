@@ -252,13 +252,15 @@ func retryHintLines(local []issues.Issue, rows []issues.SharedRow, version strin
 // word is [REDACTED] and nothing can be offered: a name that is not the
 // binary's is not something this build can vouch for.
 //
-// Every word has to be one a shell reads as a literal (retryWordsInert). The
-// record is a file on this machine, and a coding agent running as the user can
-// write it — internal/issues says as much of the store it reads — so the text
-// is not the person's own until it is checked. `fugaro update --yes; curl … |
-// sh` is a stored command a shell runs as two, and an offer that printed it
-// would hand the reader the injection with `You can retry: ` in front of it,
-// on a line whose whole purpose is to be pasted.
+// Every word has to be one a shell reads as a literal (retryWordsInert), over
+// the record's own bytes rather than over a tokenizer's reading of them
+// (retryWords): the bytes that are checked have to be the bytes the printer
+// writes. The record is a file on this machine, and a coding agent running as
+// the user can write it — internal/issues says as much of the store it reads —
+// so the text is not the person's own until it is checked. `fugaro update
+// --yes; curl … | sh` is a stored command a shell runs as two, and an offer
+// that printed it would hand the reader the injection with `You can retry: `
+// in front of it, on a line whose whole purpose is to be pasted.
 //
 // Every word after the name walks down this build's own tree until one is not
 // a subcommand — a flag, or an argument such as a task or a checkout path — and
@@ -267,10 +269,11 @@ func retryHintLines(local []issues.Issue, rows []issues.SharedRow, version strin
 // `fugaro issue frobnicate`, so an offer naming one would send the reader to a
 // command that answers "unknown command" (D1614, F28).
 //
-// What comes back is the record's own text through safetext: it is a person's
-// command line, and a terminal is no place to trust one.
+// What comes back is the record's own text through safetext, which is that
+// same text unchanged once every byte of it has passed the check: it is a
+// person's command line, and a terminal is no place to trust one.
 func retryCommand(command string, root *cobra.Command) (string, bool) {
-	words := strings.Fields(command)
+	words := retryWords(command)
 	if len(words) == 0 || words[0] != root.Name() || !retryWordsInert(words) {
 		return "", false
 	}
@@ -297,10 +300,28 @@ func retryCommand(command string, root *cobra.Command) (string, bool) {
 // offer that is not a run of shell-literal bytes.
 const retryRedacted = "[REDACTED]"
 
+// retryWords is the record's words, split on the space and the tab alone —
+// which is what this program's own printed commands separate on, and the two
+// separators safetext leaves as they are.
+//
+// It is deliberately not strings.Fields, and that is the whole of it: Fields
+// splits on every Unicode space, so a vertical tab, a next line (U+0085) or a
+// line separator (U+2028) is a separator to the check and not to the shell —
+// `fugaro\vupdate` would pass as the words `fugaro` and `update`, and
+// safetext's OneLine prints it as the glob `fugaro?update`, a command position
+// on the one line a person pastes. The bytes checked here are the bytes
+// printed, and every byte that is neither a word byte nor one of these two
+// separators is refuted by retryWordsInert.
+func retryWords(command string) []string {
+	return strings.FieldsFunc(command, func(r rune) bool { return r == ' ' || r == '\t' })
+}
+
 // retryWordsInert reports whether every word is one a shell reads as a literal
 // word: shellword's own set of bytes, which is the set this program's printed
 // commands are made of, so a line this build wrote passes it — plus the
-// redaction marker, which stands in a value's place and is not literal.
+// redaction marker, which stands in a value's place and is not literal. The
+// exemption is the whole word: a marker run together with anything else is a
+// word of markers and brackets no writer here produces.
 //
 // A word holding anything else is one a shell does something with — a
 // separator, a substitution, a redirect, a glob, an expansion — and the whole

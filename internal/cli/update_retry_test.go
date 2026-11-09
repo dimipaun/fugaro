@@ -300,6 +300,18 @@ func TestUpdateRetryPrintsOnlyFugaroCommands(t *testing.T) {
 		{"fugaro update `id`", ""},
 		{"fugaro run [REDACTED]; sh", ""},
 		{"fugaro update --repo '[REDACTED]'", ""},
+		// A separator the check and the shell do not agree on: a Unicode
+		// space is a word break to strings.Fields and no word break to a
+		// shell, and the line would print `fugaro?update`, a glob in command
+		// position. The check runs over the bytes, so the whole line goes.
+		{"fugaro\vupdate", ""},
+		{"fugaro\u2028update", ""},
+		{"fugaro\u0085update", ""},
+		{"fugaro\u00a0update", ""},
+		{"fugaro\u3000update", ""},
+		// The marker is exempt as a whole word, and only as one.
+		{"[REDACTED][REDACTED]", ""},
+		{"fugaro [REDACTED]suffix", ""},
 	} {
 		t.Run(tc.command, func(t *testing.T) {
 			lines, _ := retryHintLines(
