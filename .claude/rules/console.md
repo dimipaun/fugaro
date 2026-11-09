@@ -15,11 +15,14 @@ paths:
   - a matching update to the §5.1 table in `docs/design/desktop-console.md`.
 - Treat everything that comes from the CLI or a run as untrusted text. Put it through a class in `src/shared/sanitize.ts` (`TEXT_CLASSES`) before it reaches the renderer.
 - A view that shows spend, caps or the kill controls must ask `hidesView` (`src/shared/version.ts`, `REDUCED_VIEWS`). In the reduced mode it then withholds its figures instead of misreading a CLI shape it does not know.
-- A child gets exactly `CHILD_ENV_KEYS` (11 keys) and nothing merged from `process.env`. macOS adds `__CF_USER_TEXT_ENCODING` to every process, and the tests exempt that key and nothing else.
+- A child gets exactly `CHILD_ENV_KEYS` (12 keys) and nothing merged from `process.env`. macOS adds `__CF_USER_TEXT_ENCODING` to every process, and the tests exempt that key and nothing else.
 - WSL route (`docs/console-windows/`):
   - refuse any word with shell metacharacters (`distroShellUnsafe`); never escape it,
   - a distro name must match `DISTRO_NAME_PATTERN`,
-  - the env is the same 11 keys plus the console's own empty `WSLENV` and `WSL_UTF8=1` (`WSL_UTF8=1`
+  - the env is the same 12 keys **less `FUGARO_LICENCE_KEY`** — the share list is empty, so a
+    key written into `wsl.exe`'s environment would reach no process, and the CLI inside the
+    distribution reads the key file of its own config directory instead (S2.3) — plus the console's
+    own empty `WSLENV` and `WSL_UTF8=1` (`WSL_UTF8=1`
     goes on every `wsl.exe` call, the CLI's plan as well as the queries),
   - the wrapper's stderr marker carries a fresh random nonce per spawn (`WslWrapper.marker`): match
     that marker, never the fixed prefix, and remove U+0000 and a leading U+FEFF before reading —
