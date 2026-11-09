@@ -139,6 +139,13 @@ func TestFindingsAreBoundedAndQuoted(t *testing.T) {
 // instructions, so a follow-up carries it too; the point of pinning the
 // full-ID commands in the same sentence is that the rule never reads as "keep
 // the ID to yourself" for a command that needs one.
+//
+// It sends an agent to the command's own help for the form RUN takes rather
+// than naming a command as taking a short ID: no command resolves an ending on
+// this tree (SR3's resolveRun has no caller until SR14 wires `logs`, `diagnose`
+// and `artifacts` to it), so a rule that named one would send the agent to a
+// command that refuses the ID it was told to pass. internal/cli's
+// TestShortIDRuleNamesOnlyCommandsThatTakeOne is what holds the rule to that.
 func TestPromptsCarryShortIDRule(t *testing.T) {
 	for _, d := range []runner.PromptData{
 		{Branch: "fugaro/x", Base: "main", StateDir: "/s"},
@@ -147,8 +154,8 @@ func TestPromptsCarryShortIDRule(t *testing.T) {
 		got := runner.SystemPrompt(d, "")
 		for _, want := range []string{
 			"Refer to runs only by their short ID, the last 4 characters of the run ID; refer to plan tasks by their plan name.",
-			"Pass the short ID to `logs`, `diagnose` and `artifacts`",
-			"`cancel`, `run --retry`, `--review-run`, `review show` and `--run-id` take full IDs, which `--json` output carries",
+			"A command is given the run ID its own help asks for",
+			"`cancel`, `run --retry`, `--review-run`, `review show` and `--run-id` take the full ID, which `--json` output carries",
 			"never print the full run ID in anything you write for a person",
 		} {
 			if !strings.Contains(got, want) {
