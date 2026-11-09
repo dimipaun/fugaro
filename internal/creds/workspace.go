@@ -23,19 +23,26 @@ import (
 // member: it adds credentials the member's own policy may then admit, and it
 // never serves one that policy does not NAME.
 //
-// **"Never wider" is the name leg and not the whole of a policy.** A member's
-// policy can also narrow a credential to some of that member's repositories
-// (`accounts.<name>.allow_repos`), and that leg is NOT asked here: the caller
-// translates a pool credential to the name the member's policy holds it under
-// (policyKey) and asks nothing else, so a credential the member narrowed to one
-// repository is served to that member's jobs on its others. It is a bound this
-// file cannot close rather than an oversight — the repository a run is on
-// reaches the workspace's service only as the sanitised slug inside the run
-// identity, and a leg read from an input the service cannot verify is not a leg
-// — and it is stated here, in projectpolicy.MemberAdmitsShared and in
-// docs/workspaces/spec.md §8's residual risk 7, because a sentence claiming the
-// whole of the policy is tighter would be false in exactly the dimension the
-// pool is least able to check.
+// **This file is the NAME leg of that intersection, and the repository leg is
+// the service's.** A member's policy can also scope a credential by repository
+// (`accounts.<name>.allow_repos`), and the two legs of it are read in two
+// places: this arithmetic asks which NAMES the member's policy admits, and
+// credsvc.Workspace.Shared asks, from the member's own database, whether the
+// repository the calling run is on was admitted to that name
+// (projectpolicy.PathRepo over the run identity's verified slug). So a pooled
+// credential is served only on repositories the member's own database admits it
+// to, and this file holds none of that: it is the arithmetic over names, and a
+// caller wanting the set asks the service.
+//
+// What is not re-asked is the two canonical `allow_repos` legs — the project's
+// and the account's own allow-lists, which the member's own service checks by
+// the canonical `owner/repo` name. A workspace's service holds only the
+// sanitised slug and reads the child the publish path derived from those legs,
+// so a child that is stale against the policy it came from is served here where
+// the member's own cascade refuses. It is docs/workspaces/spec.md §8's residual
+// risk 7, stated there and in projectpolicy.MemberAdmitsShared, and closing it
+// is the owner's call: the canonical repository per job account is a column the
+// owner's per-member table does not carry.
 //
 // **The two refusals are told apart, because they are two different fixes.** A
 // credential this project is not on the allow-list for is the workspace's

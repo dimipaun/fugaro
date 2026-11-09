@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -67,11 +68,16 @@ type wsDB struct {
 	nodes map[string]any
 	paths []string
 	err   error
+	// errPath, when set, is the ONE path whose read fails: a database that is
+	// down at one node and healthy at the others. A test of a service's SECOND
+	// read needs it — a database that failed everywhere would refuse at the
+	// first read and hold nothing about the one behind it.
+	errPath string
 }
 
 func (d *wsDB) Get(_ context.Context, path string, out any) (bool, error) {
 	d.paths = append(d.paths, path)
-	if d.err != nil {
+	if d.err != nil && (d.errPath == "" || d.errPath == path) {
 		return false, d.err
 	}
 	node, ok := d.nodes[path]
@@ -236,6 +242,11 @@ func (f *wsFixture) verifyOK(member, account string) MemberCall {
 
 // setPolicy publishes one member's policy with one account admitted to this
 // test's repository, which is the member's side of D1298's intersection.
+// setPolicy writes the member's own published policy AND the repository's
+// admission child the publish path derives from it (repoAdmissions): every
+// account it names carries allow_repos naming wsRepo, so the child for wsSlug
+// lists it. One command writes the two nodes, and a fixture that wrote only the
+// policy would be a member whose repository node no publish ever produced.
 func (f *wsFixture) setPolicy(member string, accounts ...string) {
 	block := map[string]any{}
 	for _, name := range accounts {
@@ -245,6 +256,26 @@ func (f *wsFixture) setPolicy(member string, accounts ...string) {
 		"version":     projectpolicy.Version,
 		"allow_repos": []string{wsRepo},
 		"accounts":    block,
+	}
+	f.setAdmissions(member, wsSlug, accounts...)
+}
+
+// setAdmissions writes one repository's own node — the child the service reads
+// by the slug the run identity verified — with no account listed for no
+// accounts, which is the absent node and not an empty block (a written block
+// naming nobody is a document the reader refuses, projectpolicy.DecodeRepo).
+// It is a fixture entry point of its own because the service reads the node and
+// not the policy that derives it, so a test has to be able to write the states
+// a publish cannot produce: a child listing somebody else, or nobody at all.
+func (f *wsFixture) setAdmissions(member, slug string, accounts ...string) {
+	if len(accounts) == 0 {
+		delete(f.dbs[member].nodes, projectpolicy.PathRepo(slug))
+		return
+	}
+	sorted := append([]string(nil), accounts...)
+	slices.Sort(sorted)
+	f.dbs[member].nodes[projectpolicy.PathRepo(slug)] = map[string]any{
+		"credentials": map[string]any{"accounts": sorted},
 	}
 }
 
@@ -837,6 +868,91 @@ func TestWorkspaceCredentialIsRefusedWhenTheMembersPolicyExcludesIt(t *testing.T
 	f.dbs[wsMemberA].err = errors.New("the database is unavailable")
 	if _, err := f.ws.Shared(ctx, a, f.offered(wsMemberA)); err == nil {
 		t.Error("Shared with an unreadable policy = nil error, want a refusal")
+	}
+}
+
+// TestWorkspaceSharedIsRefusedWhereTheRepositoriesOwnNodeDoesNotAdmitIt: the
+// third leg of the effective set, and the one that keeps rule 1 true in the
+// repository dimension. The member's policy says which CREDENTIALS it admits;
+// the repository's own node (`projectpolicy.PathRepo`, read at the slug the run
+// identity verified) says which of them THAT repository was admitted to. A
+// credential the member's policy names but the repository's node does not is not
+// served, which is the band the member's own narrowing lives in: an
+// administrator who admitted a credential to one repository has not admitted it
+// to the others.
+//
+// It is the same node and the same slug the installation's own cascade reads
+// (admittedAccounts), so the two services answer the same question the same way
+// — and the three states are the cascade's three: listed is served, absent is
+// admitted to nothing, unreadable is a refusal.
+func TestWorkspaceSharedIsRefusedWhereTheRepositoriesOwnNodeDoesNotAdmitIt(t *testing.T) {
+	ctx := context.Background()
+
+	// The member's policy names the credential, and the repository's node lists
+	// somebody else: the pool is offered to the project and the policy admits the
+	// name, and the credential is still not served on this run's repository.
+	f := newWSFixture(t)
+	f.setPolicy(wsMemberA, wsShared)
+	f.setAdmissions(wsMemberA, wsSlug, wsShared+"-other")
+	caller := f.verifyOK(wsMemberA, wsAccountA)
+	got, err := f.ws.Shared(ctx, caller, f.offered(wsMemberA))
+	if err != nil {
+		t.Fatalf("Shared for a repository the credential was not admitted to: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("Shared = %v, want none: the repository's own node does not admit the credential, so the member's own narrowing is that it is not served here", got)
+	}
+
+	// The repository's node lists it, and the same call is served it: the
+	// refusal above is the node and not the fixture.
+	f.setAdmissions(wsMemberA, wsSlug, wsShared)
+	got, err = f.ws.Shared(ctx, caller, f.offered(wsMemberA))
+	if err != nil {
+		t.Fatalf("Shared for a repository the credential was admitted to: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != wsShared {
+		t.Errorf("Shared = %v, want the credential the repository's own node admits", got)
+	}
+
+	// An absent node is an admission to nothing and not an error: the member's
+	// administrator admitted this repository to no account at all.
+	f.setAdmissions(wsMemberA, wsSlug)
+	got, err = f.ws.Shared(ctx, caller, f.offered(wsMemberA))
+	if err != nil {
+		t.Fatalf("Shared for a repository with no admission node: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("Shared = %v, want none: a repository with no node is admitted to nothing", got)
+	}
+
+	// The node is read from the MEMBER's database and at the slug the run
+	// identity names: the other member's node is not consulted, and a node at
+	// another slug is not this run's.
+	f.setAdmissions(wsMemberA, wsSlug, wsShared)
+	got, err = f.ws.Shared(ctx, caller, f.offered(wsMemberA))
+	if err != nil || len(got) != 1 {
+		t.Fatalf("Shared with the member's own node written = (%v, %v), want the credential", got, err)
+	}
+	if !f.dbs[wsMemberA].read(projectpolicy.PathRepo(wsSlug)) {
+		t.Error("the repository's node was not read from the member's own database: the admission is the member's own state")
+	}
+	if len(f.dbs[wsMemberB].paths) != 0 {
+		t.Errorf("another member's database was read (%v): one member's call may not read another member's state", f.dbs[wsMemberB].paths)
+	}
+
+	// A node that could not be read is a refusal and not an empty set: answering
+	// a permission question with a database outage would be the same answer by
+	// luck and the wrong one by construction.
+	f.dbs[wsMemberA].err = errors.New("the database is unavailable")
+	f.dbs[wsMemberA].errPath = projectpolicy.PathRepo(wsSlug)
+	if _, err := f.ws.Shared(ctx, caller, f.offered(wsMemberA)); err == nil {
+		t.Error("Shared with an unreadable repository node = nil error, want a refusal")
+	}
+	// And the refusal is the repository node's, not the policy read's: the policy
+	// was read and admitted the credential, so a service that had skipped the
+	// node would have served it.
+	if !f.dbs[wsMemberA].read(projectpolicy.PathShared()) {
+		t.Error("the member's policy was not read: the test's unreadable node has to be the one behind the policy read")
 	}
 }
 

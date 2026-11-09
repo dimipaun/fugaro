@@ -533,26 +533,30 @@ func validExchangeURL(raw string) error {
 // the reason and never with the workspace's — the operator is not sent to the
 // workspace for a refusal the member made.
 //
-// **The repository legs of the same intersection are deliberately not asked
-// here, and this is the one place in the intersection where a leg is left
-// out.** The member's own service narrows its credentials by the canonical
-// repository the call is on (admittedAccounts takes it from the job account the
-// deployment published, never from the run's own header). This deployment
-// cannot: what it verifies about a caller is its member, and the repository a
-// run is on reaches it only as the run identity's `fs`, a slug that
-// `task.Slug` sanitised and no reader can invert into the canonical name the
-// member's `allow_repos` lists. Asking a leg whose input the workspace cannot
-// verify would be a check that reads whatever the caller said, which is the
-// shape the service refuses everywhere else (the X-Fugaro-Run-Job rule). So the
-// shared pool is scoped by the credential's NAME — the key this block holds it
-// under, which the caller translates (policyKey) — and the workspace's
-// per-project allow-list, and a member's own per-repository narrowing of that
-// name is not enforced for a pooled credential — it is a bound this shape
-// records rather than a check it makes, and the honest way to close it is a
-// canonical repository per job account in the owner's per-member table, which
-// is a column this table does not carry. What the name leg does buy is the
-// whole of D1298's direction: a credential the member's policy never declared
-// is refused, so the pool can only serve names the member already admits.
+// **This is the NAME leg, and the intersection's repository leg is not asked
+// here — it is asked by the service, at the repository's own node.** The
+// member's policy is scoped by the credential's NAME (the key this block holds
+// it under, which the caller translates, policyKey) and by the workspace's
+// per-project allow-list; the repository the run is on is asked separately, from
+// the repository child the run identity's verified slug names, and it is the
+// service that reads it (credsvc.Workspace.Shared's admittedOn over
+// projectpolicy.PathRepo). So a credential this policy names but the run's
+// repository is not admitted to is not served, and the whole of D1298's
+// direction still holds: the pool can only serve names the member already
+// admits, on repositories the member's own database admits them to.
+//
+// **What is not re-asked is the two canonical `allow_repos` legs.** The
+// member's own service asks them by the canonical `owner/repo` name
+// (admittedAccounts): the project's own allow-list — the leg that closes the
+// `repos rm` gap, because removing a repository does not touch its child — and
+// the account's. A workspace's service holds only the sanitised slug, which no
+// reader can invert into that name, so it reads the child the publish path
+// derived from both legs instead. A child that is stale against the policy it
+// was derived from — a `repos rm` whose child was not removed, two concurrent
+// publishes, a hand-edited node — is therefore served here where the member's
+// own cascade would refuse. That is spec.md §8's residual risk 7, and closing
+// it is the owner's call: the canonical repository per job account is a column
+// the owner's per-member table does not carry.
 func MemberAdmitsShared(p *Policy, name string) bool {
 	if p == nil {
 		return false

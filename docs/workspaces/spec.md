@@ -37,11 +37,8 @@ Two rules bind everything below and are not up for a decision:
 
 1. **A workspace never widens a member.** Every member keeps its own policy, its own caps, its own
    allow-lists and its own launcher/operator lists, and nothing a workspace holds can make a call
-   possible in a member that the member's own configuration forbids **by name** — the name being the
-   dimension the workspace's service asks a member's policy in (§5): it admits a pooled credential
-   only where the member's own `accounts` block names it, and it asks nothing else. A workspace
-   *groups*; it never grants. §9 states it as a prohibition, and §8's residual risk 7 states the one
-   dimension in which the prohibition is by name rather than the whole of a member's policy.
+   possible in a member that the member's own configuration forbids. A workspace *groups*; it never
+   grants. §9 states it as a prohibition.
 2. **No agent handles a credential.** The workspace's services never hand a model credential or a
    forge credential to a run, to a CLI, or to a person — not as a tool result, not in an error, not
    in a log line. A run's credential reaches the run the way it reaches every run today: the
@@ -370,7 +367,10 @@ bypass, so the intersection is the only shape that keeps rule 1). Every shared c
 effective set is the **intersection** of:
 
 - the workspace credential's allow-list;
-- the member's own policy, which may refuse a provider or a credential the workspace holds.
+- the member's own policy, which may refuse a provider or a credential the workspace holds;
+- **the repository the run is on**, as the member's own database admits it: the repository's own
+  admission child, read from the member's database at the slug the run identity's `fs` verified
+  (§4's pool, §8's residual risk 7 states the two `allow_repos` legs this node stands in for).
 
 The member's policy is always the tighter side, because that is what "only tighten" means
 (`internal/policy/merge.go`). A credential the workspace holds and the member's policy excludes is
@@ -738,22 +738,25 @@ already has over the member's own credentials today; grouping it means one membe
 reaches the *pool*, not just that member. It is why the allow-list is mandatory and why a shared
 credential's allow-list should name the fewest members that need it.
 
-**The member's leg is asked by NAME, and the repository leg is an accepted divergence.** A member's
-policy can narrow a credential to **some of that member's repositories**
-(`accounts.<name>.allow_repos`), which is a leg the member's own service enforces for its calls. The
-workspace's service cannot ask it: the only thing that reaches it about the repository a run is on is
-the sanitised slug inside the run identity's `fs`, and the canonical `github/owner/repo` an
-`allow_repos` list carries cannot be recovered from it (F18) — and asking a leg whose input the
-caller supplied would be exactly the "read whatever the caller said" shape this service refuses
-everywhere else. So the leg asked is the **name**: whether the member's policy holds the credential
-at all. A credential the member narrowed to some of its repositories is therefore served to that
-member's jobs on the others, and that is a divergence from a plain reading of §9's "cannot serve a
-credential a member's policy excludes". It is stated here rather than left to be found, and it is
-narrow: the workspace's allow-list is still mandatory, the member's policy must still declare the
-credential, and option (B) the owner refused is still refused. Whether to close it is the owner's
-call, and closing it is a column rather than a redesign: a canonical repository beside each job
-account in the owner's per-member table — the pair `credsvc.JobAccount` already carries for the
-installation's own jobs, and the column this table does not.
+**The member's leg is asked by name and by the repository's own node; what is not re-asked are the
+two canonical `allow_repos` legs.** A member's policy scopes a credential to **some of that member's
+repositories** (`accounts.<name>.allow_repos`), and the workspace's service asks that scope the way it
+can ask it: from the member's own database, at the repository's **own admission child**, keyed by the
+**slug the run identity's `fs` verified** (projectpolicy.PathRepo — the node the member's publish
+derived from those very allow-lists, and the node the member's own cascade reads for the same
+purpose). A credential the member's policy names but that child does not is not served, so the pool
+is scoped to the repositories the member's own database admits it to. What the service cannot re-ask
+is the two legs the member's own cascade asks by the **canonical `github/owner/repo` name** — the
+project's own `allow_repos`, and the account's as the policy holds it now — because the canonical name
+cannot be recovered from the sanitised slug (F18). A child that is **stale** against the policy it
+was derived from (a `repos rm` that did not touch it, two concurrent publishes, a hand edit) is
+therefore served here where the member's own service refuses. That is the divergence; it is stated
+here rather than left to be found, and it is narrow: the workspace's allow-list is still mandatory,
+the member's policy must still declare the credential, the repository's own node must still admit it,
+and option (B) the owner refused is still refused. Whether to close it is the owner's call, and
+closing it is a column rather than a redesign: a canonical repository beside each job account in the
+owner's per-member table — the pair `credsvc.JobAccount` already carries for the installation's own
+jobs, and the column this table does not.
 
 **The workspace cap's integrity, after the amendment.** The cap is enforced at the service (D1299)
 and **metered there too** (D1301 as amended, §5): the service reserves before each call it pays for
@@ -858,15 +861,20 @@ ceiling is decided.
    (The exchange's `email_verified` requirement, §3 fact 2, is not a mitigation against this: setting
    that flag is exactly what a custom token can do. It is there because an unverified address is one
    nobody proved they own, and the provider pin is what answers this risk.)
-7. A shared credential the member's policy narrows to some of that member's repositories is served to
-   that member's jobs on the others, because the workspace's service reads the member's leg by name
-   and cannot verify the repository a run is on (stated in full above). Mitigation: the workspace's
-   allow-list and the member's own declaration of the credential are both still required, so the pool
-   serves only names the member already admits, and a member that needs the narrowing enforced keeps
-   that credential in its own project rather than sharing it. Closing it is an owner decision and a
-   column, not a redesign. It is the one dimension in which §0's rule 1 and §9's "never widens a
-   member" are stated **by name** rather than as the whole of a member's policy, and both point here
-   for it.
+7. A shared credential is served on a repository the member's own policy no longer admits it to,
+   where the member's own service would refuse it. The workspace's service asks the repository from
+   the **slug the run identity verified** — the repository's own admission child, the node that
+   repository's administrator published (projectpolicy.PathRepo) — and it cannot ask the two legs the
+   member's own cascade asks by the **canonical `owner/repo` name**: the project's own `allow_repos`,
+   which is the leg that closes the `repos rm` gap because removing a repository does not touch its
+   child, and the account's `allow_repos` as the policy holds it now. A child stale against the policy
+   it was derived from — a `repos rm`, two concurrent publishes, a hand-edited node — is therefore
+   served here. Mitigation: the workspace's allow-list, the member's own declaration of the credential
+   and the repository's own admission child are all still required, so the pool serves only names the
+   member admits, on repositories its own database admits them to, and a member that needs the last
+   word keeps that credential in its own project rather than sharing it. Closing it is an owner
+   decision and a column — the canonical repository per job account in the owner's per-member table —
+   not a redesign, and it stays an open item until the owner makes that call.
 
 ## 9. What a workspace never does
 
@@ -875,10 +883,7 @@ This is rule 1 and rule 2 written as prohibitions. A workspace:
 - **never widens a member.** It cannot add a launcher or an operator, admit an address a member's
   lists do not name, raise a member's cap, run a mode a member's policy forbids, or serve a
   credential a member's policy excludes. It cannot make a repository reachable in a member that the
-  member's own policy excludes — in the dimension this prohibition is stated in, which is the
-  credential's **name**: the member's policy is asked by name and nothing else, so a credential the
-  member narrowed to some of its repositories is served to that member's jobs on the others (§8,
-  residual risk 7, states the divergence and why the service cannot close it).
+  member's own policy excludes.
 - **never hands out a credential.** No shared credential's value is returned to a run, a CLI, a
   person, an error message or a log line. The service proxies the call; the key stays with the
   service.

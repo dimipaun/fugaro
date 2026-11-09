@@ -575,22 +575,31 @@ func (w *Workspace) Policy(ctx context.Context, c MemberCall) (*projectpolicy.Po
 }
 
 // Shared is the effective set of the workspace's pool for this caller: the
-// credentials the workspace offers this member AND the member's own policy
-// admits (D1298). offered is the workspace's declaration — the node's shared
-// entries with the tiers the bundle carries — and the member side is read from
-// the member's own policy in the member's own database.
+// credentials the workspace offers this member (the node's shared entries with
+// the tiers the bundle carries, D1298's allow-list) whose name the member's own
+// policy admits AND whose name the repository this run is on was admitted to in
+// the member's own database.
+//
+// **The member's side is two reads, and the second is the repository's own
+// node.** One is the member's published policy, asked by the credential's NAME
+// (creds.AdmitShared's member leg): the member's `accounts` block is the
+// vocabulary both nodes speak, so the leg is one name lookup. The other is the
+// repository child at the slug the run identity VERIFIED (projectpolicy.PathRepo
+// over Identity.Slug) — `Admissions` in the installation's own cascade, read
+// there for the cascade's tier-A admission and here for the pooled credential —
+// whose `credentials.accounts` are the account names an administrator admitted
+// that repository to. A credential the member's policy names but that
+// repository's node does not is not served: the repository is the member's own
+// narrowing, and reading it from the slug the run identity names is what makes
+// the leg a check rather than a claim (the canonical `owner/repo` name is what
+// this service does NOT have, and the two `allow_repos` legs that need it are
+// §8's residual risk 7).
 //
 // The refusal an operator reads for one named credential is creds.AdmitShared's,
-// and this answers the SET, which is what the cascade is offered: the two legs
-// are the same two either way. A policy that could not be read is a refusal and
-// never an empty set, because a policy that could not be read is not one that
-// admits nothing.
-//
-// The member's leg is asked BY NAME and not by repository, which is the one
-// bound this deployment cannot check (projectpolicy.MemberAdmitsShared's doc
-// comment states why: the repository a run is on reaches this service only as
-// the sanitised slug in the run identity, and a leg read from an input the
-// service cannot verify is not a leg).
+// and this answers the SET, which is what the cascade is offered: the legs are
+// the same either way. A policy or an admission node that could not be read is a
+// refusal and never an empty set, because one that could not be read is not one
+// that admits nothing.
 func (w *Workspace) Shared(ctx context.Context, c MemberCall, offered []creds.Shared) ([]creds.Credential, error) {
 	if c.Class != ClassWorkspaceMember {
 		return nil, fmt.Errorf("%w: the shared pool is served to a member's job, and the caller is not one", ErrUnverifiedJob)
@@ -602,10 +611,45 @@ func (w *Workspace) Shared(ctx context.Context, c MemberCall, offered []creds.Sh
 	if !found {
 		policy = nil
 	}
+	admitted, err := w.admittedOn(ctx, c)
+	if err != nil {
+		return nil, err
+	}
 	member := creds.MemberPolicy(func(name string) bool {
-		return projectpolicy.MemberAdmitsShared(policy, name)
+		return admitted[name] && projectpolicy.MemberAdmitsShared(policy, name)
 	})
 	return creds.SharedFor(c.Member.Project, offered, member), nil
+}
+
+// admittedOn is the account names the run's OWN repository is admitted to, read
+// from the member's own database at the node the run identity's verified slug
+// names (projectpolicy.PathRepo, `Admissions` in the installation's cascade).
+//
+// An absent node is an empty admission and never an error — a repository the
+// member's administrator admitted to no account is admitted to none, which is
+// the same reading the cascade makes — and an unreadable node is a refusal,
+// because a reader that turned one into an empty set would answer a permission
+// question with a database outage (fail closed is a refusal, not a silent
+// nothing). The slug is the verified one and not a value a caller supplied: the
+// run identity carries `fs` and `fr`, both of them held to the uid the token's
+// own Firebase project minted, so the node read here is the calling run's own.
+func (w *Workspace) admittedOn(ctx context.Context, c MemberCall) (map[string]bool, error) {
+	db, err := w.database(c)
+	if err != nil {
+		return nil, err
+	}
+	child, found, err := RTDBPolicy{DB: db}.Admissions(ctx, c.Identity.Slug)
+	if err != nil {
+		return nil, fmt.Errorf("credsvc: the repository's own admission node could not be read, so the workspace's pool is not served to this run: %w", err)
+	}
+	if !found || child == nil || child.Credentials == nil {
+		return nil, nil
+	}
+	admitted := make(map[string]bool, len(child.Credentials.Accounts))
+	for _, name := range child.Credentials.Accounts {
+		admitted[name] = true
+	}
+	return admitted, nil
 }
 
 // database is the member's database as this deployment opened it, and it is

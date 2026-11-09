@@ -59,9 +59,7 @@ trusting any finding above it.
   merge of any task's work.)
 - **The folder keeps two rules unconditionally**, and [spec.md](spec.md) §9 states both as
   prohibitions: **a workspace never widens a member** (no member's policy, cap, allow-list or
-  launcher list can be changed by anything a workspace holds, and a pooled credential is served only
-  where the member's own policy names it — a member's policy is asked by name, which is the one
-  dimension [spec.md](spec.md) §8's residual risk 7 states), and **no agent handles a
+  launcher list can be changed by anything a workspace holds), and **no agent handles a
   credential** (a shared credential is proxied by the workspace's service and never disclosed).
 
 ## What it is
