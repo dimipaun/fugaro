@@ -1,6 +1,6 @@
 # Failure classes: a closed vocabulary on the run record, and a failures report
 
-**Status: a design, and its FC1–FC7 have shipped; the rest of §10 is not built.** This document
+**Status: a design, and its FC1–FC8 have shipped; §10 is built.** This document
 recommends, and names the alternative and what it costs, for every question it takes up; the owner
 rules, and the design's own decisions — §8 D1–D9 and §9 O1–O6 — stay his. The plan's decisions,
 D1450–D1469, are answered 2026-11-07, each as recommended. **FC1** — the vocabulary, the record's
@@ -18,8 +18,9 @@ class through — exported on D1454's decision so the digest's own read (§5, "t
 same function") can call the same one, which it does: **FC7** — the Failures table, `failures` in
 the summary block and the two class rules — **is on `main`**, and the digest is the caller outside
 `internal/runview` that the export was for, the runner's own agreement walks being the others.
-**FC8 is not started.** What is written here was read against `main` on 2026-11-05, and the
-line citations are taken from that tree.
+**FC8** — the documents, the contract and the skills — **is on `main` too**, so §10 is built. What
+is written here was read against `main` on 2026-11-05, and the line citations are taken from that
+tree.
 
 Related: [v1.md](v1.md) §4.5 (failure paths), §4.6 (the run record) and §4.8 (`runs ls`),
 [artifact-runs.md](artifact-runs.md) (the report a run writes with the digest), the digest's own
@@ -587,9 +588,9 @@ that is already long; no reader of it is a contract.
 
 ## 10. Tasks
 
-**Status: a plan, approved to build on 2026-11-07; FC1–FC7 are built and FC8 is not
-started.** Each task is written to fit one run's $5 cap: it names at most twelve files, one command,
-one commit message and one red step. The convention is the one the active plans use
+**Status: a plan, approved to build on 2026-11-07; FC1–FC8 are built.** Each task is written to fit
+one run's $5 cap: it names at most twelve files, one command, one commit message and one red step.
+The convention is the one the active plans use
 (`docs/bitbucket-credentials/implementation-plan.md` is the most recent): **Files**,
 **Interfaces**, **Tests**, **Command**, **Depends on**, **Red step**, **Reviewer**, **Commit**, and a
 **SEC** flag where the change moves a security boundary. **This work is SECURITY-SENSITIVE: the

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // Markdown is d as the report's file: the tables a person reads and the
@@ -30,6 +32,13 @@ func Markdown(d Digest) []byte {
 // again and again while rows are dropped.
 func markdownCore(d Digest) []byte {
 	var b strings.Builder
+	// The IDs this report prints, each shortened by the one collision rule
+	// over exactly the rows it prints (spec.md §3, D1706): the run table's
+	// rows and the failures table's example runs. The shortening is here and
+	// not in RunsTable because digestSubmitRuns renders that table too, with
+	// its rows renumbered -- a draft leaves the repository and carries no run
+	// ID at all.
+	ends := task.DisplayRuns(printed(d))
 	fmt.Fprintf(&b, "# Run digest: %s\n\n", d.Period.Key)
 	fmt.Fprintf(&b, "Runs of this repository that finished in %s (%s to %s): %d in all, %d shown, %d flagged. Billed %s, notional %s.\n\n",
 		d.Period.Key, d.Period.Start, d.Period.End, d.Total.Runs, len(d.Runs), d.Total.Flagged,
@@ -38,7 +47,12 @@ func markdownCore(d Digest) []byte {
 	if len(d.Runs) == 0 {
 		b.WriteString("No run of this repository finished in this period.\n\n")
 	} else {
-		b.WriteString(RunsTable(d.Runs))
+		rows := make([]Run, len(d.Runs))
+		for i, r := range d.Runs {
+			r.ID = ends[task.Ref{RunID: r.ID}]
+			rows[i] = r
+		}
+		b.WriteString(RunsTable(rows))
 	}
 	if d.Dropped > 0 {
 		fmt.Fprintf(&b, "Rows not shown: %d. The report is capped at %d bytes before extra sections, and the cheapest unflagged rows go first.\n\n",
@@ -48,7 +62,12 @@ func markdownCore(d Digest) []byte {
 	if len(d.Failures) > 0 {
 		b.WriteString("## Failures\n\n")
 		b.WriteString("Why the period's runs did not succeed, over every run of the period, not only the rows above.\n\n")
-		b.WriteString(FailuresTable(d.Failures))
+		rows := make([]ClassCount, len(d.Failures))
+		for i, f := range d.Failures {
+			f.Example = ends[task.Ref{RunID: f.Example}]
+			rows[i] = f
+		}
+		b.WriteString(FailuresTable(rows))
 	}
 
 	if len(d.Stages) > 0 {
@@ -72,11 +91,27 @@ func markdownCore(d Digest) []byte {
 	return []byte(b.String())
 }
 
+// printed is every run ID the report's tables print: the run table's rows and
+// the failures table's example runs. The collision rule is computed over
+// exactly this set, because a collision is a property of what is shown
+// together and not of the bucket (F15).
+func printed(d Digest) []task.Ref {
+	refs := make([]task.Ref, 0, len(d.Runs)+len(d.Failures))
+	for _, r := range d.Runs {
+		refs = append(refs, task.Ref{RunID: r.ID})
+	}
+	for _, f := range d.Failures {
+		refs = append(refs, task.Ref{RunID: f.Example})
+	}
+	return refs
+}
+
 // RunsTable is the report's run table: its header, one row per run, and the
 // blank line after it. Every cell is a figure or a closed vocabulary, and the
-// first one is the run's own ID -- so a caller that must not print an ID (a
-// draft that leaves the repository) renumbers its copy before handing it here,
-// and the two renderings of one set of figures cannot drift apart.
+// first one is the ID the caller put in the row -- the run's short ID in the
+// report (markdownCore), a renumbered one in a draft that leaves the
+// repository -- so the two renderings of one set of figures cannot drift
+// apart.
 func RunsTable(runs []Run) string {
 	var b strings.Builder
 	b.WriteString("| run | status | pr | base | reviews | billed | notional | flags |\n")

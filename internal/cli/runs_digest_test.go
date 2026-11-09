@@ -102,7 +102,8 @@ func TestRunsDigestWritesPeriodFile(t *testing.T) {
 	body := digestReport(t, dir, "2026-10-25")
 	for _, want := range []string{
 		"# Run digest: 2026-10-25",
-		"20261025-120000-abcd",
+		// The run table names the period's runs by their short IDs (D1706).
+		"| `abcd` | succeeded |",
 		"## Summary",
 		`"period":"2026-10-25"`,
 		`"end":"2026-10-25"`,
@@ -194,10 +195,13 @@ func TestRunsDigestOneRepositoryOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runs digest: %v (%s)", err, errOut)
 	}
-	if !strings.Contains(out, "20261025-120000-abcd") {
+	// The two seeded IDs end alike, so the run the table read shows its four
+	// characters; a report that wrongly read the other repository's record
+	// would extend both endings through the dash to tell the rows apart.
+	if !strings.Contains(out, "| `abcd` | succeeded |") {
 		t.Errorf("the report leaves out this repository's own run:\n%s", out)
 	}
-	if strings.Contains(out, "20261025-120001-abcd") {
+	if strings.Contains(out, "-abcd`") {
 		t.Errorf("the report reads a record of another repository:\n%s", out)
 	}
 	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
@@ -344,7 +348,7 @@ func TestRunsDigestSkipsMalformedReport(t *testing.T) {
 		t.Errorf("the index lost the report beside it:\n%s", index)
 	}
 	// The report being written is written, whatever the folder held.
-	if !strings.Contains(digestReport(t, dir, "2026-10-25"), "20261025-120000-abcd") {
+	if !strings.Contains(digestReport(t, dir, "2026-10-25"), "| `abcd` | succeeded |") {
 		t.Error("the report being written is missing its own run")
 	}
 }
@@ -514,10 +518,13 @@ func TestRunsDigestWarnsTruncatedListing(t *testing.T) {
 	if !strings.Contains(out, `"runs":2`) {
 		t.Errorf("the report is not over the newest runs of the bound:\n%s", out)
 	}
-	if strings.Contains(out, "20261025-100000-abcd") {
+	// The three seeded IDs end alike, so the endings the table shows are the
+	// ones its own rows need to tell each other apart: the newest two need ten
+	// characters, and the run off the bound would show the oldest one's.
+	if strings.Contains(out, "`00000-abcd`") {
 		t.Errorf("the report reads a run past the bound, so the cap does not keep the newest:\n%s", out)
 	}
-	if !strings.Contains(out, "20261025-120000-abcd") {
+	if !strings.Contains(out, "| `20000-abcd` | succeeded |") {
 		t.Errorf("the report leaves out the newest run:\n%s", out)
 	}
 

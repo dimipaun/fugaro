@@ -188,6 +188,7 @@ import {
   PROJECTS_ACCOUNT_KEYS_CLASS,
   PROJECTS_BUSY,
   PROJECTS_CREDENTIALS_SERVICE_CLASS,
+  PROJECTS_LICENCE_CLASS,
   PROJECTS_MANAGED_CLASS,
   PROJECTS_MODELS_BUSY,
   PROJECTS_RETIREMENTS_CLASS,
@@ -199,6 +200,14 @@ import {
   CREDENTIALS_SERVICE_BUSY,
   CREDENTIALS_SERVICE_TITLE,
 } from '../../src/renderer/screens/credentialsservice'
+import {
+  LICENCE_BOX_CLASS,
+  LICENCE_BUSY,
+  LICENCE_HINT,
+  LICENCE_SAVED_WORD,
+  LICENCE_SUBMIT_CLASS,
+  LICENCE_TITLE,
+} from '../../src/renderer/screens/licence'
 import { MANAGED_BUSY, MANAGED_TITLE } from '../../src/renderer/screens/managed'
 import { POLICY_NODE_TITLE } from '../../src/renderer/screens/policynotes'
 import { RETIREMENTS_BUSY, RETIREMENTS_SET_TITLE } from '../../src/renderer/screens/retirements'
@@ -229,7 +238,7 @@ import {
 const CONSOLE_ROOT = join(__dirname, '..', '..')
 
 /**
- * READ_METHODS is the eighteen reads `entry.ts` may reach for (`ReadBridge`'s
+ * READ_METHODS is the nineteen reads `entry.ts` may reach for (`ReadBridge`'s
  * own list less `summaryRuns`, which `queueBridge` answers with its own
  * recorder), by the name the preload exposes. Every one of them is on the
  * fake bridge below, and every one records its call -- so "this read was never
@@ -239,8 +248,11 @@ const CONSOLE_ROOT = join(__dirname, '..', '..')
  * Graph's second scope is read through it, and a case that drove the Graph with
  * a bridge that could not answer it would be driving a console whose only
  * remaining scope is the plan's. `managedStatus`, `policyShow` and
- * `environmentReport` are the managed-project screens plan's CM4 rows, and they
- * are the last three: the Project tab's later sections read them (CM10).
+ * `environmentReport` are the managed-project screens plan's CM4 rows: the
+ * Project tab's later sections read them (CM10). `readLicence` is the
+ * subscriptions plan's S2.7 row and the last: the Project tab's licence key,
+ * which is the one read here whose answer is not a `Snapshot` around a CLI
+ * document -- that operation spawns no child at all.
  */
 const READ_METHODS = [
   'subscribeLive',
@@ -261,14 +273,15 @@ const READ_METHODS = [
   'managedStatus',
   'policyShow',
   'environmentReport',
+  'readLicence',
 ] as const
 
 /** A_REPLY is a bridge method's answer. */
 type AReply = (args: unknown) => unknown
 
 /** FakeBridge is the preload seam, recorded: the handshake, the installation,
- * and the fifteen reads (`READ_METHODS`), each answering what the case told it to
- * and appending its own call to `calls`. */
+ * and the reads (`READ_METHODS`), each answering what the case told it to and
+ * appending its own call to `calls`. */
 interface FakeBridge {
   readonly bridge: Record<string, unknown>
   readonly calls: readonly { readonly name: string; readonly args: unknown }[]
@@ -5060,6 +5073,33 @@ const SETTINGS_DOC = Object.freeze({
   ],
 })
 
+/** A_LICENCE_REPLY is one `licence.read` answer (S2.7; `LicenceReply` in
+ * `src/main/licence-store.ts`): the state the verifier answered for the key this
+ * installation holds, and the claim set a screen may draw. It is **not** wrapped
+ * in a `Snapshot`, and that is the difference this suite has to drive: the two
+ * `licence.*` operations spawn no child, so the surface answers the reply itself
+ * and the entry hands it on through `replyData`. */
+const A_LICENCE_REPLY: Readonly<Record<string, unknown>> = Object.freeze({
+  state: 'grace',
+  claims: {
+    tier: 'team',
+    features: ['entitlements', 'fleet'],
+    seats: 4,
+    organisation: 'acme.example',
+    issued: 1_767_225_600,
+    expires: 1_798_761_600,
+  },
+})
+
+/** LICENCE_REFUSAL is the verifier's own sentence for a key that does not
+ * verify, which `licence.save` answers a refused paste with. */
+const LICENCE_REFUSAL = 'the licence key’s signature does not verify'
+
+/** PASTED_KEY is what the operator types into the box. It is deliberately a
+ * sentence and not a key: the section never draws what was pasted and no answer
+ * carries it, so no case here needs a key-shaped string to say so. */
+const PASTED_KEY = 'the key the operator pasted'
+
 /** QUEUE_OFFER is the one repository identity the open installation offers: the
  * `<provider>/<owner>/<name>` string the launch form's `select` holds as an
  * option's value, and the value the form sends. */
@@ -5429,6 +5469,7 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
       'managedStatus',
       'policyShow',
       'environmentReport',
+      'readLicence',
     ])
     expect(
       calls.slice(before).some((call) => call.name === 'listRuns'),
@@ -5444,11 +5485,12 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
   })
 
   it('starts the models and settings reads with the tab’s others and lets none of them wait', async () => {
-    // The three reads of this tab are independent documents: `models ls` is
-    // offline and cheap and does not wait on `budget show`, and neither waits on
-    // `settings --json` (the settings-edit plan's C1). All three go out in the
-    // click's own turn -- nothing is awaited before the second and third calls --
-    // which is what the assertion on the order says.
+    // The reads of this tab are independent documents: `models ls` is offline
+    // and cheap and does not wait on `budget show`, and neither waits on
+    // `settings --json` (the settings-edit plan's C1) nor on the licence key's
+    // own read (S2.7). All of them go out in the click's own turn -- nothing is
+    // awaited before the later calls -- which is what the assertion on the order
+    // says.
     const { bridge, calls } = fakeBridge({
       replies: {
         subscribeLive: () => snapshotReply(liveFrame()),
@@ -5460,20 +5502,28 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     const document = await boot(bridge, new FakeDocument())
     const before = calls.length
     buttonFor(document, 'projects').click()
-    // **Nothing is awaited**: the click's own turn is where all three calls are,
-    // so a tab that serialised them would show fewer than three here.
+    // **Nothing is awaited**: the click's own turn is where all four calls are,
+    // so a tab that serialised them would show fewer than four here. The licence
+    // key's read is the fourth (S2.7) even though it is the one read here that
+    // spawns no child: it is a read of the console's own store, and it starts
+    // with the others rather than behind them.
     expect(
       calls
         .slice(before)
         .map((call) => call.name)
         .filter(
-          (name) => name === 'showBudget' || name === 'listModels' || name === 'readSettings',
+          (name) =>
+            name === 'showBudget' ||
+            name === 'listModels' ||
+            name === 'readSettings' ||
+            name === 'readLicence',
         ),
-    ).toEqual(['showBudget', 'listModels', 'readSettings'])
-    // While all seven are out, the tab says which read each of its marks is --
+    ).toEqual(['showBudget', 'listModels', 'readSettings', 'readLicence'])
+    // While all eight are out, the tab says which read each of its marks is --
     // one mark per section, on the section's own host (CM10's four siblings are
-    // the last four, and the policy panel's read wears no mark of its own: it is
-    // a member of the body's model, drawn with it).
+    // the last four, the licence key's the eighth, and the policy panel's read
+    // wears no mark of its own: it is a member of the body's model, drawn with
+    // it).
     expect(busyLabels(document)).toEqual([
       PROJECTS_BUSY,
       PROJECTS_MODELS_BUSY,
@@ -5482,6 +5532,7 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
       ACCOUNT_KEYS_BUSY,
       RETIREMENTS_BUSY,
       CREDENTIALS_SERVICE_BUSY,
+      LICENCE_BUSY,
     ])
     await flush()
     // Each section paints its own answer, and the models section paints the
@@ -5927,6 +5978,125 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     // The editor goes with the read: the row it was drawn into is one of the
     // rows that read's repaint replaces.
     expect(classed(panelOf(document), SETTINGS_EDITOR_CLASS)).toEqual([])
+  })
+
+  it('draws the verifier’s own state for the key this installation holds, and re-reads the section on a paste', async () => {
+    // S2.7, the whole of the console's half. The read's answer is the verifier's
+    // -- a state word and a claim set -- and it arrives as the reply itself
+    // rather than as a `Snapshot` around a CLI document, because `licence.read`
+    // spawns no child: the console keeps the key in its own store.
+    //
+    // What leaves the renderer on a paste is **one member, the text the box
+    // held**. The operation takes no path, no installation and no flag
+    // (`licenceKey`, `src/main/ipc.ts`), and the key is never in an argv: the
+    // store keeps it and the child's environment is the one door out
+    // (`licenceKeyFor`, `src/main/index.ts`) -- the other half of that claim is
+    // `licence-store.test.ts`'s argv case, one layer down.
+    //
+    // And a save that worked **re-reads the section**: what an operator is left
+    // looking at is the verifier's answer about the key that was just kept, not
+    // the form's own claim about it. The case holds the second read open so both
+    // states are asserted rather than raced.
+    const sent: unknown[] = []
+    const second = holding()
+    let reads = 0
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
+        readLicence: () => {
+          reads += 1
+          return reads === 1 ? { ok: true, data: A_LICENCE_REPLY } : second.reply()
+        },
+      },
+    })
+    bridge['saveLicence'] = (args: unknown): unknown => {
+      sent.push(args)
+      return { ok: true, data: A_LICENCE_REPLY }
+    }
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'projects').click()
+    await flush()
+
+    const panel = classed(panelOf(document), PROJECTS_LICENCE_CLASS)[0] as FakeNode
+    expect(panel, 'the tab drew no licence section').toBeDefined()
+    expect(holdsText(panel, LICENCE_TITLE)).toBe(true)
+    // The state in the verifier's own terms, and the claims a reader of the key
+    // is shown: the organisation, the tier, the seats and the two days.
+    expect(holdsText(panel, 'in grace')).toBe(true)
+    expect(holdsText(panel, 'acme.example')).toBe(true)
+    expect(holdsText(panel, 'team')).toBe(true)
+    expect(holdsText(panel, LICENCE_HINT)).toBe(true)
+    expect(busyLabels(document)).toEqual([])
+
+    typeValue(classed(panel, LICENCE_BOX_CLASS)[0] as FakeNode, PASTED_KEY)
+    ;(classed(panel, LICENCE_SUBMIT_CLASS)[0] as FakeNode).click()
+    await flush()
+
+    expect(sent).toEqual([{ key: PASTED_KEY }])
+    // The write answered and the section is reading again: the sentence about
+    // the write is drawn while the verifier's answer to it is still out, and the
+    // mark is the section's own.
+    expect(reads).toBe(2)
+    expect(busyLabels(document)).toEqual([LICENCE_BUSY])
+    expect(holdsText(panel, LICENCE_SAVED_WORD)).toBe(true)
+    // The box is emptied: what it held is kept now, and a credential left in a
+    // text field is a credential on screen for as long as the tab is open.
+    expect((classed(panel, LICENCE_BOX_CLASS)[0] as unknown as { value: string }).value).toBe('')
+    expect(holdsText(panelOf(document), PASTED_KEY), 'the pasted key is on screen').toBe(false)
+
+    second.release({ ok: true, data: { ...A_LICENCE_REPLY, state: 'valid' } })
+    await flush()
+    const repainted = classed(panelOf(document), PROJECTS_LICENCE_CLASS)[0] as FakeNode
+    expect(holdsText(repainted, 'valid')).toBe(true)
+    expect(busyLabels(document)).toEqual([])
+    expect(classed(repainted, LICENCE_SUBMIT_CLASS), 'the box did not come back').toHaveLength(1)
+    expect(calls.filter((call) => call.name === 'readLicence')).toHaveLength(2)
+  })
+
+  it('draws the verifier’s own sentence for a paste it refuses, and keeps the text the operator typed', async () => {
+    // A key that does not verify is refused and written nowhere (S2.7's store,
+    // and its own case), and the sentence the operator reads is the verifier's
+    // own: a refusal is the remedy, and a paraphrase would take it away.
+    // Nothing is re-read -- nothing was kept -- and the box keeps what was
+    // typed, so a mistyped paste is corrected rather than typed again.
+    const sent: unknown[] = []
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
+        readLicence: () => ({ ok: true, data: { state: 'none' } }),
+      },
+    })
+    bridge['saveLicence'] = (args: unknown): unknown => {
+      sent.push(args)
+      return { ok: false, reason: LICENCE_REFUSAL }
+    }
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'projects').click()
+    await flush()
+
+    const panel = classed(panelOf(document), PROJECTS_LICENCE_CLASS)[0] as FakeNode
+    // An installation with no key is a state and not an error, and the box is
+    // the way out of it -- the section is never gated, which is what makes a
+    // lapse something an operator can walk out of.
+    expect(holdsText(panel, 'no key')).toBe(true)
+    const box = classed(panel, LICENCE_BOX_CLASS)[0] as FakeNode
+    typeValue(box, PASTED_KEY)
+    ;(classed(panel, LICENCE_SUBMIT_CLASS)[0] as FakeNode).click()
+    await flush()
+
+    expect(sent).toEqual([{ key: PASTED_KEY }])
+    expect(holdsText(panel, LICENCE_REFUSAL)).toBe(true)
+    expect((box as unknown as { value: string }).value).toBe(PASTED_KEY)
+    // The mark is down and the control is offered again: a refusal is something
+    // to act on, and one read was made because nothing was kept.
+    expect(busyLabels(document)).toEqual([])
+    expect(calls.filter((call) => call.name === 'readLicence')).toHaveLength(1)
   })
 
   it('asks for no models read at all below the command’s floor, and says which version it needs', async () => {

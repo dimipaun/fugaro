@@ -4,13 +4,13 @@ Runs of this repository that finished in 2026-W43 (2026-10-19 to 2026-10-25): 7 
 
 | run | status | pr | base | reviews | billed | notional | flags |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `20261021-090000-cccc` | succeeded | #103 | yes | 2 | $2.00 | $0.00 | fix_rounds |
-| `20261020-090000-bbbb` | halted | - | no | 0 | $0.40 | $0.10 | halt:run_cap |
-| `20261022-090000-dddd` | succeeded | #104 | yes | 0 | $0.30 | $0.00 | review_calls |
-| `20261023-090000-eeee` | succeeded | #105 | yes | 0 | $0.20 | $0.00 | subagents |
-| `20261019-090000-aaaa` | succeeded | #101 | yes | 1 | $1.25 | $0.00 | - |
-| `20261024-090000-ffff` | succeeded | #106 | yes | 0 | $0.05 | $0.05 | - |
-| `20261025-090000-1111` | succeeded | - | no | 0 | $0.00 | $0.00 | - |
+| `cccc` | succeeded | #103 | yes | 2 | $2.00 | $0.00 | fix_rounds |
+| `bbbb` | halted | - | no | 0 | $0.40 | $0.10 | halt:run_cap |
+| `dddd` | succeeded | #104 | yes | 0 | $0.30 | $0.00 | review_calls |
+| `eeee` | succeeded | #105 | yes | 0 | $0.20 | $0.00 | subagents |
+| `aaaa` | succeeded | #101 | yes | 1 | $1.25 | $0.00 | - |
+| `ffff` | succeeded | #106 | yes | 0 | $0.05 | $0.05 | - |
+| `1111` | succeeded | - | no | 0 | $0.00 | $0.00 | - |
 
 ## Failures
 
@@ -18,7 +18,7 @@ Why the period's runs did not succeed, over every run of the period, not only th
 
 | class | runs | billed | example |
 | --- | --- | --- | --- |
-| `halted_budget` | 1 | $0.40 | `20261020-090000-bbbb` |
+| `halted_budget` | 1 | $0.40 | `bbbb` |
 
 ## Stages
 

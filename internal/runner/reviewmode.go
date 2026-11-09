@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // checkoutReviewHeadsSeam, when set by a test, runs in reviewMode right
@@ -926,7 +927,9 @@ func neutralizeFinding(s string) string {
 // uses.
 func reviewReport(rec *runstore.Record, location string, failedComments []int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "### Fugaro run `%s`\n\n", rec.RunID)
+	// The heading names the run by its short ID (spec.md §1, D1701); the marker
+	// that closes the report keeps the full ID (D1705).
+	fmt.Fprintf(&b, "### Fugaro run `%s`\n\n", task.ShortRun(rec.RunID))
 	if rec.Status == runstore.StatusHalted && rec.Halt != nil {
 		b.WriteString(haltLines(rec))
 	}
