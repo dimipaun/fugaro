@@ -111,7 +111,7 @@ arbitrary Dockerfile need not set it. `FUGARO_REMOTE` is written for a **prebuil
 (`internal/infra/spec.go:1130-1135`) but that is the prebuilt sub-case, not a catalog marker: **a
 catalog image built from a Dockerfile is indistinguishable from a repository's own derived image.**
 `CatalogImageEntry` (`internal/backend/gcp/catalog.go:168-192`) can read an entry back out of a
-reference, and `JobImage` (`:171-187`) can read a deployed job's image — both are **launcher-side**
+reference, and `JobImage` (`:194-220`) can read a deployed job's image — both are **launcher-side**
 reads. Without the stamp D1371 adds, this design cannot be implemented as ruled; with it, it can.
 
 **F6. The entry is known at deploy, which is where the stamp goes.** `repoCtx.catalogJobImage`
