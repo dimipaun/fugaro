@@ -849,11 +849,15 @@ that reads it predates, naming `fugaro update` as the one command that fixes it.
 reads both:
 
 - **the deployed service's own image** — Cloud Run's `services.get` on
-  `infra.CredentialsServiceName` in the project and region the local config names, through `run/v2`,
-  the read `doctor`'s own credentials-service check makes (`internal/cli/doctor_brokering.go`), taking
-  the container image its template carries (the reference is the pinned `:X.Y.Z@sha256:` form, so the
-  release reads out of it with the same `CredentialsServiceImageRelease` the pin's does). This is the
-  state that **serves** the document, and its `NotFound` is the one answer that needs no judging;
+  `projects/<project>/locations/<region>/services/<infra.CredentialsServiceName>`, through `run/v2`,
+  taking the container image the service's template carries (the reference is the pinned
+  `:X.Y.Z@sha256:` form, so the release reads out of it with the same `CredentialsServiceImageRelease`
+  the pin's does). This is
+  the state that **serves** the document, and its `NotFound` is the one answer that needs no judging.
+  **The read is this task's own — nothing in the tree makes it** — and what `doctor` supplies is the
+  precedent for making it: its credentials-service check builds the same client and the same resource
+  name for the installation's service and names the same `NotFound` as "Cloud Run has no service …"
+  (`internal/cli/doctor_brokering.go`, an IAM read on that path rather than a service get);
 - **the installation's pin** — `terraform.tfvars.json`'s `credentials_service.image` through
   `installationServiceRelease`, which is the **desired** state and not the applied one: `fugaro update`
   writes that document as its stage plans and applies it afterwards, so a run whose apply the owner

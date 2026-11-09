@@ -386,11 +386,15 @@ the class's own credential*, never to let the repository supply one.
 account, and AK4 made that inexact.** `internal/credsvc/auth.go` refuses a review job account naming
 nothing with "names no Claude account, so no call of it could be served" and a duplicate with "bound
 to two Claude accounts"; `internal/credsvc/server.go` writes the same two in its serve path, one of
-them as "no email or no Claude account"; **three more Go sites** carry the claim —
+them as "no email or no Claude account"; **six more Go sites** carry the claim —
 `internal/cli/validate.go`'s `reviewJobNotes`, whose `budget.per_run_usd` note tells the operator a
-review job "runs on a Claude account" (the one of these a person actually reads), the two comments in
-`internal/cli/credentials_serve.go`, and `internal/infra/tfvars.go`'s comment for
-`FUGARO_REVIEW_JOB_ACCOUNTS`; and **both module files** say it —
+review job "runs on a Claude account" (the one of these a person actually reads), three comments in
+`internal/cli/credentials_serve.go` (where the service's configuration is assembled, on
+`credentialsServiceReviewJobAccounts`, and on the de-duplication the same function makes: "rows that
+name one account under two **Claude accounts** are left for `credsvc.NewAuthenticator` to refuse"), and
+`internal/infra/tfvars.go`'s two comments on the review-job document (`CredentialsReviewJob`'s
+"account is the Claude account the policy's admissions spell" and `FUGARO_REVIEW_JOB_ACCOUNTS`'s); and
+**both module files** say it —
 `deploy/terraform/gcp/modules/installation/variables.tf` describes `review_job_accounts` as
 "carrying the Claude account the variant's calls are served by" (its description and the comment above
 its validation) and `deploy/terraform/gcp/modules/installation/credentials.tf`'s
