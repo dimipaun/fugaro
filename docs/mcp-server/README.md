@@ -105,11 +105,14 @@ line at the latest commit, and its §7 records the eight things `main` had overt
   in [implementation-plan.md](implementation-plan.md) starts before the finding that names it is
   answered in the task it builds**. Its scope was §8, every **SEC**-marked task of §3 — the five
   whose marker says **mandatory** are M3, M4, M5, M7 and M9, **with M9 keeping the marker in the
-  deferred slice**, and M2, M5b, M6, M8, M10 and **M11** carry the marker without that word — and the
+  deferred slice**, and M2, M6, M8 and M10 carry the marker without that word — and the
   two new
-  privileges this design asks for (the launch grant **M11 builds and M9 uses**, and M4's single binding
-  on
-  the store D935 moves the records into). **That review has already found something**: F32 in
+  privileges this design asks for (the launch grant **the front door needs, which is M11**, and M4's
+  single binding on
+  the store D935 moves the records into). **Two SEC-marked tasks are outside that review because they
+  did not exist when it ran, and each carries its own independent reading when it is built**: **M5b**
+  (the owner's ruling of 2026-11-07) and **M11** (the ruling of 2026-11-09) — §3 says so of each.
+  **That review has already found something**: F32 in
   [reconciliation.md](reconciliation.md) §3, the answer to it recorded as D935 on 2026-11-05, and it
   is the reason the records leave the project's database. **One of its findings was accepted and
   documented rather than fixed**: **H1**, the paired-device residual risk ([spec.md](spec.md) §8).

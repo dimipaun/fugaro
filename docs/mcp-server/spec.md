@@ -1009,7 +1009,7 @@ in the runs bucket** (`internal/task/task.go:57`, the `Spec` the runner reads th
 which is the run's own trusted input rather than an environment a caller could rewrite. **That is the
 allowlist read the other way round:** rather than the runner telling a template value from an override
 value inside one merged environment, which it cannot do, there is no override to tell apart — so the
-fence costs the runner nothing and is one IAM role and one binding in Terraform. **It is decided and
+fence costs the runner nothing and is one IAM role and one job-scoped binding per project job in Terraform. **It is decided and
 NOT BUILT**: no role of this installation grants `run.jobs.run` alone, the front door's launch grant is
 deliberately absent (`deploy/terraform/gcp/modules/installation/coordinator.tf:377`), and the task
 that builds it is **M11** ([implementation-plan.md](implementation-plan.md) §3). **What gates M9 and
