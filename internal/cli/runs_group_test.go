@@ -113,9 +113,12 @@ func TestRunsGroupByRefusesAnotherValue(t *testing.T) {
 // a figure computed over something else beside the block (design §6.1).
 func TestRunsGroupByRefusesAPage(t *testing.T) {
 	newCloudFixture(t)
+	// A cursor that is a run id of this listing's own clock, as --after takes:
+	// the refusal is the combination's, not the value's.
+	after := recentRunID(t, time.Minute, "cafe")
 	for _, args := range [][]string{
 		{"runs", "ls", "--group-by", "failure_class", "--limit", "5"},
-		{"runs", "ls", "--group-by", "failure_class", "--after", "20261109-090000-aaaa"},
+		{"runs", "ls", "--group-by", "failure_class", "--after", after},
 		{"runs", "ls", "--group-by", "failure_class", "--watch"},
 	} {
 		_, _, err := execute(t, args...)
