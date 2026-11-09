@@ -1232,6 +1232,13 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     const attach = (): Promise<LiveFeed> => {
       attaching = resolve().then((source) => {
         const feed = subscribe(source)
+        // A source answers the **same stream** for the same key while it is live
+        // (`CliSource.subscribeGraph`), and this runs on every poll: what is
+        // watched once per stream is the stream's own end. Registered per call,
+        // the listener below would grow that stream's set by one a second for as
+        // long as the tab is open, and every one of them would run when the child
+        // finally ended.
+        if (feed === real) return feed
         real = feed
         answering = null
         endedAt = null
