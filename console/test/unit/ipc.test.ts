@@ -122,6 +122,7 @@ import {
   MAX_INSTALLATION_PROJECT_LENGTH,
   validateInstallationArguments,
 } from '../../src/main/installations'
+import { MAX_LICENCE_KEY_LENGTH } from '../../src/main/licence'
 import { APP_ENTRY_URL } from '../../src/main/protocol'
 import { SPAWN_KIND_FOR, SPAWN_COMMANDS, argvFor } from '../../src/main/spawn'
 import {
@@ -892,13 +893,21 @@ describe("the allow-list's read-only invariant", () => {
     expect(driven).toHaveLength(DESIGN_ARGV.length)
   })
 
-  it('has exactly nine operations spawn nothing at all, and names each of them', () => {
+  it('has exactly eleven operations spawn nothing at all, and names each of them', () => {
     // Task 3.3 added the handshake's answer, Task 3.4b `installation.current`
     // (plan step 6: "added to SHIPPED_SURFACE deliberately"), the owner's
     // design ruling of 2026-10-25 the rail's five store-and-window operations,
-    // and K2a `link.openPullRequest`. The number is the claim: these rows are
-    // the console's own state, and a tenth operation with no command would be a
-    // surface that answers something no CLI read produced.
+    // K2a `link.openPullRequest`, and S2.7 `licence.read` and `licence.save`.
+    // The number is the claim: these rows are the console's own state, and a
+    // twelfth operation with no command would be a surface that answers
+    // something no CLI read produced.
+    //
+    // **The two licence rows are a different kind of no-command operation from
+    // the nine above them**, and the diff is why they are worth naming: the nine
+    // answer the console's own state or open a window, and the two keep a
+    // **credential** in the console's own store. Nothing about them is an argv
+    // -- that is exactly the point of S2.1's hand-off -- so a reader looking for
+    // where a key could reach a command line finds these rows and no command.
     const withoutCommand = CONSOLE_OPERATIONS.filter((operation) => operation.command === null)
     expect(withoutCommand.map((operation) => operation.name)).toEqual([
       'startup.compatibility',
@@ -910,6 +919,8 @@ describe("the allow-list's read-only invariant", () => {
       'installation.open',
       'link.openExternal',
       'link.openPullRequest',
+      'licence.read',
+      'licence.save',
     ])
     // Each of them, by name, so the test fails naming the row rather than on a
     // list that a reader has to diff.
@@ -923,6 +934,8 @@ describe("the allow-list's read-only invariant", () => {
       'openInstallations',
       'openExternal',
       'openPullRequest',
+      'readLicence',
+      'saveLicence',
     ])
   })
 
@@ -1414,6 +1427,17 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   'installation.remove': { project: 'aurora' },
   'installation.reveal': { project: 'aurora' },
   'installation.open': {},
+  // The licence section's two operations (subscriptions plan S2.7). `licence.read`
+  // takes nothing for the same reason the rail's listing does: the installation
+  // it answers for is the main process's own fact, so there is no project name a
+  // renderer could put in its place. `licence.save` takes the one argument this
+  // surface has whose value is a **credential**, and the value here is a
+  // sentence rather than a key on purpose -- no key material belongs in a test,
+  // and the surface validates the paste's *shape* (trimmed, non-empty, under
+  // `MAX_LICENCE_KEY_LENGTH`, no hidden character) while the *format* is the
+  // verifier's (`verifyLicenceKey`, S2.4), which refuses this text.
+  'licence.read': {},
+  'licence.save': { key: 'the key the operator pasted' },
 }
 
 const RUN_ID = '20261016-121029-4a1b'
@@ -1562,7 +1586,7 @@ describe('the argument schemas', () => {
     }
   })
 
-  it('takes no path, wherever a value goes, for every operation but the rail’s own two kinds', () => {
+  it('takes no path, wherever a value goes, for every operation but the rail’s two kinds and the licence key’s', () => {
     const paths = ['/etc/passwd', '../../etc/passwd', '/work/repo/fugaro.yaml', 'file:///etc/passwd']
     for (const operation of CONSOLE_OPERATIONS) {
       for (const spec of operation.args) {
@@ -1577,9 +1601,20 @@ describe('the argument schemas', () => {
         //   - `installationName` is a bare word, and what keeps a path-shaped
         //     string harmless is the lookup: a name this console holds no
         //     record for is refused before anything else happens.
+        //   - `licenceKey` is not a grammar for a stronger reason than either
+        //     (S2.7): the row's `command` is `null`, so there is no argv for a
+        //     path-shaped paste to reach at all, and the format is deliberately
+        //     the verifier's rather than this table's (`validateValue`'s note,
+        //     and `verifyLicenceKey` is what refuses the text).
         //
-        // Each has its own case below rather than a hole here.
-        if (spec.kind === 'installationCheckout' || spec.kind === 'installationName') continue
+        // Each of the three has its own case below rather than a hole here.
+        if (
+          spec.kind === 'installationCheckout' ||
+          spec.kind === 'installationName' ||
+          spec.kind === 'licenceKey'
+        ) {
+          continue
+        }
         for (const path of paths) {
           const decision = validateArguments(operation.name, { [spec.key]: path })
           expect(decision.ok, `${operation.name}.${spec.key} accepted ${path}`).toBe(false)
@@ -1602,7 +1637,7 @@ describe('the argument schemas', () => {
     }
   })
 
-  it('takes no command and no flag name, wherever a value goes, for every operation but the rail’s project name', () => {
+  it('takes no command and no flag name, wherever a value goes, for every operation but the rail’s project name and the licence key’s', () => {
     const words = ['budget kill', 'run', '--repo', '-x', 'ls -la', 'fugaro run']
     for (const operation of CONSOLE_OPERATIONS) {
       for (const spec of operation.args) {
@@ -1612,7 +1647,11 @@ describe('the argument schemas', () => {
         // this console does not hold is refused (`picker.ts`). Five of the six
         // spellings below are refused by this kind too (a space, a leading `-`),
         // and the case beneath is the one that says which.
-        if (spec.kind === 'installationName') continue
+        //
+        // `licenceKey` is skipped for the reason the case above it gives: its
+        // value reaches no argv at all, and the case below pins what its shape
+        // check does admit.
+        if (spec.kind === 'installationName' || spec.kind === 'licenceKey') continue
         for (const word of words) {
           const decision = validateArguments(operation.name, { [spec.key]: word })
           expect(decision.ok, `${operation.name}.${spec.key} accepted ${word}`).toBe(false)
@@ -1632,6 +1671,38 @@ describe('the argument schemas', () => {
     for (const name of ['budget kill', 'ls -la', 'fugaro run', '--repo', '-x', '']) {
       expect(validateArguments('installation.choose', { project: name }).ok, JSON.stringify(name)).toBe(false)
     }
+  })
+
+  it('takes a licence key as a paste: the shape only, and the format is the verifier’s', () => {
+    // The shape this table checks and nothing more (S2.7): the whitespace a
+    // copy adds around a key is trimmed -- a trailing newline is the ordinary
+    // paste -- the value is bounded before anything decodes it, an empty paste
+    // is refused, and the hidden characters every other string argument is held
+    // to are refused here too. Whether the three parts decode, whether the id is
+    // one this build holds and whether the signature covers the payload are
+    // `verifyLicenceKey`'s (S2.4): a grammar here would be a second copy of the
+    // format, which is what `validateValue` says it deliberately is not.
+    const trimmed = validateArguments('licence.save', { key: '  aaa.bbb.ccc\n' })
+    expect(trimmed.ok).toBe(true)
+    expect(trimmed.ok ? trimmed.args['key'] : null).toBe('aaa.bbb.ccc')
+
+    // **A path-shaped or command-shaped paste is admitted here, and that is the
+    // point of the two sweeps above skipping this kind.** The reason is not
+    // that such a value is harmless as a *value* -- it is that there is nothing
+    // for it to be: the row's `command` is `null`, so no argv exists to carry
+    // it, and what refuses the text is the verifier, one step later and in its
+    // own words.
+    expect(validateArguments('licence.save', { key: '/etc/passwd' }).ok).toBe(true)
+    expect(validateArguments('licence.save', { key: 'budget kill' }).ok).toBe(true)
+
+    // What the shape check does refuse, in the words of the one rule every
+    // string argument of this surface is held to.
+    expect(validateArguments('licence.save', { key: '' }).ok).toBe(false)
+    expect(validateArguments('licence.save', { key: '   ' }).ok).toBe(false)
+    expect(validateArguments('licence.save', { key: 'a'.repeat(MAX_LICENCE_KEY_LENGTH + 1) }).ok).toBe(false)
+    expect(validateArguments('licence.save', { key: 'aaa\u0000bbb' }).ok).toBe(false)
+    expect(validateArguments('licence.save', { key: 'aaa\u202ebbb' }).ok).toBe(false)
+    expect(validateArguments('licence.save', { key: 7 }).ok).toBe(false)
   })
 
   it('answers for the rail’s two kinds exactly as the store’s own validator does', () => {
@@ -2532,7 +2603,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these thirty-four, and no others".
+ * channel. The claim is "these thirty-six, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -2640,6 +2711,19 @@ describe('the spend read’s arguments', () => {
  * the bound is the command's rather than a screen's, which is its whole value
  * -- and the second is `project policy show` and not `project show`, because
  * only the former omits the installation's caps (F18).
+ *
+ * **The subscriptions plan's S2.7 added the thirty-fifth and thirty-sixth**
+ * (`licence.read` / `readLicence` and `licence.save` / `saveLicence`: the
+ * licence section's key entry -- the key the active installation has, as the
+ * verifier sees it, and the key the operator pasted) and left the other
+ * thirty-four exactly where they were. They are appended here for the reason
+ * every row above was. What is new about them is not where they sit but what
+ * they are: **the first two operations on this surface that spawn nothing and
+ * keep a credential.** The console's own store holds the key
+ * (`src/main/licence-store.ts`), the CLI is handed it in its **environment** and
+ * never in an argv (S2.1's hand-off, rule 8), and no argument of either
+ * operation becomes a word of any command line -- so a reader asking where the
+ * key could reach a process's argv finds these two rows and no command.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -2676,6 +2760,12 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['managed.status', 'managedStatus'],
   ['policy.show', 'policyShow'],
   ['run.launch', 'launchRun'],
+  // The licence section's two (subscriptions plan S2.7), appended for the reason
+  // every row above was: what the task added must be visible as a diff, and the
+  // next task that adds a channel cannot do it quietly. They are the first two
+  // rows here whose operation spawns nothing and keeps a credential.
+  ['licence.read', 'readLicence'],
+  ['licence.save', 'saveLicence'],
 ]
 
 /**
@@ -2706,7 +2796,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these thirty-four, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these thirty-six, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -2727,7 +2817,7 @@ describe('the frozen list of operations the preload exposes', () => {
     // next task that adds a read cannot do it quietly.
     const thirtySecond = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
     expect(thirtySecond).toContain('fleet.report: a channel this console does not ship')
-    expect(thirtySecond).toContain('35 rows, and this console ships 34')
+    expect(thirtySecond).toContain('37 rows, and this console ships 36')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -2741,7 +2831,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('33 rows, and this console ships 34')
+    expect(withoutTheNewRow).toContain('35 rows, and this console ships 36')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -2756,8 +2846,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the thirty-four methods and nothing else', () => {
-    // The bridge the window is handed: the thirty-four methods and the names,
+  it('is frozen, and hands the window a bridge with the thirty-six methods and nothing else', () => {
+    // The bridge the window is handed: the thirty-six methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -3931,7 +4021,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: twenty-four of the surface's thirty operations,
+    // The non-vacuity half: twenty-nine of the surface's thirty-six operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
     // the nineteen, because a reduced console's header still names its
@@ -3971,7 +4061,15 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // the one row of this task that a reduced console refuses. Nothing reaches
     // `managed.status` there either: the section that will draw it is the
     // Project tab's, and CM5 to CM11 are the tasks that build them.
-    expect(THE_OPEN_OPERATIONS.length).toBe(27)
+    // **`licence.read` and `licence.save` (S2.7) are the twenty-eighth and the
+    // twenty-ninth**, and they are here for a reason unlike the twenty-seven
+    // above them: they reach no child at all (`command: null`), so there is no
+    // document of theirs for the mode to withhold a figure from -- and the key
+    // screen has to stay reachable in every state, which is the design's own
+    // rule for it (`docs/design/lapse-read-only.md`: "the key screen in
+    // particular is never gated", because a lapse is exactly when the operator
+    // has to reach the box that takes a renewal).
+    expect(THE_OPEN_OPERATIONS.length).toBe(29)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(

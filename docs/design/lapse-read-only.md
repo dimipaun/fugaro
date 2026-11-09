@@ -68,32 +68,46 @@ clock, never about the network: the check is offline, so no outage on Fugaro's s
 
 ### 3.1 What the console has today
 
-The console's whole surface is `CONSOLE_OPERATIONS` (`console/src/main/ipc.ts:586`): thirty-four
+The console's whole surface is `CONSOLE_OPERATIONS` (`console/src/main/ipc.ts:600`): thirty-six
 operations, twenty-five of which spawn the CLI under an exact-argv allow-list
-(`SPAWN_COMMANDS`, `console/src/main/spawn.ts:715`). Twenty-three of the twenty-five are reads; two
-are writes.
+(`SPAWN_COMMANDS`, `console/src/main/spawn.ts:761`). Twenty-three of the twenty-five are reads; two
+are writes. The eleven that spawn nothing at all are the nine the console answers from its own state,
+`licence.read`, and `licence.save` — which is a third write, the console's own store's, and the only
+one with no child.
 
 | Class | Operations | Child |
 | --- | --- | --- |
 | reads | `live.watch`, `budget.show`, `spend.report`, `runs.list`, `runs.stats`, `runs.summary`, `plan.status`, `graph.read`, `run.diagnose`, `run.logs`, `run.logLink`, `secrets.inventory`, `accounts.inventory`, `models.list`, `settings.read`, `cli.version`, `environment.report`, `installation.list`, `coordinator.status`, `coordinator.show`, `coordinator.intents`, `managed.status`, `policy.show` | the CLI |
-| the console's own | `startup.compatibility`, `installation.current`, `installation.choose`, `installation.checkout`, `installation.remove`, `installation.reveal`, `installation.open`, `link.openExternal`, `link.openPullRequest` | none |
+| the console's own | `startup.compatibility`, `installation.current`, `installation.choose`, `installation.checkout`, `installation.remove`, `installation.reveal`, `installation.open`, `link.openExternal`, `link.openPullRequest`, `licence.read` | none |
 | writes | **`run.launch`** (`run --task-file - --json`), **`settings.edit`** (`settings`) | the CLI |
+| the store's write | **`licence.save`** — the key the operator pasted, verified before it is kept, into the console's own file beside `installations.json` (`licence-store.ts`, S2.7) | none |
 
 `settings.edit` writes one setting of the installation's configuration document at the layer the read
-named ("one key of one document", `console/src/main/ipc.ts:1101`), so it is the console's
+named ("one key of one document", `console/src/main/ipc.ts:1115`), so it is the console's
 configuration change and not its own bookkeeping.
+
+`licence.save` and `licence.read` are the licence section's two operations (the subscriptions plan's
+S2.7; [licence-key.md](../licensing/licence-key.md), "Storage and hand-off (F41)"), and they are two
+of the eleven rows of that table that **spawn nothing at all** (`command: null`, no flag, not on
+`SPAWN_COMMANDS`) — the first two of the eleven that keep a **credential**: the key is not a child's
+argument, so the console keeps it in a file of its own (`licence.json`, 0600 in a 0700 directory, one
+entry per installation) and hands it to every child afterwards **in the environment and never in an
+argv**. That write is the console's third, and **neither operation is gated by the licence state in
+any mode** — on no reduced view, refused at no state — which is what the sentence above about the key
+screen means now that the screen exists: an expired installation is exactly the one whose operator
+has to be able to reach the box that takes a renewal.
 
 The plan's F20 counted **fifteen read operations, and no launch or cancel**
 ([reconciliation.md](../subscriptions/reconciliation.md)): that was the tree of 2026-10-27. The
 launch landed since — D22 answered "one write, launch", and the row is annotated "the launch, and the
-console's only write" (`console/src/main/spawn.ts:1170`,
+console's only write" (`console/src/main/spawn.ts:1216`,
 [desktop-console-v2.md](desktop-console-v2.md)) — and the settings write landed after it, saying of
-itself in the same table that it is "the second write" (`console/src/main/ipc.ts:1144`). **Cancel and the
+itself in the same table that it is "the second write" (`console/src/main/ipc.ts:1162`). **Cancel and the
 kill switch are still absent, and deliberately so**: D2 keeps v1 strictly read-only, D14 makes the
 allow-list the whole fence, and D34 leaves cancel and retry unscheduled
 ([desktop-console.md](desktop-console.md), [desktop-console-v2.md](desktop-console-v2.md)); the CLI's
 `budget kill` and `budget resume` are on `NEVER_REACHABLE` as "a write: it turns a kill switch on,
-which halts running work" (`console/src/main/ipc.ts:1640`).
+which halts running work" (`console/src/main/ipc.ts:1705`).
 
 So the console is where T12's "cannot launch" has teeth today and "cancel" has none yet: the lapse
 has exactly two operations to refuse, and reads that are easy to mistake for paid features to keep.
@@ -149,7 +163,7 @@ for them.
 **Kept: the console's own surface.** Which installation the rail points at, the rail's own list, the
 reveal and open, and the two link operations are the console's bookkeeping and the desktop's shell.
 `installation.remove` even says so in its own row ("it removes the console's record and nothing on
-disk", `console/src/main/ipc.ts:1281`). Refusing them would strand a user away from their other
+disk", `console/src/main/ipc.ts:1295`). Refusing them would strand a user away from their other
 installations at the moment the rail is the only way to reach one of them, so this document reads
 "configuration" as the installation's configuration and leaves the rail alone. The rule behind the
 call is that the refused set is a closed, named class — never "anything that writes".

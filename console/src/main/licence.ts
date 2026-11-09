@@ -111,6 +111,21 @@ export const TIER_MAX_LIFETIME_DAYS: Readonly<Record<LicenceTier, number>> = Obj
   enterprise: 365 + GRACE_DAYS,
 })
 
+/**
+ * MAX_LICENCE_KEY_LENGTH is the longest a key may be, and it bounds one in both
+ * places the console meets one: the surface's own `licenceKey` argument kind (a
+ * paste a renderer sent, `src/main/ipc.ts`) and the store's reader (a key in
+ * the file the console keeps, `src/main/licence-store.ts`). It is here, in the
+ * module that owns what a licence key is, so the two are one number rather than
+ * two that agree today.
+ *
+ * A key is three base64url parts -- an id, a JSON claim set of six fields, and
+ * an Ed25519 signature of 64 bytes -- so a real one is a few hundred characters
+ * and the bound is generous by an order of magnitude; what it is for is the
+ * other end, where a value is refused **before** anything decodes it.
+ */
+export const MAX_LICENCE_KEY_LENGTH = 1024
+
 /** LicenceRead is one key's answer: the claims and the state they put the
  * installation in, or the console's own sentence for refusing the key. */
 export type LicenceRead =
