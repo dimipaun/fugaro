@@ -251,7 +251,7 @@ The one function every reader of the decision shares (F3), plus the container th
   one**, for three reasons. The issue asks for a gate "like `project_secrets.<name>.allow_data_to`"
   (spec.md), and that list's writer is this flag: leaving the new block out would give the operator
   one mechanism with two spellings, one of them hand-edited. The registry row's Owner decides the
-  writer (`settings_set.go:43`: a row a family owns is refused by the generic path so that two paths
+  writer (`settings_set.go:44`: a row a family owns is refused by the generic path so that two paths
   cannot write one key), and `workflow_secrets.*.allow_data_to`'s Owner is `secrets` (W0) — so with
   the flag refusing as well, the key would have no command writer at all and each refusal would point
   at the other path. And the security work is already there rather than new: naming one more

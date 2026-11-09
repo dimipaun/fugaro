@@ -77,7 +77,7 @@ func filedIssue(t *testing.T, ctx context.Context, b *blobx.Bucket, fingerprint 
 		t.Fatalf("claiming issue %d: %v", up.Number, err)
 	}
 	url := fmt.Sprintf("https://github.com/dimipaun/fugaro/issues/%d", up.Number)
-	if err := RecordSubmitted(ctx, b, claim, url); err != nil {
+	if err := RecordSubmitted(ctx, b, claim, url, sharedAt); err != nil {
 		t.Fatalf("filing issue %d: %v", up.Number, err)
 	}
 	return up, url
@@ -715,12 +715,12 @@ func TestOccurrenceOnDismissedReopensNothing(t *testing.T) {
 		{
 			name: "a dismissed issue",
 			closing: func(t *testing.T, b *blobx.Bucket, number int) {
-				if err := SetSharedStatus(ctx, b, number, StatusDismissed); err != nil {
+				if err := SetSharedStatus(ctx, b, number, StatusDismissed, sharedAt); err != nil {
 					t.Fatalf("dismissing issue %d: %v", number, err)
 				}
 				// Asking for the status it already has writes nothing and is
 				// not an error.
-				if err := SetSharedStatus(ctx, b, number, StatusDismissed); err != nil {
+				if err := SetSharedStatus(ctx, b, number, StatusDismissed, sharedAt); err != nil {
 					t.Errorf("dismissing issue %d twice: %v", number, err)
 				}
 			},
@@ -733,7 +733,7 @@ func TestOccurrenceOnDismissedReopensNothing(t *testing.T) {
 				if err != nil {
 					t.Fatalf("claiming issue %d: %v", number, err)
 				}
-				if err := RecordSubmitted(ctx, b, claim, "https://github.com/dimipaun/fugaro/issues/12"); err != nil {
+				if err := RecordSubmitted(ctx, b, claim, "https://github.com/dimipaun/fugaro/issues/12", sharedAt); err != nil {
 					t.Fatalf("filing issue %d: %v", number, err)
 				}
 			},
@@ -823,7 +823,7 @@ func TestClaimTakeoverIsVersioned(t *testing.T) {
 		}
 		// Ana previewed the version she claimed, and that version is gone: her
 		// filing must not land under bo's claim (F19).
-		if err := RecordSubmitted(ctx, b, first, "https://github.com/dimipaun/fugaro/issues/14"); !errors.Is(err, blobx.ErrConflict) {
+		if err := RecordSubmitted(ctx, b, first, "https://github.com/dimipaun/fugaro/issues/14", sharedAt); !errors.Is(err, blobx.ErrConflict) {
 			t.Errorf("filing from a claim that was taken over = %v, want a version conflict", err)
 		}
 		rec, _, err := readShared(ctx, b, up.Number)
@@ -833,7 +833,7 @@ func TestClaimTakeoverIsVersioned(t *testing.T) {
 		if rec.Issue.Status != StatusPending {
 			t.Errorf("the issue is %q after the stale filing, want pending", rec.Issue.Status)
 		}
-		if err := RecordSubmitted(ctx, b, second, "https://github.com/dimipaun/fugaro/issues/14"); err != nil {
+		if err := RecordSubmitted(ctx, b, second, "https://github.com/dimipaun/fugaro/issues/14", sharedAt); err != nil {
 			t.Fatalf("bo filing the issue: %v", err)
 		}
 	})
@@ -880,7 +880,7 @@ func TestSubmittedNeedsTheClaim(t *testing.T) {
 	up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("16")))
 
 	// A claim this machine never took, and a claim it took and released.
-	if err := RecordSubmitted(ctx, b, &Claimed{Number: up.Number, Holder: "user:bo@example.test"}, "https://github.com/dimipaun/fugaro/issues/16"); err == nil {
+	if err := RecordSubmitted(ctx, b, &Claimed{Number: up.Number, Holder: "user:bo@example.test"}, "https://github.com/dimipaun/fugaro/issues/16", sharedAt); err == nil {
 		t.Error("a submission was recorded with no claim to condition it on")
 	}
 	released, err := Claim(ctx, b, up.Number, "user:ana@example.test", sharedAt)
@@ -890,7 +890,7 @@ func TestSubmittedNeedsTheClaim(t *testing.T) {
 	if err := Release(ctx, b, released); err != nil {
 		t.Fatalf("releasing the claim: %v", err)
 	}
-	if err := RecordSubmitted(ctx, b, released, "https://github.com/dimipaun/fugaro/issues/16"); err == nil {
+	if err := RecordSubmitted(ctx, b, released, "https://github.com/dimipaun/fugaro/issues/16", sharedAt); err == nil {
 		t.Error("a submission was recorded by a submitter that gave the claim back")
 	}
 	rec, _, err := readShared(ctx, b, up.Number)
@@ -907,7 +907,7 @@ func TestSubmittedNeedsTheClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claiming issue %d again: %v", up.Number, err)
 	}
-	if err := RecordSubmitted(ctx, b, claim, "https://github.com/dimipaun/fugaro/issues/16"); err != nil {
+	if err := RecordSubmitted(ctx, b, claim, "https://github.com/dimipaun/fugaro/issues/16", sharedAt); err != nil {
 		t.Fatalf("filing issue %d: %v", up.Number, err)
 	}
 	rec, _, err = readShared(ctx, b, up.Number)
@@ -922,7 +922,7 @@ func TestSubmittedNeedsTheClaim(t *testing.T) {
 	}
 	// A URL that is not an issue of this project is refused: the post is a
 	// link a reader follows.
-	if err := RecordSubmitted(ctx, b, claim, "https://github.com/attacker/fugaro/issues/16"); err == nil {
+	if err := RecordSubmitted(ctx, b, claim, "https://github.com/attacker/fugaro/issues/16", sharedAt); err == nil {
 		t.Error("a submission was recorded with somebody else's URL")
 	}
 }
@@ -1053,21 +1053,23 @@ func TestRejectsForeignIssueURL(t *testing.T) {
 }
 
 // A filed issue is final: the store never moves it back, never sets it aside
-// again and never files it twice (F9).
-func TestSubmittedIsFinal(t *testing.T) {
+// again and never files it twice (F9) — except for the one transition the
+// resolver makes, `submitted` to `resolved` or `dismissed`, which is the two
+// calls of its own below (F5 amended).
+func TestSubmittedStaysFinalOtherwise(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
 	up, url := filedIssue(t, ctx, b, fingerprint("18"))
 
 	for _, status := range []Status{StatusDismissed, StatusPending, StatusSubmitted} {
-		if err := SetSharedStatus(ctx, b, up.Number, status); err == nil {
+		if err := SetSharedStatus(ctx, b, up.Number, status, sharedAt); err == nil {
 			t.Errorf("a filed issue was set to %q", status)
 		}
 	}
 	if _, err := Claim(ctx, b, up.Number, "user:bo@example.test", sharedAt.Add(time.Hour)); err == nil {
 		t.Error("a filed issue was claimed again")
 	}
-	if err := RecordSubmitted(ctx, b, &Claimed{Number: up.Number, Holder: "user:bo@example.test"}, url); err == nil {
+	if err := RecordSubmitted(ctx, b, &Claimed{Number: up.Number, Holder: "user:bo@example.test"}, url, sharedAt); err == nil {
 		t.Error("a filed issue was submitted a second time")
 	}
 	rec, _, err := readShared(ctx, b, up.Number)
@@ -1076,6 +1078,510 @@ func TestSubmittedIsFinal(t *testing.T) {
 	}
 	if rec.Issue.Status != StatusSubmitted || rec.Issue.URL != url {
 		t.Errorf("the filed issue = %+v, want it unchanged", rec.Issue)
+	}
+
+	// The two that may move it, and only from `submitted`: everything else is
+	// where the issue stands, and a transition out of it would rewrite a
+	// record that a person, or another machine's pass, decided.
+	fixed, _ := filedIssue(t, ctx, b, fingerprint("19"))
+	if err := SetResolved(ctx, b, fixed.Number, "0.22.0", 0, sharedAt); err != nil {
+		t.Errorf("the resolver could not mark a filed issue resolved: %v", err)
+	}
+	closed, _ := filedIssue(t, ctx, b, fingerprint("1a"))
+	if err := SetClosed(ctx, b, closed.Number, ClosedNotPlanned, 0, sharedAt); err != nil {
+		t.Errorf("the resolver could not set aside a filed issue: %v", err)
+	}
+	// The transition a record is already in is a no-op, not an error: a
+	// second machine's pass, or this machine a day later, finds the issue
+	// where it was left and is content. The other transition, and every other
+	// status, is refused: nothing moves an issue that was decided.
+	if err := SetResolved(ctx, b, fixed.Number, "0.23.0", 0, sharedAt); err != nil {
+		t.Errorf("a second pass over a resolved issue failed: %v", err)
+	}
+	if err := SetClosed(ctx, b, closed.Number, ClosedDuplicate, 0, sharedAt); err != nil {
+		t.Errorf("a second pass over a dismissed issue failed: %v", err)
+	}
+	if err := SetClosed(ctx, b, fixed.Number, ClosedNotPlanned, 0, sharedAt); err == nil {
+		t.Error("the resolver set a resolved issue aside")
+	}
+	if err := SetResolved(ctx, b, closed.Number, "0.23.0", 0, sharedAt); err == nil {
+		t.Error("the resolver resolved a dismissed issue")
+	}
+}
+
+// A resolved issue is as decided as a filed one: the fix a release recorded is
+// not filed a second time as a fresh issue and is not set aside, which would
+// bury it (F9, F21). A claim is read where the record stands, so a submission
+// that reaches the store after the resolver moved the record is refused by the
+// same guard rather than rewriting the fix away.
+func TestResolvedIssueIsNeitherFiledNorSetAside(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	up, url := resolved(t, ctx, b, fingerprint("26"), "0.22.0")
+	holder := "user:bo@example.test"
+
+	if _, err := Claim(ctx, b, up.Number, holder, sharedAt.Add(time.Hour)); err == nil {
+		t.Error("a resolved issue was claimed again")
+	}
+	if err := RecordSubmitted(ctx, b, heldOn(t, ctx, b, up.Number, holder), url, sharedAt); err == nil {
+		t.Error("a resolved issue was filed again")
+	}
+	if err := SetSharedStatus(ctx, b, up.Number, StatusDismissed, sharedAt); err == nil {
+		t.Error("a resolved issue was set aside, burying the fix")
+	}
+	rec, _, err := readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", up.Number, err)
+	}
+	if rec.Issue.Status != StatusResolved || rec.Issue.ResolvedIn != "0.22.0" || rec.Issue.URL != url {
+		t.Errorf("the resolved issue = %+v, want it resolved in 0.22.0 at %s", rec.Issue, url)
+	}
+}
+
+// heldOn reads a shared record and answers it as a claim holder holds at the
+// version just read: the state a submission is in when it reaches the store
+// with the claim it took, which is what the guards in front of it see.
+func heldOn(t *testing.T, ctx context.Context, b *blobx.Bucket, number int, holder string) *Claimed {
+	t.Helper()
+	rec, v, err := readShared(ctx, b, number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", number, err)
+	}
+	rec.Claim = &Lease{Holder: holder, ClaimedAt: sharedAt, ExpiresAt: sharedAt.Add(claimLease)}
+	return &Claimed{Number: number, Holder: holder, Issue: rec.Issue, value: rec, version: v}
+}
+
+// resolved is a filed issue the resolver has marked fixed, and the URL it was
+// filed at: the state every later reader — the report, `issue list`, another
+// pass — reads (the update spec's F27).
+func resolved(t *testing.T, ctx context.Context, b *blobx.Bucket, fingerprint, release string) (Uploaded, string) {
+	t.Helper()
+	up, url := filedIssue(t, ctx, b, fingerprint)
+	if err := SetResolved(ctx, b, up.Number, release, 0, sharedAt); err != nil {
+		t.Fatalf("resolving issue %d: %v", up.Number, err)
+	}
+	return up, url
+}
+
+// The transition is the resolver's alone, and a write of it lands only on the
+// version it read: two machines resolving one issue write one transition, the
+// second one re-reads, finds the issue fixed and answers nothing rather than
+// writing the copy it read (F18).
+func TestSetResolvedIsIdempotentUnderRace(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	up, _ := filedIssue(t, ctx, b, fingerprint("1b"))
+
+	var other error
+	race(t, recordKey(up.Number), func() {
+		ch := make(chan struct{})
+		go func() {
+			defer close(ch)
+			other = SetResolved(ctx, b, up.Number, "0.23.0", 0, sharedAt)
+		}()
+		<-ch
+	})
+	if err := SetResolved(ctx, b, up.Number, "0.22.0", 0, sharedAt); err != nil {
+		t.Fatalf("this machine's transition: %v", err)
+	}
+	if other != nil {
+		t.Fatalf("the other machine's transition failed: %v", other)
+	}
+	rec, _, err := readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", up.Number, err)
+	}
+	// Both machines saw the issue fixed, so both are content; the store holds
+	// the one that wrote first, and the machine that lost its race did not
+	// write the release it had read over it.
+	if rec.Issue.Status != StatusResolved || rec.Issue.ResolvedIn != "0.23.0" {
+		t.Errorf("the issue is %q fixed in %q, want %q in 0.23.0 (the transition that landed first)",
+			rec.Issue.Status, rec.Issue.ResolvedIn, StatusResolved)
+	}
+	// A second pass over an issue that is already fixed is the ordinary case:
+	// another machine's update, or this machine a day later, finds it fixed
+	// and writes nothing.
+	if err := SetResolved(ctx, b, up.Number, "0.22.0", 0, sharedAt); err != nil {
+		t.Fatalf("a second pass over a resolved issue failed: %v", err)
+	}
+	rec, _, err = readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", up.Number, err)
+	}
+	if rec.Issue.ResolvedIn != "0.23.0" {
+		t.Errorf("a second pass rewrote resolved_in to %q", rec.Issue.ResolvedIn)
+	}
+}
+
+// A machine that read the issue before another one resolved it hands in a
+// generation the record has left, and still gets the no-op a second pass gets:
+// the precondition is about what this caller read, and the issue is already
+// where it was going — telling it the record "changed" would be an error for
+// the ordinary case of two machines' passes meeting (F18).
+func TestSetResolvedIsANoOpFromAGenerationThatMoved(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	up, _ := filedIssue(t, ctx, b, fingerprint("27"))
+	_, read, err := readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", up.Number, err)
+	}
+	if err := SetResolved(ctx, b, up.Number, "0.22.0", read.gen, sharedAt); err != nil {
+		t.Fatalf("the machine that resolved first: %v", err)
+	}
+	if err := SetResolved(ctx, b, up.Number, "0.23.0", read.gen, sharedAt); err != nil {
+		t.Fatalf("a pass over an issue another machine resolved: %v", err)
+	}
+	rec, _, err := readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", up.Number, err)
+	}
+	if rec.Issue.ResolvedIn != "0.22.0" {
+		t.Errorf("the issue is fixed in %q, want the first machine's 0.22.0", rec.Issue.ResolvedIn)
+	}
+	// The generation is still a precondition: the same moved record, this time
+	// with a transition that is not where the issue already is, is refused.
+	if err := SetClosed(ctx, b, up.Number, ClosedNotPlanned, read.gen, sharedAt); err == nil {
+		t.Error("the resolver set aside a record at a generation it did not read")
+	}
+}
+
+// Where the transition may start from, and what it records: a release that is
+// not a release is no verdict to record, an issue that is not filed has no fix
+// to record, and the release goes in in the one shape every comparison reads
+// (F4, F18).
+func TestSetResolvedOnlyFromSubmitted(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	pending := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("1c")))
+
+	if err := SetResolved(ctx, b, pending.Number, "0.22.0", 0, sharedAt); err == nil {
+		t.Error("the resolver resolved an issue nobody filed")
+	}
+	if err := SetClosed(ctx, b, pending.Number, ClosedNotPlanned, 0, sharedAt); err == nil {
+		t.Error("the resolver dismissed an issue nobody filed")
+	}
+	if err := SetResolved(ctx, b, pending.Number+100, "0.22.0", 0, sharedAt); err == nil {
+		t.Error("the resolver resolved an issue the store does not hold")
+	}
+	rec, _, err := readShared(ctx, b, pending.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", pending.Number, err)
+	}
+	if rec.Issue.Status != StatusPending || rec.Issue.ResolvedIn != "" || rec.Issue.ClosedAs != "" {
+		t.Errorf("a refused transition left the record as %+v", rec.Issue)
+	}
+
+	// The release is checked on an issue that is filed, and the refusal is
+	// pinned: run against a record that cannot be resolved at all, every one
+	// of these would be refused for the status instead and a guard that never
+	// ran would pass for a guard that did.
+	filed, _ := filedIssue(t, ctx, b, fingerprint("20"))
+	for _, release := range []string{"", "dev", "0.22", "0.22.0-rc1", "main", "0.22.0.1"} {
+		err := SetResolved(ctx, b, filed.Number, release, 0, sharedAt)
+		if err == nil {
+			t.Errorf("the resolver recorded %q as a release", release)
+			continue
+		}
+		if !strings.Contains(err.Error(), "is not the release") {
+			t.Errorf("SetResolved(%q) refused for another reason: %v", release, err)
+		}
+	}
+	rec, _, err = readShared(ctx, b, filed.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", filed.Number, err)
+	}
+	if rec.Issue.Status != StatusSubmitted || rec.Issue.ResolvedIn != "" {
+		t.Errorf("a refused release left the record as %+v", rec.Issue)
+	}
+	// What goes in is the release itself, in the one shape a reporter's own
+	// version is compared against: a GitHub milestone may carry the `v` the
+	// tag has, and `v0.22.0` is that release.
+	if err := SetResolved(ctx, b, filed.Number, "v0.22.0", 0, sharedAt); err != nil {
+		t.Fatalf("resolving with the release as a tag spells it: %v", err)
+	}
+	rec, _, err = readShared(ctx, b, filed.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", filed.Number, err)
+	}
+	if rec.Issue.Status != StatusResolved || rec.Issue.ResolvedIn != "0.22.0" {
+		t.Errorf("the issue is %q fixed in %q, want %q in 0.22.0", rec.Issue.Status, rec.Issue.ResolvedIn, StatusResolved)
+	}
+
+	// The version a caller read is the one the write lands on: a caller that
+	// hands in another one is told the record moved rather than writing what
+	// it read over it.
+	up, _ := filedIssue(t, ctx, b, fingerprint("1d"))
+	_, v, err := readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", up.Number, err)
+	}
+	if err := SetResolved(ctx, b, up.Number, "0.22.0", v.gen+1, sharedAt); err == nil {
+		t.Error("the resolver wrote a record at a generation it did not read")
+	}
+	if err := SetResolved(ctx, b, up.Number, "0.22.0", v.gen, sharedAt); err != nil {
+		t.Errorf("the resolver refused the generation it read: %v", err)
+	}
+}
+
+// An issue closed without a fix is set aside with the reason, so the team sees
+// why it closed and nothing else on the record moves (F9, D1752).
+func TestSetClosedRecordsReason(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	notPlanned, _ := filedIssue(t, ctx, b, fingerprint("1e"))
+	for _, reason := range []ClosedAs{"", "completed", "fixed", ClosedAs("dismissed")} {
+		if err := SetClosed(ctx, b, notPlanned.Number, reason, 0, sharedAt); err == nil {
+			t.Errorf("the resolver recorded %q as a reason an issue closed", reason)
+		}
+	}
+	if err := SetClosed(ctx, b, notPlanned.Number, ClosedNotPlanned, 0, sharedAt); err != nil {
+		t.Fatalf("setting the issue aside: %v", err)
+	}
+	duplicate, _ := filedIssue(t, ctx, b, fingerprint("1f"))
+	if err := SetClosed(ctx, b, duplicate.Number, ClosedDuplicate, 0, sharedAt); err != nil {
+		t.Fatalf("setting the duplicate aside: %v", err)
+	}
+	for _, c := range []struct {
+		number int
+		reason ClosedAs
+	}{{notPlanned.Number, ClosedNotPlanned}, {duplicate.Number, ClosedDuplicate}} {
+		rec, _, err := readShared(ctx, b, c.number)
+		if err != nil {
+			t.Fatalf("reading shared issue %d: %v", c.number, err)
+		}
+		if rec.Issue.Status != StatusDismissed || rec.Issue.ClosedAs != c.reason {
+			t.Errorf("shared issue %d = %q with %q, want %q with %q",
+				c.number, rec.Issue.Status, rec.Issue.ClosedAs, StatusDismissed, c.reason)
+		}
+		if rec.Issue.ResolvedIn != "" || !rec.Issue.Uploaded || rec.Issue.URL == "" {
+			t.Errorf("setting shared issue %d aside changed the rest of it: %+v", c.number, rec.Issue)
+		}
+	}
+	// The same answer twice is the same record: a second pass over an issue
+	// already set aside writes nothing, and the reason it recorded stays.
+	if err := SetClosed(ctx, b, notPlanned.Number, ClosedDuplicate, 0, sharedAt); err != nil {
+		t.Fatalf("a second pass over a dismissed issue failed: %v", err)
+	}
+	rec, _, err := readShared(ctx, b, notPlanned.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", notPlanned.Number, err)
+	}
+	if rec.Issue.ClosedAs != ClosedNotPlanned {
+		t.Errorf("a second pass rewrote closed_as to %q", rec.Issue.ClosedAs)
+	}
+}
+
+// recordAt is one shared record as the store holds it, for a test whose subject
+// is what a write stamped rather than what a command printed.
+func recordAt(t *testing.T, ctx context.Context, b *blobx.Bucket, number int) Issue {
+	t.Helper()
+	rec, _, err := readShared(ctx, b, number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", number, err)
+	}
+	return rec.Issue
+}
+
+// stampIs checks one of the record's three dates: written, at the instant the
+// caller passed, in UTC to the second — the shape every reader of the header
+// takes it in, whatever clock the writer was holding.
+func stampIs(t *testing.T, name string, got *time.Time, want time.Time) {
+	t.Helper()
+	if got == nil {
+		t.Errorf("%s is not stamped, want %v", name, want)
+		return
+	}
+	if !got.Equal(want) {
+		t.Errorf("%s is %v, want %v", name, got, want)
+	}
+	if got.Location() != time.UTC {
+		t.Errorf("%s is in %v, want UTC", name, got.Location())
+	}
+}
+
+// TestSubmittedAtStampedWithSubmission covers the first of the record's three
+// dates (D1781): the write that records a submission is the one that stamps
+// when the issue was filed, so the record the team reads says when the filing
+// happened rather than when the object was last written.
+func TestSubmittedAtStampedWithSubmission(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("2b")))
+	// An upload is not a submission: an issue the store holds and nobody has
+	// filed carries no filing time, and a listing prints a dash for it rather
+	// than the day it was uploaded (F4).
+	if got := recordAt(t, ctx, b, up.Number).SubmittedAt; got != nil {
+		t.Errorf("an issue nobody filed carries the submission time %v", got)
+	}
+	claim, err := Claim(ctx, b, up.Number, "user:ana@example.test", sharedAt)
+	if err != nil {
+		t.Fatalf("claiming issue %d: %v", up.Number, err)
+	}
+	url := fmt.Sprintf("https://github.com/dimipaun/fugaro/issues/%d", up.Number)
+	// The clock a submitter passes is the clock it has: a zone and sub-second
+	// precision are the record's to settle, not the caller's to remember.
+	when := sharedAt.Add(4*time.Hour + 1234*time.Millisecond).In(time.FixedZone("EET", 2*60*60))
+	if err := RecordSubmitted(ctx, b, claim, url, when); err != nil {
+		t.Fatalf("recording the submission: %v", err)
+	}
+	got := recordAt(t, ctx, b, up.Number)
+	stampIs(t, "submitted_at", got.SubmittedAt, sharedAt.Add(4*time.Hour+time.Second))
+	if got.Status != StatusSubmitted || got.URL != url {
+		t.Errorf("the submission recorded %q at %q", got.Status, got.URL)
+	}
+	if got.ResolvedAt != nil || got.DismissedAt != nil {
+		t.Errorf("filing an issue stamped %v and %v as well", got.ResolvedAt, got.DismissedAt)
+	}
+}
+
+// TestResolvedAtStampedByResolver covers the second (D1781): the resolver's
+// transition — the one write a filed record takes — stamps when the issue was
+// fixed, and a later pass over an issue that is already fixed is the no-op it
+// has always been, so the date that stays is the one the first write made.
+func TestResolvedAtStampedByResolver(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	up, _ := filedIssue(t, ctx, b, fingerprint("2c"))
+	// Filed is not fixed: the submission stamped the moment it was filed and
+	// nothing else.
+	got := recordAt(t, ctx, b, up.Number)
+	stampIs(t, "submitted_at", got.SubmittedAt, sharedAt)
+	if got.ResolvedAt != nil || got.DismissedAt != nil {
+		t.Errorf("a filed issue carries %v and %v", got.ResolvedAt, got.DismissedAt)
+	}
+	when := sharedAt.Add(30 * time.Hour)
+	if err := SetResolved(ctx, b, up.Number, "0.22.0", 0, when); err != nil {
+		t.Fatalf("recording the fix: %v", err)
+	}
+	got = recordAt(t, ctx, b, up.Number)
+	stampIs(t, "resolved_at", got.ResolvedAt, when)
+	stampIs(t, "submitted_at", got.SubmittedAt, sharedAt)
+	if got.DismissedAt != nil {
+		t.Errorf("recording the fix stamped a dismissal at %v", got.DismissedAt)
+	}
+	if err := SetResolved(ctx, b, up.Number, "0.23.0", 0, sharedAt.Add(80*time.Hour)); err != nil {
+		t.Fatalf("a second pass over a resolved issue failed: %v", err)
+	}
+	stampIs(t, "resolved_at", recordAt(t, ctx, b, up.Number).ResolvedAt, when)
+}
+
+// TestDismissedAtStampedByDismissAndByClosedAs covers the third (D1781) at both
+// writers that set a filed issue aside: the team's own dismissal on the shared
+// record, and the resolver recording the reason GitHub closed it with. The date
+// says when the issue was set aside — the retirement of a finished issue reads
+// it (F4) — so a second pass keeps the first one.
+func TestDismissedAtStampedByDismissAndByClosedAs(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("2d")))
+	when := sharedAt.Add(6*time.Hour + 1234*time.Millisecond)
+	if err := SetSharedStatus(ctx, b, up.Number, StatusDismissed, when); err != nil {
+		t.Fatalf("setting the issue aside: %v", err)
+	}
+	got := recordAt(t, ctx, b, up.Number)
+	stampIs(t, "dismissed_at", got.DismissedAt, sharedAt.Add(6*time.Hour+time.Second))
+	if got.Status != StatusDismissed {
+		t.Errorf("the issue is %q, want %q", got.Status, StatusDismissed)
+	}
+	// An issue nobody filed has no filing time for a dismissal to leave behind,
+	// and setting one aside again changes neither the status nor the date.
+	if got.SubmittedAt != nil || got.ResolvedAt != nil {
+		t.Errorf("setting the issue aside stamped %v and %v as well", got.SubmittedAt, got.ResolvedAt)
+	}
+	if err := SetSharedStatus(ctx, b, up.Number, StatusDismissed, sharedAt.Add(60*time.Hour)); err != nil {
+		t.Fatalf("setting the issue aside twice: %v", err)
+	}
+	stampIs(t, "dismissed_at", recordAt(t, ctx, b, up.Number).DismissedAt, sharedAt.Add(6*time.Hour+time.Second))
+
+	// The resolver's own way of setting a filed issue aside stamps the same
+	// field, and an issue closed rather than fixed carries no fix date.
+	filed, _ := filedIssue(t, ctx, b, fingerprint("2e"))
+	closed := sharedAt.Add(12 * time.Hour)
+	if err := SetClosed(ctx, b, filed.Number, ClosedNotPlanned, 0, closed); err != nil {
+		t.Fatalf("setting the filed issue aside: %v", err)
+	}
+	got = recordAt(t, ctx, b, filed.Number)
+	stampIs(t, "dismissed_at", got.DismissedAt, closed)
+	stampIs(t, "submitted_at", got.SubmittedAt, sharedAt)
+	if got.Status != StatusDismissed || got.ClosedAs != ClosedNotPlanned {
+		t.Errorf("the closure recorded %q as %q", got.Status, got.ClosedAs)
+	}
+	if got.ResolvedAt != nil {
+		t.Errorf("an issue closed as not planned carries a fix date: %v", got.ResolvedAt)
+	}
+}
+
+// Who hit an issue is the reporter of the record that filed it plus every
+// occurrence's reporter, each one once (F10): the same person on two machines
+// is one name, and the order is the store's, so two runs print the same line.
+func TestReportersMergesOccurrences(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	up, _ := filedIssue(t, ctx, b, fingerprint("21"))
+	// The record that filed it is ana@example.test (the fixture's reporter).
+	got, err := Reporters(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading the reporters: %v", err)
+	}
+	if want := []string{"ana@example.test"}; !slices.Equal(got, want) {
+		t.Errorf("the reporters of an issue nobody else hit are %v, want %v", got, want)
+	}
+
+	for _, occ := range []Occurrence{
+		{Reporter: "bo@example.test", At: sharedAt},
+		{Reporter: "ana@example.test", At: sharedAt.Add(time.Minute)},
+		{Reporter: "", At: sharedAt.Add(2 * time.Minute)},
+		{Reporter: "cy@example.test", At: sharedAt.Add(3 * time.Minute)},
+	} {
+		if err := AttachOccurrence(ctx, b, up.Number, occ); err != nil {
+			t.Fatalf("recording an occurrence: %v", err)
+		}
+	}
+	// One object a launcher rewrote under the prefix answers as little as one
+	// that is not there: the pass prints the names it could read (F24).
+	if _, err := b.Create(ctx, occurrencePrefix(up.Number)+"junk", []byte("not an occurrence"), sharedJSON); err != nil {
+		t.Fatalf("seeding an unreadable occurrence: %v", err)
+	}
+	got, err = Reporters(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading the reporters: %v", err)
+	}
+	want := []string{"ana@example.test", "bo@example.test", "cy@example.test"}
+	if !slices.Equal(got, want) {
+		t.Errorf("the reporters are %v, want %v", got, want)
+	}
+	if _, err := Reporters(ctx, b, up.Number+100); err == nil {
+		t.Error("the reporters of an issue the store does not hold were reported")
+	}
+}
+
+// A regression finds the resolved issue it repeats: the fingerprint is still
+// the one the store holds, so a hit from a version that already has the fix is
+// flagged and linked to the GitHub issue, and the fix itself is not undone
+// (F14, F25).
+func TestResolvedIssueIsFoundByFingerprintAsRegression(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	up, url := resolved(t, ctx, b, fingerprint("22"), "0.21.0")
+
+	other := hit("update-20261107183020-48220", fingerprint("22"), "bo@example.test", "0.22.1", sharedAt.Add(time.Minute))
+	got := upload(t, ctx, b, other)
+	if !got.Attached || !got.Regression || got.OriginalURL != url {
+		t.Fatalf("a hit on a resolved issue = %+v, want it attached to %s as a regression", got, url)
+	}
+	rec, _, err := readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", up.Number, err)
+	}
+	if rec.Issue.Status != StatusResolved || rec.Issue.ResolvedIn != "0.21.0" || rec.Issue.URL != url {
+		t.Errorf("the hit changed the resolved issue: %+v", rec.Issue)
+	}
+	// The reporter that is still below the fix is an ordinary hit of an issue
+	// that is already filed: they are not told it came back (F25).
+	below := hit("update-20261107183021-48221", fingerprint("22"), "cy@example.test", "0.20.0", sharedAt.Add(2*time.Minute))
+	if got := upload(t, ctx, b, below); got.Regression || got.OriginalURL != "" {
+		t.Errorf("a hit from below the fix = %+v, want a plain occurrence", got)
 	}
 }
 

@@ -30,3 +30,10 @@ func ResetHandoff(t *testing.T) {
 	handoffHooks, handoffHooksSet = coreHandoffFuncs(), false
 	t.Cleanup(func() { handoffHooks, handoffHooksSet = coreHandoffFuncs(), false })
 }
+
+// ResetBatch does the same for the batch seam, for the same reason.
+func ResetBatch(t *testing.T) {
+	t.Helper()
+	batchHooks, batchHooksSet = coreBatchFuncs(), false
+	t.Cleanup(func() { batchHooks, batchHooksSet = coreBatchFuncs(), false })
+}

@@ -35,15 +35,24 @@
 //     in the sentence itself, which is why nothing here adds a second line
 //     about roles -- a console that restated the fix could restate it wrongly,
 //     and the operator would have two sentences to reconcile.
-//   - the absent-binary screen is the console's own, built by
-//     `src/source/cli.ts`'s `noInstallationState` from the resolution that
-//     failed, and it is deliberately the *only* thing on screen: what is
-//     needed, the install command, and how many places were searched -- a count
-//     and never the paths themselves, because no path is ever drawn on this
-//     console (the `path` class, `sanitize.ts`). **There is no choose-the-binary
-//     affordance** (the design's section 6.3 row, as the owner's ruling of
-//     2026-10-20 amended it): the console asks the operator for no path, and the
-//     screen that used to draw one drew a control that wired nothing.
+//   - the screens with no installation to read are the console's own, built by
+//     `src/source/cli.ts`'s `noInstallationState` from the resolution that failed,
+//     and one is deliberately the *only* thing on screen: **which** failure it is
+//     (the resolution's own kind), what is needed, and the remedy for that one.
+//     The absent-binary page draws the install command and how many places were
+//     searched -- a count and never the paths themselves, because no path is ever
+//     drawn on this console (the `path` class, `sanitize.ts`) -- and the three WSL
+//     pages draw a sentence each instead, because their remedy is not a command
+//     this console can run for the operator: each names the CLI's own install
+//     procedure (`docs/windows-cli/wsl.md`) rather than copying its commands into
+//     the page (F32, D9(a)). They are drawn where a caller hands
+//     one of those kinds to `renderUnavailable` (`refusedState` is the union's
+//     other half), and the screen a first run actually meets is
+//     `src/main/onboarding.ts`'s `installCliState`, which this file does not draw.
+//     **There is no choose-the-binary affordance** (the design's section 6.3 row,
+//     as the owner's ruling of 2026-10-20 amended it): the console asks the
+//     operator for no path, and the screen that used to draw one drew a control
+//     that wired nothing.
 //
 // Every string a document or the CLI wrote reaches the window through `putText`
 // (and every number through `putReading`); only the console's own vocabulary is
@@ -90,13 +99,59 @@ export const KILL_ABSENT_BECAUSE =
 export const COMPUTE_LOWER_BOUND_NOTE =
   'runs whose compute was not estimated count as unknown, not as zero, so these figures are lower bounds'
 
-/** NO_BINARY_HEADLINE, and the three that follow it, are this screen's own
- * words -- the console's vocabulary, never a document's. */
+/** NO_BINARY_HEADLINE, and the three headlines that follow it, are this screen's
+ * own words -- the console's vocabulary, never a document's. There is **one per
+ * way a machine can have no `fugaro` the console can read** (`BinaryRefusalKind`,
+ * `src/main/spawn.ts`, which is the same four words the resolution answers with),
+ * and they are deliberately not shared: one page headed "no fugaro binary" for
+ * all four is the defect the four states exist to fix (F26) -- it sends somebody
+ * to install a CLI when what is missing is WSL. */
 export const NO_BINARY_HEADLINE = 'no fugaro binary'
+/** NO_WSL_HEADLINE is `wsl.exe` not answering at all: WSL is not installed, or
+ * the feature is off. */
+export const NO_WSL_HEADLINE = 'no WSL on this machine'
+/** NO_DISTRO_HEADLINE is WSL answering and carrying no distribution this console
+ * can drive by the name the installation names: a rename, a removal, or a
+ * registered name outside the pattern this console hands to `wsl.exe`. */
+export const NO_DISTRO_HEADLINE = 'no WSL distribution to run the CLI in'
+/** NO_FUGARO_IN_DISTRO_HEADLINE is the distribution being there and nothing
+ * named `fugaro` being on its own `PATH`. */
+export const NO_FUGARO_IN_DISTRO_HEADLINE = 'no fugaro inside the distribution'
 /** INSTALL_LEAD is the sentence the install command is offered under. */
 export const INSTALL_LEAD = 'install it with'
 /** SEARCHED_LEAD says what the number beside it counts. */
 export const SEARCHED_LEAD = 'places the console looked in for a fugaro binary'
+/** WSL_PROCEDURE is the document that owns the CLI's install procedure on the
+ * WSL route, and it is **named** by the three remedies below rather than
+ * retyped (F32, D9(a)).
+ *
+ * The console cannot open it -- the renderer holds no link but the website's
+ * getting-started page, and the repository's documents are not shipped with the
+ * app -- so the remedies spell the path for the operator to find, which is what
+ * "point at the procedure" means here. The alternative D9(b) refuses is a second
+ * copy of the four commands (download the linux archive, verify it, `tar -xzf`,
+ * put it on `~/.local/bin`) in this screen's `<code>` block: a copy that goes
+ * stale silently the day the procedure changes. It is written once, so the three
+ * remedies cannot disagree about where the procedure is. */
+const WSL_PROCEDURE = 'docs/windows-cli/wsl.md'
+/** NO_WSL_REMEDY, and the two beside it, are what to do about each of the three
+ * failures an install line for the CLI cannot answer: `brew install` on a
+ * machine with no WSL installs nothing the console can then run, and installing
+ * WSL does not put `fugaro` on a distribution's `PATH`. They are the WSL route's
+ * install lines, one per failure, and each ends by naming `WSL_PROCEDURE` --
+ * which is the whole of what the host route's `brew install` line cannot be
+ * here.
+ *
+ * They are this file's own sentences and not the resolution's, for the reason
+ * `degraded.ts`'s header gives: the renderer may not import a module that
+ * spawns, so the states are stated here. The three are one line each, and they
+ * name the *act* rather than a control: there is no picker hook under them
+ * (`§2.8`: the console asks the operator for no path and draws no control that
+ * wires nothing), so the operator is told what to do and not where in this app
+ * to click. */
+export const NO_WSL_REMEDY = `install WSL and a distribution to run the CLI in, then follow ${WSL_PROCEDURE}`
+export const NO_DISTRO_REMEDY = `choose or add a WSL distribution to run the CLI in, then follow ${WSL_PROCEDURE}`
+export const NO_FUGARO_IN_DISTRO_REMEDY = `install the CLI inside the distribution by following ${WSL_PROCEDURE}`
 /** REFUSED_HEADLINE is the refused-read screen's heading. */
 export const REFUSED_HEADLINE = 'the CLI refused this read'
 
@@ -557,16 +612,35 @@ export function renderNoFirebase(
 // The console's two states with no source at all.
 // ---------------------------------------------------------------------------
 
-/** NoBinaryState is `src/source/cli.ts`'s `NoInstallationState` as this screen
- * draws it. It is stated here rather than imported because the renderer may not
- * import a module that spawns: the *shape* is the contract, and
- * `degraded.spec.ts` assigns one to the other so a drift fails the typecheck. */
-export interface NoBinaryState {
-  readonly kind: 'no-binary'
+/** NoInstallationKind is which failure this is, in the resolution's own four
+ * words (`BinaryRefusalKind`, `src/main/spawn.ts`) -- stated here rather than
+ * imported, because the renderer may not import a module that spawns, and one
+ * page is drawn per member (Part G, T-G1). */
+export type NoInstallationKind = 'no-binary' | 'no-wsl' | 'no-distro' | 'no-fugaro-in-distro'
+
+/** NoInstallationState is `src/source/cli.ts`'s `NoInstallationState` as this
+ * screen draws it: the *shape* is the contract, and `degraded.spec.ts` assigns
+ * one to the other so a drift fails the typecheck. */
+export interface NoInstallationState {
+  readonly kind: NoInstallationKind
   readonly reason: string
+  /** the install line for the kinds whose remedy is a command, and the empty
+   * string for the three WSL ones, whose remedy is this file's own sentence --
+   * see `NO_WSL_REMEDY`. The line is **per route** (F32): this field carries the
+   * host route's `brew install`, and the WSL route's line is the procedure the
+   * three remedies name rather than a second command drawn beside them. */
   readonly installCommand: string
+  /** the host places the resolution walked, which only `no-binary` did: the WSL
+   * route asks `wsl.exe` and the distribution, and walks no directory here. */
   readonly searched: readonly string[]
 }
+
+/** NoBinaryState is `NoInstallationState` under the name the e2e suite has
+ * imported since this screen had one state and that state was `no-binary`. The
+ * shape is one for all four kinds, so there is one type; the name is kept
+ * because `degraded.spec.ts` holds a state built by `src/source/cli.ts` to the
+ * renderer's own type under it. */
+export type NoBinaryState = NoInstallationState
 
 /** RefusedState is a read the CLI refused: which read, and the CLI's sentence
  * **verbatim** -- including the remedy, which `internal/cli/reportcore.go`'s
@@ -577,8 +651,9 @@ export interface RefusedState {
   readonly sentence: string
 }
 
-/** UnavailableState is either of them. */
-export type UnavailableState = NoBinaryState | RefusedState
+/** UnavailableState is either of them: a console with no installation to read,
+ * or one whose read the CLI refused. */
+export type UnavailableState = NoInstallationState | RefusedState
 
 /** REFUSAL_UNREADABLE is what the refused-read screen says when the CLI's own
  * sentence cannot be drawn at all (`sanitizeRefusal` refuses it: a sentence
@@ -630,17 +705,38 @@ export function refusedState(operation: string, refusal: { readonly sentence: st
  * file computed, drawn `measured` -- and `SEARCHED_LEAD` is this file's own
  * sentence.
  */
-function searched(parent: ScreenElement, factory: ScreenFactory, state: NoBinaryState): void {
+function searched(parent: ScreenElement, factory: ScreenFactory, state: NoInstallationState): void {
   const element = cell(parent, factory, 'div', 'unavailable-searched')
   numberCell(element, factory, 'span', measured(state.searched.length), 'count', 'unavailable-searched-count')
   literal(cell(element, factory, 'span', 'unavailable-searched-lead'), SEARCHED_LEAD)
 }
 
-/** noBinary draws the absent-binary screen: what is needed, the install command,
- * and nothing else. */
-function noBinary(factory: ScreenFactory, state: NoBinaryState): ScreenElement {
+/** unableToSay is what an installation failure this build has no page for
+ * reaches. It is unreachable through `NoInstallationKind` -- the `never`
+ * parameter is what makes a fifth kind a **compile error** rather than a page
+ * drawn with another kind's words, which is the defect the four states exist to
+ * fix (F26). */
+function unableToSay(kind: never): never {
+  throw new Error(`no page is drawn for the installation failure ${String(kind)}`)
+}
+
+/**
+ * noInstallation draws the screen for a console with no `fugaro` it can read:
+ * **which** of the four failures this is, the resolution's own sentence, and the
+ * remedy for that one (Part G, T-G1).
+ *
+ * The absent-binary page is the template and the three WSL pages are its
+ * siblings -- the same body, the same headline and reason, one remedy each --
+ * because the four are four different instructions rather than four spellings of
+ * one. `no-binary` and, on the WSL route, `no-fugaro-in-distro` are answered by
+ * installing the CLI; the other two are not, and their remedy is this file's own
+ * sentence instead of an install line: a machine with no WSL cannot run a
+ * `fugaro` a `brew install` puts outside any distribution, and a distribution
+ * the console cannot drive is not fixed by installing WSL again.
+ */
+function noInstallation(factory: ScreenFactory, state: NoInstallationState): ScreenElement {
   const element = make(factory, 'div', 'unavailable-body')
-  literal(cell(element, factory, 'h1', 'unavailable-headline'), NO_BINARY_HEADLINE)
+  const headline = cell(element, factory, 'h1', 'unavailable-headline')
   // The resolution's sentence is the CLI's shape of "where I looked", written by
   // `spawn.ts` rather than by a document: it goes through `putText` like every
   // other string this screen did not author itself. As prose it is read as
@@ -653,14 +749,33 @@ function noBinary(factory: ScreenFactory, state: NoBinaryState): ScreenElement {
   // the places, each one drawn as the path it is", which stopped being true when
   // the list became a count.
   textCell(element, factory, 'p', state.reason, 'sentence', 'the resolution reason', 'unavailable-reason')
-  const install = cell(element, factory, 'div', 'unavailable-install')
-  literal(cell(install, factory, 'span', 'unavailable-install-lead'), INSTALL_LEAD)
-  // The install command is this file's sibling `cli.ts`'s constant, which is
-  // the README's own line, so it is the console's vocabulary and not a
-  // document's string.
-  literal(cell(install, factory, 'code', 'unavailable-install-command'), state.installCommand)
-  searched(element, factory, state)
-  return element
+  switch (state.kind) {
+    case 'no-binary': {
+      literal(headline, NO_BINARY_HEADLINE)
+      const install = cell(element, factory, 'div', 'unavailable-install')
+      literal(cell(install, factory, 'span', 'unavailable-install-lead'), INSTALL_LEAD)
+      // The install command is this file's sibling `cli.ts`'s constant, which is
+      // the README's own line, so it is the console's vocabulary and not a
+      // document's string.
+      literal(cell(install, factory, 'code', 'unavailable-install-command'), state.installCommand)
+      searched(element, factory, state)
+      return element
+    }
+    case 'no-wsl':
+      literal(headline, NO_WSL_HEADLINE)
+      literal(cell(element, factory, 'p', 'unavailable-remedy'), NO_WSL_REMEDY)
+      return element
+    case 'no-distro':
+      literal(headline, NO_DISTRO_HEADLINE)
+      literal(cell(element, factory, 'p', 'unavailable-remedy'), NO_DISTRO_REMEDY)
+      return element
+    case 'no-fugaro-in-distro':
+      literal(headline, NO_FUGARO_IN_DISTRO_HEADLINE)
+      literal(cell(element, factory, 'p', 'unavailable-remedy'), NO_FUGARO_IN_DISTRO_REMEDY)
+      return element
+    default:
+      return unableToSay(state.kind)
+  }
 }
 
 /** drawnOrNothing is a console label after `sanitizeRefusal`, or the empty
@@ -712,10 +827,11 @@ function refused(factory: ScreenFactory, state: RefusedState): ScreenElement {
 
 /**
  * renderUnavailable draws the console's state when there is no source to read:
- * no binary, or a read the CLI refused. Neither draws a dashboard -- there is no
- * cap line, no run list and no `.live` root, because there is nothing measured
- * to put in one (design section 6.3: "a single explanatory screen ... no
- * partially drawn dashboard").
+ * one page per way the console can have no `fugaro` -- the four
+ * `NoInstallationKind`s -- or the refused-read page. None of them draws a
+ * dashboard: there is no cap line, no run list and no `.live` root, because
+ * there is nothing measured to put in one (design section 6.3: "a single
+ * explanatory screen ... no partially drawn dashboard").
  */
 export function renderUnavailable(
   factory: ScreenFactory,
@@ -723,6 +839,6 @@ export function renderUnavailable(
   theme: LiveTheme,
 ): ScreenElement {
   const section = root(factory, state.kind, theme, null)
-  section.append(state.kind === 'no-binary' ? noBinary(factory, state) : refused(factory, state))
+  section.append(state.kind === 'refused' ? refused(factory, state) : noInstallation(factory, state))
   return section
 }
