@@ -118,6 +118,74 @@ func TestIssueShowPrintsHostileSummaryAsData(t *testing.T) {
 	}
 }
 
+// TestIssueListPrintsHostileSummaryAsData: the listing's summary is the same
+// text `show` prints, and it comes from a diagnosis that read log text the user
+// does not control, so a row carries the record's own words and never a
+// sequence the terminal obeys (F6). The row is also held to being one row: the
+// cells go through the terminal pass that collapses a value to a line, and a
+// summary holding a newline or a tab would otherwise break the table in two.
+func TestIssueListPrintsHostileSummaryAsData(t *testing.T) {
+	store := issueState(t)
+	i := savedIssue("48220", issues.StatusPending, false)
+	i.Summary = "the cache never refreshes\x1b[2J\x1b]8;;https://evil.test\x07" +
+		"\nthe log said:\trun fugaro run"
+	if err := store.Save(i); err != nil {
+		t.Fatalf("saving: %v", err)
+	}
+
+	out, _, err := execute(t, "issue", "list")
+	if err != nil {
+		t.Fatalf("issue list: %v\n%s", err, out)
+	}
+	if strings.ContainsRune(out, 0x1b) {
+		t.Errorf("issue list prints an escape sequence:\n%q", out)
+	}
+	if strings.Contains(out, "evil.test") {
+		t.Errorf("issue list prints an OSC 8 hyperlink's target:\n%s", out)
+	}
+	if !strings.Contains(out, "the cache never refreshes") || !strings.Contains(out, "run fugaro run") {
+		t.Errorf("issue list drops the summary's own words:\n%s", out)
+	}
+	// The header and one row, whatever the summary holds.
+	if lines := strings.Count(strings.TrimRight(out, "\n"), "\n") + 1; lines != 2 {
+		t.Errorf("issue list prints %d lines for one issue, want 2 (the header and its row):\n%q", lines, out)
+	}
+}
+
+// TestIssueShowPrintsOnlyAnUploadedURL: a record is a file on this machine and
+// the shared store can be rewritten by any launcher, so the stored URL is shown
+// only in the one shape an uploader here writes — the issue this project filed
+// (F28). A URL of any other shape is a line that reads like a link to the issue
+// and is not one, and `show` leaves it out the way it leaves out an empty
+// header value.
+func TestIssueShowPrintsOnlyAnUploadedURL(t *testing.T) {
+	store := issueState(t)
+	foreign := savedIssue("48221", issues.StatusPending, false)
+	foreign.URL = "https://evil.test/dimipaun/fugaro/issues/7"
+	uploaded := savedIssue("48222", issues.StatusSubmitted, true)
+	for _, i := range []issues.Issue{foreign, uploaded} {
+		if err := store.Save(i); err != nil {
+			t.Fatalf("saving: %v", err)
+		}
+	}
+
+	out, _, err := execute(t, "issue", "show", foreign.LocalID)
+	if err != nil {
+		t.Fatalf("issue show %s: %v\n%s", foreign.LocalID, err, out)
+	}
+	if strings.Contains(out, "evil.test") || strings.Contains(out, "url:") {
+		t.Errorf("issue show prints a stored URL that is not this project's issue:\n%s", out)
+	}
+
+	out, _, err = execute(t, "issue", "show", "7")
+	if err != nil {
+		t.Fatalf("issue show 7: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, uploaded.URL) {
+		t.Errorf("issue show drops the uploaded issue's own URL, %q:\n%s", uploaded.URL, out)
+	}
+}
+
 // TestIssueDismissSetsStatus: `dismiss` sets the issue aside so nothing is
 // filed for it (spec 4), and it takes the local ID or the number (F23). The
 // record read back from the store is the fact — the printed line is not.

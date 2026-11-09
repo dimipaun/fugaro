@@ -15,7 +15,7 @@ func newIssueListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List the issues saved on this machine",
 		Long: "List the issues saved on this machine, one row each.\n\n" +
-			"A row names the issue the way `show`, `dismiss` and `submit` take it —\n" +
+			"A row names the issue the way `show` and `dismiss` take it —\n" +
 			"its number once it has been uploaded, its local ID before — with the\n" +
 			"class the diagnosis gave it, where it stands, and its one-line summary.\n" +
 			"Nothing is uploaded and nothing is filed: the listing is this machine's\n" +
@@ -49,7 +49,7 @@ func runIssueList(cmd *cobra.Command, asJSON bool) error {
 			}
 			docs = append(docs, doc)
 		}
-		return writeIssueJSON(out, docs)
+		return writeJSON(out, docs)
 	}
 	// A machine that saved nothing prints nothing: a header with no rows under
 	// it reads like a listing that was cut short, and there is no command here

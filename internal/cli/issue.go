@@ -1,9 +1,7 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"runtime"
 
@@ -99,13 +97,4 @@ func issueJSON(i issues.Issue) (map[string]any, error) {
 	}
 	doc["logs"] = logs
 	return doc, nil
-}
-
-// writeIssueJSON writes one document — an array of records for `list`, one
-// record for `show` — the way the other `--json` outputs of this CLI write
-// theirs.
-func writeIssueJSON(w io.Writer, doc any) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(doc)
 }

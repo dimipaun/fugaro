@@ -3,11 +3,13 @@ package cli
 import (
 	"fmt"
 	"io"
+	"regexp"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/issues"
+	"github.com/dimipaun/fugaro/internal/updatecheck"
 )
 
 // newIssueShowCmd builds `fugaro issue show`: one saved issue, whole.
@@ -45,10 +47,18 @@ func runIssueShow(cmd *cobra.Command, ref string, asJSON bool) error {
 		if err != nil {
 			return userErr("nothing was shown: %v", err)
 		}
-		return writeIssueJSON(cmd.OutOrStdout(), doc)
+		return writeJSON(cmd.OutOrStdout(), doc)
 	}
 	return printIssue(cmd.OutOrStdout(), i)
 }
+
+// issueURLShape is the one shape a stored URL is printed in: the GitHub issue
+// an uploader here files (F28). A record is a file on this machine and the
+// shared store can be rewritten by any launcher, so a URL that is not this
+// shape is a line that looks like a link to the issue and is not one, and it
+// is dropped rather than printed. The repository is updatecheck.Repo's, so the
+// shape and the slug the updater knows cannot drift apart.
+var issueURLShape = regexp.MustCompile(`^https://github\.com/` + regexp.QuoteMeta(updatecheck.Repo) + `/issues/[0-9]+$`)
 
 // printIssue prints one record for a person to read: the header a reader needs
 // to tell one issue from another and to find it again, then the body's
@@ -58,6 +68,12 @@ func runIssueShow(cmd *cobra.Command, ref string, asJSON bool) error {
 // terminal as itself (F6). An empty section is left out: the body's shape is
 // the file's, and a person does not need three empty headings.
 func printIssue(w io.Writer, i issues.Issue) error {
+	// The stored URL is the one header value with a shape of its own, and it is
+	// the one a reader would click: only a URL this project's uploader could
+	// have written is shown (F28).
+	if !issueURLShape.MatchString(i.URL) {
+		i.URL = ""
+	}
 	if _, err := fmt.Fprintln(w, oneLine(issueRef(i))); err != nil {
 		return err
 	}

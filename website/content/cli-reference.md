@@ -2556,7 +2556,7 @@ List the issues saved on this machine
 
 List the issues saved on this machine, one row each.
 
-A row names the issue the way `show`, `dismiss` and `submit` take it —
+A row names the issue the way `show` and `dismiss` take it —
 its number once it has been uploaded, its local ID before — with the
 class the diagnosis gave it, where it stands, and its one-line summary.
 Nothing is uploaded and nothing is filed: the listing is this machine's
