@@ -251,6 +251,24 @@ type Row struct {
 	// PreviousRun is the run a follow-up continues.
 	PreviousRun string `json:"previous_run,omitempty"`
 	FollowUp    bool   `json:"follow_up"`
+	// FollowUpOf is the parent a triage follow-up was filed from, as the
+	// run's own task carries it (task.Spec.FollowUpOf, docs/post-review-triage
+	// D1843): the parent run's ID and the keys of the deferred findings this
+	// task settles, written by the CLI that filed it (fugaro followups) and
+	// read by nobody inside a run.
+	//
+	// It is its own fact beside FollowUp and not a second spelling of it: a
+	// follow-up continues the pull request of PreviousRun (a person or a
+	// command asked for it), while this names the deferral a run left behind,
+	// and a run can be either without the other.
+	//
+	// Absent for every run that is not one of those -- every run somebody
+	// asked for, and every task written before the field existed -- so
+	// absence reads as "not filed from a deferral" and never as "filed for
+	// no finding". Task-derived and not sanitised, like Title, Batch and
+	// RequestedBy beside it: the task's text is the launcher's, and the
+	// display layer sanitises it (design §5.1 rule 7).
+	FollowUpOf *task.FollowUpOf `json:"follow_up_of,omitempty"`
 
 	// DraftFallback: the host has no draft pull requests, so the PR is an
 	// ordinary one with "[DRAFT]" in its title.
@@ -755,6 +773,7 @@ func followUpFields(row *Row, t *task.Spec, r *runstore.Record) {
 	if t != nil {
 		row.Branch, row.TaskPR, row.PreviousRun = t.Branch, t.PR, t.PreviousRun
 		row.FollowUp = t.IsFollowUp()
+		row.FollowUpOf = t.FollowUpOf
 	}
 	if r != nil {
 		if r.Branch != "" {
