@@ -34,7 +34,7 @@
 #      rather than one it inherits: `build.win` is
 #      `target: [{target: 'nsis', arch: ['x64']}]` with
 #      `artifactName: Fugaro.Console-${version}-win-${arch}.${ext}`. (Part B,
-#      T-B1, T-B2, T-B4 and F36.)
+#      T-B1, T-B2, T-B4; F35, F36.)
 #   2. **Landed**: the unit suite's POSIX assumptions. `spawn.ts`'s
 #      `isExecutableFile` takes the platform now (on `win32`, a regular file is
 #      runnable), and `binDirectories` splits the app's own `PATH` on the
@@ -45,9 +45,10 @@
 #      `electron-v<version>-win32-x64.zip` -- the hash copied out of the
 #      lockfile-pinned `electron` package's own `checksums.json` and held to that
 #      file by `console/test/unit/fuses.test.ts` (implementation-plan.md T-B3,
-#      finding F37) -- so the Electron step below verifies the archive against a
-#      hash in this repository rather than against a `SHASUMS256.txt` fetched
-#      from the release host.
+#      finding F37). That field is what **electron-builder's own download** of
+#      the distribution is summed against during `npm run package:win`, so while
+#      the entry was missing the pack **stopped** there -- a refusal rather than
+#      an unverified fetch -- on every host.
 #
 # **All three have landed, and this job has never run.** No host has completed an
 # `electron-builder --win` pack (console/README.md, "The Windows pack, unsigned,
@@ -137,9 +138,8 @@
 #     2026-11-09 (Part B, T-B4), because a second architecture would be a
 #     cross-build nothing here can launch -- the same packer on the same runner,
 #     with the same fuses. The `win32-x64` hash landed in
-#     `build.electronDownload.checksums` the same day (T-B3), so the Electron
-#     step below downloads against a pinned hash rather than merely fetching
-#     (finding F37).
+#     `build.electronDownload.checksums` the same day (T-B3), and that entry is
+#     what the pack step's own download is checked against (finding F37).
 
 name: console-windows
 
@@ -217,13 +217,14 @@ jobs:
       - name: run the unit suite
         run: npm run test:unit
       # Electron's own download of its distribution, checked against the pinned
-      # package's `checksums.json`: `electron-v<version>-win32-x64.zip` is one of
-      # the hashes `build.electronDownload.checksums` pins -- the pin landed on
-      # 2026-11-09 (T-B3 of the plan, finding F37) -- so this step verifies the
-      # archive against a hash in this repository rather than against a
-      # `SHASUMS256.txt` fetched from the release host. Then the build the packer
-      # packs (`npm run build` is what writes the file package.json's `main`
-      # points at).
+      # electron package's own `checksums.json`, from the lockfile-pinned
+      # tarball: the Windows archive is one of the hashes that file carries, so
+      # this step is **not** governed by `build.electronDownload.checksums` at
+      # all -- that field is what electron-builder's *own* download is summed
+      # against, in the pack step below, and the `win32-x64` entry in it landed on
+      # 2026-11-09 (T-B3, finding F37).
+      # Then the build the packer packs (`npm run build` is what writes the file
+      # package.json's `main` points at).
       - name: download Electron and build the app
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"

@@ -706,8 +706,10 @@ that packaged the console for Linux (the owner's ruling of that date: *"yes,
 Linux for 0.10.0, unsigned"*; design D10 and section 9.4, and
 `docs/plans/2026-10-15-desktop-console.md`'s phase 4). One job, `console-linux`,
 on `ubuntu-latest`: `contents: read`, **no environment and no secret at all**,
-the pinned toolchain (`npm ci --ignore-scripts`), Electron's own download
-verified against the checksums `console/package.json` pins, `npm run
+the pinned toolchain (`npm ci --ignore-scripts`), Electron's own download —
+the electron package's `install.js`, summed against that package's own
+`checksums.json`, not against `build.electronDownload.checksums`, which is
+electron-builder's own download in the pack step — `npm run
 build`, then `npm run package:linux` — which is `electron-builder --linux
 --publish never`, with no `npx` in front of it — an assertion that exactly one
 `.AppImage` and one `.deb` came out, and `upload-artifact`. It runs on every
@@ -1317,8 +1319,10 @@ the *Linux* binary running inside WSL**, unsigned
 [docs/windows-cli/](../windows-cli/README.md)). One job, `console-windows`, on
 `windows-latest`: `contents: read`, **no environment and no secret at all**, the
 pinned toolchain (`npm ci --ignore-scripts`), `npm run typecheck`, `npm run
-test:unit`, Electron's own download — which the checksums `console/package.json`
-pins cover, the `win32-x64` one included since 2026-11-09 — `npm run build`,
+test:unit`, Electron's own download — the electron package's `install.js`, summed
+against that package's own `checksums.json`, which pins the Windows archive too,
+so it is not the step `build.electronDownload.checksums` governs (that field is
+electron-builder's own download, in the pack step) — `npm run build`,
 then `npm run package:win` — which is
 `electron-builder --win --publish never`, with no `npx` in front of it — an
 assertion that exactly one `.exe` came out, and `upload-artifact`.
@@ -1358,15 +1362,15 @@ owner's manual checklist's job, not a runner's.
 `console/`, and they were not this directory's to do.**
 
 1. **Landed** (2026-11-09): `console/package.json` has the `package:win` script
-   (`npm run build && electron-builder --win --publish never`), and
-   `console/src/main/fuses.ts`'s `SUPPORTED_PLATFORMS` is
+   (`npm run build && electron-builder --win --publish never`), its `build.win`
+   block names the target, the arch and the artifact name (`nsis`, x64, the Linux
+   leg's nested form), and `console/src/main/fuses.ts`'s `SUPPORTED_PLATFORMS` is
    `['darwin','linux','win32']` with a `win32Executable` row beside the other two
    — so `afterPack`, the pack's only fuse flipper, no longer refuses the Windows
-   pack (implementation-plan.md Part B, T-B1 and T-B2;
+   pack, and the packer is handed a Windows target this repository decided
+   rather than one it inherits (implementation-plan.md Part B, T-B1, T-B2 and T-B4;
    [docs/console-windows/reconciliation.md](../console-windows/reconciliation.md)
-   F35). The `win` block that names the target, the arch and the artifact name
-   landed with it (T-B4), so the packer is handed a Windows target this
-   repository decided rather than one it inherits.
+   F35, F36).
 2. **Landed**: the unit suite's POSIX assumptions. `spawn.ts`'s
    `isExecutableFile` takes the platform now (on `win32`, a regular file is
    runnable), and `binDirectories` splits the app's own `PATH` on the **host's**
@@ -1376,9 +1380,12 @@ owner's manual checklist's job, not a runner's.
    `build.electronDownload.checksums` pins the fourth zip,
    `electron-v<version>-win32-x64.zip` — copied out of the lockfile-pinned
    package's own `checksums.json` and held to that file by
-   `console/test/unit/fuses.test.ts` (implementation-plan.md T-B3, F37) — so the
-   Electron step verifies its distribution against a hash in this repository
-   rather than against a `SHASUMS256.txt` fetched from the release host.
+   `console/test/unit/fuses.test.ts` (implementation-plan.md T-B3, F37). That
+   field is what electron-builder's own download is summed against during
+   `npm run package:win`, so while the entry was missing the pack stopped there
+   — a refusal rather than an unverified fetch — and the job's own Electron step
+   is unaffected either way: that one is the electron package's `install.js`,
+   summed against that package's own `checksums.json`.
 
 **All three have landed, and the job has never run.** No host has completed an
 `electron-builder --win` pack (the console's README, "The Windows pack,
