@@ -994,6 +994,31 @@ describe('the packaging configuration the fuses belong to', () => {
     expect(script).not.toMatch(/electron-builder@/)
   })
 
+  it('describes every packaging script the manifest declares, in console/README.md', () => {
+    // Everything above reads the *manifest*. Nothing read the document a reader
+    // actually opens, so a packaging script could land in `package.json`, pass
+    // every test in this file, and reach no prose at all -- which is what
+    // happened to `package:win`: the script and the artifact it produces were
+    // pinned here and described nowhere, so the only account of the Windows pack
+    // was the manifest itself.
+    //
+    // The list is read out of the manifest rather than written out again: a
+    // fifth packaging script has to be described, and a test carrying its own
+    // copy of the four would be satisfied by the copy. And each name is matched
+    // as the command it is run as, with the name boundary respected -- `npm run
+    // package` must not be satisfied by `npm run package:linux`.
+    const readme = readFileSync(join(CONSOLE_DIR, 'README.md'), 'utf8')
+    const packaging = Object.keys(manifest.scripts).filter(
+      (name) => name === 'package' || name.startsWith('package:'),
+    )
+    expect(packaging.toSorted()).toEqual(
+      ['package', 'package:linux', 'package:targets', 'package:win'].toSorted(),
+    )
+    for (const name of packaging) {
+      expect(readme, `console/README.md must describe ${name}`).toMatch(new RegExp(`npm run ${name}(?![\\w:.-])`))
+    }
+  })
+
   it('runs this hook, compiled to the file the build emits', () => {
     expect(build.afterPack).toBe('dist/main/fuses.js')
     // and the build does emit there: `rootDir: src`, `outDir: dist`.
