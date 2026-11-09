@@ -9,9 +9,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2/google"
@@ -20,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/batch"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/image"
@@ -417,6 +421,271 @@ func locateRun(ctx context.Context, env *cloudEnv, ref string) (slug, runID stri
 		return "", "", remote(err)
 	}
 	return slug, runID, nil
+}
+
+// resolveRunOptions are the streams and the switches one run lookup is given.
+// locateRun has none of them: it takes one reference and answers it or refuses
+// it, which is all `run --retry` wants.
+type resolveRunOptions struct {
+	// in and out are the command's own streams: an ending that names several
+	// runs is asked about on in and its candidates are written to out (D1700).
+	in  io.Reader
+	out io.Writer
+	// errOut takes the lookup's notes (the unreadable feed, F6); nil is
+	// os.Stderr, as cloudOptions.stderr's nil is.
+	errOut io.Writer
+	// asJSON is the command's --json: a machine reading is never asked to
+	// choose, whatever the streams are.
+	asJSON bool
+	// activeOnly is `cancel`'s list-only reading (D1710): the candidates are
+	// the runs of the live feed alone — the seven-day window is not consulted —
+	// and the answer is the list, never a run, so the command that stops a run
+	// is only ever given one a person named in full.
+	activeOnly bool
+}
+
+// notes is where the lookup's notes go.
+func (o resolveRunOptions) notes() io.Writer {
+	if o.errOut != nil {
+		return o.errOut
+	}
+	return os.Stderr
+}
+
+// resolveRun is what a command that takes a run by name takes: a full run ID or
+// <slug>/<run-id> behaves exactly as locateRun does, and an ending — the last
+// task.MinEnding or more characters of a run ID, the form every surface shows a
+// run in (D1701) — resolves against the runs that are active now and the runs
+// of the last lsDefaultDays (D1702), never guessed at.
+//
+// An ending that names more than one run is answered one of two ways (D1700).
+// At a person's terminal it is the numbered list and one question; anywhere
+// else — a pipe, a script, --json, an agent's session — it is a user error that
+// shows the same candidates and the endings that tell them apart, so nothing
+// that cannot answer is handed a run it did not choose. An ending that names
+// none is D1709's refusal, whose way out is the full ID.
+//
+// Nothing calls it yet: the commands that accept an ending are wired to it at
+// SR14.
+func resolveRun(ctx context.Context, env *cloudEnv, ref string, o resolveRunOptions) (slug, runID string, err error) {
+	// A full ID and <slug>/<run-id> are locateRun's, refusals included: this
+	// adds endings to what a command accepts and changes nothing about what it
+	// accepts already.
+	if _, err := runstore.RunTime(ref); strings.Contains(ref, "/") || err == nil {
+		return locateRun(ctx, env, ref)
+	}
+	// The minimum is checked here as well as in the resolver, because the
+	// active-only reading below does not go through it, and "3bb" must be
+	// refused in both (D1701).
+	if n := utf8.RuneCountInString(ref); n < task.MinEnding {
+		return "", "", userErr("%q is %d characters; an ending needs at least %d, the shortest form a run is shown in", ref, n, task.MinEnding)
+	}
+	if o.activeOnly {
+		refs, err := env.activeRuns(ctx, ref)
+		if err != nil {
+			// There is no window to fall back to here, so the read's own error
+			// is the answer: a lookup that cannot see the live runs does not
+			// know whether this ending names one, and a command that stops runs
+			// must not be told it names none (F6). dbErr names the role a
+			// person lacks; anything else is remote.
+			return "", "", err
+		}
+		if len(refs) == 0 {
+			return "", "", userErr("no active run ending %q; pass the full run ID", ref)
+		}
+		matches := make([]runstore.Match, 0, len(refs))
+		for _, r := range refs {
+			matches = append(matches, runstore.Match{Slug: r.Slug, RunID: r.RunID, Active: true})
+		}
+		// The resolver's own order for the window's matches — newest first,
+		// then by ID — so the two lists read the same way.
+		slices.SortFunc(matches, func(a, b runstore.Match) int {
+			if c := strings.Compare(b.RunID, a.RunID); c != 0 {
+				return c
+			}
+			return strings.Compare(b.Slug, a.Slug)
+		})
+		cands := env.runCandidates(ctx, matches)
+		fmt.Fprintf(o.out, "%q names %d active runs:\n%s", ref, len(cands), fullRows(cands))
+		return "", "", userErr("%q is an ending; pass one of the full run IDs above", ref)
+	}
+
+	// The feed is read once per lookup and only for an ending: a full ID never
+	// opens the database. Its failure is remembered rather than returned, so
+	// the lookup can fall back to the window and say which answer this is.
+	since := lsNow().UTC().Add(-lsDefaultWindow)
+	var feedErr error
+	active := func(ctx context.Context) ([]task.Ref, error) {
+		refs, err := env.activeRuns(ctx, ref)
+		feedErr = err
+		return refs, err
+	}
+	matches, err := runstore.ResolveEnding(ctx, env.bucket.Bucket, active, ref, since)
+	if feedErr != nil {
+		fmt.Fprintf(o.notes(), "warning: could not read the active runs (%s); looking among the runs of the last %d days only\n", oneLine(feedErr.Error()), lsDefaultDays)
+		matches, err = runstore.ResolveEnding(ctx, env.bucket.Bucket, nil, ref, since)
+	}
+	switch {
+	case errors.Is(err, runstore.ErrTooShort):
+		// Unreachable while the two minimums agree (the check above is the
+		// resolver's own): kept so that a resolver that ever widened its rule
+		// is still refused as the user error it is rather than as remote.
+		return "", "", userErr("%v", err)
+	case errors.Is(err, runstore.ErrNotFound):
+		return "", "", userErr("no run ending %q among the active runs and the last %d days; pass the full ID", ref, lsDefaultDays)
+	case err != nil && !errors.Is(err, runstore.ErrAmbiguous):
+		return "", "", remote(err)
+	}
+	if len(matches) == 1 {
+		return matches[0].Slug, matches[0].RunID, nil
+	}
+	cands := env.runCandidates(ctx, matches)
+	if term := stdinIsTerminal(o.in); !o.asJSON && term && writerIsTerminal(o.out) && agentMarker(os.Getenv, term) == "" {
+		return o.pickRun(ref, cands)
+	}
+	return "", "", endingRefusal(ref, cands)
+}
+
+// activeRuns is the live feed of the project's budget database: the runs the
+// registry holds right now whose IDs end with ending, each one confirmed
+// against the bucket. It is one read of /agents, the node `budget show` already
+// counts the project's running runs with.
+//
+// Nothing in the feed is believed. The node is one the job account writes and
+// every run writes its own entry, so an entry is a claim about a run and not a
+// run, and it is confirmed the way every other reference is — a valid run ID
+// with a task.json behind it (F6, runstore.Locate). An entry that does not
+// confirm is dropped rather than refused: the ending may name a real run, and a
+// lookup that failed on a stale key would refuse to find it.
+func (env *cloudEnv) activeRuns(ctx context.Context, ending string) ([]task.Ref, error) {
+	_, db, err := budgetDBFor(ctx, env.lc)
+	if err != nil {
+		return nil, err
+	}
+	agents := map[string]map[string]budget.AgentEntry{}
+	if _, err := db.Get(ctx, "agents", &agents); err != nil {
+		return nil, dbErr(env.lc, err, false)
+	}
+	var out []task.Ref
+	for key, runs := range agents {
+		slug, err := budget.Unkey(key)
+		if err != nil {
+			continue // a key that is not a slug names no run, and this node is job-writable
+		}
+		for runID := range runs {
+			// The ending is filtered here rather than left to the resolver
+			// only because the bucket confirmation below is per candidate: the
+			// feed of a busy installation holds far more runs than any one
+			// lookup matches.
+			if !task.EndsWith(runID, ending) {
+				continue
+			}
+			if _, _, err := runstore.Locate(ctx, env.bucket.Bucket, slug+"/"+runID); err != nil {
+				continue
+			}
+			out = append(out, task.Ref{Slug: slug, RunID: runID})
+		}
+	}
+	return out, nil
+}
+
+// runCandidate is one run a lookup may offer: what both answers show about it.
+// Every fact comes from the run's own objects — the title from task.json, the
+// status and the start from result.json — and the ending is SR1's rule over the
+// candidates as the set they are shown in (D1706), so two runs sharing four
+// characters are listed under endings that tell them apart.
+type runCandidate struct {
+	slug, runID string
+	ending      string
+	title       string
+	status      string
+	started     time.Time
+}
+
+// runCandidates reads those facts for each of a lookup's matches. A run the
+// feed holds and whose record is not there yet is running — that is what the
+// feed means — and a run of the window with no record has recorded nothing to
+// show.
+func (env *cloudEnv) runCandidates(ctx context.Context, matches []runstore.Match) []runCandidate {
+	refs := make([]task.Ref, 0, len(matches))
+	for _, m := range matches {
+		refs = append(refs, task.Ref{Slug: m.Slug, RunID: m.RunID})
+	}
+	endings := task.DisplayRuns(refs)
+	cands := make([]runCandidate, 0, len(matches))
+	for i, m := range matches {
+		c := runCandidate{slug: m.Slug, runID: m.RunID, ending: endings[refs[i]], title: "-", status: "-"}
+		if started, err := runstore.RunTime(m.RunID); err == nil {
+			c.started = started
+		}
+		s := runstore.Open(env.bucket.Bucket, m.Slug, m.RunID)
+		if spec, err := s.ReadTask(ctx); err == nil && spec.Title != "" {
+			c.title = cellOneLine(spec.Title)
+		}
+		if rec, err := s.ReadRecord(ctx); err == nil {
+			c.status = cellOneLine(string(rec.Status))
+			if !rec.StartedAt.IsZero() {
+				c.started = rec.StartedAt
+			}
+		} else if m.Active {
+			c.status = string(runstore.StatusRunning)
+		}
+		cands = append(cands, c)
+	}
+	return cands
+}
+
+// endingRows is the candidates as both answers show them, numbered: the
+// repository and the ending that names the run, the status, when it started and
+// the run's own title.
+func endingRows(cands []runCandidate) string {
+	var b strings.Builder
+	for i, c := range cands {
+		fmt.Fprintf(&b, "  %d) %s/%s  %s  %s  %s\n", i+1, c.slug, c.ending,
+			c.status, c.started.UTC().Format("2006-01-02 15:04Z"), c.title)
+	}
+	return b.String()
+}
+
+// fullRows is the same candidates as `cancel` offers them (D1710): the full run
+// ID to pass and the title, because what a person acts on is a run named
+// exactly and the ending is not one.
+func fullRows(cands []runCandidate) string {
+	var b strings.Builder
+	for _, c := range cands {
+		fmt.Fprintf(&b, "  %s/%s  %s\n", c.slug, c.runID, c.title)
+	}
+	return b.String()
+}
+
+// endingRefusal is the answer to an ending away from a person's terminal: the
+// candidates a pick list would show, and the two ways to name one of them
+// exactly (D1700).
+func endingRefusal(ref string, cands []runCandidate) error {
+	return userErr("%q names %d runs:\n%spass a longer ending or the full run ID", ref, len(cands), endingRows(cands))
+}
+
+// pickRun asks which of an ending's candidates is the run meant, at a person's
+// terminal (D1700). The list and the question go to out, the answer is one line
+// from in, and every line of the list names a run this lookup found.
+//
+// It is not a confirmation of a write: what it answers is which of several runs
+// a name means, and no command that would act on the answer is ever given one
+// (D1710). An empty answer, or a line that is not one of the numbers, changes
+// nothing and names the way to say the run exactly instead.
+func (o resolveRunOptions) pickRun(ref string, cands []runCandidate) (string, string, error) {
+	fmt.Fprintf(o.out, "%q names %d runs:\n%s", ref, len(cands), endingRows(cands))
+	fmt.Fprintf(o.out, "which run? [1-%d] ", len(cands))
+	line, err := readConfirmLine(o.in)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", "", remote(err)
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil || n < 1 || n > len(cands) {
+		return "", "", userErr("%q is not one of the %d runs listed; pass a longer ending or the full run ID", oneLine(strings.TrimSpace(line)), len(cands))
+	}
+	c := cands[n-1]
+	return c.slug, c.runID, nil
 }
 
 // checkExecution refuses name, an execution name read from the bucket
