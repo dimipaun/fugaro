@@ -557,7 +557,7 @@ type ImageCatalog = config.Catalog
 // entry's are held.
 var (
 	catalogEntryMembers  = []string{"name", "tags", "source", "description", "default"}
-	catalogSourceMembers = []string{"kind", "repo", "path", "branch", "inline", "image"}
+	catalogSourceMembers = []string{"kind", "repo", "path", "branch", "context", "inline", "image"}
 )
 
 // RouteCascade is routing.claude's cascade value (O3, D150): the switch that
