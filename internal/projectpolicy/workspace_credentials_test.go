@@ -123,6 +123,36 @@ func TestWorkspaceCredentialsRefusesOneAccountInTwoRows(t *testing.T) {
 	}
 }
 
+// TestWorkspaceCredentialsRefusesOneFirebaseProjectInTwoRows: the member's
+// database is DERIVED from the row's firebase_project (finding 6), so two rows
+// naming one Firebase project are two members whose policy, ledger and outcomes
+// are read from one database — the splice the derivation exists to make
+// unrepresentable, arrived at by a duplicated field rather than by a
+// `database_url`. The plan's property is that "two members' accounts can never
+// be pointed at one database", and the derivation alone does not hold it: a
+// table that names one Firebase project twice derives one URL twice.
+//
+// It is refused exactly as the duplicate account and the duplicate project name
+// are, and the refusal names no value: a row is another installation's
+// configuration, so it names the row and not what the hand wrote in it.
+func TestWorkspaceCredentialsRefusesOneFirebaseProjectInTwoRows(t *testing.T) {
+	w := credentialsFixture()
+	// Both rows still name their own Project and FP — only the Firebase project
+	// the database is derived from is the same, which is the shape the other two
+	// checks cannot see.
+	w.Members[1].FirebaseProject = w.Members[0].FirebaseProject
+	if _, err := WorkspaceCredentialsNode(w); err == nil {
+		t.Fatal("WorkspaceCredentialsNode accepted one Firebase project in two rows: the two members would read one database")
+	} else if strings.Contains(err.Error(), w.Members[1].FirebaseProject) {
+		t.Errorf("the refusal %q names the Firebase project it refused: a row is another installation's configuration and a refusal names the row", err)
+	}
+	// The unmodified table is still a node this Fugaro publishes, so the refusal
+	// above is the duplication and not the fixture.
+	if _, err := WorkspaceCredentialsNode(credentialsFixture()); err != nil {
+		t.Fatalf("WorkspaceCredentialsNode of the fixture: %v", err)
+	}
+}
+
 // TestWorkspaceCredentialsRefusesAProjectAndFpThatDisagree: the row's Project
 // is the namespace the shared pool's allow-lists use and its FP is what the
 // run identity's `fp` claim must be. The two are compared rather than one read

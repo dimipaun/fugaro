@@ -321,6 +321,7 @@ func NewWorkspace(cfg WorkspaceConfig) (*Workspace, error) {
 // that could never be matched is a configuration error here rather than a gate
 // that silently admits nobody.
 func (w *Workspace) readMembers(cfg WorkspaceConfig) error {
+	seenFirebase := make(map[string]string, len(cfg.Members))
 	for _, m := range cfg.Members {
 		if !config.ProjectNameRE.MatchString(m.Project) {
 			return fmt.Errorf("%w: a member's project is not a project name", ErrWorkspaceConfig)
@@ -337,6 +338,16 @@ func (w *Workspace) readMembers(cfg WorkspaceConfig) error {
 		if len(m.JobAccounts) == 0 {
 			return fmt.Errorf("%w: the member %q names no job service account, so no caller could resolve to it", ErrWorkspaceConfig, m.Project)
 		}
+		// One Firebase project belongs to one member, and the check is here as
+		// well as in the node's own Validate: this constructor may be handed a
+		// table that never went through the node, and the database below is
+		// DERIVED from this field — so two rows naming one Firebase project would
+		// open one database for two members and read one member's policy for
+		// both, which is the splice finding 6 closed.
+		if prev, dup := seenFirebase[m.FirebaseProject]; dup {
+			return fmt.Errorf("%w: the members %q and %q name one Firebase project, and the database a member's state is read from is derived from it, so the two would read one member's state", ErrWorkspaceConfig, prev, m.Project)
+		}
+		seenFirebase[m.FirebaseProject] = m.Project
 		url, err := workspaceDatabase(m.FirebaseProject)
 		if err != nil {
 			return fmt.Errorf("%w: %s", ErrWorkspaceConfig, err)

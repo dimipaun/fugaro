@@ -117,7 +117,10 @@ type WorkspaceCredentialMember struct {
 	Project string
 	// FirebaseProject is the member's Firebase project id: the `aud` of a run
 	// identity minted there, and the half of the pair `aud`/`iss` that tells
-	// one member's tokens from another's.
+	// one member's tokens from another's. It is also the fact the member's
+	// database is derived from, and one Firebase project belongs to one member:
+	// Validate refuses a second row naming it, because two rows naming one would
+	// read one member's policy, ledger and outcomes for both.
 	FirebaseProject string
 	// FP is the member's Fugaro project name as the `fp` claim carries it. It
 	// is a field of its own rather than a second read of Project, because the
@@ -340,6 +343,7 @@ func (w *WorkspaceCredentials) Validate() error {
 		return fmt.Errorf("the node names the workspace %q, which is not a project name (the grammar a workspace shares with a project, F21)", w.Name)
 	}
 	seenProject := make(map[string]bool, len(w.Members))
+	seenFirebase := make(map[string]bool, len(w.Members))
 	seenAccount := make(map[string]bool, len(w.Members))
 	for i, m := range w.Members {
 		if !config.ProjectNameRE.MatchString(m.Project) {
@@ -355,6 +359,18 @@ func (w *WorkspaceCredentials) Validate() error {
 		if !config.ProjectNameRE.MatchString(m.FirebaseProject) {
 			return fmt.Errorf("members[%d] names a Firebase project that is not a project name", i)
 		}
+		// One Firebase project belongs to one member, and the refusal is the same
+		// rule the account and the project name are held to — for a sharper
+		// reason: the database a member's policy, ledger and outcomes are read
+		// from is DERIVED from this field (finding 6), so two rows naming one
+		// Firebase project are two members reading one database, which is the
+		// splice the derivation exists to make unrepresentable. The refusal names
+		// no value, like the account's: a row is another installation's
+		// configuration.
+		if seenFirebase[m.FirebaseProject] {
+			return fmt.Errorf("members[%d] names a Firebase project another row already names: one Firebase project belongs to one member, and the database a member's state is read from is derived from it, so two rows naming one would read one member's state for both", i)
+		}
+		seenFirebase[m.FirebaseProject] = true
 		if err := validExchangeURL(m.ExchangeURL); err != nil {
 			return fmt.Errorf("members[%d].exchange_url %v", i, err)
 		}

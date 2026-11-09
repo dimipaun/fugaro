@@ -21,7 +21,21 @@ import (
 // member's policy excludes, which is the policy bypass the only-tighten rule
 // (internal/policy/merge.go) forbids. A workspace can therefore only tighten a
 // member: it adds credentials the member's own policy may then admit, and it
-// can never widen what that policy refuses.
+// never serves one that policy does not NAME.
+//
+// **"Never wider" is the name leg and not the whole of a policy.** A member's
+// policy can also narrow a credential to some of that member's repositories
+// (`accounts.<name>.allow_repos`), and that leg is NOT asked here: the caller
+// translates a pool credential to the name the member's policy holds it under
+// (policyKey) and asks nothing else, so a credential the member narrowed to one
+// repository is served to that member's jobs on its others. It is a bound this
+// file cannot close rather than an oversight — the repository a run is on
+// reaches the workspace's service only as the sanitised slug inside the run
+// identity, and a leg read from an input the service cannot verify is not a leg
+// — and it is stated here, in projectpolicy.MemberAdmitsShared and in
+// docs/workspaces/spec.md §8's residual risk 7, because a sentence claiming the
+// whole of the policy is tighter would be false in exactly the dimension the
+// pool is least able to check.
 //
 // **The two refusals are told apart, because they are two different fixes.** A
 // credential this project is not on the allow-list for is the workspace's

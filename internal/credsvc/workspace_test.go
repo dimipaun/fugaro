@@ -884,6 +884,17 @@ func TestNewWorkspaceRefusesAConfigurationItCannotCheck(t *testing.T) {
 		"a member whose Firebase project is not a project name": func(c *WorkspaceConfig) {
 			c.Members[0].FirebaseProject = "Project A"
 		},
+		// The database is derived from the Firebase project, so two members
+		// naming one are two members reading one database — the splice finding 6
+		// closed, arrived at by a duplicated field. The plan's property is that
+		// two members' accounts can never be pointed at one database, and the
+		// derivation alone does not hold it.
+		"one Firebase project in two rows": func(c *WorkspaceConfig) {
+			c.Members = append(c.Members, WorkspaceMember{
+				Project: wsMemberB, FirebaseProject: wsMemberA, FP: wsMemberB,
+				JobAccounts: []string{wsAccountB}, ExchangeURL: "https://exchange.project-b.example.com",
+			})
+		},
 		"one account in two rows": func(c *WorkspaceConfig) {
 			c.Members = append(c.Members, WorkspaceMember{
 				Project: wsMemberB, FirebaseProject: wsMemberB, FP: wsMemberB,
