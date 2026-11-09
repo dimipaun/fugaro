@@ -1398,10 +1398,13 @@ format character such as U+202E, in a footprint path or in a stub, because a
 footprint path is a name the instructions of a later run end up carrying (D1812)
 and a field that reads as one thing to a person while carrying another is not a
 name — and a footprint that covers a merged contract's file from outside the
-contract and the change requests against it — **however that path is spelled**,
-because `./internal/contract/types.go`, `internal//contract/types.go` and
-`internal/dep/../contract/types.go` all name the one file, and a rule that read
-only the literal spelling would be a rule a respelling steps around. And a
+contract and the change requests against it — **however that path is spelled on
+either side**, because `./internal/contract/types.go`,
+`internal//contract/types.go` and `internal/dep/../contract/types.go` all name
+the one file, and a rule that read only the literal spelling would be a rule a
+respelling steps around: a contract that spells its own file differently still
+has that file protected, rather than a file no other task's footprint is
+checked against. And a
 footprint **pattern** that is not a checkout path at all is refused by name, so
 it can never be read as the contract's file: a **backslash** — doublestar's
 escape character, where `types\.go` is a pattern for `types.go` — and a **leading

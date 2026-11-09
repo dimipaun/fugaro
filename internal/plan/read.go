@@ -519,15 +519,23 @@ func printsAsRepoPath(p string) bool {
 }
 
 // literalPaths is a footprint's paths that name one file rather than a pattern,
-// which is the set a contract's files and its stubs come from: they are whole
-// files the planner named, and a glob never admits one. A path that fails to
-// print is refused before this is asked, so the only thing dropped here is a
-// pattern a contract node meant as one.
+// which is the set a contract's files come from: they are whole files the
+// planner named, and a glob never admits one. A path that fails to print is
+// refused before this is asked, so the only thing dropped here is a pattern a
+// contract node meant as one.
+//
+// Each one is read the way a checkout reads it (`repoPath`) before it is asked
+// whether it names a file, and the two reasons are the same reason: a contract
+// spelling its own file "./internal/x.go" or "internal//x.go" names the file it
+// means, so dropping it here would leave that file for any other task to claim
+// — the rule would fail open on exactly the spellings it exists to catch. What
+// a checkout cannot read at all (a leading slash, a backslash) is refused by
+// the footprint rule above rather than dropped here.
 func literalPaths(f Footprint) []string {
 	var out []string
 	for _, p := range f.Paths {
-		if literalRepoPath(p) {
-			out = append(out, p)
+		if c := repoPath(p); literalRepoPath(c) {
+			out = append(out, c)
 		}
 	}
 	return out

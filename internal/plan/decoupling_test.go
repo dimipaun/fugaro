@@ -399,6 +399,26 @@ func TestContractFilesBelongToTheContractAndItsChanges(t *testing.T) {
 		})
 	}
 
+	// The other direction, and the one that fails open: a contract that spells
+	// its own file differently is not a contract with no files. Read as the one
+	// file it names, the rule holds; dropped for the spelling, it leaves the
+	// contract's file for any task to claim, which is the whole of what the
+	// rule is for.
+	for _, spelling := range []string{
+		"./internal/contract/types.go",
+		"internal//contract/types.go",
+		"internal/dep/../contract/types.go",
+	} {
+		t.Run("a contract spelling its own file as "+spelling, func(t *testing.T) {
+			refused(t, v3Doc(t,
+				`"paths": ["internal/contract/types.go", "internal/contract/stub.go"]`,
+				fmt.Sprintf(`"paths": [%s, "internal/contract/stub.go"]`, `"`+spelling+`"`),
+				`{"id": "B", "title": "the dependent", "footprint": {"prediction": true, "paths": ["internal/dep/**"]}}`,
+				`{"id": "B", "title": "the dependent", "footprint": {"prediction": true, "paths": ["internal/contract/types.go"]}}`),
+				`node "B"'s footprint covers "internal/contract/types.go"`, "F10")
+		})
+	}
+
 	// The two spellings that are not a path at all are refused by name rather
 	// than read as the file they match: a backslash is doublestar's escape, so
 	// `types\.go` is a pattern for the contract's file and `type\s.go` is
