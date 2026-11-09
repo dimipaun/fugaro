@@ -3471,6 +3471,12 @@ recipe — the one route it leaves, the gid baked into the image, is untested
   terminal's worth of text, and reading the display tail as the whole would
   make the retry do nothing in exactly the case it exists for. Past that bound
   it fails closed, as it must.
+  A retried step leaves its trail: an apply a managed project's gate admitted
+  records that admission before the retry judges the next plan
+  (`initRun.applyAndRecord`, D1014), because the failure the retry absorbs is
+  one where the apply created what the plan named — a record written only after
+  the retry would carry the digest of the plan that landed and of nothing that
+  came before it.
   Which message GCP gives for the
   gap is what a live run (57b) has to confirm rather than a fake; a gap
   reported in other words is not on the list, fails the stage, and rerunning

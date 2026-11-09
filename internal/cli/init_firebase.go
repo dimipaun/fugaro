@@ -189,10 +189,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 				return plan, err
 			}
 		}
-		if err := t.Apply(ctx, infra.PlanFile); err != nil {
-			return plan, remote(err)
-		}
-		if err := r.gateApplied(ctx); err != nil {
+		if err := r.applyAndRecord(ctx, t); err != nil {
 			return plan, err
 		}
 		applied = true

@@ -298,26 +298,35 @@ const (
 	signerAccount     = "fugaro-signer"
 )
 
-// The second plan is a plan like the first one: the managed gate judges it
-// again, and the record is of the plan the retry applied -- the digest of the
-// plan the first attempt failed on is nowhere in the day's trail, because a
-// step that applied nothing is not recorded (managed_gate's recorded()).
+// The managed gate judges a plan per attempt, and each admission leaves its
+// own record: the plan the failed apply was on is one the gate admitted and
+// the apply partly landed, so the retry's admission must not replace it in the
+// day's trail (D1014) -- the record of the failed attempt carries the digest of
+// the plan it applied, and the record of the retry the digest of the new one.
 //
-// The plan here is one the gate admits (a service account and the two grants
-// on it, which is the shape the reported failure left behind) and the error is
-// the other entry of the closed list: the 400 Google answers a binding whose
-// account it has not seen.
+// The two plans are the two attempts'. Both create the account the 400 names,
+// which is what the classifier reads to call the failure the closed list's own
+// gap, and they are not the same plan: the attempt that failed also creates the
+// scheduler's account, the retry only the one it could not grant on. They are
+// also accounts the installation's own cover admits -- the cover tables are not
+// widened for a test.
+//
+// One plan is answered for every read of the first attempt and the other for
+// every read of the retry, because one attempt reads the saved plan three times
+// (the summary, the document the gate digests, and the gate's own read) and the
+// fake repeats its last answer.
 func TestPropagationRetryJudgesTheNewPlanThroughTheGate(t *testing.T) {
 	noPropagationWaits(t)
 	r := updateManagedRig(t)
 	updating(t, r)
-	first := credentialsAccountChanges()
-	second := credentialsAccountChanges()[:1]
+	failed := append(credentialsAccountChanges()[:1],
+		created("module.installation.google_service_account.scheduler", "google_service_account",
+			map[string]any{"account_id": "fugaro-scheduler", "email": "fugaro-scheduler@" + initProject + ".iam.gserviceaccount.com"}))
+	retried := credentialsAccountChanges()[:1]
+	failedJSON := map[string]any{"stdout": planJSON(t, failed...)}
+	retriedJSON := map[string]any{"stdout": planJSON(t, retried...)}
 	r.script["plan@installation"] = map[string]any{"exit": 2}
-	r.script["show@installation"] = []any{
-		map[string]any{"stdout": planJSON(t, first...)},
-		map[string]any{"stdout": planJSON(t, second...)},
-	}
+	r.script["show@installation"] = []any{failedJSON, failedJSON, failedJSON, retriedJSON, retriedJSON, retriedJSON}
 	r.script["apply@installation"] = []any{
 		map[string]any{"exit": 1, "stderr": theAccountGap400s},
 		map[string]any{"exit": 0},
@@ -329,19 +338,36 @@ func TestPropagationRetryJudgesTheNewPlanThroughTheGate(t *testing.T) {
 		t.Fatalf("the retried installation step failed: %v\n%s", err, got)
 	}
 	// The gate's own sentence is printed once per plan it admits, so two of
-	// them are the gate judging the first plan and then the second.
+	// them are the gate judging the failed attempt's plan and then the new one.
 	if n := strings.Count(got, initflow.AgentProceeded("CLAUDECODE")); n != 2 {
 		t.Errorf("the gate admitted %d plan(s), want two: the retry re-plans and the gate judges the new plan\n%s", n, got)
 	}
+	// Two admissions, two records: the plan the failed apply was on is one the
+	// gate admitted and the apply partly landed, so its record is owed before
+	// the retry judges another plan — the second admission does not replace the
+	// first one's trail (D1014). The order of the two is the listing's own and
+	// is not asserted: both records carry the same second, and the id that
+	// breaks the tie is random.
 	recs := audits(t, r)
-	if len(recs) != 1 || recs[0].Verdict != managedmode.AuditAdmitted {
-		t.Fatalf("%d record(s) after a retried step, want one admitted: %+v", len(recs), recs)
+	if len(recs) != 2 {
+		t.Fatalf("%d record(s) after a retried step, want one per admitted plan: %+v", len(recs), recs)
 	}
-	if want := gateDigest([]byte(planJSON(t, second...))); recs[0].PlanDigest != want {
-		t.Errorf("the record's digest is %s, want the digest of the plan the retry applied (%s): the gate judged the plan of the failed attempt and not the new one", recs[0].PlanDigest, want)
+	digests := map[string]managedmode.AuditRecord{}
+	for _, rec := range recs {
+		if rec.Verdict != managedmode.AuditAdmitted {
+			t.Errorf("a record's verdict is %q, want %q", rec.Verdict, managedmode.AuditAdmitted)
+		}
+		digests[rec.PlanDigest] = rec
 	}
-	if stale := gateDigest([]byte(planJSON(t, first...))); recs[0].PlanDigest == stale {
-		t.Errorf("the record is of the plan the failed apply was on (%s)", stale)
+	// The retry's admission is the gate's own verdict on the NEW plan, and it
+	// did not replace the failed attempt's.
+	if want := gateDigest([]byte(planJSON(t, retried...))); digests[want].PlanDigest != want {
+		t.Errorf("no record carries the digest of the plan the retry applied (%s): the gate judged the plan of the failed attempt and not the new one\n%+v", want, recs)
+	}
+	// And the failed attempt's is still there, about the plan whose apply
+	// created the account before the grants on it were refused.
+	if was := gateDigest([]byte(planJSON(t, failed...))); digests[was].PlanDigest != was {
+		t.Errorf("no record carries the digest of the plan the failed apply was on (%s): the retry's admission replaced it, and what that apply created is in no trail\n%+v", was, recs)
 	}
 }
 

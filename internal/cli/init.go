@@ -2694,10 +2694,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 				return plan, err
 			}
 		}
-		if err := t.Apply(ctx, infra.PlanFile); err != nil {
-			return plan, remote(err)
-		}
-		if err := r.gateApplied(ctx); err != nil {
+		if err := r.applyAndRecord(ctx, t); err != nil {
 			return plan, err
 		}
 		r.res.Applied = true
@@ -4644,10 +4641,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 				return plan, err
 			}
 		}
-		if err := t.Apply(ctx, infra.PlanFile); err != nil {
-			return plan, remote(err)
-		}
-		if err := r.gateApplied(ctx); err != nil {
+		if err := r.applyAndRecord(ctx, t); err != nil {
 			return plan, err
 		}
 		r.res.Applied = true
