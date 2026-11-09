@@ -329,16 +329,49 @@ func daemonDependencies(t *testing.T) []string {
 	return strings.Fields(string(raw))
 }
 
-// TestOrchestratorRunIsRegistered: the command exists with the two flags the
-// unit and a person pass it.
+// TestOrchestratorRunIsRegistered: the command exists with the flags the unit
+// and a person pass it.
 func TestOrchestratorRunIsRegistered(t *testing.T) {
 	out, _, err := execute(t, "orchestrator", "run", "--help")
 	if err != nil {
 		t.Fatalf("fugaro orchestrator run --help: %v", err)
 	}
-	for _, want := range []string{"--binary", "--interval"} {
+	for _, want := range []string{"--binary", "--interval", "--once"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("fugaro orchestrator run --help never names %s", want)
 		}
+	}
+}
+
+// TestRunOnceTakesOneCycleAndReleasesTheLease: the daemon's contract is not to
+// return, and --once is the one cycle a person can hold it to — the lease is
+// taken for that cycle and released with it, so an inspection never keeps the
+// id from the daemon that drives it for the TTL.
+func TestRunOnceTakesOneCycleAndReleasesTheLease(t *testing.T) {
+	newDaemonFixture(t)
+	out, _, err := execute(t, "orchestrator", "run", "--once")
+	if err != nil {
+		t.Fatalf("fugaro orchestrator run --once: %v", err)
+	}
+	if !strings.Contains(out, "driving it as") {
+		t.Errorf("the one cycle did not take the lease: %q", out)
+	}
+	if !strings.Contains(out, "one cycle as asked (--once)") {
+		t.Errorf("the run did not say it took one cycle: %q", out)
+	}
+	_, db, err := openBudget(context.Background(), cloudOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := orchestrator.NewLease(db, "aurora", daemonHolder, db.ServerNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, err := lease.Read(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if held.Held || held.Holder != "" {
+		t.Errorf("the lease still names %q after a --once run, and one cycle must not hold the id", held.Holder)
 	}
 }

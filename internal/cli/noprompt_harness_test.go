@@ -177,6 +177,11 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// project until it is interrupted. --once is its own one snapshot, which is
 	// the run this harness can hold to a deadline.
 	"fugaro watch": {args: []string{"--once"}, reaches: "counted"},
+	// The daemon is the same shape and answers it the same way: it drives the
+	// project until it is stopped, and --once is its own one cycle — the lease
+	// taken for it and released with it. In this world the node holds no work
+	// and no run, so the cycle it reaches is the empty one it prints.
+	"fugaro orchestrator run": {args: []string{"--once"}, reaches: "one cycle as asked (--once)"},
 
 	// The arguments the rest of the tree's leaves require. Each is the shallowest
 	// set that reaches the command's body; what the body answers in this world is

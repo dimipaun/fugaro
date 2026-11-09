@@ -3132,6 +3132,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for run |
 | `--interval` | duration | `30s` | no | how long to wait between cycles when the node says nothing moved |
+| `--once` | bool | `false` | no | run one cycle and exit, releasing the lease, instead of driving the id until it is stopped |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 

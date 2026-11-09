@@ -491,8 +491,8 @@ func TestEventsJSONMatchesTheSchema(t *testing.T) {
 }
 
 // TestCommandIsRegisteredOnce: the tree holds one orchestrator command, with
-// the three subcommands D1223 names and nothing else that answers to those
-// names.
+// the three subcommands D1223 names and O8's daemon beside them, and nothing
+// else that answers to those names.
 func TestCommandIsRegisteredOnce(t *testing.T) {
 	root := NewRootCmd()
 	var found []*cobra.Command
@@ -509,8 +509,8 @@ func TestCommandIsRegisteredOnce(t *testing.T) {
 		names = append(names, sub.Name())
 	}
 	slices.Sort(names)
-	if want := []string{"events", "patch", "state"}; !slices.Equal(names, want) {
-		t.Errorf("orchestrator's subcommands are %v, and O5 ships %v", names, want)
+	if want := []string{"events", "patch", "run", "state"}; !slices.Equal(names, want) {
+		t.Errorf("orchestrator's subcommands are %v, and O5's three readers with O8's daemon are %v", names, want)
 	}
 	for _, sub := range found[0].Commands() {
 		for _, banned := range []string{"spawn", "retry"} {

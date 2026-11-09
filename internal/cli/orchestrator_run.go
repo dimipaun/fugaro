@@ -53,6 +53,11 @@ type orchestratorRunOptions struct {
 	// The stream is the other half of the wait, so this is the ceiling on how
 	// stale a tick can be, not the usual delay.
 	interval time.Duration
+	// once is one cycle and exit. It is what a person (or a harness that holds
+	// every command to returning with its stdin closed) can run: the lease is
+	// taken for that cycle and released with it, so a single pass never keeps
+	// the id from the daemon that drives it.
+	once bool
 }
 
 func newOrchestratorRunCmd() *cobra.Command {
@@ -78,6 +83,7 @@ func newOrchestratorRunCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&o.binary, "binary", "", "the stable path of the fugaro binary the login unit names: the daemon exits cleanly when the version there differs from this process")
 	f.DurationVar(&o.interval, "interval", 30*time.Second, "how long to wait between cycles when the node says nothing moved")
+	f.BoolVar(&o.once, "once", false, "run one cycle and exit, releasing the lease, instead of driving the id until it is stopped")
 	addCloudFlags(cmd, &o.cloudOptions)
 	return cmd
 }
@@ -113,7 +119,7 @@ func runOrchestratorRun(cmd *cobra.Command, o *orchestratorRunOptions) error {
 	}
 	d := &orchestratorDaemon{
 		lc: lc, id: id, db: db, env: env, node: node, lease: lease, holder: holder,
-		interval: o.interval, binary: o.binary, running: Version,
+		interval: o.interval, binary: o.binary, running: Version, once: o.once,
 		out: cmd.OutOrStdout(), warn: cmd.ErrOrStderr(),
 		launched: &launchInFlight{},
 	}
@@ -139,6 +145,8 @@ type orchestratorDaemon struct {
 	interval time.Duration
 	binary   string
 	running  string
+	// once is --once: one cycle, then the clean exit.
+	once     bool
 	tick     *orchestrator.Tick
 	cache    *orchestrator.BriefCacheWriter
 	launched *launchInFlight
@@ -318,6 +326,9 @@ func (d *orchestratorDaemon) loop(ctx context.Context) error {
 		}
 		rep, err := orchestrator.StepWithCache(ctx, d.tick, d.cache)
 		d.report(rep, err)
+		if d.once {
+			return d.oneCycle(ctx)
+		}
 		if err != nil {
 			if errors.Is(err, orchestrator.ErrLeaseLost) {
 				fmt.Fprintf(d.out, "orchestrator %s: the lease went to another daemon while a cycle was writing, so this one is stopping\n", safetext.Field(d.id))
@@ -354,6 +365,17 @@ func (d *orchestratorDaemon) handOver(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	return binaryMoved(ctx, d.binary, d.running)
+}
+
+// oneCycle ends a --once run. The lease is released with the cycle it covered:
+// one pass held at a terminal must not keep the orchestrator id from the daemon
+// that drives it for the whole TTL.
+func (d *orchestratorDaemon) oneCycle(ctx context.Context) error {
+	fmt.Fprintf(d.out, "orchestrator %s: one cycle as asked (--once); the lease is released\n", safetext.Field(d.id))
+	if _, err := d.lease.Release(ctx); err != nil {
+		fmt.Fprintf(d.warn, "orchestrator %s: the lease could not be released: %s\n", safetext.Field(d.id), safetext.OneLine(err.Error()))
+	}
+	return nil
 }
 
 // stop is the clean exit: the lease is released, so the next daemon starts at
