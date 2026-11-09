@@ -493,8 +493,10 @@ blocker is the same question, and the plan's task row names it — "the owner's 
 at all, the request made by the CLI or by mail.
 
 **Ruled (a), 2026-11-07: the owner approved the widening when the plan's blockers were cleared for
-0.23.0** — `form-action 'self'` plus the key service's intake origin, and that one host admitted in
-no other directive. S3.3 carries it: `firebase.json`'s `form-action` names the origin,
+0.23.0** — `form-action 'self'` plus the key service's intake origin, which is `keys.` plus the
+site's own host (`https://keys.fugaro.dev` today; the design's §3.1 names it, S3.5's Terraform maps
+the custom domain onto the intake's service and S3.7 applies it), and that one host admitted in no
+other directive. S3.3 carries it: `firebase.json`'s `form-action` names the origin,
 `website/test/origins.mjs` admits a form action for this site or for that one host and for nothing
 else, and no page loads from the host. **The other half of F44 is untouched**: §7.3's notice still
 has to say that a visitor's data reaches the intake (S7.3), and `website/test/privacy.mjs` rule 5 is

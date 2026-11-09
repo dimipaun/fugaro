@@ -804,7 +804,8 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
 
 - **Files:** `ee/keyservice/terraform/` (new): the project's KMS key ring and a non-exportable
   asymmetric signing key, the production and staging keys, the two Cloud Run services and their
-  identities, and a `terraform`-tagged test beside it.
+  identities, **the intake's custom domain** (`keys.` plus the site's canonical host — the address
+  S3.3's three forms post to, the design's §3.1), and a `terraform`-tagged test beside it.
 - **Tests:** the key is non-exportable; only the minter's identity holds the signer role; the
   intake's identity does not.
 - **Command:** `terraform fmt -check -recursive ee/keyservice/terraform`, `terraform validate` there,

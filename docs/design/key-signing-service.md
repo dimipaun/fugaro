@@ -103,7 +103,16 @@ below assumes a reader who has the intake's code fully in hand.
 ### 3.1 The intake
 
 One Cloud Run service, publicly invokable, that terminates TLS, serves the forms' endpoints, receives
-the merchant's events, serves the admin page, and answers with a uniform page (§7.1). It holds:
+the merchant's events, serves the admin page, and answers with a uniform page (§7.1).
+
+**It answers on the site's own domain's `keys.` subdomain** — `https://keys.fugaro.dev` today, `keys.`
+plus the canonical host in `website/data/site.yaml`. That is the address the site's key request page
+posts its three forms to and the one host the deployed policy admits under `form-action` (D451
+option (a), settled 2026-11-07; S3.3), and nothing on the site loads from it. **The mapping is
+infrastructure and is not written yet:** S3.5's Terraform has to attach the custom domain to this
+service for the address to answer, and S3.7 applies it — so the host is a contract between the site
+and the service, and the site's half of it is one line (`website/src/lib/keys-intake.mjs` derives
+the origin from the domain rather than typing it). It holds:
 
 - the verification-token store and the outbound mail path (§4.1);
 - the free-mail list, the paid-domain lookup and the eligibility checks (§4);

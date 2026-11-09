@@ -7,13 +7,14 @@
 // Nothing else on the site reaches it — the CLI, the console and the app never call it, which
 // is the design's R2 — and the privacy statement's own section for the sign-up data is S7.3's.
 //
-// The intake is served on a subdomain of the site's own domain, and the host is **derived from
-// `site.yaml`'s canonical URL** rather than typed anywhere: the owner owns one domain, the
-// intake's custom domain is mapped to the Cloud Run service at the deploy (the design's §11),
-// and deriving it is what keeps pointing the site at a domain a one-line change — the page's
-// three form actions, the CSP's `form-action` token the origin check holds the deployed policy
-// to (website/test/origins.mjs) and the host `site.yaml` admits for the one form that posts
-// off-site all move with it.
+// The address is the intake's own subdomain of the site's domain — `keys.` plus the canonical
+// host, which the design's §3.1 writes out in full and which S3.5's Terraform attaches to the
+// intake's Cloud Run service as a custom domain, applied by S3.7 — and the host is **derived from
+// `site.yaml`'s canonical URL** rather than typed anywhere: the domain is a fact the site states
+// once, so the page's three form actions, the `form-action` token `website/test/origins.mjs`
+// holds the deployed policy to, and the `allowed_hosts` entry the link check resolves the actions
+// against all move with a one-line change to it. The host is a contract between the site and the
+// service rather than a hostname the site chose alone.
 //
 // Two readers, one literal (the shape `consent-key.mjs` states): the key request page builds
 // its form actions from it, and the origin check derives the one host it admits a form action
