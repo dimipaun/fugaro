@@ -12208,10 +12208,14 @@ every reading below is a step you can take now. `fugaro security paths --json` p
 rows on a project that has published no `security` list, each with its source layer.
 `--check internal/creds/state.go` answers `sensitive: true` from the `credentials` floor row;
 `--check docs/recipes.md` answers `sensitive: false`; `--check docs/pending-workflows/console-tests.yml`
-answers `true` from `pending-workflows`. The pair is the point: `docs/` is a routine tree, and only the
-two `docs/` rows the routing text's own exceptions name are on the floor, so the list is a **positive
-list and not the classifier's complement** (F1, F22). The third path is the interesting case in
-between — a routine tree with a listed exception — which is the shape a project's own list will have.
+answers `true` from `pending-workflows`. The pair is the point: `docs/` is a routine tree, and the five
+`docs/` rows on the floor are exactly the ones the routing text's own exceptions name —
+`pending-workflows` (`docs/pending-workflows/**`), `release-streams` (`docs/release-streams.yaml`),
+`plan-graphs` (`docs/**/*.graph.json`) and the two redesign scripts
+(`docs/website/redesign/capture-screenshots.mjs`, `docs/website/redesign/sample-logo-hue.py`) — so the
+list is a **positive list and not the classifier's complement** (F1, F22). The third path is the
+interesting case in between — a routine tree with a listed exception — which is the shape a project's
+own list will have.
 
 **Part 2 — the escalation, on a real run.** Two runs on the sandbox repository, each launched with a
 task that says which paths to touch. The first touches a floor path: a task that creates
