@@ -246,14 +246,6 @@ func artifactsRun(ctx context.Context, env *cloudEnv, ref, repo string, o resolv
 // task.ShortRun is for, and this only spares each of them the same expression.
 func shortRef(s *runstore.Store) string { return task.ShortRun(oneLine(s.Slug() + "/" + s.RunID())) }
 
-// fullRef is the same run the way a command these messages hand over names it:
-// whole. An ending is looked up among the active runs and the last seven days
-// (D1702) while the bucket keeps a run for runs_days, so the run one of these
-// refusals is about — an artifact that expired with it — is often older than
-// any ending reaches: the short form belongs in the sentence, where it is read,
-// and the full one in the command, which has to find the run again.
-func fullRef(s *runstore.Store) string { return oneLine(s.Slug() + "/" + s.RunID()) }
-
 // readArtifactRecord reads the run's result.json, the one thing both
 // subcommands trust about what it delivered. A run that never finished has
 // none, and there is then nothing to list and nothing to verify a download
@@ -458,9 +450,9 @@ func selectArtifacts(s *runstore.Store, files []runstore.ArtifactFile, name stri
 		// them does not say which entry's bytes to write.
 		switch {
 		case len(chosen) == 0:
-			return nil, userErr("run %s recorded no artifact named %q: fugaro artifacts ls %s lists what it did", shortRef(s), name, fullRef(s))
+			return nil, userErr("run %s recorded no artifact named %q: fugaro artifacts ls %s lists what it did", shortRef(s), name, shortRef(s))
 		case len(chosen) > 1:
-			return nil, userErr("run %s recorded the artifact %q twice: one name is one artifact, and naming it does not say which entry's bytes to write (fugaro artifacts ls %s prints the record as it is)", shortRef(s), name, fullRef(s))
+			return nil, userErr("run %s recorded the artifact %q twice: one name is one artifact, and naming it does not say which entry's bytes to write (fugaro artifacts ls %s prints the record as it is)", shortRef(s), name, shortRef(s))
 		}
 		files = chosen
 	} else {
@@ -904,7 +896,7 @@ func getArtifact(ctx context.Context, env *cloudEnv, s *runstore.Store, a runsto
 	case errors.Is(err, blobx.ErrDestExists):
 		return userErr("%s already exists: pass --force to replace it", oneLine(dest))
 	case errors.Is(err, blobx.ErrNotExist):
-		return userErr("run %s recorded %q, but there is no such artifact in the runs bucket: artifacts expire with their run (runs_days), and fugaro artifacts ls %s shows the record's list", shortRef(s), a.Name, fullRef(s))
+		return userErr("run %s recorded %q, but there is no such artifact in the runs bucket: artifacts expire with their run (runs_days), and fugaro artifacts ls %s shows the record's list", shortRef(s), a.Name, shortRef(s))
 	case errors.Is(err, blobx.ErrForbidden):
 		return remote(fmt.Errorf("reading %s: %w (this account may not read the run's artifacts: objectViewer on the runs bucket is what an operator holds)", key, err))
 	case errors.Is(err, blobx.ErrMismatch), errors.Is(err, blobx.ErrChanged), errors.Is(err, blobx.ErrTooLarge):

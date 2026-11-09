@@ -135,7 +135,7 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 	for _, r := range rows {
 		switch r.Status {
 		case runview.StatusError:
-			return nil, userErr("run %s on PR #%d can't be read (%s), so the PR's state is unknown; see fugaro diagnose %s", task.ShortRun(oneLine(r.Run)), pr, oneLine(r.Reason), oneLine(r.Run))
+			return nil, userErr("run %s on PR #%d can't be read (%s), so the PR's state is unknown; see fugaro diagnose %s", task.ShortRun(oneLine(r.Run)), pr, oneLine(r.Reason), task.ShortRun(oneLine(r.Run)))
 		case runview.StatusLaunching, runview.StatusPending, string(runstore.StatusRunning):
 			return nil, userErr("run %s on PR #%d is still %s; wait for it to finish (fugaro runs ls --pr %d --repo %s) or cancel it", task.ShortRun(oneLine(r.Run)), pr, r.Status, pr, repo)
 		case runview.StatusUnlaunched:

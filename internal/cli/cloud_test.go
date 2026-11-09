@@ -500,8 +500,9 @@ func collide(t *testing.T, f *endingFixture, ending string) (newer, older string
 
 // TestResolveRunEnding: a full reference behaves as locateRun does, a unique
 // ending resolves to its run, and the two ways a lookup finds nothing — an
-// ending shorter than four characters (D1701) and one no active run or run of
-// the last 7 days carries (D1709) — are user errors with their own sentences.
+// ending shorter than four characters (D1701) and one neither an active run nor
+// a run the bucket holds carries (D1709) — are user errors with their own
+// sentences.
 func TestResolveRunEnding(t *testing.T) {
 	f := newEndingFixture(t)
 	env := f.env(t)
@@ -523,8 +524,64 @@ func TestResolveRunEnding(t *testing.T) {
 	}
 	o, _, _ = resolveOpts("")
 	_, _, err := resolveRun(ctx, env, "ffff", o)
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "among the active runs and the last 7 days") || !strings.Contains(err.Error(), "pass the full ID") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "among the active runs or the runs the bucket still holds") || !strings.Contains(err.Error(), "pass the full ID") {
 		t.Errorf("an ending no run carries = %v, want D1709's sentence", err)
+	}
+}
+
+// TestResolveRunEndingFindsAFinishedRunBeyondTheWindow: the window an ending is
+// looked up in is `runs ls`'s seven days while the bucket keeps a run for
+// runs_days (D1702), and every message that hands an ending over — `fugaro logs
+// <ending>`, `fugaro artifacts ls <ending>`, `fugaro diagnose <ending>` — prints
+// the short form, the one a report or a PR from last month still carries. A
+// miss in the window is therefore not the end of the lookup: the runs the
+// bucket still holds are asked once more, and the ending a month-old report
+// carries names its run again. Mutation caught: refusing an ending the window
+// does not carry while the bucket holds the run it names.
+func TestResolveRunEndingFindsAFinishedRunBeyondTheWindow(t *testing.T) {
+	f := newEndingFixture(t)
+	env := f.env(t)
+	ctx := context.Background()
+	id := recentRunID(t, 30*24*time.Hour, "3bb2")
+	seedTitledRun(t, f.cloudFixture, id, "a run of last month")
+
+	o, _, _ := resolveOpts("")
+	slug, got, err := resolveRun(ctx, env, "3bb2", o)
+	if err != nil || slug != appSlug || got != id {
+		t.Fatalf("resolveRun(3bb2) of a run 30 days old = %q, %q, %v, want the run the bucket still holds", slug, got, err)
+	}
+}
+
+// TestResolveRunEndingBeyondTheWindowRefusesAnAmbiguousEnding: the widened
+// listing is a listing like any other, so an ending two of its runs share is
+// never resolved by picking one (D1700): it comes back as the candidates — the
+// repository and the endings that tell them apart, with each one's title — and
+// the person pastes the run they mean. Mutation caught: resolving an ending two
+// of the bucket's runs carry to one of them.
+func TestResolveRunEndingBeyondTheWindowRefusesAnAmbiguousEnding(t *testing.T) {
+	f := newEndingFixture(t)
+	env := f.env(t)
+	ctx := context.Background()
+	newer := recentRunID(t, 30*24*time.Hour+time.Minute, "3bb2")
+	older := recentRunID(t, 30*24*time.Hour+2*time.Minute, "3bb2")
+	seedTitledRun(t, f.cloudFixture, older, "the older run")
+	seedTitledRun(t, f.cloudFixture, newer, "the newer run")
+
+	o, out, _ := resolveOpts("")
+	slug, got, err := resolveRun(ctx, env, "3bb2", o)
+	if err == nil || slug != "" || got != "" {
+		t.Fatalf("resolveRun(3bb2) = %q, %q, %v, want a refusal and no run", slug, got, err)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("the refusal = %v, want a user error", err)
+	}
+	for _, want := range []string{appSlug, "900-3bb2", "800-3bb2", "the newer run", "the older run"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q:\n%v", want, err)
+		}
+	}
+	if out.Len() != 0 {
+		t.Errorf("a lookup nobody answers wrote a pick list to stdout: %q", out.String())
 	}
 }
 
@@ -680,7 +737,7 @@ func TestResolveRunFeedUnreadable(t *testing.T) {
 	if err != nil || slug != appSlug || got != id {
 		t.Fatalf("resolveRun(3bb2) with the feed unreadable = %q, %q, %v", slug, got, err)
 	}
-	if !strings.Contains(errOut.String(), "could not read the active runs") || !strings.Contains(errOut.String(), "7 days") {
+	if !strings.Contains(errOut.String(), "could not read the active runs") || !strings.Contains(errOut.String(), "in the bucket") {
 		t.Errorf("the fallback to the window was not said: %q", errOut.String())
 	}
 

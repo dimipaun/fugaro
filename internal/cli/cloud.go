@@ -536,8 +536,24 @@ func resolveRun(ctx context.Context, env *cloudEnv, ref string, o resolveRunOpti
 	}
 	matches, err := runstore.ResolveEnding(ctx, env.bucket.Bucket, active, ref, since)
 	if feedErr != nil {
-		fmt.Fprintf(o.notes(), "warning: could not read the active runs (%s); looking among the runs of the last %d days only\n", oneLine(feedErr.Error()), lsDefaultDays)
+		fmt.Fprintf(o.notes(), "warning: could not read the active runs (%s); looking among the runs in the bucket only\n", oneLine(feedErr.Error()))
 		matches, err = runstore.ResolveEnding(ctx, env.bucket.Bucket, nil, ref, since)
+	}
+	if errors.Is(err, runstore.ErrNotFound) {
+		// The window is `runs ls`'s seven days; the bucket keeps a run for
+		// runs_days (90). An ending older than the window is still an ending
+		// of a run the bucket holds — and the short form is what every
+		// message that hands one over prints (`fugaro logs <ending>`, `fugaro
+		// artifacts ls <ending>`, `fugaro diagnose <ending>`), so a report or
+		// a PR from a month ago names its run again. One more listing, on the
+		// miss alone: D1702's own "widen on a miss: a second slower listing,
+		// one more rule", which leaves the lookup of a recent run as cheap as
+		// it was.
+		//
+		// The feed is not asked again: it was read above, and every run it
+		// confirmed is one this listing finds (a run ID with its task.json in
+		// the bucket), whether it is still active or not.
+		matches, err = runstore.ResolveEnding(ctx, env.bucket.Bucket, nil, ref, time.Time{})
 	}
 	switch {
 	case errors.Is(err, runstore.ErrTooShort):
@@ -546,7 +562,7 @@ func resolveRun(ctx context.Context, env *cloudEnv, ref string, o resolveRunOpti
 		// is still refused as the user error it is rather than as remote.
 		return "", "", userErr("%v", err)
 	case errors.Is(err, runstore.ErrNotFound):
-		return "", "", userErr("no run ending %q among the active runs and the last %d days; pass the full ID", ref, lsDefaultDays)
+		return "", "", userErr("no run ending %q among the active runs or the runs the bucket still holds; pass the full ID", ref)
 	case err != nil && !errors.Is(err, runstore.ErrAmbiguous):
 		return "", "", remote(err)
 	}

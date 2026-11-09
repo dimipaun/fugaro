@@ -1179,15 +1179,8 @@ func TestArtifactsGetRefusesANamedFetchOfADoublyRecordedName(t *testing.T) {
 	}
 	// A name the record really does not carry still gets the missing-name
 	// message, pointing at the listing.
-	_, _, err = execute(t, "artifacts", "get", appSlug+"/"+id, "b.png")
-	if err == nil || !strings.Contains(err.Error(), "recorded no artifact named") {
+	if _, _, err := execute(t, "artifacts", "get", appSlug+"/"+id, "b.png"); err == nil || !strings.Contains(err.Error(), "recorded no artifact named") {
 		t.Errorf("get of a name the record does not carry = %v, want the missing-name refusal", err)
-	}
-	// The listing it points at is given the full ID: this run's artifacts may
-	// have outlived the window an ending is looked up in (D1702), and a
-	// suggested command that refuses is not a way out.
-	if err != nil && !strings.Contains(err.Error(), "fugaro artifacts ls "+appSlug+"/"+id) {
-		t.Errorf("the refusal does not print the full ID its suggested listing takes: %v", err)
 	}
 }
 
@@ -2413,5 +2406,25 @@ func TestArtifactsRepoEnding(t *testing.T) {
 	_, _, err = execute(t, "artifacts", "ls", "--repo", "acme/app", "beef")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), other) || !strings.Contains(err.Error(), appSlug) {
 		t.Errorf("ls --repo acme/app beef = %v, want a user error naming both repositories", err)
+	}
+}
+
+// TestArtifactsLsEndingBeyondTheWindow: the listing a refusal points at is
+// given the ending the run is shown by (`fugaro artifacts ls <ending>`, the
+// short form of "recorded no artifact named ..." and of the expired-artifact
+// refusal), so an ending has to reach a run older than the window the lookup
+// starts in: an artifact outlives its run's launch stamp by as long as the
+// bucket keeps the run (runs_days). Mutation caught: the listing's own advice
+// failing for the runs it is printed for.
+func TestArtifactsLsEndingBeyondTheWindow(t *testing.T) {
+	f := newEndingFixture(t)
+	id := recentRunID(t, 30*24*time.Hour, "3bb2")
+	body := []byte("hello")
+	seedArtifactRun(t, f.cloudFixture, id, []runstore.ArtifactFile{
+		{Name: "sizzle.mp4", Bytes: int64(len(body)), SHA256: sha256Hex(body), ContentType: "video/mp4"},
+	}, map[string][]byte{"sizzle.mp4": body})
+
+	if out, _, err := execute(t, "artifacts", "ls", "3bb2"); err != nil || !strings.Contains(out, "sizzle.mp4") {
+		t.Errorf("ls 3bb2 of a run 30 days old = %v (%s)", err, out)
 	}
 }
