@@ -183,6 +183,7 @@ import {
   COORDINATOR_JOBS_WINDOW_WORD,
   COORDINATOR_JOB_DETAIL_CLASS,
 } from '../../src/renderer/screens/coordinator'
+import { shortRun } from '../../src/shared/shortid'
 import {
   PROJECTS_ACCOUNT_KEYS_CLASS,
   PROJECTS_BUSY,
@@ -6133,7 +6134,10 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
 
     runs.release({ ok: true, data: { document: { runs: [QUEUE_RUN] } } })
     await flush()
-    expect(holdsText(panelOf(document), QUEUE_RUN_ID)).toBe(true)
+    // The item is named by the run's **short id**, as every list view of this
+    // console names one (SR10): the whole id is the value the item's act
+    // carries, and never the text this row draws.
+    expect(holdsText(panelOf(document), shortRun(QUEUE_RUN_ID))).toBe(true)
     // One button per item: the job's Retry and the ready task's Launch.
     expect(
       classed(panelOf(document), 'coordinator-queue-button').length,
@@ -6187,7 +6191,7 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     // was never the document that was refused.
     expect(classed(job, 'coordinator-queue-item')).toEqual([])
     expect(classed(job, 'coordinator-queue-button')).toEqual([])
-    expect(holdsText(panelOf(document), QUEUE_RUN_ID)).toBe(false)
+    expect(holdsText(panelOf(document), shortRun(QUEUE_RUN_ID))).toBe(false)
     expect(holdsText(panelOf(document), 'task-three')).toBe(true)
   })
 
