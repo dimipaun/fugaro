@@ -153,6 +153,21 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	if err != nil {
 		return err
 	}
+	// --type DECLARES an entry; it never retypes one. A name the config already
+	// defines with another type is the owner's own definition — what this
+	// command adds beside it is the account, and the entry is not its to
+	// rewrite. Retyping through this command is not one edit either: every pool
+	// that lists the name would be served on the other tier (for claude-oauth,
+	// into the subscription switch of D1622), the sentence above would read as
+	// a plain declaration, and `accounts rm` would afterwards read the entry as
+	// the account's own (accountsRmTyped) and remove a definition this command
+	// never wrote. The owner retypes it in the file, where a type is a decision.
+	if o.typ != "" {
+		if cur := accountsAddCredentialType(lc, name); cur != "" && cur != o.typ {
+			return userErr("credentials.%s is already defined as %s; nothing was written — this command declares a credential, and retyping one here would serve every pool that lists the name on the new type; change its type in the file",
+				pluginwire.Printable(name), pluginwire.Printable(cur))
+		}
+	}
 	repos, err := accountsAddRepos(cmd.Context(), o.repos, name)
 	if err != nil {
 		return err
@@ -344,6 +359,19 @@ func accountsAddRepos(ctx context.Context, flag, name string) ([]string, error) 
 		return nil, userErr("--repos: name at least one repository, as owner/name")
 	}
 	return out, nil
+}
+
+// accountsAddCredentialType is the type this config's credentials block defines
+// under the name, or "" when the name is not a credential in it. It is read
+// from the config as it is, before the edit: what the command may write is
+// decided by what is already there.
+func accountsAddCredentialType(lc *localcfg.Config, name string) string {
+	for _, c := range lc.Credentials {
+		if c.Name == name {
+			return c.Type
+		}
+	}
+	return ""
 }
 
 // accountsAddProfile is the profile whose claude_accounts gains the name: the

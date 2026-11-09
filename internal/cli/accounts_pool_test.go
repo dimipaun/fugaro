@@ -511,6 +511,76 @@ func TestAccountsAddTypeRefusesATypeNoRunCouldServe(t *testing.T) {
 	}
 }
 
+// accountsPoolTypedLocal is the fixture for the refusal below: the account's
+// name is already a credential in the config, under the type whose key that
+// credential authenticates with, and a pool walks it.
+const accountsPoolTypedLocal = addRigLocal + `
+credentials:
+  - name: key-one
+    type: anthropic
+pools:
+  - name: paid
+    members:
+      - key-one
+`
+
+// accountsPoolTypedLocalSameType is that fixture with the credential defined as
+// the type the flag names: the state the refusal must leave alone.
+const accountsPoolTypedLocalSameType = addRigLocal + `
+credentials:
+  - name: key-one
+    type: claude-oauth
+`
+
+// TestAccountsAddTypeRefusesToRetypeACredential is the other half of --type's
+// rule, and it is about what the flag may NOT do: the entry is the owner's —
+// this command adds the account beside it, not a new meaning for it. A retype
+// is not a declaration: every pool that lists the name would be served on the
+// other tier (for claude-oauth, into D1622's subscription switch), the sentence
+// would read as a plain declaration, and `accounts rm` would afterwards read
+// the entry as the account's own and remove a definition this command never
+// wrote. So the name is refused, with the type it already has, and the file is
+// byte for byte what it was.
+func TestAccountsAddTypeRefusesToRetypeACredential(t *testing.T) {
+	path := accountsAddFixture(t, accountsPoolTypedLocal)
+	before := readFileString(t, path)
+
+	_, _, addErr := executeStdin(t, "", "accounts", "add", "key-one", "--repos", "owner/repo-a", "--type", "claude-oauth", "--yes")
+
+	if addErr == nil {
+		t.Fatalf("the credential key-one, defined as anthropic, was retyped as claude-oauth")
+	}
+	if !strings.Contains(addErr.Error(), "credentials.key-one is already defined as anthropic; nothing was written") {
+		t.Errorf("the refusal reads %v, want the type the entry already has named", addErr)
+	}
+	if got := readFileString(t, path); got != before {
+		t.Errorf("the refused write changed the file:\n%s", got)
+	}
+}
+
+// TestAccountsAddTypeKeepsASameTypedCredential is that refusal's other side:
+// the name already defined as the very type --type names is not a retype, so
+// the entry stays exactly as the owner wrote it and the account is declared
+// beside it.
+func TestAccountsAddTypeKeepsASameTypedCredential(t *testing.T) {
+	path := accountsAddFixture(t, accountsPoolTypedLocalSameType)
+
+	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "key-one", "--repos", "owner/repo-a", "--type", "claude-oauth", "--yes")
+	if err != nil {
+		t.Fatalf("accounts add --type claude-oauth beside a claude-oauth credential: %v\n%s", err, out)
+	}
+	lc, err := localcfg.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lc.Credentials) != 1 || lc.Credentials[0].Name != "key-one" || lc.Credentials[0].Type != config.CredentialTypeClaudeOAuth {
+		t.Errorf("the credentials block is %v, want key-one alone, still claude-oauth", lc.Credentials)
+	}
+	if _, ok := lc.ClaudeAccounts["key-one"]; !ok {
+		t.Errorf("the account was not declared beside the entry: %v", lc.ClaudeAccounts)
+	}
+}
+
 // TestAccountsAddTypeWritesTheCredentialEntry is --type's positive half: the
 // name is declared as a typed credential beside the claude_accounts entry, in
 // the same edit, which is what lets a pool list it as a member. The evidence is
