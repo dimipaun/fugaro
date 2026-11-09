@@ -19,7 +19,8 @@ import (
 
 // lsGroupWire is --group-by's block as the document carries it. The test reads
 // the wire shape rather than the Go type, because the wire shape is what the
-// console, the phone and console/docs/json-contract.md are about.
+// console, the phone and the JSON contract the console is written against are
+// about.
 type lsGroupWire struct {
 	Class    string  `json:"class"`
 	Runs     int     `json:"runs"`
