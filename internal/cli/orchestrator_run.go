@@ -556,9 +556,9 @@ func (f *launchInFlight) busy() bool {
 // A run the bucket does not know is reported as one that never started, which
 // is what recovery acts on; a run whose task is stored but whose launch never
 // happened is the same answer, because launch.json is what says an execution
-// was started. A run that started and has not written result.json carries no
-// outcome and leaves its item running, which is a cycle that is still going and
-// not an item nobody can move again.
+// was started. A run that started and has not written result.json — its record
+// still says running — carries no outcome and leaves its item running, which is
+// a cycle that is still going and not an item nobody can move again.
 type orchestratorRunView struct {
 	bucket *blob.Bucket
 }
@@ -587,28 +587,34 @@ func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orch
 			if !errors.Is(err, runstore.ErrNotFound) {
 				return nil, err
 			}
-		} else {
-			rep.Finished, rep.Outcome = true, orchestratorOutcome(rec)
+		} else if done, outcome := orchestratorOutcome(rec); done {
+			rep.Finished, rep.Outcome = true, outcome
 		}
 		reports = append(reports, rep)
 	}
 	return reports, nil
 }
 
-// orchestratorOutcome is what one finished run means to the state: the run
-// record's status in the state's own vocabulary.
+// orchestratorOutcome is what one run means to the state, and whether the run
+// is over at all.
 //
-// A record this release cannot place — a status the runner has not written, or
-// one from a newer release — is a failure, which is the safe direction: the
-// attempt is over and the item does not stay running for ever. It is not the
-// direction that costs anything either: a failed attempt is the one a person
-// looks at.
-func orchestratorOutcome(rec *runstore.Record) orchestrator.Outcome {
+// A record the runner is still writing — status running, which the runner
+// writes as the run begins and replaces as it ends — is not a finished run:
+// folding it as anything would close the attempt that is still going, take the
+// item off it, and have the next cycle start a second run for the same approval
+// while the first one is still spending.
+//
+// A status this release cannot place, including one from a newer release, is a
+// finished failure: the attempt is over and the item must not stay running for
+// ever, and a failed attempt is the one a person looks at.
+func orchestratorOutcome(rec *runstore.Record) (bool, orchestrator.Outcome) {
 	switch rec.Status {
+	case runstore.StatusRunning:
+		return false, ""
 	case runstore.StatusSucceeded:
-		return orchestrator.OutcomeSucceeded
+		return true, orchestrator.OutcomeSucceeded
 	case runstore.StatusCancelled:
-		return orchestrator.OutcomeCancelled
+		return true, orchestrator.OutcomeCancelled
 	}
-	return orchestrator.OutcomeFailed
+	return true, orchestrator.OutcomeFailed
 }

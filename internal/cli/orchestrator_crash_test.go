@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // The money path: a daemon that dies mid-launch spends once (O8, D1231, F11).
@@ -132,6 +133,51 @@ func TestCrashAfterTaskJSONBeforeTheStartStillStartsOnce(t *testing.T) {
 	}
 	if _, err := s.ReadLaunch(context.Background()); err != nil {
 		t.Fatalf("the recovery did not start the run: %v", err)
+	}
+}
+
+// TestRunViewLeavesAnInFlightRunOpen: the runner writes a record saying running
+// as a run begins and replaces it as the run ends, so a record with that status
+// is a run that is still spending. A tick that read it as a finished failure
+// would close the attempt under a run that is still going and start a second
+// run for the same approval — and the first run's real outcome could never be
+// folded, because the attempt it belongs to would already be closed. The cycle
+// after the launch, and the one after that, only wait.
+func TestRunViewLeavesAnInFlightRunOpen(t *testing.T) {
+	f, d, cs := crashDaemon(t, true, true)
+	// What the runner writes at bootstrap, before it has anything to report.
+	rec := &runstore.Record{
+		Version: 1, RunID: cs.runID, Execution: "exec-1", Status: runstore.StatusRunning,
+		Stage: "bootstrap", Outcome: runstore.OutcomeNone, StartedAt: f.now,
+	}
+	if err := f.runStore(t, cs.runID).WriteRecord(context.Background(), rec); err != nil {
+		t.Fatalf("writing the record a run in flight carries: %v", err)
+	}
+
+	for cycle := 1; cycle <= 2; cycle++ {
+		rep, err := d.tick.Step(context.Background())
+		if err != nil {
+			t.Fatalf("cycle %d over a run still in flight: %v", cycle, err)
+		}
+		if rep.Outcome != orchestrator.CycleInFlight {
+			t.Errorf("cycle %d ended %q over a run that started and has not reported, want in-flight", cycle, rep.Outcome)
+		}
+		if rep.Carried != 0 {
+			t.Errorf("cycle %d carried %d action(s) for an attempt whose run is still going", cycle, rep.Carried)
+		}
+	}
+	if execs := f.run.Executions(); len(execs) != 1 {
+		t.Fatalf("a run in flight was answered with %d execution(s) in all, want the one it is: %v", len(execs), execs)
+	}
+	after := f.item(t, cs.item.ID)
+	if after.Phase != orchestrator.PhaseRunning {
+		t.Errorf("the item is %q while the run behind its attempt is still going", after.Phase)
+	}
+	if after.RunID != cs.runID {
+		t.Errorf("the item names the run %q, and the run it waits on is %q", after.RunID, cs.runID)
+	}
+	if it := f.intent(t, orchestrator.IntentID(cs.item.ID, 1)); it.Outcome != "" {
+		t.Errorf("the attempt was closed with %q while its run is still going", it.Outcome)
 	}
 }
 
