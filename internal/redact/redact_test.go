@@ -729,6 +729,40 @@ func TestRedactCorpus(t *testing.T) {
 	}
 }
 
+// TestRedactKeepsNoHalfOfAValue: a rule that cannot find the end of a value
+// makes no match rather than a short one, and the value goes into the text
+// whole — so where a rule does stop early, the half it leaves is the leak. The
+// corpus is no instrument for this: its leak spans the marker a half
+// redaction writes, and a `Contains` that never finds the whole of the value
+// is satisfied by the last byte of it being gone.
+func TestRedactKeepsNoHalfOfAValue(t *testing.T) {
+	password := fake(strings.Repeat("Qw3", 5))
+	for _, tc := range []struct{ name, in, want string }{
+		{
+			"a password holding a quote the text continues past",
+			"postgres://app:" + fake(`ab"`, strings.Repeat("Qw3", 3)) +
+				"@db.example.com:5432/app refused",
+			"postgres://app:" + redacted + "@db.example.com:5432/app refused",
+		},
+		{
+			"an excerpt that stops before the host",
+			"postgres://app:" + password + " refused",
+			"postgres://app:" + redacted + " refused",
+		},
+		{
+			"a record whose field the url is written in",
+			`{"dsn":"postgres://app:` + password + `","step":"terraform apply"}`,
+			`{"dsn":"postgres://app:` + redacted + `","step":"terraform apply"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Text(tc.in, nil); got != tc.want {
+				t.Errorf("Text(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestTextIsBothPasses: Text is the exact pass and then the pattern pass, so
 // one string holding a value Fugaro holds and one it does not loses both.
 func TestRedactsBothPasses(t *testing.T) {
