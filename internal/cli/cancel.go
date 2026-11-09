@@ -148,7 +148,7 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 	// mean and nothing else — never the seven-day window, whose runs cannot be
 	// cancelled — and it answers with that list rather than with a run, so this
 	// command only ever acts on an ID a person named in full.
-	slug, id, err := resolveRun(ctx, env, arg, resolveRunOptions{out: out, errOut: errOut, activeOnly: true})
+	slug, id, err := resolveRun(ctx, env, arg, resolveRunOptions{out: out, errOut: errOut, activeOnly: false})
 	if err != nil {
 		return err
 	}
