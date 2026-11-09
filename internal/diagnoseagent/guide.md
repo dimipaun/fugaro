@@ -142,10 +142,13 @@ from, and what you could not check.
   that would settle it, so the person can check what the evidence could not
   reach. It carries the same report a bug answer does.
 
-Every report, and the signature line, follows one redaction rule: no local path,
-user name, host name or secret, and no GCP project ID or repository name the
-log's Terraform and gcloud messages carried. Say that the report was redacted
-and should be read before it is posted.
+Every report, and the signature line, follows one redaction rule: no local
+path, user name, host name or secret; nothing shaped like a token; no email, a
+service-account address included; and no name or path of the cloud's own — a
+GCP project ID, a repository or organisation, a bucket name, a run's path
+inside that bucket, or another resource's name. The log's Terraform and gcloud
+messages carry each of them as readily as they carry a file path. Say that the
+report was redacted and should be read before it is posted.
 
 ## The block
 

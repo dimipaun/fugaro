@@ -166,8 +166,10 @@ func promptBody(e Evidence) string {
 	fmt.Fprintf(&b, "- %s: you cannot attribute it — the evidence leaves it open whether this is the person's setup or Fugaro, so say which side you could not rule out and what you could not check. "+
 		"You cannot see the cloud's state, fetch a tag, or read anything outside the two folders. "+
 		"An unclear finding is kept and may be filed, so give it the same report a bug answer carries.\n", OutcomeUnclear)
-	b.WriteString("One redaction rule covers every report and the signature line: no local path, user name, host name or secret, " +
-		"and no GCP project ID or repository name the log's Terraform and gcloud messages carried. " +
+	b.WriteString("One redaction rule covers every report and the signature line: no local path, user name, host name or secret; " +
+		"nothing shaped like a token; no email, a service-account address included; and no name or path of the cloud's own — " +
+		"a GCP project ID, a repository or organisation, a bucket name, a run's path inside that bucket, or another resource's name. " +
+		"The log's Terraform and gcloud messages carry each of them as readily as they carry a file path. " +
 		"Say the report is redacted and should be read before it is posted.\n\n")
 
 	fmt.Fprintf(&b, "Answer once, in one block, as the last thing you write:\n\n%s\n%s: one of %s\n%s\n(your answer: the cause, the fix or the report, and what you could not check)\n%s\n\n",

@@ -114,16 +114,20 @@ func TestPromptAsksForSignature(t *testing.T) {
 
 func TestPromptStatesTheRedactionRuleForEveryReport(t *testing.T) {
 	body := promptBody(testEvidence())
-	// One rule, stated once, over every report and the signature line. The log
-	// carries Terraform and gcloud error bodies, which name a project ID and a
-	// repository as readily as they name a path: a rule that stops at paths, user
-	// names and host names lets the person's project and repository ride into a
-	// public issue, and a rule stated per outcome is one the next outcome does
-	// not inherit.
+	// One rule, stated once, over every report and the signature line, and it
+	// names each identifier the log can echo rather than a category the agent has
+	// to guess at: Terraform and gcloud error bodies carry a GCP project ID, a
+	// repository or organisation, a service-account address, a bucket name and a
+	// run's path inside it, and a token, as readily as they carry a file path. A
+	// rule that stops at paths, user names and host names lets all of those ride
+	// into a public issue, and a rule stated per outcome is one the next outcome
+	// does not inherit.
 	for _, want := range []string{
 		"One redaction rule covers every report and the signature line",
 		"no local path, user name, host name or secret",
-		"no GCP project ID or repository name",
+		"nothing shaped like a token",
+		"no email, a service-account address included",
+		"a GCP project ID, a repository or organisation, a bucket name, a run's path inside that bucket, or another resource's name",
 		"redacted and should be read before it is posted",
 	} {
 		if !strings.Contains(body, want) {
