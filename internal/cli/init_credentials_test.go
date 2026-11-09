@@ -311,6 +311,21 @@ func TestUpdateSetsCredentialsServiceOnEveryInstallation(t *testing.T) {
 //	Given variables file terraform.tfvars.json does not exist.
 func TestUpdateKeepsTheVarsFileWhereTheAudiencePlanReadsIt(t *testing.T) {
 	r := credentialsRig(t)
+	// The rig's own state home, reached through a link: the fake records what
+	// os.Getwd() answers (every symlink followed) while the workdir the run is
+	// handed keeps the link, which is the case on any host whose state home
+	// sits under a directory that is a symlink.
+	// TestComputeStageFindsItsWorkdirThroughASymlink makes the same case real on
+	// every platform.
+	state := os.Getenv("XDG_STATE_HOME")
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "state-root")
+	if err := os.Symlink(state, link); err != nil {
+		t.Skipf("this host makes no symlink: %v", err)
+	}
+	t.Setenv("XDG_STATE_HOME", link)
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
 	credentialsOutputs(t, r)
 	out, errOut, err := executeStdin(t, "", "update", "--yes")
@@ -328,10 +343,16 @@ func TestUpdateKeepsTheVarsFileWhereTheAudiencePlanReadsIt(t *testing.T) {
 	if len(dirs) != 2 {
 		t.Fatalf("the installation step planned %d times, want 2 (the apply that creates the service, then the audience): %v\n%s", len(dirs), dirs, s)
 	}
+	// Both sides resolved, as computeCalls' comparison is: the fake records
+	// os.Getwd(), which answers a path with every symlink followed, while the
+	// workdir comes from $XDG_STATE_HOME -- reached through a link above, and
+	// under a symlinked $TMPDIR on macOS -- so the two spellings of one
+	// directory do not compare equal as they are (resolvedPath).
+	root := resolvedPath(r.root())
 	for i, dir := range dirs {
-		if dir != r.root() {
+		if dir != root {
 			t.Errorf("plan %d ran in %s, want %s: the workdir the run writes its %s into and the root its terraform plans in are one directory, or the plan reads variables that are not there (the report's \"Given variables file %s does not exist\")\n%s",
-				i+1, dir, r.root(), infra.VarsFile, infra.VarsFile, s)
+				i+1, dir, root, infra.VarsFile, infra.VarsFile, s)
 		}
 	}
 	// The file the plans read is the run's own, with the URL the step wrote in
@@ -345,6 +366,11 @@ func TestUpdateKeepsTheVarsFileWhereTheAudiencePlanReadsIt(t *testing.T) {
 
 // planDirs are the working directories of the run's own plans, in order: the
 // directory terraform reads the relative -var-file=terraform.tfvars.json from.
+// Each is resolved (resolvedPath), because a caller compares them against a
+// workdir built from $XDG_STATE_HOME and the fake records os.Getwd(), which
+// answers a path with every symlink followed: on macOS those differ -- /var is
+// a symlink to /private/var -- and a workdir reached through a link differs
+// everywhere, as computeCalls' comment says of the same comparison.
 func planDirs(t *testing.T, log string) []string {
 	t.Helper()
 	f, err := os.Open(log)
@@ -367,7 +393,7 @@ func planDirs(t *testing.T, log string) []string {
 			t.Fatal(err)
 		}
 		if len(c.Args) > 0 && c.Args[0] == "plan" {
-			out = append(out, c.Dir)
+			out = append(out, resolvedPath(c.Dir))
 		}
 	}
 	return out
