@@ -154,7 +154,7 @@ The alternative — leaving the refresh unbounded as `--yes` leaves it — costs
 
 ## 6. Audit: every managed agent apply is recorded (D1014)
 
-**What is recorded.** One object per applied command, at a new family under the runs bucket's owner-only prefix: `gs://fugaro-runs-<gcp-project>/fugaro/managed-audit/<utc-date>/<id>.json`. The prefix matters: `settings` objects under `runs/` are deleted at 90 days and the bucket is unversioned, so an audit that must outlive a quarter cannot live there; `fugaro/` has no lifecycle rule and is written only by operators.
+**What is recorded.** One object per applied command, at a new family under the runs bucket's owner-only prefix: `gs://fugaro-runs-<gcp-project>/fugaro/managed-audit/<utc-date>/<id>.json`. The unit is the admitted apply and not the invocation: a step `fugaro update`'s propagation retry judges twice writes two objects, one per judged plan — a failed apply created what its plan named, and a record written only for the retry would leave that plan's digest out of the trail rather than in it. The prefix matters: `settings` objects under `runs/` are deleted at 90 days and the bucket is unversioned, so an audit that must outlive a quarter cannot live there; `fugaro/` has no lifecycle rule and is written only by operators.
 
 **What it holds**, and each field is there because a reader acts on it:
 
