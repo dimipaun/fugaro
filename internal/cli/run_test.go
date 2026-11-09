@@ -99,7 +99,7 @@ func TestRunHumanOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := markDone + " launch " + appSlug + "/20260927-100000-abcd\n  branch fugaro/20260927-100000-abcd cut from main\n  logs https://"
+	want := markDone + " launch " + task.ShortRun("20260927-100000-abcd") + "\n  branch fugaro/20260927-100000-abcd cut from main\n  logs https://"
 	if !strings.HasPrefix(out, want) {
 		t.Fatalf("output:\n%s\nwant prefix:\n%s", out, want)
 	}
@@ -721,7 +721,7 @@ func TestRunRetryOfALaunchedRunHints(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, errOut, err := execute(t, "run", "--retry", "20260927-100000-abcd")
-	if err != nil || !strings.Contains(out, markSkipped+" launch "+appSlug+"/20260927-100000-abcd already launched") || !strings.Contains(errOut, "fugaro diagnose "+appSlug+"/20260927-100000-abcd") {
+	if err != nil || !strings.Contains(out, markSkipped+" launch "+task.ShortRun("20260927-100000-abcd")+" already launched") || !strings.Contains(errOut, "fugaro diagnose "+task.ShortRun("20260927-100000-abcd")) {
 		t.Fatalf("out %q, stderr %q, err %v", out, errOut, err)
 	}
 }
@@ -2228,7 +2228,7 @@ func TestReviewRunEndingRefused(t *testing.T) {
 	newCloudFixture(t)
 	t.Chdir(t.TempDir())
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--review-run", "3bb2", "fix it")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "must look like 20260926-221530-a1b2") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--review-run \"3bb2\" must look like") {
 		t.Fatalf("run --review-run 3bb2 = %v, want the shape refusal", err)
 	}
 }

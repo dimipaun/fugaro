@@ -854,9 +854,11 @@ func TestArtifactsResolvesRepoAndRunLikeRunsLs(t *testing.T) {
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), other) || !strings.Contains(err.Error(), "acme-app") {
 		t.Errorf("ls of %s with --repo acme/app = %v, want a user error naming both repositories", other, err)
 	}
-	// A bare ID that is not a run ID never becomes part of an object name.
+	// A bare ID that is not a run ID never becomes part of an object name:
+	// it is read as an ending (SR14), and an ending no run answers to is
+	// refused before any key is built.
 	_, _, err = execute(t, "artifacts", "get", "--repo", "acme/app", "not-a-run-id")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "run ID") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "pass the full ID") {
 		t.Errorf("get of a malformed run ID = %v, want a user error", err)
 	}
 }
