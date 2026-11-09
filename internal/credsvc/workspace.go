@@ -590,10 +590,23 @@ func (w *Workspace) Policy(ctx context.Context, c MemberCall) (*projectpolicy.Po
 // whose `credentials.accounts` are the account names an administrator admitted
 // that repository to. A credential the member's policy names but that
 // repository's node does not is not served: the repository is the member's own
-// narrowing, and reading it from the slug the run identity names is what makes
-// the leg a check rather than a claim (the canonical `owner/repo` name is what
-// this service does NOT have, and the two `allow_repos` legs that need it are
-// §8's residual risk 7).
+// narrowing.
+//
+// **The slug is the run's own repository, and it is NOT held to the calling job
+// account.** The identity Verify returned carries the slug its own token proved,
+// so the child read here is the run's repository and not one a caller named —
+// but nothing compares it with the repository the calling job account belongs
+// to. The installation's front door does exactly that
+// (`!bound || ja.Slug != id.Slug`, internal/credsvc/server.go), because its
+// table binds each job account to the repository its service account is derived
+// from; this deployment's per-member table names a member's job accounts and no
+// repository, so there is no slug to compare and an account admitted for one
+// repository can present a run identity of another (review finding N1). So this
+// leg is narrower than the installation's pairing, and the canonical
+// `owner/repo` name is what this service does NOT have either. Both — the
+// pairing, and the two `allow_repos` legs that need the name — are
+// docs/workspaces/spec.md §8's residual risk 7: stated there, an open item for
+// the owner, and the column this service does not carry.
 //
 // The refusal an operator reads for one named credential is creds.AdmitShared's,
 // and this answers the SET, which is what the cascade is offered: the legs are
@@ -632,7 +645,11 @@ func (w *Workspace) Shared(ctx context.Context, c MemberCall, offered []creds.Sh
 // question with a database outage (fail closed is a refusal, not a silent
 // nothing). The slug is the verified one and not a value a caller supplied: the
 // run identity carries `fs` and `fr`, both of them held to the uid the token's
-// own Firebase project minted, so the node read here is the calling run's own.
+// own Firebase project minted, so the node read here is the calling run's own
+// repository. What is not asked is whether that repository is the calling
+// ACCOUNT's: the table names a member's job accounts and no repository, so the
+// pairing the installation's front door makes has no slug to be made on here
+// (Shared's own doc, and docs/workspaces/spec.md §8's residual risk 7).
 func (w *Workspace) admittedOn(ctx context.Context, c MemberCall) (map[string]bool, error) {
 	db, err := w.database(c)
 	if err != nil {

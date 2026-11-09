@@ -545,18 +545,22 @@ func validExchangeURL(raw string) error {
 // direction still holds: the pool can only serve names the member already
 // admits, on repositories the member's own database admits them to.
 //
-// **What is not re-asked is the two canonical `allow_repos` legs.** The
-// member's own service asks them by the canonical `owner/repo` name
-// (admittedAccounts): the project's own allow-list — the leg that closes the
-// `repos rm` gap, because removing a repository does not touch its child — and
-// the account's. A workspace's service holds only the sanitised slug, which no
-// reader can invert into that name, so it reads the child the publish path
-// derived from both legs instead. A child that is stale against the policy it
-// was derived from — a `repos rm` whose child was not removed, two concurrent
-// publishes, a hand-edited node — is therefore served here where the member's
-// own cascade would refuse. That is spec.md §8's residual risk 7, and closing
-// it is the owner's call: the canonical repository per job account is a column
-// the owner's per-member table does not carry.
+// **What is not re-asked is the pairing of the run's repository with the
+// calling job account, and the two canonical `allow_repos` legs.** The member's
+// own front door holds the account's repository to the run identity's slug, and
+// the table this row belongs to names a member's job accounts and no repository,
+// so the workspace's service has no slug to make that comparison with. The two
+// `allow_repos` legs are the member's own service's other check, asked by the
+// canonical `owner/repo` name (admittedAccounts): the project's own allow-list —
+// the leg that closes the `repos rm` gap, because removing a repository does not
+// touch its child — and the account's. A workspace's service holds only the
+// sanitised slug, which no reader can invert into that name, so it reads the
+// child the publish path derived from both legs instead. A child that is stale
+// against the policy it was derived from — a `repos rm` whose child was not
+// removed, two concurrent publishes, a hand-edited node — is therefore served
+// here where the member's own cascade would refuse. Both are spec.md §8's
+// residual risk 7, and closing them is the owner's call: the repository per job
+// account is a column the owner's per-member table does not carry.
 func MemberAdmitsShared(p *Policy, name string) bool {
 	if p == nil {
 		return false

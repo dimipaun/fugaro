@@ -34,15 +34,20 @@ import (
 // to, and this file holds none of that: it is the arithmetic over names, and a
 // caller wanting the set asks the service.
 //
-// What is not re-asked is the two canonical `allow_repos` legs — the project's
-// and the account's own allow-lists, which the member's own service checks by
-// the canonical `owner/repo` name. A workspace's service holds only the
-// sanitised slug and reads the child the publish path derived from those legs,
-// so a child that is stale against the policy it came from is served here where
-// the member's own cascade refuses. It is docs/workspaces/spec.md §8's residual
-// risk 7, stated there and in projectpolicy.MemberAdmitsShared, and closing it
-// is the owner's call: the canonical repository per job account is a column the
-// owner's per-member table does not carry.
+// What is not re-asked is the pairing of the run's repository with the calling
+// job account, and the two canonical `allow_repos` legs. The first is the
+// member's own front door's check — the repository the calling job account
+// belongs to against the run identity's slug — and a workspace's table names a
+// member's job accounts and no repository, so there is no slug to hold the
+// verified one to. The second is the project's own allow-list and the
+// account's, which the member's own service checks by the canonical `owner/repo`
+// name; a workspace's service holds only the sanitised slug and reads the child
+// the publish path derived from those legs, so a child that is stale against the
+// policy it came from is served here where the member's own cascade refuses.
+// Both are docs/workspaces/spec.md §8's residual risk 7, stated there and in
+// projectpolicy.MemberAdmitsShared, and closing them is the owner's call: the
+// repository per job account is a column the owner's per-member table does not
+// carry.
 //
 // **The two refusals are told apart, because they are two different fixes.** A
 // credential this project is not on the allow-list for is the workspace's
