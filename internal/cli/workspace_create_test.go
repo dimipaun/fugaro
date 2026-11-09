@@ -30,6 +30,12 @@ import (
 // this installation a workspace's own is the same document, and a second
 // spelling of it here would be a second reading of what a workspace is.
 
+// wsSplitFirebase is the budget block of an installation whose Firebase is
+// ANOTHER project's — what `fugaro setup --firebase-project <other>` leaves in
+// the file — which is the one shape in which this root's own grant cannot reach
+// the workspace's database (workspaceSplitFirebase).
+const wsSplitFirebase = "budget: { mode: observe, per_run_usd: 5, firebase_project: proj-9999, rtdb_url: https://proj-9999-default-rtdb.firebaseio.com }\n"
+
 // wsProjectName is the name the rig's config gives this installation: the
 // workspace's own name, which is the word a typed confirmation asks for and the
 // `workspace` the root's tfvars carry.
@@ -219,6 +225,50 @@ func TestWorkspaceProjectStageSkipsAnInstallationThatIsNotAWorkspace(t *testing.
 				t.Errorf("the workspace workdir was prepared: %v", err)
 			}
 		})
+	}
+}
+
+// TestWorkspaceProjectStageRefusesAWorkspaceWhoseFirebaseIsAnotherProject: the
+// workspace's own project holds the workspace's Firebase, its database and its
+// service (spec §3), so an installation whose budget.firebase_project names
+// another project is one where this root's one grant would bind on a database
+// the workspace does not use — the record W2's publish stage writes and the
+// workspace's own service reads lives in the Firebase project's — and where the
+// plan check would accept it, because the stage holds the plan to the same
+// wrong project. All three paths refuse it before anything is planned, with the
+// two projects named and the remedy a split installation takes, and terraform
+// is never reached: no workdir, no init, no plan.
+func TestWorkspaceProjectStageRefusesAWorkspaceWhoseFirebaseIsAnotherProject(t *testing.T) {
+	fakeTerminal(t)
+	g := newWSCreateRig(t, wsProjectName+"\n", wsOwnerTable+wsOwnerCap+wsSplitFirebase)
+	for _, c := range []struct {
+		name string
+		run  func() error
+	}{
+		{"check", func() error { _, err := g.s.Check(context.Background()); return err }},
+		{"plan", func() error { _, err := g.s.Plan(context.Background(), initflow.Env{Interactive: true}); return err }},
+		{"apply", func() error { _, err := g.s.Apply(context.Background(), initflow.Env{Interactive: true}); return err }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			err := c.run()
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("%s = %v, want a refusal the operator reads", c.name, err)
+			}
+			for _, want := range []string{
+				"budget.firebase_project", "proj-9999", "docs/workspaces/spec.md §3",
+				wsProject, wsProjectName, "fugaro update --firebase-project " + wsProject,
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not name %q: %v", want, err)
+				}
+			}
+		})
+	}
+	if calls := g.ri.calls(t); len(calls) != 0 {
+		t.Errorf("the stage reached terraform for a workspace whose Firebase is another project's: %q", calls)
+	}
+	if _, err := os.Stat(g.root()); !os.IsNotExist(err) {
+		t.Errorf("the workspace workdir was prepared: %v", err)
 	}
 }
 

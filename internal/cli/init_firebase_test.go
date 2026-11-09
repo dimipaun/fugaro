@@ -1207,6 +1207,85 @@ func TestIdentityPlatformAllowsTheWorkspacesOwnSignIn(t *testing.T) {
 	}
 }
 
+// TestIdentityPlatformRefusesAWorkspacesOffPinProvider: the workspace's own
+// project is admitted for the paths spec §3's pin carries and for nothing else.
+// The exemption is not "a workspace may carry any provider": an anonymous
+// sign-in proves no address, a phone number is an address this project accepts
+// that nobody decided on, and a provider beside google.com is a second way in —
+// and this project is also an installation whose own sign-in reads a token's
+// claim and not the provider that signed the user in, so an off-pin provider is
+// admitted silently everywhere else. Each off-pin path is refused BY NAME, and
+// the pinned ones beside it are not what the refusal is about.
+func TestIdentityPlatformRefusesAWorkspacesOffPinProvider(t *testing.T) {
+	for name, c := range map[string]struct {
+		cfg map[string]any
+		off string
+	}{
+		"anonymous": {
+			cfg: map[string]any{"signIn": map[string]any{"anonymous": map[string]any{"enabled": true}}},
+			off: "signIn.anonymous.enabled",
+		},
+		"phone": {
+			cfg: map[string]any{"signIn": map[string]any{"phoneNumber": map[string]any{"enabled": true}}},
+			off: "signIn.phoneNumber.enabled",
+		},
+		"a second IdP beside the pinned one": {
+			cfg: map[string]any{"defaultSupportedIdpConfigs": []any{
+				map[string]any{"name": "google.com", "enabled": true},
+				map[string]any{"name": "microsoft.com", "enabled": true},
+			}},
+			off: "defaultSupportedIdpConfigs microsoft.com enabled",
+		},
+		"an OAuth IdP": {
+			cfg: map[string]any{"oauthIdpConfigs": []any{map[string]any{"name": "github.com", "enabled": true}}},
+			off: "oauthIdpConfigs github.com enabled",
+		},
+		"the pinned set with email and an off-pin provider": {
+			cfg: map[string]any{
+				"signIn": map[string]any{"email": map[string]any{"enabled": true}},
+				"defaultSupportedIdpConfigs": []any{
+					map[string]any{"name": "google.com", "enabled": true},
+					map[string]any{"name": "apple.com", "enabled": true},
+				},
+			},
+			off: "defaultSupportedIdpConfigs apple.com enabled",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newFBRig(t)
+			b, err := os.ReadFile(r.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(r.cfg, append(b, wsOwnerTable+wsOwnerCap...), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			lc, err := localcfg.Load(r.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.idt.SetIdentityPlatformConfig(c.cfg)
+			cmd := NewRootCmd()
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+			cmd.SetIn(strings.NewReader(""))
+			run := newInitRun(cmd, &initOptions{door: setupDoor.name})
+			if _, err := run.identityPlatform(context.Background(), lc, fpID); ExitCode(err) != ExitUserError || err == nil {
+				t.Fatalf("a workspace's own project carrying %s = %v, want a refusal", c.off, err)
+			} else {
+				for _, want := range []string{c.off, "docs/workspaces/spec.md §3", "pin"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not name %q: %v", want, err)
+					}
+				}
+			}
+			if n := r.idt.InitializeAuthCalls(); n != 0 {
+				t.Errorf("a refused workspace configuration was followed by %d initializeAuth call(s)", n)
+			}
+		})
+	}
+}
+
 // dropEndpoint removes one endpoint key from the local config.
 func (r *fbRig) dropEndpoint(t *testing.T, key string) {
 	t.Helper()

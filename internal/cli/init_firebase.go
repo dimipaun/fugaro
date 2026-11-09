@@ -682,15 +682,16 @@ type idpStep struct {
 	c       *infra.IdentityPlatform
 	missing bool
 	// workspace is whether this run's own config declares a workspace of its
-	// own, which is the one project whose sign-in paths the owner enables
-	// (refusePublicSignUp).
+	// own, which is the one project whose sign-in paths the owner enables: the
+	// pinned ones pass and an off-pin one is refused (refusePublicSignUp).
 	workspace bool
 }
 
 // identityPlatform reads the Firebase project's Identity Platform
 // configuration (read-only). One that exists is never changed, and is refused
 // when it enables a public sign-up path — unless this installation is a
-// workspace's own (refusePublicSignUp).
+// workspace's own and the path is one the workspace's pin carries
+// (refusePublicSignUp, and workspaceSignInPath for the pinned entries).
 func (r *initRun) identityPlatform(ctx context.Context, lc *localcfg.Config, fp string) (*idpStep, error) {
 	hc := &http.Client{Timeout: 90 * time.Second}
 	if !lc.Endpoints.NoAuth {
@@ -736,30 +737,71 @@ func (s *idpStep) initialize(ctx context.Context) error {
 // enables a public sign-up path: the web API key is public, so only custom
 // tokens signed by our signer may work.
 //
-// A workspace's OWN project is the one exception, and it is the config's own
-// owner half that marks it (workspaceDeclared) — a config that carries the
-// member's half as well is a member's, because the two halves contradict each
-// other and the narrow one decides. The workspace's sign-in is the owner's own
-// Firebase project's, and the workspace's spec pins which paths
+// A workspace's OWN project is the one exception to that refusal, and it is the
+// config's own owner half that marks it (workspaceDeclared) — a config that
+// carries the member's half as well is a member's, because the two halves
+// contradict each other and the narrow one decides. The workspace's sign-in is
+// the owner's own Firebase project's, and the workspace's spec pins WHICH paths
 // that project has on — email/password and google.com in, every other one out
-// (docs/workspaces/spec.md §3, and the pin the workspace's own service
-// enforces by admitting token hashes and nothing else, D1296) — so the
-// owner enables providers here on purpose, and no provider grants anything on
-// its own: the workspace's database denies every client (internal/budget/rules/
-// workspace.go), and what admits a caller to the workspace is the record's
-// admitted token hashes and not the Firebase project's sign-in methods.
+// (docs/workspaces/spec.md §3) — so the owner enables providers here on purpose,
+// and the pinned ones are admitted rather than refused. Refusing THEM would make
+// `fugaro update` fail on exactly the project W3's root converges — the HARD
+// RULE — and it would refuse the workspace's own sign-in, which is the point of
+// that project; what this never does is REQUIRE them: a workspace whose
+// providers the owner has not enabled yet (or has not enabled with the pinned
+// pair) converges as usual, and the live read is where that is named
+// (scripts/live-checks/check361.sh).
 //
-// Refusing it would make `fugaro update` fail on exactly the project W3's root
-// converges — the HARD RULE — so nothing here polices the providers, in either
-// direction: the pin is read live instead (scripts/live-checks/check361.sh),
-// which is where a project whose providers drifted is named.
+// A path outside the pin is a different matter, and the workspace's own project
+// is not exempt from it. That project is also an installation, and its MCP
+// sign-in reads a token's claim and not the provider that signed the user in
+// (ee/coordinator/mcpauth/firebase.go's VerifyIDToken), so an off-pin provider
+// that asserts a verified address would be admitted silently: an anonymous
+// sign-in proves no address at all, and a provider an owner did not mean to
+// carry — a second IdP, phone number — is an address this project accepts that
+// nobody decided on. So here the workspace's own project is held to the pin in
+// the one direction that costs no operator step: the pinned entries pass
+// (workspaceSignInPath) and everything else is refused by name.
 func refusePublicSignUp(raw []byte, fp string, workspace bool) error {
 	public, err := infra.PublicSignUp(raw)
 	if err != nil {
 		return remote(err)
 	}
-	if len(public) == 0 || workspace {
+	if len(public) == 0 {
 		return nil
 	}
+	if workspace {
+		var offPin []string
+		for _, p := range public {
+			if !workspaceSignInPath(p) {
+				offPin = append(offPin, p)
+			}
+		}
+		if len(offPin) == 0 {
+			return nil
+		}
+		return userErr("Identity Platform in the workspace's own Firebase project %s enables sign-in paths that are not the workspace's pin (%s). The workspace's own project is the one Firebase in this design where a person signs in with a real provider, and the workspace's spec pins which: email/password and google.com, and nothing else (docs/workspaces/spec.md §3) — an anonymous sign-in proves no address at all, and any other provider is an address this project accepts that nobody decided on, admitted by this installation's own sign-in as well. Disable these in the Firebase console (Authentication, Sign-in method) or with the Identity Toolkit config API, then rerun. The converge never changes an existing configuration", fp, strings.Join(offPin, "; "))
+	}
 	return userErr("Identity Platform in Firebase project %s has public sign-up enabled (%s). The web API key is public, so only custom tokens signed by Fugaro's signer may work: disable these in the Firebase console (Authentication, Sign-in method) or with the Identity Toolkit config API, then rerun. The converge never changes an existing configuration", fp, strings.Join(public, "; "))
+}
+
+// workspaceSignInPath is whether one entry of PublicSignUp's list is a path spec
+// §3's pin carries for the workspace's own project: email/password sign-in,
+// google.com (either of the two lists the API reports an IdP under — the
+// default-supported config and the OAuth one, both of which the workspace's
+// console step writes), and the sign-up setting itself, which the pin does not
+// constrain at all: the workspace's Firebase is the one that does not refuse
+// public sign-up, which is what lets a person who does not already hold a
+// password create one and reach the workspace (spec §3, and check 361's own
+// reading). Everything else — anonymous, phone number, any other IdP — is off
+// the pin and refused.
+func workspaceSignInPath(entry string) bool {
+	switch entry {
+	case "signIn.email.enabled",
+		"defaultSupportedIdpConfigs google.com enabled",
+		"oauthIdpConfigs google.com enabled",
+		"client.permissions.disabledUserSignup is false":
+		return true
+	}
+	return false
 }

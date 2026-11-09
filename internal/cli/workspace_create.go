@@ -116,9 +116,17 @@ func workspaceAccount(project string) string {
 // that does not validate — the config's own problems, which the run must stop
 // on rather than converge a root from a half-read config. The record is read
 // and not just the predicate, so that check happens before anything is planned.
+//
+// A workspace's own project whose Firebase is ANOTHER project's is refused here
+// too, and before anything is planned (workspaceSplitFirebase): the one grant
+// this root makes is the workspace's own service's whole reach over the
+// workspace's database, and that database is the workspace's own project's.
 func (s *workspaceProjectStage) declared() (bool, error) {
 	if !workspaceDeclared(s.e.lc) {
 		return false, nil
+	}
+	if why := workspaceSplitFirebase(s.e.lc); why != "" {
+		return false, errors.New(why)
 	}
 	if _, err := workspaceRecordOf(s.e.lc); err != nil {
 		var notOurs *workspacePublishNotOurs
@@ -127,6 +135,38 @@ func (s *workspaceProjectStage) declared() (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+// workspaceSplitFirebase is why a workspace's own installation cannot converge
+// its root: the config records a Firebase project that is not its GCP project
+// (budget.firebase_project, the key init_firebase.go writes when the two are
+// not the same), so the workspace's database is in one project and the project
+// the workspace is named after — the one whose service account, role and single
+// grant this root creates — is another.
+//
+// The workspace's own project holds the workspace's Firebase, its database and
+// its service (spec §3 and D1290: the workspace's own Firebase project is
+// created for the workspace and holds nothing else; the root's own
+// variables.tf says the same of `project`), and that is what makes the root's
+// one grant the account's whole reach. On a split installation the grant would
+// bind on a database the workspace does not use and reach the workspace's own
+// database not at all — the record W2's publish stage writes and the workspace's
+// own service reads lives in the FIREBASE project's database — while the plan
+// check accepts it, because the stage holds the plan to the same wrong project
+// (tf.WorkspaceNotCovered reads the one project it is given).
+//
+// Refused rather than converged against the Firebase project's name: the account
+// and the role are the identity of a service that runs in the workspace's own
+// project (W6), so a second project here would be a cross-project grant the root
+// does not carry, tf.WorkspaceNotCovered refuses by name and this design has no
+// shape for — and it would be a second answer to what a workspace's own project
+// is. The remedy is the one every split installation takes, which `fugaro
+// doctor` says beside the same command (adoptOwnFirebaseProject).
+func workspaceSplitFirebase(lc *localcfg.Config) string {
+	if lc.Budget == nil || lc.Budget.FirebaseProject == "" || lc.Budget.FirebaseProject == lc.GCPProject {
+		return ""
+	}
+	return fmt.Sprintf("this installation declares a workspace of its own, and its Firebase is another project's: %s's config records budget.firebase_project %s, so the workspace's database is %s's while the workspace's own project — the project the workspace is named after, whose own service account and one grant this root creates — is %s. A workspace's own project holds the workspace's Firebase, its database and its service (docs/workspaces/spec.md §3), and that is what makes the root's single grant the account's whole reach: applied here it would put the workspace's own service account on a database the workspace does not use and on the workspace's own database not at all. The two cannot be split, so this is refused before anything is planned: make this project its own Firebase project — drop budget.firebase_project and budget.rtdb_url from %s's config, then run `fugaro update --firebase-project %s`, which adopts it", lc.Name, lc.Budget.FirebaseProject, lc.Budget.FirebaseProject, lc.GCPProject, lc.Name, lc.GCPProject)
 }
 
 // Check reads the root's plan, because the plan is the only thing that knows
