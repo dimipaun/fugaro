@@ -89,7 +89,7 @@ export const BRIDGE_VERSION = 1
  * nothing failing, because the runtime tests in `test/unit/ipc.test.ts` pin the
  * same sets against the table and the object is built from that table anyway.
  * `satisfies` checks each row's shape without widening anything, so a row that
- * is not a name and a method is still a compile error, and the thirty names
+ * is not a name and a method is still a compile error, and the thirty-six names
  * stay literal -- which is what makes `ExposedName`, `ExposedMethod` and
  * `ConsoleBridge` below the closed things their comments say they are.
  *
@@ -278,6 +278,15 @@ export const BRIDGE_VERSION = 1
  * is its whole value. The second is `project policy show --json` and not
  * `project show --json`, because only the former omits the installation's caps
  * (F18, D1481).
+ *
+ * **The subscriptions plan's S2.7 added the thirty-fifth and thirty-sixth**
+ * (`licence.read` / `readLicence` and `licence.save` / `saveLicence`, the
+ * Licence screen's key entry) and left the other thirty-four exactly where they
+ * were. They are the first two rows here whose operation **spawns nothing** and
+ * keeps a credential: the console's own store is the keeper
+ * (`src/main/licence-store.ts`), and the CLI is handed the key in its
+ * **environment** and never in an argv (S2.1's hand-off, rule 8), so these two
+ * have no argv for a row to describe at all.
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],
@@ -417,11 +426,27 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // `src/main/confirm.ts`), so no renderer reaches a `fugaro run` child through
   // this row by itself.
   ['run.launch', 'launchRun'],
+  // The Licence screen's two operations (subscriptions plan S2.7): the key the
+  // active installation has, as the verifier sees it, and the key the operator
+  // pasted. **They are the two rows here whose child is not a child at all** --
+  // `command: null` in `src/main/ipc.ts`'s table, because the console keeps the
+  // key in its own store -- and that is the shape of their whole claim: no argv
+  // exists for a key to be in, which is S2.1's hand-off read from this side.
+  // `saveLicence` takes one argument, the pasted key, whose kind is the only one
+  // on this surface that is a credential; `readLicence` takes none, because the
+  // installation it answers for is the main process's own fact
+  // (`installation.current`'s rule). Neither answer carries the key text: what
+  // comes back is the claims and the state, or the sentence that refuses a bad
+  // key -- so a renderer draws a tier and an expiry and never a key. The screen
+  // is the one that is never gated (`docs/design/lapse-read-only.md`): a lapse
+  // is exactly when the operator has to reach the box that takes a renewal.
+  ['licence.read', 'readLicence'],
+  ['licence.save', 'saveLicence'],
 ] as const) satisfies readonly (readonly [string, string])[]
 
 /**
  * ExposedName is the closed union of the operation names this file exposes --
- * thirty string literals, not `string`. It is the type of the `operations` list
+ * thirty-six string literals, not `string`. It is the type of the `operations` list
  * a screen switches on, so the closure is what lets a screen be exhaustive.
  */
 export type ExposedName = (typeof EXPOSED_OPERATIONS)[number][0]
@@ -541,9 +566,9 @@ async function invokeOperation(
  *
  * The returned object is not cast into `ConsoleBridge`: it is checked against
  * it, like any other value, and that is the point of the accumulator's type. It
- * is `Record<ExposedMethod, ConsoleMethod>` -- thirty *named* properties,
+ * is `Record<ExposedMethod, ConsoleMethod>` -- thirty-six *named* properties,
  * because `ExposedMethod` is a union of literals -- so spreading it gives the
- * object literal those thirty properties as properties rather than as an index
+ * object literal those thirty-six properties as properties rather than as an index
  * signature. (Before that type was literal, this line needed `as ConsoleBridge`
  * to silence the compiler, which is what made the claim untested rather than
  * checked.) The loop is what actually writes them, and a loop is a thing the
@@ -572,7 +597,7 @@ export function createConsoleBridge(ipcRenderer: RendererLike): ConsoleBridge {
  * `exposeInMainWorld` is what keeps rule 5's promise concrete: the renderer gets
  * a copy of this object, in its own world, with `contextIsolation` in between.
  * It cannot reach the preload's scope, `ipcRenderer`, or Node -- only these
- * thirty methods.
+ * thirty-six methods.
  */
 export function exposeConsoleBridge(
   contextBridge: ContextBridgeLike,

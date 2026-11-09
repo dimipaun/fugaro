@@ -892,13 +892,21 @@ describe("the allow-list's read-only invariant", () => {
     expect(driven).toHaveLength(DESIGN_ARGV.length)
   })
 
-  it('has exactly nine operations spawn nothing at all, and names each of them', () => {
+  it('has exactly eleven operations spawn nothing at all, and names each of them', () => {
     // Task 3.3 added the handshake's answer, Task 3.4b `installation.current`
     // (plan step 6: "added to SHIPPED_SURFACE deliberately"), the owner's
     // design ruling of 2026-10-25 the rail's five store-and-window operations,
-    // and K2a `link.openPullRequest`. The number is the claim: these rows are
-    // the console's own state, and a tenth operation with no command would be a
-    // surface that answers something no CLI read produced.
+    // K2a `link.openPullRequest`, and S2.7 `licence.read` and `licence.save`.
+    // The number is the claim: these rows are the console's own state, and a
+    // twelfth operation with no command would be a surface that answers
+    // something no CLI read produced.
+    //
+    // **The two licence rows are a different kind of no-command operation from
+    // the nine above them**, and the diff is why they are worth naming: the nine
+    // answer the console's own state or open a window, and the two keep a
+    // **credential** in the console's own store. Nothing about them is an argv
+    // -- that is exactly the point of S2.1's hand-off -- so a reader looking for
+    // where a key could reach a command line finds these rows and no command.
     const withoutCommand = CONSOLE_OPERATIONS.filter((operation) => operation.command === null)
     expect(withoutCommand.map((operation) => operation.name)).toEqual([
       'startup.compatibility',
@@ -910,6 +918,8 @@ describe("the allow-list's read-only invariant", () => {
       'installation.open',
       'link.openExternal',
       'link.openPullRequest',
+      'licence.read',
+      'licence.save',
     ])
     // Each of them, by name, so the test fails naming the row rather than on a
     // list that a reader has to diff.
@@ -923,6 +933,8 @@ describe("the allow-list's read-only invariant", () => {
       'openInstallations',
       'openExternal',
       'openPullRequest',
+      'readLicence',
+      'saveLicence',
     ])
   })
 
@@ -1414,6 +1426,17 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   'installation.remove': { project: 'aurora' },
   'installation.reveal': { project: 'aurora' },
   'installation.open': {},
+  // The Licence screen's two operations (subscriptions plan S2.7). `licence.read`
+  // takes nothing for the same reason the rail's listing does: the installation
+  // it answers for is the main process's own fact, so there is no project name a
+  // renderer could put in its place. `licence.save` takes the one argument this
+  // surface has whose value is a **credential**, and the value here is a
+  // sentence rather than a key on purpose -- no key material belongs in a test,
+  // and the surface validates the paste's *shape* (trimmed, non-empty, under
+  // `MAX_LICENCE_KEY_LENGTH`, no hidden character) while the *format* is the
+  // verifier's (`verifyLicenceKey`, S2.4), which refuses this text.
+  'licence.read': {},
+  'licence.save': { key: 'the key the operator pasted' },
 }
 
 const RUN_ID = '20261016-121029-4a1b'
@@ -2532,7 +2555,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these thirty-four, and no others".
+ * channel. The claim is "these thirty-six, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -2640,6 +2663,19 @@ describe('the spend read’s arguments', () => {
  * the bound is the command's rather than a screen's, which is its whole value
  * -- and the second is `project policy show` and not `project show`, because
  * only the former omits the installation's caps (F18).
+ *
+ * **The subscriptions plan's S2.7 added the thirty-fifth and thirty-sixth**
+ * (`licence.read` / `readLicence` and `licence.save` / `saveLicence`: the
+ * Licence screen's key entry -- the key the active installation has, as the
+ * verifier sees it, and the key the operator pasted) and left the other
+ * thirty-four exactly where they were. They are appended here for the reason
+ * every row above was. What is new about them is not where they sit but what
+ * they are: **the first two operations on this surface that spawn nothing and
+ * keep a credential.** The console's own store holds the key
+ * (`src/main/licence-store.ts`), the CLI is handed it in its **environment** and
+ * never in an argv (S2.1's hand-off, rule 8), and no argument of either
+ * operation becomes a word of any command line -- so a reader asking where the
+ * key could reach a process's argv finds these two rows and no command.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -2676,6 +2712,12 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['managed.status', 'managedStatus'],
   ['policy.show', 'policyShow'],
   ['run.launch', 'launchRun'],
+  // The Licence screen's two (subscriptions plan S2.7), appended for the reason
+  // every row above was: what the task added must be visible as a diff, and the
+  // next task that adds a channel cannot do it quietly. They are the first two
+  // rows here whose operation spawns nothing and keeps a credential.
+  ['licence.read', 'readLicence'],
+  ['licence.save', 'saveLicence'],
 ]
 
 /**
@@ -2706,7 +2748,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these thirty-four, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these thirty-six, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -2727,7 +2769,7 @@ describe('the frozen list of operations the preload exposes', () => {
     // next task that adds a read cannot do it quietly.
     const thirtySecond = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
     expect(thirtySecond).toContain('fleet.report: a channel this console does not ship')
-    expect(thirtySecond).toContain('35 rows, and this console ships 34')
+    expect(thirtySecond).toContain('37 rows, and this console ships 36')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -2741,7 +2783,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('33 rows, and this console ships 34')
+    expect(withoutTheNewRow).toContain('35 rows, and this console ships 36')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -2756,8 +2798,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the thirty-four methods and nothing else', () => {
-    // The bridge the window is handed: the thirty-four methods and the names,
+  it('is frozen, and hands the window a bridge with the thirty-six methods and nothing else', () => {
+    // The bridge the window is handed: the thirty-six methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -3931,7 +3973,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: twenty-four of the surface's thirty operations,
+    // The non-vacuity half: twenty-nine of the surface's thirty-six operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
     // the nineteen, because a reduced console's header still names its
@@ -3971,7 +4013,15 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // the one row of this task that a reduced console refuses. Nothing reaches
     // `managed.status` there either: the section that will draw it is the
     // Project tab's, and CM5 to CM11 are the tasks that build them.
-    expect(THE_OPEN_OPERATIONS.length).toBe(27)
+    // **`licence.read` and `licence.save` (S2.7) are the twenty-eighth and the
+    // twenty-ninth**, and they are here for a reason unlike the twenty-seven
+    // above them: they reach no child at all (`command: null`), so there is no
+    // document of theirs for the mode to withhold a figure from -- and the key
+    // screen has to stay reachable in every state, which is the design's own
+    // rule for it (`docs/design/lapse-read-only.md`: "the key screen in
+    // particular is never gated", because a lapse is exactly when the operator
+    // has to reach the box that takes a renewal).
+    expect(THE_OPEN_OPERATIONS.length).toBe(29)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(
