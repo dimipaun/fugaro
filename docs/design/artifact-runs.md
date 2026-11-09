@@ -100,25 +100,25 @@ one (`:33-41`). A deterministic step *after* the agent has not been expressible 
 all, which is precisely what a render needs.
 
 **Timeouts are four numbers, and the run's clock is what really bounds it.**
-`timeouts: {total, stage, verify, finalize_reserve}` (`internal/config/config.go:497`);
+`timeouts: {total, stage, verify, finalize_reserve}` (`internal/config/config.go:423-428`);
 defaults `total = 3h`, `finalize_reserve = min(5m, total/5)`, `stage = min(60m, total)`,
-`verify = min(30m, total)` (`internal/config/defaults.go:314-327`). This
+`verify = min(30m, total)` (`internal/config/defaults.go:306-319`). This
 repository's own `fugaro.yaml` sets `total: 3h, stage: 150m, verify:
 25m, finalize_reserve: 5m` (`fugaro.yaml:81`). The runner turns `total` and
 `finalize_reserve` into one wall-clock deadline — `finalizeAt = Start + (Total - Reserve)`
 and `StageContext` capped by it (`internal/runner/budget.go:22-34`) — and the
 launcher tells Cloud Run a task timeout of `total + 2m` so the two agree
 (`docs/design/v1.md:370`; the CLI caps a request at 24 hours, `OverrideCap`,
-`internal/cli/run.go:981`). A Cloud Run job task can run up to 24 hours
+`internal/cli/run.go:976-991`). A Cloud Run job task can run up to 24 hours
 (`docs/SPEC.md:30`).
 
 **Cloud Run job resources are validated, and 8 vCPU / 32 GiB is the ceiling.**
 The workflow's `resources: {cpu, memory}` defaults to `4` / `8Gi`
-(`internal/config/defaults.go:75-79`), reaches Terraform as the job's limits
+(`internal/config/defaults.go:67-71`), reaches Terraform as the job's limits
 (`deploy/terraform/gcp/modules/workflow/job.tf:38-42`) and is checked by
 `CheckResources`: CPU must be **one of 1, 2, 4, 6, 8** and memory at most 32Gi,
 with a memory↔CPU ratio rule (`internal/backend/gcp/limits.go:25,36-46`;
-`limits_test.go:11` asserts `{8, "32Gi"}` passes and `:23` that
+`limits_test.go:11` asserts `{8, "32Gi"}` passes and `limits_test.go:23` that
 `{8, "64Gi"}` fails). So **VERIFIED, in this repository's own code: an artifact
 render on today's substrate gets at most 8 vCPU and 32 GiB.**
 
@@ -552,14 +552,14 @@ the context, then close the driver writer).
 **`fugaro run` gains `--attach PATH` (repeatable)**, and the launch order
 already supports it: the launcher mints the run id
 (`task.NewRunID`, `internal/cli/run.go:887`), writes `task.json`
-(`runstore.CreateTask`, `internal/cli/run.go:1329`) and only then submits the execution
-(`backend.Launch`, `internal/cli/run.go:1574`). `--attach` fills the gap between the mint and the
+(`runstore.CreateTask`, `:1329`) and only then submits the execution
+(`backend.Launch`, `:1574`). `--attach` fills the gap between the mint and the
 write:
 
 1. **Resolve the run id first**, and **establish that it is a new one before a
    single byte is uploaded.** A repeated `--run-id` is not a new run: the
    launcher adopts the stored task when it is byte-identical and refuses a
-   different one (`createTask`, `internal/cli/run.go:3418`, over
+   different one (`createTask`, `internal/cli/run.go:1328`, over
    `runstore.CreateTask`'s `ErrExists`) — and that check happens *after* an
    upload would have. Uploading first would therefore **overwrite a finished
    run's `inputs/` objects before the launcher ever looked at its task**, which
@@ -623,7 +623,7 @@ write:
      mode: <mode>".
    - **A launch that leaves the recipe to the runner is refused too.** When
      `spec.Recipe` is nil the CLI cannot know what the runner will pick
-     (`runnerChooses`, `internal/cli/run.go:3177`: no recipe in the task, not a
+     (`runnerChooses`, `internal/cli/run.go:1128`: no recipe in the task, not a
      follow-up, no checkout here — the runner then takes `agent.recipe` from
      `fugaro.yaml` at the ref, else the catalog default), so it cannot promise
      an artifact run. The refusal says so and names the fix: pass the artifact
@@ -786,7 +786,7 @@ An agent turn is the wrong place for a two-hour render, for four independent
 reasons, each of which is a number in this repository:
 
 1. **A stage has a timeout** (`timeouts.stage`, 150m in this repository's own
-   `fugaro.yaml:81`, 60m by default, `internal/config/defaults.go:322-324`). A
+   `fugaro.yaml:81`, 60m by default, `internal/config/defaults.go:314-316`). A
    render inside a turn is killed by a limit that has nothing to do with it —
    and a stage that *does* finish eats the budget of the loop it is in.
 2. **Every model turn costs model dollars**, and the caps are model dollars.
@@ -808,7 +808,7 @@ sizzle case is the plan stage alone.
 |---|---|---|
 | The run's own wall clock | `finalizeAt = StartedAt + (total − finalize_reserve)` | `internal/runner/budget.go:22-34` |
 | The render's own deadline | new `timeouts.render`, also capped by `finalizeAt` | this design |
-| Cloud Run's task timeout | `total + 2m` as the launcher sends it; a task may run up to 24h; the CLI's `--total-timeout` cap is 24h | `docs/design/v1.md:370`, `docs/SPEC.md:30`, `internal/cli/run.go:981` |
+| Cloud Run's task timeout | `total + 2m` as the launcher sends it; a task may run up to 24h; the CLI's `--total-timeout` cap is 24h | `docs/design/v1.md:370`, `docs/SPEC.md:30`, `internal/cli/run.go:976-991` |
 | Cloud Run job resources | 1, 2, 4, 6 or 8 vCPU; ≤ 32Gi with ratio rules | `internal/backend/gcp/limits.go:25,36-46` |
 | The container's own disk | **It is memory, and this repository records nothing about it.** On Cloud Run's second-generation execution environment the container's filesystem is an in-memory filesystem with no volume mounts (platform documentation; **nothing in this repository states it**, U3), so the staging directory, the render's own temp files and the upload's reader are all charged to the job's **memory** limit — 32 GiB at most (`limits.go`'s `CheckResources`) | Check 58's step 7, in three halves: an over-*cap* set must refuse cleanly, an over-*memory* render must be **observed** (killed container or clean failure), and the run's own record must say which happened |
 | The artifact caps | `outputs.max_files` (path count), `outputs.max_bytes` (**per artifact**), `outputs.max_total_bytes` (**the whole set**) | this design |
@@ -1149,7 +1149,7 @@ produced (out), and files an operator handed to a model-driven job (in).
 
    **And the runner does not trust `Spec.Mode` either, because it may be
    empty.** The launcher does not always resolve the recipe: when it leaves the
-   choice to the runner (`runnerChooses`, `internal/cli/run.go:3177`) the spec
+   choice to the runner (`runnerChooses`, `internal/cli/run.go:1128`) the spec
    carries **no** `mode`, and the runner takes it from the recipe it resolves
    (`agent.recipe` at the ref, else the catalog default). So the runner's rule
    is: **`Spec.Mode` when set, the resolved recipe's mode when not**, and the
@@ -1640,7 +1640,7 @@ line read for it — the plan's Review Focus repeats the important ones):
 | V5 | `mode:` is `implement|review`; `review` is the no-git-token, no-PR precedent, with the outcome `reviewed` | `internal/recipe/recipe.go:38-42,356-362,632-639`, `docs/design/generic-tool.md:195-203`, `internal/runner/runner.go:635` |
 | V6 | The `check` step is deterministic, runs `verify.Run` in the checkout as the agent's user, may only come first, and may name only `commands.build|test|lint` | `internal/recipe/recipe.go:47-62`, `internal/runner/gate.go:61,125-132`, `internal/verify/verify.go:176,243`, `schemas/recipe.schema.json` |
 | V7 | A recipe names no command; bucket text would run code | `docs/design/generic-tool.md:356` (G10's row), `internal/runner/gate.go:125-127` |
-| V8 | Timeouts: `total 3h` / `stage min(60m,total)` by default; this repository's `fugaro.yaml` says `3h/150m/25m/5m`; `finalizeAt` is the real deadline; Cloud Run gets `total+2m`; a task may run 24h; the CLI caps `--total-timeout` at 24h | `internal/config/defaults.go:314-327`, `fugaro.yaml:81`, `internal/runner/budget.go:22-34`, `docs/design/v1.md:370`, `docs/SPEC.md:30`, `internal/cli/run.go:981` |
+| V8 | Timeouts: `total 3h` / `stage min(60m,total)` by default; this repository's `fugaro.yaml` says `3h/150m/25m/5m`; `finalizeAt` is the real deadline; Cloud Run gets `total+2m`; a task may run 24h; the CLI caps `--total-timeout` at 24h | `internal/config/defaults.go:306-319`, `fugaro.yaml:81`, `internal/runner/budget.go:22-34`, `docs/design/v1.md:370`, `docs/SPEC.md:30`, `internal/cli/run.go:976-991` |
 | V9 | Cloud Run jobs take 1, 2, 4, 6 or 8 vCPU and at most 32Gi | `internal/backend/gcp/limits.go:25,36-46`, `limits_test.go:11,23` |
 | V10 | The caps count model dollars; compute is an estimate, reported and never capped; `compute_usd`/`compute_estimated` exist and are rolled into history | `docs/design/m9-spec-v3-reconciliation.md:10`, `docs/design/m9-budget-and-dashboard.md:798`, `internal/budget/evaluate.go:190-204`, `internal/runner/cost.go:62-64`, `internal/runstore/cost.go:12-18`, `internal/budget/rollup.go:296-303` |
 | V11 | `fugaro budget preview` has no compute notion | `internal/cli/budget_preview.go:26-28,489-538,697-731` |
@@ -1654,11 +1654,11 @@ line read for it — the plan's Review Focus repeats the important ones):
 | V19 | GPUs are out of scope in the VM design, by name | `docs/design/compute-backend.md:1485` (§6.3) |
 | V20 | A repository-less run needs project-centric phase 3's project jobs, which are not shipped; `checkout: clone` is not shipped either | `docs/design/project-centric.md:15,66-68,109`, `internal/cli/recipes_skew.go:51-58`, `internal/cli/docs_checkout_test.go:123-132` |
 | V21 | Check numbers: rows exist for 40–47 (`:317-324`) and 57 (`:325`); **48–56 are reserved by the project-centric plan** (PR #366) and 57 by the compute backend, so **58 is the next free number**; Check 43's guard block is at `:1437-1458` and "never `belong`" at `:1431` | `docs/gcp-live-checklist.md:250-257,317-325,1431,1437-1458` |
-| V24 | A repeated `--run-id` adopts a byte-identical stored task and refuses a different one, **after** `CreateTask` — so an upload ordered before it would rewrite a finished run's inputs | `createTask` `internal/cli/run.go:3418`, `runstore.CreateTask`/`ErrExists`, `blobx.Create`'s `IfNotExist` `internal/blobx/blobx.go:107-127` |
+| V24 | A repeated `--run-id` adopts a byte-identical stored task and refuses a different one, **after** `CreateTask` — so an upload ordered before it would rewrite a finished run's inputs | `createTask` `internal/cli/run.go:1328`, `runstore.CreateTask`/`ErrExists`, `blobx.Create`'s `IfNotExist` `internal/blobx/blobx.go:107-127` |
 | V25 | An artifact run would checkpoint like an implement run unless it is stopped: the gate is `checkpointsOn()`, not the checkout arm | `internal/runner/checkpoint.go:65` (`r.follow == nil && r.baseSHA != "" && r.startSHA != "" && cfg.Git.PR.CheckpointsOn()`), `runner.go:1684` (`startCheckpoints` inside the stage runner) |
 | V26 | The agent's git credentials enter its environment at **two** sites inside `bootstrap` (the repo env and the stage env map), and the workflow's secrets at a third (`!r.review`) | `internal/runner/runner.go:635`, `:1135`, `:1091-1099` |
 | V27 | `verify.Settings` is written at bootstrap, before any stage, from the workflow's commands — and it is a **0644 file re-read per invocation** by `verify.LoadSettings`, so it is not a place a fixed command can live | `verify.WriteSettings` call, `internal/runner/runner.go:1073-1081`; `internal/verify/verify.go:26,60,85` |
-| V28 | The runner's workflow config is read **once** and kept in memory; nothing re-reads `fugaro.yaml` afterwards, and the sites that switch on `runstore`'s outcome value are four: the report's, `cancel`'s, and the two `watch` displays. `internal/runner/halt.go:177` **reads** it but never sees the new value — a halted artifact run ends `OutcomeNone` — so it is not a fifth | `r.cfg, r.wf` at `internal/runner/runner.go:962`; the outcome sites `internal/runner/report.go:72-79`, `internal/cli/cancel.go:468`, `internal/watch/plain.go:99`, `internal/watch/render.go:653`; `:177` reads `OutcomeNone` only |
+| V28 | The runner's workflow config is read **once** and kept in memory; nothing re-reads `fugaro.yaml` afterwards, and the sites that switch on `runstore`'s outcome value are four: the report's, `cancel`'s, and the two `watch` displays. `internal/runner/halt.go:177` **reads** it but never sees the new value — a halted artifact run ends `OutcomeNone` — so it is not a fifth | `r.cfg, r.wf` at `internal/runner/runner.go:962`; the outcome sites `internal/runner/report.go:72-79`, `internal/cli/cancel.go:468`, `internal/watch/plain.go:99`, `internal/watch/render.go:653`; `internal/runner/halt.go:177` reads `OutcomeNone` only |
 | V22 | The three PNGs the check generates are real PNGs: the generator the plan commits to (a `python3` one-liner over `zlib`/`struct`, in Check 58's section) was run in this session and produced three valid 320×240 8-bit RGB PNGs, 865 bytes each | run in this session; the command is in the plan, Check 58's step 2 |
 | V23 | `blobx` has no streaming write and no read above 1 MiB (`MaxReadBytes`), and no `Put`/`Create` variant that takes a path | `internal/blobx/blobx.go:51-54,109-138,148-198,314` |
 

@@ -932,7 +932,7 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   record — the same place `internal/cli/init.go:4271` writes `Vertex` — and the backfill's one call from
   `install`), `internal/cli/init_credentials.go` (both doors: the record write and the backfill that
   reads the installation's state), `internal/cli/run.go` (`credentialsServiceLaunchEnv` at `:3647` and
-  its call site at `internal/cli/init.go:3553`), `internal/cli/update_switch_test.go` (new, so that DON2's
+  its call site at `:3553`), `internal/cli/update_switch_test.go` (new, so that DON2's
   `init_converge_test.go` stays DON2's — §4.1), `internal/cli/run_credentials_env_test.go`. **The count
   is the honest one and not six**: the two review rounds after the first plan added the third reader of
   the record (`internal/localcfg/shared.go`), the state-bucket evidence (`internal/infra/repo.go`) and

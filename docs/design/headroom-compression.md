@@ -909,7 +909,7 @@ tunes.
 **The three edits, plus a fourth this design's first draft omitted**
 (`docs/design/recipes.md` §2, restated by every design since: "Config is
 strict-parsed in three places"), concretely, following the shape
-`OAuthToken` just added (`internal/config/config.go:233`):
+`OAuthToken` just added (`internal/config/config.go:159-168`):
 
 1. **The Go struct**, `internal/config/config.go`'s `Agent`: `Compression
    string \`yaml:"compression,omitempty"\`` next to `Recipe`/`OAuthToken`.

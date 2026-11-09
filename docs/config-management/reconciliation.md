@@ -32,17 +32,17 @@ what the guard at the end of this section re-runs.
   installation's own plumbing (F13, D1182).
 - **F2 — `fugaro rigor` does not exist.** There is no `newRigorCmd` in `internal/cli`, no `rigor` cobra
   command and no `floor` subcommand, while the registry names `rigor` (`internal/settings/registry.go:266`)
-  and `rigor floor` (`internal/settings/registry.go:682`) as the owners of keys. Two of the registry's owner strings name a command a
+  and `rigor floor` (`:682`) as the owners of keys. Two of the registry's owner strings name a command a
   person cannot run.
 - **F3 — the rigor keys it would own are seven.** `rigor.default` (`internal/settings/registry.go:266`),
-  `rigor.areas` (`:273`), the four `layer.defaults.rigor.*` rows (`internal/settings/registry.go:450`: `mode`, `area_mode`, and the
-  two glob lists) and `governance.review_floor_calls`' neighbour `review_floor` (`internal/settings/registry.go:682`). They are the
+  `rigor.areas` (`:273`), the four `layer.defaults.rigor.*` rows (`:445`: `mode`, `area_mode`, and the
+  two glob lists) and `governance.review_floor_calls`' neighbour `review_floor` (`:682`). They are the
   local project config and the layer file, and both are hand-edited.
 - **F4 — `secrets` has no `rm` and no policy flags.** The family is `set` and `ls`
   (`internal/cli/secrets.go:41`), and its `set` takes a name and a value. The seven policy keys that
   name it as owner — `secret_expires`, `secret_rotation_days`, `project_secrets.*.allow_data_to`,
   `project_secrets.*.proxy` (`internal/settings/registry.go:644`), `batch.secrets`, `bitbucket_api_roots`,
-  `mailbox.keychain_item`, `verifier_accounts` (`internal/settings/registry.go:684`) — have no flag and no command.
+  `mailbox.keychain_item`, `verifier_accounts` (`:684`) — have no flag and no command.
 - **F5 — `accounts` has no `rm`.** The family is `ls`, `add` (`internal/cli/accounts_add.go:41`) and
   `clear` (`internal/cli/accounts.go:25`), and `clear` writes a project-database mark rather than a
   config. `claude_accounts.*.allow_data_to` (`internal/settings/registry.go:627`) is written by `add`
@@ -50,12 +50,12 @@ what the guard at the end of this section re-runs.
 - **F6 — a repository's `workflows.*` has no writer at all.** 37 keys
   (`internal/config/scope.go:102`), the registry rows at `internal/settings/registry.go:223`, the struct
   at `internal/config/config.go:572`, its blocks at `:627` — `commands` (`:792`), `cache` (`:822`),
-  `secrets` (`internal/config/config.go:828`), `resources` (`:879`), `timeouts` (`:1005`). `fugaro config init` writes a
+  `secrets` (`:828`), `resources` (`:879`), `timeouts` (`:1005`). `fugaro config init` writes a
   four-line file (`internal/cli/config_init.go:84`) and the setup skill writes the rest **with the
   user**, in the user's own agent session (`plugin/skills/setup/SKILL.md:13`).
 - **F7 — the project layer file is hand-edited and published by a second command.** The file is
   `<config home>/fugaro/projects/<name>.layer.yaml` (`internal/localcfg/localcfg.go:1120`), its rows are
-  `layerRows` (`internal/settings/registry.go:488`), and `fugaro config publish`
+  `layerRows` (`internal/settings/registry.go:411`), and `fugaro config publish`
   (`internal/cli/config_publish.go:27`) is the command that reads it, checks the generation
   (`:255`) and writes the object. Two steps where the owner's ruling wants one.
 - **F8 — the editors for the missing shapes already exist and the write path does not call them.**
@@ -79,7 +79,7 @@ what the guard at the end of this section re-runs.
   rows they own read with no family beside them (`internal/cli/settings_read.go:388`). The read is not
   the only caller: the same map is what refuses a write and points the key at its family
   (`internal/cli/settings_set.go:402`). So a family cannot simply be added — `config` owns `max_parallel`
-  (`internal/settings/registry.go:678`) and `setup` owns `update_check` (`:684`), and **both keys are in
+  (`internal/settings/registry.go:560`) and `setup` owns `update_check` (`:566`), and **both keys are in
   the allowlist and are written by the generic path today**, so an entry for either family would refuse
   two keys `settings set` writes. The map also carries no entry for the default owner
   (`internal/settings/registry.go:324`), so the column is empty for every key the generic path writes,
@@ -95,7 +95,7 @@ what the guard at the end of this section re-runs.
   about) and the layer's `profiles.*`.
 - **F13 — `budget.mode` and `budget.per_day_usd` name no owner and default to `settings set`, and the
   generic path refused them on purpose.** The rows are `internal/settings/registry.go:210` and `:213`,
-  the default owner is `internal/settings/registry.go:324`, and the allowlist's own comment said so in as many words until D1179
+  the default owner is `:324`, and the allowlist's own comment said so in as many words until D1179
   rewrote it (`internal/cli/settings_set.go:65`). So they were **unwritable and owned by a command that
   will not write them**: the sharpest single defect of the audit. The other two keys of the same block —
   `budget.per_run_usd` and `budget.allowed_models` — *are* in the allowlist
@@ -327,7 +327,7 @@ rather than its conclusion.
   recommended. SEC.**
   Recommendation: `fugaro secrets rm NAME` deletes the Secret Manager version and the config entry, and
   the family gains the policy flags for the keys that name it (`internal/settings/registry.go:644`,
-  `internal/settings/registry.go:684`) — including `project_secrets.*.allow_data_to` and `proxy`, which are a widening when they
+  `:684`) — including `project_secrets.*.allow_data_to` and `proxy`, which are a widening when they
   widen. No row for a secret's value is added: a value has no registry row and never appears in a diff,
   and a person who needs to set one still uses `secrets set`'s hidden prompt
   (`internal/cli/secrets.go:276`).
@@ -360,9 +360,9 @@ rather than its conclusion.
   scalars go to the generic writer) — OPEN, recommended.**
   Recommendation: `repos.*`' scalars and lists (`internal/settings/registry.go:701`) are the generic
   writer's, and one new subcommand carries the two shapes a bare scalar cannot express — a
-  `job_profiles.*` block (`internal/settings/registry.go:647`, seven keys) and a repository's workflow selection — both object lists
+  `job_profiles.*` block (`:647`, seven keys) and a repository's workflow selection — both object lists
   addressed by name (D1163). A separate `fugaro project job` family is refused: the keys already name
-  `project` (`internal/settings/registry.go:647`), so a second group would give one owner two commands.
+  `project` (`:647`), so a second group would give one owner two commands.
   Cost of the alternative: a second family for keys whose owner string already names the first is a
   registry that disagrees with the CLI, which readers hit before they hit the code. Cost of the
   recommendation: `project repos` grows a subcommand whose flags differ from its siblings' `ls`/`add`/`rm`
@@ -425,8 +425,8 @@ rather than its conclusion.
   carries is `settings set`'s and its row says so; every other key names a command that exists or a
   sentence naming `fugaro setup` or `fugaro update`. The mechanism: the read resolves an owner through a
   table of its own instead of `settingsFamilyCommands` (`internal/cli/settings_set.go:43`), which answers
-  the *write*'s refusal and cannot be widened — `config` owns `max_parallel` (`internal/settings/registry.go:678`) and `setup`
-  owns `update_check` (`internal/settings/registry.go:684`), and both are keys the generic path writes today (F11). **The table**:
+  the *write*'s refusal and cannot be widened — `config` owns `max_parallel` (`internal/settings/registry.go:560`) and `setup`
+  owns `update_check` (`:566`), and both are keys the generic path writes today (F11). **The table**:
   every key whose owner string changes is listed in the plan's own table (G12), so the change is
   reviewable as a diff of names. The owner column is a read path
   (`internal/cli/settings_read.go:388`) and not a write path, so this is a rename of a name and never a
@@ -484,9 +484,9 @@ rather than its conclusion.
   `setup` or `update`) — OPEN, recommended.**
   Recommendation: the roughly seventy keys whose owner is `setup` or `update` — `endpoints.*`
   (`internal/settings/registry.go:659`), `terraform.*` (`:585`), `batch.*` (`:571`), `build.*` (`:581`),
-  `gcp_project` and `runs_bucket` (`internal/settings/registry.go:540`), the generations (`:545`) — are never hand-edited and get no
+  `gcp_project` and `runs_bucket` (`:540`), the generations (`:545`) — are never hand-edited and get no
   command here; where a person must choose one, the choice is a **flag on the converge** that feeds it,
-  as `terraform.alert_email` (`internal/settings/registry.go:586`) already has one (`internal/cli/init.go:368`) and the batch machine
+  as `terraform.alert_email` (`:586`) already has one (`internal/cli/init.go:368`) and the batch machine
   type (`:572`) has in the design it comes from. An edit of a file the next `update` overwrites is the
   state this design removes, and it is the state most likely to be mistaken for a setting.
   Cost of the alternative: giving these keys a generic writer would let a person set an endpoint the

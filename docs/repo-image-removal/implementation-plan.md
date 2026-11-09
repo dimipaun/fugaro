@@ -37,7 +37,7 @@ converge, and that is a change to a task rather than a detail inside it.
 
 | Order | Tasks | What forces it |
 | --- | --- | --- |
-| 0 | **the catalog ships — done, and it is the one step that had a date outside the plan.** Both `imageCatalogShipped` constants are `true` on `main` (`internal/cli/recipes_skew.go:176`, `internal/infra/readiness.go:762`; #1665 merged), the flip being 0.18.0's | While the flag was false, readiness held a job whose image is a catalog entry back rather than running it (`:462`), so R0 could land and the dogfood would stop launching. **R0 now waits on nothing** |
+| 0 | **the catalog ships — done, and it is the one step that had a date outside the plan.** Both `imageCatalogShipped` constants are `true` on `main` (`internal/cli/recipes_skew.go:176`, `internal/infra/readiness.go:762`; #1665 merged), the flip being 0.18.0's | While the flag was false, readiness held a job whose image is a catalog entry back rather than running it (`internal/infra/readiness.go:462`), so R0 could land and the dogfood would stop launching. **R0 now waits on nothing** |
 | 1 | **R0** | D1193: the entry, its build and the pin, before any removal. Nothing else may land first: every later task's red step runs against this repository's own pipeline |
 | 2 | **D1148's two tasks** | They add the installation-level schedule and its driver to `internal/infra/spec.go`, `internal/infra/tf/cover.go` and `internal/imagecheck/` — the files R4 and R6 change. Removing first would make D1148's driver read a check this plan deletes |
 | 3 | **R1**, **R2**, **R3** | R1 (the `baked` rule) and R2 (the refusals) are the configuration's two halves and neither depends on the other; R3 is R2's fixtures — **R2 first**, because a red step cannot assert a message that is not written |
@@ -233,8 +233,8 @@ readiness branches that decide between them.
 - **Interface.** Each removed key becomes a tombstone that refuses by name and names the catalog command
   — the mechanism `image.node`/`image.jdk` already are (`internal/config/image.go:119`, `:122`), whose
   sentence is built from `MigrationDoc`. `internal/config/scope.go:108` loses the eleven rows of the
-  removed keys (`:113`, `:131`, `:135`, `internal/config/scope.go:179`, `:189`), `internal/settings/registry.go:229` its
-  twenty-one (`internal/settings/registry.go:454`, `:477`), and the three schemas their members
+  removed keys (`:113`, `:131`, `:135`, `:179`, `:189`), `internal/settings/registry.go:229` its
+  twenty-one (`:454`, `:477`), and the three schemas their members
   (`schemas/fugaro.schema.json:358`, `:396`, `:511`; `schemas/project-layer.schema.json:265`, `:338`;
   `schemas/settings.schema.json:1130`, `:1181`).
   `image_name`, `needs` and `image_catalog.*` keep every member they have, and no version moves.

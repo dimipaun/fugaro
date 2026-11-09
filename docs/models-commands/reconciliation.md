@@ -47,7 +47,7 @@ not `fugaro.yaml` keys at all: they are fields of the local config (`internal/lo
 
 **F7: Conflicts. `price_policy` and `require_zdr` are not yet deployable.** `catalogShipped` is `false`
 (`internal/cli/recipes_skew.go:150`), so `fugaro update --repo` refuses a route that sets either switch
-(`refuseCatalogSwitches`, `internal/cli/recipes_skew.go:1556`; reached through `gateCatalogSwitches`, `internal/cli/init.go:3473`).
+(`refuseCatalogSwitches`, `:1510`; reached through `gateCatalogSwitches`, `internal/cli/init.go:3473`).
 `docs/multi-model.md` §2 says to leave both out. *Consequence:* the brief's "explain the cost spread and
 `price_policy`" is an explanation only: `models add` prints the spread and what `highest` would do, and writes
 no switch until `catalogShipped` turns true (D795).
@@ -93,7 +93,7 @@ secret name) is not asked for and stays a hand edit; `models add` extends an exi
 
 **F13: Exists, offline. Each repository's pins can be read without the network.** The remembered checkouts
 (`internal/localcfg/checkouts.go`, `CheckoutsVersion` at `:57`) record where this machine has each repository;
-`agentAtRef` (`internal/cli/run.go:2459`) already reads a `fugaro.yaml` at a ref from a local checkout with no
+`agentAtRef` (`internal/cli/run.go:1661`) already reads a `fugaro.yaml` at a ref from a local checkout with no
 fetch; `layerRoutes` (`internal/cli/layer_resolve.go:357`) resolves the project layer's part. *Consequence:*
 `models ls` and `models rm` read usage from local checkouts only, and say which repositories they could not see
 (D783, D793).

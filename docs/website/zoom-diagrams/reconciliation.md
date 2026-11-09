@@ -110,7 +110,7 @@ both: `ReasonNoVerifiedTest` and `"tests failing on the final commit"`. `runner.
 then sets `spec.Draft = !ready`. So a senior pass alone does **not** flip a draft PR to
 ready. The draft/flip pair itself is real and shipped (`internal/runner/prflow.go:200`
 `openDraft`, `:224` `Draft: true`), gated by `git.pr.early_draft`, default **true**
-(`internal/config/defaults.go:77-79`).
+(`internal/config/defaults.go:69-71`).
 
 ### ZF4 — **Wrong** — "deterministic checks first (compile, tests)" as a property of a job
 
@@ -128,7 +128,7 @@ Bounces are `review_rounds − 1` (`docs/recipes.md:131`), so the default is exa
 only for recipes that declare `bounce: first_line` on the review step
 (`internal/recipe/recipe.go:96` `Step.Bounce`), which `standard` and `test-and-fix` do and
 `default` does not. The last senior round never bounces: the loop returns before reaching the
-bounce (`runner.go:1774` returns on `round == st.Rounds`; the bounce is `:1784`).
+bounce (`runner.go:1774` returns on `round == st.Rounds`; the bounce is `runner.go:1784`).
 "Then fail" is
 right in kind: the run ends not-ready with a draft outcome (`runner.go:2386-2395`), not an
 infrastructure error.
@@ -398,7 +398,7 @@ app on the live site is the privacy page's "The phone app" section
 
 **The site says "coming soon" nowhere.** `grep -rin 'coming soon' website/` is empty: no page,
 no data file, no test. The phrase exists in this repository only in documents about work not
-yet done — the brief itself (`spec.md:77` "Mobile app page (coming soon)", `:79` a
+yet done — the brief itself (`spec.md:77` "Mobile app page (coming soon)", `spec.md:79` a
 `"Coming soon"` badge) and this folder's own four files. An earlier draft of this finding
 claimed a search over `docs/website/` found none, which was false for the reason the search was
 meant to catch: `spec.md` is under `docs/website/`, and it is where the phrase comes from. What

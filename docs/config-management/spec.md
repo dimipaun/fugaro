@@ -252,7 +252,7 @@ three parts:
 - **The mechanism is the read's own table, not the write's map.** `settingsFamilyCommands` is asked a
   second question too — it is what refuses a write and points the key at its family
   (`internal/cli/settings_set.go:402`) — so a family cannot simply be added to it: `config` owns
-  `max_parallel` (`internal/settings/registry.go:678`) and `setup` owns `update_check` (`:684`), and both
+  `max_parallel` (`internal/settings/registry.go:560`) and `setup` owns `update_check` (`:566`), and both
   are keys the generic path writes today, so an entry for either family would refuse two keys `settings
   set` writes.
 - **Every key that changes owner is listed**, in the plan's own table (§ plan, G12), so the change is

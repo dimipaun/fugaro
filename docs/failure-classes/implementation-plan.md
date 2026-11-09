@@ -161,7 +161,7 @@ F21, F27, F28. **Depends on:** nothing. **Reviewer tier:** standard. **SEC:** no
 - **Tests:** `TestResultSchemaFailureClassesAgreeWithGo` — **the shape `TestResultSchemaHaltReasonsAgreeWithGo`
   uses (`schemas/schemas_test.go:1985`), not the `…StatusesAgreeWithGo` the design names, which does
   not exist** (F15): the schema's enum is `failure.Classes()`, in order. `TestFailureClassesAreClosedAndPropertyComplete`
-  (every class has its row, every row its class). `TestResultSchemaAcceptsRunnerRecords` (`schemas/schemas_test.go:757`,
+  (every class has its row, every row its class). `TestResultSchemaAcceptsRunnerRecords` (`:696`,
   re-run: the fully-populated record carries the field).
 - **Red step:** write the schema's enum from the Go slice before the slice exists — the test fails
   because the two lists disagree (an empty slice against a written enum), which is the failure the

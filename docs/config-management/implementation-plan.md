@@ -174,7 +174,7 @@ landed.
 
 - **Interface.** Every entry of `<config home>/fugaro/projects/<name>.layer.yaml`
   (`internal/localcfg/localcfg.go:1120`) — `profiles.*`, `defaults.*` (agent, git, rigor) and `ab.*` —
-  written through G0 and G1 against `layerRows` (`internal/settings/registry.go:488`), with
+  written through G0 and G1 against `layerRows` (`internal/settings/registry.go:411`), with
   `config publish`'s reserved-key and executable-key refusals (`internal/cli/config_publish.go:309`)
   applied to the edit's own document. The layer's `--layer project` write keeps ending with
   `next: fugaro update` (`internal/cli/settings_set.go:1172`).
@@ -265,7 +265,7 @@ landed.
 
 - **Interface.** The `repos.*` scalars and lists (`internal/settings/registry.go:701`) go to the generic
   writer; `fugaro project repos set` carries the two shapes a scalar cannot express — a `job_profiles.*`
-  block (`internal/settings/registry.go:647`, seven keys) and a repository's workflow selection — both object lists addressed by
+  block (`:647`, seven keys) and a repository's workflow selection — both object lists addressed by
   name (D1163). A separate `job` family is refused by D1173.
 - **Red step.** `TestProjectReposSetWritesAJobProfileBlock` — fails today because the subcommand does not
   exist — then `TestProjectReposSetWritesAWorkflowSelection`,

@@ -40,7 +40,7 @@ tombstones stay with them — they are not settings but refusals with a migratio
 
 The eleven scope rows that make the removed keys settable
 (`internal/config/scope.go:108`, `:113`, `:131`, `:135`) go with them, and so do their entries in
-`ExecutableKeys` and `NonExecutableImageKeys` (`internal/config/scope.go:216`, `:189`). **Not every
+`ExecutableKeys` and `NonExecutableImageKeys` (`internal/config/scope.go:179`, `:189`). **Not every
 `image.*` row goes**: `internal/config/scope.go:106` and `:107` are `image.node` and `image.jdk`, the
 two tombstones that stay, so the removal's first scope row is `:108` and its last `:135`. A key that is
 gone from the scope table is a key no settings command may write, which is the second half of the
@@ -281,7 +281,7 @@ No compatibility, in the shape the tree already uses for a removed key.
   (`internal/config/image.go:119`, `:122`). The keys stay decodable as tombstones and their *refusal*
   is the message; a bare "field image not found" names nothing and is not what ships (D1195).
 - **The schemas**: `schemas/fugaro.schema.json:358` loses `image` (`:396` for `dockerfile`, `:511`
-  for `rebuild`), and its mutual-exclusion clauses (`schemas/fugaro.schema.json:314`) shrink to the pairs that survive
+  for `rebuild`), and its mutual-exclusion clauses (`:306`) shrink to the pairs that survive
   (`image_name` with `needs`); `schemas/project-layer.schema.json:265` loses the same keys (`:338` for
   `rebuild`). **`schemas/settings.schema.json` loses the removed keys' own member rows** — the
   twenty-one at `schemas/settings.schema.json:832` through `:1181` (`:1145` is
