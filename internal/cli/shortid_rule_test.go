@@ -158,9 +158,15 @@ func shortIDRuleTexts(t *testing.T) map[string]string {
 // endingRefusalText runs one command path with an ending in place of the run
 // and returns what the CLI said when it refused the ending as a name it cannot
 // resolve, "" when the command took it. A refusal is a lookup's message for a
-// ref that is neither <repo-slug>/<run-id> nor a run ID: locateRun's own words
-// today, and resolveRun's "no run ending ... pass the full ID" (D1709) once
-// SR14 wires the read commands to it.
+// ref that names no run: locateRun's "is neither <repo-slug>/<run-id> nor a run
+// ID" today, and, once SR14 wires the read commands to it, everything
+// resolveRun answers an ending with — "no run ending ... among the active runs
+// and the last N days" (D1709), "no active run ending ..." for its active-only
+// readers, and, when the ending does name runs, "<ending> is an ending; pass
+// one of the full run IDs above", which is what the probe below reads: it runs
+// `cancel`, a destructive command that lists its matches instead of acting
+// (D1710). A vocabulary missing that phrase would call a command that did
+// refuse one whose silence this test then trusts.
 func endingRefusalText(t *testing.T, path, ending string) string {
 	t.Helper()
 	out, errOut, err := execute(t, append(strings.Fields(path), ending)...)
@@ -168,7 +174,7 @@ func endingRefusalText(t *testing.T, path, ending string) string {
 		return ""
 	}
 	msg := err.Error() + " " + errOut + " " + out
-	for _, refusal := range []string{"is neither", "no run ending"} {
+	for _, refusal := range []string{"is neither", "no run ending", "no active run ending", "is an ending"} {
 		if strings.Contains(msg, refusal) {
 			return strings.TrimSpace(msg)
 		}
