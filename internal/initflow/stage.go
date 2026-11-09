@@ -656,7 +656,7 @@ func (e *GatedError) Left(stage Left) Left {
 // the person at the terminal needs is the fact, the cause and the door, with
 // the argument in the log the step's line prints the path of (D1352).
 func coverBrief(reasons []string) []string {
-	why := "what it would write is outside Fugaro's own tables cover"
+	why := "what it would write is not one of the shapes Fugaro's own tables cover"
 	if len(reasons) > 0 {
 		why = "refused by " + report.Short(strings.Join(reasons, "; "))
 	}
