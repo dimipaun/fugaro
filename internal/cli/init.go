@@ -647,6 +647,16 @@ type initRun struct {
 	// whose roles step found no node.
 	accessDerive func(ctx context.Context) (operators, admins []string, ok bool, err error)
 
+	// landFlags writes this run's own --operator/--admin into the grants node,
+	// and it is what the installation root calls once the run is past its
+	// confirmation and about to apply (update_access.go, landFlagLists). The
+	// roles step does not write it: the write is worth nothing before the
+	// confirmation the user may still decline, and its own comment says why the
+	// node is written before the apply rather than after. It is nil in every run
+	// whose roles step found no node, and it writes nothing in a run that named
+	// no list.
+	landFlags func(ctx context.Context) error
+
 	// refresh is `fugaro image refresh`'s own read of the same marks
 	// (openRefreshManaged), set by runImageRefresh and nil in every other run.
 	// It is what the refresh's steps that are not builds — the base pin, the
@@ -2708,6 +2718,15 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 				return outs, false, err
 			}
 		}
+		// The run's own --operator/--admin lands here and nowhere earlier: the
+		// run is past the guard and past its confirmation (or past the gate that
+		// stands in for it) and is about to apply, so a change that was declined
+		// or refused has written nothing, and a write that fails stops the run
+		// before GCP holds a grant the node does not (update_access.go's
+		// landFlagLists).
+		if err := r.landFlaggedLists(ctx); err != nil {
+			return outs, false, err
+		}
 		if err := t.Apply(ctx, infra.PlanFile); err != nil {
 			return outs, false, remote(err)
 		}
@@ -2733,6 +2752,13 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		fmt.Fprintln(r.w, "No changes: the installation matches the plan.")
 		if r.o.planOnly {
 			return outs, true, nil
+		}
+		// A plan with nothing in it is still a run the user confirmed (or one
+		// that found the installation already matching): the flags' fold is
+		// landed here for the same reason as below, and it is the one change of
+		// a run whose apply has nothing to do.
+		if err := r.landFlaggedLists(ctx); err != nil {
+			return outs, false, err
 		}
 	}
 	raw, err := t.Output(ctx)

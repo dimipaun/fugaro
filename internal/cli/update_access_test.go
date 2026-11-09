@@ -360,6 +360,37 @@ func TestPlanOnlyWritesNoNodeAndLandsNoList(t *testing.T) {
 	})
 }
 
+// TestADeclinedRunLandsNoFlagList: the fold is a cloud write, and it belongs to
+// the run's apply and not to its planning: a list named on the command line is
+// landed by the installation root once the run is past its confirmation and
+// about to apply (landFlagLists). A run whose confirmation is declined has
+// changed nothing — the node included — so a change it never applied is not
+// recorded as one that happened, and the next plain `fugaro update` by anyone
+// does not apply it either.
+//
+// Mutation (fold in the roles step, as it was): the node holds the member the
+// declined run named and this fails.
+func TestADeclinedRunLandsNoFlagList(t *testing.T) {
+	operators := []string{"user:ops@example.com"}
+	r, db := accessRig(t, operators, nil, operators, nil)
+	db.Set(accesslib.PathNode, accessNodeDoc(projectGrant("user:ops@example.com", accesslib.RoleOperator)))
+	// The plan has changes, so the run reaches its confirmation instead of
+	// reporting an installation that already matches.
+	updating(t, r)
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update", "--operator", "user:new@example.com")
+	all := accessOut(out, errOut, err)
+	if err == nil || !strings.Contains(all, "not confirmed") {
+		t.Fatalf("a run whose confirmation was declined did not stop: %v\n%s", err, all)
+	}
+	if calls := subcommands(r.calls(t)); slices.Contains(calls, "apply") {
+		t.Errorf("a declined run applied the installation: %q\n%s", calls, all)
+	}
+	if got := grantLines(accessGrants(t, db)); !slices.Equal(got, []string{"user:ops@example.com (operator)"}) {
+		t.Errorf("the node holds %v, want the roster it held: a run that applied nothing may not have changed the roles\n%s", got, all)
+	}
+}
+
 // TestAFlagListThatCannotBeLandedStopsTheRun: unlike the migration, a run's own
 // --operator/--admin is a change to a role the user asked for, written where the
 // roles live (foldFlagLists), and a change that cannot be written may not look
@@ -426,17 +457,22 @@ func TestAFlagListThatIsNotAMemberIsRefused(t *testing.T) {
 // change that never happened.
 //
 // The requests are the fake database's, held one at a time so this test can put
-// the other writer's landing exactly inside each window: the roles step's read,
-// then a write and the re-read that follows it, three times.
+// the other writer's landing exactly inside each window: the two reads the run
+// takes before the installation root's apply -- the roles step's, and the derive
+// the root takes for its own tfvars -- then the fold's own read, then a write
+// and the re-read that follows it, three times. The fold is the installation
+// root's and not the roles step's (landFlagLists): a list named on the command
+// line is landed once the run is past its confirmation, and the read it is
+// conditional on is the one taken there.
 func TestARunGivesUpWhenEveryWriteLosesTheRace(t *testing.T) {
 	operators := []string{"user:ops@example.com"}
 	_, db := accessRig(t, operators, nil, operators, nil)
 	db.Set(accesslib.PathNode, accessNodeDoc(projectGrant("user:ops@example.com", accesslib.RoleOperator)))
 	others := []string{"user:first@example.com", "user:second@example.com", "user:third@example.com"}
 
-	stamps := make([]<-chan struct{}, 0, 7)
-	release := make([]func(), 0, 7)
-	for range 7 {
+	stamps := make([]<-chan struct{}, 0, 9)
+	release := make([]func(), 0, 9)
+	for range 9 {
 		stamped, rel := db.HoldNext(accesslib.PathNode)
 		stamps = append(stamps, stamped)
 		release = append(release, rel)
@@ -461,16 +497,18 @@ func TestARunGivesUpWhenEveryWriteLosesTheRace(t *testing.T) {
 			t.Fatalf("the run never sent its %s to the grants node:\n%s", what, accessOut(out, errOut, err))
 		}
 	}
-	step(0, "first read")
-	release[0]()
+	for i, what := range []string{"roles step's read", "derive's read", "fold's read"} {
+		step(i, what)
+		release[i]()
+	}
 	for i, other := range others {
-		step(1+2*i, "write of the flag list")
+		step(3+2*i, "write of the flag list")
 		// The other machine's own change lands while this run's write is in
 		// flight, so the conditional write meets a node it did not read.
 		db.Set(accesslib.PathNode, accessNodeDoc(projectGrant(other, accesslib.RoleOperator)))
-		release[1+2*i]()
-		step(2+2*i, "re-read after the lost race")
-		release[2+2*i]()
+		release[3+2*i]()
+		step(4+2*i, "re-read after the lost race")
+		release[4+2*i]()
 	}
 	select {
 	case <-done:

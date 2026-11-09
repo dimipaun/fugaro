@@ -54,7 +54,11 @@ import (
 // The one thing the derive cannot do by itself is take a change: a list named on
 // the command line would be applied once and reverted by the next converge, so
 // the run's own --operator/--admin lands in the node too (foldFlagLists), which
-// is the same write `fugaro user`'s own door makes (user.go).
+// is the same write `fugaro user`'s own door makes (user.go). That write is the
+// installation root's and not this step's (landFlagLists): this step runs before
+// the run's confirmation and before the guard, and a run that is declined or
+// refused may not have changed the installation's roles on its way to applying
+// nothing.
 
 // syncAccess is the run's roles step, called once by the converge before its
 // first stage so that every spec this run builds carries the lists the node
@@ -96,6 +100,7 @@ func (e *initEngine) syncAccess(ctx context.Context) error {
 	// and a nil client is exactly the "this run has no node" the root checks.
 	e.accessDB = db
 	e.r.accessDerive = e.deriveAccessAgain
+	e.r.landFlags = e.landFlagLists
 	node, err := accesslib.Read(ctx, db)
 	if err != nil {
 		return remote(err)
@@ -127,19 +132,75 @@ func (e *initEngine) syncAccess(ctx context.Context) error {
 		}
 	}
 	if e.r.o.operatorsChanged || e.r.o.adminsChanged {
-		if e.r.o.planOnly {
-			// A preview may name its lists too, and the fold is the same
-			// computation with the write left out (foldedNode): the plan shows
-			// the roles this run would land, and the node keeps the ones it has.
-			if node, err = e.foldedNode(node); err != nil {
-				return err
-			}
-		} else if node, err = e.foldFlagLists(ctx, db, node); err != nil {
+		// The fold is made in memory and NOT written here (foldedNode): the
+		// node is a cloud write, and this step runs before the run's own
+		// confirmation and before the guard that may refuse its plan, so a run
+		// the user declines — or one --allow-delete stops — would have changed
+		// the installation's roles already, for a change it then never applies.
+		// The write is the installation root's, once the run is past both
+		// (landFlagLists); what this step needs the fold for is the SPEC its
+		// stages build, and for that the computation is the whole of it.
+		if node, err = e.foldedNode(node); err != nil {
 			return err
 		}
 	}
 	e.deriveAccess(node)
 	return nil
+}
+
+// landFlagLists writes this run's own --operator/--admin into the grants node.
+//
+// It is called by the installation root on the two paths that lead to an apply,
+// and nowhere else: after the confirmation (or after the gate that stands in for
+// it) and before the plan is applied, and again where the plan was empty, so
+// that naming a list is still a change written where the roles live. Nothing
+// before that point writes: a run the user declined, one the guard refused, one
+// whose state bucket is not there, and a preview (--plan-only) all leave the
+// node as it is, and the change they never applied is not recorded as one that
+// happened.
+//
+// The direction matters where the two can disagree: the node is written before
+// the apply, not after. A write that failed after a successful apply would leave
+// GCP holding a grant no record holds — the next converge derives from the node
+// and takes it away again, which is the grant that disappears a run later this
+// step exists to prevent. A node written whose apply then failed is the other
+// way round: the roles the user asked for are recorded, and the next run applies
+// them.
+//
+// A run that cannot write stops here (foldFlagLists' accessFlagsNeedAdmin): an
+// operator who named a list asked for a change to a role, and a change that
+// cannot be written may not look applied. It stops before anything is applied,
+// so the node and GCP then hold the same roster.
+func (e *initEngine) landFlagLists(ctx context.Context) error {
+	if e.accessDB == nil || (!e.r.o.operatorsChanged && !e.r.o.adminsChanged) {
+		return nil
+	}
+	node, err := accesslib.Read(ctx, e.accessDB)
+	if err != nil {
+		return remote(err)
+	}
+	if !node.Found {
+		// There is no node to fold into, and this run may not make one out of
+		// its own flags alone: the roles step has already said what happened to
+		// the node (it could not be written, or there was nothing to hold), the
+		// roster this run applies is the installation's, and a node written from
+		// the flags alone would be every other member's revocation on the next
+		// converge — the fold replaces a role's whole project-scope list.
+		return nil
+	}
+	_, err = e.foldFlagLists(ctx, e.accessDB, node)
+	return err
+}
+
+// landFlaggedLists is landFlagLists for the installation root, which the engine
+// hands its own method to (initRun.landFlags, set by the roles step): the node's
+// client is the engine's, and a run whose roles step found no node has nothing
+// here to call.
+func (r *initRun) landFlaggedLists(ctx context.Context) error {
+	if r.landFlags == nil {
+		return nil
+	}
+	return r.landFlags(ctx)
 }
 
 // accessNoBackend is the warning an installation without a budget backend gets:
@@ -549,14 +610,15 @@ func (e *initEngine) deriveAccessAgain(ctx context.Context) (operators, admins [
 	if !node.Found {
 		return nil, nil, false, nil
 	}
-	if e.r.o.planOnly && (e.r.o.operatorsChanged || e.r.o.adminsChanged) {
-		// A plan-only run lands no flag list, so the roster the node holds is
-		// not the roster this run would apply: the plan a preview shows is the
-		// one the run the user asked for would make, which is the folded node
-		// (foldedNode) — the same computation the roles step makes with the
-		// write left out. Without this the preview would report the member the
-		// user just named as one this run drops, which is the opposite of what
-		// the run it previews does.
+	if e.r.o.operatorsChanged || e.r.o.adminsChanged {
+		// The node does not hold this run's own list yet: the fold is landed by
+		// this root, after the confirmation and just before the apply
+		// (landFlagLists), so what is read here is the roster before it. The
+		// apply's lists are the run the user asked for, which is the folded node
+		// (foldedNode) — the same computation the roles step makes with the write
+		// left out. Without this the plan would report the member the user just
+		// named as one this run drops, which is the opposite of what the run
+		// does, and the apply would not carry it at all.
 		if node, err = e.foldedNode(node); err != nil {
 			return nil, nil, false, err
 		}
