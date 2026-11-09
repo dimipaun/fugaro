@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backlog"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -90,6 +91,20 @@ var sweepRenderers = []humanRenderer{
 		},
 	},
 	{
+		// A run the bucket holds an unreadable object for is the one run a
+		// listing names on its own: the row is an error row and the warning
+		// above the table names the run. The world seeds one, so the line is
+		// really printed and read here, not only read in the source
+		// (assertNoPrintSiteNamesARunID).
+		name:  "runs ls (a run whose objects are corrupt)",
+		shows: []string{"aaaa", "cccc"},
+		drive: func(t *testing.T) (string, string, error) {
+			w := newSweepWorld(t)
+			corruptSweepRun(t, w, "cccc")
+			return execute(t, "runs", "ls", "--since", "0")
+		},
+	},
+	{
 		// The report's table is the digest's own listing: the rows are the
 		// period's runs, and its ending rule is the same one (F14).
 		name:  "runs digest",
@@ -154,6 +169,27 @@ func newSweepWorld(t *testing.T) *sweepWorld {
 		seedSweepAgent(t, f, id, r.title)
 	}
 	return w
+}
+
+// corruptSweepRun adds a run of the fixture's repository whose launch.json the
+// bucket holds undecodable, so the listing that reads it lists an error row and
+// warns about it. The warning is the one line of a listing that names a run
+// with no table around it, and it is where a whole ID reached a person before
+// this test drove it (runs.go's readRunVia).
+func corruptSweepRun(t *testing.T, w *sweepWorld, ending string) string {
+	t.Helper()
+	id := recentRunID(t, 3*time.Minute, task.ShortRun(ending))
+	w.ids[ending] = id
+	seedTitledRun(t, w.cloudFixture, id, "the corrupt run")
+	b, err := blobx.Open(context.Background(), w.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if err := runstore.Open(b.Bucket, appSlug, id).PutFile(context.Background(), "launch.json", []byte("{not json"), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 // newDigestSweepWorld builds the world the digest is driven over: the fixture's
@@ -227,7 +263,18 @@ var shortenerNames = map[string]bool{"ShortRun": true, "shortRef": true}
 var printNames = map[string]bool{
 	"Fprintf": true, "Printf": true, "Sprintf": true, "Fprintln": true, "Fprint": true,
 	"Println": true, "Print": true, "WriteString": true,
+	// The listing's own warning writer: `runs ls` tells a person about a run it
+	// could not read through it, and that line names the run.
+	"warnf": true,
 }
+
+// readerNames are the calls that build a person's message but are not print
+// sites everywhere. A `userErr` or a `fmt.Errorf` mostly carries the run ID the
+// person themselves supplied — `--run-id`, `--attach`, and `run --retry`, which
+// the plan keeps on the whole ID — and a message about the person's own input
+// keeps it whole. Inside one of the package's readers (runReader) the signature
+// says which value is the run, so there they are read like any other printer.
+var readerNames = map[string]bool{"userErr": true, "Errorf": true}
 
 // TestHumanOutputHasNoFullRunID is the sweep: every human renderer is driven
 // over a fake installation holding runs with distinct and colliding endings,
@@ -275,11 +322,20 @@ func TestHumanOutputHasNoFullRunID(t *testing.T) {
 // ones a shortener sits above (shortenerNames) or that are only a map key or a
 // field name, and holds the rest to fullRunIDSites.
 //
+// Two things a printer may be written with are read only where the signature
+// says what they hold: inside a function that takes the run's slug, a bare `id`
+// is the run's id (readRunVia and readTask say so, and a message that names
+// `id` there names a run), and the message builders (readerNames) count as
+// print sites. Everywhere else `id` is whatever else a function calls an id (a
+// model, a secret, a build), and a `userErr` about a `--run-id` the person
+// supplied names their own input.
+//
 // It is a reading of the source and not a proof: an ID a format string prints
 // as a value the scanner cannot see (a struct marshalled, an ID carried in a
-// variable through three functions) is not a site. The sweep's driven
-// renderers are what covers those, and this is what covers a printer the
-// registry does not know.
+// variable through three functions, a run a function renames to `root` or reads
+// off a store's own `Slug()`) is not a site. The sweep's driven renderers are
+// what covers those, and this is what covers a printer the registry does not
+// know.
 func assertNoPrintSiteNamesARunID(t *testing.T) {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -308,13 +364,18 @@ func assertNoPrintSiteNamesARunID(t *testing.T) {
 			if !ok || fn.Body == nil {
 				continue
 			}
+			reader := runReader(fn)
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
-				if !ok || !printNames[lastName(call.Fun)] {
+				if !ok {
+					return true
+				}
+				called := lastName(call.Fun)
+				if !printNames[called] && !(reader && readerNames[called]) {
 					return true
 				}
 				for _, a := range call.Args {
-					if carriesRunID(a) {
+					if carriesRunID(a, reader) {
 						sites[name+":"+fn.Name.Name] = true
 					}
 				}
@@ -358,8 +419,9 @@ func lastName(fun ast.Expr) string {
 // carriesRunID reports whether e carries a run ID into the call it is an
 // argument of: the ID reaches the output through calls and operators, and not
 // through a shortener, a map key (the key names the run, the value is what is
-// printed) or a field name.
-func carriesRunID(e ast.Expr) bool {
+// printed) or a field name. reader says the enclosing function is one of the
+// package's slug, id readers, where a bare `id` names the run (runReader).
+func carriesRunID(e ast.Expr, reader bool) bool {
 	var stack []ast.Node
 	found := false
 	ast.Inspect(e, func(n ast.Node) bool {
@@ -367,7 +429,7 @@ func carriesRunID(e ast.Expr) bool {
 			stack = stack[:len(stack)-1]
 			return true
 		}
-		if namesRunID(n) && !shortens(stack) {
+		if namesRunID(n, reader) && !shortens(stack) {
 			found = true
 		}
 		stack = append(stack, n)
@@ -376,15 +438,37 @@ func carriesRunID(e ast.Expr) bool {
 	return found
 }
 
-// namesRunID reports whether n is an expression a run ID is read off.
-func namesRunID(n ast.Node) bool {
+// namesRunID reports whether n is an expression a run ID is read off: a field
+// of the row, run or task it belongs to (runIDNames), or a name the enclosing
+// function gives the run's id — `runID` anywhere, and the bare `id` of a reader,
+// whose own signature says which value is the run.
+func namesRunID(n ast.Node, reader bool) bool {
 	switch v := n.(type) {
 	case *ast.SelectorExpr:
 		return runIDNames[v.Sel.Name]
 	case *ast.Ident:
-		return v.Name == "runID"
+		return v.Name == "runID" || (reader && v.Name == "id")
 	}
 	return false
+}
+
+// runReader reports whether fn is one of the package's run readers: it is
+// handed the run's slug and its id together (readRun, readRunVia, readTask,
+// scanRun), so in its body `id` is the run's id. Nearly every command's helper
+// takes a slug without one — a repository, a project layer, a spec — and there
+// `id` is whatever else it calls an id (a model, a secret, a build), so only
+// the named fields count.
+func runReader(fn *ast.FuncDecl) bool {
+	if fn.Type.Params == nil {
+		return false
+	}
+	named := map[string]bool{}
+	for _, p := range fn.Type.Params.List {
+		for _, n := range p.Names {
+			named[n.Name] = true
+		}
+	}
+	return named["slug"] && named["id"]
 }
 
 // shortens reports whether any ancestor in stack takes the ID out of the

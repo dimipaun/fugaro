@@ -325,13 +325,13 @@ func readTask(ctx context.Context, env *cloudEnv, slug, id string) (*task.Spec, 
 	case errors.Is(err, runstore.ErrNotFound):
 		return nil, err
 	case corruptObject(err):
-		return nil, userErr("run %s/%s's task.json is unreadable: %v", slug, id, err)
+		return nil, userErr("run %s/%s's task.json is unreadable: %v", slug, task.ShortRun(id), err)
 	case err != nil:
 		return nil, remote(err)
 	}
 	spec, err := task.Parse(raw)
 	if err != nil {
-		return nil, userErr("run %s/%s's task.json is unreadable: %v", slug, id, err)
+		return nil, userErr("run %s/%s's task.json is unreadable: %v", slug, task.ShortRun(id), err)
 	}
 	return spec, nil
 }

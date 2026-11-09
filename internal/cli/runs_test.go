@@ -823,11 +823,13 @@ func TestLsPRWarnsUndecidableRun(t *testing.T) {
 	seedSpec(t, f, firstRunSpec(lost), false)
 	putBuildObject(t, f, "runs/"+appSlug+"/"+lost+"/result.json", []byte("{not json"))
 	got, errOut := lsJSON(t, "--pr", "7")
-	if len(got.Runs) != 3 || !strings.Contains(errOut, lost+": result.json is unreadable") || !strings.Contains(errOut, r.fu2+": result.json is unreadable") {
+	// The warnings name each run by its ending, like every other human line
+	// (spec.md §1, D1705).
+	if len(got.Runs) != 3 || !strings.Contains(errOut, task.ShortRun(lost)+": result.json is unreadable") || !strings.Contains(errOut, task.ShortRun(r.fu2)+": result.json is unreadable") {
 		t.Fatalf("ls --pr 7 = %v, stderr %q", runIDs(got.Runs), errOut)
 	}
 	// A run whose record says it is on another PR is off this one: no warning for it.
-	if got, errOut := lsJSON(t, "--pr", "8"); len(got.Runs) != 1 || strings.Contains(errOut, r.fu2) {
+	if got, errOut := lsJSON(t, "--pr", "8"); len(got.Runs) != 1 || strings.Contains(errOut, task.ShortRun(r.fu2)) {
 		t.Fatalf("ls --pr 8 = %v, stderr %q", runIDs(got.Runs), errOut)
 	}
 }
@@ -1765,7 +1767,7 @@ func TestRunsLsParallelOrderStable(t *testing.T) {
 	}
 	var wantWarned []string
 	for _, s := range corrupt {
-		wantWarned = append(wantWarned, s.slug+"/"+s.id)
+		wantWarned = append(wantWarned, s.slug+"/"+task.ShortRun(s.id))
 	}
 	if !slices.Equal(warned, wantWarned) {
 		t.Fatalf("warnings = %v, want %v: the runs are read in slug order, newest first within each", warned, wantWarned)

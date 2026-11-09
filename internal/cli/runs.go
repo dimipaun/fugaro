@@ -668,7 +668,11 @@ func readRunVia(ctx context.Context, env *cloudEnv, rd runcache.Reader, slug, id
 	in := &r.in
 	problem := func(p string) {
 		in.Problem = p
-		r.warning = fmt.Sprintf("warning: run %s/%s: %s\n", slug, id, p)
+		// The warning is a person's line on stderr, so it names the run by its
+		// ending like every other human surface (spec.md §1, D1705), with the
+		// slug beside it: the warning may name a run the listing below does not
+		// show at all (--pr, a window the run fell out of).
+		r.warning = fmt.Sprintf("warning: run %s/%s: %s\n", slug, task.ShortRun(id), p)
 	}
 	raw, err := rd.Read(ctx, s, "task.json")
 	switch {
@@ -696,7 +700,7 @@ func readRunVia(ctx context.Context, env *cloudEnv, rd runcache.Reader, slug, id
 	}
 	if in.Launch == nil && in.Record == nil {
 		if in.CancelMarker, err = s.CancelRequested(ctx); err != nil {
-			return r, fmt.Errorf("checking %s/%s's cancel marker: %w", slug, id, err)
+			return r, fmt.Errorf("checking %s/%s's cancel marker: %w", slug, task.ShortRun(id), err)
 		}
 		if in.Claim, err = absent(s.ReadClaim(ctx)); corruptObject(err) {
 			problem("the launch claim is unreadable: " + err.Error())
@@ -768,7 +772,7 @@ func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs ma
 	x, err := env.checkExecution(ctx, hint, name, in.Slug, in.RunID)
 	if err != nil {
 		in.Problem = "not following its execution: " + err.Error()
-		warnf("warning: run %s/%s: %s\n", in.Slug, in.RunID, in.Problem)
+		warnf("warning: run %s/%s: %s\n", in.Slug, task.ShortRun(in.RunID), in.Problem)
 		return nil
 	}
 	in.Exec = x
