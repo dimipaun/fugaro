@@ -21,13 +21,17 @@
  * the route for its own check. The service does not exist yet: it is built after the entity
  * exists (S3.2, S3.5, the design's §1) and deployed by the owner (S3.7), so until then the
  * page exists in the repository and is not published — the publish is the owner's (S7.4) and
- * it waits for S7.3 as well. The routes are this page's own half of the intake's contract,
- * and `website/test/keys.mjs` pins them.
+ * it waits for S7.3 as well. That is enforced and not merely intended: `firebase.json`'s
+ * `ignore` holds the page out of every deploy until S7.3 writes the statement's key sign-up
+ * section and takes the entry out, and `website/test/consent.mjs` fails if the page is served
+ * while the statement still says the site has no form. The routes are this page's own half of
+ * the intake's contract, and `website/test/keys.mjs` pins them.
  *
  * **The CSP's `form-action` is what makes the posting possible.** `form-action 'self'` blocks
  * a form whose action is another origin, so the deployed policy in `firebase.json` admits the
- * intake's one exact host — the owner approved that change for this task (the design's D451,
- * option (a): one directive, one exact host) — and `website/test/origins.mjs` is where the
+ * intake's one exact host — the owner approved that change for this task (the ruling of
+ * 2026-11-07, recorded in `docs/subscriptions/reconciliation.md`; the design's D451, option
+ * (a): one directive, one exact host) — and `website/test/origins.mjs` is where the
  * policy's token list and the check that reads a built page's `<form action>` are held to it.
  * A form posting anywhere else is still refused, by that check, on every page.
  *

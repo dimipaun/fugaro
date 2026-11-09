@@ -972,9 +972,15 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
 
 #### S7.3 The privacy notice for key sign-up
 
-- **Files:** `website/src/pages/privacy.astro`, `website/test/privacy.mjs`.
+- **Files:** `website/src/pages/privacy.astro`, `website/test/privacy.mjs`, and the two lines S3.3's
+  hold on the key request page lives in: `firebase.json`'s `ignore` entry and `website/test/consent.mjs`'s
+  exemption for it.
 - **Change:**
   - counsel's text for the sign-up data, with the merchant of record as a recipient;
+  - **S3.3's hold comes off in the same commit**: the key request page is built and excluded from
+    the deploy while the statement says the site has no form, so this task removes `keys/**` from
+    `firebase.json`'s `ignore` and the keys-page exemption in `website/test/consent.mjs`; the
+    exemption's own failure names both, so publishing the page before this task is what it refuses;
   - "nothing the Fugaro project operates" restated for a key service the software never calls;
   - rule 5 extended to `ee/`, excluding `ee/keyservice/`.
 

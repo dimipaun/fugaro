@@ -71,6 +71,7 @@ import {
   builtPages,
   cssDeclarations,
   cssRules,
+  deployExcludes,
   filesUnder,
   find,
   findAll,
@@ -2374,7 +2375,17 @@ test('the claims the privacy page makes about the site are held to the artifact'
     // `website/test/keys.mjs`, which reads the three forms, every field inside them, and the
     // intake they post to. When S7.3 writes the section, this exemption goes and the sentence
     // holds the page like any other.
-    if (page.rel === KEYS_PAGE) continue
+    if (page.rel === KEYS_PAGE) {
+      // The exemption rests on the page not being SERVED — `dist/` holding it is not the site a
+      // reader reaches — so the config that decides that is read here rather than assumed: a
+      // deploy that would upload the page fails this case, and the sentence has to be accounted
+      // for (S7.3's notice, in the commit that takes the exclusion out of `firebase.json`).
+      assert.ok(
+        deployExcludes(KEYS_PAGE),
+        `firebase.json serves ${KEYS_PAGE} and /privacy/ says the site has no form: the key request page's three forms and the section of the statement that accounts for them are S7.3's copy, so the page is held out of the deploy until they exist — this case's exemption is what says so, and one of the two has to move`,
+      )
+      continue
+    }
     for (const el of walk(parse(page.html))) {
       // The one field the site carries: the homepage hero's live card, where a reader types a
       // task and sees it drawn as jobs (the owner's ruling of 2026-10-23, the redesign's Step 3,
