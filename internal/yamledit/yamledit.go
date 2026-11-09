@@ -66,7 +66,10 @@
 //   - ReasonReplacesCollection: the value at the path is a mapping or a
 //     sequence, which holds bytes and comments of its own. Replacing it with a
 //     scalar would drop all of them, so the edit is refused; removing the key,
-//     or writing a key inside it, are the edits that work instead.
+//     or writing a key inside it, are the edits that work instead. A mapping is
+//     refused by the list writer too (UpsertSeqItemListByKey): it replaces a
+//     list's items but has no way to turn a mapping into a list without losing
+//     what is written in it.
 //   - ReasonDuplicateKey: a key on the path is written twice, so which of the
 //     two the edit changed would not be visible in the result.
 //   - ReasonAnchorOrAlias: the node to change carries an anchor, is an alias,
@@ -989,7 +992,14 @@ func upsertListField(op string, src []byte, path []string, keyField, keyValue, f
 	}
 	// A field written with no list yet — a scalar the caller is retyping — has
 	// no item lines to replace: the whole entry goes, its own comment block with
-	// it, because the entry is what the list takes the place of.
+	// it, because the entry is what the list takes the place of. A MAPPING is
+	// not that: it holds bytes and comments a list could only drop, and the
+	// scalar sibling refuses the same shape for the same reason
+	// (ReasonReplacesCollection), so this writer refuses it too rather than
+	// silently emptying it.
+	if list.Kind == yaml.MappingNode {
+		return nil, refuse(op, at, ReasonReplacesCollection)
+	}
 	start, end, err := d.entrySpan(op, fe)
 	if err != nil {
 		return nil, err

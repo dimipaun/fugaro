@@ -1195,6 +1195,14 @@ func TestRefusals(t *testing.T) {
 			},
 			yamledit.ReasonEmptyField,
 		},
+		{
+			"a mapping where a list-valued field would be written",
+			"pools:\n  - name: claude\n    # what the pool walks\n    members:\n      oauth-one: 1\n",
+			func(d []byte) ([]byte, error) {
+				return yamledit.UpsertSeqItemListByKey(d, []string{"pools"}, "name", "claude", "members", []string{"oauth-two"})
+			},
+			yamledit.ReasonReplacesCollection,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := tc.op([]byte(tc.doc))
