@@ -86,13 +86,14 @@ type Entry struct {
 
 // Decode reads one verdict from a judge's answer, strictly: an unknown member
 // of the document or of an entry, a member name that is not spelled exactly as
-// the schema spells it, that an object writes twice, or that an object must
-// carry and does not, a version this reader does not know, a verdict word
-// outside the two, a missing findings array, a reason that is empty, over
-// MaxLine bytes or on more than one line, and an empty key or a negative index
-// are all refused. Anything refused here is a call the runner records as
-// failed, which blocks every finding (D1846): the refusals are the strict
-// direction, so an answer this reader cannot place never becomes a deferral.
+// the schema spells it, that an object writes twice, that an object must carry
+// and does not, or that it writes as null, a version this reader does not know,
+// a verdict word outside the two, a missing findings array, a reason that is
+// empty, over MaxLine bytes or on more than one line, and an empty key or a
+// negative index are all refused. Anything refused here is a call the runner
+// records as failed, which blocks every finding (D1846): the refusals are the
+// strict direction, so an answer this reader cannot place never becomes a
+// deferral.
 func Decode(data []byte) (Verdict, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
@@ -156,9 +157,10 @@ func checkLine(field, s string, required bool) error {
 // members is one object's member rule: the names it may carry, the names it
 // must carry, the member that holds the objects of the level below it, and what
 // a refusal calls it. Both levels are schemas/triage.schema.json's own lists —
-// the same names and the same required ones — which is what makes "a document
-// one accepts, the other accepts" true of every member but the two the reader
-// settles on its own.
+// the same names, the same required ones, and the same refusal of a member
+// written null — which is what makes "a document one accepts, the other accepts"
+// true of every member but the five the reader settles on its own
+// (TestSchemaAcceptsADecodedVerdict pins each).
 type members struct {
 	allowed  map[string]bool
 	required []string
@@ -183,16 +185,17 @@ var (
 )
 
 // checkNames refuses a member name the verdict does not spell exactly, one an
-// object spells twice, and one an object must carry and does not. encoding/json
-// matches a name whatever its case — it reads {"VERSION":1,"FINDINGS":[]} whole
-// — and keeps the last of a repeated one, so neither DisallowUnknownFields nor
-// the decode above would stop {"verdict":"block","VERDICT":"defer"}: the runner
-// would read a deferral where schemas/triage.schema.json, and any reader that
-// takes the exact name or the first one, sees a block. Nor would it stop an
-// entry with no index member, which decodes as position 0 — the first finding
-// of the round — where the schema requires the member. A verdict two readers
-// place differently is refused as a whole, like every other refusal here
-// (D1846).
+// object spells twice, one an object must carry and does not, and one an object
+// writes as null. encoding/json matches a name whatever its case — it reads
+// {"VERSION":1,"FINDINGS":[]} whole — and keeps the last of a repeated one, so
+// neither DisallowUnknownFields nor the decode above would stop
+// {"verdict":"block","VERDICT":"defer"}: the runner would read a deferral where
+// schemas/triage.schema.json, and any reader that takes the exact name or the
+// first one, sees a block. Nor would it stop an entry with no index member,
+// which decodes as position 0 — the first finding of the round — or one that
+// spells the member null, which decodes the same way, where the schema requires
+// the member and requires it to be an integer. A verdict two readers place
+// differently is refused as a whole, like every other refusal here (D1846).
 //
 // It runs over the bytes after the decode above, so it settles names alone:
 // the syntax, the shapes and the members the document does not know at all are
@@ -246,6 +249,9 @@ func readMembers(raw []byte, m members) ([]json.RawMessage, error) {
 		if err := dec.Decode(&value); err != nil {
 			return nil, fmt.Errorf("triage: %w", err)
 		}
+		if isNull(value) {
+			return nil, fmt.Errorf("triage: %q is written null in %s, which decodes as the zero value of whatever it names", name, m.subject)
+		}
 		if name == m.nested {
 			var list []json.RawMessage
 			if err := json.Unmarshal(value, &list); err == nil {
@@ -259,4 +265,15 @@ func readMembers(raw []byte, m members) ([]json.RawMessage, error) {
 		}
 	}
 	return entries, nil
+}
+
+// isNull reports whether raw is the JSON literal null: the one value a member
+// may hold that a decode into any Go type accepts and leaves at its zero value.
+// A member written that way would be read as a position and a group the
+// document never named — the reading an absent member gets — so it is refused
+// here as it is there, and as schemas/triage.schema.json refuses it: null is
+// neither an integer nor a string, and holds neither the version's `const` nor
+// the findings array's shape.
+func isNull(raw []byte) bool {
+	return string(bytes.TrimSpace(raw)) == "null"
 }

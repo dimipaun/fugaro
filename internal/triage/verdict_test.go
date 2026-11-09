@@ -49,11 +49,13 @@ func TestDecodeStrict(t *testing.T) {
 		{"a reason with a carriage return", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"one line\rand another"}]}`},
 		{"no reason at all", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block"}]}`},
 		{"no index at all, which reads as position 0", `{"version":1,"findings":[{"key":"` + key + `","verdict":"block","reason":"x"}]}`},
+		{"an index written null, which also reads as position 0", `{"version":1,"findings":[{"index":null,"key":"` + key + `","verdict":"block","reason":"x"}]}`},
 		{"an empty reason", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":""}]}`},
 		{"an empty key", `{"version":1,"findings":[{"index":0,"key":"","verdict":"block","reason":"x"}]}`},
 		{"a negative index", `{"version":1,"findings":[{"index":-1,"key":"` + key + `","verdict":"block","reason":"x"}]}`},
 		{"a group with a newline", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"x","group":"docs\nmore"}]}`},
 		{"a group over the limit", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"x","group":"` + long + `x"}]}`},
+		{"a group written null, which reads as no group at all", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"x","group":null}]}`},
 		{"an entry that is not an object", `{"version":1,"findings":["block"]}`},
 		{"a document that is not an object", `[{"version":1}]`},
 		{"data after the object", `{"version":1,"findings":[]}{"version":1,"findings":[]}`},
@@ -282,8 +284,8 @@ func TestSchemaAcceptsADecodedVerdict(t *testing.T) {
 
 	// The bounds the schema states are the reader's own: a third verdict word,
 	// a reason over the limit, no reason, an empty key, a member name in
-	// another case, no findings array, a findings array written null, and a
-	// member the shape does not know.
+	// another case, no findings array, a findings array written null, a member
+	// written null, and a member the shape does not know.
 	for _, tc := range []struct{ name, in string }{
 		{"a third verdict word", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"maybe","reason":"x"}]}`},
 		{"a reason over the limit", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"` + strings.Repeat("x", 201) + `"}]}`},
@@ -291,6 +293,8 @@ func TestSchemaAcceptsADecodedVerdict(t *testing.T) {
 		{"an empty key", `{"version":1,"findings":[{"index":0,"key":"","verdict":"block","reason":"x"}]}`},
 		{"no findings array", `{"version":1}`},
 		{"a findings array written null", `{"version":1,"findings":null}`},
+		{"an index written null", `{"version":1,"findings":[{"index":null,"key":"` + key + `","verdict":"block","reason":"x"}]}`},
+		{"a group written null", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"x","group":null}]}`},
 		{"another version", `{"version":2,"findings":[]}`},
 		{"an unknown member", `{"version":1,"findings":[],"tolerated":[]}`},
 		{"a member name in another case", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"x","Group":"docs"}]}`},
