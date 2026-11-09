@@ -325,6 +325,19 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 		_ = r.printResult()
 		return res.Cause
 	}
+	// D1553's self-flag, and it is here rather than beside markCreated above
+	// because of what each of the two marks means: markCreated records what a
+	// run created, which is true whatever the run did afterwards, while this
+	// one takes the installation's typed confirmation away, and a run that
+	// failed above applied nothing to be confirmed. So it is reached only by a
+	// run whose stages all succeeded, and its own test drives that path
+	// (update_selfflag.go, TestUpdateOnAnUnmanagedInstallation...). It is
+	// still before printResult, so what it says and the warnings it records are
+	// in the result the print encodes — the reason markCreated is where it is.
+	if err := e.selfFlagUnmanaged(ctx); err != nil {
+		_ = r.printResult()
+		return err
+	}
 	if err := r.printResult(); err != nil {
 		return err
 	}
@@ -862,7 +875,7 @@ func (e *initEngine) fillCredentialsAudience(ctx context.Context) (bool, error) 
 	// because this plan has none — every resource in it is in the state already,
 	// and the cover consults that list only for a change that carries an import
 	// (tf.Cover.NotCovered).
-	gated, err := r.gateStep(ctx, e.t, nil, r.coverOf(r.coverReasons))
+	gated, err := r.gateStep(ctx, e.t, nil, r.coverOf(r.coverReasons), nil)
 	if err != nil {
 		return false, err
 	}

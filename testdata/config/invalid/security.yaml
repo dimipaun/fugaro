@@ -1,0 +1,8 @@
+version: 1
+project: aurora
+git: { provider: github }
+security:
+  patterns:
+    - { name: deploy, match: "deploy/**", category: deployment }
+workflows:
+  server: { commands: { build: make, test: make test } }

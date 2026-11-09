@@ -3,6 +3,7 @@ package settings
 import (
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -240,5 +241,34 @@ func TestRegistryMarksEverySensitiveKey(t *testing.T) {
 	}
 	if len(sensitive) == 0 {
 		t.Fatal("no row is sensitive: the flag is not exercised")
+	}
+}
+
+// TestSettingsRegistryHasIssuesKeys pins the two nudge thresholds of the
+// terminal Issues section (T-IS15 of docs/troubleshoot-issue/, F14): the
+// section's wording firms up at them, they are the local config's own — the
+// section is printed on whichever machine runs the digest and the committed
+// report carries none — and the DEFAULT column is where their defaults are
+// documented, read back out of localcfg by
+// TestRegistryDefaultsMatchApplyDefaults.
+func TestSettingsRegistryHasIssuesKeys(t *testing.T) {
+	for _, tc := range []struct{ key, def, constant string }{
+		{"issues.nudge_after_days", strconv.Itoa(localcfg.DefaultIssuesNudgeAfterDays), "localcfg.DefaultIssuesNudgeAfterDays"},
+		{"issues.nudge_recurrence", strconv.Itoa(localcfg.DefaultIssuesNudgeRecurrence), "localcfg.DefaultIssuesNudgeRecurrence"},
+	} {
+		r, ok := Lookup(tc.key)
+		if !ok {
+			t.Errorf("%s: no registry row", tc.key)
+			continue
+		}
+		if !slices.Equal(r.Layers, []string{LayerLocal}) {
+			t.Errorf("%s: Layers = %v, want the local config alone: the nudge is the printing machine's own and is never published", tc.key, r.Layers)
+		}
+		if r.Default.Value != tc.def || r.Default.Const != tc.constant {
+			t.Errorf("%s: Default = {%q %q}, want {%q %q}", tc.key, r.Default.Value, r.Default.Const, tc.def, tc.constant)
+		}
+		if r.Owner == "" || r.Doc == "" {
+			t.Errorf("%s: Owner = %q and Doc = %q, and a row a reader can act on names both", tc.key, r.Owner, r.Doc)
+		}
 	}
 }

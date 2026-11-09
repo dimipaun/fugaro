@@ -1312,6 +1312,13 @@ var ErrExists = errors.New("already exists")
 // ErrTooLarge means an object is larger than its read cap.
 var ErrTooLarge = errors.New("object is larger than its read cap")
 
+// ErrCorrupt means one of the run's own JSON objects is there and does not
+// decode. The object is the run's own and the run's own agent writes it, so a
+// reader that meets one is reading a run's problem rather than its own, which
+// is the distinction a caller draws between an unusable object and a read that
+// failed. It wraps the decoder's own error, which is the one that says why.
+var ErrCorrupt = errors.New("the run's own object does not decode")
+
 // Read caps. The job's service account, and so a run's agent, can
 // write every object under runs/, and the CLI reads them on the
 // operator's machine: a hostile object of gigabytes must fail with
@@ -1571,7 +1578,7 @@ func (s *Store) ReadRecord(ctx context.Context) (*Record, error) {
 	}
 	var r Record
 	if err := json.Unmarshal(data, &r); err != nil {
-		return nil, fmt.Errorf("decoding result.json: %w", err)
+		return nil, fmt.Errorf("decoding result.json: %w: %w", ErrCorrupt, err)
 	}
 	return &r, nil
 }

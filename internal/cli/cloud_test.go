@@ -4,20 +4,25 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gocloud.dev/blob/memblob"
 
+	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/batch"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -109,6 +114,10 @@ func isolateProjects(t *testing.T, dir string) string {
 	// The project-name check caches its answer here, never in the
 	// developer's own cache.
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
+	// And the state directory, where a step-printing command files its run's
+	// log: one of these per test, so a test can read back the one log its own
+	// run left (onlyLog) instead of TestMain's shared backstop directory.
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
 	t.Setenv("FUGARO_PROJECT", "")
 	t.Setenv("FUGARO_CONFIG", "")
 	projects := filepath.Join(xdg, "fugaro", "projects")
@@ -395,5 +404,370 @@ func TestRunRefRefusesDotSlugs(t *testing.T) {
 				t.Errorf("%s %s: %v", cmd, ref, err)
 			}
 		}
+	}
+}
+
+// ---------------------------------------------------------------- resolveRun
+
+// endingNow is the instant the resolveRun tests pin lsNow to. An ending's
+// collision rule is computed from the run IDs themselves (SR1), so a test that
+// asserts which ending tells two runs apart needs the IDs minted against a
+// clock it chose and not against the second the test happened to run: the
+// extension reaches as far into the launch stamp as the two runs agree.
+var endingNow = time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+
+// endingFixture is the cloud fixture with the budget database an ending is
+// looked up in — the /agents feed of its active runs — and lsNow pinned.
+type endingFixture struct {
+	*cloudFixture
+	db *gcpfake.RTDB
+}
+
+// newEndingFixture is one installation resolveRun works against: aurora's
+// config with a budget database, the agent markers cleared (a test that wants
+// a person's session says so itself), and the clock the seven-day window is
+// measured back from pinned to endingNow.
+func newEndingFixture(t *testing.T) *endingFixture {
+	t.Helper()
+	clearAgentMarkers(t)
+	f := &endingFixture{cloudFixture: newCloudFixture(t), db: gcpfake.NewRTDB(t)}
+	f.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: "+f.db.URL+" }\n")
+	old := lsNow
+	lsNow = func() time.Time { return endingNow }
+	t.Cleanup(func() { lsNow = old })
+	return f
+}
+
+// env is the fixture's environment over the fixture's own runs bucket, the one
+// seedTitledRun writes to: resolveRun then reads the objects a seed wrote.
+func (f *endingFixture) env(t *testing.T) *cloudEnv {
+	t.Helper()
+	b, err := blobx.Open(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { b.Close() })
+	return envOn(t, f.cloudFixture, b)
+}
+
+// bothTerminals makes a person's terminal of the streams a lookup is given:
+// stdinIsTerminal and writerIsTerminal both answer true, which with no --json
+// and no agent marker is the one case a pick list is shown in (D1700).
+func bothTerminals(t *testing.T) {
+	t.Helper()
+	oldIn, oldOut := stdinIsTerminal, writerIsTerminal
+	stdinIsTerminal = func(io.Reader) bool { return true }
+	writerIsTerminal = func(io.Writer) bool { return true }
+	t.Cleanup(func() { stdinIsTerminal, writerIsTerminal = oldIn, oldOut })
+}
+
+// resolveOpts are the options of one lookup, with the streams a test reads
+// back: in is what the person would type.
+func resolveOpts(in string) (resolveRunOptions, *strings.Builder, *strings.Builder) {
+	out, errOut := &strings.Builder{}, &strings.Builder{}
+	return resolveRunOptions{in: strings.NewReader(in), out: out, errOut: errOut}, out, errOut
+}
+
+// seedTitledRun seeds one run of the fixture's repository with its own title:
+// task.json is what locates a run at all, and the title is the fact the lists
+// below show.
+func seedTitledRun(t *testing.T, f *cloudFixture, id, title string) {
+	t.Helper()
+	ctx := context.Background()
+	b, err := blobx.Open(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	spec := &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x", Title: title}
+	if err := runstore.Open(b.Bucket, appSlug, id).CreateTask(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// collide seeds the two runs of one ending: minted a minute apart from
+// endingNow, so with endingNow at 12:00:00 they are …-115800-3bb2 and
+// …-115900-3bb2, and the shortest endings that tell them apart are 800-3bb2
+// and 900-3bb2 (SR1: the extension crosses the dash). newer is the one minted
+// later.
+func collide(t *testing.T, f *endingFixture, ending string) (newer, older string) {
+	t.Helper()
+	newer, older = recentRunID(t, time.Minute, ending), recentRunID(t, 2*time.Minute, ending)
+	seedTitledRun(t, f.cloudFixture, older, "the older run")
+	seedTitledRun(t, f.cloudFixture, newer, "the newer run")
+	return newer, older
+}
+
+// TestResolveRunEnding: a full reference behaves as locateRun does, a unique
+// ending resolves to its run, and the two ways a lookup finds nothing — an
+// ending shorter than four characters (D1701) and one no active run or run of
+// the last 7 days carries (D1709) — are user errors with their own sentences.
+func TestResolveRunEnding(t *testing.T) {
+	f := newEndingFixture(t)
+	env := f.env(t)
+	ctx := context.Background()
+	id := recentRunID(t, time.Minute, "3bb2")
+	seedTitledRun(t, f.cloudFixture, id, "fix the parser")
+
+	for _, ref := range []string{"3bb2", id, appSlug + "/" + id} {
+		o, _, errOut := resolveOpts("")
+		slug, got, err := resolveRun(ctx, env, ref, o)
+		if err != nil || slug != appSlug || got != id {
+			t.Fatalf("resolveRun(%q) = %q, %q, %v (stderr %q)", ref, slug, got, err, errOut.String())
+		}
+	}
+
+	o, _, _ := resolveOpts("")
+	if _, _, err := resolveRun(ctx, env, "3bb", o); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "at least 4") {
+		t.Errorf("a three-character ending = %v, want the minimum-length refusal", err)
+	}
+	o, _, _ = resolveOpts("")
+	_, _, err := resolveRun(ctx, env, "ffff", o)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "among the active runs and the last 7 days") || !strings.Contains(err.Error(), "pass the full ID") {
+		t.Errorf("an ending no run carries = %v, want D1709's sentence", err)
+	}
+}
+
+// TestResolveRunAmbiguousNonTerminalRefuses is the red step: two runs whose
+// IDs share their last four characters are never resolved by picking one
+// (D1700) — a lookup nobody answers lists both, under the endings that tell
+// them apart, and returns no run at all.
+func TestResolveRunAmbiguousNonTerminalRefuses(t *testing.T) {
+	f := newEndingFixture(t)
+	env := f.env(t)
+	collide(t, f, "3bb2")
+
+	o, out, _ := resolveOpts("")
+	slug, got, err := resolveRun(context.Background(), env, "3bb2", o)
+	if err == nil || slug != "" || got != "" {
+		t.Fatalf("resolveRun(3bb2) = %q, %q, %v, want a refusal and no run", slug, got, err)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("the refusal = %v, want a user error", err)
+	}
+	for _, want := range []string{appSlug, "800-3bb2", "900-3bb2", "the older run", "the newer run"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q:\n%s", want, err)
+		}
+	}
+	if out.Len() != 0 {
+		t.Errorf("a lookup nobody answers wrote a pick list to stdout: %q", out.String())
+	}
+}
+
+// TestResolveRunAmbiguousTerminalPicks: the same collision at a person's
+// terminal is a numbered list, and the number names the run (D1700). The
+// matches come back newest first, as the resolver sorts them.
+func TestResolveRunAmbiguousTerminalPicks(t *testing.T) {
+	f := newEndingFixture(t)
+	env := f.env(t)
+	bothTerminals(t)
+	_, older := collide(t, f, "3bb2")
+	ctx := context.Background()
+
+	o, out, errOut := resolveOpts("2\n")
+	slug, got, err := resolveRun(ctx, env, "3bb2", o)
+	if err != nil || slug != appSlug || got != older {
+		t.Fatalf("picking 2 = %q, %q, %v (stderr %q)", slug, got, err, errOut.String())
+	}
+	for _, want := range []string{"1)", "2)", "800-3bb2", "900-3bb2", "the older run", "the newer run"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the pick list does not show %q:\n%s", want, out.String())
+		}
+	}
+	o, _, _ = resolveOpts("7\n")
+	if _, _, err := resolveRun(ctx, env, "3bb2", o); ExitCode(err) != ExitUserError {
+		t.Errorf("an answer outside the list = %v, want a user error", err)
+	}
+}
+
+// TestResolveRunAgentMarkerRefuses: an agent's session with a pty must not
+// answer its own prompt (D1700): the pick list is not shown and the collision
+// is the refusal.
+func TestResolveRunAgentMarkerRefuses(t *testing.T) {
+	f := newEndingFixture(t)
+	env := f.env(t)
+	bothTerminals(t)
+	t.Setenv(agentenv.AgentMarkers[0], "1")
+	collide(t, f, "3bb2")
+
+	o, out, _ := resolveOpts("1\n")
+	slug, got, err := resolveRun(context.Background(), env, "3bb2", o)
+	if err == nil || slug != "" || got != "" {
+		t.Fatalf("an agent's terminal = %q, %q, %v, want a refusal", slug, got, err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("an agent's session was shown a pick list: %q", out.String())
+	}
+	if !strings.Contains(err.Error(), "800-3bb2") || !strings.Contains(err.Error(), "900-3bb2") {
+		t.Errorf("the refusal does not list the candidates:\n%s", err)
+	}
+}
+
+// TestResolveRunJSONRefuses: --json is a machine reading, so nobody is asked
+// even on a terminal (D1700).
+func TestResolveRunJSONRefuses(t *testing.T) {
+	f := newEndingFixture(t)
+	env := f.env(t)
+	bothTerminals(t)
+	collide(t, f, "3bb2")
+
+	o, out, _ := resolveOpts("1\n")
+	o.asJSON = true
+	slug, got, err := resolveRun(context.Background(), env, "3bb2", o)
+	if err == nil || slug != "" || got != "" {
+		t.Fatalf("a --json lookup = %q, %q, %v, want a refusal", slug, got, err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("a --json lookup was shown a pick list: %q", out.String())
+	}
+}
+
+// TestResolveRunPlantedActiveMatchIgnored: the active feed is a node the job
+// account can write, so an entry in it is a claim and not a run — a valid run
+// ID with a task.json in the bucket is what confirms one (F6, D1710). An
+// ending resolves to the runs the bucket holds, never to a name planted in the
+// registry.
+func TestResolveRunPlantedActiveMatchIgnored(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a planted entry alone is not a run", func(t *testing.T) {
+		f := newEndingFixture(t)
+		env := f.env(t)
+		planted := recentRunID(t, time.Minute, "3bb2")
+		f.db.Set(budget.PathAgent(appSlug, planted), map[string]any{"run_id": planted, "title": "planted"})
+
+		o, _, _ := resolveOpts("")
+		slug, got, err := resolveRun(ctx, env, "3bb2", o)
+		if err == nil || slug != "" || got != "" {
+			t.Fatalf("resolveRun(3bb2) = %q, %q, %v, want nothing: a registry entry the bucket does not confirm is not a run", slug, got, err)
+		}
+		if !strings.Contains(err.Error(), "no run ending") {
+			t.Errorf("the refusal is %v, want the not-found sentence", err)
+		}
+	})
+
+	t.Run("a planted entry does not shadow the run that exists", func(t *testing.T) {
+		f := newEndingFixture(t)
+		env := f.env(t)
+		real := recentRunID(t, 3*time.Minute, "3bb2")
+		seedTitledRun(t, f.cloudFixture, real, "the real run")
+		planted := recentRunID(t, time.Minute, "3bb2")
+		f.db.Set(budget.PathAgent(appSlug, planted), map[string]any{"run_id": planted, "title": "planted"})
+
+		o, _, _ := resolveOpts("")
+		slug, got, err := resolveRun(ctx, env, "3bb2", o)
+		if err != nil || slug != appSlug || got != real {
+			t.Fatalf("resolveRun(3bb2) = %q, %q, %v, want the run the bucket confirms (%s)", slug, got, err, real)
+		}
+	})
+}
+
+// TestResolveRunFeedUnreadable: a feed that cannot be read is said on stderr
+// and the lookup goes on among the window's runs (F6). The answer is narrower
+// than an ending normally gets, and a person is told so rather than shown a
+// list that silently misses the runs that are live now.
+func TestResolveRunFeedUnreadable(t *testing.T) {
+	f := newEndingFixture(t)
+	env := f.env(t)
+	id := recentRunID(t, time.Minute, "3bb2")
+	seedTitledRun(t, f.cloudFixture, id, "the run")
+	f.db.DenyRead("agents")
+	ctx := context.Background()
+
+	o, _, errOut := resolveOpts("")
+	slug, got, err := resolveRun(ctx, env, "3bb2", o)
+	if err != nil || slug != appSlug || got != id {
+		t.Fatalf("resolveRun(3bb2) with the feed unreadable = %q, %q, %v", slug, got, err)
+	}
+	if !strings.Contains(errOut.String(), "could not read the active runs") || !strings.Contains(errOut.String(), "7 days") {
+		t.Errorf("the fallback to the window was not said: %q", errOut.String())
+	}
+
+	// The active-only lookup has no window to fall back to, so a feed it
+	// cannot read is a failure and not a narrower answer: `cancel` must never
+	// be told an ending names nothing when nobody could read the live runs.
+	o, _, _ = resolveOpts("")
+	o.activeOnly = true
+	if _, _, err := resolveRun(ctx, env, "3bb2", o); err == nil {
+		t.Errorf("the active-only lookup answered with an unreadable feed")
+	}
+}
+
+// TestResolveRunActiveOnlyRefusesAndLists: the active-only lookup is `cancel`'s
+// (D1710). It never resolves — an ending names the runs it lists, and the
+// full ID is what a person pastes — and a run that merely finished inside the
+// window is not one of them.
+func TestResolveRunActiveOnlyRefusesAndLists(t *testing.T) {
+	f := newEndingFixture(t)
+	env := f.env(t)
+	ctx := context.Background()
+	live := recentRunID(t, time.Minute, "3bb2")
+	seedTitledRun(t, f.cloudFixture, live, "the running run")
+	f.db.Set(budget.PathAgent(appSlug, live), map[string]any{"run_id": live, "title": "the running run"})
+	finished := recentRunID(t, 2*time.Minute, "cafe")
+	seedTitledRun(t, f.cloudFixture, finished, "the finished run")
+
+	// opts is the active-only lookup, with the two streams a test reads back.
+	opts := func() (resolveRunOptions, *strings.Builder) {
+		o, out, _ := resolveOpts("")
+		o.activeOnly = true
+		return o, out
+	}
+
+	// Exactly one active match is still a refusal: this is what makes the
+	// full ID the only way to cancel a run (D1710).
+	o, out := opts()
+	slug, got, err := resolveRun(ctx, env, "3bb2", o)
+	if err == nil || slug != "" || got != "" {
+		t.Fatalf("the active-only lookup = %q, %q, %v, want a refusal and no run", slug, got, err)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("the refusal = %v, want a user error", err)
+	}
+	if !strings.Contains(out.String(), appSlug+"/"+live) || !strings.Contains(out.String(), "the running run") {
+		t.Errorf("the refusal does not print the full ID to paste and its title:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), finished) {
+		t.Errorf("the refusal lists a run that is not active:\n%s", out.String())
+	}
+
+	// A second active run sharing the ending is listed too, in full.
+	second := recentRunID(t, 3*time.Minute, "3bb2")
+	seedTitledRun(t, f.cloudFixture, second, "the other running run")
+	f.db.Set(budget.PathAgent(appSlug, second), map[string]any{"run_id": second, "title": "the other running run"})
+	o, out = opts()
+	if _, _, err := resolveRun(ctx, env, "3bb2", o); ExitCode(err) != ExitUserError {
+		t.Fatalf("two active matches = %v, want a user error", err)
+	}
+	for _, want := range []string{appSlug + "/" + live, appSlug + "/" + second, "the other running run"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the refusal does not list %q:\n%s", want, out.String())
+		}
+	}
+
+	// An ending only a finished run carries names no active run.
+	o, _ = opts()
+	if _, _, err := resolveRun(ctx, env, "cafe", o); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "no active run ending") {
+		t.Errorf("an ending of a finished run = %v, want the active-only sentence", err)
+	}
+}
+
+// TestLocateRunStillRefusesAnEnding: locateRun is what `run --retry` keeps
+// (a full ID or <slug>/<run-id>), and SR3 adds resolveRun beside it rather
+// than widening it: an ending is refused there however unique it is.
+func TestLocateRunStillRefusesAnEnding(t *testing.T) {
+	f := newEndingFixture(t)
+	env := f.env(t)
+	ctx := context.Background()
+	id := recentRunID(t, time.Minute, "3bb2")
+	seedTitledRun(t, f.cloudFixture, id, "fix the parser")
+
+	if _, _, err := locateRun(ctx, env, "3bb2"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "neither <repo-slug>/<run-id> nor a run ID") {
+		t.Errorf("locateRun(3bb2) = %v, want the malformed-reference refusal", err)
+	}
+	slug, got, err := locateRun(ctx, env, id)
+	if err != nil || slug != appSlug || got != id {
+		t.Errorf("locateRun(%s) = %q, %q, %v, want the run", id, slug, got, err)
 	}
 }

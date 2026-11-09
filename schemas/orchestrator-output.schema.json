@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/orchestrator-output.schema.json",
+  "title": "fugaro orchestrator --json documents (state, events, patch)",
+  "description": "The three documents `fugaro orchestrator state`, `events` and `patch` print with --json (the stateless-orchestrator plan's O5, D1223). They are the CLI's own contract with whatever reads them — the console, a session, a script — and they are additives-only under version 1: a field never changes meaning, a new one is added, and a renamed one is a new version. The state document carries the generated summary rather than the raw state, because the summary is what the state model itself calls the state as a person or a session reads it and it is capped (internal/orchestrator.Summarize), so a consumer that reads it pays a bounded cost whatever the node grew to; `rev` is the revision the node was at, which is the `base_rev` a patch built from that read carries. The events document is the audit log in the order the server stamped it, oldest first, and it is what `internal/orchestrator.Entry` marshals: the id and the stamp are the log's own, derived on append and never by the caller. The patch document reports the write that landed — which class of actor made it among them. That class is `session` or `person` and never `daemon` or `decision-agent`: no flag, environment variable or field of the document makes the CLI act as either (G1), so this enum is the fence written down. The two timestamp fields the commands format themselves are second-precision UTC RFC 3339; the audit's own stamps are too, because internal/orchestrator.audit's Append truncates them (stamp). The brief and the event texts carry stored text, already cleaned and, for the brief, fenced by the summary that generated it (G3).",
+  "oneOf": [
+    { "$ref": "#/$defs/state" },
+    { "$ref": "#/$defs/events" },
+    { "$ref": "#/$defs/patch" }
+  ],
+  "$defs": {
+    "version": {
+      "const": 1,
+      "$comment": "orchestratorOutputVersion in internal/cli/orchestrator_cmd.go"
+    },
+    "id": {
+      "type": "string",
+      "description": "The orchestrator id, which is the selected project's name: the commands take no id of their own (D1358 puts one orchestrator per project). The pattern is internal/orchestrator's agentRE, the rule every path under orchestrator/<id> is built and checked by.",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+    },
+    "stamp": {
+      "type": "string",
+      "description": "A second-precision UTC RFC 3339 instant. It is the database server's clock wherever it is a stamp of the state (D1230): a laptop's own clock is not what the order of the audit log, or the date of an approval, may depend on.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "kind", "id", "source", "brief"],
+      "$comment": "A node's document carries rev and schema_version, and a cache's carries neither. It is said conditionally rather than in the fields' own descriptions because zero is a revision a live node really is at — the revision of a node nobody has written yet — so a writer that drops the field as an empty value has to fail this contract rather than pass as an absent optional.",
+      "allOf": [
+        {
+          "if": { "required": ["source"], "properties": { "source": { "const": "node" } } },
+          "then": { "required": ["rev", "schema_version"] }
+        }
+      ],
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "kind": { "const": "state" },
+        "id": { "$ref": "#/$defs/id" },
+        "source": {
+          "description": "Where the brief came from: `node` is the live state node, read over the project's database as the person's own credential; `cache` is the file the daemon writes at session start and `--brief --offline` prints, which reaches no network at all (D1243).",
+          "enum": ["node", "cache"]
+        },
+        "rev": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The revision the state node was at, and so the `base_rev` a patch built from this read carries. It is written for `node` and never for `cache`, and an empty node's revision 0 is written too."
+        },
+        "schema_version": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The state document's own schema version (internal/orchestrator.SchemaVersion), written for `node`. A node saved at an older version is migrated by the reader before the summary is generated, and the next write carries the raised version.",
+          "default": 1
+        },
+        "brief": {
+          "type": "string",
+          "description": "The generated summary: the goal, the work items with their phases, the questions waiting on someone and the facts, with every stored string fenced and cleaned and the whole of it capped by the generator (internal/orchestrator.Summarize). It is the same text `fugaro orchestrator state --brief` prints without --json.",
+          "maxLength": 3072
+        },
+        "cached_at": {
+          "allOf": [{ "$ref": "#/$defs/stamp" }],
+          "description": "When the daemon wrote the cached brief, which is its freshness stamp: `--brief --offline` prints it so that a stale cache is visible rather than silent. Written for `source: cache` and never for `node`."
+        }
+      }
+    },
+    "events": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "kind", "id", "events"],
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "kind": { "const": "events" },
+        "id": { "$ref": "#/$defs/id" },
+        "since": {
+          "allOf": [{ "$ref": "#/$defs/stamp" }],
+          "description": "The cut `--since` was resolved to, on the database's own clock. Written only when --since was passed; absent means the whole log."
+        },
+        "events": {
+          "type": "array",
+          "description": "The audit log, oldest first by the server's stamp with the derived id breaking a tie. It is written on every run, empty included, so a consumer may read it without a nil check. An audit node that does not exist yet is an empty log rather than an error.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "at", "subject", "transition"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "The derived id, `subject:transition` (internal/orchestrator.EntryID): the same event delivered twice is one entry, so a reader never sees the same thing twice."
+              },
+              "at": { "$ref": "#/$defs/stamp" },
+              "subject": {
+                "type": "string",
+                "description": "What the entry is about: a work item's, a decision's or a run's name (internal/orchestrator's idRE).",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+              },
+              "transition": {
+                "type": "string",
+                "description": "What happened to it (internal/orchestrator's auditTransitionRE).",
+                "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+              },
+              "text": {
+                "type": "string",
+                "description": "A short line for a person reading it later, capped by the writer (internal/orchestrator.MaxAuditTextRunes). Absent when the transition carries nothing to say; what a model said goes in the run's own record and not here.",
+                "maxLength": 300
+              }
+            }
+          }
+        }
+      }
+    },
+    "patch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "kind", "id", "rev", "actor", "ops"],
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "kind": { "const": "patch" },
+        "id": { "$ref": "#/$defs/id" },
+        "rev": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The revision the write landed at, one past the revision the run read: the document is a report of a write that happened, and there is no refusal here because a refusal is an error and not a document."
+        },
+        "actor": {
+          "description": "Which class of actor made the write. `session` is a run that landed only what a session may land; `person` is a run that passed the typed confirmation at a real terminal, and the whole patch landed as that person. The two other classes are not here on purpose: nothing a caller passes makes this command the daemon or the decision agent.",
+          "enum": ["session", "person"]
+        },
+        "ops": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64,
+          "description": "How many ops the document carried. The bounds are internal/orchestrator.ValidatePatch's: a patch with no op would change nothing, and one over MaxOps is refused."
+        }
+      }
+    }
+  }
+}

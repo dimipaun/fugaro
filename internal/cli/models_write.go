@@ -44,9 +44,10 @@ func modelsLocalFile() (localcfg.Selection, *localcfg.Config, error) {
 // helper supplies the two fields of the edit its caller cannot know — the
 // selected file's path, and that the document is that file, outside every
 // repository, which is the half of the coding-agent fence (SD9) — and leaves
-// the confirmation to the caller, whose Typed and TypedWhy carry D846: the
-// widening halves of an edit are the project's own name, the tightening ones
-// the ordinary y/N.
+// the classification to the caller, whose Typed and TypedWhy carry D846: the
+// widening halves of an edit are the owner's own step, refused in a coding
+// agent's session and asked nothing at the owner's terminal (D1552), and the
+// tightening ones are neither.
 func modelsEditLocal(cmd *cobra.Command, lc *localcfg.Config, sel localcfg.Selection, e settingsEdit) error {
 	e.Path, e.Kind = sel.Path, settingsDocLocal
 	if yamledit.Changed(e.Old, e.New) {

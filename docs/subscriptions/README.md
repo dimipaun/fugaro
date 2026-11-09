@@ -46,7 +46,7 @@ carries a figure.
 
 | Numbers | State |
 | --- | --- |
-| **D430–D459** | this work's block. **D430–D448** written and answered 2026-10-27; **D449–D459** reserved and unused. Taken above the go-to-market work's D400–D429 and the Bitbucket credentials work's D360–D389, on `main` and in every open PR |
+| **D430–D459** | this work's block. **D430–D448** written and answered 2026-10-27; **D449–D459** written by the key service's design (S3.1, `docs/design/key-signing-service.md` §12) and unanswered. Taken above the go-to-market work's D400–D429 and the Bitbucket credentials work's D360–D389, on `main` and in every open PR |
 | **Checks 170–179** | this work's block. **170–179** are named by the plan, owner-run and not run (S3.6 registers them). Taken above the go-to-market work's Checks 160–169 |
 
 ## Headline

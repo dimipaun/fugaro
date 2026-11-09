@@ -616,6 +616,9 @@
         "image_catalog.entries.*.source.branch": {
           "default": "unset = none"
         },
+        "image_catalog.entries.*.source.context": {
+          "default": "unset = none"
+        },
         "image_catalog.entries.*.source.inline": {
           "default": "unset = none"
         },
@@ -630,6 +633,14 @@
         },
         "image_source": {
           "default": "unset = none: no base pin has been recorded"
+        },
+        "issues.nudge_after_days": {
+          "$comment": "localcfg.DefaultIssuesNudgeAfterDays",
+          "default": "7"
+        },
+        "issues.nudge_recurrence": {
+          "$comment": "localcfg.DefaultIssuesNudgeRecurrence",
+          "default": "3"
         },
         "job_profiles.*.allow_repos": {
           "default": "unset = every repository of the project"
@@ -1138,6 +1149,9 @@
         },
         "rigor.default": {
           "default": "unset = pro (rigor.Default)"
+        },
+        "security.patterns": {
+          "default": "unset = the engine's floor alone"
         },
         "routing.claude.models": {
           "default": "unset = none"

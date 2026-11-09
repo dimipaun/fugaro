@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/watch"
 )
 
@@ -166,7 +167,7 @@ func TestWatchPlainNoEscapes(t *testing.T) {
 			t.Fatalf("a control reached the output: %q", s)
 		}
 	}
-	for _, want := range []string{"project aurora", "the bug", "NOTIONAL", "counted $30.00 of $100.00", "counted $25.00, no cap", "20261002-090000-aaaa"} {
+	for _, want := range []string{"project aurora", "the bug", "NOTIONAL", "counted $30.00 of $100.00", "counted $25.00, no cap", task.ShortRun("20261002-090000-aaaa")} {
 		if !strings.Contains(out, want) {
 			t.Errorf("plain frame lacks %q:\n%s", want, out)
 		}

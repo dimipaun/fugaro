@@ -73,8 +73,9 @@ the old side named, never reading a plaintext object.
 The grants moved with the object (§7.2, §7.5): the job account's `tokens/<slug>/` is
 `roles/storage.objectViewer` (`google_storage_bucket_iam_member.job_tokens`, in the workflow
 module), and the launchers' conditioned write is widened to `runs/ || tokens/` under the new title
-`fugaro-launchers-runs-tokens`, in Terraform, its precondition and tftest lines, and the four Go
-files that write and re-check it. **The project module of Task 3.2 does not exist on the base Slice
+`fugaro-launchers-runs-tokens` — and, with the shared issue store, to `runs/ || tokens/ ||
+issues/` under `fugaro-launchers-runs-tokens-issues` (§7.2, D1727) — in Terraform, its precondition
+and tftest lines, and the four Go files that write and re-check it. **The project module of Task 3.2 does not exist on the base Slice
 B was built on**, so the read-only grant is in the per-repository workflow module
 (`tokens/<slug>/`); Task 3.2's shared job must carry the same read-only grant on its own prefix
 condition, and must not add `tokens` to the job's objectUser prefixes. **Both landed when the seal
@@ -606,7 +607,11 @@ the second half of the recommendation moves the object:
   expression is the two-prefix string `gcp.LauncherBucketCondition` builds —
   `resource.name.startsWith("…/objects/runs/") || resource.name.startsWith("…/objects/tokens/")`
   (`internal/backend/gcp/names.go`) — with the member's own `precondition` pinning exactly that
-  pair, its tftest line and the install guard's reading of the grant beside it. `PutObject`,
+  pair, its tftest line and the install guard's reading of the grant beside it. **The title moved
+  once more with the shared issue store** (D1727): the condition now carries a third clause,
+  `resource.name.startsWith("…/objects/issues/")`, under the title
+  `fugaro-launchers-runs-tokens-issues` (`gcp.LauncherBucketConditionTitle`), so a launcher files its
+  own issue with the credential the grant already gives it. `PutObject`,
   `DeleteObject` and `dropBudgetToken` under `tokens/` are what the widened expression is for. This
   is a deliberate widening of a *launcher* grant — the price of the move, not of the seal — and D16
   and D19 are where it is decided and ordered. The launchers need nothing new to *read* the prefix:

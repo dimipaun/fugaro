@@ -85,14 +85,13 @@ type Row struct {
 	Sensitive bool   // the value is never printed (spec §2.3)
 	Owner     string // the command family that writes it
 	Doc       string // the document that must state it
-	// TypedWhy is the sentence saying why turning this key ON is confirmed by
-	// the project's own name rather than y/N, and who may answer that form:
-	// `settings set|unset` take --yes for it outside a coding agent's session
-	// (D1107, amending D846 for those two alone), while `fugaro project repos
-	// rm` and `fugaro update`'s publish of a looser node are the doors where
-	// nothing stands in for it. The widening directions do not include every
+	// TypedWhy is the sentence saying why turning this key ON is the widening
+	// direction rather than the ordinary write: the write prints it and the dry
+	// run carries it as `why`. A widening is the owner's own step and is asked
+	// nothing for itself (D1552); what fences it is the coding agent's session,
+	// at every door that writes it. The widening directions do not include every
 	// key, so the row carries its own. Empty is a key whose write is the
-	// ordinary confirmation.
+	// ordinary one.
 	TypedWhy string
 }
 
@@ -284,6 +283,17 @@ var yamlMeta = map[string]Row{
 		Doc:     "docs/rigor-modes/spec.md",
 	},
 	"rigor.areas": {Owner: "rigor", Merge: Union, Default: unset("no area rules"), Doc: "docs/rigor-modes/spec.md"},
+
+	// The security list is rigor.areas' twin in the two fields a Scopes row
+	// cannot answer. Its merge is Union and not the default Replace (D1506):
+	// the repository's rows are added to the project's and the engine's, never
+	// put in their place, so a layer that writes the key can only ever say
+	// more. And its owner is not `settings set`, though that is the row a key
+	// with no entry here takes: D1515 decides the editor is fugaro.yaml and the
+	// project layer file — a list has no scalar floor for the allow-list's rule
+	// to raise — and `fugaro config publish` is the command that carries the
+	// layer's half, which is what the row names.
+	"security.patterns": {Owner: "config", Merge: Union, Default: unset("the engine's floor alone")},
 }
 
 // buildRows is the table, assembled from the three documents' own sources: the
@@ -387,6 +397,16 @@ const (
 	// schedule on are stated there and nowhere else yet, and a spec of the
 	// installation's own would be the document that takes the rows over.
 	docPeriodicReviews = "docs/periodic-reviews/implementation-plan.md"
+	// docTroubleshoot is the document that states the issue nudge's
+	// thresholds (docs/troubleshoot-issue/). The spec states the behaviour
+	// (§6: the wording gets firmer as an issue ages or recurs more often, at
+	// thresholds config may set) and leaves the keys unnamed, so the row
+	// points at the plan for docOrchestrator's reason: the two keys are named
+	// there and nowhere else yet. The plan states no figure — it says the
+	// defaults are documented — so the values themselves are this table's
+	// DEFAULT column and the schema's keyDefaults, and a spec of the section's
+	// own would be the document that takes the rows over.
+	docTroubleshoot = "docs/troubleshoot-issue/implementation-plan.md"
 )
 
 // layerRow is a row of the project layer's file. The layer is its only store,
@@ -714,7 +734,7 @@ var localRows = []Row{
 		Default:  unset("false: nothing chooses an account for the owner"),
 		Owner:    "settings set",
 		Doc:      docModels,
-		TypedWhy: "this lets Fugaro choose an account for the owner: a run then spreads one project across several accounts, which is the owner's own decision about the terms the subscriptions are held under, so the project's own name is what confirms it, or --yes outside a coding agent's session",
+		TypedWhy: "this lets Fugaro choose an account for the owner: a run then spreads one project across several accounts, which is the owner's own decision about the terms the subscriptions are held under",
 	},
 	// The installation's credentials, pools and crafts (docs/model-crafts/
 	// spec.md §1–3). They are local-only for claude_accounts' reason, and the
@@ -795,6 +815,7 @@ var localRows = []Row{
 	loc("image_catalog.entries.*.source.repo", "none", "project", docImages),
 	loc("image_catalog.entries.*.source.path", "none", "project", docImages),
 	loc("image_catalog.entries.*.source.branch", "none", "project", docImages),
+	loc("image_catalog.entries.*.source.context", "none", "project", docImages),
 	loc("image_catalog.entries.*.source.inline", "none", "project", docImages),
 	loc("image_catalog.entries.*.source.image", "none", "project", docImages),
 	loc("image_catalog.entries.*.description", "none", "project", docImages),
@@ -857,6 +878,17 @@ var localRows = []Row{
 	locLocal("workspace_members.*.fp", "none", "workspace", docWorkspace),
 	locLocal("workspace_members.*.exchange_url", "none", "workspace", docWorkspace),
 	locLocal("workspace_cap.monthly", "the workspace states no cap", "workspace", docWorkspace),
+
+	// The terminal Issues section's nudge thresholds (T-IS15). They are
+	// local-only rather than loc's two layers: the section is printed on the
+	// machine running the digest, the committed report carries no part of it,
+	// and no other machine acts on this one's thresholds — so the shared file
+	// never holds the block (Shared drops it) and a row advertising the shared
+	// layer would name a store the key cannot have. Their defaults are values
+	// the loader leaves in place, so they come from defaultValues below, as
+	// update_check's does, rather than from an "unset means" sentence.
+	{Key: "issues.nudge_after_days", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config", Doc: docTroubleshoot},
+	{Key: "issues.nudge_recurrence", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config", Doc: docTroubleshoot},
 }
 
 // defaultValues are the rows whose default is a value the loaders leave in
@@ -873,6 +905,12 @@ var defaultValues = map[string]Default{
 	// sets it nowhere (localcfg.Parse) and no constant holds it, so the value
 	// is written here and read back out of a parsed config like the two above.
 	"local.version": value("1", ""),
+	// The Issues section's nudge thresholds (T-IS15): the loader answers the
+	// constants for a file that sets neither, through the accessors rather
+	// than the fields, so "the file wrote nothing" and "the file wrote the
+	// default" are one reading here.
+	"issues.nudge_after_days": value("7", "localcfg.DefaultIssuesNudgeAfterDays"),
+	"issues.nudge_recurrence": value("3", "localcfg.DefaultIssuesNudgeRecurrence"),
 }
 
 // sensitiveKeys are the keys whose value is never printed (spec §2.3): the
