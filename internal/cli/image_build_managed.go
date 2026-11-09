@@ -30,15 +30,19 @@ import (
 // took the typed name's place. The typed name is gone from every arm of this
 // command now (D1540, D1542) and what bounds a build is the lease the caller
 // takes from the project's budget database before each submission
-// (image_build_lease.go, D1543), so there is no confirmation left for the gate
-// to stand in for. What the gate still does here is the managed project's own
-// record: each catalog entry is judged against the row §6 of
-// docs/repo-image-removal/spec.md states for this command, the plan a rule
-// refuses is refused rather than judged again, and the verdict is written as
-// the audit record (D1025). A project that is not managed, a mark that cannot be
-// read and a project whose clients or budget database cannot be opened answer
-// nil from openBuildManaged, and the build then takes its lease and runs — the
-// same answer every session that is not an owner at their own terminal gets.
+// (image_build_lease.go, D1543), so the prompt is gone from the gate to stand in
+// for as well. What the gate still does here — and it is what it does in both
+// sessions it is read for, the owner's terminal and a coding agent's — is the
+// managed project's own judgement and record: each catalog entry is judged
+// against the row §6 of docs/repo-image-removal/spec.md states for this command,
+// the plan a rule refuses is refused rather than judged again, the verdict is
+// written as the audit record (D1025), and the session reads the sentence of the
+// branch it was admitted on (GateProceeded, AgentProceeded) or, in a coding
+// agent's session, the refusal a verdict that did not come has always left there
+// (D55). A project that is not managed, a mark that cannot be read and a project
+// whose clients or budget database cannot be opened answer nil from
+// openBuildManaged, and the build then takes its lease and runs — the same answer
+// every session this file does not judge gets.
 //
 // Which arm the gate has a document for, and which it does not. The gate's rows
 // are the design of record's, and for this command the row is the catalog entry:
@@ -48,7 +52,11 @@ import (
 // §6, D1206). The count clause went with the bound (T4, D1543). The derived arm —
 // `--workflow`, or a checkout with no catalog — is written by no row anywhere, so
 // no document of the gate's names it: that arm submits its build under its lease
-// and is recorded by nothing here.
+// and is recorded by nothing here. That is also the whole of what a coding
+// agent's session is admitted to: the row above is the catalog entry, so that
+// session is judged, admitted and recorded for an entry of the catalog and for
+// nothing else this command builds (D1016 — a step the gate has no document for
+// is not a step a session is admitted to).
 //
 // Why the kill switch is read, and read per build. D1013's bound was what made
 // this row admissible rather than a licence, and the kill switch is the part of
@@ -72,24 +80,25 @@ import (
 // is D12's answer of 2026-10-20 and the class `fugaro image refresh`'s per-build
 // document already carried (askBuild), and it is the class a build's admission is
 // still made under. What it decides now is what the verdict is spent on — the
-// record, and the one line a person at their own terminal is shown in place of
-// the questions a typed confirmation used to print (initflow.ConfirmsByGate,
-// GateProceeded) — and no longer whether anything is asked: with the confirmation
-// gone, a managed project's terminal and a coding agent's session submit their
-// builds alike, each under the lease the caller takes immediately after the
-// verdict. What keeps the admission from being a licence is the same as before
-// minus the prompt: the rules below are re-stated over the submitted build rather
-// than assumed from the code that computed it, and the admission — not the
+// record, and the line the session that was admitted reads (GateProceeded at a
+// terminal, AgentProceeded under a marker) — and no longer whether anything is
+// asked: with the confirmation gone, a managed project's terminal and a coding
+// agent's session are judged by the same document and submit their builds under
+// the lease the caller takes immediately after the verdict, and a session the
+// verdict did not come for is refused rather than left to the lease alone
+// (admitEntry). What keeps the admission from being a licence is the same as
+// before minus the prompt: the rules below are re-stated over the submitted build
+// rather than assumed from the code that computed it, and the admission — not the
 // absence of a question — is what the record carries.
 
 // buildManaged is `fugaro image build`'s own door: the installation the gate
 // read, the gate itself, and the client the kill switch is re-read with before
 // every build.
 //
-// nil is the whole of the difference for every other session. A nil
-// *buildManaged answers standsIn false, and admitEntry and recorded do nothing
-// — which is the answer for an unmanaged project, a mark that cannot be read,
-// an agent's session, a pipe and a project whose clients or budget database
+// nil is the whole of the difference for every session this file does not
+// judge. A nil *buildManaged answers standsIn false, and admitEntry and
+// recorded do nothing — which is the answer for an unmanaged project, a mark
+// that cannot be read, a pipe and a project whose clients or budget database
 // cannot be opened.
 type buildManaged struct {
 	// lc is the installation the gate read, and the one this command already
@@ -117,15 +126,19 @@ type buildManaged struct {
 // returns nil, so the build is judged by nothing but the lease the caller takes
 // and is never met with an error about the installation.
 //
-// Why nothing is read for a session that is not a person at the terminal. The
-// door is the one place that decides which sessions this file judges, and the
-// answer is the session these rows were written for: the owner at their own
-// terminal. A session that is not one pays nothing for the read and submits its
-// build under its lease alone, which is what every arm of the command did before
-// this file existed — and widening the gate to those sessions is a change of
-// behavior this file is not the place for.
+// Why a coding agent's session is read for, and read for here. The gate's
+// verdict is what replaces the confirmation in BOTH sessions the confirmation
+// used to decide: the owner at their own terminal, whose prompt the verdict
+// stands in for, and a coding agent's session, where the verdict is what the
+// session proceeds on (D55, managed-agent-converge §3.1). This command's row is
+// the catalog entry, so the gate has a document for a catalog build and the
+// agent's session is judged by it exactly as `fugaro image refresh` judges its
+// own per-build document — and recorded by it, which is the audit the owner has
+// instead of the prompts (D1025). A session this file does not judge — a pipe,
+// which the rows are not stated for and which has no verdict to act on — pays
+// nothing for the read and submits its build under its lease alone.
 func openBuildManaged(ctx context.Context, env *cloudEnv, c initflow.Conditions) *buildManaged {
-	if !initflow.PersonAtTheTerminal(c) {
+	if !judgedHere(c) {
 		return nil
 	}
 	cl, err := newInitClients(ctx, env.lc)
@@ -143,16 +156,24 @@ func openBuildManaged(ctx context.Context, env *cloudEnv, c initflow.Conditions)
 	return &buildManaged{lc: env.lc, gate: &gate, db: db}
 }
 
+// judgedHere is the session this file's gate is read for and judges, named once
+// so the door and standsIn cannot answer two different questions: the owner at
+// their own terminal, and a coding agent's session — the two readers
+// managed-agent-converge §3.1 states the gate's verdict for.
+func judgedHere(c initflow.Conditions) bool {
+	return initflow.PersonAtTheTerminal(c) || c.Agent != ""
+}
+
 // standsIn is whether this session's builds are judged by the gate: the door's
-// read answered "managed" and this is the owner at their own real terminal,
-// which is the session the rows are stated for.
+// read answered "managed" and this is a session the rows are stated for
+// (judgedHere).
 //
 // The predicate is asked again here rather than remembered from the door,
 // because the session the record is scoped to and the session the door read for
 // are one reading of the same facts, taken where each is decided: a caller
 // cannot end up writing one session's record for another session's build.
 func (m *buildManaged) standsIn(c initflow.Conditions) bool {
-	return m != nil && m.gate != nil && initflow.PersonAtTheTerminal(c)
+	return m != nil && m.gate != nil && judgedHere(c)
 }
 
 // buildGateFacts is this command's own facts about itself, as M6's helper takes
@@ -229,8 +250,8 @@ func (p buildPlan) bytes() ([]byte, error) {
 // a judgement to work around, and a gate that finds the project is not managed
 // any more (the second read's own answer, admit's zero Managed) leaves the build
 // to its lease exactly as a session this file does not judge. What is left for
-// the verdict to decide is the record and the line the person reads, because the
-// build's confirmation is gone from every session (T4, D1540).
+// the verdict to decide is the record and the line the session reads, because
+// the build's confirmation is gone from every session (T4, D1540).
 func (m *buildManaged) admitEntry(ctx context.Context, cmd *cobra.Command, c initflow.Conditions, cat *config.Catalog, e config.Entry, slug string, p buildPlan) error {
 	if !m.standsIn(c) {
 		return nil
@@ -251,14 +272,30 @@ func (m *buildManaged) admitEntry(ctx context.Context, cmd *cobra.Command, c ini
 		return err
 	}
 	// The verdict is the record of what was judged, not a permission: what
-	// bounds this build is the lease the caller takes immediately after it,
-	// and a gate that did not stand in for this session — the second read
-	// found the project is not managed any more, or this is not the class it
-	// covers — leaves the build to that lease exactly as it leaves an agent's
-	// session's. The sentence is printed only where the gate DID stand in, so
-	// it says what is true of the build it precedes.
+	// bounds this build is the lease the caller takes immediately after it.
+	// What the verdict decides here is what this session reads, and the two
+	// sessions are the two the gate is read for (judgedHere).
+	//
+	// The owner at their own terminal reads the gate's own sentence where the
+	// typed name would have been. A coding agent's session reads
+	// AgentProceeded's — the sentence this design already carries for exactly
+	// this case, a step of a managed project whose plan the gate admitted
+	// (managed-agent-converge §3.1) — and is REFUSED where the verdict did not
+	// stand in for the confirmation the session cannot give: the second read
+	// found the project is not managed any more, the inventory fell back, or
+	// the class is not one the gate covers. That refusal is the answer the
+	// agent's session got before T4 and it is right where the gate cannot
+	// replace the prompt (D55): nothing a session can type reaches past an
+	// unadmitted plan, and a session that has no admission to proceed on
+	// proceeds on nothing. refreshBuilds' announceBuild gives its own
+	// per-build admission the same two answers.
 	if initflow.ConfirmsByGate(initflow.YesOrTyped, c, adm) {
 		fmt.Fprintf(cmd.ErrOrStderr(), "  %s\n", initflow.GateProceeded())
+	} else if c.Agent != "" {
+		if !initflow.CanConfirmManaged(initflow.YesOrTyped, c, adm) {
+			return &initflow.AgentError{Marker: c.Agent}
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "  %s\n", initflow.AgentProceeded(c.Agent))
 	}
 	return nil
 }

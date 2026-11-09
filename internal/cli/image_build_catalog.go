@@ -41,9 +41,10 @@ func runImageBuildCatalogOrDerived(cmd *cobra.Command, name string, o imageBuild
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
 	}
-	// What this session is, as the managed door reads it: a coding agent's
-	// session and a pipe are not judged here (openBuildManaged), and --json
-	// never reaches this far (runImageBuild refuses it for a Cloud Build).
+	// What this session is, as the managed door reads it: the owner at their
+	// own terminal and a coding agent's session are the two the gate is read
+	// for, a pipe is not judged (openBuildManaged), and --json never reaches
+	// this far (runImageBuild refuses it for a Cloud Build).
 	conds := initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), JSON: o.asJSON, Agent: agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))}
 	env, err := openCloud(ctx, o.cloud)
 	if err != nil {

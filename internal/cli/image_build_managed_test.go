@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -716,17 +717,25 @@ func TestImageBuildManagedAcceptsACanonicalRepoSpellingAtTheCommand(t *testing.T
 	oneRecord(t, w, managedmode.AuditAdmitted)
 }
 
-// A coding agent's session on the same managed project builds, and this is T4's
-// own change stated: the refusal that used to stand here was the typed
-// confirmation's (catalogBuildNotConfirmable), and with the prompt gone there is
-// no session that can be refused for being unable to answer it. What bounds the
-// agent's build is the same lease a person's build takes, and the one fence the
+// A coding agent's session on the same managed project builds its catalog entry
+// THROUGH the gate: the entry is judged by the row's own rules, admitted, and
+// written as the project's record, and the session reads AgentProceeded — the
+// sentence this design carries for a step of a managed project whose plan the
+// gate admitted (managed-agent-converge §3.1, D55). What bounds the build beside
+// the verdict is the same lease a person's build takes, and the one fence the
 // policy puts around an agent is raising a cap (D1542), which a build cannot do
 // — so an agent's session is bounded by a cap its owner set and it cannot lift.
 //
-// Nothing is recorded: the gate stands in for a person at a real terminal, and
-// this session is not one.
-func TestImageBuildManagedAnAgentSessionBuildsUnderTheLease(t *testing.T) {
+// Why it is judged at all, given that no prompt stands here any more. The gate's
+// verdict is what replaces a confirmation in BOTH sessions a confirmation used to
+// decide, and this command HAS a document for a catalog entry (§6 of
+// docs/repo-image-removal/spec.md, D1206): leaving the agent's session out of the
+// judgement would leave the build that this row is about outside the record the
+// owner has in place of every prompt (D1025). The mutation this catches is the
+// door closing for a marker — the build goes out with no verdict reached and
+// nothing recorded, which is what this test failed on before the fix — and the
+// person's own sentence printed to a session that is not a person.
+func TestImageBuildManagedAnAgentSessionIsAdmittedAndRecorded(t *testing.T) {
 	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildThreeYAML)
 	w := managedBuildWorld(t, f, managedBuildMarker(1))
 	fakeTerminal(t)
@@ -735,7 +744,7 @@ func TestImageBuildManagedAnAgentSessionBuildsUnderTheLease(t *testing.T) {
 
 	out, errOut, err := executeStdinReader(t, stdin, "image", "build", "alpha", "--base", "b:1")
 	if err != nil {
-		t.Fatalf("a coding agent's session is bounded by the lease and must not be refused: %v\n%s%s", err, out, errOut)
+		t.Fatalf("a coding agent's session was refused a build the gate admits: %v\n%s%s", err, out, errOut)
 	}
 	if buildPosts(fb) != 1 {
 		t.Errorf("the agent's build was submitted %d times, want the one its lease paid for", buildPosts(fb))
@@ -743,8 +752,78 @@ func TestImageBuildManagedAnAgentSessionBuildsUnderTheLease(t *testing.T) {
 	if stdin.read {
 		t.Error("a coding agent's session was asked a question it can never answer")
 	}
-	if strings.Contains(errOut, agentMarkers[0]+" is set") {
-		t.Errorf("the session read a refusal about the marker it carries, which no longer refuses a build:\n%s", errOut)
+	if strings.Contains(errOut, initflow.AgentRefusal(agentMarkers[0])) {
+		t.Errorf("the session read the refused-step sentence for a build the gate admits:\n%s", errOut)
+	}
+	if !strings.Contains(errOut, initflow.AgentProceeded(agentMarkers[0])) {
+		t.Errorf("the session did not read that the gate's verdict is what admits it:\n%s", errOut)
+	}
+	if strings.Contains(errOut, initflow.GateProceeded()) {
+		t.Errorf("a coding agent's session read the sentence that belongs to the owner's own terminal:\n%s", errOut)
+	}
+	rec := oneRecord(t, w, managedmode.AuditAdmitted)
+	if rec.AgentMarker != agentMarkers[0] {
+		t.Errorf("the record says the session carried the marker %q, want %q: a managed project's audit has to name the session its build was admitted for", rec.AgentMarker, agentMarkers[0])
+	}
+}
+
+// The other half of the agent's branch: a session the verdict did not come for
+// is refused. The window is the one the second read exists for — the owner took
+// the project's managed label away between the door's read and this build's
+// admission (D1024) — and it is the same window
+// TestImageBuildManagedRevokedMidCommandRecordsNothing drives for the owner's
+// terminal, judged here for a marker instead.
+//
+// Why the two sessions get two answers in that window. The owner at their
+// terminal reads no sentence and is refused nothing: there is no prompt left to
+// put, and the lease is what bounds the build. A coding agent's session has
+// nothing of its own to proceed on — the gate's verdict IS what replaces the
+// confirmation it cannot give (D55), so a build no verdict covers is a build it
+// is refused — and that is the answer refreshBuilds' announceBuild gives its own
+// per-build admission, and the answer this arm gave before T4. What neither
+// session gets is a prompt: a refusal is not one.
+func TestImageBuildManagedAnAgentSessionIsRefusedAVerdictThatDoesNotCome(t *testing.T) {
+	_, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildThreeYAML)
+	w := managedBuildWorld(t, f, managedBuildMarker(1))
+	noAgentSession(t)
+	lc := fixtureConfig(t)
+
+	// The world the door read, so the revocation below is the only one between
+	// the two reads.
+	labelled(w.crmFake, initProject)
+	m := catalogBuildGate(t, w, lc)
+	stamped, release := w.db.HoldNext(budget.PathKillGlobal)
+
+	cmd := gateCmd()
+	out := &strings.Builder{}
+	cmd.SetOut(out)
+	cmd.SetErr(out)
+	cmd.SetIn(&unreadStdin{})
+	plan := catalogBuildPlan(t, lc, []string{"alpha"}, "alpha")
+	done := make(chan error, 1)
+	go func() {
+		done <- m.admitEntry(t.Context(), cmd, initflow.Conditions{Terminal: true, Agent: agentMarkers[0]},
+			directRulesCatalog("alpha"), config.Entry{Name: "alpha", Source: config.Source{Kind: config.SourceInline}},
+			mustSlug("bitbucket", "acme/app"), plan)
+	}()
+	select {
+	case <-stamped:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the admission never read the project's kill switch, so the door was never reached")
+	}
+	w.crmFake.SetLabels(initProject, map[string]string{managed.ProjectLabelKey: "no"})
+	release()
+	err := <-done
+
+	var refused *initflow.AgentError
+	if !errors.As(err, &refused) {
+		t.Fatalf("a coding agent's session with no verdict to proceed on was not refused with the marker's own answer: %v", err)
+	}
+	if refused.Marker != agentMarkers[0] {
+		t.Errorf("the refusal names the marker %q, want %q", refused.Marker, agentMarkers[0])
+	}
+	if s := out.String(); strings.Contains(s, initflow.AgentProceeded(agentMarkers[0])) || strings.Contains(s, initflow.GateProceeded()) {
+		t.Errorf("a build no verdict covered read a sentence that claims one:\n%s", s)
 	}
 	if got := w.audits(t); len(got) != 0 {
 		t.Errorf("a session the gate does not stand in for left %d records (%+v)", len(got), got)
@@ -776,6 +855,45 @@ func TestImageBuildUnmanagedBuildsUnderTheLease(t *testing.T) {
 	}
 	if stdin.read {
 		t.Error("a project that is not managed read the person's own stdin, so a question was asked")
+	}
+	if buildPosts(fb) != 1 {
+		t.Errorf("submitted %d builds, want the one the lease paid for\n%s%s", buildPosts(fb), out, errOut)
+	}
+	if got := w.audits(t); len(got) != 0 {
+		t.Errorf("a project that is not managed left %d records (%+v)", len(got), got)
+	}
+}
+
+// The same installation, in a coding agent's session: the door's read answers
+// "nothing to judge" exactly as it does for a person, the agent is judged by
+// nothing and refused nothing, and the build goes out under its lease.
+//
+// It is the direction the agent's branch must not widen. The verdict is what a
+// MANAGED project's gate replaces the confirmation with (D55), so a project that
+// is not managed has no verdict to reach and none to withhold — the fence the
+// policy puts around an agent's build is the cap its owner set (D1542), and a
+// command that refused the session here would be asking for the prompt the
+// policy took away in the one project where nothing stands in for it.
+func TestImageBuildUnmanagedAnAgentSessionBuildsUnderTheLease(t *testing.T) {
+	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildThreeYAML)
+	w := unmanagedBuildWorld(t, f)
+	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
+	fakeTerminal(t)
+	t.Setenv(agentMarkers[0], "1")
+	stdin := &unreadStdin{}
+
+	out, errOut, err := executeStdinReader(t, stdin, "image", "build", "alpha", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("a coding agent's session in a project that is not managed was refused: %v\n%s%s", err, out, errOut)
+	}
+	if strings.Contains(errOut, initflow.AgentRefusal(agentMarkers[0])) {
+		t.Errorf("the session read the refused-step sentence, and a project that is not managed has no verdict to refuse it with:\n%s", errOut)
+	}
+	if strings.Contains(errOut, initflow.AgentProceeded(agentMarkers[0])) || strings.Contains(errOut, initflow.GateProceeded()) {
+		t.Errorf("a project that is not managed printed a sentence that claims a verdict:\n%s", errOut)
+	}
+	if stdin.read {
+		t.Error("a project that is not managed read the session's own stdin, so a question was asked")
 	}
 	if buildPosts(fb) != 1 {
 		t.Errorf("submitted %d builds, want the one the lease paid for\n%s%s", buildPosts(fb), out, errOut)
