@@ -261,11 +261,10 @@ func newLsCmd() *cobra.Command {
 			"states the flag takes. A run's state is in its result.json, so this filter\n" +
 			"reads every run it filters -- it narrows the listing, never the reads.\n\n" +
 			"--debt lists only the runs filed from a triage deferral: a task whose own spec\n" +
-			"is marked debt (fugaro followups writes that mark), which is work a run's\n" +
-			"review left behind rather than work somebody asked for. Like --state it\n" +
-			"reads the runs it filters, since the mark is in the run's task.json; a run\n" +
-			"whose task.json is unreadable is left out rather than guessed in, because\n" +
-			"nothing there says it is one.\n\n" +
+			"is marked debt, which is work a run's review left behind rather than work\n" +
+			"somebody asked for. Like --state it reads the runs it filters, since the\n" +
+			"mark is in the run's task.json; a run whose task.json is unreadable is\n" +
+			"left out rather than guessed in, because nothing there says it is one.\n\n" +
 			"--pr N lists the runs on pull request N of one repository (the first run and\n" +
 			"its follow-ups), over the last " + prLookback + " unless --since says otherwise; the totals\n" +
 			"line is then the PR's total cost.",

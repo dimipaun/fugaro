@@ -4285,11 +4285,10 @@ states the flag takes. A run's state is in its result.json, so this filter
 reads every run it filters -- it narrows the listing, never the reads.
 
 --debt lists only the runs filed from a triage deferral: a task whose own spec
-is marked debt (fugaro followups writes that mark), which is work a run's
-review left behind rather than work somebody asked for. Like --state it
-reads the runs it filters, since the mark is in the run's task.json; a run
-whose task.json is unreadable is left out rather than guessed in, because
-nothing there says it is one.
+is marked debt, which is work a run's review left behind rather than work
+somebody asked for. Like --state it reads the runs it filters, since the
+mark is in the run's task.json; a run whose task.json is unreadable is
+left out rather than guessed in, because nothing there says it is one.
 
 --pr N lists the runs on pull request N of one repository (the first run and
 its follow-ups), over the last 90d unless --since says otherwise; the totals

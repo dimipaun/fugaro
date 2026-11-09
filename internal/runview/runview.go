@@ -254,8 +254,8 @@ type Row struct {
 	// FollowUpOf is the parent a triage follow-up was filed from, as the
 	// run's own task carries it (task.Spec.FollowUpOf, docs/post-review-triage
 	// D1843): the parent run's ID and the keys of the deferred findings this
-	// task settles, written by the CLI that filed it (fugaro followups) and
-	// read by nobody inside a run.
+	// task settles, written when the task is filed and read by nobody inside a
+	// run.
 	//
 	// It is its own fact beside FollowUp and not a second spelling of it: a
 	// follow-up continues the pull request of PreviousRun (a person or a
