@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -193,14 +194,34 @@ type WorkspaceCaller struct {
 	// Member is the member the account resolved to. It is the zero value for
 	// the owner's person, who is a member of nothing.
 	Member WorkspaceMember
-	// Identity is the verified run identity, for a member's job caller that
-	// presented one. It is the zero value for the owner's person, and for a
-	// member's job on a route that carries no run identity.
+	// Identity is the verified run identity. It is the zero value for the
+	// owner's person, who is admitted by Caller alone — and it is never the
+	// zero value on a MemberCall, the type every route that acts for a member
+	// takes, because only Verify produces one.
 	Identity Identity
 	// Database is the member's database, derived from the member's Firebase
 	// project (finding 6). It is empty for the owner's person.
 	Database string
 }
+
+// MemberCall is a verified member's caller: what Caller resolved — the class,
+// the account, the member and the member's database — together with the run
+// identity Verify checked beside it.
+//
+// **It is a type rather than a field a route re-reads, and that is the whole of
+// its job.** Only Verify produces one, so the routes that ACT for a member take
+// a MemberCall and cannot be reached without the run identity having been
+// verified: the pool, the policy the pool is intersected with and the member's
+// own figures are all behind it, and no route can serve them by checking a flag
+// of its own. It is also what the audit line needs: the "who" a member's route
+// records is the run Verify returned (Identity.Audit), which a caller that
+// stopped at Caller would have no value for — the installation's serving path
+// takes its Identity the same way (cascade.go).
+//
+// A member's Caller is still a WorkspaceCaller: the workspace-wide routes take
+// that type, because the class they admit — the workspace owner's people — holds
+// no run identity at all (Verify refuses it).
+type MemberCall struct{ WorkspaceCaller }
 
 // Workspace is the workspace's credentials service: the front door, the
 // per-member verifiers and the route classes.
@@ -341,6 +362,13 @@ func (w *Workspace) readMembers(cfg WorkspaceConfig) error {
 // reach depends on which route it reached, which is the rule NewAuthenticator
 // makes for a person that is also a job, read here for this deployment's two
 // lists.
+//
+// A service account address is refused for the sibling constructor's reason
+// (NewAuthenticator): the owner's people are the humans who operate the
+// workspace, and *.gserviceaccount.com is the shape every job, verifier and
+// coordinator account has. Admitting one would hand the class that reads the
+// workspace's own figures — every member's spend at once — to an automation,
+// which is the caller the class does not exist for.
 func (w *Workspace) readPeople(cfg WorkspaceConfig) error {
 	for _, person := range cfg.OwnerPeople {
 		folded, ok := foldEmail(person)
@@ -349,6 +377,9 @@ func (w *Workspace) readPeople(cfg WorkspaceConfig) error {
 		}
 		if _, isJob := w.byAccount[folded]; isJob {
 			return fmt.Errorf("%w: an address is both one of the workspace owner's people and a member's job service account, and a caller two classes admit would have the reach of whichever route it reached", ErrWorkspaceConfig)
+		}
+		if strings.HasSuffix(folded, ".gserviceaccount.com") {
+			return fmt.Errorf("%w: one of the workspace owner's people is a service account address, and the person class is the workspace owner's operators: the routes that answer about the whole workspace are what that class reads", ErrWorkspaceConfig)
 		}
 		if _, dup := w.ownerPeople[folded]; dup {
 			continue
@@ -408,26 +439,28 @@ func (w *Workspace) Caller(ctx context.Context, jobToken string) (WorkspaceCalle
 //
 // The owner's person holds no run identity, so it is refused: the routes that
 // act for a member admit that member's job service account and no person
-// (spec.md §4).
-func (w *Workspace) Verify(ctx context.Context, req Request) (WorkspaceCaller, error) {
+// (spec.md §4). What it answers is a MemberCall, the type those routes take, so
+// the two facts — this caller is a member's job AND the run identity beside it
+// verified — arrive together or not at all.
+func (w *Workspace) Verify(ctx context.Context, req Request) (MemberCall, error) {
 	caller, err := w.Caller(ctx, req.JobIDToken)
 	if err != nil {
-		return WorkspaceCaller{}, err
+		return MemberCall{}, err
 	}
 	if caller.Class != ClassWorkspaceMember {
-		return WorkspaceCaller{}, fmt.Errorf("%w: the caller is one of the workspace owner's people and holds no run identity, so it may not reach the routes that act for a member", ErrUnverifiedJob)
+		return MemberCall{}, fmt.Errorf("%w: the caller is one of the workspace owner's people and holds no run identity, so it may not reach the routes that act for a member", ErrUnverifiedJob)
 	}
 	auth, ok := w.auths[caller.Member.Project]
 	if !ok {
 		// Unreachable: Caller resolved the member out of this same table.
-		return WorkspaceCaller{}, fmt.Errorf("%w: the caller resolved to a member this deployment has no verifier for", ErrWorkspaceConfig)
+		return MemberCall{}, fmt.Errorf("%w: the caller resolved to a member this deployment has no verifier for", ErrWorkspaceConfig)
 	}
 	id, err := auth.Verify(ctx, req)
 	if err != nil {
-		return WorkspaceCaller{}, err
+		return MemberCall{}, err
 	}
 	caller.Identity = id
-	return caller, nil
+	return MemberCall{WorkspaceCaller: caller}, nil
 }
 
 // WorkspaceWide admits a caller to the routes that answer about the workspace
@@ -446,8 +479,10 @@ func (w *Workspace) WorkspaceWide(c WorkspaceCaller) error {
 // admits that member's job service account and no person at all: a member's
 // person is not a class this deployment has (spec.md §4), and the workspace
 // owner's person reaches a member's own figures through the workspace-wide
-// routes rather than through a member's route.
-func (w *Workspace) MemberRoute(c WorkspaceCaller, project string) error {
+// routes rather than through a member's route. It takes a MemberCall rather
+// than a bare caller so that a route cannot ask this question of a caller whose
+// run identity was never verified.
+func (w *Workspace) MemberRoute(c MemberCall, project string) error {
 	if c.Class != ClassWorkspaceMember {
 		return fmt.Errorf("%w: the route answers about one member, and only a member's job service account may reach it", ErrUnverifiedJob)
 	}
@@ -461,7 +496,7 @@ func (w *Workspace) MemberRoute(c WorkspaceCaller, project string) error {
 // `iss` names: the member the call resolved to decides which database is read,
 // so two members' accounts can never be pointed at one database by the owner's
 // declaration (finding 6).
-func (w *Workspace) Policy(ctx context.Context, c WorkspaceCaller) (*projectpolicy.Policy, bool, error) {
+func (w *Workspace) Policy(ctx context.Context, c MemberCall) (*projectpolicy.Policy, bool, error) {
 	db, err := w.database(c)
 	if err != nil {
 		return nil, false, err
@@ -487,7 +522,7 @@ func (w *Workspace) Policy(ctx context.Context, c WorkspaceCaller) (*projectpoli
 // comment states why: the repository a run is on reaches this service only as
 // the sanitised slug in the run identity, and a leg read from an input the
 // service cannot verify is not a leg).
-func (w *Workspace) Shared(ctx context.Context, c WorkspaceCaller, offered []creds.Shared) ([]creds.Credential, error) {
+func (w *Workspace) Shared(ctx context.Context, c MemberCall, offered []creds.Shared) ([]creds.Credential, error) {
 	if c.Class != ClassWorkspaceMember {
 		return nil, fmt.Errorf("%w: the shared pool is served to a member's job, and the caller is not one", ErrUnverifiedJob)
 	}
@@ -508,7 +543,7 @@ func (w *Workspace) Shared(ctx context.Context, c WorkspaceCaller, offered []cre
 // keyed by the member the CALL resolved to: there is no path from a caller to
 // another member's database, because the only way to name a member here is to
 // have resolved to it.
-func (w *Workspace) database(c WorkspaceCaller) (Getter, error) {
+func (w *Workspace) database(c MemberCall) (Getter, error) {
 	if c.Class != ClassWorkspaceMember {
 		return nil, fmt.Errorf("%w: the caller is not a member's job, so it names no member's database", ErrUnverifiedJob)
 	}
@@ -526,7 +561,7 @@ func (w *Workspace) database(c WorkspaceCaller) (Getter, error) {
 //
 // It is derived from the issuer and not declared, and the two are the same fact
 // because the member's verifier holds the run identity's `iss` to exactly
-// workspaceIssuer(FirebaseProject) before anything is read: the database a call
+// firebaseIssuer(FirebaseProject) before anything is read: the database a call
 // reads is therefore the one the caller's own verified `iss` names, and an
 // owner's declaration can never pair one member's accounts with another
 // member's — possibly looser — policy (finding 6).
@@ -535,16 +570,4 @@ func workspaceDatabase(firebaseProject string) (string, error) {
 		return "", errors.New("the member's row names a firebase_project that is not a Firebase project id, so its database could not be derived from it")
 	}
 	return "https://" + firebaseProject + "-default-rtdb.firebaseio.com", nil
-}
-
-// workspaceIssuer is the issuer a member's Firebase project mints its tokens
-// under, and the value the member's verifier holds the run identity's `iss` to
-// (verifyRun, over the member's own FirebaseProject). It is the same derivation
-// localcfg.WorkspaceIssuer makes on the member's own machine, and a test holds
-// the two spellings to each other: the pair aud/iss is the whole of what tells
-// one project's tokens from another's, because Google's Firebase signing keys
-// are one global set (GoogleKeysURL), so a service whose half of the pair
-// differed from the launcher's would refuse every honest call.
-func workspaceIssuer(firebaseProject string) string {
-	return "https://securetoken.google.com/" + firebaseProject
 }

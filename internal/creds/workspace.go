@@ -3,6 +3,8 @@ package creds
 import (
 	"errors"
 	"fmt"
+
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // A workspace's shared pool as the member's own service sees it: what a
@@ -69,12 +71,43 @@ var ErrNotShared = errors.New("creds: the workspace does not share this credenti
 var ErrMemberPolicy = errors.New("creds: the member's own policy excludes this credential, so the workspace's pool cannot serve it: a workspace can only tighten what a member admits (D1298)")
 
 // MemberPolicy answers whether the member's own policy admits a credential of
-// the workspace's pool, by the name the pool speaks. It is a func rather than a
-// set because the caller reads it from the member's published policy and the
-// name is the only thing this file may know about it: the policy may refuse an
+// the workspace's pool, by the key that policy speaks. It is a func rather than
+// a set because the caller reads it from the member's published policy and the
+// key is the only thing this file may know about it: the policy may refuse an
 // account, a provider or a model a credential serves, and answering that
 // question is the policy reader's, not this file's.
+//
+// The key it is asked with is the credential's OWN name for every credential
+// but one (policyKey), which is the pairing the caller does not have to know
+// about: asking the member's policy in the pool's own spelling would be a
+// question that policy has no entry for.
 type MemberPolicy func(name string) bool
+
+// policyKey is the key the MEMBER'S POLICY holds a pool credential under, which
+// is the credential's own name for everything but the pool's ONE tier-B
+// credential.
+//
+// That credential is the project's own Anthropic API key: the bundle holds it
+// under config.AnthropicSecret (the name the service's own audit lines, the
+// wire contract and the pool speak), while the member's policy keys it by
+// config.AnthropicKeyAccount, the sentinel the accounts block's tier-B entry is
+// derived under (projectpolicy's DeriveAccounts). The installation's own cascade
+// pairs the two spellings the same way and for the same reason (credsvc's
+// offeredToReview), and a pool-to-policy lookup that did not would ask the
+// member's policy about a name it never holds — silently, because a miss is a
+// refusal: the paid key would be offered by the workspace and admitted by
+// nobody.
+//
+// The sentinel's arm matches the TIER as well as the name, exactly as
+// offeredToReview's arm does, so what it translates is the paid key and never a
+// credential that merely goes by that name: only this rule knows that the pool's
+// tier-B credential is the one the member's policy files under the sentinel.
+func policyKey(c Credential) string {
+	if c.Tier == TierB && c.Name == config.AnthropicSecret {
+		return config.AnthropicKeyAccount
+	}
+	return c.Name
+}
 
 // SharedWith reports whether the workspace's allow-list names this member's
 // project. It is the workspace's leg alone: a caller asking the whole question
@@ -101,7 +134,7 @@ func AdmitShared(project string, s Shared, member MemberPolicy) error {
 	if !s.SharedWith(project) {
 		return fmt.Errorf("%w (credential %s)", ErrNotShared, s.Name)
 	}
-	if member == nil || !member(s.Name) {
+	if member == nil || !member(policyKey(s.Credential)) {
 		return fmt.Errorf("%w (credential %s)", ErrMemberPolicy, s.Name)
 	}
 	return nil

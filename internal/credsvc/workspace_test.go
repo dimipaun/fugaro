@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -28,7 +29,13 @@ const (
 	wsAccountA   = "fugaro-job-1@project-a.iam.example.com"
 	wsAccountB   = "fugaro-job-1@project-b.iam.example.com"
 	wsAccountOut = "fugaro-job-1@project-c.iam.example.com"
-	wsOwner      = "owner@example.com"
+	// wsAccountA2 is the member A's SECOND job service account. A member's row
+	// carries a list (WorkspaceCredentials.Validate admits several), so a fixture
+	// with one account per member would leave a rewrite that bound only the
+	// first one green: the account table is what names the member, and every
+	// account of it has to.
+	wsAccountA2 = "fugaro-job-2@project-a.iam.example.com"
+	wsOwner     = "owner@example.com"
 	// wsMemberPerson is a member's own person: an address a member's launcher
 	// list would name and this deployment holds no grant to read, so it is a
 	// caller of no class here.
@@ -117,7 +124,7 @@ func newWSFixtureWith(t *testing.T, mutate func(*WorkspaceConfig)) *wsFixture {
 		Members: []WorkspaceMember{
 			{
 				Project: wsMemberA, FirebaseProject: wsMemberA, FP: wsMemberA,
-				JobAccounts: []string{wsAccountA}, ExchangeURL: "https://exchange.project-a.example.com",
+				JobAccounts: []string{wsAccountA, wsAccountA2}, ExchangeURL: "https://exchange.project-a.example.com",
 			},
 			{
 				Project: wsMemberB, FirebaseProject: wsMemberB, FP: wsMemberB,
@@ -202,7 +209,7 @@ func (f *wsFixture) runToken(member string, mutate ...func(map[string]any)) stri
 }
 
 // verify is one member's job calling a route that acts for a member.
-func (f *wsFixture) verify(member, account string, mutate ...func(map[string]any)) (WorkspaceCaller, error) {
+func (f *wsFixture) verify(member, account string, mutate ...func(map[string]any)) (MemberCall, error) {
 	f.t.Helper()
 	return f.ws.Verify(context.Background(), Request{
 		RunIDToken: f.runToken(member, mutate...),
@@ -212,7 +219,7 @@ func (f *wsFixture) verify(member, account string, mutate ...func(map[string]any
 }
 
 // verifyOK is the happy path: the member's own job, its own run identity.
-func (f *wsFixture) verifyOK(member, account string) WorkspaceCaller {
+func (f *wsFixture) verifyOK(member, account string) MemberCall {
 	f.t.Helper()
 	caller, err := f.verify(member, account)
 	if err != nil {
@@ -262,9 +269,12 @@ func TestWorkspaceServiceRefusesAJobServiceAccountOutsideTheWorkspace(t *testing
 		t.Errorf("the refusal %q repeats the address it refused: it is the caller's own claim, and the package's no-echo rule holds every refusal to it", err)
 	}
 	// The three tables' jobs resolve, and each says which member it is — the
-	// configured spelling, not the claim's.
+	// configured spelling, not the claim's. A member with two accounts resolves
+	// through both: the row is a list, and a table built from its first entry
+	// only is a member whose second job is refused.
 	for _, tc := range []struct{ account, member string }{
 		{wsAccountA, wsMemberA},
+		{wsAccountA2, wsMemberA},
 		{wsAccountB, wsMemberB},
 	} {
 		caller, err := f.ws.Caller(context.Background(), f.jobToken(tc.account))
@@ -488,19 +498,21 @@ func TestWorkspaceServiceRefusesAMembersPersonTheWorkspaceWideRead(t *testing.T)
 	if err := f.ws.WorkspaceWide(owner); err != nil {
 		t.Errorf("WorkspaceWide for one of the workspace owner's people = %v, want it admitted", err)
 	}
-	if err := f.ws.MemberRoute(owner, wsMemberA); !errors.Is(err, ErrUnverifiedJob) {
-		t.Errorf("MemberRoute for one of the workspace owner's people = %v, want ErrUnverifiedJob", err)
-	}
+	// It reaches no member's route, and there is nothing for a test to call: a
+	// member's route takes the type only Verify produces, and Verify refuses the
+	// owner's person — so the class cannot reach one even by a route that forgot
+	// to check, which is the property and not an accident of this call.
 	if _, err := f.ws.Verify(ctx, Request{
 		RunIDToken: f.runToken(wsMemberA), JobIDToken: f.ownerToken(), Job: wsJob,
 	}); !errors.Is(err, ErrUnverifiedJob) {
 		t.Errorf("Verify for one of the workspace owner's people = %v, want ErrUnverifiedJob: it holds no run identity", err)
 	}
 	// A member's route admits its own member and no other.
-	if err := f.ws.MemberRoute(job, wsMemberA); err != nil {
+	memberA := f.verifyOK(wsMemberA, wsAccountA)
+	if err := f.ws.MemberRoute(memberA, wsMemberA); err != nil {
 		t.Errorf("MemberRoute for the member's own job = %v, want it admitted", err)
 	}
-	if err := f.ws.MemberRoute(job, wsMemberB); !errors.Is(err, ErrUnverifiedJob) {
+	if err := f.ws.MemberRoute(memberA, wsMemberB); !errors.Is(err, ErrUnverifiedJob) {
 		t.Errorf("MemberRoute for another member's job = %v, want ErrUnverifiedJob", err)
 	}
 }
@@ -554,7 +566,48 @@ func TestWorkspaceCredentialIsRefusedWhenTheMembersPolicyExcludesIt(t *testing.T
 	}
 }
 
-// TestWorkspaceServiceNeverReturnsACredentialValue is the package's rule 2, at
+// TestWorkspaceServesThePaidKeyAMemberNamesByItsSentinel: the workspace's pool
+// and the member's policy do not spell the project's own Anthropic API key the
+// same way, and the pool-to-policy lookup has to pair them.
+//
+// The bundle holds it as config.AnthropicSecret ("anthropic-api-key"), which is
+// the name the pool, the wire contract and the service's audit lines speak, and
+// the member's published `accounts` block files it under
+// config.AnthropicKeyAccount ("anthropic-api-key--project"), the sentinel
+// DeriveAccounts derives the entry under. Asking the member's policy in the
+// pool's own spelling finds no entry and drops the credential in silence — and
+// silence is the failure mode: the pool would be offered to a member whose
+// policy admits the key and served nothing, with no refusal anywhere to read.
+// The pairing is the one the installation's own cascade makes (offeredToReview).
+func TestWorkspaceServesThePaidKeyAMemberNamesByItsSentinel(t *testing.T) {
+	f := newWSFixture(t)
+	// The workspace's one bundle, and the owner's declaration that the key is
+	// shared with A.
+	b, err := ParseBundle([]byte(config.AnthropicSecret + ": " + fakeCred(t, "paid") + "\n"))
+	if err != nil {
+		t.Fatalf("ParseBundle: %v", err)
+	}
+	node := &projectpolicy.WorkspaceCredentials{
+		Name:   wsWorkspace,
+		Shared: []projectpolicy.WorkspaceShared{{Name: config.AnthropicSecret, Projects: []string{wsMemberA}}},
+	}
+	offered := WorkspaceShared(b, node)
+	if len(offered) != 1 || offered[0].Name != config.AnthropicSecret || offered[0].Tier != creds.TierB {
+		t.Fatalf("the pool's own declaration = %+v, want the paid key at tier B", offered)
+	}
+	// A's own policy names the key the way its own publish path writes it.
+	f.setPolicy(wsMemberA, config.AnthropicKeyAccount)
+	ctx := context.Background()
+	got, err := f.ws.Shared(ctx, f.verifyOK(wsMemberA, wsAccountA), offered)
+	if err != nil {
+		t.Fatalf("Shared for the member whose policy names the sentinel: %v", err)
+	}
+	want := []creds.Credential{{Name: config.AnthropicSecret, Tier: creds.TierB}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Shared = %+v, want %+v: the member's policy admits this credential under the sentinel, and the pool speaks its own name for it", got, want)
+	}
+}
+
 // the workspace's service: no run, no CLI and no person is handed a
 // credential's value, and the deployment that holds the pool is the one place
 // the rule could be broken by an accessor that looked convenient.
@@ -659,6 +712,9 @@ func TestNewWorkspaceRefusesAConfigurationItCannotCheck(t *testing.T) {
 		"a person that is not a printable address": func(c *WorkspaceConfig) {
 			c.OwnerPeople = []string{"owner@exa\x00mple.com"}
 		},
+		"a person that is a service account address": func(c *WorkspaceConfig) {
+			c.OwnerPeople = []string{"ci@workspace-alpha.iam.gserviceaccount.com"}
+		},
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -681,10 +737,16 @@ func TestNewWorkspaceRefusesAConfigurationItCannotCheck(t *testing.T) {
 // and nothing else: a service whose issuer derivation differed from the one the
 // member's own config pins would refuse every honest call, or admit a token
 // minted for another project.
+//
+// The two spellings compared are the LIVE ones: firebaseIssuer is what the run
+// identity's `iss` is held to (an Authenticator built over the member's own
+// FirebaseProject, which is the verifier every member of this deployment gets),
+// and localcfg.WorkspaceIssuer is what a member's own pin is validated against.
+// Pinning a helper of the test's own to the pin would hold nothing to anything.
 func TestWorkspaceIssuerMatchesTheLocalPins(t *testing.T) {
 	for _, project := range []string{wsMemberA, wsMemberB, "aurora-dev"} {
-		if got, want := workspaceIssuer(project), localcfg.WorkspaceIssuer(project); got != want {
-			t.Errorf("workspaceIssuer(%q) = %q, want %q: the service and the member's pin have to derive the same issuer", project, got, want)
+		if got, want := firebaseIssuer(project), localcfg.WorkspaceIssuer(project); got != want {
+			t.Errorf("firebaseIssuer(%q) = %q, want %q: the service's check and the member's pin have to derive the same issuer", project, got, want)
 		}
 	}
 	// The database derivation keeps the shape the credentials service's own

@@ -451,6 +451,15 @@ func validExchangeURL(raw string) error {
 // used here writes the same declaration they write for a credential of their
 // own, and one who writes nothing is served nothing from the workspace.
 //
+// `name` is therefore the key THIS policy speaks, and the caller is the one that
+// translates a pool credential into it: the pool's one tier-B credential is the
+// project's own Anthropic API key, which the bundle holds as
+// config.AnthropicSecret and this block files under config.AnthropicKeyAccount
+// (the sentinel DeriveAccounts derives an entry for). That pairing is the
+// pool's own rule and it lives with the tier that makes it (internal/creds'
+// policyKey), so a reader comparing the two spellings finds them paired in one
+// place — the same pairing the installation's own cascade makes.
+//
 // **A refusal is the member's, and naming it so is the point.** D1298's whole
 // safety property is that the member's policy is the tighter side, so a
 // credential the member has not admitted is refused with the member's policy as
@@ -468,7 +477,8 @@ func validExchangeURL(raw string) error {
 // member's `allow_repos` lists. Asking a leg whose input the workspace cannot
 // verify would be a check that reads whatever the caller said, which is the
 // shape the service refuses everywhere else (the X-Fugaro-Run-Job rule). So the
-// shared pool is scoped by the credential's NAME and the workspace's
+// shared pool is scoped by the credential's NAME — the key this block holds it
+// under, which the caller translates (policyKey) — and the workspace's
 // per-project allow-list, and a member's own per-repository narrowing of that
 // name is not enforced for a pooled credential — it is a bound this shape
 // records rather than a check it makes, and the honest way to close it is a

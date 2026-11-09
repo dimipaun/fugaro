@@ -3,6 +3,8 @@ package creds
 import (
 	"errors"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // TestWorkspaceCredentialIsRefusedWhenTheMembersPolicyExcludesIt: D1298's
@@ -77,6 +79,57 @@ func TestWorkspaceCredentialIsRefusedForAMemberOutsideItsAllowList(t *testing.T)
 	// The project the allow-list does name is served, with the same policy.
 	if err := AdmitShared("project-b", shared, admitsEverything); err != nil {
 		t.Fatalf("AdmitShared for the project the allow-list names = %v, want it served", err)
+	}
+}
+
+// TestSharedAsksTheMembersPolicyInThePolicySOwnSpelling: the pool and the
+// member's published policy spell the project's own Anthropic API key
+// differently, and the member's leg is the one that has to pair them.
+//
+// The pool holds it under config.AnthropicSecret, the name the bundle, the wire
+// contract and the service's audit lines speak; the member's `accounts` block
+// files it under config.AnthropicKeyAccount, the sentinel projectpolicy's
+// DeriveAccounts derives the tier-B entry under. A lookup in the pool's own
+// spelling finds no entry, and a miss is a refusal — so the paid key would be
+// offered by the workspace and admitted by nobody, silently, with no error for
+// an operator to read. The pairing mirrors the installation's own cascade
+// (credsvc's offeredToReview), tier included: a tier-A credential that merely
+// goes by the paid key's name is not the credential the sentinel's entry
+// answers for.
+func TestSharedAsksTheMembersPolicyInThePolicySOwnSpelling(t *testing.T) {
+	paid := Shared{
+		Credential: Credential{Name: config.AnthropicSecret, Tier: TierB},
+		Projects:   []string{"project-a"},
+	}
+	// The member's policy names the sentinel and nothing else, which is exactly
+	// what its own publish path writes for the key.
+	sentinelOnly := func(name string) bool { return name == config.AnthropicKeyAccount }
+	if err := AdmitShared("project-a", paid, sentinelOnly); err != nil {
+		t.Fatalf("AdmitShared for the paid key a policy names by the sentinel = %v, want it served", err)
+	}
+	got := SharedFor("project-a", []Shared{paid}, sentinelOnly)
+	if len(got) != 1 || got[0] != paid.Credential {
+		t.Fatalf("SharedFor = %v, want the paid key: the member's policy admits it under the sentinel", got)
+	}
+
+	// The pairing is the tier's as well as the name's. A credential that is not
+	// the paid one — the same name at another tier — is asked about under its own
+	// name and refused by a policy that names only the sentinel, which is what
+	// keeps the sentinel's entry from admitting a credential it does not stand
+	// for.
+	notPaid := Shared{
+		Credential: Credential{Name: config.AnthropicSecret, Tier: TierA},
+		Projects:   []string{"project-a"},
+	}
+	if err := AdmitShared("project-a", notPaid, sentinelOnly); !errors.Is(err, ErrMemberPolicy) {
+		t.Errorf("AdmitShared for a credential that merely goes by the paid key's name = %v, want ErrMemberPolicy: the sentinel stands for the tier-B key", err)
+	}
+	// And a policy that names the pool's own spelling — the way the pool speaks
+	// it, which the publish path never writes — is what a tier-A credential is
+	// asked about, so the translation is not a blanket substitution.
+	poolSpelling := func(name string) bool { return name == config.AnthropicSecret }
+	if err := AdmitShared("project-a", notPaid, poolSpelling); err != nil {
+		t.Fatalf("AdmitShared for a tier-A credential the policy names as the pool does = %v, want it served", err)
 	}
 }
 

@@ -1043,6 +1043,23 @@ func foldEmail(email string) (string, bool) {
 	return strings.ToLower(email), true
 }
 
+// firebaseIssuer is the issuer a Firebase project mints its ID tokens under,
+// and the value every run identity's `iss` is held to (verifyRun). It is
+// derived from the project id because there is nothing else it could be: the
+// signature is verified against Google's published Firebase signing keys, which
+// are one global set for every project (GoogleKeysURL), so what tells one
+// project's tokens from another's is the pair aud/iss.
+//
+// It has a name because two deployments on either side of the wire have to
+// derive it the same way: a member's launcher pins the issuer its own config
+// holds (internal/localcfg's WorkspaceIssuer), and the workspace's service
+// checks the run identity against its own spelling of the same derivation. A
+// test holds the two to each other, so a change to one is a failing test rather
+// than a service that refuses every honest call.
+func firebaseIssuer(firebaseProject string) string {
+	return "https://securetoken.google.com/" + firebaseProject
+}
+
 // verifyRun checks the run's budget identity and its liveness.
 func (a *Authenticator) verifyRun(ctx context.Context, tok string, now time.Time) (Identity, error) {
 	head, claims, err := decodeJWT(tok)
@@ -1069,7 +1086,7 @@ func (a *Authenticator) verifyRun(ctx context.Context, tok string, now time.Time
 	if aud := claimString(claims, "aud"); aud != a.cfg.FirebaseProject {
 		return Identity{}, fmt.Errorf("%w: the run identity was issued for another Firebase project", ErrUnverified)
 	}
-	if iss := claimString(claims, "iss"); iss != "https://securetoken.google.com/"+a.cfg.FirebaseProject {
+	if iss := claimString(claims, "iss"); iss != firebaseIssuer(a.cfg.FirebaseProject) {
 		return Identity{}, fmt.Errorf("%w: the run identity was not issued by this project's Firebase", ErrUnverified)
 	}
 	if exp, ok := claimInt(claims, "exp"); !ok || !now.Before(time.Unix(exp, 0)) {
