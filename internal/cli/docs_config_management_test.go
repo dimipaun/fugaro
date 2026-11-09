@@ -101,7 +101,7 @@ const (
 // about rather than narrowing it, and with CB1 of docs/catalog-build-context/,
 // whose image_catalog.entries.*.source.context row is the image catalog's own.
 const (
-	cfmRegistryRows   = 378
+	cfmRegistryRows   = 382
 	cfmAllowlistNamed = 88
 )
 
@@ -329,11 +329,11 @@ func TestDocsConfigManagementRelativeCitationsResolve(t *testing.T) {
 }
 
 // TestDocsConfigManagementAllowlistCounts: the figure the audit's whole argument
-// is made of is re-counted here rather than trusted. The registry holds 378 rows
+// is made of is re-counted here rather than trusted. The registry holds 382 rows
 // and the generic write path's allowlist carries eighty-eight of them by name
 // plus the rows its nine prefixes reach; the documents state the registry's
 // count and the allowlist's, and a row added to either -- which moves the gap
-// between the two -- fails here rather than leaving §1's "214 rows have no
+// between the two -- fails here rather than leaving §1's "218 rows have no
 // generic writer" reading as checked when it is not.
 //
 // The count moved with G0, which gained the allowlist the wildcard blocks
@@ -346,7 +346,10 @@ func TestDocsConfigManagementRelativeCitationsResolve(t *testing.T) {
 // the local config file's own, and with SC7, whose security.patterns row is the
 // repository file's: the audit's subject is the keys no writer carries, and a
 // key added to the registry without one widens that gap rather than narrowing
-// it. CB1 of docs/catalog-build-context/ moved it once more: its
+// it. SC8's four rows are the layer's half of that block -- three row fields
+// and always_level_3 -- and no writer carries them either: the layer file is
+// `fugaro config publish`'s, not `fugaro settings set`'s.
+// CB1 of docs/catalog-build-context/ moved it once more: its
 // image_catalog.entries.*.source.context row is the image catalog's own, and no
 // writer carries it.
 //

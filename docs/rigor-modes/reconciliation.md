@@ -765,7 +765,12 @@ carry an empty owner's-answer cell, the number block sits above every claim the 
 and every task in the plan states its files, its red step and its reviewer tier.
 Amended 2026-11-08: that move was resolved away by the batch merge that landed the
 same pin beside `de90e93c`'s recount of the doubled row, so the table's row moves from
-113 to 114 and carries the tree's figure again.) They
+113 to 114 and carries the tree's figure again. Amended 2026-11-09: `7297a7e4` (#2013,
+the security-classification work) added one top-level `fugaro.yaml` key, one config
+scope row and one image-skew `Since` constant, and left three rows below at the
+counts of the tree before it, so they move with the tree: the top-level keys from
+12 to 13, the scope rows from 101 to 102, and the image-skew constants from 30 to
+31.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.

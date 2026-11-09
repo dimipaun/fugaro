@@ -609,6 +609,20 @@ var layerRows = []Row{
 	// set` refuses both keys, which is the state R13 ships.
 	layerValueRow("jobs.reports.paused", "true", "update", docPeriodicReviews),
 	layerValueRow("jobs.catalog_check.paused", "true", "update", docPeriodicReviews),
+
+	// The project layer's own half of the security list (D1501) and the switch
+	// that is its alone (D1517, D1503): the rows the layer adds for every
+	// repository of the project, and always_level_3, which asks for the
+	// adversarial review level for every change of the project. Owner `config`
+	// for security.patterns' reason — the layer file is the second editor
+	// D1515 names, and `fugaro config publish` is what carries it — and the
+	// rows are judged by the rules the repository's own are, which is why they
+	// share that row's answer. always_level_3 is the one that is no list: it is
+	// a switch that only turns on, and false is a layer that states nothing.
+	layerRow("security.patterns.*.name", "none", "config", docLayer),
+	layerRow("security.patterns.*.match", "none", "config", docLayer),
+	layerRow("security.patterns.*.category", "none", "config", docLayer),
+	layerValueRow("security.always_level_3", "false", "config", docLayer),
 }
 
 // LocalPrefix marks a local row whose bare name a fugaro.yaml key already

@@ -462,6 +462,27 @@ func (e *initEngine) announceAlreadySetUp() {
 		o.programPrefix(), setupAlreadySetUp, pluginwire.Printable(e.lc.Name), "fugaro "+updateDoor.name)
 }
 
+// announceGhHint is setup's one line about `gh`: the admin's run is the one
+// moment to say that filing an issue on GitHub needs it, and that everything
+// else about issues works without it (spec 4b, F18). It is a recommendation
+// and never a requirement — a team member without `gh` still saves issues and
+// uploads them to the project's store, and `fugaro issue submit` names the
+// install command for whoever wants to file one — so it is printed once, at
+// the end of the run, and asks nothing.
+//
+// It says nothing with --json (stdout is one object) or --print-vars (stdout is
+// the variables alone), the two modes whose stdout is a document rather than a
+// transcript, and nothing on the update door: an installation that is already
+// there is not where the recommendation belongs.
+func (e *initEngine) announceGhHint() {
+	o := e.r.o
+	if o.door != setupDoor.name || o.asJSON || o.printVars {
+		return
+	}
+	fmt.Fprintf(e.r.w, "%sto file an issue on GitHub, install `gh` and run `gh auth login`; it is never required — fugaro saves and uploads issues without it\n",
+		o.programPrefix())
+}
+
 // firstRun is whether this converge is a first run: no project config yet,
 // or the one a first run of setup wrote when it paused for billing
 // (localcfg.Config.SetupPending), which the rerun resumes as a first run.

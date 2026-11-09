@@ -1,8 +1,8 @@
 # A closed failure class on every run record, and a failures report: implementation plan
 
 **Status (2026-11-07): D1450–D1469 are answered 2026-11-07 and all tasks are approved 2026-11-07
-(owner: "All tasks approved. Jobmax"); of them, FC1–FC5 are built on `main` and FC6–FC9 are not
-started.**
+(owner: "All tasks approved. Jobmax"); of them, FC1–FC5 and FC7 are built on `main` and FC6, FC8 and
+FC9 are not started.**
 Nine tasks, **FC1–FC9** — the design's own FC1–FC8 (its §10, kept by name, by order and by edge — its
 **task** names, that is: one
 of the tests §10 names cannot be written as named, F35) plus **FC9**, which the plugin
@@ -24,8 +24,8 @@ reconciliation's findings (F1–F36) and decisions (D1450–D1469) win, and the 
 
 **Every task here is approved, and what each one's gate named is settled.** The design stays a design
 and this stays a plan (§10 of the design and [README.md](README.md) say so); each task's gate is in
-§7, and the decision rows most of them name carry the owner's dated answer of 2026-11-07. **Five of
-the nine are built** — FC1–FC5 — and **FC6–FC9 are not started**: an approved task is still built on
+§7, and the decision rows most of them name carry the owner's dated answer of 2026-11-07. **Six of
+the nine are built** — FC1–FC5 and FC7 — and **FC6, FC8 and FC9 are not started**: an approved task is still built on
 its own, in its own run, in the order §1 fixes.
 
 **Rules every task obeys** (this repository's own, not this plan's invention):
@@ -334,13 +334,14 @@ standard, with the Docs run in the same pull request. **SEC:** no. **Owner-run:*
   when the field is present (every legacy row is `unclassified`), and the Docs run fails on the
   contract before the row is added.
 - **Mutation to hold it:** write the derived class back onto the record → the bytes test fails;
-  unexport `ClassOf` → `internal/runview`'s own tests and `internal/runner`'s two agreement walks do
-  not compile, while `go build ./...` stays green — the digest that design §5's "the digest reads the
-  same function" names is FC7's and is not built, so the export stands on D1454's decision and its
-  only callers outside the package today are tests; move `ClassOf` into `internal/failure` → that
-  package does not compile, `import cycle not allowed` (`runstore` imports `failure`), which is the
-  proof F21 and D1454 leave `internal/runview` as the only placement that works; move a reason's
-  family in `haltClass` alone → `TestHaltClassesAgreeWithTheReadersTable` fails.
+  unexport `ClassOf` → `internal/runview`'s own tests, `internal/runner`'s two agreement walks and
+  `internal/digest`'s own table do not compile, while `go build ./...` stays green — the digest that
+  design §5's "the digest reads the same function" names is FC7's, built since this task, so the
+  export stands on D1454's decision and the read outside the package is FC7's; move `ClassOf` into
+  `internal/failure` → that package does not compile, `import cycle not allowed` (`runstore` imports
+  `failure`), which is the proof F21 and D1454 leave `internal/runview` as the only placement that
+  works; move a reason's family in `haltClass` alone → `TestHaltClassesAgreeWithTheReadersTable`
+  fails.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/runview -run 'Legacy|RowCarries|RunsLs' -count=1`
   then `GOFLAGS=-p=2 go test ./internal/runner -run 'HaltClasses' -count=1 -timeout 40m`, then
   `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|RunsLs' -count=1 -timeout 40m`.
@@ -661,6 +662,7 @@ no decision of its own — and all five tasks are merged, so FC4's first gate (F
 
 **And the plan's own status:** a plan, **every task of it approved on 2026-11-07** (owner: "All
 tasks approved. Jobmax"); the dated answer this plan's decisions share is in
-[reconciliation.md](reconciliation.md) §6; **FC1–FC5 are built and FC6–FC9 are not started**. The
+[reconciliation.md](reconciliation.md) §6; **FC1–FC5 and FC7 are built and FC6, FC8 and FC9 are not
+started**. The
 design's §10 status records the same fact and answers none of the design's own decisions, which are
 D1–D9 and O1–O6 of that document and not this folder's.
