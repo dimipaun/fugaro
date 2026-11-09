@@ -607,8 +607,9 @@ func TestCatalogBuildHasACheckoutStepForAContextEntry(t *testing.T) {
 	}
 	// CONTEXT_DIR is the substitution the build step builds from, so the step
 	// resolves the directory docker will open and not a second reading of the
-	// entry's context.
-	if env := checkout.Env; !slices.Equal(env, []string{"REPO_URL=" + s.RepoURL, "COMMIT=" + s.ContextCommit, "CONTEXT_DIR=${_CONTEXT_DIR}"}) {
+	// entry's context — from BUILD_CWD, the directory of the build step that
+	// hands docker the value, because that is where docker resolves it.
+	if env := checkout.Env; !slices.Equal(env, []string{"REPO_URL=" + s.RepoURL, "COMMIT=" + s.ContextCommit, "CONTEXT_DIR=${_CONTEXT_DIR}", "BUILD_CWD=" + buildStepCwd(step(t, b, "build"))}) {
 		t.Fatalf("the checkout step's env = %v", env)
 	}
 	script := strings.Join(checkout.Args, "\n")
@@ -823,24 +824,70 @@ func TestCatalogBuildRefusesAContextOutsideTheCheckout(t *testing.T) {
 	}
 }
 
-// catalogGitStub is the git the context step runs against in the test below:
-// the clone leaves the checkout the case names at the context path — a
-// directory, or a link to whatever CTX_LINK holds — and every other subcommand
-// the step runs (cat-file, fetch, reset) succeeds.
+// catalogGitStub is the git the context step runs against in the tests below:
+// the clone leaves a checkout holding whatever TREE writes, with the checkout
+// in "$CHECKOUT" and the workspace the script's /workspace names in
+// "$WORKSPACE", and every other subcommand the step runs (cat-file, fetch,
+// reset) succeeds.
 const catalogGitStub = `#!/bin/sh
 while [ $# -gt 0 ]; do
   case "$1" in
   clone)
     for last; do :; done
-    rm -rf "$last/ci"
-    mkdir -p "$last/sub" || exit 1
-    if [ -n "$CTX_LINK" ]; then ln -s -- "$CTX_LINK" "$last/ci"; else mkdir -p "$last/ci"; fi
+    rm -rf "$last"
+    mkdir -p "$last" || exit 1
+    CHECKOUT="$last" sh -c "$TREE" || exit 1
     exit 0 ;;
   esac
   shift
 done
 exit 0
 `
+
+// runCatalogContextStep runs the step's script with the stub git and returns
+// its output: ws holds the workspace the script's /workspace names, with the
+// credential volume the step mounts and the /workspace/context directory the
+// read step copies the definition into, the checkout holds tree, and the
+// script's substitutions carry context — the _CONTEXT_DIR the build step hands
+// docker.
+func runCatalogContextStep(t *testing.T, st *cloudbuild.BuildStep, ws, tree, context string) ([]byte, error) {
+	t.Helper()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash")
+	}
+	for _, d := range []string{"creds", "context"} {
+		if err := os.MkdirAll(filepath.Join(ws, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bin := filepath.Join(ws, "bin")
+	testutil.WriteFiles(t, bin, map[string]string{"git": catalogGitStub})
+	script := strings.ReplaceAll(strings.ReplaceAll(st.Args[1], "$$", "$"), "/workspace", ws)
+	context = strings.ReplaceAll(context, "${WS}", ws)
+	env := []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "WORKSPACE=" + ws, "TREE=" + tree}
+	for _, kv := range st.Env {
+		env = append(env, strings.ReplaceAll(strings.ReplaceAll(kv, "${_CONTEXT_DIR}", context), "/workspace", ws))
+	}
+	cmd := exec.Command(bash, "-c", script)
+	cmd.Env = env
+	return cmd.CombinedOutput()
+}
+
+// checkCatalogContextStep asserts the step's verdict on one context: a refusal
+// says why, an acceptance runs the script to the end.
+func checkCatalogContextStep(t *testing.T, st *cloudbuild.BuildStep, context, tree string, refused bool) {
+	t.Helper()
+	out, err := runCatalogContextStep(t, st, t.TempDir(), tree, context)
+	switch {
+	case refused && err == nil:
+		t.Errorf("the step builds from the context %q:\n%s", context, out)
+	case refused && !strings.Contains(string(out), "outside the checkout"):
+		t.Errorf("the step refuses the context %q without saying why: %v\n%s", context, err, out)
+	case !refused && err != nil:
+		t.Errorf("the step refuses the context %q: %v\n%s", context, err, out)
+	}
+}
 
 // TestCatalogContextStepRefusesAContextThatLeavesTheCheckoutByALink: the
 // context reaches docker as the directory its path resolves to — the CLI tars
@@ -852,58 +899,116 @@ exit 0
 // -P says where it landed) and builds only from a directory inside the
 // checkout. A link to a directory of the checkout is a context like any other.
 func TestCatalogContextStepRefusesAContextThatLeavesTheCheckoutByALink(t *testing.T) {
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("no bash")
-	}
 	s := catalogContextSpec(t)
 	s.Context = "ci"
-	step := catalogContextStep(s)
-	if len(step.Args) != 2 {
-		t.Fatalf("the checkout step's args = %q, want one script", step.Args)
+	b, err := CatalogBuildRequest("proj-1234", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := step(t, b, catalogContextStepID)
+	if len(st.Args) != 2 {
+		t.Fatalf("the checkout step's args = %q, want one script", st.Args)
 	}
 	for _, tc := range []struct {
 		name    string
-		target  func(ws string) string
+		tree    string
 		refused bool
 	}{
-		{"a directory of the checkout", func(string) string { return "" }, false},
-		{"a link to the credential volume",
-			func(ws string) string { return filepath.Join(ws, "creds") }, true},
-		{"a link above the checkout", func(ws string) string { return ws }, true},
-		{"a link to a directory of the checkout",
-			func(ws string) string { return filepath.Join(ws, "src", "sub") }, false},
+		{
+			name: "a directory of the checkout",
+			tree: `mkdir -p "$CHECKOUT/ci" "$CHECKOUT/sub"`,
+		},
+		{
+			// The credential volume the step mounts, standing where the
+			// build mounts it.
+			name:    "a link to the credential volume",
+			tree:    `ln -s -- "$WORKSPACE/creds" "$CHECKOUT/ci"`,
+			refused: true,
+		},
+		{
+			name:    "a link above the checkout",
+			tree:    `ln -s -- "$WORKSPACE" "$CHECKOUT/ci"`,
+			refused: true,
+		},
+		{
+			name: "a link to a directory of the checkout",
+			tree: `mkdir -p "$CHECKOUT/sub"; ln -s -- "$CHECKOUT/sub" "$CHECKOUT/ci"`,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ws := t.TempDir()
-			// The credential volume the step mounts, standing where the
-			// build mounts it: a directory of its own, never a file this
-			// case would have to read.
-			creds := filepath.Join(ws, "creds")
-			if err := os.MkdirAll(creds, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			bin := filepath.Join(ws, "bin")
-			testutil.WriteFiles(t, bin, map[string]string{"git": catalogGitStub})
-			script := strings.ReplaceAll(strings.ReplaceAll(step.Args[1], "$$", "$"), "/workspace", ws)
-			cmd := exec.Command(bash, "-c", script)
-			cmd.Env = []string{
-				"PATH=" + bin + ":" + os.Getenv("PATH"),
-				"REPO_URL=" + s.RepoURL,
-				"COMMIT=" + s.ContextCommit,
-				"CONTEXT_DIR=" + filepath.Join(ws, "src", "ci"),
-				"CTX_LINK=" + tc.target(ws),
-			}
-			out, err := cmd.CombinedOutput()
-			switch {
-			case tc.refused && err == nil:
-				t.Errorf("the step builds from a context outside the checkout:\n%s", out)
-			case tc.refused && !strings.Contains(string(out), "outside the checkout"):
-				t.Errorf("the step refuses it without saying why: %v\n%s", err, out)
-			case !tc.refused && err != nil:
-				t.Errorf("the step refuses a context inside the checkout: %v\n%s", err, out)
-			}
+			// The context an entry's own build is handed: contextDir joins
+			// the value onto the checkout root.
+			checkCatalogContextStep(t, st, "${WS}/src/ci", tc.tree, tc.refused)
 		})
+	}
+}
+
+// TestCatalogContextStepResolvesTheContextAsTheBuildStepDoes: docker resolves
+// the context against the working directory of the step that hands it the
+// argument, so the guard must resolve the same value in that same directory.
+// Resolved from the checkout instead, a relative context is answered for a
+// directory docker never builds — and a link the checkout commits is enough to
+// make that reading land back on the checkout, so the guard accepts while
+// docker resolves the very same value to the worker's own directory, which
+// holds every other tree the build wrote. The request's rules cannot close it:
+// check refuses an entry's context whose text holds a ".." segment or a leading
+// "/", but this step is the template's and answers for the value any submitter
+// hands it, not only for the absolute path this CLI builds today.
+func TestCatalogContextStepResolvesTheContextAsTheBuildStepDoes(t *testing.T) {
+	s := catalogContextSpec(t)
+	s.Context = "ci"
+	b, err := CatalogBuildRequest("proj-1234", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := step(t, b, catalogContextStepID)
+	// The cwd comes from the build step the template holds — the step that
+	// runs docker build — and not from a path this step assumes.
+	if build := step(t, b, "build"); !slices.Contains(st.Env, "BUILD_CWD="+buildStepCwd(build)) {
+		t.Fatalf("the checkout step's env does not carry the build step's own directory: %v", st.Env)
+	}
+	for _, tc := range []struct {
+		name    string
+		context string
+		tree    string
+		refused bool
+	}{
+		{
+			name:    "a relative context under the checkout",
+			context: "src/ci",
+			tree:    `mkdir -p "$CHECKOUT/ci"`,
+		},
+		{
+			name:    "a relative context beside the checkout",
+			context: "context",
+			tree:    `mkdir -p "$CHECKOUT/context"`,
+			refused: true,
+		},
+		{
+			name:    "a relative context a link in the checkout folds back onto the checkout",
+			context: "src/..",
+			tree:    `mkdir -p "$CHECKOUT/sub"; ln -s -- sub "$CHECKOUT/src"`,
+			refused: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checkCatalogContextStep(t, st, tc.context, tc.tree, tc.refused)
+		})
+	}
+}
+
+// TestBuildStepCwd: the guard resolves the context where docker resolves it,
+// which is the directory of the build step in the template — its own dir:, or
+// the worker's default when it names none.
+func TestBuildStepCwd(t *testing.T) {
+	for _, tc := range []struct{ dir, want string }{
+		{"", "/workspace"},
+		{"src", "/workspace/src"},
+		{"/other", "/other"},
+	} {
+		if got := buildStepCwd(&cloudbuild.BuildStep{Dir: tc.dir}); got != tc.want {
+			t.Errorf("buildStepCwd(dir %q) = %q, want %q", tc.dir, got, tc.want)
+		}
 	}
 }
 

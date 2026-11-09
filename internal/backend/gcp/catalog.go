@@ -290,7 +290,7 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 	// An entry with no context has no checkout step: the id is in the list
 	// and no step answers to it, which is how the list drops it.
 	if s.Context != "" {
-		own[catalogContextStepID] = catalogContextStep(s)
+		own[catalogContextStepID] = catalogContextStep(s, buildStepCwd(build))
 	}
 	steps := make([]*cloudbuild.BuildStep, 0, len(catalogBuildSteps))
 	for _, id := range catalogBuildSteps {
@@ -457,6 +457,21 @@ func contextPathMessage(f string) string {
 	return ""
 }
 
+// buildStepCwd is the working directory of the template's build step — its own
+// dir:, or the worker's default when it names none — which is the directory
+// docker resolves the context argument against. It is read from the build step
+// the request carries, so the step that checks the context cannot be told a
+// different directory than the step that builds it.
+func buildStepCwd(build *cloudbuild.BuildStep) string {
+	switch {
+	case build.Dir == "":
+		return "/workspace"
+	case path.IsAbs(build.Dir):
+		return build.Dir
+	}
+	return "/workspace/" + build.Dir
+}
+
 // catalogContextStep is the step that gives a build context to the entry's
 // Dockerfile: it checks the entry's repository out at the commit the copy
 // pinned, into catalogContextRoot, so the build step's context is a tree
@@ -497,14 +512,26 @@ func contextPathMessage(f string) string {
 // (check, contextPathMessage); a link is visible only in the tree, so this is
 // the one place it can be seen, and it is checked on the directory docker is
 // handed rather than walked through the tree.
-func catalogContextStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
+//
+// The resolution has to be docker's own, not an approximation of it: docker
+// resolves the context against the working directory of the step that hands it
+// the argument, so a relative _CONTEXT_DIR names that directory's child and not
+// the checkout's. The guard resolves it from buildCwd — the build step's own
+// directory — rather than from the checkout it just made: resolved from the
+// checkout, a relative context is answered for a directory the build never
+// opens, and a link the checkout commits can turn that answer into "inside the
+// checkout" for a value docker resolves to the worker's own directory, which
+// holds every other tree this build wrote. This step belongs to the template,
+// so it must answer for the value any submitter hands it, not only for the
+// absolute path contextDir builds today.
+func catalogContextStep(s CatalogBuildSpec, buildCwd string) *cloudbuild.BuildStep {
 	// The values reach the script through env: and are read as quoted
 	// "$$VAR" (the rule images/derived/cloudbuild.yaml states).
 	return &cloudbuild.BuildStep{
 		Id:         catalogContextStepID,
 		Name:       "gcr.io/cloud-builders/git",
 		Entrypoint: "bash",
-		Env:        []string{"REPO_URL=" + s.RepoURL, "COMMIT=" + s.ContextCommit, "CONTEXT_DIR=${_CONTEXT_DIR}"},
+		Env:        []string{"REPO_URL=" + s.RepoURL, "COMMIT=" + s.ContextCommit, "CONTEXT_DIR=${_CONTEXT_DIR}", "BUILD_CWD=" + buildCwd},
 		Args: []string{"-c", `set -eu
 case "$$REPO_URL" in https://*) ;; *) echo "REPO_URL must be an https URL" >&2; exit 1 ;; esac
 GIT_TERMINAL_PROMPT=0 git -c credential.helper='store --file=/creds/git-credentials' \
@@ -516,6 +543,7 @@ git cat-file -e "$$COMMIT^{commit}" 2>/dev/null \
   || { echo "commit $$COMMIT is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }
 git reset --quiet --hard "$$COMMIT"
 root=$$(cd /workspace/src && pwd -P)
+cd -- "$$BUILD_CWD"
 context=$$(cd -- "$$CONTEXT_DIR" 2>/dev/null && pwd -P) \
   || { echo "the context $$CONTEXT_DIR is not a directory of the checkout" >&2; exit 1; }
 case "$$context" in
