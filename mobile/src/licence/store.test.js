@@ -211,7 +211,9 @@ test('a renewal installs a second key, and the later expiry is the one that appl
   assert.equal(applied.state, 'valid', 'and it is valid while the first is still inside its term');
 
   // A third key arrives: the store keeps the two it may (T26's overlap installs
-  // two at the most), dropping the oldest arrival.
+  // two at the most), dropping the first key -- which here is both the oldest
+  // arrival and the one that expires soonest, the two rules this file separates
+  // in `the cap drops the shortest term, not the newest arrival`.
   const third = mint(production, claimsFor({ issued: ISSUED + 700 * DAY, expires: ISSUED + 1065 * DAY }));
   await licence.install(third, at(ISSUED + 700 * DAY));
   assert.deepEqual(await licence.keys(), { ok: true, keys: [renewal, third] }, `at most ${LICENCE_KEYS_MAX} keys are kept`);
@@ -220,6 +222,37 @@ test('a renewal installs a second key, and the later expiry is the one that appl
   // duplicate.
   await licence.install(third, at(ISSUED + 700 * DAY));
   assert.deepEqual(await licence.keys(), { ok: true, keys: [renewal, third] }, 'the same key twice is one key');
+});
+
+test('the cap drops the shortest term, not the newest arrival', async () => {
+  const port = new MemoryStore();
+  const production = signer('prod-2026');
+  const licence = store(port, [production]);
+
+  const year = mint(production, claimsFor({ expires: ISSUED + 365 * DAY }));
+  const renewal = mint(production, claimsFor({ issued: ISSUED + 335 * DAY, expires: ISSUED + 700 * DAY }));
+  await licence.install(year, at(ISSUED));
+  await licence.install(renewal, at(ISSUED + 335 * DAY));
+
+  // The key already held is pasted again. The set is the same two, but the year
+  // key is now the newest arrival -- so a cap that counted arrivals would make
+  // it the key that survives the next one, and the renewal the one that goes.
+  await licence.install(year, at(ISSUED + 335 * DAY));
+
+  // A key that expires before the renewal arrives last: an old one, out of an
+  // old mail. It gives less term than the renewal and more than the year key, so
+  // the cap drops the year key and the renewal the owner relies on stays.
+  const stale = mint(production, claimsFor({ issued: ISSUED + 105 * DAY, expires: ISSUED + 500 * DAY }));
+  await licence.install(stale, at(ISSUED + 700 * DAY));
+
+  assert.deepEqual(
+    await licence.keys(),
+    { ok: true, keys: [renewal, stale] },
+    'the two with the most term are the two kept, in the order they arrived',
+  );
+  const applied = await licence.active(at(ISSUED + 700 * DAY));
+  assert.equal(applied.claims.expires, ISSUED + 700 * DAY, 'and the renewal is still the key that applies');
+  assert.equal(applied.state, 'valid', 'which is the state that would have been lost with it');
 });
 
 test('two pastes at once keep both keys rather than one overwriting the other', async () => {

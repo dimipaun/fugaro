@@ -56,9 +56,13 @@
 // the key it follows expires, so the store holds both and the one with the
 // later `expires` is the one that applies (T26) -- decided by `verify.js`'s
 // `latest`, never by the order they were pasted, so a renewal landing early
-// changes nothing for the user. The cap of two is the store's: a third key
-// replaces the oldest arrival, because at that point the oldest is the one the
-// renewal superseded.
+// changes nothing for the user. The cap of two is the store's, and it drops by
+// the same rule rather than by arrival: when a third key arrives the store keeps
+// the two that expire latest. Arrival order would be wrong twice over -- a key
+// the verifier cannot read is worth nothing, and a key already held and pasted
+// again is the newest arrival without being any newer a key, so a cap that
+// counted arrivals could evict the renewal the owner is relying on and leave the
+// key it superseded in its place.
 
 /** The refusal codes this store answers with. They are this module's and not
  * `LICENCE_CODES`': a refusal that came from the verifier carries one of those
@@ -152,7 +156,8 @@ export class LicenceStore {
    * The text is stored as it is read: trimmed, because surrounding whitespace
    * is what a paste brings and the verifier reads the trimmed text, so the store
    * writes the key the refusal and the claims are about rather than a second
-   * spelling of it.
+   * spelling of it. Pasting a key already held does not add it again, and a
+   * third key is not kept by dropping the oldest arrival: see `#capped`.
    *
    * @param {unknown} raw the key text, as pasted
    * @param {Date} now the moment to read it at
@@ -166,7 +171,7 @@ export class LicenceStore {
     return serial(async () => {
       const held = await this.#read();
       if (!held.ok) return held;
-      const kept = [...held.keys.filter((one) => one !== text), text].slice(-LICENCE_KEYS_MAX);
+      const kept = this.#capped(held.keys, text, now);
       const wrote = await this.#write(kept);
       if (wrote !== null) return wrote;
       return read;
@@ -201,6 +206,29 @@ export class LicenceStore {
     const held = await this.#read();
     if (!held.ok) return held;
     return this.#verifier.latest(held.keys, now);
+  }
+
+  /** #capped is the held key texts with the pasted one added, cut back to what
+   * the store may hold -- and the cut keeps the two that expire latest.
+   *
+   * Not the newest arrival and not the oldest: the cap is about how much term
+   * the app can hold, and the key that expires soonest is the one worth least.
+   * A key the verifier cannot read is worth nothing at all and goes before any
+   * key it can; among equals the earlier arrival goes first, so the set does not
+   * depend on the order the cap was reached in. The survivors keep their arrival
+   * order, which is the order `keys` answers in. */
+  #capped(held, text, now) {
+    const texts = [...held.filter((one) => one !== text), text];
+    if (texts.length <= LICENCE_KEYS_MAX) return texts;
+    const ranked = texts.map((one, arrival) => {
+      const answer = this.#verifier.verify(one, now);
+      return { one, arrival, expires: answer.ok ? answer.claims.expires : -Infinity };
+    });
+    ranked.sort((a, b) => (a.expires === b.expires ? b.arrival - a.arrival : Math.sign(b.expires - a.expires)));
+    return ranked
+      .slice(0, LICENCE_KEYS_MAX)
+      .sort((a, b) => a.arrival - b.arrival)
+      .map((kept) => kept.one);
   }
 
   async #read() {
