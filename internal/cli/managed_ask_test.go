@@ -346,6 +346,21 @@ func askUpdateRig(t *testing.T, w askMarkWorld) *initRig {
 
 const askAdditiveAddress = "module.installation.google_service_account.scheduler"
 
+// freeLogName leaves the next run in this rig a log name of its own: a log is
+// named after its command, the second and the pid (report.logName) and created
+// O_EXCL, so two runs of one command inside one second collide on the name and
+// the second keeps no log at all (CL3's OpenLog). That is not a difference a
+// test may leave in place — a converge without a log cuts nothing on its screen
+// and prints the plan's own summary in full, because the brief account is the
+// log's (D1352) — so a test that compares two runs of one command in one rig
+// hands the second one the name back.
+func freeLogName(t *testing.T) {
+	t.Helper()
+	if err := os.RemoveAll(logDir(t)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // askUpdateRun is updateRun with something typed: the flag gives prompts back,
 // so a test that means to answer one needs to be able to.
 func askUpdateRun(t *testing.T, r *initRig, stdin string, args ...string) (string, error) {
@@ -516,6 +531,7 @@ func TestUpdateAskInAProjectThatIsNotManagedIsANoOp(t *testing.T) {
 				}
 
 				plain, _ := updateRun(t, r, "update")
+				freeLogName(t)
 				flagged, _ := updateRun(t, r, "update", "--ask")
 
 				if !strings.Contains(flagged, initflow.AskUnmanaged()) {
@@ -546,6 +562,7 @@ func TestUpdateAskOnAPlanOnlyRunSaysThereWasNothingToRestore(t *testing.T) {
 	noAgentSession(t)
 
 	plain, plainErr := updateRun(t, r, "update", "--plan-only")
+	freeLogName(t)
 	flagged, flaggedErr := updateRun(t, r, "update", "--plan-only", "--ask")
 	if ExitCode(plainErr) != ExitCode(flaggedErr) {
 		t.Errorf("--ask changed the exit code of a plan-only run: %d without it, %d with it", ExitCode(plainErr), ExitCode(flaggedErr))
