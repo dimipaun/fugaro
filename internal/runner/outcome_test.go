@@ -541,6 +541,44 @@ func TestModeRaisedAtFinalizeLeavesDraft(t *testing.T) {
 	}
 }
 
+// TestStopAcceptanceIsWithdrawnByARaiseAtFinalize is the stop's acceptance read
+// against the raise that came after every round (T3.5, D22), the other half of
+// the moment above: the round the stop accepts was reviewed under the mode the
+// run started at, and the mode it publishes under is the one that rose at
+// finalize — which no round was held at and no stop answered. The acceptance is
+// withdrawn, so the run is a draft with the raise's own reason rather than ready
+// on a mode's reading of a round it never judged; and the record files no
+// accepted block, which is what the report and the pull request's status line
+// are built from, so neither claims the merge Decide refused.
+//
+// The finding is above Startup's floor, so the policy really is the stop's own
+// split of the round (findingsPolicyOf builds one only for a round the mode's
+// own rule blocks on) and the case reads acceptsAtStop rather than passing it
+// for want of a stop.
+func TestStopAcceptanceIsWithdrawnByARaiseAtFinalize(t *testing.T) {
+	const block = "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"internal/payments/**\", mode: startup }\n"
+	r := raisedRun(t, raisedCase{block: block, findings: []Finding{riskNine}, moments: []string{runstore.RigorAtFinalize}})
+	r.stopAt = runstore.StopRoundsSpent
+	if got := r.reachedRigor(); got != rigor.Startup {
+		t.Fatalf("the run resolved %q; want startup, or the case proves nothing", got)
+	}
+	ready, reason := decideOf(t, r)
+	if ready {
+		t.Fatalf("the stop accepted a round under a mode that rose after every round: %q", reason)
+	}
+	const want = "the mode was raised to startup by area payments at finalize, after the last review round"
+	if reason != want {
+		t.Errorf("reason = %q, want %q", reason, want)
+	}
+	pol := r.findingsPolicy()
+	if pol.AtStop == "" {
+		t.Fatal("the policy carries no stop, so nothing here reads the acceptance")
+	}
+	if ac := r.acceptedRecord(pol, r.decidingReview()); ac != nil {
+		t.Errorf("the record's accepted block = %+v, want none: the run is a draft, and a block here would file a merge it did not make", ac)
+	}
+}
+
 // TestRaisedModeByLayerAfterARoundStaysReady: the moment the mode rose decides,
 // not the shape of the block that records it. Areas are defaults and not floors
 // (docs/project-layer.md §2), so a declared path can start a run *below* the

@@ -613,3 +613,79 @@ func TestStopInABouncedCheapLoopFilesTheDecidingRoundsAcceptance(t *testing.T) {
 		}
 	}
 }
+
+// TestStopWithdrawsItsAcceptanceForALevelTheStopDoesNotTake is the stop's one
+// exception at the two readers that are not Decide (the ruling's "every
+// remaining finding that is not catastrophic", item 1): the round readiness
+// reads is the highest enabled level's, so an enabled level under it whose
+// round the stop does not take — here level 2's catastrophic finding, which
+// Startup's stop row keeps blocking — is a draft, and the acceptance the mode
+// would otherwise have made is one the run never made. Decide itself refuses
+// above the acceptance, so the two surfaces this test asserts are the ones a
+// reader sees instead: the record's accepted block, which the report and the
+// pull request's own status line are built from, and the body they are written
+// into. A run that filed the acceptance anyway would print a merge the record
+// has no block for and the mode did not make.
+func TestStopWithdrawsItsAcceptanceForALevelTheStopDoesNotTake(t *testing.T) {
+	// Level 3 is asked for by the task, which is how a run below Critical gets
+	// the highest level it enables (item 6).
+	spec := &task.Spec{
+		Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature",
+		ReviewLevels: &config.ReviewLevels{L3: &config.LevelSetting{Model: "adversarial-model"}},
+	}
+	// One adversarial round, so the round it leaves is the last the level has
+	// and the stop ends the run on it rather than on a fix it would have bought.
+	cfg := modeCfg(t, "startup", 1, "  first_line_review: on\n  recipe: levels\n  adversarial_rounds: 1\n")
+	// Level 2's round leaves the severity override, which Startup's stop row
+	// keeps blocking whatever the axes say; level 3's leaves a finding above the
+	// mode's floor — one the mode buys a fix round for and its stop accepts,
+	// which is the only shape that reaches the stop's own split at all
+	// (findingsPolicyOf). The two rounds differ only in the level they came
+	// from, which is what the stop's exception is about.
+	catastrophic := reviewScored("changes", map[string]any{
+		"summary": "the fetch path drops the error", "likelihood": 1, "impact": 5, "fix_cost": 1, "class": "cosmetic",
+	})
+	blocking := reviewScored("changes", map[string]any{
+		"summary": "unbounded retry loop", "likelihood": 3, "impact": 3, "fix_cost": 2, "class": "correctness",
+	})
+	h := newHarnessFiles(t, cfg, spec, levelsFiles)
+	rec, err := h.run(t,
+		implement("feature"),
+		review("ship", 0), // review_first: level 1, which advises and never decides
+		catastrophic,      // review: level 2's round, the level the stop does not take
+		blocking,          // adversarial: level 3's round, which the stop accepts
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tiers(rec); !eq(got, "first:ship", "senior:changes", "adversarial:changes") {
+		t.Fatalf("reviews = %v, want all three levels to have run and level 3 to decide", got)
+	}
+	if rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("outcome = %s (reason %q), want a draft: level 2 left a finding the stop does not take", rec.Outcome, rec.Reason)
+	}
+	if !strings.Contains(rec.Reason, "review level 2 left a finding the stop does not accept") {
+		t.Errorf("reason = %q, want it to name level 2's round as the reason the run is a draft", rec.Reason)
+	}
+	if ac := rec.Accepted; ac != nil {
+		t.Errorf("the record's accepted block = %+v, want none: Decide refused the acceptance, and a record that filed one would report a merge the run did not make", ac)
+	}
+	pr := onlyPR(t, h.provider)
+	if !pr.Draft {
+		t.Errorf("the pull request is not a draft: %+v", pr)
+	}
+	if strings.Contains(pr.Body, "accepted at") {
+		t.Errorf("the status section files an acceptance the run never made:\n%s", pr.Body)
+	}
+	raw, err := h.bucket.ReadAll(context.Background(), h.store.Prefix()+"report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+	if strings.Contains(got, "#### Accepted at the stop") {
+		t.Errorf("the report files an acceptance the run never made:\n%s", got)
+	}
+	if !strings.Contains(got, "first round 1: ship") || !strings.Contains(got, "senior round 1: changes (1 finding)") {
+		t.Errorf("the report does not carry the rounds the case is about:\n%s", got)
+	}
+}
