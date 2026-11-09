@@ -625,9 +625,13 @@ describe('the committed synthetic fixture', () => {
       // short-ID case table SR1 wrote (`internal/task/testdata/shortid_cases.json`),
       // held to it byte for byte by the same Go test so the two languages cannot
       // answer a case differently. Both are JSON and not `.ndjson`, so the sweep
-      // above never reads them, and the suite that runs them over the console's
-      // own helper is `test/unit/live-parity.test.ts`. Their `.license` siblings
-      // are listed beside them, with the other `.json` ones.
+      // above never reads them, and each is run over the console's own code by
+      // a suite of its own: `test/unit/live-parity.test.ts` replays the frame
+      // through the live tab's decoder and model, and `test/unit/shortid.test.ts`
+      // answers every `short[]` and `display[]` case of the table with
+      // `shared/shortid.ts` -- a table held equal and never run would prove only
+      // that the two files match. Their `.license` siblings are listed beside
+      // them, with the other `.json` ones.
       'watch-parity.json',
       'watch-parity.json.license',
       'shortid_cases.json',

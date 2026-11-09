@@ -1803,6 +1803,73 @@ describe('the job list (K4)', () => {
     expect(textOf(bodyOf(row), 'coordinator-job-reason')).toBe('javascript:alert(1)')
     expect(one(row, 'coordinator-job-detail').getAttribute('hidden')).toBe('')
   })
+
+  it('cuts the ending from the id the console would draw, not from the wire text', () => {
+    // **The ending is a cut of the *sanitized* id** (`drawnRef`), which is what
+    // `live.test.ts` holds of the live tab's cell and this case holds of this
+    // list (SR10). The `runId` class strips the bidi override below **before**
+    // its shape check, so the wire value is accepted and the page's two ids
+    // still share their last four characters. Answering the rule over the raw
+    // strings instead is not a cosmetic difference: the override would make the
+    // two endings differ, and two different runs would be drawn as the same
+    // `3bb2` one row apart.
+    const page = jobsDocument({
+      runs: [
+        { run: '20261108-115248-3bb2‮', repo: 'owner/repo-a', status: 'succeeded' },
+        { run: '20261107-010101-3bb2', repo: 'owner/repo-a', status: 'succeeded' },
+      ],
+      totals: { runs: 2, total_usd: 0 },
+    })
+    const frame = renderCoordinatorFrame(factory, 'dark')
+    fillCoordinatorJobs(factory, page.rows, frame.jobs.list)
+    expect(all(frame.jobs.list, 'coordinator-job-id').map((cell) => cell.textContent)).toEqual([
+      '8-3bb2',
+      '1-3bb2',
+    ])
+  })
+
+  it('sanitizes the repository the collision rule prefixes, not only the ending', () => {
+    // The cross-repository branch of `displayRuns` draws `<repo>/<ending>`, and
+    // the repository is untrusted text too. `drawRunId` writes the answer
+    // through `literal`, which sanitizes nothing, so the prefix is only clean
+    // because `drawnRef` cleaned it -- a zero-width space in one of the two
+    // repositories would otherwise ride onto the screen in front of the ending.
+    const page = jobsDocument({
+      runs: [
+        { run: '20261101-090000-aa01', repo: 'owner/repo​-b', status: 'succeeded' },
+        { run: '20261101-090000-aa01', repo: 'owner/repo-c', status: 'succeeded' },
+      ],
+      totals: { runs: 2, total_usd: 0 },
+    })
+    const frame = renderCoordinatorFrame(factory, 'dark')
+    fillCoordinatorJobs(factory, page.rows, frame.jobs.list)
+    expect(all(frame.jobs.list, 'coordinator-job-id').map((cell) => cell.textContent)).toEqual([
+      'owner/repo-b/aa01',
+      'owner/repo-c/aa01',
+    ])
+  })
+
+  it('answers the endings over the rows the list already holds, not over the page appended', () => {
+    // The list is **append-only** (`fillCoordinatorJobs`), and the entry hands
+    // it every row the pages have read with the count already drawn: a run on
+    // the second page that shares its last four characters with a row of the
+    // first is drawn *under* that row, so the two must not be the same four
+    // characters. The row already on screen keeps the ending it was drawn with
+    // -- an append cannot rewrite it -- and the new row is the one that moves.
+    const page = jobsDocument({
+      runs: [
+        { run: '20261101-090000-zz50', repo: 'owner/repo-a', status: 'succeeded' },
+        { run: '20261101-090001-zz50', repo: 'owner/repo-a', status: 'succeeded' },
+      ],
+      totals: { runs: 2, total_usd: 0 },
+    })
+    const frame = renderCoordinatorFrame(factory, 'dark')
+    fillCoordinatorJobs(factory, page.rows.slice(0, 1), frame.jobs.list)
+    fillCoordinatorJobs(factory, page.rows, frame.jobs.list, 1)
+    const drawn = all(frame.jobs.list, 'coordinator-job-id').map((cell) => cell.textContent ?? '')
+    expect(drawn).toEqual(['zz50', '1-zz50'])
+    expect(drawn[0]).not.toBe(drawn[1])
+  })
 })
 
 describe('the pull request description (K3)', () => {

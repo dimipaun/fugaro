@@ -2430,20 +2430,27 @@ function jobCell(
  * after it lands: the rows already drawn are the operator's own view, and the
  * press that asked for more is answered under them.
  *
- * The endings are answered for **the page being drawn**, which is the group this
- * call prints: a run whose last four characters another row of the same page
- * shares is extended until the two are told apart, and a row drawn on a page of
- * its own keeps its plain four (`shared/shortid.ts`, spec part 3). The list is
- * one page's rows at a time by construction -- the entry appends the next page
- * when the operator asks for it -- so the page is the list this function draws.
+ * `rows` is **every row the list holds**, in the order it holds them, and `from`
+ * is how many of them are already drawn into it: the rows appended are
+ * `rows.slice(from)` and no more. The endings are answered over **all** of
+ * `rows`, because that is the group the operator reads together -- the pages are
+ * the console's own way of asking, and a run on the second page that shares its
+ * last four characters with a row of the first is drawn under the first in the
+ * same list, so the two have to be told apart (`shared/shortid.ts`, spec part 3,
+ * F15: the group is what is shown *together*, not what arrived in one read).
+ * Counting a page on its own would draw two runs as the same four characters,
+ * one above the other.
  */
 export function fillCoordinatorJobs(
   factory: ScreenFactory,
   rows: readonly CoordinatorJobRow[],
   list: ScreenElement,
+  from = 0,
 ): readonly ScreenElement[] {
   const endings = runEndings(rows, 'runs[].run_id')
-  return rows.map((row, at) => jobCell(list, factory, row, endings[at] ?? shortRun(row.run)))
+  return rows
+    .slice(from)
+    .map((row, at) => jobCell(list, factory, row, endings[from + at] ?? shortRun(row.run)))
 }
 
 /**

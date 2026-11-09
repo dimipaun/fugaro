@@ -35,7 +35,10 @@ import (
 //   - console/test/fixtures/shortid_cases.json -- the table SR1 wrote
 //     (internal/task/testdata/shortid_cases.json), copied rather than
 //     transcribed, so the console's helper and the Go one cannot answer a case
-//     differently. The console's own test runs its helper over it.
+//     differently. The console's own test runs its helper over it:
+//     console/test/unit/shortid.test.ts reads this file and answers every
+//     `short[]` and `display[]` case of it, so the table is executed on that
+//     side and not only held equal here.
 //
 // The fixtures are recorded, not hand-written: `go test ./internal/watch -run
 // Parity -update-console-parity` rewrites them, and a reviewer reads the diff.
@@ -98,7 +101,9 @@ func TestConsoleParityFixtureMatchesWatch(t *testing.T) {
 // TestConsoleParityShortIDCasesMatchTheGoTable holds the console's copy of SR1's
 // case table to the table itself: one rule, one set of cases, two languages
 // (D1706). A case added to the Go table and not to the console's copy fails
-// here, and the console's own test runs its helper over the cases it reads.
+// here, and console/test/unit/shortid.test.ts runs the console's helper over
+// every case the copy carries -- so an entry reaches a check on both sides, and
+// this test only has to say that the two files are the same case table.
 func TestConsoleParityShortIDCasesMatchTheGoTable(t *testing.T) {
 	want, err := os.ReadFile(goShortIDCases)
 	if err != nil {

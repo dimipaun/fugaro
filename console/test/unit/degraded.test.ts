@@ -350,6 +350,44 @@ describe('the no-Firebase screen', () => {
     expect(texts(tree, 'degraded-run-id')).toEqual(['8-3bb2', '1-3bb2', 'aa01'])
   })
 
+  it('cuts the ending from the id the console would draw, not from the wire text', () => {
+    // **The ending is a cut of the *sanitized* id** (`drawnRef`), the fact
+    // `live.test.ts` holds of the live tab's cell, held here of this screen
+    // (SR10). The `runId` class strips the bidi override below **before** its
+    // shape check, so the wire value is accepted and the two records still
+    // share their last four characters. Handed the raw strings, the rule would
+    // see the two endings as different and draw `3bb2` twice -- two different
+    // runs named by the same four characters, one row apart.
+    const document = theDegradedDocument()
+    const template = document.runs[0]
+    if (template === undefined) throw new Error('the fixture carries no run')
+    const runs = [
+      { ...template, run: '20261108-115248-3bb2‮', runId: '20261108-115248-3bb2‮' },
+      { ...template, run: '20261107-010101-3bb2', runId: '20261107-010101-3bb2' },
+    ]
+    const tree = renderNoFirebase(factory, buildNoFirebaseModel({ ...document, runs }), 'light')
+    expect(texts(tree, 'degraded-run-id')).toEqual(['8-3bb2', '1-3bb2'])
+  })
+
+  it('sanitizes the repository the collision rule prefixes, not only the ending', () => {
+    // The cross-repository branch of `displayRuns` draws `<repo>/<ending>`, and
+    // the repository is untrusted text too (`runs[].repo`). `drawRunId` writes
+    // its answer through `literal`, which sanitizes nothing, so the prefix is
+    // only clean because `drawnRef` cleaned it: a zero-width space in one of
+    // the two repositories would otherwise ride onto the screen in front of the
+    // ending.
+    const document = theDegradedDocument()
+    const template = document.runs[0]
+    if (template === undefined) throw new Error('the fixture carries no run')
+    const same = '20261015-123000-bb01'
+    const runs = [
+      { ...template, run: same, runId: same, repo: 'acme/ap​p' },
+      { ...template, run: same, runId: same, repo: 'acme/web' },
+    ]
+    const tree = renderNoFirebase(factory, buildNoFirebaseModel({ ...document, runs }), 'light')
+    expect(texts(tree, 'degraded-run-id')).toEqual(['acme/app/bb01', 'acme/web/bb01'])
+  })
+
   it('splits a run\'s model figure on `model_notional_usd`, never on the basis', () => {
     // C1.16 (P12/D140): `model_usd` is the **whole** model figure and
     // `model_notional_usd` the part of it the subscription paid, so the billed
