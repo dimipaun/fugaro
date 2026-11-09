@@ -27,8 +27,10 @@ func init() {
 //
 // The kill switch is not listed because it needs no entry: it is the core
 // command `fugaro budget kill`, a MIT safety feature (R4) that a lapse never
-// gates, so the console and the app reach it through the CLI exactly as they do
-// today.
+// gates. No surface is stranded by leaving it out, because no surface drives it
+// today either — `budget kill` sits on the console's NEVER_REACHABLE table, and
+// the app refuses the verb (shared/confirm's REFUSED_VERBS) — while the switch a
+// person uses is the CLI's own (docs/design/lapse-read-only.md §3.2).
 //
 // The switch is spelled out and its default refuses, so an action added to the
 // core's table later is refused under a lapse until a licensing decision keeps
