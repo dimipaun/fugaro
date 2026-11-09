@@ -350,6 +350,9 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	if err := r.printResult(); err != nil {
 		return err
 	}
+	// The run's last line, on the door whose job it is to say it: what filing
+	// an issue on GitHub needs (`gh`), and that nothing else about issues does.
+	e.announceGhHint()
 	if len(res.Left) > 0 && !o.planOnly {
 		return userErr("%s is not finished: %d step(s) left for you, listed above", o.doorProgram(), len(res.Left))
 	}
