@@ -53,6 +53,11 @@ const (
 	// workspace's service ever sees (and a valid database path segment).
 	wsSlug = "owner-repo-a"
 	wsJob  = "fugaro-owner-repo-a"
+	// wsSlugOther is a second repository of the same member: the slug a run
+	// identity of that member's own Firebase project can name while the job
+	// service account that presents it is the one the owner's table binds, which
+	// is the state §8's residual risk 7 is about (server.go's pairing).
+	wsSlugOther = "owner-repo-b"
 	// wsShared is one credential of the workspace's pool. It is a name: the
 	// pool's values live in the workspace's one bundle secret and no test
 	// carries one.
@@ -831,10 +836,20 @@ func TestWorkspaceServiceRefusesAMembersPersonTheWorkspaceWideRead(t *testing.T)
 // A service that served the pool past the member's policy would be a policy
 // bypass (rule 1: a workspace can only tighten a member), and the pool would be
 // the one thing in the design that widens.
+//
+// **B's repository node is written to admit the credential anyway**, which is
+// the state a publish does not produce (a child left behind by a policy that
+// named it once, or a hand edit). Without it the admission leg refuses B first
+// — setPolicy writes the two nodes from one account list, so a member whose
+// policy names nothing has a child that names nothing either — and the leg this
+// test is about, the member's own policy, would never be the leg that decides:
+// the whole of the only-tighten rule could be deleted and this test would stay
+// green.
 func TestWorkspaceCredentialIsRefusedWhenTheMembersPolicyExcludesIt(t *testing.T) {
 	f := newWSFixture(t)
-	f.setPolicy(wsMemberA, wsShared) // A's own policy names the credential
-	f.setPolicy(wsMemberB)           // B's own policy names no account
+	f.setPolicy(wsMemberA, wsShared)             // A's own policy names the credential
+	f.setPolicy(wsMemberB)                       // B's own policy names no account
+	f.setAdmissions(wsMemberB, wsSlug, wsShared) // ... and B's repository node lists it
 	ctx := context.Background()
 	a := f.verifyOK(wsMemberA, wsAccountA)
 	b := f.verifyOK(wsMemberB, wsAccountB)
@@ -852,6 +867,23 @@ func TestWorkspaceCredentialIsRefusedWhenTheMembersPolicyExcludesIt(t *testing.T
 	}
 	if len(got) != 0 {
 		t.Errorf("Shared for %s = %v, want none: the member's own policy excludes it and a workspace can only tighten a member", wsMemberB, got)
+	}
+	// The leg BEHIND the policy admitted it, and the refusal above is the
+	// policy's: B's repository node names the credential, and the SAME call is
+	// served once B's own policy names it too. The node is written the same way
+	// both times, so the policy is the only value that changed — which is what
+	// makes this the only-tighten leg and not the admission leg refusing first.
+	if !f.dbs[wsMemberB].read(projectpolicy.PathRepo(wsSlug)) {
+		t.Error("B's repository node was not read: a test that never reads it cannot tell which of the two legs answered, and the leg rule 1 is made of is the policy's")
+	}
+	f.setPolicy(wsMemberB, wsShared)
+	f.setAdmissions(wsMemberB, wsSlug, wsShared)
+	got, err = f.ws.Shared(ctx, b, f.offered(wsMemberA, wsMemberB))
+	if err != nil {
+		t.Fatalf("Shared for the same member once its policy names the credential: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != wsShared {
+		t.Errorf("Shared = %v, want the credential: the repository's node admitted it while the policy did not, so the member's own policy is the leg that refused", got)
 	}
 	// The other leg: a credential the workspace does not offer this member is
 	// not served either, and the member's policy is not asked about it.
@@ -953,6 +985,73 @@ func TestWorkspaceSharedIsRefusedWhereTheRepositoriesOwnNodeDoesNotAdmitIt(t *te
 	// node would have served it.
 	if !f.dbs[wsMemberA].read(projectpolicy.PathShared()) {
 		t.Error("the member's policy was not read: the test's unreadable node has to be the one behind the policy read")
+	}
+}
+
+// TestWorkspaceSharedReadsTheRepositoryOfTheRunIdentityNotTheCallers pins, in
+// both directions, the divergence docs/workspaces/spec.md §8's residual risk 7
+// states: the repository leg is read at the slug the run identity VERIFIED, and
+// the calling job service account is not held to it.
+//
+// The installation's own front door holds the two together — its table binds
+// each job account to the repository the service account was derived from, and
+// it refuses a run whose slug is another's (`!bound || ja.Slug != id.Slug`,
+// internal/credsvc/server.go:737). This deployment's per-member table names a
+// member's job accounts and no repository (WorkspaceCredentialMember), so there
+// is no slug to hold the verified one to and the node that decides is the one
+// the run names. The test exists so that the SHIPPED behaviour is asserted
+// rather than described: a change that closes risk 7 by carrying a repository
+// beside each account has to change this test, which is where the owner's
+// decision about the column is read — and a change that reached a repository
+// the identity did not name fails it.
+func TestWorkspaceSharedReadsTheRepositoryOfTheRunIdentityNotTheCallers(t *testing.T) {
+	f := newWSFixture(t)
+	f.setPolicy(wsMemberA, wsShared)                  // A's policy admits the credential
+	f.setAdmissions(wsMemberA, wsSlug)                // A's own repository admits nobody
+	f.setAdmissions(wsMemberA, wsSlugOther, wsShared) // the other repository admits it
+	ctx := context.Background()
+
+	// A run identity of A's OWN Firebase project naming the other repository,
+	// presented with A's own job service account. The pins name one member —
+	// the account's, the issuer's and the fp's are all A's — so Verify admits
+	// it, and nothing in the table says which repository that account belongs
+	// to. verifyRun holds fs and fr to the uid, so the three move together.
+	other, err := f.verify(wsMemberA, wsAccountA, func(c map[string]any) {
+		uid := "r~" + wsSlugOther + "~" + f.run
+		c["sub"], c["user_id"], c["fs"] = uid, uid, wsSlugOther
+	})
+	if err != nil {
+		t.Fatalf("Verify refused a run identity of the member's own project for another repository: %v", err)
+	}
+	got, err := f.ws.Shared(ctx, other, f.offered(wsMemberA))
+	if err != nil {
+		t.Fatalf("Shared for a run on the other repository: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != wsShared {
+		t.Errorf("Shared = %v, want the credential: the node read is the one the run identity's own slug names, which is what §8's residual risk 7 states and not what the account's repository would say", got)
+	}
+	if !f.dbs[wsMemberA].read(projectpolicy.PathRepo(wsSlugOther)) {
+		t.Error("the other repository's node was not read: the slug is the run identity's, and a service that read the member's repository instead would decide by something the account does not carry")
+	}
+
+	// The other direction, on a fresh fixture of the same shape: the identity
+	// names A's own repository, which admits nobody, and the credential is not
+	// served even though another of A's repositories is admitted to it. Nothing
+	// falls back to a repository the identity did not name, so the divergence is
+	// the pairing and not a widening of the node that is read.
+	f = newWSFixture(t)
+	f.setPolicy(wsMemberA, wsShared)
+	f.setAdmissions(wsMemberA, wsSlug)
+	f.setAdmissions(wsMemberA, wsSlugOther, wsShared)
+	got, err = f.ws.Shared(ctx, f.verifyOK(wsMemberA, wsAccountA), f.offered(wsMemberA))
+	if err != nil {
+		t.Fatalf("Shared for a run on the member's own repository: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("Shared = %v, want none: the run identity's own repository admits nobody", got)
+	}
+	if f.dbs[wsMemberA].read(projectpolicy.PathRepo(wsSlugOther)) {
+		t.Error("the other repository's node was read: only the slug the run identity names is, so nothing falls back to a repository the run is not on")
 	}
 }
 

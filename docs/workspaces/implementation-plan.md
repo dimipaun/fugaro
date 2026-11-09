@@ -186,14 +186,18 @@ the membership key **and the pin** — the four values it is given, which is the
 decides what it trusts — firebase project, issuer, assertion key and service account — and
 `workspace rm` removes both. `workspace member add` is the owner's side: it writes the member entry
 **and the values the service's per-member table is built from** (the member's **job service
-accounts**, its **Firebase project id**, the **region of that project's database when it is not the
-default one**, its **`fp`**, and its **exchange URL**, spec.md §5), and
+accounts**, its **Firebase project id**, its **`fp`**, and its **exchange URL**, spec.md §5), and
 `member rm` removes the entry. **The member's database URL is not among them**: its project half is
 **derived from the Firebase project the verified `iss` names** (finding 6 of the post-merge review),
-and the region beside it says only where in that project the database lives, so an owner
-cannot splice member B's accounts onto member A's database, and **the runs bucket is not among them
-either** — O1's answer dropped the bucket grant, and nothing derives it. The two commands are the two
-halves of a membership, and neither writes the other's file.
+so an owner cannot splice member B's accounts onto member A's database, and **the runs bucket is not
+among them either** — O1's answer dropped the bucket grant, and nothing derives it. **The region of
+that database is not among them yet, and no task in this plan carries it**: the verb has no option
+for it and `localcfg.WorkspaceMember` has no field for it, so the credentials node's
+`database_region` has no writer anywhere in the tree — the node's own comment says so
+(`internal/projectpolicy/workspace_credentials.go`:101) and spec.md §5 states it — and a member whose
+Firebase project was adopted with a **regional** database is therefore derived the legacy
+`<firebase_project>-default-rtdb` host until a later task takes the field. The two commands are the
+two halves of a membership, and neither writes the other's file.
 
 **`workspace show` reads files and no cloud node**, and the two halves it can therefore see are not
 the same (spec.md §6). The **workspace owner's** machine holds the record it publishes, so its drift
@@ -463,7 +467,12 @@ either (O1's answer dropped the bucket grant). Every value that *is* there is th
 declaration, converged by the workspace owner's `fugaro update` (W2's stage writes the record; this
 task's service and W3's root of the workspace's own project carry the table) — never read from a
 member's machine and never taken from `workspaces/<name>`, which names the members and carries the cap
-and nothing else (spec.md §2, §5). A member the table does not bind is refused at this front door, and
+and nothing else (spec.md §2, §5). **The stage that writes this node is not this task's, and no task
+in this plan is it**: nothing in the tree writes `workspace_credentials` today — the node's own
+comment says so (`internal/projectpolicy/workspace_credentials.go`:101), and W1's `workspace member
+add` records no region for it to carry — so what this task ships is the shape a later task's publish
+fills, `database_region` included (spec.md §5 states the same gap). A member the table does not bind
+is refused at this front door, and
 one the comparison cannot read is reported as an alarm by W7's reconciliation: an unbound member is an
 unreadable one.
 

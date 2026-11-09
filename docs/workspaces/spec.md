@@ -459,7 +459,17 @@ service needs, per member, its **job service accounts**, its **Firebase project 
 database is in when it is not the project's default one, and `fp`**, and
 its **exchange URL** — and each is the workspace owner's own declaration, made once per member on the
 owner's machine (`workspace member add`, W1) and converged by the owner's `fugaro update` (W2's stage
-writes the record; W3's root of the workspace's own project and W6's service carry the table). **The
+writes the record; W3's root of the workspace's own project and W6's service carry the table).
+**The table has no writer in the tree yet, and the region is the one value of it no command
+records** — stated rather than implied. `workspace member add`'s options are the member's job
+accounts, its Firebase project, its `fp` and its exchange URL, so the **region** is not among them
+(§6), and the per-member credentials node itself has no writer at all:
+`WorkspaceCredentials`'s own comment says so
+(`internal/projectpolicy/workspace_credentials.go`:101, "This node has no writer in the tree"). The
+command that records a region, and the publish path that fills the table, are therefore a later
+task's, and a member whose Firebase project was adopted with a **regional** database is derived the
+legacy `<firebase_project>-default-rtdb` host until one lands: its row can carry only an empty
+region, so the service cannot reach that member at all. **The
 member's database URL is not in the table at all**: it is **derived from the Firebase project the
 verified `iss` names**, so an owner cannot splice member B's accounts onto member A's database (§4,
 finding 6). **None of it is in
@@ -602,7 +612,7 @@ member's database. Both are applied throughout this section above, and both are 
 | `workspace ls [--json]` | Offline. Every workspace this machine's project configs name, with the members it can see **from its own files** — the owner's machine, which holds the record it publishes, sees the whole list, and a member's sees the memberships its own configs name — and which of them this machine has a config for. Versioned JSON with a schema, like every other CLI document |
 | `workspace show <name> [--json]` | Offline. One workspace from **this machine's own files**: the configs on it and the pin each carries, its cap as last published here, and the drift between what this machine holds and what it last knew the record to say. It reads no cloud node (§2: a member holds no grant on the workspace's project), so on a member it shows the member's own half and says so rather than printing an empty member list; the workspace owner's machine, which holds the record it publishes, shows the whole of it |
 | `workspace add <name>` / `workspace rm <name>` | Edits the **selected local project config** and nothing else: the membership key `workspace: <name>` **and the pin beside it** — the values of §2, which are the one place a member decides what it trusts and which workspace key it verifies an assertion against — on, or off. Prints the diff, backs up the file, writes atomically, and ends by printing `next: fugaro update` |
-| `workspace member add <name> <project>` / `member rm …` | The same, for the member list of a workspace this machine holds a config for — the owner's side of a membership. `member add` is also where the owner records the per-member values §5's service table is built from (the member's job accounts, its Firebase project and the region of its database, its `fp`, and its exchange URL), because the owner is the side that declares them. **The member's database URL is not among them**: it is derived from the verified `iss` project (§4, §5), so that an owner cannot pair one member's accounts with another's database |
+| `workspace member add <name> <project>` / `member rm …` | The same, for the member list of a workspace this machine holds a config for — the owner's side of a membership. `member add` is also where the owner records the per-member values §5's service table is built from (the member's job accounts, its Firebase project, its `fp`, and its exchange URL), because the owner is the side that declares them — **and the region of the member's database is the one value of that table the command does not record**: it has no option for it, so the task that carries it is a later one (§5). **The member's database URL is not among them**: it is derived from the verified `iss` project (§4, §5), so that an owner cannot pair one member's accounts with another's database |
 | `workspace cap set --workspace <name> --monthly <amount>` | Records the workspace's cap in the local config; `fugaro update` publishes it |
 
 **`workspace show` reads files and never a cloud node**, and what "drift" means follows from that.

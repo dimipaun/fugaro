@@ -649,7 +649,11 @@ func (w *Workspace) Shared(ctx context.Context, c MemberCall, offered []creds.Sh
 // repository. What is not asked is whether that repository is the calling
 // ACCOUNT's: the table names a member's job accounts and no repository, so the
 // pairing the installation's front door makes has no slug to be made on here
-// (Shared's own doc, and docs/workspaces/spec.md §8's residual risk 7).
+// (Shared's own doc, and docs/workspaces/spec.md §8's residual risk 7). The
+// shipped behaviour is pinned either way — the node read is the run's own
+// repository and nothing falls back to another — by
+// TestWorkspaceSharedReadsTheRepositoryOfTheRunIdentityNotTheCallers, so a
+// change that closes the gap and a change that widens it both have to say so.
 func (w *Workspace) admittedOn(ctx context.Context, c MemberCall) (map[string]bool, error) {
 	db, err := w.database(c)
 	if err != nil {
