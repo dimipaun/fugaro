@@ -17,8 +17,15 @@ import (
 // developer's own claude.
 var claudeLookPath = exec.LookPath
 
-// noClaudeHint is the plugin step without claude on PATH.
-const noClaudeHint = "claude is not on PATH: in Claude Code run /plugin marketplace add dimipaun/fugaro (once), /plugin marketplace update fugaro and /plugin install fugaro@fugaro, then restart the session"
+// noClaudeHint is the plugin step without claude on PATH: the commands the
+// step would run, with the marketplace pinned to this release's tag, because
+// the same update that needs them is the one a marketplace on the default
+// branch cannot converge (a patch release's plugin version is on the tag, not
+// on main).
+func noClaudeHint(tag string) string {
+	return "claude is not on PATH: in Claude Code run /plugin marketplace add " + pluginwire.Repo + "#" + tag +
+		" (once), /plugin marketplace update " + pluginwire.Marketplace + " and /plugin install " + pluginwire.PluginID + ", then restart the session"
+}
 
 // pluginStep installs or updates the plugin in Claude Code through the claude
 // CLI (claudeplugin: fixed calls, no shell, a timeout each; decisions U2 to
@@ -31,12 +38,19 @@ func pluginStep(ctx context.Context, u *upgradeCtx) stepResult {
 	if u.o.check {
 		return pluginCheck(u, ver)
 	}
-	bin, err := claudeplugin.Find(claudeLookPath)
-	if errors.Is(err, claudeplugin.ErrNoClaude) {
-		return stepResult{state: stepSkipped, reason: noClaudeHint}
-	}
 	fail := func(err error) stepResult {
 		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
+	}
+	// The pin the checkout's own settings carry, and the one Claude Code's
+	// marketplace is declared at: releaseVersion is X.Y.Z, so Tag cannot fail
+	// here, and a marketplace is never pinned to anything but a release tag.
+	tag, err := pluginwire.Tag(ver)
+	if err != nil {
+		return fail(err)
+	}
+	bin, err := claudeplugin.Find(claudeLookPath)
+	if errors.Is(err, claudeplugin.ErrNoClaude) {
+		return stepResult{state: stepSkipped, reason: noClaudeHint(tag)}
 	}
 	if err != nil {
 		return fail(err)
@@ -55,7 +69,7 @@ func pluginStep(ctx context.Context, u *upgradeCtx) stepResult {
 	if err != nil {
 		return fail(err)
 	}
-	plan, err := claudeplugin.Decide(claudeplugin.Input{Root: u.loc.Root, Want: ver, Repo: repo, Markets: markets, Installed: installed})
+	plan, err := claudeplugin.Decide(claudeplugin.Input{Root: u.loc.Root, Want: ver, Ref: tag, Repo: repo, Markets: markets, Installed: installed})
 	if err != nil {
 		return fail(err)
 	}

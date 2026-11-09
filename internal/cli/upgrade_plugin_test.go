@@ -11,7 +11,16 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
+// ourMarket is Claude Code's record of the fugaro marketplace as fugaro added
+// it before this change: declared with no ref, so it follows
+// dimipaun/fugaro's default branch.
 const ourMarket = `[{"name":"fugaro","source":"github","repo":"dimipaun/fugaro"}]`
+
+// ourMarketAt is that record for a marketplace declared at ref: what the
+// plugin step itself writes (claudeplugin's pinned add).
+func ourMarketAt(ref string) string {
+	return `[{"name":"fugaro","source":"github","repo":"dimipaun/fugaro","ref":"` + ref + `"}]`
+}
 
 func userInstall(v string) string {
 	return `[{"id":"fugaro@fugaro","version":"` + v + `","scope":"user","enabled":true}]`
@@ -20,7 +29,7 @@ func userInstall(v string) string {
 var (
 	argsListMarkets = []string{"plugin", "marketplace", "list", "--json"}
 	argsListPlugins = []string{"plugin", "list", "--json"}
-	argsAdd         = []string{"plugin", "marketplace", "add", "--scope", "user", "dimipaun/fugaro"}
+	argsAdd         = []string{"plugin", "marketplace", "add", "--scope", "user", "dimipaun/fugaro#v0.5.2"}
 	argsUpdMarket   = []string{"plugin", "marketplace", "update", "fugaro"}
 	argsInstall     = []string{"plugin", "install", "fugaro@fugaro", "--scope", "user"}
 	argsUpdProject  = []string{"plugin", "update", "fugaro@fugaro", "--scope", "project"}
@@ -80,9 +89,59 @@ func TestUpgradePluginInstallsWithExactArgv(t *testing.T) {
 	}
 }
 
+// TestUpgradePluginMovesAnUnpinnedMarketplaceToTheRelease: Claude Code's own
+// marketplace on this machine is what the plugin is installed and updated
+// from, and the step used to declare it with no ref, so it followed
+// dimipaun/fugaro's default branch. On a patch release cut from release/X.Y
+// main's plugin.json still carries the version main was last bumped to, so
+// `fugaro update` on 0.21.1 (2026-11-09) installed 0.21.0 from it and failed a
+// complete update with "the installed plugin is still 0.21.0". The step
+// re-declares the marketplace at this release's tag before anything is
+// installed from it.
+func TestUpgradePluginMovesAnUnpinnedMarketplaceToTheRelease(t *testing.T) {
+	upgradeEnv(t, "0.5.2")
+	f := testutil.NewClaudePluginFake(t, ourMarket, userInstall("0.5.1"))
+	// What Claude Code serves is decided by the marketplace's ref, so the fake
+	// changes the installed version when the pinned add runs — the way the
+	// failed update of 2026-11-09 got 0.21.0 from an unpinned marketplace.
+	f.On(t, "plugins", userInstall("0.5.2"), argsAdd...)
+	f.On(t, "plugins", userInstall("0.5.2"), argsUpdUser...)
+	useFakeClaude(t, f)
+	root, _ := skillCheckout(t, wiredAt("v0.5.2")) // the checkout's own pin is already right
+	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	want := [][]string{argsAdd, argsUpdMarket, argsUpdUser}
+	if !slices.EqualFunc(f.Changes(t), want, slices.Equal[[]string]) {
+		t.Fatalf("changes %q, want %q\n%s", f.Changes(t), want, out)
+	}
+	if !strings.Contains(out, "plugin: done: installed 0.5.2") {
+		t.Errorf("the plugin did not converge on this release's version:\n%s", out)
+	}
+}
+
+// TestUpgradePluginNeverLowersANewerMarketplaceRef: a newer fugaro pinned
+// Claude Code's marketplace to a newer tag (U10: a pin is never moved down),
+// so the step refreshes that declaration instead of re-declaring it at this
+// release's tag, and the newer plugin that comes back is a note, not a failure.
+func TestUpgradePluginNeverLowersANewerMarketplaceRef(t *testing.T) {
+	upgradeEnv(t, "0.5.2")
+	f := testutil.NewClaudePluginFake(t, ourMarketAt("v0.6.0"), userInstall("0.6.0"))
+	useFakeClaude(t, f)
+	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
+	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
+	if err != nil || !slices.EqualFunc(f.Changes(t), [][]string{argsUpdMarket, argsUpdUser}, slices.Equal[[]string]) {
+		t.Fatalf("%v, changes %q\n%s", err, f.Changes(t), out)
+	}
+	if !strings.Contains(out, "plugin: done: installed 0.6.0, newer than this fugaro 0.5.2") {
+		t.Errorf("a newer pin was not reported as one:\n%s", out)
+	}
+}
+
 func TestUpgradePluginCurrentRunsOnlyTheLists(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
-	f := testutil.NewClaudePluginFake(t, ourMarket, userInstall("0.5.2"))
+	f := testutil.NewClaudePluginFake(t, ourMarketAt("v0.5.2"), userInstall("0.5.2"))
 	useFakeClaude(t, f)
 	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
 	// pin and plugin current, cloud, rules and policy skipped by --local: nothing to do.
@@ -99,7 +158,7 @@ func TestUpgradePluginUpdatesThisCheckoutsProjectInstall(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
 	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
 	plugins := `[{"id":"fugaro@fugaro","version":"0.5.2","scope":"user"},{"id":"fugaro@fugaro","version":"0.5.1","scope":"project","projectPath":"` + root + `"}]`
-	f := testutil.NewClaudePluginFake(t, ourMarket, plugins)
+	f := testutil.NewClaudePluginFake(t, ourMarketAt("v0.5.2"), plugins)
 	f.On(t, "plugins", strings.Replace(plugins, `"0.5.1"`, `"0.5.2"`, 1), argsUpdProject...)
 	useFakeClaude(t, f)
 	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
@@ -128,7 +187,7 @@ func TestUpgradePluginNeverReplacesAnotherMarketplace(t *testing.T) {
 
 func TestUpgradePluginFailureStopsTheCheckout(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
-	f := testutil.NewClaudePluginFake(t, ourMarket, "[]")
+	f := testutil.NewClaudePluginFake(t, ourMarketAt("v0.5.2"), "[]")
 	f.On(t, "fail", "network down\n", argsInstall...)
 	useFakeClaude(t, f)
 	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
@@ -155,7 +214,7 @@ func TestUpgradePluginWithoutClaude(t *testing.T) {
 
 func TestUpgradeCheckRunsNoClaude(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
-	f := testutil.NewClaudePluginFake(t, ourMarket, userInstall("0.5.1"))
+	f := testutil.NewClaudePluginFake(t, ourMarketAt("v0.5.2"), userInstall("0.5.1"))
 	useFakeClaude(t, f)
 	record := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json")
 	if err := os.MkdirAll(filepath.Dir(record), 0o755); err != nil {
@@ -179,7 +238,7 @@ func TestUpgradePluginNotesSettingsChangedByClaude(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
 	root, settings := skillCheckout(t, wiredAt("v0.5.2"))
 	plugins := `[{"id":"fugaro@fugaro","version":"0.5.1","scope":"project","projectPath":"` + root + `"}]`
-	f := testutil.NewClaudePluginFake(t, ourMarket, plugins)
+	f := testutil.NewClaudePluginFake(t, ourMarketAt("v0.5.2"), plugins)
 	f.On(t, "plugins", strings.Replace(plugins, `"0.5.1"`, `"0.5.2"`, 1), argsUpdProject...)
 	f.On(t, "touch", "", argsUpdProject...)
 	useFakeClaude(t, f)
@@ -199,7 +258,7 @@ func TestUpgradePluginVersionAfterTheCalls(t *testing.T) {
 	} {
 		t.Run(tc.after, func(t *testing.T) {
 			upgradeEnv(t, "0.5.2")
-			f := testutil.NewClaudePluginFake(t, ourMarket, "[]")
+			f := testutil.NewClaudePluginFake(t, ourMarketAt("v0.5.2"), "[]")
 			f.On(t, "plugins", userInstall(tc.after), argsInstall...)
 			useFakeClaude(t, f)
 			root, _ := skillCheckout(t, wiredAt("v0.5.2"))
@@ -221,10 +280,10 @@ func TestUpgradePluginListsThatFailAreFailedSteps(t *testing.T) {
 			return testutil.NewClaudePluginFake(t, garbage, "[]")
 		}},
 		{"installed", func(t *testing.T) *testutil.ClaudePluginFake {
-			return testutil.NewClaudePluginFake(t, ourMarket, garbage)
+			return testutil.NewClaudePluginFake(t, ourMarketAt("v0.5.2"), garbage)
 		}},
 		{"relist", func(t *testing.T) *testutil.ClaudePluginFake {
-			f := testutil.NewClaudePluginFake(t, ourMarket, "[]")
+			f := testutil.NewClaudePluginFake(t, ourMarketAt("v0.5.2"), "[]")
 			f.On(t, "plugins", garbage, argsInstall...)
 			return f
 		}},
@@ -244,7 +303,7 @@ func TestUpgradePluginListsThatFailAreFailedSteps(t *testing.T) {
 
 func TestUpgradePluginNothingAppliesAfterTheUpdate(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
-	f := testutil.NewClaudePluginFake(t, ourMarket, "[]")
+	f := testutil.NewClaudePluginFake(t, ourMarketAt("v0.5.2"), "[]")
 	useFakeClaude(t, f) // the install call leaves the list empty
 	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
 	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
@@ -276,7 +335,7 @@ func TestUpgradeCheckPluginNewerThanFugaro(t *testing.T) {
 // is never passed to claude (marketRepo's ValidRepo check).
 func TestUpgradePluginForkRepoIsPrintable(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
-	f := testutil.NewClaudePluginFake(t, ourMarket, "[]")
+	f := testutil.NewClaudePluginFake(t, ourMarketAt("v0.5.2"), "[]")
 	useFakeClaude(t, f)
 	evil := `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"ev\u001b[31mil/x","ref":"v0.5.2"}}},"enabledPlugins":{"fugaro@fugaro":true}}`
 	root, _ := skillCheckout(t, evil)

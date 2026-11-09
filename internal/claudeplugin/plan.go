@@ -14,6 +14,7 @@ import (
 type Input struct {
 	Root      string    // the checkout's top directory
 	Want      string    // this fugaro's release version, X.Y.Z
+	Ref       string    // the release tag the marketplace must carry, vX.Y.Z
 	Repo      string    // the marketplace repository: pluginwire.Repo, or a fork allowed with --allow-fork
 	Markets   []Market  // claude plugin marketplace list --json
 	Installed []Install // claude plugin list --json
@@ -69,17 +70,33 @@ func Effective(root string, installed []Install) string {
 	return v
 }
 
+// refNewer reports whether ref, a marketplace's own ref, is a release tag
+// strictly newer than want (both strict vX.Y.Z); anything else about it — no
+// ref, a branch name, an older tag — is not newer, and the marketplace is
+// declared again at this release's tag.
+func refNewer(ref, want string) bool {
+	if !pluginwire.ValidTag(ref) || !pluginwire.ValidTag(want) {
+		return false
+	}
+	c, _ := Compare(ref, want)
+	return c > 0
+}
+
 // Decide plans the change calls for one checkout:
 //   - a fugaro marketplace from another source: OtherMarketError;
-//   - the marketplace there and every applying install at Want: none;
-//   - otherwise the marketplace added (missing) or updated, then the plugin
-//     installed at user scope when no install applies, or each stale scope
-//     updated (local, project, user).
+//   - the marketplace pinned at Ref and every applying install at Want: none;
+//   - otherwise the marketplace declared at Ref (missing, or there at another
+//     ref that is not newer) and refreshed, then the plugin installed at user
+//     scope when no install applies, or each stale scope updated (local,
+//     project, user).
 //
 // Every call it returns passes Allowed.
 func Decide(in Input) (Plan, error) {
 	if !ValidRepo(in.Repo) {
 		return Plan{}, fmt.Errorf("the marketplace repository %s is not a GitHub owner/name", pluginwire.Printable(in.Repo))
+	}
+	if !pluginwire.ValidTag(in.Ref) {
+		return Plan{}, fmt.Errorf("the marketplace ref %s is not a release tag vX.Y.Z", pluginwire.Printable(in.Ref))
 	}
 	var market *Market
 	for i := range in.Markets {
@@ -94,6 +111,15 @@ func Decide(in Input) (Plan, error) {
 		}
 		return Plan{}, &OtherMarketError{Got: got, Want: in.Repo}
 	}
+	// moved: the marketplace is on this machine, but not at this release's
+	// tag, so what it serves is not this binary's plugin. Claude Code's add is
+	// the only call that sets a marketplace's ref (there is no set-ref call,
+	// and update refreshes from the source the declaration already has), and
+	// re-adding a name it knows overwrites that declaration, so the step
+	// declares it again at the pin. A ref strictly newer than this binary's is
+	// never lowered (U10): a newer fugaro wrote it, and the plugin from it is a
+	// note, not a failure.
+	moved := market != nil && market.Ref != in.Ref && !refNewer(market.Ref, in.Ref)
 	applying := Applying(in.Root, in.Installed)
 	p := Plan{Before: Effective(in.Root, in.Installed)}
 	var stale []string
@@ -102,12 +128,13 @@ func Decide(in Input) (Plan, error) {
 			stale = append(stale, a.Scope)
 		}
 	}
-	if market != nil && len(applying) > 0 && len(stale) == 0 {
+	if !moved && market != nil && len(applying) > 0 && len(stale) == 0 {
 		return p, nil
 	}
-	if market == nil {
-		p.Calls = append(p.Calls, addMarket(in.Repo))
-	} else {
+	if market == nil || moved {
+		p.Calls = append(p.Calls, addMarket(in.Repo, in.Ref))
+	}
+	if market != nil {
 		p.Calls = append(p.Calls, slices.Clone(updateMarket))
 	}
 	if len(applying) == 0 {

@@ -361,7 +361,7 @@ func TestOnlyProjectAndLocalUpdatesRunInTheCheckout(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(r.Dir, "dimipaun"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{addMarket("dimipaun/fugaro"), updateMarket, installUser, updatePlugin("user"), updatePlugin("project"), updatePlugin("local")} {
+	for _, args := range [][]string{addMarket("dimipaun/fugaro", "v0.5.2"), updateMarket, installUser, updatePlugin("user"), updatePlugin("project"), updatePlugin("local")} {
 		if err := r.Change(t.Context(), args...); err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}

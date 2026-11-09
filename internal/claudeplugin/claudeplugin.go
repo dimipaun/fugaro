@@ -46,7 +46,11 @@ var (
 	scopes = []string{"local", "project", "user"}
 )
 
-func addMarket(repo string) []string { return append(slices.Clone(addPrefix), repo) }
+// addMarket is the add call for a marketplace at a git ref. Claude Code's own
+// source syntax carries the ref as `owner/repo#vX.Y.Z` (its `marketplace add`
+// takes "a URL, path, or GitHub repo"), there is no other call that sets one,
+// and it is what puts the `ref` in the settings the installs then follow.
+func addMarket(repo, ref string) []string { return append(slices.Clone(addPrefix), repo+"#"+ref) }
 
 func updatePlugin(scope string) []string {
 	return []string{"plugin", "update", pluginwire.PluginID, "--scope", scope}
@@ -60,6 +64,15 @@ var repoRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_][A-Z
 // ValidRepo reports whether s may be passed to claude plugin marketplace add.
 func ValidRepo(s string) bool { return repoRE.MatchString(s) }
 
+// ValidSource reports whether s is a marketplace source this package may pass
+// to claude: a GitHub owner/name, optionally with the release tag the
+// marketplace is pinned to (`owner/repo#vX.Y.Z`). Only a strict tag is
+// accepted, so no branch name of the user's reaches the command line.
+func ValidSource(s string) bool {
+	repo, ref, hasRef := strings.Cut(s, "#")
+	return ValidRepo(repo) && (!hasRef || pluginwire.ValidTag(ref))
+}
+
 // Allowed is nil when args is one of the calls fugaro makes, and an error
 // naming it otherwise. Runner checks it before anything is executed.
 func Allowed(args []string) error {
@@ -72,7 +85,7 @@ func Allowed(args []string) error {
 			return nil
 		}
 	}
-	if len(args) == len(addPrefix)+1 && slices.Equal(args[:len(addPrefix)], addPrefix) && ValidRepo(args[len(addPrefix)]) {
+	if len(args) == len(addPrefix)+1 && slices.Equal(args[:len(addPrefix)], addPrefix) && ValidSource(args[len(addPrefix)]) {
 		return nil
 	}
 	return fmt.Errorf("claude %s is not a call fugaro makes", pluginwire.Printable(strings.Join(args, " ")))
@@ -110,6 +123,9 @@ type Market struct {
 	Name   string `json:"name"`
 	Source string `json:"source"`
 	Repo   string `json:"repo"`
+	// Ref is the git ref the marketplace was added at, empty when it has none
+	// and so follows the repository's default branch.
+	Ref string `json:"ref"`
 }
 
 // Install is one entry of claude plugin list --json.
