@@ -481,6 +481,12 @@ func (w *Workspace) Policy(ctx context.Context, c WorkspaceCaller) (*projectpoli
 // are the same two either way. A policy that could not be read is a refusal and
 // never an empty set, because a policy that could not be read is not one that
 // admits nothing.
+//
+// The member's leg is asked BY NAME and not by repository, which is the one
+// bound this deployment cannot check (projectpolicy.MemberAdmitsShared's doc
+// comment states why: the repository a run is on reaches this service only as
+// the sanitised slug in the run identity, and a leg read from an input the
+// service cannot verify is not a leg).
 func (w *Workspace) Shared(ctx context.Context, c WorkspaceCaller, offered []creds.Shared) ([]creds.Credential, error) {
 	if c.Class != ClassWorkspaceMember {
 		return nil, fmt.Errorf("%w: the shared pool is served to a member's job, and the caller is not one", ErrUnverifiedJob)
@@ -492,9 +498,8 @@ func (w *Workspace) Shared(ctx context.Context, c WorkspaceCaller, offered []cre
 	if !found {
 		policy = nil
 	}
-	repo := c.Identity.Slug
 	member := creds.MemberPolicy(func(name string) bool {
-		return projectpolicy.MemberAdmitsShared(policy, name, repo)
+		return projectpolicy.MemberAdmitsShared(policy, name)
 	})
 	return creds.SharedFor(c.Member.Project, offered, member), nil
 }
