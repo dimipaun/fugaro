@@ -317,8 +317,11 @@ func TestTheWorkdirLockIsOnlyTheConverges(t *testing.T) {
 // — the installation's, and the running checkout's, both through
 // PrepareWorkdir — and they are refused by the same lock. A door that prepared
 // them outside it would leave the failure the lock exists for reachable
-// through it, which is the whole of what this pins: the sentence, the exit
-// code, and that the refused run reached terraform nowhere.
+// through it, which is the whole of what this pins: the refusal, the exit
+// code, and that the refused run reached terraform nowhere. The run holding the
+// lock here is an update, so the sentence names that one — what the refused
+// command is called is the door's own business, and a second accounts add would
+// read its own name there.
 func TestTheAccountsConvergeTakesTheWorkdirLock(t *testing.T) {
 	r := newAddRig(t)
 	lock, err := infra.LockWorkdirs(os.Getenv, initProject, "fugaro update")
@@ -335,7 +338,7 @@ func TestTheAccountsConvergeTakesTheWorkdirLock(t *testing.T) {
 	if got := ExitCode(err); got != ExitUserError {
 		t.Errorf("the accounts converge exited %d, want %d: %v", got, ExitUserError, err)
 	}
-	refusal := fmt.Sprintf("another fugaro accounts add is running on this machine for project %s (pid %d), wait for it to finish, then rerun", initProject, os.Getpid())
+	refusal := fmt.Sprintf("another fugaro update is running on this machine for project %s (pid %d), wait for it to finish, then rerun", initProject, os.Getpid())
 	if got := err.Error(); got != refusal {
 		t.Errorf("the refusal is\n  %s\nwant\n  %s", got, refusal)
 	}
