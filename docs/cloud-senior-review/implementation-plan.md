@@ -2575,6 +2575,9 @@ plan's sense:
 a red step, a file list, named tests and a person's gate where a person's gate is what the work needs —
 **and §6.7 names a tenth and an eleventh, `CSR17` and `CSR18`, the api-key review, which are NOT in
 0.20.0** and are therefore outside the levels, the critical path and the shared-files table below.
+**The api-key review's own plan carries them as three tasks** — `CSR17` split into **AK6a** and **AK6b**,
+and `CSR18` as **AK7** — and the reconciliation of **2026-11-09** with this subsection is written in §6.7
+itself, below.
 **An answer is not an approval** (README.md): every task above still waits for the owner to approve it,
 and the tasks that were written because an item was answered are no more started than the ones that were
 already here.
@@ -2623,6 +2626,15 @@ else (`upstreamKindAnthropic`, `internal/credsvc/forward.go:66`). So the api-key
 somebody forgot to flip — **the service has nowhere to hold the key, no pairing that can name one, no
 candidate list that may offer one and no upstream to send it to**, and the runner has no path that would
 carry a provider's auth shape or base URL. That is why it is a slice and not a paragraph of CSR13.
+**One thing in the paragraph above has moved since it was written, and it is not the provider apparatus:**
+the api-key review's **first** half — the project's own **Anthropic** key as the review class's credential
+— has since been designed, approved and **merged** (`docs/api-key-review`'s AK4 and AK5), so
+`ReviewJobAccount.Account` may now be `config.AnthropicKeyAccount`, the sentinel that names the project's
+own key and is **not** an account, and the class may be served by the tier-B entry. The sentence above
+about the account being a Claude OAuth account is read with that in mind. **Everything else there stands
+and the provider review is still a slice:** `CredentialKey`'s closed set still has no provider-key kind,
+`reviewCandidates` still offers exactly one credential, and no upstream carries a provider's base URL or
+auth shape.
 
 **CSR17. The service can hold and serve a provider key for a review caller (SEC). — NOT IN 0.20.0.**
 **Depends on:** nothing in 0.20.0's levels, and it is **after** the OAuth review path only in the sense
@@ -2642,6 +2654,26 @@ section that is not a credential, and both are a change to a contract another re
 rule: a field never changes meaning). **Red step (sketched):** a service whose bundle holds a provider key
 and whose review pairing names a provider account serves a review caller with **that** key — a test that
 cannot pass today because the pairing refuses the account and the candidate list has nothing to offer.
+
+**Amended 2026-11-09, by the reconciliation `docs/api-key-review` owed to this subsection, and the reading
+that survives is this sketch's.** Two things are settled there and both are read as corrections of this
+task rather than of its intent:
+
+- **The "second axis" is right, and the plan that read this task as six service files was the loser.** The
+  account-axis value **is the admission unit** — the published `accounts` block is keyed by it and the
+  service's own admission intersects a repository's child with it — so a provider key needs **a value of its
+  own** beside `config.AnthropicKeyAccount`, which is a change to `internal/credsvc/review.go`'s own type and
+  to the readers of the axis in `internal/config`, `internal/projectpolicy`, `internal/localcfg`,
+  `internal/infra`, `internal/cli`, `internal/task`, the task schema and the project module. That work is
+  `docs/api-key-review`'s **AK6a**, and the offer rule, the bundle key and the forward above are its
+  **AK6b** — so this subsection's `CSR17` is two tasks there rather than one, and the "**6–8**" above
+  covered the service half only. **Files, as it landed there:** AK6a's 24 and AK6b's 9, listed in
+  `docs/api-key-review`'s implementation-plan §2, which books every one of them.
+- **The design point is answered: the bundle holds the base URL and the auth shape** — the owner's ruling of
+  **2026-11-09** (**D1418**), as **additive optional fields**, so an older bundle still decodes and no
+  format version moves. A provider the bundle does not describe **fails closed**, and the whole
+  reconciliation, with its conditions and its findings, is `docs/api-key-review`'s reconciliation and
+  [security-review.md](../../api-key-review/security-review.md).
 **SEC flag:** yes — this is a model credential the service attaches to a caller's request. **Reviewer
 tier:** SEC — opus, with the independent review mandatory. **Commit:** `credsvc: the review class can serve
 a provider key`.
@@ -2652,7 +2684,16 @@ on:** `CSR17` (the service side first: a runner path to a service that cannot se
 is the provider's, not the service's Anthropic forward), `internal/runner/agentenv.go` +
 `agentenv_test.go` (the gateway variables a provider's model list needs), `internal/gateway/gateway.go`
 (the upstream kind and the auth shape a provider call carries) and `internal/runner/runner.go`'s one call
-site if it moves. **Red step (sketched):** a review run served by a provider key reaches the provider's
+site if it moves. **Two clauses of that list are dropped, by the reconciliation of 2026-11-09**
+(`docs/api-key-review`'s implementation-plan §6 item 9, where this task is **AK7**): `internal/gateway/gateway.go`
+was booked on its own condition — "the upstream kind and the auth shape a provider call carries" — and with
+**D1418** both are the **bundle's**, so the service builds the provider's call from the document it holds and
+the gateway's upstream kind does not move; `internal/runner/runner.go`'s call site goes with it, because the
+one call site `agentenv.go` already has is the call site. **The files are therefore
+`internal/runner/routing.go`, `internal/runner/routing_internal_test.go`, `internal/runner/agentenv.go` and
+`internal/runner/agentenv_test.go` — `internal/runner` and nothing else**, which is the property the whole
+answer rests on: the provider's base URL and auth shape never leave the service's bundle, so the runner
+names no provider endpoint and no host. **Red step (sketched):** a review run served by a provider key reaches the provider's
 endpoint with the provider's auth shape, and `TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn` is **rewritten**
 rather than deleted — the refusal is 0.20.0's answer and this task is the one that makes it a path, so the
 test keeps its name and gains the second direction. **SEC flag:**
@@ -2663,4 +2704,9 @@ served by a provider key`.
 **What this subsection does not do.** It does not move `reviewJobSince` (that is the release slot's, §6.4),
 it does not change 0.20.0's `### For operators` sentence (§6.5), and it does not add a level, an edge or a
 shared-files row: the two tasks above are a later release's, and their own release writes the sentence that
-names them.
+names them. **Nor does it decide anything about them that the api-key review's own plan now carries**
+(2026-11-09): the reconciliation above, the conditions its security review places on AK6a, AK6b and AK7,
+and the finding that the OpenRouter half's **served** path waits on **Check 50** — a live check neither plan
+has run, and the tree refuses every tier-C candidate until it has — all live in `docs/api-key-review`. This
+subsection's job was to name the slice, order it and leave it outside 0.20.0, and it still does exactly
+that.
