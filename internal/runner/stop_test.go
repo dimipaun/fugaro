@@ -668,6 +668,58 @@ func TestStopInABouncedCheapLoopFilesTheDecidingRoundsAcceptance(t *testing.T) {
 	}
 }
 
+// TestStopDoesNotAcceptTheCatastrophicFindingABouncedCheapRoundLeft is the one
+// thing the stop accepts nothing of — "wherever in the run it was left" — read
+// where a bounce puts it. Level 2's round 1 asks for changes and the fix it
+// bought is the head the bounce's cheap round reads; the stop is asked after
+// that cheap round, so the round the record ends on is level 1's and the round
+// readiness is decided on is level 2's, about the commit before the fix. A set
+// of blocking rounds built from the levels alone reads level 2's round, whose
+// finding the stop takes, and never level 1's, whose catastrophic finding sits
+// on the commit the run publishes and which no level above it has read: the run
+// would go ready on it, which is what this pins.
+func TestStopDoesNotAcceptTheCatastrophicFindingABouncedCheapRoundLeft(t *testing.T) {
+	// The same clock as the bounced acceptance below: level 2's round runs at
+	// 75s, its fix takes the run to 100s, the bounce's cheap round runs, and
+	// the stop is asked after it at 125s.
+	cfg := modeCfg(t, "startup", 2, "  first_line_review: on\n  recipe: standard-bounce\n  review_stop_fraction: 0.4\n")
+	accepted := map[string]any{
+		"summary": "unbounded retry loop in the fetch path", "likelihood": 3, "impact": 3, "fix_cost": 2, "class": "correctness",
+	}
+	catastrophic := map[string]any{
+		"summary": "the deploy token is printed into the build log", "likelihood": 3, "impact": 5, "fix_cost": 1, "class": "security",
+	}
+	clk := newClock()
+	h := newHarnessFiles(t, cfg, nil, bounceFiles)
+	h.deps.Now = clk.Now
+	rec, err := h.run(t,
+		afterStep(clk, implement("feature")),
+		afterStep(clk, review("ship", 0)),                     // review_first: ships, so level 2 reviews the head
+		afterStep(clk, reviewScored("changes", accepted)),     // review: level 2's round 1, the round readiness reads
+		afterStep(clk, fixStep),                               // the fix it asked for
+		afterStep(clk, reviewScored("changes", catastrophic)), // review_first, the bounce: the stop is asked after it
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review_first", "review", "fix", "review_first") {
+		t.Fatalf("stages = %v, want the bounced cheap round to be the round the stop ended on", got)
+	}
+	if rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("outcome = %s (reason %q), want a draft: the stop accepts no catastrophic finding, and the bounced cheap round left one on the commit the run publishes", rec.Outcome, rec.Reason)
+	}
+	if ac := rec.Accepted; ac != nil {
+		t.Errorf("the record's accepted block = %+v, want none: the round the stop read is not the run's whole account of what it left", ac)
+	}
+	if pr := onlyPR(t, h.provider); !pr.Draft {
+		t.Errorf("the pull request is not a draft: %+v", pr)
+	}
+	const want = "review level 1 left a finding the stop does not accept in round 1"
+	if !strings.Contains(rec.Reason, want) {
+		t.Errorf("reason = %q, want it to name the level the finding was left by (%q)", rec.Reason, want)
+	}
+}
+
 // TestStopWithdrawsItsAcceptanceForALevelTheStopDoesNotTake is the stop's one
 // exception at the two readers that are not Decide (the ruling's "every
 // remaining finding that is not catastrophic", item 1): the round readiness

@@ -353,9 +353,20 @@ func (r *run) levelTolerated(l policy.Level, rs runstore.ReviewSummary) bool {
 // stop (rigor.AcceptsAtStop): those are the runs whose acceptance could
 // otherwise flip a ready pull request whose deciding round did not carry the
 // blocking finding itself. A mode whose stop is a draft — Pro, Critical, the
-// zero mode — keeps Decide's own reasons, unchanged. Level 1 is not read, the
-// way it is not read in heldBackLevel: it advises and never decides, and its
-// round is the one the level above it reviewed.
+// zero mode — keeps Decide's own reasons, unchanged.
+//
+// Level 1 is read only where the run's loop ended on its round — where that
+// round is the last the record holds, so no enabled level above it has read the
+// commit it read or ever will. Everywhere else it is the level the one above it
+// reviewed, which is why heldBackLevel and this function leave it out: a cheap
+// round the outer level reviewed is an input to that level's round, and the
+// stop accepts what the round it decides on left. Where the stop was asked
+// after the cheap round (the bounce's, on the head level 2's fix bought), the
+// deciding round is the outer one *behind* it — read on the commit before that
+// fix — and the cheap round's findings are the run's own, on the commit that
+// ships: a catastrophic one there is a finding the stop accepts nothing of,
+// "wherever in the run it was left" (the ruling of 2026-11-08), and readiness
+// would otherwise file an acceptance over it.
 //
 // A level's round is read through the stop's own policy (levelTolerated with
 // r.stopAt), so "the stop does not accept it" is the same rule the deciding
@@ -369,9 +380,16 @@ func (r *run) stopBlockingLevels() []runstore.ReviewSummary {
 	if decided == nil {
 		return nil
 	}
+	// The cheap loop's round is the one the record ends on in the bounce the
+	// stop cut: nothing above it ran after it, and the round readiness is
+	// decided on is the level 2 round it followed.
+	endedOnLevel1 := len(r.rec.Reviews) > 0 && reviewLevelOf(r.rec.Reviews[len(r.rec.Reviews)-1]) == policy.LevelL1
 	var out []runstore.ReviewSummary
-	for _, l := range []policy.Level{policy.LevelL2, policy.LevelL3} {
+	for _, l := range []policy.Level{policy.LevelL1, policy.LevelL2, policy.LevelL3} {
 		if !levelOn(r.levels, l) || l == reviewLevelOf(*decided) {
+			continue
+		}
+		if l == policy.LevelL1 && !endedOnLevel1 {
 			continue
 		}
 		rs := lastRoundOf(r.rec.Reviews, l)
@@ -386,19 +404,26 @@ func (r *run) stopBlockingLevels() []runstore.ReviewSummary {
 }
 
 // levelRound is the level's last round as the loop kept it: the findings the
-// record's summary only counts, for the two outer levels the loop keeps a round
-// of — level 3 in lastSenior and level 2 in seniorLevelLast, which is the copy
-// level 3 would otherwise overwrite. The round numbers of the two levels are
-// not comparable (each loop counts from 1), which is why the level decides
-// which of the two is read and the number only has to agree with the record's.
+// record's summary only counts, for the three levels the loop keeps a round of
+// — level 3 in lastSenior, level 2 in seniorLevelLast (which is the copy level
+// 3 would otherwise overwrite) and level 1 in firstLineLast, the cheap loop's
+// own field whichever of the two things it is doing. The round numbers of the
+// levels are not comparable (each loop counts from 1), which is why the level
+// decides which of the three is read and the number only has to agree with the
+// record's.
 //
-// Level 1 is not one of them: where the cheap loop decides readiness it writes
-// lastSenior itself (firstLine), so the round is already there, and where a
-// stop ended the run before level 2 started, the copy it left is what the stop
-// puts in lastSenior (firstLine's stop paths) — one field either way, which is
-// what the policy and the record are read off.
+// Level 1's own round is read off firstLineLast and not off lastSenior, which
+// holds it only where the cheap loop decides readiness or where a stop ended
+// the run before level 2 started (firstLine, timeStop): a run that ended on the
+// cheap round with an outer level above it reviewed keeps that level's round in
+// lastSenior, and its own in firstLineLast, which is the field that says what
+// the round nobody above it read left (stopBlockingLevels).
 func (r *run) levelRound(l policy.Level, round int) ([]Finding, bool) {
 	switch l {
+	case policy.LevelL1:
+		if r.firstLineLast.Round == round {
+			return r.firstLineLast.Findings, true
+		}
 	case policy.LevelL2:
 		if r.seniorLevelLast.Round == round {
 			return r.seniorLevelLast.Findings, true
