@@ -193,13 +193,13 @@ file, a signature or a review comment this tree could show, and the check's own 
 halves are now there, so **M5 may merge and the licence holds nothing back**; what the clearance did
 not do is put the front door on a binary, because **M5 merged dormant: M5b was a hard prerequisite
 before any binary links it** (§4a, the ruling of 2026-11-07), **and M5b is built**. Had the licence
-turned out to be unusable, it would still send D921 back to its own alternatives, with the library out of `go.mod` and
-M5 rebuilt against them, rather than a dependency landing ahead of its gate. **The transitive set the
-clearance covers is named here for that reason**: `zitadel/schema`, `muhlemmer/gu` and `kr/text`,
-which are
-new, and the version bumps `go mod tidy` made beside the library: `go-jose/v4` v4.1.4→v4.1.6,
-**`go-logr/logr`** v1.4.3→v1.4.4, `doublestar/v4` v4.10.2→v4.10.4, `otel` v1.44.0→v1.46.0 with
-`/metric` and `/trace`, `x/text` v0.42.0→v0.43.0 and `x/sync` v0.23.0→v0.24.0.
+turned out to be unusable, it would still send D921 back to its own alternatives, with the library
+out of `go.mod` and M5 rebuilt against them, rather than a dependency landing ahead of its gate.
+**The transitive set the clearance covers is named here for that reason**: `zitadel/schema`,
+`muhlemmer/gu` and `kr/text`, which are new, and the version bumps `go mod tidy` made beside the
+library: `go-jose/v4` v4.1.4→v4.1.6, **`go-logr/logr`** v1.4.3→v1.4.4, `doublestar/v4`
+v4.10.2→v4.10.4, `otel` v1.44.0→v1.46.0 with `/metric` and `/trace`, `x/text` v0.42.0→v0.43.0 and
+`x/sync` v0.23.0→v0.24.0.
 
 The
 **status of the whole folder** moved from "design only, nothing approved" to the line every file
