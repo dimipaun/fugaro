@@ -118,6 +118,18 @@ func TestTheNumberNamesOneRequest(t *testing.T) {
 		}
 	}
 
+	// B is still the flow it was: answering its page before the device approved
+	// it refused the answer and ended nothing, so the device approves B now and
+	// B's own page finishes the flow it started. A refusal that spent B's
+	// binding would have cost the person a whole flow for pressing Continue in
+	// the wrong order.
+	if rec := ts.deviceApprove(t, bindingB, numberB, approvalToken(t)); rec.Code != http.StatusOK {
+		t.Errorf("the device's act for the flow whose page answered early answered %d (%s); want it to record the approval, because the page's own refusal leaves the flow open", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	if code := codeOf(t, ts.consent(t, url.Values{"request_id": {bindingB}, "decision": {"allow"}})); code == "" {
+		t.Errorf("the flow whose page answered before its approval minted no code after the device approved it: the page's refusal is about the order the two acts arrived in, not an answer to the flow")
+	}
+
 	// And A's own page mints A's code, which is the whole flow: the refusal
 	// above was about whose approval it was and not about refusals in general.
 	code := codeOf(t, ts.consent(t, url.Values{"request_id": {bindingA}, "decision": {"allow"}}))

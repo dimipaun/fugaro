@@ -281,10 +281,10 @@ func (s *Server) serveAuthorizeRequest(w http.ResponseWriter, r *http.Request) {
 // rather than one: the **paired device's approval** (approval.go), which is
 // what carries the flow's number and the ID token, and the **page's answer**,
 // which carries the flow's binding and the person's decision and no credential
-// at all. They are told apart by their bodies, and a body that is both is
-// refused — that shape is M5's page posting its own number back beside a token,
-// which is the approval this endpoint no longer takes (M-a's first
-// requirement).
+// at all. They are told apart by the token's field, which only one of them
+// may carry, and a body carrying that field beside a decision is refused — that
+// shape is M5's page posting its own number back beside a token, which is the
+// approval this endpoint no longer takes (M-a's first requirement).
 //
 // Both go through the endpoint rather than through a path of their own because
 // the paths of this front door are mounted in server.go's `Mount`
@@ -302,33 +302,44 @@ func (s *Server) serveAuthorizeConsent(w http.ResponseWriter, r *http.Request) {
 		refusePage(w, http.StatusBadRequest, "This approval is not a form this endpoint can read.")
 		return
 	}
-	switch device, page := isDeviceAct(form), servesThePage(form); {
-	case device && page:
+	switch device := isDeviceAct(form); {
+	case device && form.Get("decision") != "":
 		refusePage(w, http.StatusBadRequest, deviceApprovalRefusal)
 	case device:
 		s.serveDeviceApproval(w, r, form)
-	case page:
-		s.servePageAnswer(w, r, form)
 	default:
-		refusePage(w, http.StatusBadRequest, "This request is neither a device's approval nor a page's answer to a flow. A device approves with the flow's id, its number and the ID token of its own sign-in, and a page answers with the flow's binding and its decision.")
+		s.servePageAnswer(w, r, form)
 	}
 }
 
 // servePageAnswer is the page's own answer to a flow: the binding and the
 // person's decision, which is what the page above posts (M5b).
 //
-// The binding is spent first and everything is judged afterwards, which is the
-// fail-closed direction this endpoint takes on purpose: an answer that fails
-// any of the checks below has still answered the flow, and the alternative — a
-// binding that survives a refused answer — is a page a stranger can keep
-// guessing against.
+// The flow is read before it is spent, and that order is the one place this
+// function differs from an answer that is judged first and spent afterwards. A
+// page whose Allow arrives before any device approved the flow is refused, and
+// it is refused **without spending the binding**: the person has done what the
+// page asked and the device has simply not caught up, so the page is still the
+// page that finishes this flow once the device approves — the same page, the
+// same binding, one press of Continue. Spending it there would end the flow on
+// the person for pressing a button in the wrong order, and the flow would have
+// to be started again from the client. Nothing is granted by the refusal: a
+// flow no device approved still mints no code, and the take below re-reads the
+// same record, so the approval this decides on is the approval the mint acts
+// on.
 //
-// The flow has to carry an approval by the time this runs, and that check is
-// the one M5b adds here: the identity the code acts for is the device's
-// (`pending.Approval`), and a page that minted without one would be the page
-// approving on its own.
+// Past that check the binding is spent first and everything is judged
+// afterwards, which is the fail-closed direction this endpoint takes on
+// purpose: an answer that fails any of the checks below has still answered the
+// flow, and the alternative — a binding that survives a refused answer — is a
+// page a stranger can keep guessing against.
+//
+// The flow has to carry an approval by the time the code is minted, and that
+// check is the one M5b adds here: the identity the code acts for is the
+// device's (`taken.Approval`), and a page that minted without one would be the
+// page approving on its own.
 func (s *Server) servePageAnswer(w http.ResponseWriter, r *http.Request, form url.Values) {
-	pending, err := s.store.TakeRequest(r.Context(), form.Get("request_id"))
+	pending, err := s.store.GetRequest(r.Context(), form.Get("request_id"))
 	switch {
 	case errors.Is(err, ErrRequestNotFound), errors.Is(err, ErrRequestUsed):
 		refusePage(w, http.StatusBadRequest, "This approval does not carry the binding of a flow this installation is waiting for. A flow is answered once, and only from the page it was rendered on.")
@@ -337,8 +348,27 @@ func (s *Server) servePageAnswer(w http.ResponseWriter, r *http.Request, form ur
 		refusePage(w, http.StatusInternalServerError, "This approval could not be read.")
 		return
 	}
-	if s.now().After(pending.ExpiresAt) {
-		s.redirectError(w, r, pending.RedirectURI, pending.State, oauthError(oidc.ErrAccessDenied(),
+	// An Allow for a flow with no approval is refused here, before the binding
+	// is spent: the person pressed Continue on a page whose flow the device has
+	// not approved yet, and what they need is to press it again afterwards
+	// rather than a new flow. The expiry is checked beside it so that a flow
+	// that is over is still answered with the client's own error below instead
+	// of this page.
+	if form.Get("decision") == "allow" && !s.now().After(pending.ExpiresAt) && pending.Approval == nil {
+		refusePage(w, http.StatusBadRequest, "This flow has not been approved on the device this installation paired with you. Approve it there first — the number on this page is the one the device takes — and continue on this page afterwards.")
+		return
+	}
+	taken, err := s.store.TakeRequest(r.Context(), pending.ID)
+	switch {
+	case errors.Is(err, ErrRequestNotFound), errors.Is(err, ErrRequestUsed):
+		refusePage(w, http.StatusBadRequest, "This approval does not carry the binding of a flow this installation is waiting for. A flow is answered once, and only from the page it was rendered on.")
+		return
+	case err != nil:
+		refusePage(w, http.StatusInternalServerError, "This approval could not be read.")
+		return
+	}
+	if s.now().After(taken.ExpiresAt) {
+		s.redirectError(w, r, taken.RedirectURI, taken.State, oauthError(oidc.ErrAccessDenied(),
 			"the authorization request expired before it was answered"))
 		return
 	}
@@ -350,17 +380,8 @@ func (s *Server) servePageAnswer(w http.ResponseWriter, r *http.Request, form ur
 	// sends (RFC 6749 §4.1.2.1). The binding is what makes the deny an answer
 	// to this flow, and it is spent by the time this is read.
 	if form.Get("decision") != "allow" {
-		s.redirectError(w, r, pending.RedirectURI, pending.State, oauthError(oidc.ErrAccessDenied(),
+		s.redirectError(w, r, taken.RedirectURI, taken.State, oauthError(oidc.ErrAccessDenied(),
 			"the person did not allow this client to call the MCP endpoint"))
-		return
-	}
-	// The approval, which is the whole of what makes this page's Allow an
-	// approval: the identity the code acts for is the one the paired device's
-	// sign-in proved, and this page carries no credential of its own (M5b). A
-	// flow no device approved mints nothing, and the person is told where to
-	// approve it rather than left with a button that does nothing.
-	if pending.Approval == nil {
-		refusePage(w, http.StatusBadRequest, "This flow has not been approved on the device this installation paired with you. Approve it there first — the number on this page is the one the device takes — and answer here afterwards.")
 		return
 	}
 
@@ -371,17 +392,17 @@ func (s *Server) servePageAnswer(w http.ResponseWriter, r *http.Request, form ur
 	}
 	if err := s.store.PutCode(r.Context(), Code{
 		Hash:        TokenHash(code),
-		ClientID:    pending.ClientID,
-		RedirectURI: pending.RedirectURI,
-		Challenge:   pending.Challenge,
-		Identity:    pending.Approval.Identity,
-		Scopes:      pending.Scopes,
+		ClientID:    taken.ClientID,
+		RedirectURI: taken.RedirectURI,
+		Challenge:   taken.Challenge,
+		Identity:    taken.Approval.Identity,
+		Scopes:      taken.Scopes,
 		ExpiresAt:   s.now().Add(CodeTTL),
 	}); err != nil {
 		refusePage(w, http.StatusInternalServerError, "This approval could not be recorded.")
 		return
 	}
-	s.redirectWith(w, r, pending.RedirectURI, pending.State, url.Values{"code": {code}})
+	s.redirectWith(w, r, taken.RedirectURI, taken.State, url.Values{"code": {code}})
 }
 
 // verifySignIn verifies the Firebase ID token an approval carried and answers

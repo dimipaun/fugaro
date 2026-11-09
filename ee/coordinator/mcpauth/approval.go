@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 // This file is M5b: **the paired device's approval**, which is M-a's first
@@ -40,6 +41,13 @@ import (
 // waits on this one, is where a path of its own can be mounted if the owner
 // wants the device's act on one.
 //
+// **How the flow reaches the paired device is not built here.** The page
+// renders the number and carries the flow's id, but nothing yet hands the two
+// to the device — no QR of the flow's binding, no launcher reading the page —
+// and that is the wiring task's half: this file takes an act that already
+// carries the flow's id and the number, and it is the one place that decides
+// what such an act means.
+//
 // **The spend is a create and not a flag.** The ID token is recorded in M2's
 // store as the sha256 of its value (D922) through the store's own PutToken,
 // which refuses a hash that is already written: the first act writes the
@@ -56,18 +64,17 @@ import (
 // write that spends is the write that precedes the approval's own, so a crash
 // between them costs a sign-in and never an approval of a flow nobody proved.
 
-// isDeviceAct answers whether an authorize POST is the paired device's act.
+// isDeviceAct answers whether an authorize POST is the paired device's act, and
+// the ID token's field is what names it.
 //
-// The field is what names it, and it is named by presence rather than by value:
-// an act with no token in it is still the device's act and is refused as an
-// unverified sign-in, which is the answer a device that lost its session needs,
-// and the shape the page's answer takes is a decision and nothing else.
+// It is answered by the field's presence rather than by its value: an act whose
+// token field is empty is still the device's act, and it is refused as an
+// unverified sign-in, which is the answer a device that lost its session needs.
+// A body *without* that field is the page's answer, whatever else it carries —
+// the page posts a decision and nothing else — so the shapes the caller tells
+// apart are the token's presence, and the one body that is neither is the token
+// beside a decision (serveAuthorizeConsent).
 func isDeviceAct(form url.Values) bool { return form.Has("id_token") }
-
-// servesThePage answers whether a body is the page's own answer to the flow.
-// A body carrying a decision is, and the two shapes are exclusive: the caller
-// refuses a body that carries both rather than choosing one of them.
-func servesThePage(form url.Values) bool { return form.Get("decision") != "" }
 
 // serveDeviceApproval is the paired device's act: it checks the flow, checks
 // the number the person read off the screen, spends the ID token, and records
@@ -105,7 +112,14 @@ func (s *Server) serveDeviceApproval(w http.ResponseWriter, r *http.Request, for
 		refusePage(w, http.StatusBadRequest, "This approval does not carry the number this flow is showing. The number on the screen that asked and the number on the paired device have to be the same one.")
 		return
 	}
-	token := form.Get("id_token")
+	// The token is canonicalised once, and the value that is verified is the
+	// value that is spent. verifySignIn drops the whitespace a form may carry
+	// around a value, so spending the raw field would spend a *different*
+	// string from the one whose signature was checked — and since the spend is
+	// a create on the hash, the same token padded by one byte would approve a
+	// second flow, and a third, for as long as the padding varies. One token,
+	// one spend, whatever the field carried around it.
+	token := strings.TrimSpace(form.Get("id_token"))
 	identity, err := s.verifySignIn(r.Context(), token)
 	if err != nil {
 		// The sign-in step, and it is not the client's failure: a device whose
@@ -114,7 +128,8 @@ func (s *Server) serveDeviceApproval(w http.ResponseWriter, r *http.Request, for
 		refusePage(w, http.StatusUnauthorized, "The sign-in was not verified. Approve this flow from a device paired to the installation, and present the Firebase ID token that device's own session produced.")
 		return
 	}
-	if err := s.spendSignIn(r.Context(), token, identity); err != nil {
+	spent := TokenHash(token)
+	if err := s.spendSignIn(r.Context(), spent, identity); err != nil {
 		if errors.Is(err, ErrIDTokenSpent) {
 			refusePage(w, http.StatusBadRequest, "This sign-in token has already approved a flow. One sign-in approves one flow: present the token a fresh sign-in on the device produced.")
 			return
@@ -123,7 +138,7 @@ func (s *Server) serveDeviceApproval(w http.ResponseWriter, r *http.Request, for
 		return
 	}
 	approval := Approval{
-		IDTokenHash: TokenHash(token),
+		IDTokenHash: spent,
 		Identity:    identity,
 		ApprovedAt:  s.now(),
 	}
@@ -159,9 +174,13 @@ func (s *Server) serveDeviceApproval(w http.ResponseWriter, r *http.Request, for
 // record is the marker of a spend and not a credential any path of this front
 // door resolves — LookupByHash refuses a record that names no family, which is
 // every record written here.
-func (s *Server) spendSignIn(ctx context.Context, raw, identity string) error {
+//
+// It takes the hash and not the token, because the caller is the one that has
+// to spend the same string it verified: a value this function hashed itself
+// would be a second chance for the two to disagree.
+func (s *Server) spendSignIn(ctx context.Context, hash, identity string) error {
 	rec := TokenRecord{
-		Hash:  TokenHash(raw),
+		Hash:  hash,
 		Kind:  KindIDToken,
 		Token: Token{Identity: identity},
 	}
