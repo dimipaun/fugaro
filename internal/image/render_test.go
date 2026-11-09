@@ -92,8 +92,8 @@ RUN --mount=type=cache,id=fugaro-mise,target=/home/fugaro/.cache/mise,uid=1000,g
  && if [ -n "$missing" ]; then printf 'mise left these tools missing:\n%s\n' "$missing" >&2; exit 1; fi
 
 # Dependency warm-up for yarn.lock.
-# Package build scripts do not run in this warm-up: a dependency's install
-# script is unreviewed code and this RUN mounts the workflow's secrets. The
+# This install runs no package lifecycle or build scripts: this RUN mounts the
+# workflow's secrets, and a dependency's install script is unreviewed code. The
 # workflow's build command builds what the repository needs.
 RUN --mount=type=secret,id=NPM_TOKEN,uid=1000,mode=0400,required=false if test -e /run/secrets/NPM_TOKEN; then NPM_TOKEN="$(cat /run/secrets/NPM_TOKEN)" || exit 1; export NPM_TOKEN; fi; yarn install --immutable --mode=skip-build
 
@@ -388,9 +388,18 @@ func warmUpBlock(lockfile, install string) string {
 		`RUN --mount=type=secret,id=NPM_TOKEN,uid=1000,mode=0400,required=false if test -e /run/secrets/NPM_TOKEN; then NPM_TOKEN="$(cat /run/secrets/NPM_TOKEN)" || exit 1; export NPM_TOKEN; fi; ` + install + "\n"
 }
 
-const noBuildScriptsComment = `# Package build scripts do not run in this warm-up: a dependency's install
-# script is unreviewed code and this RUN mounts the workflow's secrets. The
+// noBuildScriptsComment is the warm-up comment of a workflow that declares a
+// secret, which is the one whose install runs no lifecycle or build scripts.
+const noBuildScriptsComment = `# This install runs no package lifecycle or build scripts: this RUN mounts the
+# workflow's secrets, and a dependency's install script is unreviewed code. The
 # workflow's build command builds what the repository needs.`
+
+// plainWarmUpBlock is the warm-up section of a workflow that declares no
+// secret: the comment line and the package manager's own install, in a RUN
+// that mounts nothing.
+func plainWarmUpBlock(lockfile, install string) string {
+	return "\n# Dependency warm-up for " + lockfile + ".\nRUN " + install + "\n"
+}
 
 // warmUpInstalls are the package managers the warm-up renders for, with the
 // install that runs no package lifecycle or build scripts.
@@ -424,13 +433,15 @@ func fullInput(pm config.NodePM, skipBuildScripts bool) RenderInput {
 }
 
 // Every package manager's warm-up installs without lifecycle or build
-// scripts, and the rest of the Dockerfile is TestRenderFull's, byte for byte.
+// scripts when the workflow declares a secret, and the rest of the Dockerfile
+// is TestRenderFull's, byte for byte.
 //
-// The warm-up is the one RUN that mounts the workflow's secrets, so the
-// scripts a dependency's install would otherwise start are unreviewed code
-// running beside them — the setting that used to keep them out
+// The secret is mounted into this RUN, and the warm-up is where the
+// repository's own dependency tree installs, so the scripts a dependency's
+// install would otherwise start are unreviewed code running beside the
+// workflow's credential — the setting that used to keep them out
 // (image.skip_build_scripts) is refused by name now, which leaves the safe
-// setting as the only one the renderer may write.
+// setting as the only one a secret-bearing warm-up may write.
 func TestRenderWarmUpRunsNoBuildScripts(t *testing.T) {
 	yarnBlock := warmUpBlock("yarn.lock", "yarn install --immutable --mode=skip-build")
 	if !strings.Contains(wantFull, yarnBlock) {
@@ -455,9 +466,39 @@ func TestRenderWarmUpRunsNoBuildScripts(t *testing.T) {
 	}
 }
 
+// A workflow that declares no secret renders the package manager's own
+// install, in a RUN that mounts nothing: there is no credential in that step
+// for a dependency's install script to read, so the guard that skips the
+// scripts (and the comment that explains it) does not apply. This is the
+// install every workflow got before the removal, whatever its image: block
+// said, since image.skip_build_scripts defaulted to false.
+func TestRenderWarmUpWithoutSecretsIsThePlainInstall(t *testing.T) {
+	for _, tc := range warmUpInstalls {
+		t.Run(tc.pm.Lockfile+" "+tc.install, func(t *testing.T) {
+			got, err := Render(RenderInput{Workflow: "app", Base: config.BaseKind, Version: "dev", PM: &tc.pm})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := plainWarmUpBlock(tc.pm.Lockfile, tc.pm.Install); !strings.Contains(string(got), want) {
+				t.Errorf("Render without secrets lacks %q:\n%s", want, got)
+			}
+			if strings.Contains(string(got), noBuildScriptsComment) {
+				t.Error("a warm-up that mounts no secret explains a script-free install")
+			}
+			if strings.Contains(string(got), "type=secret,id=NPM_TOKEN") {
+				t.Error("a workflow that declares no secret rendered one of its mounts")
+			}
+			if msgs := config.LintDockerfile(got); len(msgs) > 0 {
+				t.Errorf("the rendered Dockerfile breaks the repository-Dockerfile contract: %v", msgs)
+			}
+		})
+	}
+}
+
 // The Dockerfile a workflow's own image: block renders is the same one,
 // whatever the block says: image.skip_build_scripts no longer reaches the
-// render, so the setting cannot turn install scripts back on.
+// render, so the setting cannot turn install scripts back on. RenderYAML's
+// workflow declares a secret, which is what the skipping install is for.
 func TestDockerfileWarmUpRunsNoBuildScripts(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFiles(t, root, map[string]string{"package.json": `{"packageManager":"yarn@4.16.0"}`, "yarn.lock": ""})

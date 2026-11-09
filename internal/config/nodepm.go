@@ -29,10 +29,11 @@ type NodePM struct {
 // scripts (Yarn Berry's --mode=skip-build, the others' --ignore-scripts).
 // pnpm fetch runs no scripts, so only its install takes the flag.
 //
-// The derived-image renderer, the only production caller, passes true:
-// image.skip_build_scripts is a key the repository-image removal refuses, so
-// a build that mounts the workflow's secrets has no safe value but this one
-// (internal/image/render.go states it beside the call).
+// The derived-image renderer, the only production caller, passes true exactly
+// when the workflow declares a secret, which is mounted into the warm-up:
+// image.skip_build_scripts, the key that chose between the two installs, is
+// refused by name, so there is no other setting for a warm-up with a
+// credential beside it (internal/image/render.go states it beside the call).
 func (pm *NodePM) WarmUp(skipBuildScripts bool) string {
 	switch {
 	case !skipBuildScripts:

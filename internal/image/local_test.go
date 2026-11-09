@@ -173,7 +173,7 @@ func TestBuildLocal(t *testing.T) {
 	}
 	for _, want := range []string{`printf '%s\n' '[tools]' '"node" = "24.19.0"' > /home/fugaro/.config/mise/config.toml`,
 		"RUN --mount=type=cache,id=fugaro-mise,target=/home/fugaro/.cache/mise,uid=1000,gid=1000",
-		`--mount=type=secret,id=NPM_TOKEN,uid=1000,mode=0400,required=false --mount=type=secret,id=OTHER_TOKEN,uid=1000,mode=0400,required=false if test -e /run/secrets/NPM_TOKEN; then NPM_TOKEN="$(cat /run/secrets/NPM_TOKEN)" || exit 1; export NPM_TOKEN; fi; if test -e /run/secrets/OTHER_TOKEN; then OTHER_TOKEN="$(cat /run/secrets/OTHER_TOKEN)" || exit 1; export OTHER_TOKEN; fi; npm ci`} {
+		`--mount=type=secret,id=NPM_TOKEN,uid=1000,mode=0400,required=false --mount=type=secret,id=OTHER_TOKEN,uid=1000,mode=0400,required=false if test -e /run/secrets/NPM_TOKEN; then NPM_TOKEN="$(cat /run/secrets/NPM_TOKEN)" || exit 1; export NPM_TOKEN; fi; if test -e /run/secrets/OTHER_TOKEN; then OTHER_TOKEN="$(cat /run/secrets/OTHER_TOKEN)" || exit 1; export OTHER_TOKEN; fi; npm ci --ignore-scripts`} {
 		if !strings.Contains(f.dockerfile, want) {
 			t.Errorf("Dockerfile lacks %q", want)
 		}

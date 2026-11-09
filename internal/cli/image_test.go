@@ -46,7 +46,10 @@ func TestImageRenderGenerated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"FROM ${FUGARO_BASE}", "# Dependency warm-up for package-lock.json.", "RUN npm ci --ignore-scripts\n", "finalize-checkout /work/repo"} {
+	// The workflow declares no secret, so its warm-up mounts none and is the
+	// package manager's own install: the script-free install is for a warm-up
+	// with a credential in it (internal/image/render.go).
+	for _, want := range []string{"FROM ${FUGARO_BASE}", "# Dependency warm-up for package-lock.json.", "RUN npm ci\n", "finalize-checkout /work/repo"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("render output lacks %q:\n%s", want, out)
 		}

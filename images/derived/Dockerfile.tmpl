@@ -93,9 +93,11 @@ RUN --mount=type=cache,id=fugaro-mise,target=/home/fugaro/.cache/mise,uid=1000,g
 {{- if .WarmUp}}
 
 # Dependency warm-up for {{.WarmUpFor}}.
-# Package build scripts do not run in this warm-up: a dependency's install
-# script is unreviewed code and this RUN mounts the workflow's secrets. The
+{{- if .WarmUpSkipsScripts}}
+# This install runs no package lifecycle or build scripts: this RUN mounts the
+# workflow's secrets, and a dependency's install script is unreviewed code. The
 # workflow's build command builds what the repository needs.
+{{- end}}
 RUN{{.SecretMounts}} {{.SecretEnv}}{{.WarmUp}}
 {{- end}}
 
