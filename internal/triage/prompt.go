@@ -105,13 +105,19 @@ func Prompt(mode rigor.Mode, goal string, findings []Finding) string {
 	return b.String()
 }
 
-// writeData writes untrusted text into a block: every line neutralized,
-// trimmed of the trailing whitespace a line break leaves, and indented, so no
-// line of it can pass for a delimiter at the start of a line. Blank lines stay
-// blank — an empty line is no delimiter — so the reader's paragraphing
-// survives.
+// writeData writes untrusted text into a block: every line safetext'd,
+// neutralized, trimmed of the trailing whitespace a line break leaves, and
+// indented, so no line of it can pass for a delimiter at the start of a line.
+// Blank lines stay blank — an empty line is no delimiter — so the reader's
+// paragraphing survives.
+//
+// Safetext runs first, the order internal/followup's prompt and findingHeader
+// use, because it is the pass that removes bytes: an ESC a writer hid inside
+// the word — "fugaro-\x1bNtriage-" — is dropped rather than marked, so a
+// neutralizer that ran before it would look at text that does not yet spell
+// the delimiter and then hand on text that does.
 func writeData(b *strings.Builder, text string, neutralize func(string) string) {
-	for _, line := range strings.Split(strings.TrimRight(safetext.MultiLine(neutralize(text)), " \t\n"), "\n") {
+	for _, line := range strings.Split(strings.TrimRight(neutralize(safetext.MultiLine(text)), " \t\n"), "\n") {
 		if strings.TrimSpace(line) == "" {
 			b.WriteString("\n")
 			continue
