@@ -47,7 +47,19 @@ const scrubMin = 3
 // that is also an ordinary word takes that word with it. Both are the
 // caller's to weigh, because only the caller knows what the project is
 // called.
+//
+// The text is redacted before any name is replaced, with no secrets of its
+// own: the caller's values went through the gate on the way into the issue,
+// and what is new here is only the order. D1722's post is stripped of identity
+// and then redacted again, so the two passes meet in either order, and the one
+// that ends with this pass used to leak — a name taken out of a credential
+// leaves the marker where the value was, and the password rules hold the
+// marker aside while they run, so they cannot read a value that opens with
+// one: `PGPASSWORD=acme-widgets-2024xyz` reached GitHub as
+// `PGPASSWORD=[REDACTED]-2024xyz`. Redacting first means no marker is ever
+// written into a credential.
 func Scrub(text string, names []string) string {
+	text = Redact(text, nil)
 	longest := make([]string, 0, len(names))
 	for _, name := range names {
 		if name = strings.TrimSpace(name); len(name) >= scrubMin {

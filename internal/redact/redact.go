@@ -601,7 +601,12 @@ var (
 	// and left the surname in the text. What that costs is a sentence that
 	// puts words after such a path (`C:\Users\someone was not found`), which
 	// loses them with the path: the report does not need them and the path is
-	// the one thing it must not carry.
+	// the one thing it must not carry. That segment does stop at a line break,
+	// though: a profile name is not what follows the path on the next line,
+	// and an environment dump under `USERPROFILE=` was losing every line up to
+	// the next quote or separator. `Users` is matched without regard to case
+	// (`c:\users\someone`, `/mnt/c/users/someone`), because the filesystem it
+	// names does not have one.
 	//
 	// email reads a host with no dot in it as well (`someone@someone-ThinkPad`)
 	// because that is the address git invents when no identity is configured —
@@ -609,9 +614,12 @@ var (
 	// 'someone@someone-ThinkPad.(none)')`, which is exactly the line a
 	// troubleshoot issue quotes — and it holds the user's login name and the
 	// machine's name, which is what the report must not carry. The `.(none)`
-	// suffix git appends is read as one more segment of the host.
-	email    = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.(?:[A-Za-z0-9\-]+|\(none\)))*`)
-	homePath = regexp.MustCompile(`(?m)(^|[^\w]|-[A-Za-z])(?:(?:/(?:root|home|Users)\b|/var/home\b|(?:/mnt)?/[a-zA-Z]/Users\b)(?:[/\\][^\s"'<>]*)?|[A-Za-z]:\\{1,2}Users\b(?:\\{1,2}[^\\/"'<>]*)?(?:[/\\][^\s"'<>]*)?)`)
+	// suffix git appends is read as one more segment of the host. The `@` may
+	// be written the way a URL writes it, `%40` (`runner%40acme-prod.iam.gserviceaccount.com`,
+	// which names the service account and so the project), because that is how
+	// an address reaches a log from a URL or a query string.
+	email    = regexp.MustCompile(`[A-Za-z0-9._%+\-]+(?:%40|@)[A-Za-z0-9\-]+(?:\.(?:[A-Za-z0-9\-]+|\(none\)))*`)
+	homePath = regexp.MustCompile(`(?m)(^|[^\w]|-[A-Za-z])(?:(?:/(?:root|home|(?i:users))\b|/var/home\b|(?:/mnt)?/[a-zA-Z]/(?i:users)\b)(?:[/\\][^\s"'<>]*)?|[A-Za-z]:\\{1,2}(?i:users)\b(?:\\{1,2}[^\\/"'<>\r\n]*)?(?:[/\\][^\s"'<>]*)?)`)
 )
 
 // Forms returns the strings to redact for secrets, longest first so a secret

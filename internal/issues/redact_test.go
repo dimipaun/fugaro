@@ -98,6 +98,18 @@ var corpus = []struct {
 		keep: "psql: connection refused",
 	},
 	{
+		name: "email written the way a url writes it",
+		in:   "filed by " + "runner" + "%40" + "acme-prod.iam.gserviceaccount.com" + " today",
+		leak: "runner" + "%40" + "acme-prod.iam.gserviceaccount.com",
+		keep: "today",
+	},
+	{
+		name: "windows home path spelled the way the filesystem does",
+		in:   "at " + "c:\\users\\" + "someone" + "\\AppData\\Local\\Temp it is",
+		leak: "c:\\users\\" + "someone",
+		keep: "it is",
+	},
+	{
 		name: "address git invents with no identity set",
 		in: "fatal: unable to auto-detect email address (got '" +
 			"someone" + "@" + "someone-ThinkPad" + ".(none)" + "')",
@@ -198,6 +210,18 @@ func TestScrubNames(t *testing.T) {
 	t.Run("a name too short to replace is left alone", func(t *testing.T) {
 		if got := Scrub("a b c", []string{"", "a"}); got != "a b c" {
 			t.Errorf("Scrub = %q, want the text unchanged", got)
+		}
+	})
+
+	t.Run("a name inside a credential does not put the rest of it back", func(t *testing.T) {
+		// D1722's post is stripped of identity and then redacted again, so the
+		// second redaction reads text this pass wrote: a name taken out of the
+		// middle of a password must not leave the rest of it standing beside
+		// the marker it left behind.
+		password := "PGPASSWORD=" + "acme-widgets-" + strings.Repeat("Qw3", 2)
+		got := Redact(Scrub(password, []string{"acme-widgets"}), nil)
+		if strings.Contains(got, strings.Repeat("Qw3", 2)) {
+			t.Errorf("Redact(Scrub(%q)) = %q: the rest of the password survived the name's marker", password, got)
 		}
 	})
 

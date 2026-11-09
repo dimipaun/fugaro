@@ -726,23 +726,31 @@ func TestRedactsBothPasses(t *testing.T) {
 // TestReportMasksThePerson: the issue report is the one output that must not
 // carry the address or the home directory of whoever filed it.
 func TestReportRedactsThePerson(t *testing.T) {
-	for _, tc := range []struct{ name, in, leak string }{
-		{"email", "filed by " + fake("dimi", "@", "example.com") + " today", fake("dimi", "@", "example.com")},
-		{"home path", "at " + fake("/home/", "someone", "/.config/fugaro/fugaro.yaml") + " the file is", fake("/home/", "someone")},
-		{"home path in a file url", "at " + fake("file:///home/", "someone", "/x.yaml") + " it is", fake("/home/", "someone")},
-		{"home path under var", "at " + fake("/var/home/", "someone", "/x.yaml") + " it is", fake("/var/home/", "someone")},
-		{"mac home path", "at " + fake("/Users/", "someone", "/Library/logs") + " it is", fake("/Users/", "someone")},
-		{"root home", "reading " + fake("/root", "/.config/fugaro") + " now", fake("/root", "/.config/fugaro")},
-		{"windows home path", "at " + fake(`C:\\Users\\`, "someone", `\\AppData`) + " it is", fake(`C:\\Users\\`, "someone")},
-		{"home path after a compiler flag", "cc " + fake("-I/home/", "someone", "/include") + " -o out", fake("/home/", "someone")},
-		{"wsl home path", "at " + fake("/mnt/c/Users/", "someone", "/x") + " it is", fake("/Users/", "someone")},
-		{"git bash home path", "at " + fake("/c/Users/", "someone", "/x") + " it is", fake("/Users/", "someone")},
-		{"windows home path with a space in the profile name", "at " + fake(`C:\Users\John `, "Smith") + `\AppData it is`, "Smith"},
+	for _, tc := range []struct{ name, in, leak, keep string }{
+		{"email", "filed by " + fake("dimi", "@", "example.com") + " today", fake("dimi", "@", "example.com"), ""},
+		{"email written the way a url writes it", "filed by " + fake("runner", "%40", "acme-prod.iam.gserviceaccount.com") + " today", fake("runner", "%40", "acme-prod.iam.gserviceaccount.com"), "today"},
+		{"home path", "at " + fake("/home/", "someone", "/.config/fugaro/fugaro.yaml") + " the file is", fake("/home/", "someone"), ""},
+		{"home path in a file url", "at " + fake("file:///home/", "someone", "/x.yaml") + " it is", fake("/home/", "someone"), ""},
+		{"home path under var", "at " + fake("/var/home/", "someone", "/x.yaml") + " it is", fake("/var/home/", "someone"), ""},
+		{"mac home path", "at " + fake("/Users/", "someone", "/Library/logs") + " it is", fake("/Users/", "someone"), ""},
+		{"root home", "reading " + fake("/root", "/.config/fugaro") + " now", fake("/root", "/.config/fugaro"), ""},
+		{"windows home path", "at " + fake(`C:\\Users\\`, "someone", `\\AppData`) + " it is", fake(`C:\\Users\\`, "someone"), ""},
+		{"home path after a compiler flag", "cc " + fake("-I/home/", "someone", "/include") + " -o out", fake("/home/", "someone"), ""},
+		{"wsl home path", "at " + fake("/mnt/c/Users/", "someone", "/x") + " it is", fake("/Users/", "someone"), ""},
+		{"git bash home path", "at " + fake("/c/Users/", "someone", "/x") + " it is", fake("/Users/", "someone"), ""},
+		{"windows home path with a space in the profile name", "at " + fake(`C:\Users\John `, "Smith") + `\AppData it is`, "Smith", ""},
+		{"windows home path spelled the way the filesystem does", "at " + fake(`c:\users\`, "someone", `\AppData\Local\Temp`) + " it is", fake(`c:\users\`, "someone"), ""},
+		{"wsl home path spelled the way the filesystem does", "at " + fake("/mnt/c/users/", "someone", "/x") + " it is", fake("/users/", "someone"), ""},
+		{"git bash home path spelled the way the filesystem does", "at " + fake("/c/users/", "someone", "/x") + " it is", fake("/users/", "someone"), ""},
+		{"windows home path with a line after it", "at " + fake(`C:\Users\`, "someone") + "\nline two\nline three ok", fake(`C:\Users\`, "someone"), "line two\nline three ok"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Report(tc.in)
 			if strings.Contains(got, tc.leak) {
 				t.Errorf("Report(%q) = %q: %q survived", tc.in, got, tc.leak)
+			}
+			if tc.keep != "" && !strings.Contains(got, tc.keep) {
+				t.Errorf("Report(%q) = %q: the mask ate %q as well", tc.in, got, tc.keep)
 			}
 		})
 	}
