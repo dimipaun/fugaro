@@ -1918,18 +1918,31 @@ var runAccountGrants = setOf(
 	// words.
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=google_cloud_run_v2_service.coordinator_front_door[0].name | "allUsers" | for_each= | perms=`,
 	// Reviewed for M4: the front door's own account's whole reach, and it is
-	// one grant. objectViewer on the runs bucket is what a run's recorded
+	// two grants. objectViewer on the runs bucket is what a run's recorded
 	// artefacts — its logs and its diff (D932) — are read with; it carries no
 	// create, delete or update, and the bucket's root is something no read
 	// changes. The member is the account the service above runs as, created
 	// with the front door's own opt-in (D934) and not the coordinator's: the
 	// sweep's account reaches the App key, the credentials service and the FP
-	// database, and this one reaches none of them. It is the only grant that
-	// account has anywhere in this tree — no secret, no project role, no
-	// database role, and no binding on the coordinator's store, which is
-	// D935's unanswered question — so the public endpoint's identity is
-	// bounded by this one row.
+	// database, and this one reaches none of them. The second grant is D935's
+	// store (the row below), which this installation owns and no run's
+	// credential can reach — it is not the runs bucket, so nothing here bounds
+	// it, and the store holds no object at the bucket's root at all. Apart
+	// from those two the account has no grant anywhere in this tree — no
+	// secret, no project role, no database role — so the public endpoint's
+	// identity is bounded by these rows.
 	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | google_service_account.mcp_server[0].member | for_each= | perms=`,
+	// Reviewed for M4's store half (D935): the front door's own account is the
+	// store's single member, and objectAdmin on that bucket is what it writes
+	// its token records, its client registrations and its audit with. The
+	// bucket is `fugaro-mcpauth-<gcp-project>`, created by this installation
+	// and never adopted, and it is not the runs bucket: the store holds no
+	// `fugaro/` root, the marker and the delete list are not in it, and the
+	// grant is conditioned by nothing because the bucket is its own fence —
+	// its whole content is the one account's. `otherBucketSources` names it so
+	// that this scan reads the grant as one on another bucket rather than as
+	// one it cannot identify.
+	`google_storage_bucket_iam_member | "roles/storage.objectAdmin" | bucket=google_storage_bucket.mcpauth_store[0].name | google_service_account.mcp_server[0].member | for_each= | perms=`,
 	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=var.runs_bucket | google_service_account.job.member | for_each= | perms=`,
 	// The same account's read-only grant on the budget token objects, in the
 	// workflow module (tokens/<slug>/, one repository) and in the project
@@ -2636,11 +2649,16 @@ var runsBucketSources = map[string]bool{
 // one so that the runs bucket is not the only expression this test knows
 // what to do with: the installation's Terraform state bucket, which holds no
 // object at a fugaro/ root (the creation fact and the delete list are in the
-// runs bucket alone). Any other expression is a bucket this test cannot
+// runs bucket alone), and the front door's store D935 moves the token records
+// into, whose whole content is the front door's own account's and which holds
+// no fugaro/ root either. Any other expression is a bucket this test cannot
 // identify, which is a finding: a grant on the runs bucket under a name the
 // scan does not know — a literal, a local, a new variable — would otherwise
 // be the one shape that passes the assertion by being unreadable.
-var otherBucketSources = map[string]bool{"var.state_bucket": true}
+var otherBucketSources = map[string]bool{
+	"var.state_bucket": true,
+	"google_storage_bucket.mcpauth_store[0].name": true,
+}
 
 // customRolePermissions maps every custom role the modules define to its
 // permissions, under two names: the resource it is (the modules refer to it
