@@ -155,6 +155,13 @@ func TestFindingsAreBoundedAndQuoted(t *testing.T) {
 // command's own help, and internal/cli's
 // TestShortIDRuleNamesOnlyCommandsThatTakeOne is what holds any text that does
 // name one to a command that really takes it.
+// runCommandRE finds a run-management command named in a code span of the
+// prompt, bare or in the `fugaro <cmd>` form this prompt writes its own
+// commands in, and with or without an argument after it: a check for the bare
+// name alone would miss the mention the prompt would really carry, which is
+// the `fugaro cancel <run>` shape.
+var runCommandRE = regexp.MustCompile("`(?:fugaro )?(?:cancel|run --retry|--review-run|review show|--run-id)\\b")
+
 func TestPromptsCarryShortIDRule(t *testing.T) {
 	for _, d := range []runner.PromptData{
 		{Branch: "fugaro/x", Base: "main", StateDir: "/s"},
@@ -172,10 +179,8 @@ func TestPromptsCarryShortIDRule(t *testing.T) {
 				t.Errorf("the prompt %+v lacks %q:\n%s", d, want, got)
 			}
 		}
-		for _, named := range []string{"`cancel`", "`run --retry`", "`--review-run`", "`review show`", "`--run-id`"} {
-			if strings.Contains(got, named) {
-				t.Errorf("the prompt %+v names %s: an unattended stage has no command that takes a run, and naming one reads as how to cancel or relaunch a run from inside the job", d, named)
-			}
+		for _, named := range runCommandRE.FindAllString(got, -1) {
+			t.Errorf("the prompt %+v names the run command %s: an unattended stage has no command that takes a run, and naming one reads as how to cancel or relaunch a run from inside the job", d, strings.TrimPrefix(named, "`"))
 		}
 	}
 }
