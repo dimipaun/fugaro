@@ -22,13 +22,13 @@ func runBudget(t *testing.T, bytes string, args ...string) (string, error) {
 }
 
 func TestSizeBudget(t *testing.T) {
-	if out, err := runBudget(t, "3100000000"); err != nil || !strings.Contains(out, "3100 MB") || strings.Contains(out, "warning") {
+	if out, err := runBudget(t, "2900000000"); err != nil || !strings.Contains(out, "2900 MB") || strings.Contains(out, "warning") {
 		t.Errorf("under: err=%v %s", err, out)
 	}
-	if out, err := runBudget(t, "3600000000"); err != nil || !strings.Contains(out, "::warning::") {
+	if out, err := runBudget(t, "3100000000"); err != nil || !strings.Contains(out, "::warning::") {
 		t.Errorf("warn: err=%v %s", err, out)
 	}
-	if out, err := runBudget(t, "4100000000"); err == nil || !strings.Contains(out, "over its budget") {
+	if out, err := runBudget(t, "3300000000"); err == nil || !strings.Contains(out, "over its budget") {
 		t.Errorf("over: err=%v %s", err, out)
 	}
 	if out, err := runBudget(t, "1500000000", "1000"); err == nil {
@@ -39,10 +39,10 @@ func TestSizeBudget(t *testing.T) {
 // TestSizeBudgetBoundary: exactly the budget passes, one MB over it fails
 // (the comparison is "over the budget", not "at or over it").
 func TestSizeBudgetBoundary(t *testing.T) {
-	if out, err := runBudget(t, "4000000000"); err != nil {
+	if out, err := runBudget(t, "3200000000"); err != nil {
 		t.Errorf("exactly the budget failed: %v\n%s", err, out)
 	}
-	if out, err := runBudget(t, "4001000000"); err == nil {
+	if out, err := runBudget(t, "3201000000"); err == nil {
 		t.Errorf("one MB over the budget passed:\n%s", out)
 	}
 }
