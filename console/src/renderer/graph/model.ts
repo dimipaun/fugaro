@@ -31,6 +31,7 @@
 
 import { sanitizeText } from '../../shared/sanitize'
 import type { Sanitized, TextClass } from '../../shared/sanitize'
+import { STAMP_LEAD, stampOf } from '../section'
 import type { Reading } from '../../shared/availability'
 import { wireTextClass } from '../../shared/schema'
 import { MIN_ENDING } from '../../shared/shortid'
@@ -640,9 +641,15 @@ function compare(left: string, right: string): number {
  * GRAPH_MAX_SCOPE_NODES bounds the coordinator drawing, for the reason the plan's
  * three bounds exist: the coordinator's view is an installation's whole history,
  * not one checkout's plan, so it is the picture that is bounded and never the
- * document -- everything past the bound is dropped in document order (two reads
- * of one document draw the same picture) and counted in `notShown`, which the
- * screen prints.
+ * document -- everything past the bound is dropped in drawing order and counted
+ * in `notShown`, which the screen prints.
+ *
+ * **The bound is the drawing's, so the figures a silent source keeps count
+ * against it too.** The document's own nodes are drawn first, in document order
+ * (two reads of one document draw the same picture), and the kept ones after
+ * them, in the order the read they came from drew them: a bound that stopped at
+ * the document would let the picture grow past it by one row per key a source
+ * stopped answering about, which is exactly the case the bound exists for.
  */
 export const GRAPH_MAX_SCOPE_NODES = 2000
 
@@ -652,15 +659,36 @@ export const GRAPH_MAX_SCOPE_NODES = 2000
  * pull requests and runs carry no release at all. */
 export const GRAPH_SCOPE_NO_RELEASE = 'no release'
 
+/** GRAPH_SCOPE_KEPT is the console's own word for a figure that is **kept**: a
+ * node the last read drew for a source this document reports as not answering.
+ * It is the console's word and not a document's, which is why it is written here
+ * rather than read off a source's `state`, and it is drawn beside the figure so
+ * that "these are the last figures" is a thing a reader reads instead of a tone
+ * they have to notice (H10). */
+export const GRAPH_SCOPE_KEPT = 'last read'
+
+/** SOURCE_UP is the one source state that means "the figures beside it are this
+ * document's own". Every other word -- `down`, `stale`, `unreadable`, and any
+ * word this build has no vocabulary for -- is a source that is not answering
+ * now, and the contract deliberately leaves the set open (`schema.ts`): a source
+ * is silent, not unknown, and the figures a silent source drew last are what the
+ * panel keeps instead of blanking. */
+const SOURCE_UP = 'up'
+
 /** ScopeSource is one source of a coordinator read, as the drawing needs it: the
- * source's own name, the state it reported, and the reason it gave for it. H3 is
- * the whole reason these are drawn -- a scope that is down is a state of its own
- * and not an empty scope, and a reader who is not told which of the two they are
- * looking at will read a down source as "nothing is happening". */
+ * source's own name, the state it reported, the reason it gave for it, and the
+ * time its figures are worth.
+ *
+ * H3 is the whole reason these are drawn -- a scope that is down is a state of
+ * its own and not an empty scope, and a reader who is not told which of the two
+ * they are looking at will read a down source as "nothing is happening". `asOf`
+ * is the other half of that state: `stale` says the figures are old, and the
+ * stamp says *how* old, which is the one thing a word cannot say. */
 export interface ScopeSource {
   readonly source: Sanitized
   readonly state: Sanitized
   readonly reason: Sanitized
+  readonly asOf: Sanitized | null
 }
 
 /** ScopeNode is one thing a coordinator read drew. `key` is the document's own
@@ -698,6 +726,21 @@ export interface ScopeNode {
   readonly state: Sanitized
   readonly release: string
   readonly pullRequest: Sanitized | null
+  /** `origin` is the document's own `source` string, kept **raw** because this
+   * module joins on it: the figures a silent source keeps are the previous
+   * model's nodes of that same source, and a `Sanitized` value is what a reader
+   * is shown rather than what two models are matched by. */
+  readonly origin: string
+  /** `kept` is the console's own word (`GRAPH_SCOPE_KEPT`) for a figure that is
+   * **the last read's** rather than this document's -- the node of a source that
+   * answered with nothing this time -- and `null` for a figure this document
+   * drew.
+   *
+   * The mark and its label are one value because they are one fact: a boolean
+   * beside the word would be a second thing to keep true, and the drawing would
+   * have to decide on its own that a kept row is a row a reader must be told
+   * about (H10's rule that no state is a tone alone). */
+  readonly kept: Sanitized | null
 }
 
 /** ScopeRelease is one release's group of nodes: the version as the document
@@ -739,12 +782,39 @@ function scopeText(value: string, key: string, field: string): Sanitized {
  * none today (F17), and a picture needs an engine to place it: this scope is
  * drawn as the reading it is, grouped and listed, and it asks the layout worker
  * nothing.
+ *
+ * **A source that is not up keeps the last figures.** The feed is a stream of
+ * whole snapshots, and the commonest thing a later one says about a source is
+ * that it is not answering now -- a child that died, a stream that was
+ * withdrawn, a scope that has gone unreadable. Blanking those rows would make the
+ * panel agree with a source that says nothing, which is precisely the reading H3
+ * exists to refuse: a reader must see *the scope is down* beside *what it last
+ * said*. So the previous model is handed in, and the nodes of every source this
+ * document does not call up are drawn again, marked `kept`.
+ *
+ * **Only `up` means the document is the source's whole answer.** A source that
+ * is up has answered completely, so a node it no longer lists is a node it no
+ * longer has, and its row goes -- which is what makes a retired task disappear
+ * rather than live on in the panel for ever. Any other state is a source whose
+ * answer is partial or absent: a `down` or `unreadable` source reports nothing at
+ * all, and a `stale` one reports the sweep it still holds, which is older than
+ * the read the console made of it a second ago. So for those the last figures
+ * stay, and a key this document **does** carry is not drawn twice -- what a
+ * document says about a key is that key's own statement (`listed` below).
+ *
+ * A source this document does not mention at all is not a source any more, and
+ * its figures go with it.
+ *
+ * **The bound counts the kept figures too**, because it bounds the drawing and
+ * not the document: they are drawn after the document's own rows and dropped and
+ * counted like them when the bound is already full (`GRAPH_MAX_SCOPE_NODES`).
  */
-export function buildScopeModel(view: GraphView): ScopeModel {
+export function buildScopeModel(view: GraphView, previous: ScopeModel | null = null): ScopeModel {
   const sources = view.sources.map((source, at) => ({
     source: scopeText(source.source, 'source', `sources[${String(at)}].source`),
     state: scopeText(source.state, 'state', `sources[${String(at)}].state`),
     reason: scopeText(source.reason, 'reason', `sources[${String(at)}].reason`),
+    asOf: asOfText(source.asOf),
   }))
 
   const groups = new Map<string, ScopeNode[]>()
@@ -766,10 +836,29 @@ export function buildScopeModel(view: GraphView): ScopeModel {
       // Only a pull request has one: a run's id is a run id and a task's is a
       // task id, and neither is a number a reader opens.
       pullRequest: node.kind === 'pull_request' ? scopeText(node.id, 'id', `${where}.id`) : null,
+      origin: node.source,
+      kept: null,
     }
     const held = groups.get(node.release)
     if (held === undefined) groups.set(node.release, [drawn])
     else held.push(drawn)
+  }
+
+  const listed = new Set([...groups.values()].flat().map((node) => node.key))
+  // The kept figures are drawn inside the same bound as the document's own: the
+  // room left is what the document did not use, and a figure with no room is
+  // dropped and counted exactly as a node past the bound is. Without this the
+  // drawing would grow past GRAPH_MAX_SCOPE_NODES by one row per key a silent
+  // source holds while `notShown` still read 0.
+  const room = GRAPH_MAX_SCOPE_NODES - [...groups.values()].reduce((total, group) => total + group.length, 0)
+  for (const [at, node] of keptFigures(view, previous, listed).entries()) {
+    if (at >= room) {
+      notShown += 1
+      continue
+    }
+    const held = groups.get(node.release)
+    if (held === undefined) groups.set(node.release, [node])
+    else held.push(node)
   }
 
   const releases = [...groups].map(([release, nodes]) => ({
@@ -784,4 +873,54 @@ export function buildScopeModel(view: GraphView): ScopeModel {
     warnings: view.warnings.map((warning, at) => scopeText(warning, 'warnings', `warnings[${String(at)}]`)),
     notShown,
   }
+}
+
+/**
+ * keptFigures is the previous read's nodes for every source this document does
+ * not call up, in the order the previous read drew them, marked `kept`.
+ *
+ * `listed` is every key this document answered with, and it is what keeps a node
+ * a document still carries from being drawn twice: a source that is not up may
+ * still answer with figures of its own -- a `stale` one does -- and the
+ * document's row for that key is the statement to draw, kept ones being the ones
+ * the document says nothing about. Without it the same key would be drawn twice,
+ * once as the document's and once as the last read's.
+ *
+ * A figure the read before this one already kept is kept again -- the source is
+ * still not up, so the last figures are still the last figures -- and the walk
+ * carries it forward rather than letting a second quiet snapshot drop it.
+ */
+function keptFigures(view: GraphView, previous: ScopeModel | null, listed: ReadonlySet<string>): readonly ScopeNode[] {
+  if (previous === null) return []
+  const quiet = new Set<string>()
+  for (const source of view.sources) {
+    if (source.state !== SOURCE_UP) quiet.add(source.source)
+  }
+  if (quiet.size === 0) return []
+  const nodes: ScopeNode[] = []
+  for (const release of previous.releases) {
+    for (const node of release.nodes) {
+      if (quiet.has(node.origin) && !listed.has(node.key)) nodes.push({ ...node, kept: own(GRAPH_SCOPE_KEPT) })
+    }
+  }
+  return nodes
+}
+
+/**
+ * asOfText is a source's own stamp as the drawing spells it: the console's
+ * "as of HH:MM", or `null` where the source named no time of its own.
+ *
+ * **A source that names none is drawn with no cell at all, and never with a
+ * time.** `as_of` being null is "the source does not say" (`schema.ts`), which is
+ * not "now", and the one-shot read's coordinator scope is exactly the case that
+ * sends null: a clock drawn there would be a time the console made up, and the
+ * whole point of the stamp is that a reader can trust it. The wording and the
+ * clock are `section.ts`'s, so this line and a cached section's stamp read the
+ * same -- the coordinator's sources are cached figures on the other side of a
+ * child process, and a second spelling of "as of" would be a second reading of
+ * one fact.
+ */
+function asOfText(asOf: string | null): Sanitized | null {
+  if (asOf === null) return null
+  return own(`${STAMP_LEAD} ${stampOf(Date.parse(asOf))}`)
 }

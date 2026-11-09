@@ -430,7 +430,7 @@ const (
 	// release that let an installation hold two paid keys would use.
 	testSecondPaidKey = "second-paid-key"
 	// testProviderKey is a third-party provider's key — creds.TierC, the route
-	// this release never selects and a name no bundle can hold yet (AK6).
+	// this release never selects and a name no bundle can hold yet (AK6b).
 	testProviderKey = "provider-key"
 )
 
@@ -439,7 +439,7 @@ const (
 // a tier-C provider key.
 //
 // The bundle holds neither of the two added entries — its key set is closed, and
-// widening it is AK6's — and that is why the rule is tested over a set rather
+// widening it is AK6b's — and that is why the rule is tested over a set rather
 // than over a document: what a review caller may be served by must not depend on
 // which credentials a later release lets the bundle carry, and the one entry a
 // caller paired with the sentinel is offered has to be the key itself rather
@@ -541,13 +541,13 @@ func TestReviewCandidateListIsExactlyOneCredential(t *testing.T) {
 }
 
 // TestReviewCallerIsNeverOfferedAProviderKey is the negative that keeps AK4 from
-// becoming AK6: a provider's key is a third-party route (creds.TierC), and no
+// becoming AK6b: a provider's key is a third-party route (creds.TierC), and no
 // review caller is served by one — neither a caller paired with a Claude account
 // nor one paired with the project's own key.
 //
 // It is stated over the credential set rather than over a bundle document
 // because the bundle cannot hold a provider key in this release (the closed key
-// set, AK6): the rule this test holds is the offering rule, and the offering
+// set, AK6b): the rule this test holds is the offering rule, and the offering
 // rule is the one place that would have to change for a review call to reach a
 // provider's key — the tier-C entry is in the set the caller is offered from and
 // is refused there, not filtered out before it arrives.

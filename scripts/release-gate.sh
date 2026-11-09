@@ -44,8 +44,11 @@ if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
   #   - the branch is the line's own, release/X.Y, and the commit is on it,
   #   - vX.Y.0 exists and is reachable from main, so the line was gated on main
   #     once and the patch cannot be the first release of anything,
-  #   - and the commit descends from that vX.Y.0, so the branch is the line's
-  #     history and not an unrelated one named like it.
+  #   - the commit descends from that vX.Y.0, so the branch is the line's
+  #     history and not an unrelated one named like it,
+  #   - and main's own plugin version is the tag's or newer, so the patch
+  #     release's plugin bump landed on main too (docs/release.md "Hotfix
+  #     releases") and main never publishes a plugin older than a released tag.
   # The required checks below are read from the commit itself, on any branch, so
   # CI dispatched on the maintenance branch is what vouches for the commit.
   maintenance_ok=""
@@ -66,6 +69,19 @@ if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
       newest=$(git tag -l 'v*' | grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' | sort -V | tail -n1)
       if [ "${newest%.*}" != "v$line" ]; then
         echo "::error::$tag is a patch of the line v$line, but a newer line exists ($newest): a maintenance release would be published as the latest release; only the newest line may be patched from its maintenance branch" >&2
+        exit 1
+      fi
+      # The patch release's plugin bump must be on main as well (docs/release.md
+      # "Hotfix releases"): the branch is never merged back, so a plugin version
+      # main does not carry outlives the release, and a main behind a published
+      # tag is a marketplace that serves a plugin older than the binary that
+      # installed it (0.21.1, 2026-11-09). A version main already carries counts
+      # whatever the line: only never older is required.
+      main_plugin=$(git show refs/remotes/origin/main:plugin/.claude-plugin/plugin.json 2>/dev/null \
+        | sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+      if [[ ! $main_plugin =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
+        || [ "$(printf '%s\n%s\n' "$main_plugin" "${tag#v}" | sort -V | tail -n1)" != "$main_plugin" ]; then
+        echo "::error::main's plugin/.claude-plugin/plugin.json says '$main_plugin' and $tag is ${tag#v}: a patch release's plugin bump is made on main and cherry-picked onto release/$line, like the fix and the gate change (docs/release.md, \"Hotfix releases\"), so that main and the released tag never disagree about the plugin" >&2
         exit 1
       fi
       maintenance_ok=1

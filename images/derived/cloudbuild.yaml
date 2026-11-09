@@ -55,6 +55,13 @@
 # a checkout — and the catalog build's own read, pin, content-tag and record
 # steps take their place. Only those four steps read _CATALOG_TAG and
 # _SELFTEST_B64.
+#
+# The build step always reads the Dockerfile at /workspace/context/Dockerfile
+# (--file): what a repository's own render wrote there, or the copy a catalog
+# build pinned (D1404). What it builds is _CONTEXT_DIR — that same directory
+# by default, or, for a catalog entry that names a build context, the
+# checkout of the entry's repository at the subdirectory the context names,
+# so a COPY in the Dockerfile resolves inside that tree (D1394, D1406).
 substitutions:
   _REPO_URL: ""       # https clone URL without credentials; also the checkout's origin
   _BASE_BRANCH: main
@@ -69,6 +76,7 @@ substitutions:
   _PROJECT_LAYER_SHA256: ""  # the project layer's sha256, "" for none: render reads builds/<slug>/project-layer.yaml and refuses another (docs/design/layered-config.md §8)
   _CATALOG_TAG: ""    # a catalog build's content tag: the sha256 of the definition it built. A repository's own build never reads it
   _SELFTEST_B64: ""   # a catalog build's smoke spec, base64 (image.SpecForCloud as the submitter rendered it). A repository's own build never reads it
+  _CONTEXT_DIR: /workspace/context  # what the build step builds: the copied definition's own directory, or a catalog entry's checkout when it names a context
 options:
   logging: CLOUD_LOGGING_ONLY
 availableSecrets:
@@ -130,7 +138,10 @@ steps:
   # Dockerfile clones the full base branch itself, with the credential as a
   # BuildKit secret, and resets it to the commit render read
   # (FUGARO_COMMIT), so a push to the branch meanwhile changes neither the
-  # image nor what its smoke and record expect. It pushes only
+  # image nor what its smoke and record expect. The Dockerfile is always
+  # /workspace/context/Dockerfile and the context is "$$CONTEXT_DIR": the
+  # copied definition's own directory when this build wrote it, a catalog
+  # entry's checkout when one named a context. It pushes only
   # the candidate tag, and hands on the pushed digest (in
   # /workspace/out/image-digest and as its step output), which is what the
   # smoke tests and promote tags latest.
@@ -144,6 +155,7 @@ steps:
       - "BASE_BRANCH=${_BASE_BRANCH}"
       - "IMAGE=${_IMAGE}"
       - "SECRET_ENVS=${_SECRET_ENVS}"
+      - "CONTEXT_DIR=${_CONTEXT_DIR}"
       - "BUILD_ID=$BUILD_ID"
     args:
       - -c
@@ -177,7 +189,8 @@ steps:
           --label "dev.fugaro.base.digest=$${base#*@}" \
           --secret "id=git-credentials,src=/creds/git-credentials" \
           "$$@" \
-          --tag "$$candidate" /workspace/context
+          --file /workspace/context/Dockerfile \
+          --tag "$$candidate" "$$CONTEXT_DIR"
         docker push "$$candidate"
         pushed=$$(docker image inspect --format '{{index .RepoDigests 0}}' "$$candidate")
         case "$$pushed" in "$$IMAGE@sha256:"*) ;; *) echo "the pushed candidate has no digest in $$IMAGE" >&2; exit 1 ;; esac

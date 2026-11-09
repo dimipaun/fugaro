@@ -176,8 +176,9 @@ func newDiagnoseCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "diagnose RUN",
 		Short: "Explain how a run went: status, tests, review findings, the agent's last word, logs",
-		Long: "Gather what is known about RUN (<repo-slug>/<run-id>, or a bare run ID): its\n" +
-			"status and reason, the last test run's failed and flaky tests, the last\n" +
+		Long: "Gather what is known about RUN (a run ID, <repo-slug>/<run-id>, or the last\n" +
+			"four or more characters of a run ID): its status and reason, the last test\n" +
+			"run's failed and flaky tests, the last\n" +
 			"review's findings, the agent's final message, the newest log lines, its cost\n" +
 			"and its pull request. Everything printed is redacted of the credentials in\n" +
 			"this environment, on top of the runner's own redaction.",
@@ -197,8 +198,11 @@ func runDiagnose(cmd *cobra.Command, o *diagnoseOptions, ref string) error {
 	}
 	defer env.Close()
 	// Not locateLaunched: a run that never launched still has a row that
-	// explains it; it just has no logs.
-	slug, id, err := locateRun(ctx, env, ref)
+	// explains it; it just has no logs. The reference is what resolveRun
+	// accepts — a full run ID, <slug>/<run-id>, or an ending (D1701) — and
+	// the row itself keeps naming the run in full, as the details view it is
+	// (D1705).
+	slug, id, err := resolveRun(ctx, env, ref, resolveRunOpts(cmd, o.asJSON))
 	if err != nil {
 		return err
 	}

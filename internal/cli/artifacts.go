@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // What `fugaro artifacts` is for: an artifact run's deliverable is a file in
@@ -121,11 +122,12 @@ func newArtifactsLsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ls RUN",
 		Short: "List what a run's record says it delivered",
-		Long: "List the artifacts RUN (<repo-slug>/<run-id>, or a bare run ID) recorded in\n" +
-			"its result.json: name, recorded size, short sha256, recorded content type and\n" +
-			"the probe's verdict. The record is shown as it is — a name `get` cannot\n" +
-			"retrieve is listed with the reason, never filtered out, and a missing object is\n" +
-			"not ls's to hide: ls is the record, get is the object.\n\n" +
+		Long: "List the artifacts RUN (a run ID, <repo-slug>/<run-id>, or the last four or\n" +
+			"more characters of a run ID) recorded in its result.json: name, recorded\n" +
+			"size, short sha256, recorded content type and the probe's verdict. The\n" +
+			"record is shown as it is — a name `get` cannot retrieve is listed with the\n" +
+			"reason, never filtered out, and a missing object is not ls's to hide: ls is\n" +
+			"the record, get is the object.\n\n" +
 			"--json prints the record's artifact list verbatim.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runArtifactsLs(cmd, &o, args[0]) },
@@ -151,8 +153,9 @@ func newArtifactsGetCmd() *cobra.Command {
 		Short: "Download a run's artifacts, verifying them against its record",
 		Long: "Download one artifact NAME, or every artifact the record lists when NAME is\n" +
 			"omitted, verifying each one's size and sha256 against the run's result.json as\n" +
-			"the bytes arrive. A mismatch is an error naming both hashes, and nothing is\n" +
-			"written — not even the file the download streamed into.\n\n" +
+			"the bytes arrive. RUN is a run ID, <repo-slug>/<run-id>, or the last four or\n" +
+			"more characters of a run ID. A mismatch is an error naming both hashes, and\n" +
+			"nothing is written — not even the file the download streamed into.\n\n" +
 			"The destination is a fresh directory this command creates,\n" +
 			"./<run-id>-artifacts/ unless --out names another parent for it. A name in the\n" +
 			"record that is absolute, walks out of that directory, begins with a dot or\n" +
@@ -178,21 +181,27 @@ func newArtifactsGetCmd() *cobra.Command {
 	return cmd
 }
 
-// artifactsRun resolves RUN ([<repo-slug>/]<run-id>) and --repo to the store
-// of one run. --repo names the repository a bare run ID belongs to, and a RUN
-// that already carries a slug has to agree with it.
+// artifactsRun resolves RUN ([<repo-slug>/]<run-id>, or the last four or more
+// characters of a run ID) and --repo to the store of one run. --repo names the
+// repository a bare run ID belongs to, and a RUN that already carries a slug
+// has to agree with it.
 //
 // The run itself is looked up in the bucket either way. --repo answers "which
-// repository", not "does this run exist", so with it the lookup is one object
-// check under the named repository rather than a search across all of them
-// (locateRun: runstore.Locate). Doing without that check — an earlier version
-// returned a store for anything that was shaped like a run ID — reports a run
-// that was never launched as a run that recorded no artifacts: "it never
-// finished" about a run that never started, which sends an operator looking
-// for a container that died when they mistyped an id.
-func artifactsRun(ctx context.Context, env *cloudEnv, ref, repo string) (*runstore.Store, error) {
+// repository", not "does this run exist", so a full run ID with it is one
+// object check under the named repository rather than a search across all of
+// them (locateRun: runstore.Locate). Doing without that check — an earlier
+// version returned a store for anything that was shaped like a run ID —
+// reports a run that was never launched as a run that recorded no artifacts:
+// "it never finished" about a run that never started, which sends an operator
+// looking for a container that died when they mistyped an id.
+//
+// The shape check is only for the full-ID case: an ending is resolved by the
+// one resolver (SR3, resolveRun) and the answer is then held to the repository
+// --repo names, because the slug is part of every object key and the flag has
+// already answered which repository the run is in.
+func artifactsRun(ctx context.Context, env *cloudEnv, ref, repo string, o resolveRunOptions) (*runstore.Store, error) {
 	if repo == "" {
-		slug, id, err := locateRun(ctx, env, ref)
+		slug, id, err := resolveRun(ctx, env, ref, o)
 		if err != nil {
 			return nil, err
 		}
@@ -215,16 +224,27 @@ func artifactsRun(ctx context.Context, env *cloudEnv, ref, repo string) (*runsto
 		}
 		return runstore.Open(env.bucket.Bucket, slug, id), nil
 	}
-	// The run ID's form is checked here because it becomes part of an object
-	// name (the same rule locateRun applies to a bare ID).
-	if _, err := runstore.RunTime(ref); err != nil {
-		return nil, userErr("%q is neither <repo-slug>/<run-id> nor a run ID", ref)
+	if _, err := runstore.RunTime(ref); err == nil {
+		if _, _, err := locateRun(ctx, env, slug+"/"+ref); err != nil {
+			return nil, err
+		}
+		return runstore.Open(env.bucket.Bucket, slug, ref), nil
 	}
-	if _, _, err := locateRun(ctx, env, slug+"/"+ref); err != nil {
+	gotSlug, id, err := resolveRun(ctx, env, ref, o)
+	if err != nil {
 		return nil, err
 	}
-	return runstore.Open(env.bucket.Bucket, slug, ref), nil
+	if gotSlug != slug {
+		return nil, userErr("run %s is in %s, but --repo names %s", ref, gotSlug, slug)
+	}
+	return runstore.Open(env.bucket.Bucket, slug, id), nil
 }
+
+// shortRef is a run's store the way a message here names it: the short form of
+// its "<slug>/<run-id>" (D1705). Every refusal that says which run recorded
+// what goes through it, so none of them prints a launch stamp — that is what
+// task.ShortRun is for, and this only spares each of them the same expression.
+func shortRef(s *runstore.Store) string { return task.ShortRun(oneLine(s.Slug() + "/" + s.RunID())) }
 
 // readArtifactRecord reads the run's result.json, the one thing both
 // subcommands trust about what it delivered. A run that never finished has
@@ -234,7 +254,7 @@ func readArtifactRecord(ctx context.Context, s *runstore.Store) (*runstore.Recor
 	rec, err := s.ReadRecord(ctx)
 	switch {
 	case errors.Is(err, runstore.ErrNotFound):
-		return nil, userErr("run %s has no result.json: it never finished, so it recorded no artifacts", s.Slug()+"/"+s.RunID())
+		return nil, userErr("run %s has no result.json: it never finished, so it recorded no artifacts", shortRef(s))
 	case err != nil:
 		return nil, remote(err)
 	}
@@ -252,7 +272,7 @@ func runArtifactsLs(cmd *cobra.Command, o *artifactsLsOptions, ref string) error
 		return err
 	}
 
-	s, err := artifactsRun(ctx, env, ref, o.repo)
+	s, err := artifactsRun(ctx, env, ref, o.repo, resolveRunOpts(cmd, o.asJSON))
 	if err != nil {
 		return err
 	}
@@ -373,7 +393,7 @@ func runArtifactsGet(cmd *cobra.Command, o *artifactsGetOptions, ref, name strin
 		return err
 	}
 
-	s, err := artifactsRun(ctx, env, ref, o.repo)
+	s, err := artifactsRun(ctx, env, ref, o.repo, resolveRunOpts(cmd, false))
 	if err != nil {
 		return err
 	}
@@ -430,14 +450,14 @@ func selectArtifacts(s *runstore.Store, files []runstore.ArtifactFile, name stri
 		// them does not say which entry's bytes to write.
 		switch {
 		case len(chosen) == 0:
-			return nil, userErr("run %s recorded no artifact named %q: fugaro artifacts ls %s lists what it did", s.Slug()+"/"+s.RunID(), name, s.Slug()+"/"+s.RunID())
+			return nil, userErr("run %s recorded no artifact named %q: fugaro artifacts ls %s lists what it did", shortRef(s), name, shortRef(s))
 		case len(chosen) > 1:
-			return nil, userErr("run %s recorded the artifact %q twice: one name is one artifact, and naming it does not say which entry's bytes to write (fugaro artifacts ls %s prints the record as it is)", s.Slug()+"/"+s.RunID(), name, s.Slug()+"/"+s.RunID())
+			return nil, userErr("run %s recorded the artifact %q twice: one name is one artifact, and naming it does not say which entry's bytes to write (fugaro artifacts ls %s prints the record as it is)", shortRef(s), name, shortRef(s))
 		}
 		files = chosen
 	} else {
 		if len(files) == 0 {
-			return nil, userErr("run %s recorded no artifacts", s.Slug()+"/"+s.RunID())
+			return nil, userErr("run %s recorded no artifacts", shortRef(s))
 		}
 		// One name, one artifact, one path: the record is untrusted text, and
 		// two entries that a filesystem would write to one file are refused
@@ -457,7 +477,7 @@ func selectArtifacts(s *runstore.Store, files []runstore.ArtifactFile, name stri
 		// record being unreadable, and a named fetch of a doubled name is
 		// refused above, by the case that names the duplication.
 		if conflict := artifactSetConflict(files); conflict != "" {
-			return nil, userErr("run %s recorded %s", s.Slug()+"/"+s.RunID(), conflict)
+			return nil, userErr("run %s recorded %s", shortRef(s), conflict)
 		}
 	}
 	// The refusals below are the selected set's, whether it is the whole
@@ -469,7 +489,7 @@ func selectArtifacts(s *runstore.Store, files []runstore.ArtifactFile, name stri
 	// destination exists or any byte is read.
 	for _, a := range files {
 		if problem := artifactNameProblem(a.Name); problem != "" {
-			return nil, userErr("run %s recorded an artifact named %q, which cannot be retrieved: %s", s.Slug()+"/"+s.RunID(), a.Name, problem)
+			return nil, userErr("run %s recorded an artifact named %q, which cannot be retrieved: %s", shortRef(s), a.Name, problem)
 		}
 	}
 	for _, a := range files {
@@ -479,7 +499,7 @@ func selectArtifacts(s *runstore.Store, files []runstore.ArtifactFile, name stri
 			// entirely, and the bytes would then be bytes nothing attests
 			// to: the record's own hash is what makes the download
 			// checkable, so a record without one is refused.
-			return nil, userErr("run %s recorded %q without a sha256: there is nothing to verify the download against", s.Slug()+"/"+s.RunID(), a.Name)
+			return nil, userErr("run %s recorded %q without a sha256: there is nothing to verify the download against", shortRef(s), a.Name)
 		case a.Bytes < 0:
 			// 0 is a size a run records — result.schema.json's "bytes" has
 			// {"minimum": 0}, and a render that writes an empty file matched
@@ -487,13 +507,13 @@ func selectArtifacts(s *runstore.Store, files []runstore.ArtifactFile, name stri
 			// artifact is downloaded like any other, with a cap of 0 bytes.
 			// A negative count is not a size, and there is then no cap to
 			// bound the download by at all.
-			return nil, userErr("run %s recorded %q as %d bytes: a negative count is not a size, and there is no size to bound the download by", s.Slug()+"/"+s.RunID(), a.Name, a.Bytes)
+			return nil, userErr("run %s recorded %q as %d bytes: a negative count is not a size, and there is no size to bound the download by", shortRef(s), a.Name, a.Bytes)
 		case a.Bytes > recipe.MaxOutputBytes:
 			// The record's own byte count is the cap, and the cap itself has
 			// a ceiling: no runner can upload an artifact larger than the
 			// recipe format's per-artifact maximum, so a record that claims
 			// one is refused rather than believed (design §6, P6).
-			return nil, userErr("run %s recorded %q as %s, over the %s ceiling a recipe's outputs.max_bytes may not exceed: this is not an artifact any run could have delivered", s.Slug()+"/"+s.RunID(), a.Name, recipe.SizeText(a.Bytes), recipe.SizeText(recipe.MaxOutputBytes))
+			return nil, userErr("run %s recorded %q as %s, over the %s ceiling a recipe's outputs.max_bytes may not exceed: this is not an artifact any run could have delivered", shortRef(s), a.Name, recipe.SizeText(a.Bytes), recipe.SizeText(recipe.MaxOutputBytes))
 		}
 	}
 	return files, nil
@@ -853,7 +873,7 @@ func artifactObjectKey(prefix, name string) (string, error) {
 func getArtifact(ctx context.Context, env *cloudEnv, s *runstore.Store, a runstore.ArtifactFile, root, dest string, force bool, out io.Writer) error {
 	key, err := artifactObjectKey(s.Prefix(), a.Name)
 	if err != nil {
-		return userErr("run %s recorded an artifact named %q, which cannot be retrieved: %v", s.Slug()+"/"+s.RunID(), a.Name, err)
+		return userErr("run %s recorded an artifact named %q, which cannot be retrieved: %v", shortRef(s), a.Name, err)
 	}
 	// The directories this name needs, made now that this file is the one
 	// about to be written — after every destination has been checked, and
@@ -876,7 +896,7 @@ func getArtifact(ctx context.Context, env *cloudEnv, s *runstore.Store, a runsto
 	case errors.Is(err, blobx.ErrDestExists):
 		return userErr("%s already exists: pass --force to replace it", oneLine(dest))
 	case errors.Is(err, blobx.ErrNotExist):
-		return userErr("run %s/%s recorded %q, but there is no such artifact in the runs bucket: artifacts expire with their run (runs_days), and fugaro artifacts ls %s/%s shows the record's list", s.Slug(), s.RunID(), a.Name, s.Slug(), s.RunID())
+		return userErr("run %s recorded %q, but there is no such artifact in the runs bucket: artifacts expire with their run (runs_days), and fugaro artifacts ls %s shows the record's list", shortRef(s), a.Name, shortRef(s))
 	case errors.Is(err, blobx.ErrForbidden):
 		return remote(fmt.Errorf("reading %s: %w (this account may not read the run's artifacts: objectViewer on the runs bucket is what an operator holds)", key, err))
 	case errors.Is(err, blobx.ErrMismatch), errors.Is(err, blobx.ErrChanged), errors.Is(err, blobx.ErrTooLarge):
@@ -885,7 +905,7 @@ func getArtifact(ctx context.Context, env *cloudEnv, s *runstore.Store, a runsto
 		// Nothing was written — blobx verifies on its own temporary file,
 		// before the placement — and whatever was at the destination path is
 		// still there.
-		return userErr("run %s/%s recorded %q as %d bytes with sha256 %s, and the object in the runs bucket is not that: %v (nothing was written)", s.Slug(), s.RunID(), a.Name, a.Bytes, a.SHA256, err)
+		return userErr("run %s recorded %q as %d bytes with sha256 %s, and the object in the runs bucket is not that: %v (nothing was written)", shortRef(s), a.Name, a.Bytes, a.SHA256, err)
 	case err != nil:
 		return remote(err)
 	}

@@ -135,6 +135,7 @@ const SPEC = 'coordinator.spec.ts'
 const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
+  'shared/shortid.js',
   'shared/notice.js',
   'shared/version.js',
   'shared/schema.js',

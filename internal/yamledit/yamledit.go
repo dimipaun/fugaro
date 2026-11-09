@@ -66,7 +66,10 @@
 //   - ReasonReplacesCollection: the value at the path is a mapping or a
 //     sequence, which holds bytes and comments of its own. Replacing it with a
 //     scalar would drop all of them, so the edit is refused; removing the key,
-//     or writing a key inside it, are the edits that work instead.
+//     or writing a key inside it, are the edits that work instead. A mapping is
+//     refused by the list writer too (UpsertSeqItemListByKey): it replaces a
+//     list's items but has no way to turn a mapping into a list without losing
+//     what is written in it.
 //   - ReasonDuplicateKey: a key on the path is written twice, so which of the
 //     two the edit changed would not be visible in the result.
 //   - ReasonAnchorOrAlias: the node to change carries an anchor, is an alias,
@@ -82,6 +85,9 @@
 //   - ReasonEmptyPath, ReasonEmptyField, ReasonFieldIsKeyField: an empty path,
 //     an empty key field, and an upsert given the key field among the fields to
 //     write, which would rename the item it was told to look up.
+//   - ReasonEmptyList: a list-valued field given no values. An empty block
+//     sequence is written as a key with no value under it, which is a null and
+//     not a list of nothing, so there are no bytes an edit could write for it.
 //   - ReasonUnlocatable, ReasonMalformed, ReasonVerification: a node that does
 //     not map back onto the text, a document yaml.v3 cannot parse, and — the
 //     last guard — an edit whose result does not re-parse to the change that was
@@ -116,6 +122,7 @@ const (
 	ReasonMultilineScalar    Reason = "a scalar written across several lines"
 	ReasonEmptyPath          Reason = "an empty path"
 	ReasonEmptyField         Reason = "an empty key field"
+	ReasonEmptyList          Reason = "a list field with no values"
 	ReasonFieldIsKeyField    Reason = "a field name that is the key field"
 	ReasonUnlocatable        Reason = "a node that does not map back onto the text"
 	ReasonMalformed          Reason = "a document that is not valid YAML"
@@ -335,6 +342,64 @@ func UpsertSeqItemByKey(src []byte, path []string, keyField, keyValue string, fi
 		}
 		for field, want := range fields {
 			if !scalarIs(mapValue(item, field), want) {
+				return false
+			}
+		}
+		return true
+	}); err != nil {
+		return src, err
+	}
+	return out, nil
+}
+
+// UpsertSeqItemListByKey sets a LIST-valued field on the item of a sequence of
+// mappings whose keyField holds keyValue: the item is written whole with the
+// field when the sequence does not have it, the field is written beside the
+// fields the item already carries when it does not have that one yet, and the
+// list is replaced where it stands when it does — so the item keeps its place,
+// its other fields and their lines, and the field keeps the comment block above
+// it, the comment beside its key and whatever trails its last item. A comment
+// written between the items themselves goes with them: the list the caller
+// asked for replaces that one whole.
+//
+// UpsertSeqItemByKey writes scalar fields only, and a field whose value is a
+// list of its own — a pool's members — has no writer there: this is that half.
+// The list is written as a block sequence, one item per line, which is the shape
+// a reader of the file expects and the shape this package's other writers
+// produce. A field written in flow style is refused rather than replaced, the
+// way every other collection this package cannot splice into is
+// (ReasonFlowCollection), and so is a sequence item that is not a mapping: an
+// item this operation cannot write a field into is one it must not write an item
+// beside.
+func UpsertSeqItemListByKey(src []byte, path []string, keyField, keyValue, field string, values []string) ([]byte, error) {
+	const op = "UpsertSeqItemListByKey"
+	if err := checkPath(op, path); err != nil {
+		return src, err
+	}
+	if keyField == "" || field == "" {
+		return src, refuse(op, pathString(path), ReasonEmptyField)
+	}
+	if field == keyField {
+		return src, refuse(op, pathString(path), ReasonFieldIsKeyField)
+	}
+	if len(values) == 0 {
+		return src, refuse(op, pathString(path), ReasonEmptyList)
+	}
+	out, err := upsertListField(op, src, path, keyField, keyValue, field, values)
+	if err != nil {
+		return src, err
+	}
+	if err := verified(op, path, out, func(root *yaml.Node) bool {
+		item := keyedItem(resolve(root, path), keyField, keyValue)
+		if item == nil {
+			return false
+		}
+		v := mapValue(item, field)
+		if v == nil || v.Kind != yaml.SequenceNode || len(v.Content) != len(values) {
+			return false
+		}
+		for i, want := range values {
+			if !scalarIs(v.Content[i], want) {
 				return false
 			}
 		}
@@ -794,6 +859,160 @@ func upsertField(op string, src []byte, path []string, keyField, keyValue, field
 			indentOf(indent+2)+renderKey(field)+": "+renderValue(value, 0))), nil
 	}
 	return d.setKey(op, item, field, value, pathString(append(append([]string{}, path...), field)))
+}
+
+// upsertListField applies one list-valued field of an upsert, in the three
+// places it can land: the key the sequence hangs from written from nothing, the
+// item written with the field, and the field replaced on the item that already
+// carries it.
+func upsertListField(op string, src []byte, path []string, keyField, keyValue, field string, values []string) ([]byte, error) {
+	d, err := open(op, src)
+	if err != nil {
+		return src, err
+	}
+	leaf := listItemLeaf(keyField, keyValue, field, values)
+	if d.root == nil {
+		return d.openRoot(chain(path, 0, d.step, leaf)), nil
+	}
+	cur := d.root
+	for i := 0; i < len(path)-1; i++ {
+		out, next, done, err := d.descend(op, cur, path, i, leaf)
+		if err != nil {
+			return nil, err
+		}
+		if done {
+			return out, nil
+		}
+		cur = next
+	}
+	last := path[len(path)-1]
+	here := pathString(path)
+	if err := d.expectMapping(op, cur, here); err != nil {
+		return nil, err
+	}
+	e, err := d.find(op, cur, last, here)
+	if err != nil {
+		return nil, err
+	}
+	if e == nil {
+		if mergeKey(cur) {
+			return nil, refuse(op, here, ReasonMergeKey)
+		}
+		return d.appendBlock(op, cur, chain(path[len(path)-1:], d.entryIndent(cur), d.step, leaf))
+	}
+	if err := d.anchorFree(op, e, here); err != nil {
+		return nil, err
+	}
+	if empty, err := d.emptyValue(e.value); err != nil {
+		return nil, withOp(err, op)
+	} else if empty {
+		indent := d.entryIndent(cur) + d.step
+		return d.openChild(op, e, itemListLines(indent, d.step, keyField, keyValue, field, values))
+	}
+	seq := e.value
+	if seq.Style&yaml.FlowStyle != 0 {
+		return nil, refuse(op, here, ReasonFlowCollection)
+	}
+	if seq.Kind != yaml.SequenceNode {
+		return nil, refuse(op, here, ReasonNotASequence)
+	}
+	for _, it := range seq.Content {
+		if it.Kind != yaml.MappingNode {
+			return nil, refuse(op, here, ReasonNotAMapping)
+		}
+	}
+	indent, err := d.itemIndent(seq)
+	if err != nil {
+		return nil, err
+	}
+	if mergeKey(cur) {
+		return nil, refuse(op, here, ReasonMergeKey)
+	}
+	item := keyedItem(seq, keyField, keyValue)
+	if item == nil {
+		off, err := d.blockEnd(op, seq)
+		if err != nil {
+			return nil, err
+		}
+		return splice(d.src, off, off, []byte(d.eol+
+			strings.Join(itemListLines(indent, d.step, keyField, keyValue, field, values), d.eol))), nil
+	}
+	if item.Style&yaml.FlowStyle != 0 {
+		return nil, refuse(op, here, ReasonFlowCollection)
+	}
+	at := pathString(append(append([]string{}, path...), field))
+	fe, err := d.find(op, item, field, at)
+	if err != nil {
+		return nil, err
+	}
+	fieldIndent := d.entryIndent(item)
+	if fe == nil {
+		off, err := d.blockEnd(op, item)
+		if err != nil {
+			return nil, err
+		}
+		return splice(d.src, off, off, []byte(d.eol+strings.Join(listLines(fieldIndent, d.step, field, values), d.eol))), nil
+	}
+	if err := d.anchorFree(op, fe, at); err != nil {
+		return nil, err
+	}
+	if fe.value.Style&yaml.FlowStyle != 0 {
+		return nil, refuse(op, at, ReasonFlowCollection)
+	}
+	// The list's own items are replaced, and no more than they: the field's key
+	// line stays as the document wrote it — the comment beside it with it — and
+	// so does the comment block above the key, which belongs to the file rather
+	// than to the list. The replacement starts where the first item's line does
+	// and ends where the last item's written text does, so whatever follows that
+	// text on its line, a trailing comment above all, stays where it was; the
+	// line break is no part of it either, because the document's own is still
+	// there.
+	list := fe.value
+	empty, err := d.emptyValue(list)
+	if err != nil {
+		return nil, withOp(err, op)
+	}
+	if empty {
+		// The key is written with nothing under it: the items go in under the
+		// key it already has, which openChild writes after the key's own line —
+		// its comment, if the document put one beside it, above them.
+		return d.openChild(op, fe, listValueLines(fieldIndent, d.step, values))
+	}
+	if list.Kind == yaml.SequenceNode {
+		end, err := d.nodeEnd(op, list)
+		if err != nil {
+			return nil, err
+		}
+		first, err := d.offset(list.Content[0])
+		if err != nil {
+			return nil, withOp(err, op)
+		}
+		start := d.lines.start(d.lines.lineOf(first))
+		return splice(d.src, start, end, []byte(strings.Join(listValueLines(fieldIndent, d.step, values), d.eol))), nil
+	}
+	// A field written with no list yet — a scalar the caller is retyping — has
+	// no item lines to replace: the whole entry goes, its own comment block with
+	// it, because the entry is what the list takes the place of. A MAPPING is
+	// not that: it holds bytes and comments a list could only drop, and the
+	// scalar sibling refuses the same shape for the same reason
+	// (ReasonReplacesCollection), so this writer refuses it too rather than
+	// silently emptying it.
+	if list.Kind == yaml.MappingNode {
+		return nil, refuse(op, at, ReasonReplacesCollection)
+	}
+	start, end, err := d.entrySpan(op, fe)
+	if err != nil {
+		return nil, err
+	}
+	repl := []byte(strings.Join(listLines(fieldIndent, d.step, field, values), d.eol))
+	// The span ends where the field's own last line does, its line break
+	// included when the document had one there; the line break is the one byte
+	// of it a replacement has to give back, or the file would end — or run on —
+	// without it.
+	if end > 0 && d.src[end-1] == '\n' {
+		repl = append(repl, d.eol...)
+	}
+	return splice(d.src, start, end, repl), nil
 }
 
 // walk finds the entry for the last element of path, without creating anything.
