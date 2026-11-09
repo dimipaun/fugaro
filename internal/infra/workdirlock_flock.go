@@ -1,4 +1,4 @@
-//go:build unix
+//go:build unix && (!solaris || illumos) && !aix
 
 package infra
 
@@ -8,6 +8,12 @@ import (
 	"syscall"
 )
 
+// The constraint is not the whole of unix, and workdirlock_other.go is what is
+// left out and why: syscall.Flock is not in every unix's syscall package
+// (solaris and aix have no such call there), while GOOS=illumos carries the
+// solaris build tag beside its own and does have it, so illumos is named back
+// in where solaris is not.
+//
 // lockWorkdirFile takes the exclusive lock of f without waiting, and reports
 // errWorkdirLockHeld when another process (or another open description of the
 // same file, this process's own second run included) holds it.

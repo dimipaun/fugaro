@@ -3,6 +3,7 @@ package infra
 import (
 	"errors"
 	"fmt"
+	"go/build"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -346,5 +347,57 @@ func TestWorkdirLockBodyIsOneLine(t *testing.T) {
 	}
 	if got, want := string(b), "fugaro update "+strconv.Itoa(os.Getpid())+"\n"; got != want {
 		t.Errorf("the lock file holds %q, want %q", got, want)
+	}
+}
+
+// TestWorkdirLockHalvesTakeThePlatformsThatHaveTheirCall pins which of the two
+// halves a platform compiles, because the answer is a build constraint and a
+// wrong one is not a wrong sentence: it is a package that does not build for
+// that platform at all (syscall.Flock is missing on solaris and aix) or one
+// that keeps no lock where it could. The two constraints are complements, and
+// the third answer is windows, which takes the lock through LockFileEx and so
+// compiles neither of these files.
+//
+// The rule applied is go/build's, which is the toolchain's own reading of a
+// constraint — so this is the compiler's answer about the two files rather
+// than a restatement of the lines it reads.
+func TestWorkdirLockHalvesTakeThePlatformsThatHaveTheirCall(t *testing.T) {
+	for _, tc := range []struct {
+		goos          string
+		flock, noLock bool
+	}{
+		// syscall.Flock is defined here.
+		{"linux", true, false},
+		{"darwin", true, false},
+		{"freebsd", true, false},
+		{"openbsd", true, false},
+		{"netbsd", true, false},
+		{"dragonfly", true, false},
+		{"illumos", true, false},
+		{"android", true, false},
+		{"ios", true, false},
+		// Not defined here, so the no-op is what states the loss.
+		{"solaris", false, true},
+		{"aix", false, true},
+		{"plan9", false, true},
+		{"js", false, true},
+		{"wasip1", false, true},
+		// LockFileEx, in workdirlock_windows.go.
+		{"windows", false, false},
+	} {
+		t.Run(tc.goos, func(t *testing.T) {
+			ctx := build.Context{GOOS: tc.goos, GOARCH: "amd64"}
+			flock, err := ctx.MatchFile(".", "workdirlock_flock.go")
+			if err != nil {
+				t.Fatal(err)
+			}
+			noLock, err := ctx.MatchFile(".", "workdirlock_other.go")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if flock != tc.flock || noLock != tc.noLock {
+				t.Errorf("GOOS=%s compiles flock=%v and the no-op=%v, want %v and %v", tc.goos, flock, noLock, tc.flock, tc.noLock)
+			}
+		})
 	}
 }
