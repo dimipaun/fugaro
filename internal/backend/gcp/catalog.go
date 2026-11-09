@@ -451,29 +451,29 @@ func catalogPrebuiltRequest(project string, s CatalogBuildSpec) *cloudbuild.Buil
 // It pulls the reference the entry names and resolves the digest that
 // reference answers with, so what was smoked is bytes and not a tag that
 // moved afterwards. The digest reaches the record step through the workspace
-// and the CLI through this step's output (stepOutputs reads it by this step's
-// id). The selftest runs through docker run with no network and no volume,
-// never as a step of its own — a step would be a container on the
-// cloudbuild network, next to the metadata server and the build account's
-// token — as the derived smoke does.
+// (OUT, the one directory this script writes) and the CLI through this step's
+// output (stepOutputs reads it by this step's id). The selftest runs through
+// docker run with no network and no volume, never as a step of its own — a
+// step would be a container on the cloudbuild network, next to the metadata
+// server and the build account's token — as the derived smoke does.
 func catalogSmokeStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
-	// The two values reach the script through env: and are read as quoted
+	// The three values reach the script through env: and are read as quoted
 	// "$$VAR" (the rule images/derived/cloudbuild.yaml states).
 	return &cloudbuild.BuildStep{
 		Id:         catalogSmokeStepID,
 		Name:       "gcr.io/cloud-builders/docker",
 		Entrypoint: "bash",
-		Env:        []string{"IMAGE=${_IMAGE}", "SELFTEST_B64=${_SELFTEST_B64}"},
+		Env:        []string{"IMAGE=${_IMAGE}", "SELFTEST_B64=${_SELFTEST_B64}", "OUT=/workspace/out"},
 		Args: []string{"-c", `set -eu
-install -d -m 0755 /workspace/out
+install -d -m 0755 "$$OUT"
 docker pull --quiet "$$IMAGE"
 ref=$$(docker image inspect --format '{{index .RepoDigests 0}}' "$$IMAGE") \
   || { echo "the prebuilt image $$IMAGE carries no digest: the registry serves it by tag and nothing pins what a job would start on" >&2; exit 1; }
 case "$$ref" in *@sha256:*) ;; *) echo "the prebuilt image $$IMAGE carries no digest" >&2; exit 1 ;; esac
-printf '%s\n' "$${ref#*@}" > /workspace/out/image-digest
-date -u +%Y-%m-%dT%H:%M:%SZ > /workspace/out/built-at
-printf '%s' "$$SELFTEST_B64" | base64 -d > /workspace/out/selftest.json
-report=$$(docker run --rm -i --network none "$$ref" fugaro image selftest < /workspace/out/selftest.json) \
+printf '%s\n' "$${ref#*@}" > "$$OUT/image-digest"
+date -u +%Y-%m-%dT%H:%M:%SZ > "$$OUT/built-at"
+printf '%s' "$$SELFTEST_B64" | base64 -d > "$$OUT/selftest.json"
+report=$$(docker run --rm -i --network none "$$ref" fugaro image selftest < "$$OUT/selftest.json") \
   || { printf '%s\n' "$$report"; echo "the prebuilt image $$IMAGE failed its smoke test" >&2; exit 1; }
 printf '%s\n' "$$report"
 case "$$report" in *'"passed":true'*) ;; *) echo "the prebuilt image $$IMAGE did not pass its smoke test" >&2; exit 1 ;; esac
@@ -735,12 +735,15 @@ gcloud artifacts docker tags add "$$IMAGE@$$digest" "$$IMAGE:$$TAG" --quiet`},
 // end the name and any other reserved character could add or split one.
 //
 // One step writes the record of both kinds of catalog entry, because one
-// shape and one reader have to agree: the prebuilt branch (PREBUILT, set
-// only by a smoke-only run) fills the entry's own reference in and leaves the
-// definition, the context and the base empty, since nothing was read and
-// nothing was built from anything, and the image digest it records is the one
-// the smoke resolved. Everything else — the key, the field names, the
-// unescaped printf, the encoding and the upload — is the same for both.
+// shape and one reader have to agree: a smoke-only run is submitted with the
+// definition, the context and the base empty (checkPrebuilt refuses a spec
+// that names any of them), so the same env and the same printf carry the
+// entry's own reference in and leave those fields empty — nothing was read and
+// nothing was built from anything — and the image digest it records is the one
+// the smoke resolved. The marker PREBUILT is what tells the script's own run
+// apart: only then is there no base digest to read. Everything else — the key,
+// the field names, the unescaped printf, the encoding and the upload — is the
+// same for both.
 func catalogRecordStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
 	key, _ := CatalogRecordKey(s.Slug, s.Entry) // checked before this is called
 	env := []string{
@@ -751,8 +754,8 @@ func catalogRecordStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
 		"BASE=" + s.Base, "TAG=${_CATALOG_TAG}",
 	}
 	// A build's own record step has exactly the variables it had before a
-	// prebuilt entry had one: the marker is added to the smoke-only run's
-	// step and read as an unset variable by the other.
+	// prebuilt entry had one: the marker is added to the smoke-only run's step
+	// and read as an unset variable by the other.
 	if s.Prebuilt != "" {
 		env = append(env, "PREBUILT=1")
 	}
@@ -762,22 +765,20 @@ func catalogRecordStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
 		Entrypoint: "bash",
 		Env:        env,
 		Args: []string{"-c", `set -eu
+image_digest=$$(cat /workspace/out/image-digest)
+case "$$image_digest" in sha256:*) ;; *) echo "no pushed digest" >&2; exit 1 ;; esac
 built_at=$$(cat /workspace/out/built-at)
-record=$$(mktemp)
-if [ -n "$${PREBUILT:-}" ]; then
-  image_digest=$$(cat /workspace/out/image-digest)
-  case "$$image_digest" in sha256:*) ;; *) echo "the smoke reported no digest for the prebuilt image" >&2; exit 1 ;; esac
-  printf '{"version":1,"entry":"%s","source_commit":"","context_commit":"","context_sha256":"","definition_generation":0,"definition_sha256":"","base_ref":"","base_digest":"","image":"%s","content_tag":"","image_digest":"%s","build_id":"%s","built_at":"%s"}' \
-    "$$ENTRY" "$$IMAGE" "$$image_digest" "$BUILD_ID" "$$built_at" > "$$record"
-else
-  image_digest=$$(cat /workspace/out/image-digest)
-  case "$$image_digest" in sha256:*) ;; *) echo "no pushed digest" >&2; exit 1 ;; esac
+# A smoke-only run has no base to read: its record carries the same thirteen
+# keys, and the fields only a build has are the empty ones its own env states.
+base_digest=
+if [ -z "$${PREBUILT:-}" ]; then
   base_digest=$$(cat /workspace/base-digest)
   base_digest=$${base_digest#*@}
   case "$$base_digest" in sha256:*) ;; *) echo "no base digest" >&2; exit 1 ;; esac
-  printf '{"version":1,"entry":"%s","source_commit":"%s","context_commit":"%s","context_sha256":"%s","definition_generation":%s,"definition_sha256":"%s","base_ref":"%s","base_digest":"%s","image":"%s","content_tag":"%s","image_digest":"%s","build_id":"%s","built_at":"%s"}' \
-    "$$ENTRY" "$$COMMIT" "$$CONTEXT_COMMIT" "$$CONTEXT_SHA256" "$$GENERATION" "$$SHA256" "$$BASE" "$$base_digest" "$$IMAGE" "$$TAG" "$$image_digest" "$BUILD_ID" "$$built_at" > "$$record"
 fi
+record=$$(mktemp)
+printf '{"version":1,"entry":"%s","source_commit":"%s","context_commit":"%s","context_sha256":"%s","definition_generation":%s,"definition_sha256":"%s","base_ref":"%s","base_digest":"%s","image":"%s","content_tag":"%s","image_digest":"%s","build_id":"%s","built_at":"%s"}' \
+  "$$ENTRY" "$$COMMIT" "$$CONTEXT_COMMIT" "$$CONTEXT_SHA256" "$$GENERATION" "$$SHA256" "$$BASE" "$$base_digest" "$$IMAGE" "$$TAG" "$$image_digest" "$BUILD_ID" "$$built_at" > "$$record"
 case "$$BUCKET" in gs://*) ;; *) echo "the runs bucket must be a gs:// URL" >&2; exit 1 ;; esac
 export LC_ALL=C
 name=
