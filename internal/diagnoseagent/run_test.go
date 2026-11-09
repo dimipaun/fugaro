@@ -638,6 +638,7 @@ func TestRunDeniesAStoreTheEnvironmentMoved(t *testing.T) {
 	}{
 		{"$XDG_CONFIG_HOME/gh", "XDG_CONFIG_HOME", filepath.Join("gh", "hosts.yml"), true},
 		{"$XDG_CONFIG_HOME/fugaro", "XDG_CONFIG_HOME", filepath.Join("fugaro", "projects", "aurora.yaml"), false},
+		{"$XDG_CONFIG_HOME/rclone", "XDG_CONFIG_HOME", filepath.Join("rclone", "rclone.conf"), false},
 		{"$GH_CONFIG_DIR", "GH_CONFIG_DIR", "hosts.yml", false},
 		// gcloud reads no XDG variable at all (internal/cli/adcpath.go, F29),
 		// which is why its own variable is the one resolved for it.
