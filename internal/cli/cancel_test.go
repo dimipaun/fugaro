@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -962,5 +963,117 @@ func TestCancelDoesNotClaimAPullRequestForAnArtifactRun(t *testing.T) {
 	plain, _, err := execute(t, "cancel", id)
 	if err != nil || !strings.Contains(plain, "finalized; no pull request was needed") || strings.Contains(plain, "diagnose") {
 		t.Fatalf("cancel = %q, %v", plain, err)
+	}
+}
+
+// TestCancelEndingListsAndNeverActs is SR14's and D1710's rule: cancel acts on
+// a run named exactly, and an ending cancels nothing. The ending is looked up
+// among the active runs and every match is listed as the full <slug>/<run-id>
+// to paste, with its title, before the command exits as a user error.
+//
+// Mutation (resolve the ending and cancel the run it names, the way SR3's
+// active-only lookup answers everything else): a run here is cancelled.
+func TestCancelEndingListsAndNeverActs(t *testing.T) {
+	f := newEndingFixture(t)
+	live := recentRunID(t, time.Minute, "3bb2")
+	second := recentRunID(t, 2*time.Minute, "3bb2")
+	liveExec := seedRun(t, f.cloudFixture, live, "", "someone@example.com", true)
+	secondExec := seedRun(t, f.cloudFixture, second, "", "someone@example.com", true)
+	f.run.SetState(liveExec, backend.StateRunning)
+	f.run.SetState(secondExec, backend.StateRunning)
+	for _, r := range []struct{ id, title string }{{live, "the running run"}, {second, "the other running run"}} {
+		f.db.Set(budget.PathAgent(appSlug, r.id), map[string]any{"run_id": r.id, "title": r.title})
+	}
+
+	for _, args := range [][]string{{"cancel", "3bb2"}, {"cancel", "--json", "3bb2"}} {
+		out, _, err := execute(t, args...)
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("%v = %v, want a user error", args, err)
+		}
+		for _, want := range []string{appSlug + "/" + live, appSlug + "/" + second, "the running run", "the other running run"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%v: the refusal does not list %q:\n%s", args, want, out)
+			}
+		}
+	}
+	for _, id := range []string{live, second} {
+		if cancelled(t, f.cloudFixture, id) {
+			t.Errorf("cancel of an ending wrote the cancel marker of %s: an ending is never acted on (D1710)", id)
+		}
+	}
+	if e := f.run.State(liveExec); e != backend.StateRunning {
+		t.Errorf("the execution of %s is %s: cancel of an ending stops nothing", live, e)
+	}
+
+	// Exactly one active match is still a listing and not an act: the full ID
+	// is the only way to cancel a run.
+	only := recentRunID(t, 3*time.Minute, "cafe")
+	onlyExec := seedRun(t, f.cloudFixture, only, "", "someone@example.com", true)
+	f.run.SetState(onlyExec, backend.StateRunning)
+	f.db.Set(budget.PathAgent(appSlug, only), map[string]any{"run_id": only})
+	out, _, err := execute(t, "cancel", "cafe")
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, appSlug+"/"+only) {
+		t.Fatalf("cancel of an ending one active run carries = %v (%s), want the full ID listed", err, out)
+	}
+	if cancelled(t, f.cloudFixture, only) || f.run.State(onlyExec) != backend.StateRunning {
+		t.Fatalf("cancel of an ending one run carries cancelled %s", only)
+	}
+}
+
+// TestCancelEndingIgnoresFinishedRuns: the ending is looked up among the runs
+// that are active now and nothing else, so a run that merely ran inside the
+// seven-day window is not one cancel offers (D1710): cancelling it would act
+// on a name the person did not mean.
+func TestCancelEndingIgnoresFinishedRuns(t *testing.T) {
+	f := newEndingFixture(t)
+	finished := recentRunID(t, time.Minute, "cafe")
+	seedTitledRun(t, f.cloudFixture, finished, "the finished run")
+
+	_, _, err := execute(t, "cancel", "cafe")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "no active run ending") {
+		t.Fatalf("cancel of an ending only a finished run carries = %v, want the active-only sentence", err)
+	}
+
+	// An active run and a finished one share an ending: only the active run
+	// is listed, and only its full ID is offered.
+	live := recentRunID(t, 2*time.Minute, "3bb2")
+	twin := recentRunID(t, 3*time.Minute, "3bb2")
+	exec := seedRun(t, f.cloudFixture, live, "", "someone@example.com", true)
+	f.run.SetState(exec, backend.StateRunning)
+	seedTitledRun(t, f.cloudFixture, twin, "the finished twin")
+	f.db.Set(budget.PathAgent(appSlug, live), map[string]any{"run_id": live})
+
+	out, _, err := execute(t, "cancel", "3bb2")
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, appSlug+"/"+live) {
+		t.Fatalf("cancel 3bb2 = %v (%s), want the active run's full ID listed", err, out)
+	}
+	if strings.Contains(out, twin) {
+		t.Errorf("cancel 3bb2 lists the finished run its ending also names:\n%s", out)
+	}
+	if cancelled(t, f.cloudFixture, live) || cancelled(t, f.cloudFixture, twin) {
+		t.Fatal("cancel of an ending wrote a cancel marker")
+	}
+}
+
+// TestCancelFullIDStillCancels: D1710 makes cancel's act full-ID only; the
+// whole flow behind it is untouched, and a run named exactly is cancelled as
+// it always was.
+func TestCancelFullIDStillCancels(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	f.run.SetState(exec, backend.StateRunning)
+
+	out, _, err := execute(t, "cancel", "--now", "--json", id)
+	var res cancelResult
+	_ = json.Unmarshal([]byte(out), &res)
+	if err != nil || res.Status != cancelCancelled || !res.Hard || !res.Marker {
+		t.Fatalf("cancel --now --json %s = %+v, %v", id, res, err)
+	}
+	if e := f.run.State(exec); e != backend.StateCancelled {
+		t.Fatalf("execution state = %s, want cancelled", e)
+	}
+	if !cancelled(t, f, id) {
+		t.Fatal("cancel of a full run ID wrote no cancel marker")
 	}
 }

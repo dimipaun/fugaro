@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -782,5 +783,27 @@ func TestNoFixedRunIDsInRecencyTests(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestRunIDFlagKeepsFullID is D1705's input side: --run-id is an identifier
+// that becomes an object name and a branch, so it takes the full form and an
+// ending is refused before anything of the launch exists.
+func TestRunIDFlagKeepsFullID(t *testing.T) {
+	newCloudFixture(t)
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "3bb2", "Add a feature")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "must look like 20260926-221530-a1b2") {
+		t.Fatalf("run --run-id 3bb2 = %v, want the full-ID refusal", err)
+	}
+	out, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20260927-100000-abcd", "--json", "Add a feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res launchResult
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.RunID != "20260927-100000-abcd" || res.Run != appSlug+"/20260927-100000-abcd" || res.Branch != "fugaro/20260927-100000-abcd" {
+		t.Fatalf("run --run-id with a full ID = %+v, want the full ID kept", res)
 	}
 }

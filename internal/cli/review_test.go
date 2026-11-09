@@ -986,3 +986,34 @@ func TestFixBriefBuildsTheBriefForFixFirst(t *testing.T) {
 		}
 	}
 }
+
+// TestReviewRunEndingRefused: --review-run names the stored review run whose
+// findings become a fix round's brief, so it keeps taking a full ID or
+// <slug>/<run-id> and nothing else (D1705, O4): the runs bucket is writable by
+// the job account, and a planted task.json whose ID ends the same way must not
+// become a brief.
+func TestReviewRunEndingRefused(t *testing.T) {
+	newCloudFixture(t)
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--review-run", "3bb2")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "must look like 20260926-221530-a1b2") {
+		t.Fatalf("--review-run 3bb2 = %v, want the full-ID refusal", err)
+	}
+}
+
+// TestReviewShowEndingRefused: `review show` reads one review run's artifact,
+// so it too keeps full IDs (D1705, O4). An ending is refused before the bucket
+// is read, and a full <slug>/<run-id> still prints the artifact.
+func TestReviewShowEndingRefused(t *testing.T) {
+	f := newCloudFixture(t)
+	_, _, err := reviewCLI(t, "show", "3bb2")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "<repo-slug>/<run-id>") {
+		t.Fatalf("review show 3bb2 = %v, want the <repo-slug>/<run-id> refusal", err)
+	}
+	id := wallRunIDAt(0, "120000", "5eed")
+	artifact := `{"version":1,"pr":7,"verdict":"comment"}`
+	putBuildObject(t, f, "runs/"+appSlug+"/"+id+"/"+runstore.ArtifactPrefix+runner.ReviewArtifactName, []byte(artifact))
+	out, _, err := reviewCLI(t, "show", appSlug+"/"+id, "--json")
+	if err != nil || !strings.Contains(out, artifact) {
+		t.Fatalf("review show %s = %v (%s)", appSlug+"/"+id, err, out)
+	}
+}

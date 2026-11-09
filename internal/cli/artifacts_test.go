@@ -2360,3 +2360,44 @@ func TestRunsLsShowsArtifactCountOnlyWhenThereAreArtifacts(t *testing.T) {
 		t.Errorf("an empty listing still prints the artifact column:\n%s", empty)
 	}
 }
+
+// TestArtifactsRepoEnding: --repo names the repository RUN belongs to, and
+// SR14 lets RUN be an ending there too. The ending is resolved by the lookup
+// every other command uses (resolveRun), and --repo is then checked against
+// the repository it resolved in: an ending that names another repository's run
+// is refused rather than read, so --repo never becomes a way around the
+// repository in the object key.
+func TestArtifactsRepoEnding(t *testing.T) {
+	f := newEndingFixture(t)
+	t.Chdir(t.TempDir())
+	id := recentRunID(t, time.Minute, "3bb2")
+	body := []byte("hello")
+	seedArtifactRun(t, f.cloudFixture, id, []runstore.ArtifactFile{
+		{Name: "sizzle.mp4", Bytes: int64(len(body)), SHA256: sha256Hex(body), ContentType: "video/mp4"},
+	}, map[string][]byte{"sizzle.mp4": body})
+
+	if out, _, err := execute(t, "artifacts", "ls", "--repo", "acme/app", "3bb2"); err != nil || !strings.Contains(out, "sizzle.mp4") {
+		t.Errorf("ls --repo acme/app 3bb2 = %v (%s)", err, out)
+	}
+	if _, _, err := execute(t, "artifacts", "get", "--repo", "acme/app", "3bb2", "sizzle.mp4"); err != nil {
+		t.Errorf("get --repo acme/app 3bb2: %v", err)
+	}
+
+	// An ending that names a run of another repository: --repo names this one,
+	// and the run the ending resolved to is not in it.
+	other := mustSlug("gitlab", "acme/app")
+	otherID := recentRunID(t, 2*time.Minute, "cafe")
+	b, err := blob.OpenBucket(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if err := runstore.Open(b, other, otherID).CreateTask(context.Background(),
+		&task.Spec{Version: 1, RunID: otherID, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = execute(t, "artifacts", "ls", "--repo", "acme/app", "cafe")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), other) || !strings.Contains(err.Error(), appSlug) {
+		t.Errorf("ls --repo acme/app of an ending another repository carries = %v, want a user error naming both repositories", err)
+	}
+}

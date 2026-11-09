@@ -2167,3 +2167,55 @@ func TestReviewRunFlagNeedsAPullRequest(t *testing.T) {
 	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
 	wantFindingsRefused(t, f, mustSlug("github", "other/app")+"/"+reviewID, "is a review of")
 }
+
+// TestLaunchOutputShortID: the line a launch prints for a person names the run
+// by its short ID, the form every surface shows a run in (spec.md §1), while
+// the branch under it and --json keep the full ID a machine reads (D1705).
+func TestLaunchOutputShortID(t *testing.T) {
+	newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	out, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", id, "Add a feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := ""
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(l, "launch ") {
+			line = l
+		}
+	}
+	if !strings.Contains(line, "launch abcd") {
+		t.Fatalf("the launch line does not name the run by its short ID (%q):\n%s", line, out)
+	}
+	if strings.Contains(line, id) {
+		t.Errorf("the launch line prints the full run ID: %q", line)
+	}
+	// The branch stays a full-ID name: it is what a follow-up continues a run
+	// through and what the bucket path is built from.
+	if !strings.Contains(out, "branch fugaro/"+id) {
+		t.Errorf("the launch's branch line does not carry the full run ID:\n%s", out)
+	}
+	// --json is a machine reading and keeps every full ID.
+	asJSON, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20260927-100000-ffff", "--json", "Add a feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res launchResult
+	if err := json.Unmarshal([]byte(asJSON), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Run != appSlug+"/20260927-100000-ffff" || res.RunID != "20260927-100000-ffff" || res.Branch != "fugaro/20260927-100000-ffff" {
+		t.Errorf("--json launch = %+v, want the full run ID in every field", res)
+	}
+}
+
+// TestRetryEndingRefused: `run --retry` launches a stored task, so it keeps
+// taking a full ID or <slug>/<run-id> and nothing else (D1705, O4): a planted
+// task.json whose ID ends the same way must not be launchable by an ending.
+func TestRetryEndingRefused(t *testing.T) {
+	newCloudFixture(t)
+	_, _, err := execute(t, "run", "--retry", "3bb2")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "neither <repo-slug>/<run-id> nor a run ID") {
+		t.Fatalf("run --retry 3bb2 = %v, want the full-ID refusal", err)
+	}
+}
