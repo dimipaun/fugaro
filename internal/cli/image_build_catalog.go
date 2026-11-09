@@ -354,8 +354,18 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		// trail). A record that could not be written is the failure the person
 		// reads, and the day still counts what the build spent: the build is
 		// out and nothing here can take it back.
+		//
+		// Waited is false here and that is what this path's own sentence asks
+		// for: this return happens before the wait below, in both modes, so the
+		// whole reservation is what the day counts — the same figure a --no-wait
+		// build's settle records, and for the same reason (buildLease.settle).
+		// Settling it as a build this command watched would record the moment
+		// between the submission and this failure at the lease's minute rate and
+		// give the rest of the reservation back, which is money the build Cloud
+		// Build is running is spending and headroom under the caps for a loop of
+		// builds that fail here.
 		if err := m.recorded(ctx); err != nil {
-			return withLease(err, lease.settle(ctx, true))
+			return withLease(err, lease.settle(ctx, false))
 		}
 		if !o.noWait {
 			fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
