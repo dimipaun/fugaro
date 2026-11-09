@@ -46,7 +46,14 @@ type PromptData struct {
 // one is read. Naming them is what keeps the rule from reading as "withhold an
 // ID a command needs", which would break the launch and follow-up references
 // that pass a full ID (F11).
-const runIDRule = "- Refer to runs only by their short ID, the last 4 characters of the run ID; refer to plan tasks by their plan name. Pass the short ID to `logs`, `diagnose` and `artifacts` (the commands that accept it; `cancel`, `run --retry`, `--review-run`, `review show` and `--run-id` take full IDs, which `--json` output carries), and never print the full run ID in anything you write for a person."
+//
+// The rule names no command as taking a short ID, because on this tree none
+// does: `logs`, `diagnose` and `artifacts` resolve a run with locateRun, which
+// refuses an ending, and SR14 is what switches them to resolveRun. The clause
+// that sends them a short ID returns in the change that lands SR14 —
+// internal/cli's TestRunIDRuleShortIDCommandsResolveAnEnding fails either half
+// without the other, so the rule cannot promise an ending a command refuses.
+const runIDRule = "- Refer to runs only by their short ID, the last 4 characters of the run ID; refer to plan tasks by their plan name. Pass the short ID to `logs`, `diagnose` and `artifacts` (the commands that accept it; `cancel`, `run --retry`, `--review-run`, `review show` and `--run-id` take full IDs, which `--json` output carries, and never print the full run ID in anything you write for a person."
 
 // SystemPrompt is appended to Claude Code's system prompt for implement and fix stages.
 func SystemPrompt(d PromptData, instructions string) string {

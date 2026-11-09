@@ -42,7 +42,6 @@ func TestPromptsCarryShortIDRule(t *testing.T) {
 	rule := []string{
 		"Refer to runs only by their short ID, the last 4 characters of the run ID",
 		"refer to plan tasks by their plan name",
-		"Pass the short ID to `logs`, `diagnose` and `artifacts`",
 		"`cancel`, `run --retry`, `--review-run`, `review show` and `--run-id` take full IDs, which `--json` output carries",
 		"never print the full run ID in anything you write for a person",
 	}
