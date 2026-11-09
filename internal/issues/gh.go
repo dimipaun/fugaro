@@ -60,6 +60,17 @@ func ExecGH(ctx context.Context, args ...string) ([]byte, error) {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
+	if err != nil && errors.Is(err, exec.ErrWaitDelay) && ctx.Err() == nil &&
+		cmd.ProcessState != nil && cmd.ProcessState.Success() {
+		// gh itself exited 0 and had already printed the issue URL; WaitDelay
+		// fired only because a descendant it left behind still held the output
+		// pipe. Waiting for that descendant is what the delay is for, but
+		// calling the call a failure is not: the caller records the URL this
+		// returns and nothing else, so reporting "nothing was filed" for an
+		// issue that was filed files a second public issue on the next submit.
+		// internal/gitops guards the same case for the same reason.
+		err = nil
+	}
 	if err != nil {
 		if msg := ghFirstLine(stderr.String()); msg != "" {
 			return nil, fmt.Errorf("%s %s: %w: %s", GHBin, strings.Join(args, " "), err, msg)

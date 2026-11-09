@@ -4,10 +4,15 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/updatecheck"
 )
@@ -123,6 +128,72 @@ func TestGHUsesBodyFileAndExplicitRepo(t *testing.T) {
 			t.Errorf("Create() = %q with an error, want no URL", url)
 		}
 	})
+}
+
+// TestExecGHKeepsTheURLOfAChildThatExited: gh prints the issue URL to stdout
+// and exits 0, and a descendant it left behind holding that pipe must not turn
+// the filed issue into "nothing was filed". The caller records the URL this
+// returns and nothing else, so losing it files a duplicate public issue at the
+// next submit (F24's own guarantee is the other half: the call still returns
+// well inside the claim's lease).
+//
+// The fake gh is a shell script, and the sleep it backgrounds inherits stdout
+// with no redirection — that inheritance is the leak, and it outlives the
+// shell. internal/gitops' TestLeakedChildDoesNotHang is the precedent, and its
+// guard is the one mirrored in ExecGH.
+func TestExecGHKeepsTheURLOfAChildThatExited(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake gh is a shell script")
+	}
+	// The path is the fake gh's alone, so the descendant is named by its own
+	// path rather than found on a PATH this test has taken away.
+	sleep, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skip("no sleep to leak")
+	}
+	link := "https://github.com/" + updatecheck.Repo + "/issues/12"
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "leaked.pid")
+	// 600s is far longer than ExecGH's wait delay, so a regression — waiting for
+	// the leaked child — fails the bound below rather than passing slowly.
+	script := "#!/bin/sh\n" + sleep + " 600 & echo $! > " + pidFile + "\necho " + link + "\n"
+	fake := filepath.Join(dir, GHBin)
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatalf("writing the fake gh: %v", err)
+	}
+	t.Setenv("PATH", dir)
+	t.Cleanup(func() {
+		// The leaked child is this test's own: it is killed here whether the
+		// assertions below held or not.
+		pid, err := os.ReadFile(pidFile)
+		if err != nil {
+			return
+		}
+		if n, err := strconv.Atoi(strings.TrimSpace(string(pid))); err == nil {
+			if p, err := os.FindProcess(n); err == nil {
+				_ = p.Kill()
+			}
+		}
+	})
+
+	start := time.Now()
+	out, err := ExecGH(context.Background(), "issue", "create")
+	d := time.Since(start)
+	if _, statErr := os.Stat(pidFile); statErr != nil {
+		t.Fatalf("the fake gh left no descendant behind (%v): the case under test did not happen", statErr)
+	}
+	if d > time.Minute {
+		t.Fatalf("ExecGH waited %s for a gh that had exited", d)
+	}
+	if d < time.Second {
+		t.Fatalf("ExecGH returned in %s, before its wait delay could fire: the descendant did not hold the pipe", d)
+	}
+	if err != nil {
+		t.Fatalf("ExecGH returned an error for a gh that exited 0: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != link {
+		t.Errorf("ExecGH returned %q, want the URL gh printed (%q)", got, link)
+	}
 }
 
 // TestGHEnvCannotRedirectTheHost: GH_HOST and GH_REPO are taken out of the
