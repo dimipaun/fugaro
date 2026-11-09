@@ -358,7 +358,10 @@ func TestUpdateManagedMixedRefusalsLeaveTheRemovalNoCommand(t *testing.T) {
 		// plan is the whole plan — the removal and the change no delete list
 		// reaches, or the one change that is both — and names is the fact the
 		// refusal has to be about: a mixed plan that was refused, or applied, for
-		// any other reason would leave these assertions green.
+		// any other reason would leave these assertions green. The fact is read
+		// in the log the refusal's own line names, because that is where the
+		// gate's sentence — the rule, the address it was read at and the why —
+		// is whole (the owner's feedback of 2026-11-09).
 		plan  []planChange
 		names string
 	}{
@@ -380,8 +383,8 @@ func TestUpdateManagedMixedRefusalsLeaveTheRemovalNoCommand(t *testing.T) {
 			if n := len(r.ran(t, "apply")); n != 0 {
 				t.Errorf("%d terraform apply(s) ran: the gate refused the plan and nothing may be applied", n)
 			}
-			if !strings.Contains(got, tc.names) {
-				t.Errorf("the refusal does not name %s, so it is not this arm's refusal:\n%s", tc.names, got)
+			if whole := got + namedLog(t, got); !strings.Contains(whole, tc.names) {
+				t.Errorf("the refusal does not name %s, so it is not this arm's refusal:\n%s", tc.names, whole)
 			}
 			if left := leftFor(got, initflow.Installation, initflow.LeftCommand); left != "" {
 				t.Errorf("a plan the delete rule did not refuse alone left the owner the removal's command (%q): --allow-delete stands the whole gate down, so a run that passed it would apply %s with no rule left to read it:\n%s", left, tc.names, got)
@@ -660,8 +663,14 @@ func TestUpdateManagedStageRefusesAPlanTheCoverDoesNotCover(t *testing.T) {
 	if n := len(r.ran(t, "apply")); n != 0 {
 		t.Errorf("%d terraform apply(s) ran: the gate refused the plan and nothing may be applied", n)
 	}
-	if !strings.Contains(got, managedmode.NotConverged) {
-		t.Errorf("the session does not read the gate's own sentence:\n%s", got)
+	// The gate's own sentence is the step's line in the log, whole: the
+	// terminal gets the refusal's three short lines and the path of the log
+	// (the owner's feedback of 2026-11-09).
+	if line := stepLineInLog(t, got, markFailed+" "+initflow.Installation+":"); !strings.Contains(line, managedmode.NotConverged) {
+		t.Errorf("the session does not read the gate's own sentence:\n%s", line)
+	}
+	if !strings.Contains(got, "the managed gate refused this step and nothing was written") {
+		t.Errorf("the session is not told the gate refused the step:\n%s", got)
 	}
 	recs := audits(t, r)
 	if len(recs) != 1 || recs[0].Verdict != managedmode.AuditRefused {
@@ -1107,7 +1116,9 @@ func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 		// names is the fact the refusal has to be about, in the refusal's own
 		// words: the member neither list holds, and the accelerator the cost
 		// list's GPU entry read. A run that stopped for any other reason — a
-		// missing grant, an unreadable plan — would stop without it.
+		// missing grant, an unreadable plan — would stop without it. It is read
+		// in the log the refused step's line names, where the gate's sentence is
+		// whole (the owner's feedback of 2026-11-09).
 		names string
 	}{
 		{"an outsider's grant", outsiderGrant, "user:a@example.com"},
@@ -1127,11 +1138,12 @@ func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 			if n := len(r.ran(t, "apply")); n != 0 {
 				t.Errorf("%d terraform apply(s) ran after the gate's refusal:\n%s", n, got)
 			}
-			if !strings.Contains(got, managedmode.NotConverged) {
-				t.Errorf("the step did not stop in the gate's own sentence, so what refused it is not what the owner reads:\n%s", got)
+			whole := got + namedLog(t, got)
+			if !strings.Contains(whole, managedmode.NotConverged) {
+				t.Errorf("the step did not stop in the gate's own sentence, so what refused it is not what the owner reads:\n%s", whole)
 			}
-			if !strings.Contains(got, tc.names) {
-				t.Errorf("the refusal does not name %s, so it is not this arm's refusal:\n%s", tc.names, got)
+			if !strings.Contains(whole, tc.names) {
+				t.Errorf("the refusal does not name %s, so it is not this arm's refusal:\n%s", tc.names, whole)
 			}
 			// GateProceeded and not GateOrdinary: the run's other steps, the
 			// IAM removal before the first plan among them, print the latter
@@ -1148,34 +1160,46 @@ func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 			// the gate is there to protect is sent to the one act it makes
 			// impossible — every new repository of the project blocked behind
 			// a confirmation nobody can give.
-			lines := strings.Split(got, "\n")
-			refused := ""
-			for i, line := range lines {
-				if !strings.HasPrefix(line, "left for you (") || !strings.Contains(line, ", "+string(initflow.LeftRefused)+"): ") {
-					continue
-				}
-				refused = line
-				if i+1 < len(lines) && strings.HasPrefix(lines[i+1], "    ") {
-					t.Errorf("the refused step lists the command %q: no command gets a refused plan written", strings.TrimSpace(lines[i+1]))
-				}
-			}
+			// The block is at most three short lines — what was refused, why
+			// in a clause and what to do — and the whole of what it says is
+			// in the log the refused step's own line names (the owner's
+			// feedback of 2026-11-09). A line longer than a step's own line
+			// is the paragraph this came from, and an indented line that is a
+			// command is a command no refusal may leave (CV1).
+			refused := leftFor(got, initflow.Installation, initflow.LeftRefused)
 			if refused == "" {
 				t.Fatalf("a step the gate refused left the user no refusal to read:\n%s", got)
 			}
-			if !strings.Contains(refused, managedmode.NotConverged) {
-				t.Errorf("the refusal does not quote the gate's own sentence:\n%s", refused)
+			block := strings.Split(refused, "\n")
+			if len(block) > 3 {
+				t.Errorf("the refusal's block is %d lines, want three at most:\n%s", len(block), refused)
 			}
-			if !strings.Contains(refused, "Nothing here is yours to type") {
-				t.Errorf("the refusal does not say there is nothing to type:\n%s", refused)
+			head := "left for you (" + initflow.Installation + ", " + string(initflow.LeftRefused) + "): "
+			for i, line := range block {
+				if i == 0 {
+					line = strings.TrimPrefix(line, head)
+				}
+				if n := len([]rune(line)); n > 80 {
+					t.Errorf("the refusal's line is %d characters long, which is a paragraph and not a line: %q", n, line)
+				}
+				for _, addr := range []string{"module.", "google_"} {
+					if strings.Contains(line, addr) {
+						t.Errorf("the refusal prints %q, which is Terraform's own address and not Fugaro's words: %q", addr, line)
+					}
+				}
 			}
-			// And it is the PLAN refusal and not the unjudged one: both texts
-			// share the sentence above, so a classifier that collapsed to the
-			// other answer would leave this test green while the owner was told
-			// the run had failed rather than that a shape is missing from
-			// Fugaro's own tables (and the other way round: the unjudged text
-			// says nothing about an issue, which is the promise this arm makes).
-			if !strings.Contains(refused, "a person files an issue with the sentence above") {
+			// And it is the PLAN refusal and not the unjudged one: the two
+			// are opposite promises, so a classifier that collapsed to the
+			// other answer would leave this test green while the owner was
+			// told the run had failed rather than that a shape is missing
+			// from Fugaro's own tables (and the other way round: the unjudged
+			// text says nothing about an issue, which is the promise this arm
+			// makes).
+			if !strings.Contains(refused, "a person files an issue with this line") {
 				t.Errorf("the refusal is not the plan's own, which is what a cover or a cost refusal leaves:\n%s", refused)
+			}
+			if !strings.Contains(refused, "refused by ") {
+				t.Errorf("the refusal does not name the rule that refused, in the gate's own words:\n%s", refused)
 			}
 			if strings.Contains(refused, "did not judge this step") {
 				t.Errorf("a plan the cover judged is left as a step the gate reached no verdict on:\n%s", refused)
@@ -1184,6 +1208,13 @@ func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 				if strings.Contains(refused, bad) {
 					t.Errorf("the refused step tells the person at the terminal to %q, which cannot help them:\n%s", bad, refused)
 				}
+			}
+			// The gate's own sentence, and the rest of the argument, are the
+			// log's: the step's own line there carries the whole reason, and
+			// the block above is what the person reads.
+			line := stepLineInLog(t, got, markFailed+" "+initflow.Installation+":")
+			if !strings.Contains(line, managedmode.NotConverged) {
+				t.Errorf("the step's line in the log does not hold the gate's own sentence:\n%s", line)
 			}
 			if strings.Contains(got, "left for you ("+initflow.Installation+", prompt)") {
 				t.Errorf("the refused installation step printed the stage's own prompt:\n%s", got)

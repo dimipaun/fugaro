@@ -947,7 +947,15 @@ func (l *loop) endStep(r StageResult) {
 	case NeedsYou, BillingPending, WaitingForBilling:
 		// The user still owes this stage — a confirmation, a billing
 		// account — so it is never a tick, whatever it says (G3).
-		s.Left(l.stageText(r))
+		if lf := l.leftFor(r.Name); lf != nil && lf.Kind == LeftRefused {
+			// And a step the gate refused is not a step to run either, so it
+			// is drawn as the refusal it is: the left-for-you marker says
+			// "you owe this", which is true of every other stage here and
+			// false of this one.
+			s.Refused(l.stageText(r))
+		} else {
+			s.Left(l.stageText(r))
+		}
 	default:
 		// Skipped and blocked: the stage did not run, and what it waits for
 		// is not this session's to give.
@@ -1000,7 +1008,19 @@ func (l *loop) finish() {
 		l.view(l.res.Stages)
 	}
 	for _, lf := range l.res.Left {
-		fmt.Fprintf(l.o.Out, "left for you (%s, %s): %s\n", lf.Stage, lf.Kind, lf.Text)
+		// A refusal prints its three short lines (Left.Brief) and not its
+		// whole text: what a person reads there is what was refused, why in a
+		// clause and what to do, and the argument the text makes — with the
+		// gate's own sentence in it — is in the log the step's own line names
+		// (the owner's feedback of 2026-11-09).
+		lines := []string{lf.Text}
+		if len(lf.Brief) > 0 {
+			lines = lf.Brief
+		}
+		fmt.Fprintf(l.o.Out, "left for you (%s, %s): %s\n", lf.Stage, lf.Kind, lines[0])
+		for _, extra := range lines[1:] {
+			fmt.Fprintf(l.o.Out, "    %s\n", extra)
+		}
 		for _, c := range lf.Commands {
 			fmt.Fprintf(l.o.Out, "    %s\n", c)
 		}

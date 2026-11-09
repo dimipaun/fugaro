@@ -23,6 +23,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/report"
 )
 
 // State is where a stage stands.
@@ -311,6 +313,14 @@ type Left struct {
 	Kind     LeftKind `json:"kind"`
 	Text     string   `json:"text"`
 	Commands []string `json:"commands,omitempty"`
+	// Brief is a refusal's account as the terminal prints it, one part per
+	// line: what was refused, why in a clause, what to do (the owner's
+	// feedback of 2026-11-09). A refusal's Text argues the case at paragraph
+	// length — the gate's own sentence, quoted, among it — and Text is what
+	// the log holds and the only thing a reader outside this binary sees, so
+	// this never reaches the wire (json:"-"): the two fields say the same
+	// thing at two lengths and not two things.
+	Brief []string `json:"-"`
 }
 
 // PrintedCommands is every command line the Left asks the user to run.
@@ -558,6 +568,15 @@ type GatedError struct {
 	Err     error
 	Refusal GateRefusal
 	Owner   Left
+	// Reasons is the same refusal as the rules that fired, one entry each, in
+	// the producer's own words and with no Terraform address in them: what
+	// the plan's three short lines name is the thing the gate refused
+	// ("cover: a member the review did not list"), and the address each rule
+	// was read at stays in the log beside the sentence (D1352, the owner's
+	// feedback of 2026-11-09). Empty is a refusal judged without them — a
+	// step whose document the producer refused by its own rules — and the
+	// brief then says only that no table of Fugaro's covers it.
+	Reasons []string
 }
 
 func (e *GatedError) Error() string { return e.Reason }
@@ -618,14 +637,41 @@ func (e *GatedError) Left(stage Left) Left {
 			// A producer that classified the refusal without building the
 			// command it promises: the plan's own text, never the empty line
 			// an empty Left would print.
-			return Left{Kind: LeftRefused, Text: gateOutsideCover(e.Reason)}
+			return Left{Kind: LeftRefused, Text: gateOutsideCover(e.Reason), Brief: coverBrief(e.Reasons)}
 		}
 		owner.Stage = stage.Stage
 		return owner
 	case GateRefusedUnread:
-		return Left{Kind: LeftRefused, Text: gateUnjudged(e.Reason)}
+		return Left{Kind: LeftRefused, Text: gateUnjudged(e.Reason), Brief: unjudgedBrief()}
 	default:
-		return Left{Kind: LeftRefused, Text: gateOutsideCover(e.Reason)}
+		return Left{Kind: LeftRefused, Text: gateOutsideCover(e.Reason), Brief: coverBrief(e.Reasons)}
+	}
+}
+
+// coverBrief and unjudgedBrief are the two refusals as the terminal prints
+// them: three short lines, no longer than a step's own line, saying what was
+// refused, why in a clause and what to do. They are separate from the
+// sentences above and not a cut of them: a refusal's full text is an argument
+// — the gate's own sentence, naming the resource, is quoted in it — and what
+// the person at the terminal needs is the fact, the cause and the door, with
+// the argument in the log the step's line prints the path of (D1352).
+func coverBrief(reasons []string) []string {
+	why := "what it would write is outside Fugaro's own tables cover"
+	if len(reasons) > 0 {
+		why = "refused by " + report.Short(strings.Join(reasons, "; "))
+	}
+	return []string{
+		"the managed gate refused this step and nothing was written",
+		why,
+		"a person files an issue with this line; the whole sentence is in the log",
+	}
+}
+
+func unjudgedBrief() []string {
+	return []string{
+		"the managed gate did not judge this step and nothing was written",
+		"no verdict was reached: a failure of the run, not of your plan",
+		"the whole sentence is in the log",
 	}
 }
 

@@ -777,7 +777,7 @@ func (r *initRun) gateRefused(err error, doc []byte, verdict managedmode.Verdict
 	if owner, ok := r.gateDeleteLeft(err.Error(), doc, verdict, cover, imports); ok {
 		return &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: initflow.GateRefusedDelete, Owner: owner}
 	}
-	return &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: refusal}
+	return &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: refusal, Reasons: refusedReasons(verdict)}
 }
 
 // gateRefusalOf is what a step's refusal leaves the person who reads it, read
@@ -992,4 +992,23 @@ func refusedRules(v managedmode.Verdict) []string {
 		rules = append(rules, why)
 	}
 	return rules
+}
+
+// refusedReasons is the same verdict as the short lines a person reads: each
+// rule's own words and the half of the gate that wrote them, with the
+// address left out. The address is Terraform's and not Fugaro's, it is what a
+// rule was read at rather than what was refused, and it is in the log beside
+// the sentence the refusal's line shortened (the owner's feedback of
+// 2026-11-09) — so what the terminal names is the thing ("cover: a member the
+// review did not list") and never a module path or a resource type.
+func refusedReasons(v managedmode.Verdict) []string {
+	reasons := make([]string, 0, len(v.Refusals))
+	for _, ref := range v.Refusals {
+		reason := ref.Why
+		if ref.Gate != "" {
+			reason = ref.Gate + ": " + ref.Why
+		}
+		reasons = append(reasons, reason)
+	}
+	return reasons
 }

@@ -297,6 +297,18 @@ func (s *Step) Left(text string) {
 	s.end(glyphLeft, colourLeft, Left, ": ", text, lines)
 }
 
+// Refused ends the step with a cross and the log's path, and it is Left all
+// the same: a step the managed gate refused is not a failure of the run —
+// nothing was written and nothing this reader types or runs writes it — and it
+// is nobody's to type past. What it does not do is keep the left-for-you
+// marker: a person reading a run that stopped has to tell the two apart at a
+// glance (the owner's feedback of 2026-11-09).
+func (s *Step) Refused(text string) {
+	var lines []string
+	s.r.appendLogLine(&lines)
+	s.end(glyphFailed, colourFailed, Left, ": ", text, lines)
+}
+
 // Abandon ends the step without a line and without counting it: the run never
 // got to a result for it — a refusal stops the run before the stage ran — so
 // there is nothing to report, and a line in flight still has to come down.
