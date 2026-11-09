@@ -385,9 +385,10 @@ func TestTheStoreHasExactlyOneMemberAndItIsTheMCPAccount(t *testing.T) {
 // plan is not the project's policy"). Taking those off is the repository's
 // existing storage-IAM call — infra.RemoveProjectViewers, which fugaro setup
 // and fugaro update already run on the state and runs buckets — and its call
-// site for this bucket is the release that turns the front door on, because
-// nothing in this tree creates the store yet. Check 8's "a basic project Viewer
-// is refused" is the reading that proves it happened, and it is owner-run.
+// site for this bucket is the release that turns the front door on, because no
+// released `fugaro update` writes the flag that creates the store at all. Check
+// 8's "a basic project Viewer is refused" is the reading that proves it
+// happened, and it is owner-run.
 //
 // The mutations this fails on: a `projectViewer:` member or a legacy role
 // written onto the store's bucket (which is the shape a convenience binding
