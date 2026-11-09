@@ -1071,8 +1071,13 @@ affordance is absent (`KILL_ABSENT_BECAUSE`), and a figure that is a lower bound
 
 ### 2.8 The unavailable and refusal screens — `console/src/renderer/screens/degraded.ts` + `console/src/renderer/entry.ts`
 
-`renderUnavailable` draws `section.console-unavailable` with `data-kind="no-binary"` or
-`data-kind="refused"`, `data-theme`, `data-received-at=""`. Two bodies:
+`renderUnavailable` draws `section.console-unavailable` with `data-kind="no-binary"`,
+`data-kind="no-wsl"`, `data-kind="no-distro"`, `data-kind="no-fugaro-in-distro"` or
+`data-kind="refused"`, `data-theme`, `data-received-at=""`. **The four installation
+failures are four pages and not one**, each with the headline and the remedy of the
+failure it is (`docs/console-windows/`, part G): a machine with no WSL is not fixed by
+installing the CLI, and a distribution that holds no `fugaro` is not fixed by installing
+WSL. Three bodies:
 
 - **no binary** — `div.unavailable-body` holding `h1.unavailable-headline` ("no fugaro
   binary"), `p.unavailable-reason`, `div.unavailable-install` (itself holding
@@ -1086,6 +1091,18 @@ affordance is absent (`KILL_ABSENT_BECAUSE`), and a figure that is a lower bound
   it): no `div.unavailable-picker`, no `span.unavailable-picker-lead`, no
   `data-picker="binary"` and no `span.unavailable-configured` — the console asks the
   operator for no path, and the control this bullet used to describe wired nothing.
+  **This is the one of the four that draws the install line and the searched-places
+  count**, because it is the only one whose remedy is a command and the only one that
+  walked the host's own directories.
+- **the three WSL failures** — `no-wsl`, `no-distro` and `no-fugaro-in-distro`, the same
+  body with the state's own headline (`no WSL on this machine`, `no WSL distribution to
+  run the CLI in`, `no fugaro inside the distribution`), `p.unavailable-reason` and the
+  one sentence the operator acts on, `p.unavailable-remedy`. The remedy is the state's
+  own words and not an install line: `brew install` puts a `fugaro` outside every
+  distribution, so it is the wrong instruction for two of the three and an incomplete one
+  for the third. None of the three draws `div.unavailable-install` or a searched-places
+  line, and none draws the install command in any other spelling — the console walks no
+  host directory here.
 - **refused** — `h1.unavailable-headline` ("the CLI refused this read"),
   `span.unavailable-operation` and `p.unavailable-sentence`, where the sentence is the
   CLI's own text through `sanitizeRefusal` or the console's
@@ -1124,7 +1141,11 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 | unreadable | Spend | `data-unreadable="true"` on the row / `div.spend-totals` + the `no readable record` marker |
 | degraded | Spend | `span.spend-degraded` with `data-degraded="true"` |
 | polling (no Firebase) | degraded | `data-kind="no-firebase"` + `data-state="polling"` |
-| no binary / refused | unavailable | `data-kind="no-binary"` / `"refused"` |
+| no binary | unavailable | `data-kind="no-binary"` + the headline "no fugaro binary", the install line and the count of the host places walked (§2.8) |
+| no WSL | unavailable | `data-kind="no-wsl"` + the headline "no WSL on this machine" and this state's own remedy in `p.unavailable-remedy` (§2.8) |
+| no distribution | unavailable | `data-kind="no-distro"` + the headline "no WSL distribution to run the CLI in" and this state's own remedy (§2.8) |
+| no fugaro in the distribution | unavailable | `data-kind="no-fugaro-in-distro"` + the headline "no fugaro inside the distribution" and this state's own remedy (§2.8) |
+| refused | unavailable | `data-kind="refused"` + `span.unavailable-operation` and `p.unavailable-sentence` |
 | skew (refused / reduced) | chrome | the version-skew notice `section.console-skew` (§2.14): `data-mode`, `data-skew`, the reason, the facts, and every withheld view as an `li[data-hidden]`. The nav is missing the withheld buttons, and a dismissed notice is `[hidden]` on that same root with `button.console-reduced-chip` left in the header saying so |
 | the rail's row states (§4.1) | chrome (the installation rail) | `span.console-rail-state` with the **word** `running` / `silent` / `idle` beside its glyph `●` / `▲` / `○`. **Not a state the code emits today** — the rail is the canvas's addition, and what a row reads is §4.1's open item — so whichever task draws the row draws the word with it: the word is what makes the tone redundant, and the collapsed rail keeps it in the row's accessible name |
 | not built | Project (`policy`, `enrollment`) | `data-state="not-built"` + a `projects-because` sentence |
@@ -2157,6 +2178,7 @@ the code already emits**, and the stylesheet must never be the only carrier of a
 | notional / estimated | the `~$` / `est.` prefix **in the number itself** |
 | partial | the `(partial)` marker text |
 | degraded / polling | the words `degraded` and `polling` |
+| the four installation failures (§2.9) | the **headline's own sentence**, which is the state's name — `no fugaro binary`, `no WSL on this machine`, `no WSL distribution to run the CLI in`, `no fugaro inside the distribution` — with the state's own remedy under it. The rule the stylesheet draws on the page's left extent is the redundant second carrier and never the only one, and its tone is the one §3.2 gives the pair the state belongs to: `--warn` where the route to a CLI is there and the CLI is what is missing, `--error` where the route itself is not on this machine |
 | cap near / over | the **number**: the percent reading and the repository bar's `data-fill`, and, on the fleet budget panel, the cap, the legend's figures and the full-cap banner's own sentence. On Spend, the caps panel's **word** `at cap` in `span.spend-cap-at-cap`, drawn with the figures it was measured from — the row's `headroom`, and the `counted` dollars and the `daily cap` where the repository has a cap of its own — beside the bar and never instead of them |
 | not-built | the panel's own sentence |
 | a run's rigor mode | the mode's own **word** — `POC`, `Startup`, `Pro`, `Critical`, `Hotfix` — in the chip on a Live row (§2.3), the MODE cell on Projects (§2.5) and the Rigor row on the run detail (§2.6). **This mark carries no colour at all**, and the row is here to say so: the five modes have no colour of their own in this tree, so the word is the whole of the mark and a rule must not paint the modes apart |

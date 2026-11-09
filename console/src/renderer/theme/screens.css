@@ -147,6 +147,7 @@ p.run-follow-up,
 p.degraded-notice,
 p.degraded-warning,
 p.unavailable-reason,
+p.unavailable-remedy,
 p.unavailable-sentence,
 div.unavailable-searched,
 p.live-review-empty,
@@ -1190,6 +1191,27 @@ span.unavailable-operation,
 span.unavailable-searched-count {
   color: var(--text-muted);
   font-size: var(--font-size-xs);
+}
+
+/* The unavailable screen's state mark, one selector per `data-kind` the
+ * design's state table names (§2.9, the one table of every state variant): a
+ * console with no `fugaro` it can read is one of four failures or a refusal,
+ * and the four are four different instructions rather than four spellings of
+ * one. The rule on the page's left extent is the second carrier and never the
+ * only one -- the headline above it says which failure this is in the state's
+ * own words (`no fugaro binary`, `no WSL on this machine`, ...), which is
+ * section 3.5's rule 1 -- and its tone is the one section 3.2 gives the pair
+ * the state belongs to: `--warn` (attention) where the route to a CLI is there
+ * and the CLI is what is missing, `--error` where the route itself is not on
+ * this machine. A refusal keeps the attention tone it has always had. */
+section.console-unavailable[data-kind='no-binary'],
+section.console-unavailable[data-kind='no-fugaro-in-distro'] {
+  border-left: 3px solid var(--warn);
+}
+
+section.console-unavailable[data-kind='no-wsl'],
+section.console-unavailable[data-kind='no-distro'] {
+  border-left: 3px solid var(--error);
 }
 
 section.console-unavailable[data-kind='refused'] {
