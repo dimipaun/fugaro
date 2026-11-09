@@ -14,14 +14,13 @@ import (
 // included.
 const issuesPendingID = "issues-pending"
 
-// doctorIssuesCheck is doctor's line for the issues `fugaro troubleshoot` saved
-// here and nothing has filed yet: still pending, or never uploaded to the
-// project's shared store, so the team cannot see it (spec 2, D1725's one
-// doctor line).
+// doctorIssuesCheck is doctor's line for the issues this machine saved here
+// and nothing has filed yet: still pending, or never uploaded to the project's
+// shared store, so the team cannot see it (spec 2, D1725's one doctor line).
 //
 // It prints nothing at all when there is nothing waiting, which is the
 // "doctor is one screen" rule: a machine with no unfiled issue stays at its
-// one ok line, and a machine that never ran troubleshoot has no line and no
+// one ok line, and a machine that never saved an issue has no line and no
 // count. A machine with no state directory at all is the same case — there is
 // nowhere an issue could have been saved — so it is silent rather than a
 // finding about a file nobody could have written.
