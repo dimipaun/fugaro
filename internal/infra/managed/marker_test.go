@@ -927,16 +927,19 @@ func TestRunAccountsHaveNoWritePathToTheMarker(t *testing.T) {
 	// widening of one is a visible diff: a job writes runs/, cache/ and
 	// locks/, a build writes builds/, a launcher writes runs/ and, since the
 	// sealed budget token moved there, tokens/ (budget-token-channel.md §7.2,
-	// D16: the deliberate widening). tokens/ is not a run account's write
-	// prefix — the job's grant there is objectViewer, checked by
-	// runAccountGrants and by the scan's write-role rules.
+	// D16: the deliberate widening), and, since the shared issue store, issues/
+	// (docs/troubleshoot-issue/reconciliation.md D1727: the launcher who files
+	// an issue writes it with their own credential). tokens/ and issues/ are
+	// not a run account's write prefix — the job's grant on tokens/ is
+	// objectViewer, checked by runAccountGrants and by the scan's write-role
+	// rules, and no run account holds issues/ at all.
 	if !slices.Equal(gcp.JobBucketPrefixes, []string{"runs", "cache", "locks"}) {
 		t.Errorf("gcp.JobBucketPrefixes = %v", gcp.JobBucketPrefixes)
 	}
 	if !slices.Equal(gcp.BuildBucketPrefixes, []string{"builds"}) {
 		t.Errorf("gcp.BuildBucketPrefixes = %v", gcp.BuildBucketPrefixes)
 	}
-	if got := startsWithPrefixes(gcp.LauncherBucketCondition(testBucket), testBucket); !slices.Equal(got, []string{"runs/", "tokens/"}) {
+	if got := startsWithPrefixes(gcp.LauncherBucketCondition(testBucket), testBucket); !slices.Equal(got, []string{"runs/", "tokens/", "issues/"}) {
 		t.Errorf("the launcher condition grants %v", got)
 	}
 	// The project's catalog check job (D1148) writes one repository's check
@@ -3494,6 +3497,94 @@ func TestWriteFlagRoundTrip(t *testing.T) {
 	}
 	if b, _ := readMarker(t, s, testBucket); string(b) != markerBuildsJSON {
 		t.Errorf("the second call changed the object to %q", b)
+	}
+}
+
+// TestReadFlagFactReadsTheObjectWithoutTheLabel is the read the self-flag
+// finishes a half-written flag with (internal/cli/update_selfflag.go, whose
+// object write can succeed and whose label write then fail): the object half of
+// the marks on its own, which the label-bearing read cannot answer, because
+// readFact drops the object when the label is missing. Ours is the one state
+// that completion acts on — this project's fact, of a version that records an
+// amount, with a figure this build accepts — and every other state is a reason
+// instead, so a caller prints what is there rather than writing the label on
+// the strength of an object it did not recognise.
+//
+// Both of the figures a version-3 object carries are answered, and the bound is
+// not the amount: a caller that completes a half-written flag with the label
+// completes the object as it stands, so it has to be able to see a bound other
+// than the one the flag writes — and ReadImageBuilds' own rule is the one that
+// judges it, including the default a version-2 object is held to because it
+// records none (D1013).
+func TestReadFlagFactReadsTheObjectWithoutTheLabel(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name   string
+		seed   string
+		ours   bool
+		budget Budget
+		builds int64
+		want   string
+	}{
+		{name: "nothing there", ours: false, want: "is not there"},
+		{name: "the creation fact that records no amount", seed: markerJSON, ours: false, want: "records no budget amount"},
+		{
+			name: "a fact about another project",
+			seed: `{"version":3,"gcp_project":"another-project","budget":{"amount":7,"currency":"USD"},"max_image_builds":1}`,
+			ours: false, want: "names project another-project",
+		},
+		{
+			name: "a figure this build refuses",
+			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":0,"currency":"USD"},"max_image_builds":1}`,
+			ours: false, want: "records a budget this build refuses",
+		},
+		{
+			name: "a bound this build refuses",
+			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"},"max_image_builds":0}`,
+			ours: false, want: "records an image build bound this build refuses",
+		},
+		{name: "this project's fact recording an amount", seed: markerBuildsJSON, ours: true, budget: Budget{Amount: 7, Currency: "USD"}, builds: 1},
+		{
+			name: "this project's fact recording another bound",
+			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"},"max_image_builds":1000}`,
+			ours: true, budget: Budget{Amount: 7, Currency: "USD"}, builds: 1000,
+		},
+		{name: "the version that records no bound", seed: markerBudgetJSON, ours: true, budget: Budget{Amount: 7, Currency: "USD"}, builds: DefaultImageBuilds},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, f := newStorage(t)
+			f.AddBucket(testBucket, testProjectNumber, testManaged)
+			if tc.seed != "" {
+				f.Put(testBucket, MarkerObject, []byte(tc.seed))
+			}
+			fact, err := ReadFlagFact(ctx, s, testBucket, testProject, testProjectNumber)
+			if err != nil {
+				t.Fatalf("ReadFlagFact: %v", err)
+			}
+			if fact.Ours != tc.ours {
+				t.Errorf("Ours = %v, want %v (reason %q)", fact.Ours, tc.ours, fact.Reason)
+			}
+			if tc.ours && fact.Budget != tc.budget {
+				t.Errorf("Budget = %+v, want %+v", fact.Budget, tc.budget)
+			}
+			if tc.ours && fact.Builds != tc.builds {
+				t.Errorf("Builds = %d, want %d", fact.Builds, tc.builds)
+			}
+			if !tc.ours && !strings.Contains(fact.Reason, tc.want) {
+				t.Errorf("the reason %q does not say %q", fact.Reason, tc.want)
+			}
+			if !tc.ours && fact.Builds != 0 {
+				t.Errorf("Builds = %d on an object this read does not believe: the figure is set only when Ours", fact.Builds)
+			}
+		})
+	}
+	// And the same proof the writers make: a bucket that is not this project's
+	// own is not believed, whatever it holds.
+	s, f := newStorage(t)
+	f.AddBucket(testBucket, testProjectNumber, testManaged)
+	f.Put(testBucket, MarkerObject, []byte(markerBuildsJSON))
+	if _, err := ReadFlagFact(ctx, s, testBucket, testProject, testProjectNumber+1); err == nil {
+		t.Error("an object in a bucket belonging to another project number was read as this project's fact")
 	}
 }
 

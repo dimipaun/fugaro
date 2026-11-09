@@ -4,7 +4,9 @@
 merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
 prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
 except the reading of the installation's published state its lists come from, which no task of this
-plan carries; M8–M10 are not started; this folder approves no task.** The owner's spec of
+plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
+half and not started; M8 is built except the wiring that would serve its four read tools, which is
+the task M5b gates; M9 is not started; this folder approves no task.** The owner's spec of
 2026-10-24 is §0, copied **verbatim**; the design that follows (§1 onward) is written to the
 **answers the owner gave on 2026-11-04** to the fifteen decisions in
 [reconciliation.md](reconciliation.md) §4 (D920–D934) — **every one of them the recommendation at
@@ -506,7 +508,7 @@ model credentials**. That contradicts D923's own "the coordinator mints nothing"
 `TestTheCoordinatorMintsNoCustomToken`. **So the first slice is the authorization server plus
 `get_task_status`, `stream_logs`, `get_result` and `list_tasks`; `cancel_task` goes with `spawn_task`
 into the later design item rather than into the first slice**, because the marker it writes is an
-object in the runs bucket (`internal/runstore/runstore.go:1315`, `fugaro cancel`'s own write) and so
+object in the runs bucket (`internal/runstore/runstore.go:1581`, `fugaro cancel`'s own write) and so
 needs the same runs-bucket write the coordinator does not hold — "without the launch path" is not a
 condition it can meet. No task in [implementation-plan.md](implementation-plan.md) starts a run.
 **What a later `spawn_task` design item has to answer** is written in
@@ -641,7 +643,7 @@ amended answer has four parts, and the rules clause above is only the first:
    MAC'd**, so a writer the rules do not bind — a database admin, a launcher with a signer, a
    compromised run — cannot forge one. **This is the design's requirement and it is not what the
    code does**: the store hashes with a plain unkeyed `sha256` and writes no MAC
-   (`ee/coordinator/mcpauth/store.go:387`), so a reader who is not the store's own member reads an
+   (`ee/coordinator/mcpauth/store.go:398`), so a reader who is not the store's own member reads an
    identity in the clear. That gap is M2's own row, merged on `main` and not in this branch, and it
    is carried as a finding in §11 and [reconciliation.md](reconciliation.md) §4a rather than read
    here as a control the tree performs.
@@ -875,7 +877,7 @@ design says now, and what §6 states in full:
 - **The records are keyed and marked**: **HMAC-keyed hashes with a pepper in Secret Manager**, and a
   **MAC over each record's identity, limits and revocation state**, so a reader cannot reverse a
   hash and a writer the rules do not bind cannot forge a record. **Both are designed and not
-  built**: the store hashes with a plain unkeyed `sha256` (`ee/coordinator/mcpauth/store.go:387`)
+  built**: the store hashes with a plain unkeyed `sha256` (`ee/coordinator/mcpauth/store.go:398`)
   and writes no MAC, which §11 and [reconciliation.md](reconciliation.md) §4a carry as a finding
   rather than this paragraph reading as a control the tree performs.
 - **The public service holds viewer and not admin**, which is the part of the finding a *grant*
@@ -1069,15 +1071,23 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   store until M4 strips or refuses those members.
 - **The keyed hashes and the MACs the store is specified to write** (§6, §8 — the answer to finding
   H3): **designed and not built.** The store hashes with a plain unkeyed `sha256`
-  (`ee/coordinator/mcpauth/store.go:387`) and writes no MAC over a record's identity, limits or
+  (`ee/coordinator/mcpauth/store.go:398`) and writes no MAC over a record's identity, limits or
   revocation state, so a reader who is not the store's own member reads an identity in the clear and
   a writer the rules do not bind is not refused by a mark. The gap is **M2's own row**, which merged
   on `main` before this branch, and it is carried in [reconciliation.md](reconciliation.md) §4a as a
-  finding rather than closed by an edit here. **What it costs is bounded by the value it hashes**:
-  `NewValue` is 32 random bytes (`ee/coordinator/mcpauth/store.go:395`), so the hash has no weak
-  space to walk and the missing key buys a reader nothing practical — what is wrong until the keyed
-  hash and the MAC land is a security document promising an integrity control the code does not
-  perform.
+  finding rather than closed by an edit here. **What it costs is bounded by the value it hashes, and
+  that bound holds only where the value is one nobody can guess**: a token record's key is the hash
+  of `NewValue`'s 32 random bytes (`ee/coordinator/mcpauth/store.go:406`), which has no weak space to
+  walk, so there the missing key buys a reader nothing practical. **It does not hold for the audit
+  record** (M10): that one is keyed by the same unkeyed hash of a `user:<email>` entry
+  (`ee/coordinator/mcpauth/audit_record.go:164`), and an address is guessable — so a reader who can
+  list the store, the project Viewer the bullet above leaves reading it until M4's row lands, can
+  walk a dictionary of addresses and **confirm which identities have called here**, the object's own
+  `identity` field then naming the person outright. That amendment's keyed hash is specified over
+  the **token** records, so the pepper held in Secret Manager has to be put under **this** key too
+  when it lands, or the one walkable hash in the store is the one the amendment's own answer does
+  not cover. What is wrong either way until the keyed hash and the MAC land is a security
+  document promising an integrity control the code does not perform.
 - **Who owns the two bounds the open registration endpoint is accepted under** (§3, §8): the
   **per-source rate limit** and the **sweep that makes a registration, a pending authorize request
   and a code expire**. **Neither is built**, M10's `store.go` row is revocation and nothing else, and
@@ -1100,6 +1110,16 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   binary — the one M5b gates — owes this reading beside the two bounds above**; until it lands, a
   front door wired up without one admits nobody rather than everybody, which is the direction the
   gap fails in ([reconciliation.md](reconciliation.md) §4a, D933's amendment).
+- **The four read tools M8 builds are registered on no binary** (D936): nothing outside this
+  package's own tests calls `RegisterReadTools` or constructs `NewProjectRuns`, so
+  `get_task_status`, `stream_logs`, `get_result` and `list_tasks` are reachable by no client while
+  the door is dormant, and `TestNoBinaryLinksTheFrontDoorYet` still holds. **The wiring task that mounts this package on a
+  binary — the one M5b gates — owes this beside the two bounds above and M7's reading of the
+  published state**, and it is where the project's own repository slugs come from: the
+  `FUGARO_COORDINATOR_REPOS` the installation already puts on the front door's own service
+  (`deploy/terraform/gcp/modules/installation/coordinator.tf:491`), with a token's own repository
+  filter applied on top of it rather than instead of it.
+  [reconciliation.md](reconciliation.md) §4a carries what M8 still owes.
 - **The library's citations, and the version they were read at.** The review read `zitadel/oidc`
   3.51.17 **outside this container**, so §3's constraint layer rests on findings this folder could
   not re-check; M5 re-reads them against the version it pins.

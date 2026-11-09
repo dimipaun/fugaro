@@ -8,8 +8,18 @@ import (
 	"testing"
 )
 
-// Fugaro's mise.toml pins the Go of go.mod's go line's minor series and the
-// Terraform CI tests with, and keeps GOTOOLCHAIN local, as the go base did.
+// Fugaro's mise.toml pins the Go of go.mod's go line's minor series, the
+// Terraform and the tflint CI's terraform job runs, and the Trivy
+// images/scan.sh pins, and keeps GOTOOLCHAIN local, as the go base did.
+//
+// Every pair is held equal in both directions: the test reads the version out
+// of each side -- mise.toml and ci.yml, mise.toml and images/scan.sh -- and
+// requires the two to be the same, so a bump of either side alone is a
+// failure here rather than a run that lints or scans with a version CI does
+// not. images/scan.sh's half is the version its digest's comment names, the
+// one `docker inspect aquasec/trivy:<version>` reports: the digest itself is
+// not re-derived here, which needs the network, so a digest moved to another
+// release without its comment is this test's one blind spot.
 func TestRepositoryMisePins(t *testing.T) {
 	mise, err := os.ReadFile("../mise.toml")
 	if err != nil {
@@ -31,6 +41,26 @@ func TestRepositoryMisePins(t *testing.T) {
 	tm := regexp.MustCompile(`terraform_version: ([\d.]+)`).FindStringSubmatch(string(ci))
 	if tm == nil || pin("terraform") != tm[1] {
 		t.Errorf("mise.toml terraform %s, ci.yml %v", pin("terraform"), tm)
+	}
+	// ci.yml names tflint's version with the v setup-tflint's input wants;
+	// mise's registry takes it without.
+	tf := regexp.MustCompile(`tflint_version: v([\d.]+)`).FindStringSubmatch(string(ci))
+	if tf == nil || pin("tflint") != tf[1] {
+		t.Errorf("mise.toml tflint %s, ci.yml %v", pin("tflint"), tf)
+	}
+	// The pin line itself carries a digest and no version, so the version is
+	// the tag its comment names as the one the digest was read from. Exactly
+	// one `aquasec/trivy:<version>` in the file: taking the first of several
+	// would let a "bumped from X to Y" note stand in for the tag and pass
+	// while the digest names a release mise does not, so a second mention
+	// fails here instead.
+	scan, _ := os.ReadFile("../images/scan.sh")
+	sv := regexp.MustCompile(`aquasec/trivy:([\d.]+)`).FindAllStringSubmatch(string(scan), -1)
+	if len(sv) != 1 {
+		t.Fatalf("images/scan.sh names a trivy tag %d times, want exactly one (`aquasec/trivy:<version>`, the tag its digest was read from): %v", len(sv), sv)
+	}
+	if pin("trivy") != sv[0][1] {
+		t.Errorf("mise.toml trivy %s, images/scan.sh's tag %s", pin("trivy"), sv[0][1])
 	}
 	if !strings.Contains(string(mise), "GOTOOLCHAIN = \"local\"") {
 		t.Error("mise.toml does not keep GOTOOLCHAIN local")

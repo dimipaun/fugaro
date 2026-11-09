@@ -308,7 +308,12 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 	}
 	b.Options.MachineType = s.MachineType
 	b.Options.Logging = "CLOUD_LOGGING_ONLY"
+	// The catalog check job's build is bound the same way the derived build
+	// is: the timeout the estimator prices, over a queue wait the lease's
+	// deadline also covers (BuildRequest, and the test that pins all four
+	// against internal/budget's two constants).
 	b.Timeout = "3600s"
+	b.QueueTtl = "3600s"
 	return b, nil
 }
 

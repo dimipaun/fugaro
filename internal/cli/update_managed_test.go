@@ -701,6 +701,100 @@ func TestUpdateManagedStageAdmitsAnAdditivePlan(t *testing.T) {
 	}
 }
 
+// The HARD RULE on a managed project, which is where it is hardest to keep: an
+// installation one release behind this one plans each non-operator launcher's
+// runs_launcher grant as a replace (the condition gained issues/, and a
+// condition is ForceNew), and the gate has to admit exactly that replace. It is
+// the binary's own upgrade of its own grant, matched out of this plan
+// (infra.LauncherGrantUpgrade), so the release's operator step promises no
+// --allow-delete — a gate that never saw it would refuse a coding agent's
+// `fugaro update` at the installation step and send the owner after a flag,
+// which is the second step CLAUDE.md's rule about `fugaro update` forbids.
+func TestUpdateManagedConvergesTheLauncherGrantUpgrade(t *testing.T) {
+	const a, o = "user:a@example.com", "user:o@example.com"
+	bucket := "fugaro-runs-" + initProject
+	// launcherGrant makes this world an installation whose launchers are a and
+	// o (o an operator too) and whose installation root plans the one replace,
+	// from the earlier form of the launchers' condition the caller names.
+	launcherGrant := func(t *testing.T, r *initRig, beforeTitle, beforeExpr string) {
+		t.Helper()
+		// The installation's own members, as its config and its outputs record
+		// them: the matcher judges the replace against the launcher list this
+		// run holds, and an installation's list is what its config says.
+		r.appendConfig(t, "terraform: { launchers: [\""+a+"\", \""+o+"\"], operators: [\""+o+"\"] }\n")
+		r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"launchers": []string{a, o}, "operators": []string{o}})}
+		r.script["plan@installation"] = map[string]any{"exit": 2}
+		r.setPlanAt(t, "installation", launcherReplaceChange(bucket, a, beforeTitle, beforeExpr))
+	}
+
+	t.Run("the previous release's grant converges, with no flag", func(t *testing.T) {
+		r := updateManagedRig(t)
+		launcherGrant(t, r, gcp.LegacyLauncherBucketConditionTitle, gcp.LegacyLauncherBucketCondition(bucket))
+
+		got, err := updateRun(t, r, "update", "--yes")
+		if err != nil {
+			t.Fatalf("a managed project's fugaro update left an installation at the previous version behind: %v\n%s", err, got)
+		}
+		if strings.Contains(got, "--allow-delete") {
+			t.Errorf("the run sends the owner after --allow-delete for the launchers' own upgrade:\n%s", got)
+		}
+		if n := len(r.ran(t, "apply")); n == 0 {
+			t.Fatalf("the gate did not admit the upgrade, and nothing was applied:\n%s", got)
+		}
+		// Admitted is not the same statement as "the step kept its own guard":
+		// the gate is the guard here, and the session may confirm nothing.
+		if !strings.Contains(got, initflow.AgentProceeded("CLAUDECODE")) {
+			t.Errorf("the admitted step does not say it proceeded:\n%s", got)
+		}
+		recs := audits(t, r)
+		if len(recs) != 1 || recs[0].Verdict != managedmode.AuditAdmitted {
+			t.Fatalf("%d record(s) after the upgrade, want one admitted: %+v", len(recs), recs)
+		}
+		// And the record says what admitted THIS plan. Its rules are what an
+		// owner reads back and checks against the plan they kept, so on a plan
+		// the gate admitted a replace of, the two rules of the empty case are
+		// false as they stand — "the guard refused no delete and no replace"
+		// (it admitted one) and "the cover admitted every change" (it judged
+		// the change as the create it makes) — and a record that stated them
+		// anyway would be a false admission record nothing else catches, the
+		// verdict being the same either way.
+		rules := strings.Join(recs[0].Rules, "\n")
+		if strings.Contains(rules, "the guard refused no delete and no replace, so the plan removes nothing") {
+			t.Errorf("the record claims the plan removes nothing of fugaro's own, and this plan replaces a launcher's grant:\n%s", rules)
+		}
+		if !strings.Contains(rules, `runs_launcher["`+a+`"]`) {
+			t.Errorf("the record does not name the replace it admitted:\n%s", rules)
+		}
+		if !strings.Contains(rules, "asked as the create it makes") {
+			t.Errorf("the record does not say the cover judged the replace's create half:\n%s", rules)
+		}
+		if !strings.Contains(rules, "the cost list blocked no attribute of the plan") {
+			t.Errorf("the record dropped a rule the plan did pass:\n%s", rules)
+		}
+	})
+
+	// The narrow half: the gate admits the replaces this binary's own upgrade
+	// makes and nothing else. A replace from a condition no release of Fugaro
+	// wrote is refused as it always was — this is the same world with one field
+	// of the before view moved, and a matcher that had stopped reading the
+	// condition would apply it.
+	t.Run("a replace from another condition is still refused", func(t *testing.T) {
+		r := updateManagedRig(t)
+		launcherGrant(t, r, "someone-else", `resource.name.startsWith("projects/_/buckets/`+bucket+`/objects/")`)
+
+		got, err := updateRun(t, r, "update", "--yes")
+		if err == nil {
+			t.Fatalf("the run applied a replace from a condition no release wrote:\n%s", got)
+		}
+		if !strings.Contains(got, managedmode.NotConverged) {
+			t.Errorf("the refusal is not the gate's own:\n%s", got)
+		}
+		if n := len(r.ran(t, "apply")); n != 0 {
+			t.Errorf("%d terraform apply(s) ran for a replace the gate refused", n)
+		}
+	})
+}
+
 // markReads is how many calls READ the runs bucket's managed marker object,
 // however the client spelled the path: the gate's own read is one, and a run
 // that never reads the marks makes none.

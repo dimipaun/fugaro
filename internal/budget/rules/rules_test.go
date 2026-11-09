@@ -1169,7 +1169,8 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 // TestUserReadGrantsAreExactlyTheNamedFamilies: the read grants D112's answer
 // adds, and nothing else. The user claim reads the eight expressions a run
 // token already carried (each now `… || USER`), the two nodes of its own
-// mailbox, and — since coordinator plan task P3 — the coordinator's subtree.
+// mailbox, — since coordinator plan task P3 — the coordinator's subtree, and —
+// since O2 of the stateless orchestrator plan — the orchestrator's.
 // A grant anywhere else, on a family tension (b1) struck or on a parent that
 // would cascade to one, fails here as well as in the golden.
 //
@@ -1179,13 +1180,16 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 // and outcomes above all — was widened by this change.
 func TestUserReadGrantsAreExactlyTheNamedFamilies(t *testing.T) {
 	paths := generatedPaths(t)
-	// The nine, and the two mailbox nodes, which are scoped to the mailbox
+	// The eleven, and the two mailbox nodes, which are scoped to the mailbox
 	// the claim owns.
 	// generatedPaths spells $slug as slugForPath (it is the one wildcard the
 	// tests substitute), so the keys below do too.
 	// The ninth is the coordinator's subtree (coordinator plan task P3): the
 	// one family here that is granted on the root, so that the whole prefix is
-	// one grant rather than a list (D195).
+	// one grant rather than a list (D195). The tenth is the stateless
+	// orchestrator's (O2, D1220), granted on the root for the same reason and
+	// with a `.write: false` beside it: the person reads the state over the
+	// claim, and writes it over IAM, which no rule here binds.
 	want := map[string]bool{
 		"config/caps/global":                       true,
 		"config/caps/defaults":                     true,
@@ -1198,6 +1202,7 @@ func TestUserReadGrantsAreExactlyTheNamedFamilies(t *testing.T) {
 		"mailbox/$mb/outbox":                       true,
 		"mailbox/$mb/heartbeat":                    true,
 		"coordinator":                              true,
+		PathOrchestrator:                           true,
 	}
 	got := map[string]string{}
 	for p, attrs := range paths {
@@ -1470,6 +1475,85 @@ func TestCredsIsDeniedByAnExplicitNode(t *testing.T) {
 	}
 }
 
+// TestBuildLeaseFamilyIsTheWritersOwnName (T8, D1543, F22): the document names
+// the build lease's family, and names it the key space internal/budget's own
+// builders write into. There is an emulator test for the same family
+// (buildlease_emulator_test.go) and it only runs under the firebase tag; this
+// is the half that runs everywhere, and it is the half a rename breaks. A
+// family the document carries under another name, or not at all, is one the
+// CLI's writer writes with no rule over it — and that looks green, because the
+// root refuses everything and nothing here reads the name.
+//
+// Hand mutation this fails on: renaming either side of the pair (they no longer
+// agree), moving the family under runs/ (a lease becomes a run every record
+// reader sees), and dropping the template's node or one of its two attributes
+// (the family is then refused only by the root, which a later grant under it
+// may widen without meeting a rule).
+func TestBuildLeaseFamilyIsTheWritersOwnName(t *testing.T) {
+	if PathBuildLeases != budget.BuildLeasesRoot {
+		t.Fatalf("the rules name the build lease family /%s and internal/budget writes /%s, so a lease the CLI takes lives under a family no rule names", PathBuildLeases, budget.BuildLeasesRoot)
+	}
+	for _, p := range []string{budget.PathBuildLeases("aurora"), budget.PathBuildLease("aurora", "b1")} {
+		if !strings.HasPrefix(p, PathBuildLeases+"/") {
+			t.Errorf("internal/budget writes /%s, outside the family the rules name (/%s)", p, PathBuildLeases)
+		}
+	}
+	// Keyed by its own id under its own family, never under runs/: a lease that
+	// sits where a run sits is one every record reader mistakes for a run, and
+	// the two families share no path. The run family's own root is read off a
+	// run's path, so this test does not spell it a second time.
+	runRoot := strings.SplitN(budget.PathRun("aurora", "b1"), "/", 2)[0]
+	for _, p := range []string{budget.PathBuildLeases("aurora"), budget.PathBuildLease("aurora", "b1")} {
+		if p == runRoot || strings.HasPrefix(p, runRoot+"/") {
+			t.Errorf("internal/budget writes the build lease at /%s, inside the run family /%s: a lease there is read as a run (F22)", p, runRoot)
+		}
+	}
+
+	// The template names the family, and names it closed: its writers are IAM
+	// (the CLI's own credentials, the catalog-check job's account), so no client
+	// token is admitted, and an inherited refusal is one a later grant can widen
+	// without meeting an explicit node.
+	var tmpl struct {
+		Rules map[string]any `json:"rules"`
+	}
+	if err := json.Unmarshal([]byte(source), &tmpl); err != nil {
+		t.Fatalf("the rules template is not JSON: %v", err)
+	}
+	node, ok := tmpl.Rules[PathBuildLeases].(map[string]any)
+	if !ok {
+		t.Fatalf("the template carries no top-level /%s subtree: F22 gives the build lease a key space of its own, and a family the rules never name is one no reader of this file can see", PathBuildLeases)
+	}
+	for _, attr := range []string{".read", ".write"} {
+		if v, has := node[attr]; !has || v != false {
+			t.Errorf("the template's /%s carries %s = %v, want an explicit false", PathBuildLeases, attr, v)
+		}
+	}
+
+	// And the generated document — the one a deployment carries — still holds
+	// it, with nothing beneath that grants anything: a child grant would
+	// re-open what the family's node closes.
+	paths := generatedPaths(t)
+	generated, ok := paths[PathBuildLeases]
+	if !ok {
+		t.Fatalf("the template names /%s and the generated rules do not", PathBuildLeases)
+	}
+	for _, attr := range []string{".read", ".write"} {
+		if v, has := generated[attr]; !has || v != false {
+			t.Errorf("generated /%s %s = %#v, want an explicit false", PathBuildLeases, attr, v)
+		}
+	}
+	for p, a := range paths {
+		if !strings.HasPrefix(p, PathBuildLeases+"/") {
+			continue
+		}
+		for _, attr := range []string{".read", ".write"} {
+			if v, has := a[attr]; has && v != false {
+				t.Errorf("/%s %s = %#v, want false: no client token may reach the build leases", p, attr, v)
+			}
+		}
+	}
+}
+
 // TestAgentEntryCarriesTheCredentialNameAndWaitingUntil: the run's registry
 // entry gains two validated children (C1.3 rule 2). `/agents/$slug/$run` is a
 // closed allowlist (`$other` refuses everything else), so a cascade run's write
@@ -1641,10 +1725,15 @@ func TestAgentEntryFieldsAreTemplateChildren(t *testing.T) {
 // had it) still carries byte-for-byte the same rule. The new document may only
 // add; a rule that moved under a path that already existed is a change to what
 // every installation's runs may do, and it must be seen and named rather than
-// arrive as part of "we added the credentials children".
+// arrive as part of "we added the credentials children" — or, for this branch's
+// O2, "we added the orchestrator subtree", whose addition is the top-level
+// /orchestrator node and nothing under it, or for its T8, "we added the build
+// lease family", whose addition is likewise its own node and nothing under it
+// (isNamedAddition).
 //
 // Hand mutation this fails on: editing any existing rule (a loosened bound, a
-// dropped conjunct) while adding the new nodes.
+// dropped conjunct) while adding the new nodes, or dropping the new node from
+// the template (the addition check below).
 func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 	raw, err := os.ReadFile("testdata/rules.generation3.json")
 	if err != nil {
@@ -1679,8 +1768,8 @@ func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 		}
 	}
 	// And the addition is the one this task makes: the new paths are exactly
-	// the credentials family. Anything else that appears here is a rules change
-	// nobody asked for.
+	// the ones isNamedAddition names. Anything else that appears here is a
+	// rules change nobody asked for.
 	for p := range after {
 		if _, ok := before[p]; ok {
 			continue
@@ -1689,22 +1778,35 @@ func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 			t.Errorf("/%s is new and is not one of this task's additions", p)
 		}
 	}
+	// And this task's own addition is really there. The loop above proves only
+	// that whatever appeared is allowed, and a document that never gained the
+	// subtree would pass it, while the whole point of this diff is that it did.
+	if _, ok := after[PathOrchestrator]; !ok {
+		t.Errorf("the generated rules carry no /%s node: O2's addition to this document is the whole of what this branch changes", PathOrchestrator)
+	}
 }
 
 // isNamedAddition reports whether p is one of the paths a rules change of this
 // branch is allowed to add: the credentials family (C1.3), the coordinator's
-// subtree (coordinator plan task P3, D195), or the hosted MCP server's own
-// (docs/mcp-server/implementation-plan.md's M3, D922). Anything else that
-// appears in the document is a rules change nobody asked for.
+// subtree (coordinator plan task P3, D195), the hosted MCP server's own
+// (docs/mcp-server/implementation-plan.md's M3, D922), the build lease's
+// (docs/no-prompt-policy/implementation-plan.md's T8, D1543, F22), or the
+// stateless orchestrator's (docs/stateless-orchestrator/implementation-plan.md's
+// O2, D1220). Anything else that appears in the document is a rules change
+// nobody asked for.
 //
-// The coordinator's half and the MCP server's are equalities and not prefixes,
-// for the reason isNewCredsPath gives below: P3 adds the family's own node and
-// nothing under it, so a path *under* /coordinator is a change to what the
-// family contains — the shape a grant hidden under it takes — and belongs here
-// as a diff a reviewer reads rather than as a match this test waves through.
-// M3's node is refused whole, so a path under it is the same shape.
+// They are equalities and not prefixes, for the reason isNewCredsPath gives
+// below: P3 adds the family's own node and nothing under it, so a path *under*
+// /coordinator is a change to what the family contains — the shape a grant
+// hidden under it takes — and belongs here as a diff a reviewer reads rather
+// than as a match this test waves through. M3's and T8's nodes are refused
+// whole, so a path under either is the same shape. O2's is the same again, and
+// it is the one that matters most: the subtree carries a single `.read` at the
+// top and no rule under it, so a `$child` with a grant of its own is a widening
+// hidden one level down — and one a `USER` read at the top would otherwise make
+// look legitimate.
 func isNamedAddition(p string) bool {
-	return isNewCredsPath(p) || p == coordpath.PathRoot || p == PathMCPAuth
+	return isNewCredsPath(p) || p == coordpath.PathRoot || p == PathMCPAuth || p == PathBuildLeases || p == PathOrchestrator
 }
 
 // isNewCredsPath reports whether p is one of the three things C1.3 adds: the
@@ -1749,9 +1851,15 @@ func isNewCredsPath(p string) bool {
 //     change touches. It stays 1.
 //   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
 //     which a cascade launch, the init stage and doctor read (C1.19-C1.21).
+//   - rules.OrchestratorRulesVersion is the orchestrator family's own
+//     generation, at 1 (marker.go), which the daemon and the CLI read before
+//     they write the state node (O2, O3, O5). It is a marker of its own rather
+//     than a bump of the first number for C1.3's reason: a bump drops every
+//     published policy on an installation whose owner has not redeployed the
+//     rules yet, and nothing gates the subtree on the document generation.
 //
-// Hand mutation this fails on: bumping any of the three (or lowering
-// CredsRulesVersion), which is what a reviewer must see argued for.
+// Hand mutation this fails on: bumping any of the four (or lowering one of the
+// family versions), which is what a reviewer must see argued for.
 func TestRulesVersionUnchanged(t *testing.T) {
 	if projectpolicy.RulesVersion != 4 {
 		t.Errorf("projectpolicy.RulesVersion = %d, want 4: the generation that carries the coordinator's read grant (coordinator plan task P3)", projectpolicy.RulesVersion)
@@ -1767,6 +1875,15 @@ func TestRulesVersionUnchanged(t *testing.T) {
 	}
 	if PathCredsRulesMarker() == projectpolicy.PathRulesMarker() {
 		t.Errorf("the credentials marker is the rules marker: %q", PathCredsRulesMarker())
+	}
+	if OrchestratorRulesVersion != 1 {
+		t.Errorf("OrchestratorRulesVersion = %d, want 1: the first generation that carries the /%s subtree", OrchestratorRulesVersion, PathOrchestrator)
+	}
+	if PathOrchestratorRulesMarker() != "config/limits/orchestratorRules" {
+		t.Errorf("PathOrchestratorRulesMarker() = %q, want config/limits/orchestratorRules", PathOrchestratorRulesMarker())
+	}
+	if PathOrchestratorRulesMarker() == projectpolicy.PathRulesMarker() || PathOrchestratorRulesMarker() == PathCredsRulesMarker() {
+		t.Errorf("the orchestrator marker is another family's: %q", PathOrchestratorRulesMarker())
 	}
 }
 

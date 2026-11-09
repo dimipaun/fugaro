@@ -69,19 +69,15 @@ fixed here rather than worked out at merge.
    shows **no** secret mounted — not the account's Claude token, never the App key — and the variant's
    service account holds **no** `secretAccessor` on the App key, on the bundle or on anything else.
 3. **A review launches and runs.** `fugaro review --pr <N>` on the sandbox completes, and its log names
-   **no** token value, read by eye. **This is the one step reached with `FUGARO_REVIEW_SKIP_ADMISSION_CHECK`
-   set**, and it is the only reason that switch exists: the launcher's early refusal of a review launch is
-   a convenience — failing before a job is started — and not the boundary, so while the credentials service
-   admits no review caller (gap 1 of [implementation-plan.md](../cloud-senior-review/implementation-plan.md)
-   §6) the variable is what lets this launch start at all, which is the owner's answer of 2026-11-05 to
-   that section's Open item 1 and is why the step reads `FUGARO_REVIEW_SKIP_ADMISSION_CHECK=1 fugaro review
-   --pr <N>`. The launch prints **one warning line** saying so before it does anything else. The variable
-   is **off by default**, is read from the environment and from nothing else (no `fugaro.yaml`, no project
-   layer, no local config can set it), **a coding agent's session is refused it** by the same marker check
-   that refuses `fugaro creds set`, and **it admits nothing**: the credentials service's answer to the
-   review's caller is what decides whether the run is served, so a launch that starts under the switch and
-   is refused there has shown gap 1 rather than passed this step. The commit that enables the service's
-   review admission removes the variable, and **a run of this check after that flip sets none**.
+   **no** token value, read by eye. The launch is the **plain** one, with nothing set in the environment:
+   while the credentials service admitted no review caller (gap 1 of
+   [implementation-plan.md](../cloud-senior-review/implementation-plan.md) §6) this step was reached with
+   an environment switch, which the owner answered Open item 1 with on 2026-11-05, and **the flip that
+   made the service's admission the tree's own state deleted that switch in the same change** (§6's
+   CSR11, 2026-11-08) — the variable and its warning line are gone from the launcher, and the record of
+   both is the plan that defined them. What the switch never was is an admission: the credentials
+   service's answer to the review's caller is what decides whether the run is served, so a launch that
+   starts and is refused there has shown gap 1 rather than passed this step.
 4. **The token is read-only and it is one repository's.** A minted token's push is refused by GitHub
    (403), and a hand-made call naming a different repository the account is admitted for is refused by
    the **service**.

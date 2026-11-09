@@ -158,7 +158,7 @@ type InstallationSpec struct {
 	Launchers       []string          `json:"launchers"`
 	Operators       []string          `json:"operators"`
 	// LauncherBucketCondition limits the launchers' write grant on the runs
-	// bucket to runs/ and tokens/ (gcp.LauncherBucketCondition).
+	// bucket to runs/, tokens/ and issues/ (gcp.LauncherBucketCondition).
 	LauncherBucketCondition Condition       `json:"launcher_bucket_condition"`
 	Budget                  *Budget         `json:"budget"`
 	AlertEmail              *string         `json:"alert_email"`

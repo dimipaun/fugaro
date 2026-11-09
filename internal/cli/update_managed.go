@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/shellword"
 )
 
@@ -421,7 +422,19 @@ func (r *initRun) gateNamesAnIAMCall(bucket string) string {
 // So an installation whose upgrade deletes something is the owner's to run,
 // with the flag they have always passed and the confirmations they have always
 // been asked.
-func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey, cover managedmode.Cover) (bool, error) {
+//
+// upgrade is the one thing the gate is told and the owner's list is not: the
+// replaces this binary's own upgrade makes of a grant an earlier release wrote,
+// as infra.LauncherGrantUpgrade matched them out of this plan
+// (managed.Spec.Upgrade). A launcher's condition is ForceNew, so every
+// installation that has not been re-applied since it last changed plans one
+// replace per launcher who is not an operator, and a gate that refused it would
+// make `fugaro update` two steps — the flag the refusal names, on the owner's
+// own terminal — which is the one thing CLAUDE.md's rule about that command
+// forbids. It is the installation root's own and no other step's: the
+// runs_launcher grants live in that module, and every other call site passes
+// nil.
+func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey, cover managedmode.Cover, upgrade []string) (bool, error) {
 	g := r.gate
 	if g == nil || !g.managed {
 		return false, nil
@@ -445,7 +458,7 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	}
 	verdict, err := managedmode.Gate(ctx, infra.PlanFile, managedmode.Spec{
 		Project: r.projectName, GCPProject: r.gcpProject,
-		Cover: cover, Imports: imports, TF: t,
+		Cover: cover, Imports: imports, TF: t, Upgrade: upgrade,
 	})
 	if err != nil {
 		// A plan terraform cannot read is never admitted (managed.Gate's own
@@ -458,7 +471,7 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	class := gateClass()
 	conv := managedmode.ConvergeRefused(doc, class, refusedRules(verdict))
 	if verdict.OK {
-		conv = managedmode.ConvergeAdmitted(doc, class, admittedRules)
+		conv = managedmode.ConvergeAdmitted(doc, class, admittedRules(upgrade))
 	}
 	m, err := g.g.admit(ctx, class, conv)
 	if err != nil {
@@ -547,10 +560,11 @@ var rulesAdmittedRules = []string{
 // The class is the step's own and not this function's choice: a publish that
 // loosens a ceiling takes the Typed class (D846), which D1026 never admits, so
 // nothing is recorded for it and the write waits on the tail's own
-// confirmation (policyMigrationConfirm) — the typed name where the door asks
-// for one, and on a managed project at the owner's own terminal a note (the
-// ruling of 2026-11-06). The helper decides the class from the step, and this
-// call passes the class it read rather than the one it would have preferred.
+// confirmation (policyMigrationConfirm) — a note on a managed project at the
+// owner's own terminal (the ruling of 2026-11-06), and the refusal below in a
+// coding agent's session (D1552). The helper decides the class from the step,
+// and this call passes the class it read rather than the one it would have
+// preferred.
 //
 // The two branches that write no node are not judged at all, and the reason is
 // the one above: D854's bare re-seed and the generation-record step write this
@@ -578,31 +592,32 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 	}
 	marker := agentMarker(os.Getenv, s.e.r.stdinTerminal())
 	if !initflow.GateConfirms(class, r.conditions(), mg) {
-		// A Typed class is the one not-admitted answer with a sentence of the
-		// gate's own to give, and it is given here rather than left to the
-		// caller's coding-agent refusal: this step's document WAS admitted by
-		// the rules above, so what refuses it is the class rule and nothing
-		// about the session — a session told only that a coding agent is
-		// present learns that it is an agent and nothing about the node every
-		// run of the project is admitted by, which is the thing D1026 keeps out
-		// of a plan gate's reach. The verdict is the one this step built, so
-		// Refuse's own sentence names the class rule (D1026) and no rule that
-		// passed.
+		// The publish that widens the node is the owner's own step, and the
+		// fence on it is the session's rather than its class's (D1552): a
+		// loosening is what refuses here — m.loosening() is the node's
+		// ceilings, its account-choice members and its first publish, the three
+		// widens this stage has — and the marker is what asks it, so the fence
+		// keeps refusing a coding agent's session when the class system goes
+		// (D1552's own reason for the fence being this one and not Typed). The
+		// class stays beside it for everything else: it is what D1026 keeps out
+		// of a plan gate's reach, and a step this gate admits is one the rules
+		// above admitted, so what the sentence below names is the class rule
+		// and no rule that passed.
 		//
-		// The marker is asked for beside the class, and it is what keeps this
-		// inside the session the gate is about: the sentence here is the coding
-		// agent's alone. A person at a real terminal on a managed project is
-		// not asked for the typed name (the owner's ruling of 2026-11-06,
-		// policyMigrationConfirm), so the tail writes on a note with the diff
-		// above it — what this loosens is read there, in the members that
-		// changed, rather than in a sentence worded for a confirmation nobody
-		// is asked for.
+		// The sentence is the coding agent's alone, and the person at a real
+		// terminal on a managed project is not asked for the typed name (the
+		// owner's ruling of 2026-11-06, policyMigrationConfirm), so the tail
+		// writes on a note with the diff above it — what this loosens is read
+		// there, in the members that changed, rather than in a sentence worded
+		// for a confirmation nobody is asked for. What it leaves the owner is
+		// the command they run themselves (Left, below): this refusal is about
+		// the step and not about the plan, so the step is theirs.
 		//
 		// Every other not-admitted answer keeps the caller's refusal, because
 		// the gate has no sentence for it: a mark revoked between the two reads
 		// is a project that is not managed at this moment, and a fallback
 		// inventory is not a verdict about this document either.
-		if class == initflow.Typed && marker != "" {
+		if len(m.loosening()) > 0 && marker != "" {
 			refused := conv.Refuse()
 			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused, Refusal: initflow.GateRefusedClass}
 		}
@@ -928,17 +943,38 @@ func (r *initRun) gateDeleteLeft(reason string, doc []byte, verdict managedmode.
 // ever sees.
 func gateClass() initflow.ConfirmClass { return initflow.YesOrTyped }
 
-// admittedRules is what the record says admitted the plan: the three rules
-// Gate runs, in the order it runs them (internal/managed/plan.go), each one
-// true by the time a verdict is OK. A record that said only "admitted" would
-// be one an owner cannot check against the plan they kept, and these three are
-// what makes an admission mean something — the plan removes nothing, every
-// change is one the review's own cover announced, and no cost-bearing
-// attribute is blocked.
-var admittedRules = []string{
-	"the guard refused no delete and no replace, so the plan removes nothing of fugaro's own (the owner's delete list admits no removal in the embedded roots)",
-	"the cover of the embedded roots admitted every change in the plan",
-	"the cost list blocked no attribute of the plan",
+// admittedRules is what the record says admitted the plan: the rules Gate ran,
+// in the order it ran them (internal/managed/plan.go), each one true of the
+// plan the record digests. A record that said only "admitted" would be one an
+// owner cannot check against the plan they kept, and these are what makes an
+// admission mean something — the plan removes nothing of the owner's own, every
+// change is one the review's own cover announced, and no cost-bearing attribute
+// is blocked.
+//
+// upgrade is the replaces this binary's own upgrade makes, as the step matched
+// them out of this plan (infra.LauncherGrantUpgrade), and it is the reason the
+// sentences are the plan's own facts rather than one fixed list: on a plan that
+// carries one, the guard DID admit a replace and the cover DID NOT read the
+// change whole. A record that repeated the empty case's sentences there would
+// be an admission record stating two things false about the very plan it
+// digests — and an owner reading it back cannot check a rule against the plan
+// unless the rule says what the gate did. The empty case is the three sentences
+// every record this program wrote before the issues grant holds, unchanged.
+func admittedRules(upgrade []string) []string {
+	const costs = "the cost list blocked no attribute of the plan"
+	if len(upgrade) == 0 {
+		return []string{
+			"the guard refused no delete and no replace, so the plan removes nothing of fugaro's own (the owner's delete list admits no removal in the embedded roots)",
+			"the cover of the embedded roots admitted every change in the plan",
+			costs,
+		}
+	}
+	return []string{
+		"the guard refused no delete and no replace this binary's own upgrade does not make, so the plan removes nothing of fugaro's own (the owner's delete list admits no removal in the embedded roots)",
+		"the cover of the embedded roots admitted every change in the plan, each of the upgrade's replaces asked as the create it makes (its removal half is this binary's own, and no rule of the cover read it)",
+		costs,
+		"the replaces this binary's own upgrade makes were matched out of this plan, both halves of each change compared before it was named (infra.LauncherGrantUpgrade): " + safetext.FieldListLine(upgrade),
+	}
 }
 
 // refusedRules is the verdict's refusals as the rules that fired, one per

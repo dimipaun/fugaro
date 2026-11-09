@@ -90,26 +90,6 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 	if err := projectpolicy.CheckProfiles(profiles, accounts); err != nil {
 		return nil, userErr("%v", err)
 	}
-	// The account axis's one non-account value is refused for EVERY profile
-	// here, ahead of the Bitbucket skip below rather than inside the job loop:
-	// config.ValidClaudeAccountRef admits config.AnthropicKeyAccount, because a
-	// profile may name the project's own Anthropic API key at publish, and no
-	// job any installation of this release deploys serves it — so an
-	// installation whose config names it is refused, not deployed, which is the
-	// fail-closed state the api-key review plan records until AK5 deploys the
-	// review variant that carries the key. The skip below is a rule about
-	// shared jobs and a provider; this is a rule about a credential, and every
-	// provider's profiles are held to it: a Bitbucket profile is skipped
-	// rather than deployed, so an arm inside the loop would never see it and
-	// the sentinel would pass an installation unrefused, with its policy entry
-	// published (projectpolicy.DeriveAccounts, above) for a job that does not
-	// exist.
-	for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
-		if slices.Contains(lc.Profiles[name].ClaudeAccounts, config.AnthropicKeyAccount) {
-			return nil, userErr("profiles.%s.claude_accounts: %q is the project's own Anthropic API key, not a Claude account, and no job serves it: its credential is the project's own copy, held by the platform, so no shared job mounts a token for it and no review variant is deployed for it in this release. Take the key off profiles.%s.claude_accounts and run fugaro update again — a repository that reads the key for its own model calls mounts it from the project's own copy, which a profile does not have to name",
-				name, config.AnthropicKeyAccount, name)
-		}
-	}
 	// Every project job is a github one in this phase (a Bitbucket profile is
 	// skipped below), so the App's ID is resolved once, for all of them: the
 	// project has one App (design §4.5), and a job that carries it must carry
@@ -165,7 +145,16 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 		// the one function the deployer, the launcher and the runner compute
 		// the axis with): the profile's no-account job, whose name, service
 		// account and mounts are byte for byte what this deployer built before
-		// accounts existed (D9), plus one per account the profile lists.
+		// accounts existed (D9), plus one per account the profile lists. One
+		// of those values is no Claude account at all — the project's own
+		// Anthropic API key (config.AnthropicKeyAccount), which a profile may
+		// list and which config.ValidClaudeAccountRef admits there — and its
+		// job is deployed like any other value of the axis: it mounts no token
+		// (projectAccountMount) and its review-only variant is the one the
+		// credentials service serves the key from (D1417, F17). Nothing
+		// refuses it: the value carries no credential of the installation's,
+		// so there is no mount to get wrong, and a job this deployer skipped
+		// is a review the launcher would ask Cloud Run for and never find.
 		//
 		// Each account's job gets its own copy of the profile's mounts — the
 		// token of one account must never ride on another's job — its own copy
@@ -650,14 +639,13 @@ func projectJobSecrets(lc *localcfg.Config, profile string, env map[string]strin
 // when the profile lists "default" (D5), which is the same rule that function
 // states — a profile that lists no account mounts no Claude token anywhere.
 //
-// The account axis's one non-account value never reaches here: account is one
-// entry of config.ProjectJobAccounts of a profile ProjectJobs has already
-// refused for naming it, in a check that stands ahead of the Bitbucket skip and
-// so covers every profile this loop is reached for. This function is
-// deliberately not a second reader of the value, because its container lookup
-// below would answer the sentinel with claude_accounts.<sentinel>.allow_data_to
-// — a key config.ValidateClaudeAccounts refuses — so an arm here could only
-// ever repeat, in a worse sentence, a refusal the caller has already made.
+// The account axis's one non-account value (config.AnthropicKeyAccount, the
+// project's own Anthropic API key) is one entry of config.ProjectJobAccounts
+// like any other, and the arm below is where it is answered: its job mounts no
+// token, because the credential is the platform's own — the container lookup
+// this function is otherwise made of would answer it with
+// claude_accounts.<sentinel>.allow_data_to, a key config.ValidateClaudeAccounts
+// refuses.
 //
 // The mount is refused, rather than granted, when the installation creates no
 // container for it: a job whose secret_env names a container the root does not
@@ -671,6 +659,20 @@ func projectJobSecrets(lc *localcfg.Config, profile string, env map[string]strin
 // that keeps the two rules from drifting apart, and the one that fires if
 // either stops holding.
 func projectAccountMount(lc *localcfg.Config, profile string, pr config.JobProfile, account string, secretEnv, env map[string]string) error {
+	// The axis's one non-account value is the project's own Anthropic API key
+	// (config.AnthropicKeyAccount): it names a credential the platform already
+	// holds, so its job mounts no token and the container lookup below is not
+	// its question — the account's own logical name has no container to find,
+	// and its answer would prescribe a claude_accounts key
+	// config.ValidateClaudeAccounts refuses. The arm stands ahead of the
+	// lookup for that reason, as it did when this value was refused outright:
+	// the lookup's answer is a remedy nobody can carry out. Its review-only
+	// variant mounts nothing at all (reviewVariant), which is what makes the
+	// value deployable: the class's calls are the credentials service's, and
+	// the key it serves them with never rides a job (D1417, O1).
+	if account == config.AnthropicKeyAccount {
+		return nil
+	}
 	if account == "" && !slices.Contains(pr.ClaudeAccounts, config.DefaultClaudeAccount) {
 		return nil
 	}

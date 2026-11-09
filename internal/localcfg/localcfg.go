@@ -345,6 +345,13 @@ type Config struct {
 	// secret and may be printed (M5, D113b — "the settings hold the item's
 	// name only").
 	Mailbox *Mailbox `yaml:"mailbox,omitempty"`
+	// Issues is the issues block: the thresholds the terminal Issues section's
+	// nudge firms up at (T-IS15 of docs/troubleshoot-issue/, F14). It is one
+	// machine's own setting and is never published (Shared drops it): the
+	// section is printed on a terminal, after the digest's own output, and the
+	// committed report carries no part of it, so a published threshold is a
+	// figure no other machine acts on.
+	Issues *Issues `yaml:"issues,omitempty"`
 	// CredentialsService is the installation's credentials service
 	// (docs/credentials-service, D146/D147), or nil on an installation whose
 	// `fugaro update` could not deploy one — no Firebase backend for the
@@ -772,6 +779,41 @@ func (c *Config) BurnAlert() *pricing.Micros {
 		return nil // validate refused it
 	}
 	return &m
+}
+
+// Issues is the issues block: how the terminal Issues section's nudge reads
+// (T-IS15 of docs/troubleshoot-issue/, F14). The two thresholds are the whole
+// of it, and each is a pointer for Watch's reason: a file that writes one of
+// them leaves the other the default's, and the loader can tell the two apart.
+type Issues struct {
+	// NudgeAfterDays is the age, in whole days, at which a pending issue's
+	// line in the section firms up (spec §6): an issue that has waited this
+	// long is printed in the firmer wording. One day or more, which is what
+	// validate holds it to; the default is DefaultIssuesNudgeAfterDays.
+	NudgeAfterDays *int `yaml:"nudge_after_days,omitempty"`
+	// NudgeRecurrence is the occurrence count at which a recurring issue's
+	// line firms up, duplicates merged from other reporters counted (spec §6).
+	// One occurrence or more; the default is DefaultIssuesNudgeRecurrence.
+	NudgeRecurrence *int `yaml:"nudge_recurrence,omitempty"`
+}
+
+// NudgeAfterDays is issues.nudge_after_days: the age the section's wording
+// firms up at, and DefaultIssuesNudgeAfterDays when the file sets none.
+func (c *Config) NudgeAfterDays() int {
+	if c.Issues == nil || c.Issues.NudgeAfterDays == nil {
+		return DefaultIssuesNudgeAfterDays
+	}
+	return *c.Issues.NudgeAfterDays
+}
+
+// NudgeRecurrence is issues.nudge_recurrence: the occurrence count the
+// section's wording firms up at, and DefaultIssuesNudgeRecurrence when the
+// file sets none.
+func (c *Config) NudgeRecurrence() int {
+	if c.Issues == nil || c.Issues.NudgeRecurrence == nil {
+		return DefaultIssuesNudgeRecurrence
+	}
+	return *c.Issues.NudgeRecurrence
 }
 
 // Budget modes.
@@ -1735,6 +1777,14 @@ func mappingValue(m *yaml.Node, key string) *yaml.Node {
 const (
 	DefaultMaxParallel      = 20
 	DefaultBuildMachineType = "E2_HIGHCPU_8"
+	// DefaultIssuesNudgeAfterDays and DefaultIssuesNudgeRecurrence are the
+	// thresholds the Issues section's nudge firms up at (T-IS15): a week, and
+	// a third occurrence. The week is long enough that an issue a person
+	// filed and is still waiting on has visibly aged rather than merely
+	// arrived, and the third occurrence is the first count at which a
+	// recurrence is a pattern rather than a coincidence.
+	DefaultIssuesNudgeAfterDays  = 7
+	DefaultIssuesNudgeRecurrence = 3
 )
 
 // Parse decodes the config strictly, applies defaults and validates it.
@@ -1904,6 +1954,17 @@ func (c *Config) validate() error {
 	}
 	if c.MaxParallel < 1 {
 		bad("max_parallel must be at least 1")
+	}
+	if c.Issues != nil {
+		// Zero is refused rather than read as unset: the block's fields are
+		// pointers, so a file that writes 0 means 0, and 0 would have every
+		// issue print in the firmer wording from the moment it is filed.
+		if d := c.Issues.NudgeAfterDays; d != nil && *d < 1 {
+			bad("issues.nudge_after_days %d must be one day or more", *d)
+		}
+		if n := c.Issues.NudgeRecurrence; n != nil && *n < 1 {
+			bad("issues.nudge_recurrence %d must be one occurrence or more", *n)
+		}
 	}
 	if c.RegistryHost != "" && !registryHostRE.MatchString(c.RegistryHost) {
 		bad("registry_host %q is not <region>-docker.pkg.dev/<project>", c.RegistryHost)

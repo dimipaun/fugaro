@@ -27,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -76,11 +77,13 @@ import (
 // restoreOptions are fugaro restore's own flags, besides the cloud flags.
 //
 // There is no --yes and no --non-interactive, and none is missing: every step
-// of a restore is money or permanent, which is initflow.Typed's definition —
-// a project is created on a billing account, a Terraform state is written
-// from zero, and a committed file in the checkout is edited. A flag that
-// stood in for the typed name would be exactly the second, weaker path this
-// command must not be.
+// of a restore is money or permanent — a project is created on a billing
+// account, a Terraform state is written from zero, and a committed file in the
+// checkout is edited — and the no-prompt policy removed the one typed
+// confirmation this command used to take by its own project's name
+// (restoreSteps prints whatToDo instead). What still needs a real terminal is
+// the creating path the run delegates to, and those questions are that path's
+// own: a flag here would stand in for none of them.
 type restoreOptions struct {
 	cloud                          cloudOptions
 	budget                         int64
@@ -130,9 +133,12 @@ can be run again; what the creation did in the cloud (the project, its
 billing link, its state bucket, the installation's resources, any secrets)
 is not undone, and the message says so.
 
-Every step is money or permanent, so the project's name is typed at a real
-terminal, and there is no --yes, no --non-interactive and no address argument.
-The command is refused in a coding agent's session.
+Every step is money or permanent, so this command prints what it is about to
+make permanent — the new project, the budget amount, the root and the two files
+— before its first write, and the creating path it delegates to keeps its own
+typed questions (the new project's ID and the billing account) at a real
+terminal. There is no --yes, no --non-interactive and no address argument. The
+command is refused in a coding agent's session.
 
 It ends by printing what was NOT restored, as a list: the runs that were in
 flight and their counters, the spend history and the kill-switch state, the
@@ -164,7 +170,12 @@ re-created rather than lost, and the output says so.`,
 // order the sequence uses them, so each step reads only what an earlier step
 // has already decided.
 type restoreRun struct {
-	cmd  *cobra.Command
+	cmd *cobra.Command
+	// rep is the run's account and log, opened by restoreSteps once the
+	// preflight has passed and shared with the apply the sequence ends in, so
+	// this run prints one line per unit of work and one closing line (D1352,
+	// D1354).
+	rep  *report.Reporter
 	o    restoreOptions
 	sel  localcfg.Selection
 	lc   *localcfg.Config // the installation as it is: the project that was lost
@@ -183,10 +194,10 @@ type restoreRun struct {
 }
 
 // runRestore is newRestoreCmd's body. The order is the whole of the design:
-// the refusals first, then the inputs (restorePreflight), then the one
-// confirmation, then the move, the creation and its verification, the
-// checkout and the apply — and every refusal before the creation is a hard
-// return.
+// the refusals first, then the inputs (restorePreflight), then the statement
+// of what the run makes permanent, then the move, the creation and its
+// verification, the checkout and the apply — and every refusal before the
+// creation is a hard return.
 func runRestore(cmd *cobra.Command, o restoreOptions, newID, rootArg string) error {
 	// A credential leak first, before anything opens the cloud (refuseHTTP2Debug).
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
@@ -204,12 +215,18 @@ func runRestore(cmd *cobra.Command, o restoreOptions, newID, rootArg string) err
 	return restoreSteps(cmd, o, newID, rootArg)
 }
 
-// restoreManagedApply is the apply a restore ends in: managedApply, the
-// function `fugaro managed apply` runs, and nothing else (a test pins the
+// restoreManagedApply is the apply a restore ends in: managedApplyWith, the
+// body `fugaro managed apply` runs, and nothing else (a test pins the
 // production value). It is a variable only so that a test can record that
 // the sequence below reaches it, exactly once and with the new project's
 // root.
-var restoreManagedApply = managedApply
+//
+// It is the body rather than the command because a restore's apply is part of
+// the restore's own run: it prints its steps through this run's reporter — the
+// opener it is handed returns the one restoreSteps opened, so the body opens no
+// log of its own and the wrapper that would end the run is not on this path —
+// in this run's log, under this run's one closing line.
+var restoreManagedApply = managedApplyWith
 
 // restoreInitCmd builds the creating path's command: newSetupCmdWith, the
 // constructor `fugaro setup` itself uses (the door that creates — a restore
@@ -239,7 +256,7 @@ func restorePreflight(cmd *cobra.Command, o restoreOptions, newID, rootArg strin
 		return nil, nil, userErr("nothing was restored: %s", initflow.AgentRefusal(m))
 	}
 	if !stdinIsTerminal(cmd.InOrStdin()) {
-		return nil, nil, userErr("nothing was restored: %s", initflow.NeedsTerminal("a restore's typed confirmations"))
+		return nil, nil, userErr("nothing was restored: %s", initflow.NeedsTerminal("the typed steps of the creating path a restore delegates to (fugaro setup --create-project --managed)"))
 	}
 	sel, lc, err := selectProject(ctx, o.cloud)
 	if err != nil {
@@ -291,9 +308,9 @@ func restorePreflight(cmd *cobra.Command, o restoreOptions, newID, rootArg strin
 	if err := rr.refuseExisting(ctx); err != nil {
 		return nil, nil, err
 	}
-	// What the config's move will be, before the confirmation rather than
-	// after it: restoreConfig's refusals are refusals a typed name does not
-	// help with.
+	// What the config's move will be, before the run's first write rather than
+	// after it: restoreConfig's refusals are refusals the run's own statement
+	// does not help with.
 	if err := rr.planConfig(); err != nil {
 		return nil, nil, err
 	}
@@ -301,8 +318,8 @@ func restorePreflight(cmd *cobra.Command, o restoreOptions, newID, rootArg strin
 }
 
 // restoreSteps is the sequence behind runRestore's refusals: the preflight,
-// the one confirmation, the creation and its verification, the checkout and
-// the apply.
+// the statement of what the run makes permanent, the creation and its
+// verification, the checkout and the apply.
 //
 // The local config moves before the creation (the creating path installs into
 // it, and init refuses a --gcp-project the selected config does not name), so
@@ -316,11 +333,28 @@ func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (
 	if err != nil {
 		return err
 	}
-	// The one confirmation, before anything is changed: the local config, the
-	// checkout's file, the project and the apply.
-	if err := rr.confirm(cmd); err != nil {
-		return err
+	// This run's account and its log (D1352), opened where the restore's own
+	// work starts and not at the command's door: the preflight above is every
+	// refusal this command makes before it changes anything, the ones it
+	// answers without reaching the cloud included (reporterOpener), and a
+	// refused restore files no log — not even an empty one, which would be one
+	// of the fifty the name keeps (CL3's pruneLogs). The log is filed under the
+	// command's own name and holds what the run's stages streamed, and the
+	// closing line is this run's whether it finished, failed or left something
+	// for the operator. It is closed on the way out, so a last partial line is
+	// written.
+	rep, sink := reporterFor(cmd, "restore", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
 	}
+	defer rep.Summary()
+	rr.rep = rep
+	// What this run is about to make permanent, said before the first write:
+	// the policy removed the typed confirmation this step used to be, and the
+	// statement of what it does is what remains of it — the operator reads the
+	// amount, the new project, the root and the two files before any of them
+	// changes.
+	rr.say("%s\n", rr.whatToDo())
 	if err := rr.writeConfig(); err != nil {
 		return err
 	}
@@ -337,9 +371,28 @@ func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (
 			err = rr.putBack(err)
 		}
 	}()
-	var made initCreation
-	if err := rr.create(ctx, &made); err != nil {
+	// The project step covers the creation and its verification, because to the
+	// person watching they are one unit of work: the creating run's own stages
+	// are its output. Its line in flight comes down for the whole of it (G1):
+	// the child is a run of its own and prints its steps to this same terminal.
+	step := rep.Step("project")
+	fail := func(err error) error {
+		// The child's failure carries terraform's own stderr tail — its stage
+		// error wraps the tf.ExitError the child's terraform left — and this
+		// run's log has no redaction source, so what it holds is the run's
+		// stage lines and never a provider's output (F6, D1352). The line the
+		// step ends on names the same failure without the tail, and the screen
+		// keeps the tail: the child printed it, and the error this command
+		// returns prints it again (withoutTerraformTail).
+		step.Failed(withoutTerraformTail(err), nil)
 		return err
+	}
+	var made initCreation
+	rep.Pause()
+	err = rr.create(ctx, &made)
+	rep.Resume()
+	if err != nil {
+		return fail(err)
 	}
 	if err := rr.verifyCreated(ctx, c, made); err != nil {
 		var notOpen *createdNotOpenError
@@ -359,8 +412,8 @@ func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (
 			// offers a command that would refuse for the state this command
 			// actually leaves.
 			moved = false
-			return restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so it is a complete managed project except for the apply, and the project config now names it (its previous content is in the backup %s); the checkout's gcp_project: line did not move. If the marker read failed for a passing reason, change that line to gcp_project: %s and run fugaro managed apply %s to finish. Otherwise the fact in the runs bucket is what refuses the apply, and what can replace it depends on what it records: a creation fact that records none is what `fugaro managed flag %s --budget N --budget-currency CCC`, run at the owner's own terminal, replaces with the version that records the amount (Task 6.1), while the fact this run's --managed creation writes already records one, and no command of ours rewrites one that does — so for it, shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
-				rr.newID, rr.backup, rr.newID, rr.rootArg, rr.newID, rr.newID, rr.newID)
+			return fail(restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so it is a complete managed project except for the apply, and the project config now names it (its previous content is in the backup %s); the checkout's gcp_project: line did not move. If the marker read failed for a passing reason, change that line to gcp_project: %s and run fugaro managed apply %s to finish. Otherwise the fact in the runs bucket is what refuses the apply, and what can replace it depends on what it records: a creation fact that records none is what `fugaro managed flag %s --budget N --budget-currency CCC`, run at the owner's own terminal, replaces with the version that records the amount (Task 6.1), while the fact this run's --managed creation writes already records one, and no command of ours rewrites one that does — so for it, shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
+				rr.newID, rr.backup, rr.newID, rr.rootArg, rr.newID, rr.newID, rr.newID))
 		case errors.As(err, &unmarked):
 			// The creation is this run's and half marked: the fact is in the
 			// runs bucket and the project has no label, so nothing reads it
@@ -372,22 +425,28 @@ func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (
 			// refusal names the condition and not the command, because a
 			// refusal is what a coding agent's session reads (Task 3.0 §5).
 			moved = false
-			return restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so the project config keeps naming it (its previous content is in the backup %s) and the checkout's gcp_project: line did not move. What is missing is the project's %s=%s label, which only the owner writes, in their own terminal: docs/design/managed-projects.md has that one line. Run it, then change the checkout's line to gcp_project: %s and run fugaro managed apply %s to finish. If the project is unwanted instead, shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
-				rr.newID, rr.backup, managed.ProjectLabelKey, managed.ProjectLabelValue, rr.newID, rr.rootArg, rr.newID, rr.newID)
+			return fail(restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so the project config keeps naming it (its previous content is in the backup %s) and the checkout's gcp_project: line did not move. What is missing is the project's %s=%s label, which only the owner writes, in their own terminal: docs/design/managed-projects.md has that one line. Run it, then change the checkout's line to gcp_project: %s and run fugaro managed apply %s to finish. If the project is unwanted instead, shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
+				rr.newID, rr.backup, managed.ProjectLabelKey, managed.ProjectLabelValue, rr.newID, rr.rootArg, rr.newID, rr.newID))
 		default:
-			return err
+			return fail(err)
 		}
 	}
 	// The project exists, this run created it and wrote its fact: from here
 	// the config names a project that is the installation's, and it stays.
 	moved = false
+	step.Done(fmt.Sprintf("%s is created and reads as managed", rr.newID))
 	if err := rr.anchor(cmd); err != nil {
 		return restoreWrap(err, "%s was created by this run and is managed, and the project config names it; the checkout's gcp_project: line did not move, so change it to gcp_project: %s yourself, then run fugaro managed apply %s", rr.newID, rr.newID, rr.rootArg)
 	}
 	// The apply: the same function `fugaro managed apply` runs, so the
 	// preflight allowlist, the gate, the plan-hash re-check, the credential
 	// and the confirmation are the same ones and not a second, weaker path.
-	if err := restoreManagedApply(cmd, restoreApplyCloud(o.cloud), rr.root); err != nil {
+	// The opener hands the body this run's own reporter, opened above and
+	// shared with the apply: one run, one log, one closing line. The body opens
+	// nothing of its own here, and closes nothing either.
+	if err := restoreManagedApply(cmd, restoreApplyCloud(o.cloud), rr.root, func() (*report.Reporter, report.Sink) {
+		return rep, nil
+	}); err != nil {
 		return restoreWrap(err, "%s was created and is managed, and the project config names it; the apply did not finish, so run fugaro managed apply %s to finish it (nothing else is left to do but D66's list below, which a finished restore prints)", rr.newID, rr.rootArg)
 	}
 	return rr.report()
@@ -595,8 +654,8 @@ func restoreConfigPath(sel localcfg.Selection, lc *localcfg.Config) (string, err
 //     are given, which then win.
 //   - When the old project cannot be read — deleted, closed, or no longer
 //     the caller's to read: the case a restore is for — there is no fact to
-//     read, and the run proceeds only on --budget and --budget-currency, with
-//     the typed confirmations as designed. Without them it is a refusal
+//     read, and the run proceeds only on --budget and --budget-currency, as
+//     the run's own statement prints them. Without them it is a refusal
 //     naming the flags: an absent amount is not an unlimited one.
 //   - A read that did not answer (a 5xx, a cancelled context) is a refusal
 //     either way: it is neither "gone" nor "managed".
@@ -677,7 +736,11 @@ func (rr *restoreRun) budgetOf(ctx context.Context, c *infra.Clients) (*managed.
 		return nil, userErr("nothing was restored: the creation fact of %s could not be read, and a restore refuses a project that is not managed: %s", old, safetext.Field(err.Error()))
 	}
 	if !isManaged {
-		return nil, userErr("nothing was restored: %s can be read and is not managed (%s). A restore rebuilds a managed project, and no flag turns an installation that is not managed into one", old, safetext.Field(managedReason))
+		// The open end of D1541, in the one command that has it here: the old
+		// project answers and is not managed, so this run refuses and names the
+		// one command that flags an existing project managed, with the project
+		// ID as its argument.
+		return nil, managedRequired(rr.cmd, old, managedReason)
 	}
 	if flags != nil {
 		return flags, nil
@@ -850,8 +913,8 @@ func restoreBaseImages(lc *localcfg.Config) (kept map[string]string, dropped []s
 
 // readConfirmLine reads one line from in, one byte at a time.
 //
-// It is byte-wise and not a bufio.Reader, and that is the whole point. The
-// creating path below is handed the SAME reader this run's confirmations read
+// It is byte-wise and not a bufio.Reader, and that is the whole point. A
+// restore's creating path is handed the SAME reader a value entry here read
 // from, so that it sees the user's terminal — stdinIsTerminal is a type
 // assertion on an *os.File — and a bufio.Reader would break that twice over:
 // the child would be handed the *bufio.Reader itself and every typed step of
@@ -877,44 +940,19 @@ func readConfirmLine(in io.Reader) (string, error) {
 	}
 }
 
-// whatToDo is the question's subject: what this run is about to make
-// permanent, in one line. It names the amount, because it is the figure the
-// operator is committing to on a billing account.
+// whatToDo is what this run makes permanent, in one line: the statement the
+// run prints before its first write, in place of the typed confirmation the
+// policy removed. It names the amount, because it is the figure the operator
+// is committing to on a billing account.
 func (rr *restoreRun) whatToDo() string {
 	return fmt.Sprintf("restore %s into the new GCP project %s, with a monthly budget of %d %s, apply the agent-authored root %s from zero, and move this machine's project config and the repository's gcp_project: line to it",
 		rr.lc.Name, rr.newID, rr.budget.Amount, oneLine(rr.budget.Currency), rr.rootArg)
 }
 
-// whyPermanent is why this step is one initflow.Typed and not one --yes
-// covers, and it names no flag: there is none to pass.
-func (rr *restoreRun) whyPermanent() string {
-	return "a restore creates a project on your billing account, writes a Terraform state from zero, and edits a committed file in the checkout: every step of it is money or permanent, so the project's name is typed here at a real terminal"
-}
-
-// confirm is the one typed confirmation of the run (initflow.Typed's shape,
-// the same one confirmTypedStrict gives): a real terminal, and the project's
-// name typed back. A pipe or a redirect confirms nothing, a wrong name
-// changes nothing, and no flag stands in for either.
-func (rr *restoreRun) confirm(cmd *cobra.Command) error {
-	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "⚠ CONFIRM (project %s): %s\n", rr.lc.Name, rr.whatToDo())
-	if !stdinIsTerminal(cmd.InOrStdin()) {
-		return userErr("%s: %s", initflow.NeedsTerminal("the typed confirmation of a restore"), rr.whyPermanent())
-	}
-	fmt.Fprintf(out, "Type %s to confirm: ", rr.lc.Name)
-	line, err := readConfirmLine(cmd.InOrStdin())
-	if err != nil && !errors.Is(err, io.EOF) {
-		return userErr("reading the confirmation: %v", err)
-	}
-	if strings.TrimSpace(line) != rr.lc.Name {
-		return userErr("not confirmed (the project's name was not typed); nothing was changed")
-	}
-	return nil
-}
-
 // planConfig is what the config's move will be, decided before the run's
-// typed confirmation: restoreConfig's refusals are refusals a typed name does
-// not help with, and the operator reads them before typing rather than after.
+// first write: restoreConfig's refusals are refusals the run's own statement
+// does not help with, and the operator reads them before anything changes
+// rather than after.
 func (rr *restoreRun) planConfig() error {
 	// The config as its own file writes it, beside the selection's copy: the
 	// selection has this invocation's --gcp-project and --region applied to it
@@ -939,42 +977,111 @@ func (rr *restoreRun) planConfig() error {
 }
 
 // writeConfig is the local config's move: the diff, a backup of the old file,
-// and the write through init's own helpers. It runs behind the run's typed
-// confirmation, so it asks nothing of its own, and it takes the value
-// planConfig decided.
+// and the write through init's own helpers. It asks nothing of its own, and it
+// takes the value planConfig decided.
 //
 // There is no "already up to date" branch, because there is no such run: the
 // config names the OLD project (newID == lc.GCPProject is refused before
 // this) and the move writes gcp_project: <newID>, so the two are never equal.
 func (rr *restoreRun) writeConfig() error {
+	step := rr.rep.Step("config")
+	fail := func(err error) error {
+		step.Failed(err, nil)
+		return err
+	}
 	data, err := rr.next.Marshal()
 	if err != nil {
-		return userErr("marshalling the moved project config: %v", err)
+		return fail(userErr("marshalling the moved project config: %v", err))
 	}
 	if _, err := localcfg.Parse(data); err != nil {
-		return userErr("the moved project config: %v", err)
+		return fail(userErr("the moved project config: %v", err))
 	}
-	w := rr.cmd.OutOrStdout()
-	fmt.Fprintf(w, "The project config %s changes:\n%s", rr.path, lineDiff(string(rr.old), string(data)))
+	rr.say("The project config %s changes:\n%s", rr.path, lineDiff(string(rr.old), string(data)))
 	if err := os.MkdirAll(filepath.Dir(rr.path), 0o700); err != nil {
-		return userErr("%v", err)
+		return fail(userErr("%v", err))
 	}
 	if rr.old != nil {
 		backup, err := backupFile(rr.path, rr.old, time.Now())
 		if err != nil {
-			return userErr("backing up the project config: %v", err)
+			return fail(userErr("backing up the project config: %v", err))
 		}
 		rr.backup = backup
-		fmt.Fprintf(w, "backed up the old project config to %s\n", backup)
+		rr.say("backed up the old project config to %s\n", backup)
 	}
 	if err := writeFileAtomic(rr.path, data); err != nil {
-		return userErr("writing the project config: %v", err)
+		return fail(userErr("writing the project config: %v", err))
 	}
-	fmt.Fprintf(w, "wrote %s\n", rr.path)
+	step.Done(fmt.Sprintf("wrote %s", rr.path))
 	for _, l := range rr.left {
-		fmt.Fprintf(w, "note: %s\n", l)
+		rr.say("note: %s\n", l)
 	}
 	return nil
+}
+
+// say prints a block the person is meant to read on lines of its own, with this
+// run's line in flight taken down around it and drawn again after (G1): a
+// step's spinner over the config's diff, the checkout's diff or the list the
+// run ends with would be a block somebody is reading through.
+func (rr *restoreRun) say(format string, args ...any) {
+	fmt.Fprintf(sayThrough(rr.rep, rr.cmd.OutOrStdout()), format, args...)
+}
+
+// sayThrough is the writer a command prints its own lines through: the writer
+// it was given — a person's stdout, or the stderr a warning belongs on — and
+// the run's log beside it (D1352, Reporter.Log), so the log is the run's full
+// output and not only its steps, and a failure's "full output:" path holds the
+// sentences the run printed under its step.
+func sayThrough(rep *report.Reporter, w io.Writer) io.Writer {
+	return through(rep, w, true)
+}
+
+// streamThrough is the writer for a child's own stream — a managed apply's
+// terraform progress — which a person watches and the run does not keep: D1352
+// gives a command with no redaction source a log of its stage lines only, and
+// this stream is raw (the converge's is sunk because the converge hands the
+// sink its live redaction slots, CL5b, and a log keeps what it holds for 14
+// days). What it is not is unguarded: the apply's step is open across the
+// whole of it, so its writes take the line in flight down and draw it again
+// after, exactly as a command's own lines do.
+func streamThrough(rep *report.Reporter, w io.Writer) io.Writer {
+	return through(rep, w, false)
+}
+
+// through is both writers: the writer the command was given, the run's log
+// when the stream is one the run keeps, and the line in flight taken down
+// around every write and drawn again after (G1) — a spinner redraws its own
+// line with a carriage return, so a block written while a step is open is
+// drawn over unless the line comes down first. A nil reporter is a run with no
+// log and nothing drawn: the writer itself.
+func through(rep *report.Reporter, w io.Writer, log bool) io.Writer {
+	if rep == nil {
+		return w
+	}
+	return &throughWriter{rep: rep, w: w, log: log}
+}
+
+// throughWriter is through's writer: one block out to a person, one into the
+// log when the run keeps it. It writes through to the log whatever the human
+// write does, and it never fails the command (G5): a closed pipe or a log that
+// cannot be written changes no exit code, and the returned length is the
+// caller's bytes either way, so an io.Writer that checks errors — terraform's
+// — is not stopped by either of them.
+type throughWriter struct {
+	rep *report.Reporter
+	w   io.Writer
+	// log is whether this stream is the run's own account of itself: a
+	// command's own lines are kept, a child's raw output is not.
+	log bool
+}
+
+func (t *throughWriter) Write(p []byte) (int, error) {
+	if t.log {
+		_, _ = t.rep.Log().Write(p)
+	}
+	t.rep.Pause()
+	_, _ = t.w.Write(p)
+	t.rep.Resume()
+	return len(p), nil
 }
 
 // createArgs is the creating path's flags, and nothing else: `fugaro setup
@@ -1014,17 +1121,17 @@ func (rr *restoreRun) createArgs() []string {
 //
 // Delegating is the point and not a shortcut. The creating run is what writes
 // the project's creation fact for the project it created and what sets up
-// D77's state bucket and binds the deployer to it (markCreated), and what
-// removes every confirmation would be a second implementation of the creation
-// that skipped one of them. So the restore runs the creation, with the
-// creating run's own confirmations — the project's ID typed, the billing
-// account typed, and the installation's own review — exactly as a person
-// running it by hand would.
+// D77's state bucket and binds the deployer to it (markCreated), and doing
+// either here would be a second implementation of the creation that skipped
+// one of the creating run's own steps. So the restore runs the creation,
+// with the creating run's own inputs — the project's ID, the billing account,
+// and the installation's own review — exactly as a person running it by hand
+// would.
 //
 // The stdin is the command's own, unchanged: the child has to see the user's
-// terminal (stdinIsTerminal is a type assertion on an *os.File), and this
-// run's own confirmations read it a byte at a time so that they take one line
-// and leave the rest — see readConfirmLine.
+// terminal (stdinIsTerminal is a type assertion on an *os.File), and a value
+// entry here reads it a byte at a time so that it takes one line and leaves
+// the rest — see readConfirmLine.
 func (rr *restoreRun) create(ctx context.Context, made *initCreation) error {
 	cmd := rr.cmd
 	args := rr.createArgs()
@@ -1049,41 +1156,36 @@ func (rr *restoreRun) create(ctx context.Context, made *initCreation) error {
 // field of the repository the restore changes, and the one every teammate's
 // CLI and every CI job reads the shared config from.
 //
-// The edit keeps init's own discipline: the diff, then a yes at a terminal
-// (anything else, and a pipe, leaves the file alone and prints the line to
-// add), and a read-back that has to mean what the file meant plus the one
-// value. There is no --yes here: a restore has none.
+// The edit keeps init's own discipline: the diff, then the write, and a
+// read-back that has to mean what the file meant plus the one value. The
+// policy removed the yes this step used to wait for, so the write follows the
+// diff; the run's own statement of what it makes permanent is printed by
+// restoreSteps before the config moves at all.
 func (rr *restoreRun) anchor(cmd *cobra.Command) error {
+	step := rr.rep.Step("checkout")
+	fail := func(err error) error {
+		step.Failed(err, nil)
+		return err
+	}
 	path := filepath.Join(rr.checkout, "fugaro.yaml")
 	old, err := requireFugaroYAML(path)
 	if err != nil {
-		return err
+		return fail(err)
 	}
 	out, changed, err := restoreGCPProjectLine(old, rr.lc.GCPProject, rr.newID)
 	if err != nil {
-		return err
+		return fail(err)
 	}
-	w := cmd.OutOrStdout()
 	if !changed {
-		fmt.Fprintf(w, "%s already names gcp_project: %s\n", path, rr.newID)
+		step.Skipped(fmt.Sprintf("%s already names gcp_project: %s", path, rr.newID))
 		return nil
 	}
-	fmt.Fprintf(w, "%s\n%s", path, lineDiff(string(old), string(out)))
-	addLine := fmt.Sprintf("to let teammates use this installation without setup, change the gcp_project line of %s yourself: gcp_project: %s\n", path, rr.newID)
-	if !stdinIsTerminal(cmd.InOrStdin()) {
-		fmt.Fprint(w, addLine)
-		return nil
-	}
-	fmt.Fprintf(w, "Write this to %s? [y/N]: ", path)
-	line, _ := readConfirmLine(cmd.InOrStdin()) // an ended input is a no
-	if ans := strings.ToLower(strings.TrimSpace(line)); ans != "y" && ans != "yes" {
-		fmt.Fprint(w, addLine)
-		return nil
-	}
+	rr.say("%s\n%s", path, lineDiff(string(old), string(out)))
 	if err := writeFileAtomic(path, out); err != nil {
-		return userErr("writing %s: %v", path, err)
+		return fail(userErr("writing %s: %v", path, err))
 	}
-	fmt.Fprintf(w, "Updated %s with the new gcp_project. Review it with git diff and commit it like any change: every teammate's CLI and every CI job or pin that runs fugaro against the repository reads the shared config from this line.\n", path)
+	step.Done(fmt.Sprintf("moved gcp_project to %s in %s", rr.newID, path))
+	rr.say("Review it with git diff and commit it like any change: every teammate's CLI and every CI job or pin that runs fugaro against the repository reads the shared config from this line.\n")
 	return nil
 }
 
@@ -1273,10 +1375,13 @@ func restoreNotRestored(old *localcfg.Config, newID string) []string {
 
 // report ends the run with D66's list. It is the last thing the command does,
 // after the apply, so a reader takes away what the new project has and what it
-// does not in one place.
+// does not in one place: the step line says the restore finished and names what
+// the list below is, and the list is the lines under it — printed through the
+// run's own writer, so the list is in the log the step's line is in, and not
+// only on the screen the step's line points away from (D1352).
 func (rr *restoreRun) report() error {
-	w := rr.cmd.OutOrStdout()
-	fmt.Fprintf(w, "\n%s is restored into %s. NOT restored:\n", rr.lc.Name, rr.newID)
+	rr.rep.Step("account").Done(fmt.Sprintf("%s is restored into %s. NOT restored:", rr.lc.Name, rr.newID))
+	w := sayThrough(rr.rep, rr.cmd.OutOrStdout())
 	for _, l := range restoreNotRestored(rr.lc, rr.newID) {
 		fmt.Fprintf(w, "  - %s\n", l)
 	}

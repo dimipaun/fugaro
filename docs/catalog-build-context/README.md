@@ -1,11 +1,17 @@
 # A repository build context for catalog `dockerfile` entries — the Dockerfiles teams already have
 
-**Status: plan only; nothing is implemented; no task approved.** This is a plan for the owner to read.
+**Status: plan only; nothing is implemented on `main`; the decisions D1390–D1409 are all answered
+2026-11-07 (each the recommendation) and all five tasks CB1–CB5 are approved 2026-11-07.** This is a
+plan for the owner to read.
 
-**2026-11-07: D1390-D1409 are all answered, each the recommendation** (asked one at a time; reconciliation section 7 carries the dated answer in each row). D1408 is answered (fold into `docs/project-image-catalog/context-design.md`), so the first gate is lifted; D1409 puts the work after the removal and after D1208's migrated entries (0.22.0). **No task is approved yet**: each still needs the owner's explicit go.
-It adds no code, no schema, no config key and no Terraform; it edits no file outside `docs/`. Nothing
-in it is an approval: every task in [implementation-plan.md](implementation-plan.md) needs the owner's
-own go, and the first task needs an answer before it — see **Open items** below.
+**2026-11-07: D1390-D1409 are all answered, each the recommendation** (asked one at a time; reconciliation section 7 carries the dated answer in each row). D1408 is answered (fold into `docs/project-image-catalog/context-design.md`), so the first gate is lifted, and **all five tasks are approved**: the go this folder left to the owner, task by task, was given in that one answer. D1409's answer puts the work **after the removal and after D1208's migrated entries — 0.22.0**, the slot `docs/failure-classes` shares with it.
+
+**2026-11-08: the owner amended D1409** — **this work does not wait for `docs/repo-image-removal`'s chain**, so the ordering that answer named is superseded. The amendment changes no task — CB1 and CB5's gate half were unaffected either way, and CB2–CB4's order against R0–R2 becomes a release-planning question rather than a code one — and it names no release: which one carries the work stays the owner's and is claimed nowhere here (reconciliation section 7 records the amendment in its own row, beside the answer it amends).
+
+It adds no code, no schema, no config key and no Terraform of its own; the documents here edit no file
+outside `docs/`, and the work they plan is `internal/config`'s, `internal/infra`'s and
+`internal/settings`' — named here, done by the tasks. **Open items** below is what the owner answered,
+and each answer is the reason a task reads the way it does.
 
 **Asked by:** issue **#1738** ("catalog: a repository build context for dockerfile entries"), opened
 by **the issue's reporter** — a Fugaro operator running a project image catalog on their own
@@ -40,7 +46,7 @@ its security section reads.
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | Issue **#1738**, verbatim: the problem, the Dockerfile example, the four things the ask would keep, and the checklist line. Where this file and the others disagree about what the issue *says*, this file wins |
-| [reconciliation.md](reconciliation.md) | Every claim of the issue against the code on `main`, read by path and symbol: findings **F1–F33** (Wrong / Exists / Gap / Rule / Open), how a catalog `dockerfile` entry is built today end to end (§2), what a context would mean for `COPY` (§3), **the security analysis as an attacker would see it** (§4: repository-authored context text, the build account's grants, the git credential, secrets in the context, size, `.dockerignore`, the nightly check's credential-less shape, and how `docs/repo-image-removal`'s D1208 points the other way), an **UNVERIFIED** section (§6), the decisions **D1390–D1409** each with a recommendation, an alternative and an **empty owner's-answer cell** (§7), the number block and how it was read (§8), and the owner's **Open items** (§9). **Where it disagrees with [spec.md](spec.md) about the code, it wins** |
+| [reconciliation.md](reconciliation.md) | Every claim of the issue against the code on `main`, read by path and symbol: findings **F1–F33** (Wrong / Exists / Gap / Rule / Open), how a catalog `dockerfile` entry is built today end to end (§2), what a context would mean for `COPY` (§3), **the security analysis as an attacker would see it** (§4: repository-authored context text, the build account's grants, the git credential, secrets in the context, size, `.dockerignore`, the nightly check's credential-less shape, and how `docs/repo-image-removal`'s D1208 points the other way), an **UNVERIFIED** section (§6), the decisions **D1390–D1409** each with a recommendation, an alternative and the owner's dated answer (§7, where D1409 carries a second row for the 2026-11-08 amendment), the number block and how it was read (§8), and the owner's **Open items**, every one of them answered (§9). **Where it disagrees with [spec.md](spec.md) about the code, it wins** |
 | [implementation-plan.md](implementation-plan.md) | The tasks **CB1–CB5**, each with its files (at most six, and CB1 is exactly at the cap), its interfaces, its named tests and command, its **red step**, its **mutation**, its **reviewer tier**, its dependencies and its commit; the levels, the critical path and the shared-files table proving no level has two writers of one file (§1–§2), what is deliberately not in the plan (§4), the release slot left to the owner with the `### For operators` text quoted (§5), the owner-run live check **Check 292** (§6) and the gates a task may not start without (§7) |
 | `README.md` | This file: the status, the shape in one paragraph, the numbers, and what a reader should not take from here |
 
@@ -50,8 +56,9 @@ its security section reads.
 `main`, in the folder whose spec this issue's feature belongs to, and it is titled — in those words —
 "A repository build context for catalog `dockerfile` entries". It carries its own gaps **G1–G4**,
 decisions **A1–A8**, open items **O1–O6** and build tasks **C1–C5**, it takes no `D` number and no
-`Check` number, and it is unbuilt and unapproved. Its **G2** is this folder's **F4** and its **G3** is
-this folder's **F2**.
+`Check` number, and it is unbuilt. Its **G2** is this folder's **F4**, its **G3** is this folder's **F2**, and
+**D1408** — answered 2026-11-07: fold into it — makes its series this folder's: **CB1–CB5** are the
+tasks written in it, with **CB5** carrying the fold-in.
 
 **This folder does not silently become a second plan for one feature.** The owner's answer to
 **D1408** — fold into that amendment, supersede it, or stand beside it — is the gate on every task
@@ -64,8 +71,10 @@ folder adds is the reading that the **issue** does not.
 
 ## What this folder is not
 
-- **It is not an approval, and it is not a decision.** D1390–D1409 are questions with a recommended
-  answer each; the owner's-answer cell is empty in every row. No recommendation here has been taken.
+- **It is not an approval by itself.** D1390–D1409 are questions with a recommended answer each, and
+  the recommendation is not the answer: every one of them was answered by the owner on 2026-11-07,
+  each as recommended, and the five tasks were approved the same day. What this folder writes is the
+  reading those answers were given against.
 - **It is not a second answer to `docs/repo-image-removal`'s question.** That design's **D1208**
   (owner ruling 2026-11-04) answered how a migrated entry bakes the repository's own dependency cache:
   "the entry's own Dockerfile does the clone … and the engine gains NO bake mode", on the stated
@@ -85,24 +94,29 @@ folder adds is the reading that the **issue** does not.
 
 | Block | State |
 | --- | --- |
-| **D1390–D1409** | this work's block, read on 2026-11-06 over `origin/main` and **every** open pull request's head (1783 refs). The highest decision written anywhere is **D1389** (`docs/image-env`, on `main`), and a `git grep` for the decision numbers in the `D139x` and `D140x` ranges over all of them returns **no path at all**, with positive controls run so that "nothing" is not a broken command. **D1390–D1409 are all written** in [reconciliation.md](reconciliation.md) §7 and **not one is answered**; none is reserved unused. The reading, with its commands, is §8 |
+| **D1390–D1409** | this work's block, read on 2026-11-06 over `origin/main` and **every** open pull request's head (1783 refs). The highest decision written anywhere is **D1389** (`docs/image-env`, on `main`), and a `git grep` for the decision numbers in the `D139x` and `D140x` ranges over all of them returns **no path at all**, with positive controls run so that "nothing" is not a broken command. **D1390–D1409 are all written** in [reconciliation.md](reconciliation.md) §7 and **every one of them is answered** (2026-11-07, each the recommendation; D1409 amended 2026-11-08); none is reserved unused. The reading, with its commands, is §8 |
 | **Check 292** | this work's live check (implementation-plan §6), the first number free above the register's highest **written** `## Check` section, **290** at this work's own reading (`docs/gcp-live-checklist.md`) and **291** since `docs/image-env`'s check was written. **291 was claimed** by `docs/image-env` at that reading; **292–299 are claimed by nobody**; `docs/stateless-orchestrator` claims 300–309 and `pr/1780`'s `docs/cli-output-console-graph` claims 310–314, both above this block. Like every claim above the highest written section, 292 is **claimed, not reserved**: the register's rule is that a claim is settled at its merge, and whichever of two claims merges second renumbers itself. The register's own row and section are written by the task that implements the check, under the number free **at that merge** |
 | **Findings F1–F33** | this folder's own numbering, in [reconciliation.md](reconciliation.md) §5, taking no number any other work reads. **F33 keeps the next free number rather than renumbering the findings the decisions above it cite** — it was established while slicing the plan, it is a Gap like F14–F22, and the reason is written where it sits |
 | **CB1–CB5** | this folder's task series, in [implementation-plan.md](implementation-plan.md). Distinct from `docs/project-image-catalog/context-design.md`'s **C1–C5** on purpose: two series in one tree that share letters would be read as one |
 
 ## Open items
 
-These are the owner's, and none is decided here. The full text, with the reason each one exists, is
-[reconciliation.md](reconciliation.md) §9; this is the index.
+These were the owner's, and every one is answered: the items are the questions the answers were given
+to, and each answer is the reason a task reads the way it does. The full text, with the reason each one
+exists, is [reconciliation.md](reconciliation.md) §9; this is the index.
 
-1. **D1408 — blocking, and first.** `docs/project-image-catalog/context-design.md` already designs
-   this feature (**F29**). Fold into it, supersede it, or stand beside it. **No task in
-   [implementation-plan.md](implementation-plan.md) may start before this is answered**, because the
-   answer decides which folder's tasks are real.
-2. **D1409 — the release, and the order against the removal.** `docs/repo-image-removal`'s D1208
-   (owner ruling 2026-11-04) refused an engine-side mechanism keyed by repository, and this feature
-   re-creates part of that input inside the catalog (**F30**). Whether the difference is enough, and
-   whether the two ship in one release, is the owner's.
+1. **D1408 — answered 2026-11-07: fold into `docs/project-image-catalog/context-design.md`.**
+   `docs/project-image-catalog/context-design.md` already designs this feature (**F29**), so its
+   G/A/O/C series is this work's series and no task here starts before that fold-in (**CB5** carries
+   it).
+2. **D1409 — answered 2026-11-07 (after the removal lands and D1208's migrated entries are real),
+   amended 2026-11-08: this work does not wait for the removal chain.** `docs/repo-image-removal`'s
+   D1208 (owner ruling 2026-11-04) refused an engine-side mechanism keyed by repository, and this
+   feature re-creates part of that input inside the catalog (**F30**). The amendment says the work
+   does not wait for that chain; it changes no task, because CB1 and CB5's gate half were unaffected
+   either way, and it leaves CB2–CB4's order against R0–R2 a release-planning problem rather than a
+   code one. Which release carries the work is still the owner's and is claimed nowhere
+   ([implementation-plan.md](implementation-plan.md) §5).
 3. **D1401 — the security fork, and the one that changes a task's tier.** A context-change trigger
    needs either a git credential in the check job or a hash staged beside the Dockerfile in
    `builds/catalog/`. The second is recommended, because it keeps the check job's credential-less

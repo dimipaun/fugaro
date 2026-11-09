@@ -15,6 +15,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -250,6 +251,27 @@ func TestATestNeverWritesTheDeveloperConfigHome(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("the recording wrote nothing to its own config home: %v", err)
+	}
+}
+
+// TestAStepCommandsLogLandsInTestMainsStateHome opens a log the way a
+// step-printing command does and reads back the path the sink reports: the
+// state directory's half of the rule above, through the code that resolves it
+// rather than the arithmetic of the rule, so a change to either one moves this
+// test's failure with it. A log under the developer's own state home is
+// pruned on every open — fourteen days, fifty files per command name — so
+// this is the difference between a suite run and an operator's logs.
+//
+// TestATestNeverWritesTheDeveloperStateHome (report_run_test.go, CL7c) is the
+// other half: that the variable itself is TestMain's and not under $HOME.
+func TestAStepCommandsLogLandsInTestMainsStateHome(t *testing.T) {
+	sink, err := report.OpenLog("devhome", os.Getenv, runtime.GOOS, time.Now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sink.Close() })
+	if dir, want := filepath.Dir(sink.Path()), filepath.Join(testStateRoot, "fugaro", "logs"); dir != want {
+		t.Fatalf("a run's log is filed under %s, want %s", dir, want)
 	}
 }
 

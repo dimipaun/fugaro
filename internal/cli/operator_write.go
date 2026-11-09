@@ -28,7 +28,7 @@ func writeDenied(err error) bool {
 // admins may make (docs/design/bucket-iam.md H8). The two lists those
 // sentences were written for are the same two roles under the old words: the
 // role the releases name a launcher reads the whole bucket but writes only
-// runs/ and tokens/ (the sealed budget token, since 0.9.0), and the role they
+// runs/ and tokens/ (the sealed budget token, since 0.9.0) and issues/ (the shared issue store), and the role they
 // name an operator writes it all -- operator and admin now (D1581). A 403 is
 // a user error (exit 1) naming the object, the bucket and what to do; any
 // other error is returned unchanged, for the caller's own wrapping.
@@ -45,7 +45,7 @@ func operatorWriteErr(url, key string, err error, lead ...string) error {
 	if len(lead) > 0 {
 		open = lead[0]
 	}
-	return userErr("%s: writing %s in %s needs the admin role (since 0.7.0 operators read the runs bucket but write only runs/, and since 0.9.0 tokens/); ask an admin to publish it, or to add you with fugaro update --admin", open, key, url)
+	return userErr("%s: writing %s in %s needs the admin role (since 0.7.0 operators read the runs bucket but write only runs/; the reach has since widened to tokens/ and issues/); ask an admin to publish it, or to add you with fugaro update --admin", open, key, url)
 }
 
 // checkWriteErr is writeState's refusal of a check.json write the daily

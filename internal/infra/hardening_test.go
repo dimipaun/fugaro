@@ -60,7 +60,7 @@ func TestRunsBucketFindings(t *testing.T) {
 	// this test asserts both halves: the init fix is there, and nothing for
 	// this member tells an operator to remove the binding.
 	t.Run("the launchers' pre-seal runs/-only write", func(t *testing.T) {
-		old := &storage.Expr{Title: gcp.LegacyLauncherBucketConditionTitle, Expression: gcp.LegacyLauncherBucketCondition(b)}
+		old := &storage.Expr{Title: gcp.RunsOnlyLauncherBucketConditionTitle, Expression: gcp.RunsOnlyLauncherBucketCondition(b)}
 		p := &storage.Policy{Bindings: slices.Clone(hardened)}
 		p.Bindings[2] = &storage.PolicyBindings{Role: "roles/storage.objectUser", Members: []string{a}, Condition: old}
 		fs := RunsBucketFindings(p, b, hardeningProject, []string{a, o}, []string{o})
@@ -72,7 +72,7 @@ func TestRunsBucketFindings(t *testing.T) {
 			if f.Severity == "warning" && strings.Contains(f.Problem, "lacks") && strings.Contains(f.Problem, "tokens/") && strings.Contains(f.Fix, "fugaro update") {
 				lacks = true
 			}
-			if f.Severity == "warning" && strings.Contains(f.Problem, gcp.LegacyLauncherBucketConditionTitle) && strings.Contains(f.Fix, "fugaro update (0.9.0 or later)") {
+			if f.Severity == "warning" && strings.Contains(f.Problem, gcp.RunsOnlyLauncherBucketConditionTitle) && strings.Contains(f.Fix, "fugaro update (0.9.0 or later)") {
 				oldForm = true
 			}
 		}
@@ -83,6 +83,32 @@ func TestRunsBucketFindings(t *testing.T) {
 			t.Errorf("the pre-0.9.0 launcher condition is not reported as that grant's old form: %+v", fs)
 		}
 	})
+	// The same binding one release later: the runs/ and tokens/ form 0.9.0
+	// wrote, on an installation not re-applied since the shared issue store
+	// moved to issues/ (D1727). The launcher holds the runs/ and tokens/ write
+	// it is supposed to hold and cannot upload an issue; the fix is the update
+	// that widens the grant, never a removal — this case used to fall through
+	// to the catch-all for a condition that is not the launchers' own, which
+	// prints remove-iam-policy-binding --all.
+	t.Run("the launchers' runs/ and tokens/ write, before the issues grant", func(t *testing.T) {
+		old := &storage.Expr{Title: gcp.LegacyLauncherBucketConditionTitle, Expression: gcp.LegacyLauncherBucketCondition(b)}
+		p := &storage.Policy{Bindings: slices.Clone(hardened)}
+		p.Bindings[2] = &storage.PolicyBindings{Role: "roles/storage.objectUser", Members: []string{a}, Condition: old}
+		fs := RunsBucketFindings(p, b, hardeningProject, []string{a, o}, []string{o})
+		issues := false
+		for _, f := range fs {
+			if strings.Contains(f.Fix, "remove-iam-policy-binding") {
+				t.Errorf("an operator is told to remove the launcher's own grant: %+v", f)
+			}
+			if f.Severity == "warning" && strings.Contains(f.Problem, gcp.LegacyLauncherBucketConditionTitle) &&
+				strings.Contains(f.Problem, "cannot upload an issue") && strings.Contains(f.Fix, "fugaro update (0.22.0 or later)") {
+				issues = true
+			}
+		}
+		if !issues {
+			t.Errorf("the launcher condition one release behind this one is not reported: %+v", fs)
+		}
+	})
 	// The same binding on an installation whose launcher and operator lists
 	// doctor could not read (both empty): still the launchers' own grant in
 	// its old form, so still no removal command — the catch-all that would
@@ -90,7 +116,7 @@ func TestRunsBucketFindings(t *testing.T) {
 	t.Run("the pre-seal launcher condition with unknown lists", func(t *testing.T) {
 		p := &storage.Policy{Bindings: []*storage.PolicyBindings{
 			{Role: "roles/storage.objectUser", Members: []string{a},
-				Condition: &storage.Expr{Title: gcp.LegacyLauncherBucketConditionTitle, Expression: gcp.LegacyLauncherBucketCondition(b)}},
+				Condition: &storage.Expr{Title: gcp.RunsOnlyLauncherBucketConditionTitle, Expression: gcp.RunsOnlyLauncherBucketCondition(b)}},
 		}}
 		fs := RunsBucketFindings(p, b, hardeningProject, nil, nil)
 		if sev(fs, "info") != 0 {
@@ -175,7 +201,7 @@ func TestRunsBucketFindings(t *testing.T) {
 		}
 		var sawBadCondition bool
 		for _, f := range fs {
-			if strings.Contains(f.Problem, "under a condition that is not the launchers' runs/ and tokens/ condition") {
+			if strings.Contains(f.Problem, "under a condition that is not the launchers' runs/, tokens/ and issues/ condition") {
 				sawBadCondition = true
 			}
 		}
@@ -196,7 +222,7 @@ func TestRunsBucketFindings(t *testing.T) {
 		if sev(fs, "warning") != 1 {
 			t.Fatalf("findings %+v", fs)
 		}
-		if !strings.Contains(fs[0].Problem, "condition that is not the launchers' runs/ and tokens/ condition") {
+		if !strings.Contains(fs[0].Problem, "condition that is not the launchers' runs/, tokens/ and issues/ condition") {
 			t.Errorf("not flagged as an unrecognized condition: %+v", fs)
 		}
 	})
@@ -306,21 +332,29 @@ func launcherGrant(bucket, member, role, title, expr string, desc any) map[strin
 		"condition": []any{map[string]any{"title": title, "expression": expr, "description": desc}}}
 }
 
-// launcherReplace is the upgrade's replace of m's runs_launcher grant, from
-// the pre-0.9.0 runs/-only condition to the runs/ and tokens/ one, as
+// launcherReplaceFrom is the upgrade's replace of m's runs_launcher grant from
+// one earlier form of the launchers' own condition — whichever form the
+// installation was last applied at — to the current one, as
 // `terraform show -json` renders it.
-func launcherReplace(bucket, m string, actions ...string) tf.ResourceChange {
+func launcherReplaceFrom(bucket, m, beforeTitle, beforeExpr string, actions ...string) tf.ResourceChange {
 	return tf.ResourceChange{Address: grantAddr("runs_launcher", m), Type: "google_storage_bucket_iam_member", Change: tf.Change{
 		Actions: actions,
-		Before:  launcherGrant(bucket, m, "roles/storage.objectUser", gcp.LegacyLauncherBucketConditionTitle, gcp.LegacyLauncherBucketCondition(bucket), ""),
+		Before:  launcherGrant(bucket, m, "roles/storage.objectUser", beforeTitle, beforeExpr, ""),
 		After:   launcherGrant(bucket, m, "roles/storage.objectUser", gcp.LauncherBucketConditionTitle, gcp.LauncherBucketCondition(bucket), nil),
 	}}
 }
 
-// The 0.9.0 upgrade replaces every non-operator launcher's runs_launcher
-// grant (its condition widened from runs/ to runs/ and tokens/, and a
-// condition is ForceNew). Exactly that replace is admitted, for a launcher on
-// the list; every near miss stays with the guard.
+// launcherReplace is that replace on the installation one release behind this
+// one: the runs/ and tokens/ condition 0.9.0 wrote.
+func launcherReplace(bucket, m string, actions ...string) tf.ResourceChange {
+	return launcherReplaceFrom(bucket, m, gcp.LegacyLauncherBucketConditionTitle, gcp.LegacyLauncherBucketCondition(bucket), actions...)
+}
+
+// The upgrade replaces every non-operator launcher's runs_launcher grant (its
+// condition widened again, and a condition is ForceNew). Exactly that replace
+// is admitted, for a launcher on the list, from either earlier form of the
+// condition — an installation sits at whichever one it was last applied at;
+// every near miss stays with the guard.
 func TestLauncherGrantUpgrade(t *testing.T) {
 	const bucket = "fugaro-runs-" + hardeningProject
 	const a, b, o = "user:a@example.com", "user:b@example.com", "user:o@example.com"
@@ -344,6 +378,7 @@ func TestLauncherGrantUpgrade(t *testing.T) {
 	}{
 		{"two launchers upgrade", []tf.ResourceChange{ok, launcherReplace(bucket, b, "delete", "create")}, []string{grantAddr("runs_launcher", a), grantAddr("runs_launcher", b)}},
 		{"create before destroy", []tf.ResourceChange{launcherReplace(bucket, a, "create", "delete")}, []string{grantAddr("runs_launcher", a)}},
+		{"a pre-0.9.0 runs/-only before", []tf.ResourceChange{launcherReplaceFrom(bucket, b, gcp.RunsOnlyLauncherBucketConditionTitle, gcp.RunsOnlyLauncherBucketCondition(bucket), "delete", "create")}, []string{grantAddr("runs_launcher", b)}},
 		{"description empty on both sides", []tf.ResourceChange{with(ok, func(c *tf.Change) { cond(c.After, "description", "") })}, []string{grantAddr("runs_launcher", a)}},
 		{"a pure delete", []tf.ResourceChange{with(ok, func(c *tf.Change) { c.Actions = []string{"delete"}; c.After = nil })}, nil},
 		{"an update", []tf.ResourceChange{with(ok, func(c *tf.Change) { c.Actions = []string{"update"} })}, nil},
@@ -391,10 +426,11 @@ func TestLauncherGrantUpgrade(t *testing.T) {
 	}
 }
 
-// The upgrade plan as a 0.8.x installation with two launchers (one an
-// operator) gets it from 0.9.0's init, run through the guard itself: the
-// launcher's replace passes with what LauncherGrantUpgrade returns and
-// nothing else, and the guard still refuses it without that.
+// The upgrade plan as an installation one release behind this one with two
+// launchers (one an operator) gets it from this release's update, run through
+// the guard itself: the launcher's replace passes with what
+// LauncherGrantUpgrade returns and nothing else, and the guard still refuses
+// it without that.
 func TestLauncherGrantUpgradeThroughGuard(t *testing.T) {
 	const bucket = "fugaro-runs-" + hardeningProject
 	const a, o = "user:alice@example.com", "user:o@example.com"
@@ -406,8 +442,8 @@ func TestLauncherGrantUpgradeThroughGuard(t *testing.T) {
 	if err := tf.Guard(p, append(HardeningAllowDelete(p, []string{a, o}, []string{o}), allowed...)); err != nil {
 		t.Fatalf("the upgrade plan is refused: %v", err)
 	}
-	if got := LauncherGrantUpgradeBanner(allowed); !strings.Contains(got, "  "+a+"\n") || !strings.Contains(got, "tokens/") {
-		t.Errorf("the banner does not name %s and tokens/:\n%s", a, got)
+	if got := LauncherGrantUpgradeBanner(allowed); !strings.Contains(got, "  "+a+"\n") || !strings.Contains(got, "tokens/") || !strings.Contains(got, "issues/") {
+		t.Errorf("the banner does not name %s, tokens/ and issues/:\n%s", a, got)
 	}
 	if LauncherGrantUpgradeBanner(nil) != "" {
 		t.Error("a banner with nothing allowed")
