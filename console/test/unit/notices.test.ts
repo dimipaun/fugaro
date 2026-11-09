@@ -59,7 +59,7 @@ const UNDECLARED_LOADS: readonly string[] = []
 /** BUNDLED are the notices sections whose code ships inside a build output. They
  * are not packages of the packed `node_modules`, so the derivation below leaves
  * them out, and they are asserted present separately. */
-const BUNDLED: readonly string[] = ['elkjs 0.12.1', 'Instrument Sans', 'IBM Plex Mono']
+const BUNDLED: readonly string[] = ['elkjs 0.11.0', 'Instrument Sans', 'IBM Plex Mono']
 
 interface PackageEntry {
   readonly version?: string
@@ -271,7 +271,7 @@ describe('the notices file lists what ships, for every platform', () => {
     // package of the packed tree, so none is in the derived set, and this is
     // what stops them being deleted as unmatched.
     for (const section of [
-      '## elkjs 0.12.1 -- Eclipse Public License 2.0',
+      '## elkjs 0.11.0 -- Eclipse Public License 2.0',
       '## Instrument Sans -- SIL Open Font License 1.1',
       '## IBM Plex Mono -- SIL Open Font License 1.1',
     ]) {

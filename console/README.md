@@ -98,7 +98,7 @@ the one runtime dependency (`electron-updater`, below):
 | `@types/node` | `26.6.6` | `devDependencies` | the Node the main process and the tests run on |
 | `@electron/fuses` | `2.1.3` | `devDependencies` | the `afterPack` hook's fuse writer (Task 4.1) |
 | `electron-builder` | `26.18.0` | `devDependencies` | the packer, run from its local binary by `npm run package` (Task 4.1) |
-| `elkjs` | `0.12.1` | `devDependencies` | the graph view's layout engine: the build copies its `elk-worker.min.js` verbatim into the served root (GV2.2); its EPL-2.0 licence is `THIRD_PARTY_NOTICES.md` |
+| `elkjs` | `0.11.0` | `devDependencies` | the graph view's layout engine: the build copies its `elk-worker.min.js` verbatim into the served root (GV2.2); its EPL-2.0 licence is `THIRD_PARTY_NOTICES.md` |
 
 `dependencies` holds exactly one entry — `electron-updater` pinned to `6.8.11`,
 the console's one runtime dependency — and that is a decision rather than a

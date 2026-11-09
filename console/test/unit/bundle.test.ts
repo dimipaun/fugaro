@@ -1613,18 +1613,18 @@ describe('the copied worker (GV2.2)', () => {
   it("is elkjs's own file, byte for byte, from the pinned version", () => {
     // The worker is minified by *its* build and shipped as it came, so what is
     // worth asserting is not that it looks right but that it is the pinned
-    // package's file: this digest is `elkjs@0.12.1`'s `lib/elk-worker.min.js`,
+    // package's file: this digest is `elkjs@0.11.0`'s `lib/elk-worker.min.js`,
     // and a different pin -- or a copy a later edit touched -- is a red test
     // rather than a quiet line in node_modules. A patched worker would be
     // unreviewed third-party code running under the console's CSP.
     const source = readFileSync(join(CONSOLE_ROOT, 'node_modules', 'elkjs', 'lib', 'elk-worker.min.js'))
     expect(createHash('sha256').update(source).digest('hex')).toBe(
-      'dca3a19d9ec37f5634bf5876b4ebd2455c3f43f0d32570136c13c13edaba9bfb',
+      'c0dc844ac1739a1e1e4f64d08a9ec4594818d5aa7e0cb26e5096b6d34b864e2b',
     )
     builtListing('bundle')
     const copied = readFileSync(join(CONSOLE_ROOT, 'dist', 'bundle', 'elk-worker.min.js'))
     expect(createHash('sha256').update(copied).digest('hex')).toBe(
-      'dca3a19d9ec37f5634bf5876b4ebd2455c3f43f0d32570136c13c13edaba9bfb',
+      'c0dc844ac1739a1e1e4f64d08a9ec4594818d5aa7e0cb26e5096b6d34b864e2b',
     )
     // and the CSP is unchanged: the worker is one served file, named once
     expect(SERVED_FILES.filter((name) => name.includes('worker'))).toEqual(['/elk-worker.min.js'])

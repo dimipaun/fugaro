@@ -66,16 +66,16 @@ here where the two paragraphs above cite it. Run on Linux against `electron-buil
 The one thing the probe does *not* say is what the vendored code inside the two Sentry packages
 does, and that is the section at the end of this file.
 
-The elkjs worker is `dist/bundle/elk-worker.min.js`, the layout worker of **elkjs 0.12.1**, copied
+The elkjs worker is `dist/bundle/elk-worker.min.js`, the layout worker of **elkjs 0.11.0**, copied
 verbatim by `npm run build` from `node_modules/elkjs/lib/elk-worker.min.js`.
 
 elkjs is licensed under the Eclipse Public License 2.0. Its source is the
-`elkjs@0.12.1` package from the npm registry
-(https://registry.npmjs.org/elkjs/-/elkjs-0.12.1.tgz), whose repository is
+`elkjs@0.11.0` package from the npm registry
+(https://registry.npmjs.org/elkjs/-/elkjs-0.11.0.tgz), whose repository is
 https://github.com/kieler/elkjs.git. The licence text below is copied verbatim from that package's
 `LICENSE.md`.
 
-## elkjs 0.12.1 -- Eclipse Public License 2.0
+## elkjs 0.11.0 -- Eclipse Public License 2.0
 
 # Eclipse Public License - v 2.0
 
@@ -329,7 +329,8 @@ No third-party beneficiary rights are created under this Agreement.
 
 “This Source Code may also be made available under the following
 Secondary Licenses when the conditions for such availability set forth
-in the Eclipse Public License, v. 2.0 are satisfied: GNU General Public License v3.0 or later”
+in the Eclipse Public License, v. 2.0 are satisfied: {name license(s),
+version(s), and exceptions or additional permissions here}.”
 
 > Simply including a copy of this Agreement, including this Exhibit A is
 > not sufficient to license the Source Code under Secondary Licenses.

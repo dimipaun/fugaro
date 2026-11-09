@@ -109,7 +109,7 @@ export const PICKER_ENTRY_URL = `${APP_ORIGIN}${PICKER_ENTRY_PATH}`
  * document the console serves and nothing vouches for.
  *
  * **`/elk-worker.min.js` is the one third-party file this origin serves, and
- * GV2.2 adds it as a file rather than as a policy.** It is elkjs 0.12.1's own
+ * GV2.2 adds it as a file rather than as a policy.** It is elkjs 0.11.0's own
  * `lib/elk-worker.min.js`, copied byte for byte by the build -- the digest is
  * asserted in `test/unit/bundle.test.ts` -- so none of it is this project's code
  * and none of it is editable here; its EPL-2.0 licence and its source are
