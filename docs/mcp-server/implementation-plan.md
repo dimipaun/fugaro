@@ -2,12 +2,14 @@
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
 merged on `main`; M5 is built and M5b is built with it — the paired-device approval the owner ruled
-a task of its own on 2026-11-07, so the approval this front door takes is the paired device's; M7 is
-built except the reading of the installation's published state its lists come from, which no task of
-this plan carries; M10 is built except the store's own bucket and its one grant, which are M4's
-store half and not started; M8 is built except the wiring that would serve its four read tools,
-which no binary has and no task of this plan carries; M9 is not started; this folder approves no
-task.** The design is [spec.md](spec.md), the findings and the fifteen decisions are
+a task of its own on 2026-11-07, so the approval this front door takes is the paired device's,
+except the delivery of a flow to that device — no QR of the flow's binding is rendered and no
+launcher reads the page — which nothing builds and no task of this plan carries; M7 is built except
+the reading of the installation's published state its lists come from, which no task of this plan
+carries; M10 is built except the store's own bucket and its one grant, which are M4's store half and
+not started; M8 is built except the wiring that would serve its four read tools, which no binary has
+and no task of this plan carries; M9 is not started; this folder approves no task.** The design is
+[spec.md](spec.md), the findings and the fifteen decisions are
 [reconciliation.md](reconciliation.md). **All fifteen were answered on 2026-11-04** — **every one of
 them the recommendation**, with the owner's own detail written into M3, M5, M6 and M9 — and this
 plan is written to those answers: the "Answered" column below is what the tasks build, and the last
@@ -764,10 +766,15 @@ pull request that builds M5 merges dormant**: the consent page's token paste
 (`ee/coordinator/mcpauth/authorize.go`) stays exactly as it is there, and **M5b is a hard
 prerequisite before anything wires the front door**.
 **`TestNoBinaryLinksTheFrontDoorYet` is the tripwire, and M5b must land before it may be relaxed**;
-the test's own message names this task for that reason, so the guard is relaxed by building M5b and
-not by deleting a sentence. **M5b has landed**, on the six files below and no seventh, and **the
-guard is not relaxed here**: relaxing it belongs to the wiring task, which is still carried by no
-task of this plan.
+the test's own message names what the guard waits on for that reason, so the guard is relaxed by
+building the approval and not by deleting a sentence. **M5b has landed**, on the six files below and
+no seventh, and **the guard is not relaxed here**: relaxing it belongs to the wiring task, which is
+still carried by no task of this plan. **What landed is the server's half of the first requirement
+and not the delivery**: the endpoint takes an act that already carries the flow's id and the number,
+and nothing hands those two to the paired device — no QR of the flow's binding, no launcher reading
+the page — so no client produces that act yet. **The delivery is owed, and named as owed** in
+[spec.md](spec.md) §11, [reconciliation.md](reconciliation.md) §4a and the wiring sections under M7
+and M8 below.
 
 **Four things, and no fifth.** Each is a requirement M-a or the review of this branch raised and the
 tree did not carry:
@@ -776,7 +783,11 @@ tree did not carry:
    or takes it (a QR the page renders carries the same number), so a person approves a request they
    can see came from the screen in front of them. **A number the page renders and the same page posts
    back is not this** — the page knows its own number — which is why the page's check is what M5
-   built and this task is what it built past.
+   built and this task is what it built past. **What this task built is the shape the server can
+   check**: an act arriving with the flow's id, the number and the paired device's own ID token, and
+   an approval no page post can produce. **What it did not build is the delivery** — the device's
+   side of showing or taking the number — so the requirement is met at the endpoint and unperformed
+   on the device, and that half is named as owed in [spec.md](spec.md) §11.
 2. **The ID token is spent.** The approve step records the token as used, in M2's store and as a
    keyed hash of it (D922), before the code is minted, so a replay of the same token is refused
    instead of approving a second flow: when this task was written nothing spent it, so a leaked
@@ -916,8 +927,8 @@ this task still owes is its own rerun against M-a and H1 rather than that step.
   **the reading of the installation's published state is not in the tree and no task of this plan
   carries it**: nothing on a binary's side supplies a `Roster`, so the two lists bound what a token
   buys only once one does. **The task that mounts this package on a binary
-  owes that reading beside the two bounds**, and spec.md §11 carries it as an open item until the
-  owner assigns it. What M7 holds is the rule that reading has to keep: the lists are the source and
+  owes that reading beside the two bounds and M5b's delivery of a flow to the paired device**, and
+  spec.md §11 carries it as an open item until the owner assigns it. What M7 holds is the rule that reading has to keep: the lists are the source and
   never one machine's local config, and only exact `user:` entries are read.
 
 ### M8 — The read tools
@@ -943,8 +954,8 @@ this task still owes is its own rerun against M-a and H1 rather than that step.
   `RegisterReadTools` or constructs `NewProjectRuns`, so the read reach this task adds is reach no
   process has while the door is dormant (D936), and `TestNoBinaryLinksTheFrontDoorYet` still holds. **The task
   that mounts this package on a binary, which owes M7's reading of the published
-  state and the two bounds the open registration endpoint is accepted under, owes this wiring
-  beside them**: it is where the project's own repository slugs are read, from the
+  state, the two bounds the open registration endpoint is accepted under and M5b's delivery of a flow
+  to the paired device, owes this wiring beside them**: it is where the project's own repository slugs are read, from the
   `FUGARO_COORDINATOR_REPOS` the installation already puts on the front door's own service
   (`deploy/terraform/gcp/modules/installation/coordinator.tf:491`, "the repositories the front door
   may answer about"), and where a token's own repository filter is applied on top of that list

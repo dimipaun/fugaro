@@ -522,11 +522,14 @@ func TestNoAnswerOfThisServerIsCacheable(t *testing.T) {
 // builds reaches this package. The owner's ruling of 2026-11-07 added the
 // second half of what a task that wires the front door owes: M5 is built
 // dormant, and the paired-device approval M-a asks for is M5b, a task of its
-// own and a hard prerequisite (implementation-plan.md §3). A task that wires
-// the front door deliberately deletes this test and carries those bounds and
-// M5b with it; until then, a non-test file that names this package fails here
-// rather than turning the exposure reachable in a release nobody re-read the
-// paragraph for.
+// own and a hard prerequisite (implementation-plan.md §3). M5b is built, and it
+// built the server's half of that approval: the endpoint takes the device's act,
+// and what it left is the delivery — nothing renders a QR of the flow's binding
+// and no launcher reads the page — which is owed beside the bounds (spec.md §11).
+// A task that wires the front door deliberately deletes this test and carries
+// those bounds and that delivery with it; until then, a non-test file that names
+// this package fails here rather than turning the exposure reachable in a release
+// nobody re-read the paragraph for.
 func TestNoBinaryLinksTheFrontDoorYet(t *testing.T) {
 	const pkg = "github.com/dimipaun/fugaro/ee/coordinator/mcpauth"
 	root := filepath.Join("..", "..", "..")
@@ -543,7 +546,7 @@ func TestNoBinaryLinksTheFrontDoorYet(t *testing.T) {
 				return err
 			}
 			if strings.Contains(string(data), pkg) {
-				t.Errorf("%s links the MCP front door, which mounts an open registration endpoint with neither a rate limit nor a sweep and approves a sign-in on the page that asked for it; a task that wires it carries those two bounds and M5b, the paired-device approval, and deletes this guard", path)
+				t.Errorf("%s links the MCP front door, which mounts an open registration endpoint with neither a rate limit nor a sweep; a task that wires it carries those two bounds and the delivery of a flow to the paired device, which nothing builds, and deletes this guard", path)
 			}
 			return nil
 		})

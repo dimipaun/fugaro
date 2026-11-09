@@ -2,12 +2,13 @@
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
 merged on `main`; M5 is built and M5b is built with it — the paired-device approval the owner ruled
-a task of its own on 2026-11-07, so the approval this front door takes is the paired device's; M7 is
-built except the reading of the installation's published state its lists come from, which no task of
-this plan carries; M10 is built except the store's own bucket and its one grant, which are M4's
-store half and not started; M8 is built except the wiring that would serve its four read tools,
-which no binary has and no task of this plan carries; M9 is not started; this folder approves no
-task.**
+a task of its own on 2026-11-07, so the approval this front door takes is the paired device's,
+except the delivery of a flow to that device — no QR of the flow's binding is rendered and no
+launcher reads the page — which nothing builds and no task of this plan carries; M7 is built except
+the reading of the installation's published state its lists come from, which no task of this plan
+carries; M10 is built except the store's own bucket and its one grant, which are M4's store half and
+not started; M8 is built except the wiring that would serve its four read tools, which no binary has
+and no task of this plan carries; M9 is not started; this folder approves no task.**
 
 What the owner's spec ([spec.md](spec.md) §0) says, checked one claim at a time against the code as
 it is at this work's base, and then the decisions the planning found.
@@ -453,7 +454,11 @@ before anything wires the front door** (§4a, "The owner's ruling of 2026-11-07"
 the two limits the token had beside it are closed with it**: the approval is the paired device's own
 POST, the ID token is spent before a code is minted, so a replay of one is refused instead of
 approving a second flow, and the **refresh family an approval mints has two lifetimes of its own**
-(spec.md §6, §8) rather than outliving the ID token's hour by an unbounded amount.
+(spec.md §6, §8) rather than outliving the ID token's hour by an unbounded amount. **What M5b did
+not build is the delivery**: nothing hands the flow's id and its number to the paired device — no QR
+of the flow's binding, no launcher reading the page — so this check is met by the endpoint and
+unperformed on the device, and that half is named as owed in
+[spec.md](spec.md) §11 and [implementation-plan.md](implementation-plan.md) §3.
 
 ### D924 — amended (finding M-b)
 
@@ -643,8 +648,10 @@ the exposure latent rather than reachable is a guard M5 does carry, and it is a 
 behaviour**: `TestNoBinaryLinksTheFrontDoorYet` fails if any file a binary builds names this package,
 so the task that wires the front door is the task that carries the two bounds and deletes the guard,
 and no release mounts an open registration endpoint because a wiring arrived unnoticed. **M5b was the
-other thing that task was to carry** (the owner's ruling of 2026-11-07) **and is built**, so the
-guard is the only thing still holding the door.
+other thing that task was to carry** (the owner's ruling of 2026-11-07) **and is built**, except the
+half that delivers a flow to the paired device, which nothing builds and no task of this plan
+carries, so the task that relaxes the guard carries the two bounds **and the delivery** with them.
+**Until it does, the guard is what holds the door** (spec.md §11).
 
 ### The owner's ruling of 2026-11-07: M5b, and the licence table
 
@@ -657,16 +664,19 @@ raised rather than answered by M5, because the page renders its own number and t
 same form (§4a, D923's M-a amendment). **The owner ruled that the pull request that builds M5 merges
 dormant**: the consent page's token paste stays exactly as it is there, and **M5b is a hard
 prerequisite before anything wires the front door**. So **`TestNoBinaryLinksTheFrontDoorYet` is
-relaxed by building M5b and not by deleting its message**, which now names the task — and M5b is
-written as a task in [implementation-plan.md](implementation-plan.md) §3 with its four requirements:
+relaxed by building M5b and not by deleting its message**, which names what the guard still waits on
+— the two bounds and the delivery of a flow to the paired device — and M5b is written as a task in
+[implementation-plan.md](implementation-plan.md) §3 with its four requirements:
 the approval happens on the paired device, the ID token is spent, the approval is bound to the flow,
 and a refresh family ages. **It is a task and not a change to anything merged**: the code that would
 carry it did not exist when the ruling was written, and the two limits beside the approve step (a
 token nothing spends, a family with no expiry of its own) were its second and fourth requirements.
-**M5b is built**: the approval is the paired device's own POST — the flow's id, the number the page
-shows and the ID token of that device's session — the token is spent before a code is minted, and
-the family an approval mints carries the two bounds ([implementation-plan.md](implementation-plan.md)
-§3).
+**M5b is built on the server's side**: the approval is the paired device's own POST — the flow's id,
+the number the page shows and the ID token of that device's session — the token is spent before a
+code is minted, and the family an approval mints carries the two bounds
+([implementation-plan.md](implementation-plan.md) §3). **What it left is the delivery**: nothing
+renders a QR of the flow's binding and no launcher reads the page, so no client produces the act the
+endpoint now accepts, and that half is carried by no task of this plan ([spec.md](spec.md) §11).
 
 **2. The licence gate is cleared by a table the owner read, and the gate is met.** §6 check 1's
 second half is D921's licence, and the owner ruled that he would clear the dependency set by reading

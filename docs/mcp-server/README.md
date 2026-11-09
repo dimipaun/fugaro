@@ -2,26 +2,27 @@
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
 merged on `main`; M5 is built and M5b is built with it — the paired-device approval the owner ruled
-a task of its own on 2026-11-07, so the approval this front door takes is the paired device's; M7 is
-built except the reading of the installation's published state its lists come from, which no task of
-this plan carries; M10 is built except the store's own bucket and its one grant, which are M4's
-store half and not started; M8 is built except the wiring that would serve its four read tools,
-which no binary has and no task of this plan carries; M9 is not started; this folder approves no
-task.** The owner's spec of 2026-10-24 is copied verbatim into [spec.md](spec.md) §0 and is
-reconciled against the code here; [reconciliation.md](reconciliation.md) §4 puts fifteen decisions
-(D920–D934) in front of the owner, each with the recommendation first and the cost of the
-alternative — and **all fifteen were answered on 2026-11-04**, **every one of them the
-recommendation**, with the owner's own detail written into the design (D922's was restated the same
-day: the first answer opened the subtree and the restatement closes it). **A sixteenth answer
-arrived on 2026-11-05 (D935), from the independent review of PR #1715's M3**: the `mcpauth` records
-leave the project's shared Realtime Database for a store whose IAM names only the front door's own
-account `mcp_server`, because the database's own grants are project-level and no rule can keep a
-launcher out ([reconciliation.md](reconciliation.md) §3 F32, §4 D935) — and **which store, the one
-thing D935 carried over open, was answered by the owner the same day: the bucket the plan's §8
-recommends**. **If the implementation happens, [implementation-plan.md](implementation-plan.md) §5
-recommends 0.21.0 "Rhino" or later** — 0.15.0, 0.16.0, 0.17.0, 0.18.0, 0.19.0 and 0.20.0 have all
-shipped since this design was written, and §5 says why the work is big and security-heavy enough to
-want a window of its own.
+a task of its own on 2026-11-07, so the approval this front door takes is the paired device's,
+except the delivery of a flow to that device — no QR of the flow's binding is rendered and no
+launcher reads the page — which nothing builds and no task of this plan carries; M7 is built except
+the reading of the installation's published state its lists come from, which no task of this plan
+carries; M10 is built except the store's own bucket and its one grant, which are M4's store half and
+not started; M8 is built except the wiring that would serve its four read tools, which no binary has
+and no task of this plan carries; M9 is not started; this folder approves no task.** The owner's
+spec of 2026-10-24 is copied verbatim into [spec.md](spec.md) §0 and is reconciled against the code
+here; [reconciliation.md](reconciliation.md) §4 puts fifteen decisions (D920–D934) in front of the
+owner, each with the recommendation first and the cost of the alternative — and **all fifteen were
+answered on 2026-11-04**, **every one of them the recommendation**, with the owner's own detail
+written into the design (D922's was restated the same day: the first answer opened the subtree and
+the restatement closes it). **A sixteenth answer arrived on 2026-11-05 (D935), from the independent
+review of PR #1715's M3**: the `mcpauth` records leave the project's shared Realtime Database for a
+store whose IAM names only the front door's own account `mcp_server`, because the database's own
+grants are project-level and no rule can keep a launcher out ([reconciliation.md](reconciliation.md)
+§3 F32, §4 D935) — and **which store, the one thing D935 carried over open, was answered by the
+owner the same day: the bucket the plan's §8 recommends**. **If the implementation happens,
+[implementation-plan.md](implementation-plan.md) §5 recommends 0.21.0 "Rhino" or later** — 0.15.0,
+0.16.0, 0.17.0, 0.18.0, 0.19.0 and 0.20.0 have all shipped since this design was written, and §5
+says why the work is big and security-heavy enough to want a window of its own.
 
 **Amended 2026-11-04, after the mandatory independent security review.** The design merged as
 **#1487** *before* the SECURITY review of [spec.md](spec.md) §8 that this folder requires; that
@@ -39,7 +40,7 @@ instead of fixing it. The findings and what each changed, in one line each:
 | **H1** | A device token is a custom token, and **any launcher can mint one** and approve a sign-in as an operator's device — so the approval proves nothing against a launcher | **ACCEPT AND DOCUMENT, not the recommendation**: the residual risk stands with its consequences (operator scope, forged audit attribution, a rotating refresh family that outlives the ID token's hour), and the change that would close it is named and **not built** | spec.md §3 step 5, §8, §11; D923's amendment |
 | **H2** | `spawn_task` needs **three** privileges, not one — `signJwt`, write on the runs bucket, and `run.jobs.runWithOverrides`, which can override container args and so run any command beside the job's credentials | **DEFER `spawn_task` out of the first slice.** The first slice is the authorization server plus the **read tools**; what a later design item must answer is written down | **D936**; spec.md §5, §8; the plan's order, scope and release slot |
 | **H3** | **IAM bypasses the database rules**: launchers and operators can read the token records, admins can write them, and the public service would hold `firebasedatabase.admin` over the whole database | **Keyed hashes and MACs** where the records live now, **no database admin on the public service**, and the records **out of the main database** — **D935** states where they live and who may reach them | **D935** (the answer of 2026-11-05, F32); D922's amendment; spec.md §6, §8 |
-| **M-a** | The "loopback is the attacker's machine" argument **fails when approval happens on a phone** — cross-device phishing | QR proximity or number matching; the phone shows the client (**marked unverified**) and the redirect host; **a single-use POST**, an ID token never in a GET URL, nothing pushed unstarted — **and the device half is M5b, a task of its own, a gate (the owner's ruling of 2026-11-07) and built** | D923's amendment; spec.md §3, §8; M5, M5b, M6 |
+| **M-a** | The "loopback is the attacker's machine" argument **fails when approval happens on a phone** — cross-device phishing | QR proximity or number matching; the phone shows the client (**marked unverified**) and the redirect host; **a single-use POST**, an ID token never in a GET URL, nothing pushed unstarted — **and the device half is M5b, a task of its own, a gate (the owner's ruling of 2026-11-07) and built on the server's side**: the endpoint takes the device's act and nothing yet delivers a flow to the device, which the wiring task carries (spec.md §11) | D923's amendment; spec.md §3, §8; M5, M5b, M6 |
 | **M-b** | The family spend limit was not enforced across **concurrent** runs | Reserve `min(job cap, remaining)` **atomically against the family counter** at spawn, settle at finalize; for `client_credentials` the family is the client | D924's amendment; spec.md §6, §8; M2, M9 (deferred) |
 | **M-c** | The library's defaults contradict the design (PKCE optional, empty challenge = `plain`, unknown scopes dropped, extra grants, a `SigningKey` with no home, non-RFC-8414 discovery) | Refuse a missing or non-`S256` challenge and an unknown scope **before the library**; only the code and refresh grants; opaque tokens or the key in Secret Manager; **the owner cleared the library's dependency set on 2026-11-07 by reading [licence-table.md](licence-table.md), and [licence-gate.md](licence-gate.md) is the record** | D921's amendment; spec.md §1, §3, §6; M5 |
 | **M-d** | Refresh rotation is a **check-then-write race** | Condition the rotation on the **generation of the same read**, with a small grace window — **the conditioning is built and the grace window is not**, so the loser of a race is refused `invalid_grant` rather than answered with the winner's pair | D930's amendment; spec.md §6; M2 |

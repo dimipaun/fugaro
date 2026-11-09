@@ -2,13 +2,15 @@
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
 merged on `main`; M5 is built and M5b is built with it — the paired-device approval the owner ruled
-a task of its own on 2026-11-07, so the approval this front door takes is the paired device's; M7 is
-built except the reading of the installation's published state its lists come from, which no task of
-this plan carries; M10 is built except the store's own bucket and its one grant, which are M4's
-store half and not started; M8 is built except the wiring that would serve its four read tools,
-which no binary has and no task of this plan carries; M9 is not started; this folder approves no
-task.** The owner's spec of 2026-10-24 is §0, copied **verbatim**; the design that follows (§1
-onward) is written to the **answers the owner gave on 2026-11-04** to the fifteen decisions in
+a task of its own on 2026-11-07, so the approval this front door takes is the paired device's,
+except the delivery of a flow to that device — no QR of the flow's binding is rendered and no
+launcher reads the page — which nothing builds and no task of this plan carries; M7 is built except
+the reading of the installation's published state its lists come from, which no task of this plan
+carries; M10 is built except the store's own bucket and its one grant, which are M4's store half and
+not started; M8 is built except the wiring that would serve its four read tools, which no binary has
+and no task of this plan carries; M9 is not started; this folder approves no task.** The owner's
+spec of 2026-10-24 is §0, copied **verbatim**; the design that follows (§1 onward) is written to the
+**answers the owner gave on 2026-11-04** to the fifteen decisions in
 [reconciliation.md](reconciliation.md) §4 (D920–D934) — **every one of them the recommendation at
 the time** — with the owner's own detail written into §2, §3, §4, §5, §6 and §8. **Where §0 and this
 design disagree the reconciliation wins** — §0 is the record of what was asked, not of what this
@@ -388,17 +390,22 @@ of them the endpoints, all of them what happens at them):
      URL**, where it would land in history, logs and referrers;
    - **nothing is pushed without a person starting it.**
 
-   **The first of those is built, and what it took is the reason M5b exists.** M5's approve step
-   rendered the flow's number on the page and posted it back from the same page's form, so the
+   **The first of those is built on the server's side and not yet on the device's.** M5's approve
+   step rendered the flow's number on the page and posted it back from the same page's form, so the
    number was a binding between that page and the approval and **not the device-side approval this
    bullet asks for**: the paired device never saw the number, and a page rendering a flow of its own
    knows its own number ([reconciliation.md](reconciliation.md) §4a, D923's M-a amendment). **The
    owner answered it on 2026-11-07: it is M5b, a task of its own and a hard prerequisite before
-   anything wires the front door** ([implementation-plan.md](implementation-plan.md) §3) — and
-   **M5b is built**: the approval is a POST of its own carrying the flow's id, the number the person
-   read off the screen and the ID token of the paired device's session, the page's answer carries
-   the binding and the decision and no credential, and the code is minted only for a flow the device
-   approved.
+   anything wires the front door** ([implementation-plan.md](implementation-plan.md) §3). **M5b is
+   built, and what it built is the half a server can**: the approval is a POST of its own carrying
+   the flow's id, the number the person read off the screen and the ID token of the paired device's
+   session, the page's answer carries the binding and the decision and no credential, and the code is
+   minted only for a flow the device approved. **What is not built is how a flow reaches that
+   device** — no QR of the flow's binding is rendered and no launcher reads the page — so the act the
+   endpoint accepts is one no client produces yet, and a person who reads the number off the page has
+   nothing to type it into. **That half is owed and named in §11**: no task of this plan carries it,
+   and the wiring task carries it beside the two bounds the registration endpoint is accepted under
+   (`approval.go`'s own header states the same gap where it is read).
 6. The coordinator issues the authorization code, and the exchange at `POST /oauth/token` mints a
    short-lived access token and a refresh token, scoped to the MCP resource URL, carrying the
    identity, the client, the scopes and the limits of §6.
@@ -829,10 +836,12 @@ its own handed over the number and the token together and this server could not 
 from the one M-a asks for. **The owner answered it on 2026-11-07: the device half is M5b, a task of
 its own and a hard prerequisite before anything wires the front door**
 ([implementation-plan.md](implementation-plan.md) §3; [reconciliation.md](reconciliation.md) §4a),
-**and it is built with the other two**: the approval is the paired device's own POST — the flow's
-id, the number the person read off the screen and the ID token that device's session produced — and
-the page's answer carries the binding and the decision and no credential, so a flow no device
-approved mints no code.
+**and it is built with the other two, as far as the server can build it**: the approval is the paired
+device's own POST — the flow's id, the number the person read off the screen and the ID token that
+device's session produced — and the page's answer carries the binding and the decision and no
+credential, so a flow no device approved mints no code. **What is not built is the delivery**:
+nothing renders a QR of the flow's binding and no launcher reads the page, so the act the endpoint
+takes is one no client produces yet and no task of this plan carries the half that would (§11).
 
 **The coordinator mints no Firebase token of its own** either: it holds no
 signer role, so a compromised coordinator cannot answer "this person signed in" for somebody who
@@ -1108,9 +1117,14 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   of their own — and **until it comes the bound is the wiring task's**: the task that mounts this
   package on a binary carries both bounds and deletes `TestNoBinaryLinksTheFrontDoorYet`, so the
   growth §8 accepts is accepted only while nothing mounts the routes. **M5b was owed beside them**
-  (the owner's ruling of 2026-11-07) **and is built**: the guard is relaxed by building the
-  paired-device approval rather than by deleting its message, and what the wiring task carries is
-  the two bounds and the guard.
+  (the owner's ruling of 2026-11-07) **and is built**, and it closed the half of M-a's device
+  requirement a server can close: the guard is relaxed by building the paired-device approval rather
+  than by deleting its message. **What it left is the other half, and it is owed now**: **the
+  delivery of a flow to the paired device** — no QR of the flow's binding is rendered and no launcher
+  reads the page — **which no task of this plan carries**, and which the wiring task therefore
+  carries beside the two bounds and the guard. Until it lands, the act the endpoint accepts is one
+  no client produces: the approval is decided exactly as M5b built it, and a person who reads the
+  number off the page has nothing yet to type it into.
 - **Where the front door's own two lists are read from** (§4, D933, the amendment's finding M-f):
   **the design says the installation's published state, and the tree reads nothing there.** §8's
   claim that the lists bound what a token buys turns on it: `ee/coordinator/mcpauth/identity.go`
