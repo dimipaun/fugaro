@@ -493,8 +493,9 @@ Download a run's artifacts, verifying them against its record
 
 Download one artifact NAME, or every artifact the record lists when NAME is
 omitted, verifying each one's size and sha256 against the run's result.json as
-the bytes arrive. A mismatch is an error naming both hashes, and nothing is
-written — not even the file the download streamed into.
+the bytes arrive. RUN is a run ID, <repo-slug>/<run-id>, or the last four or
+more characters of a run ID. A mismatch is an error naming both hashes, and
+nothing is written — not even the file the download streamed into.
 
 The destination is a fresh directory this command creates,
 ./<run-id>-artifacts/ unless --out names another parent for it. A name in the
@@ -529,11 +530,12 @@ This command has no subcommands.
 
 List what a run's record says it delivered
 
-List the artifacts RUN (<repo-slug>/<run-id>, or a bare run ID) recorded in
-its result.json: name, recorded size, short sha256, recorded content type and
-the probe's verdict. The record is shown as it is — a name `get` cannot
-retrieve is listed with the reason, never filtered out, and a missing object is
-not ls's to hide: ls is the record, get is the object.
+List the artifacts RUN (a run ID, <repo-slug>/<run-id>, or the last four or
+more characters of a run ID) recorded in its result.json: name, recorded
+size, short sha256, recorded content type and the probe's verdict. The
+record is shown as it is — a name `get` cannot retrieve is listed with the
+reason, never filtered out, and a missing object is not ls's to hide: ls is
+the record, get is the object.
 
 --json prints the record's artifact list verbatim.
 
@@ -1056,7 +1058,12 @@ This command has no subcommands.
 
 Cancel a run, letting the runner open a draft PR first
 
-Cancel RUN (<repo-slug>/<run-id>, or a bare run ID).
+Cancel RUN (a full run ID, or <repo-slug>/<run-id>).
+
+cancel is the one command that acts on a run and takes no ending. Given the
+last four or more characters of a run ID it cancels nothing: it looks them up
+among the active runs, lists each one it names as <repo-slug>/<run-id> to
+paste, and exits with an error.
 
 cancel writes the run's cancel marker; the runner sees it, stops the current
 stage and finalizes a draft PR. If the execution is still in a stage after
@@ -1920,8 +1927,9 @@ This command has no subcommands.
 
 Explain how a run went: status, tests, review findings, the agent's last word, logs
 
-Gather what is known about RUN (<repo-slug>/<run-id>, or a bare run ID): its
-status and reason, the last test run's failed and flaky tests, the last
+Gather what is known about RUN (a run ID, <repo-slug>/<run-id>, or the last
+four or more characters of a run ID): its status and reason, the last test
+run's failed and flaky tests, the last
 review's findings, the agent's final message, the newest log lines, its cost
 and its pull request. Everything printed is redacted of the credentials in
 this environment, on top of the runner's own redaction.
@@ -2615,7 +2623,8 @@ This command has no subcommands.
 
 Print a run's logs from Cloud Logging
 
-Print the logs of RUN (<repo-slug>/<run-id>, or a bare run ID), oldest first.
+Print the logs of RUN (a run ID, <repo-slug>/<run-id>, or the last four or
+more characters of a run ID), oldest first.
 
 With -f, keep printing until the execution ends and its logs settle. Every
 line is redacted of the credentials in this environment, on top of the
@@ -4247,7 +4256,7 @@ Flags:
 | `--ref` | string | "" | no | base branch or ref the run is cut from (default: the branch this checkout is on, when origin has it and it is not the base branch; else the base branch (fugaro.yaml git.base_branch, then the local config's, then the project's base_branch, then main)) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | repository as owner/name, or a path inside its checkout (default: this checkout's origin) |
-| `--retry` | string | "" | no | launch the stored task of RUN (<repo-slug>/<run-id> or a run ID) that never started |
+| `--retry` | string | "" | no | launch the stored task of RUN (a full run ID, or <repo-slug>/<run-id>) that never started: a run an ending names is never launched, since the bucket cannot vouch for which run an ending means |
 | `--review-levels` | string | "" | no | read the run's own review levels from this YAML file, or - for stdin: the block the task stores as review_levels (l1, l2, l3, each of model, effort, none and focus), decoded strictly, with no key on no level meaning the configuration decides it. Asking for levels needs a job image whose runner acts on them, so a launch on an older one is refused and names fugaro image refresh; without the flag the run resolves its levels from its configuration and its mode alone |
 | `--run-id` | string | "" | no | run ID to use; repeating one reports its launch instead of starting another |
 | `--task-file` | string | "" | no | read the task from this file, or - for stdin |
