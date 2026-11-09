@@ -847,8 +847,9 @@ describe('the packaging configuration the fuses belong to', () => {
 
   it('verifies every Electron archive it downloads against the pinned Electron’s own checksums', () => {
     // A universal build downloads the darwin arm64 and x64 Electron archives at
-    // pack time, and the Linux leg downloads `electron-v<version>-linux-x64.zip`
-    // on the ubuntu runner. Without inline checksums electron-builder verifies
+    // pack time, the Linux leg downloads `electron-v<version>-linux-x64.zip` on
+    // the ubuntu runner, and the Windows leg `electron-v<version>-win32-x64.zip`
+    // on the windows runner. Without inline checksums electron-builder verifies
     // them against a SHASUMS256.txt fetched from the same release host; with
     // these, against hashes in this repository, which must equal the ones the
     // lockfile-pinned `electron` package carries in its `checksums.json`
@@ -857,7 +858,7 @@ describe('the packaging configuration the fuses belong to', () => {
     // The list is pinned exactly, so a build that started downloading an archive
     // nobody pinned -- a third arch, a different version -- fails here rather
     // than trusting a hash fetched over the network at pack time. `linux-arm64`
-    // is deliberately not in it: this build produces x64 Linux only.
+    // is deliberately not in it: every leg this build packages is x64.
     const version = manifest.devDependencies.electron
     const checksums = build.electronDownload?.checksums ?? {}
     expect(Object.keys(build.electronDownload ?? {})).toEqual(['checksums'])
@@ -866,6 +867,7 @@ describe('the packaging configuration the fuses belong to', () => {
         `electron-v${version}-darwin-arm64.zip`,
         `electron-v${version}-darwin-x64.zip`,
         `electron-v${version}-linux-x64.zip`,
+        `electron-v${version}-win32-x64.zip`,
       ].toSorted(),
     )
     for (const hash of Object.values(checksums)) expect(hash).toMatch(/^[0-9a-f]{64}$/)
