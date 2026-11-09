@@ -28,7 +28,7 @@ func issueSample() Issue {
 		Status:        StatusPending,
 		URL:           "https://github.com/dimipaun/fugaro/issues/7",
 		Uploaded:      true,
-		Fingerprint:   "9f2c4a1b0d3e5f60718293a4b5c6d7e8",
+		Fingerprint:   "9f2c4a1b0d3e5f60718293a4b5c6d7e89f2c4a1b0d3e5f60718293a4b5c6d7e8",
 		ResolvedIn:    "0.21.1",
 		Regression:    true,
 		OriginalURL:   "https://github.com/dimipaun/fugaro/issues/3",

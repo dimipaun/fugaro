@@ -8,12 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	cloudbuild "google.golang.org/api/cloudbuild/v1"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -76,8 +78,8 @@ func TestBuildRequest(t *testing.T) {
 	if _, ok := b.Substitutions["_GITHUB_APP_ID"]; ok {
 		t.Fatalf("a Bitbucket build sends _GITHUB_APP_ID: %v", b.Substitutions)
 	}
-	if b.ServiceAccount != "projects/proj-1234/serviceAccounts/"+spec.ServiceAccount || b.Options.MachineType != "E2_HIGHCPU_8" || b.Options.Logging != "CLOUD_LOGGING_ONLY" || b.Timeout != "3600s" {
-		t.Fatalf("build = %+v / %+v / %s", b.ServiceAccount, b.Options, b.Timeout)
+	if b.ServiceAccount != "projects/proj-1234/serviceAccounts/"+spec.ServiceAccount || b.Options.MachineType != "E2_HIGHCPU_8" || b.Options.Logging != "CLOUD_LOGGING_ONLY" || b.Timeout != "3600s" || b.QueueTtl != "3600s" {
+		t.Fatalf("build = %+v / %+v / %s / %s", b.ServiceAccount, b.Options, b.Timeout, b.QueueTtl)
 	}
 	// The build pushes only its candidate; promote moves latest.
 	if len(b.Images) != 0 {
@@ -139,6 +141,29 @@ func TestBuildRequest(t *testing.T) {
 		mutate(&s)
 		if _, err := BuildRequest("proj-1234", s); err == nil {
 			t.Errorf("an incomplete or unsafe spec was accepted: %+v", s)
+		}
+	}
+}
+
+// TestEveryBuildIsBoundedByTheEstimatorsClock: the two numbers a submitted
+// build is bounded by are the two the budget reasons about — the timeout the
+// estimate is computed from, and the queue wait the lease's deadline adds to
+// it. A build bounded by anything else would be a build the estimator never
+// priced, so both request kinds are pinned against internal/budget's constants
+// and not against a second copy of the two numbers here.
+func TestEveryBuildIsBoundedByTheEstimatorsClock(t *testing.T) {
+	timeout, queue := strconv.Itoa(budget.MaxBuildSeconds), strconv.Itoa(budget.MaxBuildQueueSeconds)
+	requests := map[string]func() (*cloudbuild.Build, error){
+		"a derived build": func() (*cloudbuild.Build, error) { return BuildRequest("proj-1234", buildSpec(t)) },
+		"a catalog build": func() (*cloudbuild.Build, error) { return CatalogBuildRequest("proj-1234", catalogBuildSpec(t)) },
+	}
+	for name, request := range requests {
+		b, err := request()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if b.Timeout != timeout+"s" || b.QueueTtl != queue+"s" {
+			t.Errorf("%s carries timeout %q and queue TTL %q, want %ss and %ss", name, b.Timeout, b.QueueTtl, timeout, queue)
 		}
 	}
 }

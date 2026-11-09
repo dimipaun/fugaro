@@ -25,6 +25,7 @@
 version: 1
 
 summaries:
+  v0.22.0: fugaro security paths now prints the list of paths a repository's runs treat as security-sensitive and answers any path against it, an installation's rules gain the orchestrator's own state subtree that one fugaro update deploys, and an upgrade given the budget once flags that installation as managed in the same run.
   v0.21.0: A change can now be reviewed in the cloud by its own read-only job, long tasks get a three-hour default budget so they finish without a per-run override, runs record why they failed, and a person on a managed project is never asked to type anything.
   v0.20.3: A run that reviews on your Claude subscription now starts on the job that holds its token, and a managed project's own update retires what it created.
   v0.20.2: fugaro update no longer stops at the installation step on a project that has a catalog check.

@@ -142,7 +142,8 @@ type Issue struct {
 	// Uploaded says the issue is in the shared store.
 	Uploaded bool `yaml:"uploaded"`
 	// Fingerprint is the hash of the signature the diagnosis returned; two
-	// reports of one bug share it (D1724).
+	// reports of one bug share it (D1724). It is the shape Fingerprint gives
+	// it, or empty on a record that carries no signature.
 	Fingerprint string `yaml:"fingerprint"`
 	// ResolvedIn is the release that fixed the issue, filled in by the
 	// `update` command's own spec and empty until then (F27, D1736).
@@ -220,6 +221,14 @@ func (i Issue) Validate() error {
 		if strings.ContainsAny(f.value, "\r\n") {
 			return fmt.Errorf("issues: the record's %s spans lines, which its header cannot hold", f.name)
 		}
+	}
+	// Empty is the one value a fingerprint may have besides the hash: a record
+	// saved with no signature. Anything else is a value no writer here makes
+	// and one the schema a reader outside this binary validates against
+	// refuses, so the header and that reader would disagree about the record
+	// (TestIssueRefusesMalformedFingerprint).
+	if i.Fingerprint != "" && !fingerprintRE.MatchString(i.Fingerprint) {
+		return fmt.Errorf("issues: %q is not a fingerprint, want the SHA-256 of the signature in lowercase hex", i.Fingerprint)
 	}
 	return nil
 }

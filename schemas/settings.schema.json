@@ -616,6 +616,9 @@
         "image_catalog.entries.*.source.branch": {
           "default": "unset = none"
         },
+        "image_catalog.entries.*.source.context": {
+          "default": "unset = none"
+        },
         "image_catalog.entries.*.source.inline": {
           "default": "unset = none"
         },
@@ -990,6 +993,18 @@
         "layer.project": {
           "default": "unset = the file is refused (project: is required)"
         },
+        "layer.security.always_level_3": {
+          "default": "false"
+        },
+        "layer.security.patterns.*.category": {
+          "default": "unset = none"
+        },
+        "layer.security.patterns.*.match": {
+          "default": "unset = none"
+        },
+        "layer.security.patterns.*.name": {
+          "default": "unset = none"
+        },
         "layer.version": {
           "default": "unset = the file is refused (version: is required)"
         },
@@ -1146,6 +1161,9 @@
         },
         "rigor.default": {
           "default": "unset = pro (rigor.Default)"
+        },
+        "security.patterns": {
+          "default": "unset = the engine's floor alone"
         },
         "routing.claude.models": {
           "default": "unset = none"

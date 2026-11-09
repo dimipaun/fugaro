@@ -1129,7 +1129,7 @@ export const FINISHED_KEYS = [
  * `artifact_count`, `artifact_bytes`, `task_pr`, `record_pr`, `pr`,
  * `pushed_head`, `started_at`, `draft_fallback`, `pr_status_at`, `stale_draft`,
  * `execution`, `batch`, `halt`, `previous_run`, `base_branch`, `failure_class`,
- * `derived`)
+ * `derived`, `follow_up_of`)
  * are the ones this screen has no use for yet; they are listed so that a
  * document carrying them is read rather than thrown away.
  *
@@ -1267,6 +1267,7 @@ export const RECORD_KEYS = [
   'base_branch',
   'previous_run',
   'follow_up',
+  'follow_up_of',
   'draft_fallback',
   'pr_status_at',
   'stale_draft',
