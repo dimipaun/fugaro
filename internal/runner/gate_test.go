@@ -207,6 +207,38 @@ func TestLintAutofixReviewChangesStartsFreshFix(t *testing.T) {
 	}
 }
 
+// TestLintAutofixEscalatesOnAFloorPath: the autofix commit is the run's own
+// work — no implement stage runs on this path — so a lint-fix recipe whose
+// commands.fix touches a path the security floor lists has to escalate before
+// the review loop: level 3 on, the adversarial step in the plan, and the row
+// in the record (security.go, D1507). The gate hands the loop a diff and
+// nothing after it reads the diff again, so a run that skipped the seam here
+// would be reviewed once by level 2 and finalized ready, with no level 3 and
+// no member to say the list had matched.
+func TestLintAutofixEscalatesOnAFloorPath(t *testing.T) {
+	cfg := gateCfg(t, "lint-fix", 1, "true", "test -f internal/creds/state.go",
+		"mkdir -p internal/creds && echo 'package creds' > internal/creds/state.go")
+	h := newHarnessFiles(t, cfg, nil, gateFiles("lint-fix", lintFixRecipe))
+	// One step for the senior review: the escalation's own adversarial round is
+	// the harness's (runner_test.go's escalationRound).
+	rec, err := h.run(t, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "review", "adversarial") {
+		t.Fatalf("stages = %v, want the senior review and the escalation's adversarial round", got)
+	}
+	if rec.Security == nil {
+		t.Fatal("the autofix committed a floor path and the run recorded no escalation")
+	}
+	if rec.Security.At != runstore.SecurityAtImplement || rec.Security.Pattern != "credentials" {
+		t.Errorf("the record's escalation = %+v, want the credentials row at the post-implement seam", rec.Security)
+	}
+	if rec.Gate != "fixed" || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = %+v", rec)
+	}
+}
+
 // TestGateMissingCommandFailsTheRun: a check: {command: lint} on a
 // repository with no commands.lint ends the run as infra_error at
 // bootstrap; it never silently skips.

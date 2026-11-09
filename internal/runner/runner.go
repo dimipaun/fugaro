@@ -2377,11 +2377,9 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// run is the arm's: resolveLevels put the champion's coder back only
 		// for the length of its own call, because the level 1 *model* is read
 		// off the coder while the rounds are not.
-		plan := planOf(rcp, r.levels, r.cfg.Agent, spec.Overrides.ReviewRounds, r.reachedRigor())
-		if err := checkPlan(rcp, r.levels, plan); err != nil {
+		if err := r.buildPlan(); err != nil {
 			return fmt.Errorf("recipe %s: %w", rrec.Name, err)
 		}
-		r.plan = plan
 	}
 	// The run's Firebase identity, the shared caps and the kill switches:
 	// a halt here is outcome none (nothing is locked, pushed or opened).
@@ -2473,6 +2471,25 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// resolved — the last of them by checkReviewPRs just above — and before
 	// the prefetch reads them.
 	r.fetchDiffBases(ctx)
+	if r.follow != nil {
+		// The commit the pull request's base is at, read locally off the
+		// fetch above and before any stage runs: the security escalation
+		// measures the pull request's whole diff against it (security.go's
+		// securityBase), and that read must start from a SHA, never from the
+		// ref it came from, which the agent's own git could repoint at its
+		// tip once a stage runs (refused.go's workBase; the same read a
+		// first run's checkpoints make of their base, above). A failure
+		// leaves the field empty, and the escalation then classifies the
+		// follow-up's own commits alone — which the warning says, because
+		// the commits the pull request's earlier runs added are lost with
+		// it.
+		if sha, err := repo.CommitOf(ctx, "refs/remotes/origin/"+r.diffBase()); err != nil {
+			r.d.Log.Warn("resolving the pull request's base commit failed; the security escalation classifies the follow-up's own commits only",
+				"base", r.diffBase(), "err", r.redact(err.Error()))
+		} else {
+			r.follow.baseSHA = sha
+		}
+	}
 	// A follow-up's and a review run's agent has no git credentials of its
 	// own, and a blobless clone fetches file contents lazily through
 	// origin: the runner brings in what the agent's own git will read while
@@ -2993,10 +3010,29 @@ func (r *run) agentLoop(ctx context.Context) {
 			return
 		}
 		r.afterStage(ctx, "implement")
+		// D1507's first seam: the diff the implement stage left is the run's
+		// first answer to "does this change touch what the list in force calls
+		// security-sensitive", and the level it decides has to be in the plan
+		// before the loop below walks it (security.go).
+		r.escalateSecurity(ctx, runstore.SecurityAtImplement)
 		if r.pr.gone {
 			return // a person closed the PR: nothing more to spend on it
 		}
 		sessionID = req.SessionID
+	}
+	if skipImplement {
+		// D1507's first seam, for the two paths that reach the review loop
+		// with no implement stage: a first run whose check gate fixed the tree
+		// itself, whose autofix commit is the run's own work, and a digest
+		// run, whose step's own commit is. Both are a diff the list in force
+		// has to classify before the loop below walks the plan — the seam
+		// inside the implement branch above is the only other one, and a run
+		// that skipped it would be reviewed at level 2 alone, with nothing in
+		// its record to say the list had matched (security.go).
+		r.escalateSecurity(ctx, runstore.SecurityAtImplement)
+		if r.pr.gone {
+			return // a person closed the PR: nothing more to spend on it
+		}
 	}
 	// The prompt as it is before the input each review round adds to it
 	// (reviewPromptWithInput): the diff under review is built per round,
@@ -3030,7 +3066,33 @@ func (r *run) agentLoop(ctx context.Context) {
 		}
 	}
 	tier := ""
-	for _, st := range r.plan {
+	// The plan is read through the slice on every step, rather than ranged
+	// once, because a step may rebuild it: the security escalation rebuilds it
+	// after the fix seam inside this loop, and a range would keep walking the
+	// plan it captured (security.go, D1507). The step the loop takes next is
+	// the first of the current plan it has not walked yet, and not the plan's
+	// next index, because a rebuild can also leave a step the loop has already
+	// walked out of the plan: level 1 runs at POC on the mode's own row and on
+	// no model of the run's, so a fix that raises the mode out of POC drops the
+	// first_line step (applyLevels writes a level that runs into the run's own
+	// configuration, and level 1 had no model to write), which moves every step
+	// after it up one place — an index would then step over the adversarial
+	// step the escalation just put in the plan. A kind names a step: a recipe
+	// carries at most one of each of the three (recipe.Parse).
+	walked := map[recipe.StepKind]bool{}
+	for {
+		next := -1
+		for i, st := range r.plan {
+			if !walked[st.Kind] {
+				next = i
+				break
+			}
+		}
+		if next < 0 {
+			return
+		}
+		st := r.plan[next]
+		walked[st.Kind] = true
 		switch st.Kind {
 		case recipe.StepFirstLine:
 			tier = runstore.TierSenior
@@ -3408,6 +3470,11 @@ func (r *run) fix(ctx context.Context, v Verdict, sys, sessionID string) (string
 	// asked for, so a mode the run's own work reached is the one the rounds it
 	// has left are spent at (rigor.go).
 	r.roundRigor(ctx)
+	// D1507's second seam, at the same moment and for the same reason: a fix
+	// round can add a path the implement round did not touch, and the plan has
+	// to carry level 3's step before the next round is asked for
+	// (security.go). The read is roundRigor's, above.
+	r.escalateSecurity(ctx, runstore.SecurityAtFix)
 	return req.SessionID, !r.pr.gone
 }
 
@@ -3428,8 +3495,14 @@ func (r *run) fix(ctx context.Context, v Verdict, sys, sessionID string) (string
 // senior round the mode's findings policy is read off (outcome.go,
 // findingsPolicy).
 func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sessionID string) (string, bool) {
-	decides := !levelOn(r.levels, policy.LevelL2) && !levelOn(r.levels, policy.LevelL3)
 	for round := 1; round <= rounds; round++ {
+		// Read per round, not once before the loop: the fix at the end of a
+		// round can turn level 3 on (the escalation's fix seam, security.go),
+		// and from that round on an outer level exists and the cheap loop is
+		// no longer the one that decides readiness — a round whose findings
+		// are all the owner's is handed to it rather than stopping the run
+		// here, and the adversarial step the escalation bought is reached.
+		decides := !levelOn(r.levels, policy.LevelL2) && !levelOn(r.levels, policy.LevelL3)
 		head := r.reviewedHead(ctx)
 		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
 		res, ok, err := r.stage(ctx, "review_first", req, stageOpts{Skippable: true})
@@ -4651,6 +4724,11 @@ func (r *run) finalize(ctx context.Context) error {
 	// this run's too. A failed read keeps the set read at the top of
 	// finalize, which is still this run's work.
 	r.recordChangedFiles(ctx)
+	// The escalation's own last look, and the only moment it can leave nothing
+	// but a refusal: a file the agent wrote and never committed is invisible to
+	// both of its seams, and the leftover commit above is what makes it this
+	// run's work (security.go, D1509).
+	r.escalateSecurityAtFinalize(ctx)
 	// The run's own diff is now measured, which is D22's third moment: the
 	// mode is resolved from it before Decide reads the run's gates, so the
 	// value a later slice's rules act on is the one the run's whole diff
@@ -4692,6 +4770,14 @@ func (r *run) finalize(ctx context.Context) error {
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
 	}
+	// A run whose diff matched a security row and whose escalation was refused
+	// is not ready, whatever Decide answered (D1509): the level the
+	// classification required never ran, so the review the record shows did not
+	// cover the change. It replaces the uncommitted case's sentence above when
+	// both hold — a refusal found at finalize is found there because the run
+	// committed work nobody reviewed, and the member's own `at` says so — and
+	// the run's own failure still outranks it (the override below).
+	ready, reason, class = r.applySecurityRefusal(ready, reason, class)
 	// The class follows the reason, and it is chosen by this same three-way
 	// choice in the same place by the same lines (design §4.2): the run's own
 	// first failure outranks what Decide read, a halt outranks both, and each

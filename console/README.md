@@ -4711,7 +4711,7 @@ create or edit anything under `.github/workflows/`:
 
 - **`console-linux.yml`** — one job, `console-linux`, on `ubuntu-latest`:
   `contents: read`, **no environment and no secret**, the pinned toolchain,
-  Electron's own download verified against the three checksums `package.json`
+  Electron's own download verified against the checksums `package.json`
   pins, `npm run build`, `npm run package:linux`, an assertion that exactly one
   `.AppImage` and one `.deb` came out, and `upload-artifact`. It runs on every
   pull request and every push to `main`, with no path filter.
@@ -4828,12 +4828,13 @@ the way past it. What a reader checks the download against is the SHA-256 beside
 it and nothing else — the answer the Linux pair gets too, for the same reason
 (there is nothing to sign *with*).
 
-### `electron-builder --win` cannot be run on macOS or Linux today
+### The `--win` pack no longer stops at the Electron archive's checksum
 
-**The fuse hook is no longer what stands in the way** — `win32` is in the table
-above, `win32Executable` names the file the packer writes, and the `win` block
-names the target — so the obstacle is the Electron archive's checksum. Run on the
-Linux host, after the `win` block and the `win32` row landed:
+**The fuse hook is not what stands in the way** — `win32` is in the table above,
+`win32Executable` names the file the packer writes, and the `win` block names the
+target — so the obstacle was the Electron archive's checksum. Run on the Linux
+host, after the `win` block and the `win32` row landed and before that hash was
+pinned, the pack got this far:
 
 ```sh
 $ npm run package:win
@@ -4845,15 +4846,21 @@ $ npm run package:win
 `build.electronDownload.checksums` **is** the checksum file electron-builder
 checks a download against — `@electron/get` is handed those entries as inline
 checksums, which is what makes the comparison a hash in *this* repository rather
-than one fetched from the release host at pack time — and it lists three
-archives: the two darwin ones and `electron-v<version>-linux-x64.zip`. The
-`win32-x64` archive is not among them, and an archive that is not in the file is
-**refused** rather than verified against something nobody pinned. So a `--win`
-pack stops here, before `afterPack` is ever called, and the stop is the pinning
-story working rather than a gap in it: the archive has to join that list — the
-hash copied out of the lockfile-pinned `electron` package's own `checksums.json`,
-never from a network fetch and never typed from memory — before any host, macOS,
-Linux or a Windows runner, completes the pack.
+than one fetched from the release host at pack time — and it listed three
+archives then: the two darwin ones and `electron-v<version>-linux-x64.zip`. An
+archive that is not in the file is **refused** rather than verified against
+something nobody pinned, which is the stop above and the pinning story working
+rather than a gap in it. `win32-x64` is one of the **four** archives it lists
+now: the hash joined the block on **2026-11-09** (implementation-plan.md T-B3),
+copied out of the lockfile-pinned `electron` package's own `checksums.json`,
+never from a network fetch and never typed from memory, and
+`test/unit/fuses.test.ts` holds the entry to that file by name. So that refusal
+no longer fires, before `afterPack` is ever called or after.
+
+**What is left is the run, and it has not been made.** The transcript above is
+the last `--win` pack this repository ran: no host — macOS, Linux or a Windows
+runner — has carried one past the download since the hash landed, so what the
+rest of the pack does here is unverified rather than known to work.
 
 ### What was verified here, and what was not
 
