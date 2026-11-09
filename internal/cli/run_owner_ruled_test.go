@@ -46,7 +46,7 @@ func TestRunPRRefusesAFollowUpWaitingOnTheOwner(t *testing.T) {
 	}
 	got := err.Error() + errOut
 	for _, want := range []string{
-		rootID, "PR #7", "2 owner decisions",
+		task.ShortRun(rootID), "PR #7", "2 owner decisions",
 		"`LICENSE.md`: the licence text needs counsel's clearance",
 		"`internal/approval/flow.go`: the approval flow is a product decision",
 		"--owner-ruled <text-or-file>",

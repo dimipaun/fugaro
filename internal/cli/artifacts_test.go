@@ -854,10 +854,12 @@ func TestArtifactsResolvesRepoAndRunLikeRunsLs(t *testing.T) {
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), other) || !strings.Contains(err.Error(), "acme-app") {
 		t.Errorf("ls of %s with --repo acme/app = %v, want a user error naming both repositories", other, err)
 	}
-	// A bare ID that is not a run ID never becomes part of an object name.
+	// A bare RUN that is neither a run ID nor an ending of one never becomes
+	// part of an object name: with --repo it is resolved as an ending like any
+	// other (SR14), and an ending that names no run is a user error (D1709).
 	_, _, err = execute(t, "artifacts", "get", "--repo", "acme/app", "not-a-run-id")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "run ID") {
-		t.Errorf("get of a malformed run ID = %v, want a user error", err)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "no run ending") {
+		t.Errorf("get of a malformed run ID = %v, want the not-found refusal", err)
 	}
 }
 

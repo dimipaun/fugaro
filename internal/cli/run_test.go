@@ -721,7 +721,9 @@ func TestRunRetryOfALaunchedRunHints(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, errOut, err := execute(t, "run", "--retry", "20260927-100000-abcd")
-	if err != nil || !strings.Contains(out, markSkipped+" launch "+appSlug+"/20260927-100000-abcd already launched") || !strings.Contains(errOut, "fugaro diagnose "+appSlug+"/20260927-100000-abcd") {
+	// The line and the hint name the run by its short ID (SR14): the hint is a
+	// command that takes one, and --retry above took the full ID.
+	if err != nil || !strings.Contains(out, markSkipped+" launch abcd already launched") || !strings.Contains(errOut, "fugaro diagnose abcd") {
 		t.Fatalf("out %q, stderr %q, err %v", out, errOut, err)
 	}
 }

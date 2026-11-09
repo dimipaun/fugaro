@@ -11,6 +11,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // seedRootRigor is seedRoot with the root run's record carrying the mode it
@@ -51,7 +52,7 @@ func TestFollowUpRefusesALowerMode(t *testing.T) {
 	writeBuildRecord(t, f, appSlug, "web", release0111)
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--mode", "poc", "also rename x")
 	if ExitCode(err) != ExitUserError ||
-		!strings.Contains(err.Error(), "--mode asks for poc, lower than pro, the mode run "+appSlug+"/"+rootID+", the last to update PR #7, recorded") {
+		!strings.Contains(err.Error(), "--mode asks for poc, lower than pro, the mode run "+task.ShortRun(rootID)+", the last to update PR #7, recorded") {
 		t.Fatalf("err = %v, want exit 1 naming the run that recorded the mode the PR carries", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {
@@ -187,7 +188,7 @@ func TestStoredFollowUpReappliesTheRaiseOnlyRule(t *testing.T) {
 				seedSpec(t, f, fu, false)
 				_, _, err := execute(t, shape.args...)
 				if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), c.wantPhrase) || !strings.Contains(err.Error(), string(rigor.Critical)) ||
-					!strings.Contains(err.Error(), "run "+appSlug+"/"+rootID+", the last to update PR #7, recorded") {
+					!strings.Contains(err.Error(), "run "+task.ShortRun(rootID)+", the last to update PR #7, recorded") {
 					t.Fatalf("err = %v, want exit 1 saying the stored task %s, against the run that recorded critical", err, c.wantPhrase)
 				}
 				if n := len(f.run.Executions()); n != 0 {

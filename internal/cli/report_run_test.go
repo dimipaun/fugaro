@@ -128,9 +128,11 @@ func TestCancelDefaultIsShort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	step := markDone + " cancel " + appSlug + "/20260927-100000-abcd"
+	// The run is named by its short ID in the progress line, the step and the
+	// result (SR14); the full ID stays the command's input and --json's field.
+	step := markDone + " cancel abcd"
 	result := "cancelled the execution."
-	for _, want := range []string{"cancel requested for " + appSlug + "/20260927-100000-abcd", step, result} {
+	for _, want := range []string{"cancel requested for abcd", step, result} {
 		if !strings.Contains(out, want) {
 			t.Errorf("cancel printed %q, want it to say %q", out, want)
 		}
@@ -261,9 +263,8 @@ func TestCancelWritesALog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref := appSlug + "/20260927-100000-abcd"
 	_, log := onlyLog(t, "cancel")
-	for _, want := range []string{"cancel requested for " + ref, "cancelled the execution."} {
+	for _, want := range []string{"cancel requested for abcd", "cancelled the execution."} {
 		if !strings.Contains(log, want) || !strings.Contains(out, want) {
 			t.Errorf("cancel said %q on the screen and logged %q, want both to carry %q", out, log, want)
 		}
