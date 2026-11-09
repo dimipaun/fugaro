@@ -179,23 +179,86 @@ func tfBlocks(src, header string) []string {
 // `provider`, `terraform` — which is where a block ends in every file of these
 // roots, so a caller that reads a `variable` block names the kinds that can follow
 // it rather than cutting at an attribute the block itself writes.
+//
+// Both the header and the markers are found in CODE alone (tfCodeMask): a
+// header written inside a description — a heredoc or a quoted string carrying
+// the text `variable "signer_role" { default = "fugaroKeySigner" }` — is a
+// sentence, not a block, and reading it as one is not a harmless extra: the
+// sweep keys what it finds by root, so a decoy in a later file of a root answers
+// for the block that root really declares, and the whole rule passes while the
+// block says something else.
 func tfBlocksUntil(src, header string, cuts []string) []string {
+	code := tfCodeMask(src)
 	var out []string
 	for i := 0; ; {
-		j := strings.Index(src[i:], header)
-		if j < 0 {
+		start := tfFindCode(src, code, header, i)
+		if start < 0 {
 			return out
 		}
-		start := i + j
-		rest := src[start+len(header):]
+		end := len(src)
 		for _, cut := range cuts {
-			if k := strings.Index(rest, cut); k >= 0 {
-				rest = rest[:k]
+			if k := tfFindCode(src, code, cut, start+len(header)); k >= 0 && k < end {
+				end = k
 			}
 		}
-		out = append(out, header+rest)
+		out = append(out, src[start:end])
 		i = start + len(header)
 	}
+}
+
+// tfCodeMask marks every byte of src that is CODE. The bytes inside a quoted
+// string, a heredoc and a comment are not: they are text a person or a tool
+// wrote, and no block begins or ends in the middle of one.
+func tfCodeMask(src string) []bool {
+	code := make([]bool, len(src))
+	for i := 0; i < len(src); {
+		switch c := src[i]; {
+		case c == '"':
+			j, ok := tfSkipString(src, i)
+			if !ok {
+				j = len(src)
+			}
+			i = j
+		case c == '<' && strings.HasPrefix(src[i:], "<<"):
+			j, ok := tfSkipHeredoc(src, i)
+			if !ok {
+				j = len(src)
+			}
+			i = j
+		case c == '#':
+			i = tfToLineEnd(src, i)
+		case c == '/' && strings.HasPrefix(src[i:], "//"):
+			i = tfToLineEnd(src, i)
+		case c == '/' && strings.HasPrefix(src[i:], "/*"):
+			end := strings.Index(src[i+2:], "*/")
+			if end < 0 {
+				i = len(src)
+			} else {
+				i += 2 + end + 2
+			}
+		default:
+			code[i] = true
+			i++
+		}
+	}
+	return code
+}
+
+// tfFindCode answers the index of the next occurrence of needle in src at or
+// after from whose first byte is code, or -1 for none.
+func tfFindCode(src string, code []bool, needle string, from int) int {
+	for i := from; i+len(needle) <= len(src); {
+		j := strings.Index(src[i:], needle)
+		if j < 0 {
+			return -1
+		}
+		if k := i + j; code[k] {
+			return k
+		} else {
+			i = k + 1
+		}
+	}
+	return -1
 }
 
 // tfCompact removes every space, tab and newline from a file or a block. These
@@ -489,6 +552,31 @@ func tfUnheldDefaults(t *testing.T, dir string) []string {
 	return out
 }
 
+// tfUnheldKeys answers, sorted and named by root, every `google_kms_crypto_key`
+// the tree under dir declares outside the one block it may hold. The signer role
+// is granted on the key ring rather than on a key, so a key in that ring is one
+// the minter signs with whichever block created it, and the checks that read the
+// key's algorithm, its protection level and its lifecycle read one block: a
+// sweep of the type that read all of them would still hold nothing about the
+// ring's key set, and this list is what refuses a key no check looked at.
+func tfUnheldKeys(t *testing.T, dir string) []string {
+	t.Helper()
+	held := tfNames(keyringRoot, `resource "google_kms_crypto_key" "signing"`)
+	var out []string
+	for _, rel := range tfTerraform(t, dir) {
+		for _, block := range tfBlocks(tfSource(t, filepath.Join(dir, rel)), `resource "`) {
+			if !strings.Contains(tfHeader(block), `"google_kms_crypto_key"`) {
+				continue
+			}
+			if name := tfNames(path.Dir(rel), tfHeader(block)); name != held {
+				out = append(out, name)
+			}
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
 // tfVarBlockEnds are the markers that end a `variable` block in these roots: the
 // next variable, and the kinds of block a later change could put beside one.
 var tfVarBlockEnds = []string{"\nvariable \"", "\nresource \"", "\ndata \"", "\noutput \"", "\nprovider \"", "\nterraform {", "\nlocals {"}
@@ -576,8 +664,10 @@ func tfBlockBody(block string) (string, bool) {
 }
 
 // tfValue answers the value starting at i: a quoted string with its quotes, so
-// that two spellings of one literal compare equal, and anything else as the rest
-// of its line, which no quoted literal equals.
+// that two spellings of one literal compare equal; a list or a map as the whole
+// bracket, so that `permissions = ["a", "b"]` is one value however it is
+// wrapped; and anything else as the rest of its line, which no quoted literal
+// equals.
 func tfValue(body string, i int) string {
 	for i < len(body) && (body[i] == ' ' || body[i] == '\t' || body[i] == '\n' || body[i] == '\r') {
 		i++
@@ -587,7 +677,109 @@ func tfValue(body string, i int) string {
 			return body[i:j]
 		}
 	}
+	if i < len(body) && (body[i] == '[' || body[i] == '{') {
+		if j, ok := tfSkipBrackets(body, i); ok {
+			return body[i:j]
+		}
+	}
 	return strings.TrimSpace(body[i:tfToLineEnd(body, i)])
+}
+
+// tfSkipBrackets answers the index just past the bracket that closes the opener
+// at i, and whether there was one. A value's own brackets are counted, so a
+// nested list or map is part of the value, and a bracket written inside a string
+// or a heredoc closes nothing.
+func tfSkipBrackets(src string, i int) (int, bool) {
+	depth := 0
+	for j := i; j < len(src); {
+		switch c := src[j]; {
+		case c == '"':
+			k, ok := tfSkipString(src, j)
+			if !ok {
+				return len(src), false
+			}
+			j = k
+		case c == '<' && strings.HasPrefix(src[j:], "<<"):
+			k, ok := tfSkipHeredoc(src, j)
+			if !ok {
+				return len(src), false
+			}
+			j = k
+		case c == '[' || c == '{' || c == '(':
+			depth++
+			j++
+		case c == ']' || c == '}' || c == ')':
+			depth--
+			j++
+			if depth == 0 {
+				return j, true
+			}
+		default:
+			j++
+		}
+	}
+	return len(src), false
+}
+
+// tfNestedBlock answers the first block nested inside block under the given
+// name — `version_template`, `lifecycle`, `template` — or false for a block that
+// holds none. It is how a check reaches an attribute the resource writes one
+// level down without reading the block as text: the algorithm and the protection
+// level live in `version_template` and `prevent_destroy` in `lifecycle`, and a
+// check that found those words anywhere in the block would be satisfied by a map
+// value or a description that happened to spell them out.
+func tfNestedBlock(block, name string) (string, bool) {
+	body, ok := tfBlockBody(block)
+	if !ok {
+		return "", false
+	}
+	code := tfCodeMask(body)
+	for i := 0; i < len(body); {
+		j := tfFindCode(body, code, name, i)
+		if j < 0 {
+			return "", false
+		}
+		if k := j + len(name); k < len(body) && tfIdentChar(body[k]) {
+			i = k
+			continue
+		} else if j > 0 && tfIdentChar(body[j-1]) {
+			i = j + len(name)
+			continue
+		} else {
+			for k < len(body) && (body[k] == ' ' || body[k] == '\t' || body[k] == '\n' || body[k] == '\r') {
+				k++
+			}
+			if k < len(body) && body[k] == '{' {
+				if end, ok := tfSkipBrackets(body, k); ok {
+					return body[j:end], true
+				}
+				return "", false
+			}
+			i = k + 1
+		}
+	}
+	return "", false
+}
+
+// tfAttrsAre checks a block's attributes one by one and reports each one that
+// does not write what it is held to, with what it wrote instead: a person
+// reading the failure sees the value that is in the tree rather than only the
+// rule it broke. The read is tfAttr's — the attribute itself — because a phrase
+// is not a value: a `condition` block, a `description`, a `labels` map and a
+// heredoc all hold free text, and every one of them can spell out the sentence a
+// check was looking for while the attribute says something else.
+func tfAttrsAre(t *testing.T, block, where string, want []struct{ attr, value string }, why string) {
+	t.Helper()
+	for _, w := range want {
+		got, ok := tfAttr(block, w.attr)
+		if ok && tfCompact(got) == tfCompact(w.value) {
+			continue
+		}
+		if got == "" {
+			got = "nothing"
+		}
+		t.Errorf("%s does not write %s = %s (it writes %s): %s", where, w.attr, w.value, got, why)
+	}
 }
 
 // tfIdentStart reports whether c can begin an HCL attribute name.
@@ -625,19 +817,40 @@ func tfWantedDefaults() string {
 //
 // The mutation this fails on: the key becoming an imported one (`import_only`
 // with `skip_initial_version_creation`, whose material an external machine would
-// generate), an external_key_uri appearing on a version, or the algorithm or
-// protection level moving off the pair the verifiers were built for.
+// generate), an external_key_uri appearing on a version, the algorithm or
+// protection level moving off the pair the verifiers were built for, or a second
+// key resource beside this one.
 func TestTheSigningKeyIsNonExportable(t *testing.T) {
-	key := tfCompact(tfRootBlock(t, keyringRoot, `resource "google_kms_crypto_key" "signing"`))
-	for _, want := range []string{
-		`purpose="ASYMMETRIC_SIGN"`,
-		`algorithm="EC_SIGN_ED25519"`,
-		`protection_level="SOFTWARE"`,
-	} {
-		if !strings.Contains(key, want) {
-			t.Errorf("the signing key in %s does not write %s: S2.1 fixes the algorithm as Ed25519, which the three verifiers verify, and the key is signed with through the API rather than from a file", keyringRoot, want)
-		}
+	key := tfRootBlock(t, keyringRoot, `resource "google_kms_crypto_key" "signing"`)
+
+	// The block above is the whole of this tree's key material, so it is refused
+	// to any block but this one rather than found by a sweep of the type: the
+	// signer role is granted at the key RING, which reaches every key in it, so
+	// a second google_kms_crypto_key — in either root — is a key the reads below
+	// never reach, with an algorithm, a protection level and a lifecycle of its
+	// own. `for_each = var.keys` puts production and staging under the one block,
+	// so the answer for a second one is a list's absence, not a second read of
+	// the same attributes.
+	if extra := tfUnheldKeys(t, "."); len(extra) != 0 {
+		t.Errorf("this tree declares a KMS crypto key beside the one block above: %s\nthe signer role is granted on the key ring, so every key in it is one the minter signs with, and the checks here read that one block alone: a second key is a second algorithm, a second protection level and a lifecycle nothing here holds (Check 174, S3.5). The one key this service holds is %s", strings.Join(extra, ", "), tfNames(keyringRoot, `resource "google_kms_crypto_key" "signing"`))
 	}
+
+	tfAttrsAre(t, key, "the signing key in "+keyringRoot, []struct{ attr, value string }{
+		{"purpose", `"ASYMMETRIC_SIGN"`},
+	}, "S2.1 fixes the algorithm as Ed25519, which the three verifiers verify, and the key is signed with through the API rather than from a file")
+
+	// The algorithm and the protection level are written one level down, inside
+	// version_template, so they are read out of that block rather than looked for
+	// in the key's text: a map value or a description saying "EC_SIGN_ED25519"
+	// somewhere else in the key would satisfy a search and hold nothing.
+	version, ok := tfNestedBlock(key, "version_template")
+	if !ok {
+		t.Fatalf("the signing key in %s writes no version_template block: the algorithm the three verifiers verify and the protection level it is offered at are written there, and without it the key is created at the provider's defaults", keyringRoot)
+	}
+	tfAttrsAre(t, version, "the signing key in "+keyringRoot, []struct{ attr, value string }{
+		{"algorithm", `"EC_SIGN_ED25519"`},
+		{"protection_level", `"SOFTWARE"`},
+	}, "S2.1 fixes the algorithm as Ed25519, which the three verifiers verify, and the key is signed with through the API rather than from a file")
 
 	// The key must also be one the store creates the material of: an
 	// `import_only` key takes versions whose material was generated elsewhere, and
@@ -688,10 +901,14 @@ func TestTheSigningKeyIsNonExportable(t *testing.T) {
 // prevent_destroy flipped to false, either of which leaves the key an ordinary
 // resource a plan may remove.
 func TestTheSigningKeyIsNeverDestroyedByAnApply(t *testing.T) {
-	key := tfCompact(tfRootBlock(t, keyringRoot, `resource "google_kms_crypto_key" "signing"`))
-	if !strings.Contains(key, "prevent_destroy=true") {
-		t.Errorf("the signing keys in %s do not write prevent_destroy = true: the key id is what the three verifiers hold a public half of, so a destroy stops every install verifying the licences that key signed, and rotation is a new id published in the verifiers rather than a removal an apply may make (S3.5, §11)", keyringRoot)
+	key := tfRootBlock(t, keyringRoot, `resource "google_kms_crypto_key" "signing"`)
+	lifecycle, ok := tfNestedBlock(key, "lifecycle")
+	if !ok {
+		t.Fatalf("the signing keys in %s write no lifecycle block: prevent_destroy is written there, and without it an apply may take the key id out of the ring", keyringRoot)
 	}
+	tfAttrsAre(t, lifecycle, "the signing keys in "+keyringRoot, []struct{ attr, value string }{
+		{"prevent_destroy", "true"},
+	}, "the key id is what the three verifiers hold a public half of, so a destroy stops every install verifying the licences that key signed, and rotation is a new id published in the verifiers rather than a removal an apply may make (S3.5, §11)")
 }
 
 // TestOnlyTheMinterHoldsTheSignerRole: the signer role reaches exactly one
@@ -742,31 +959,29 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 		}
 	}
 
-	grant := tfCompact(tfRootBlock(t, servicesRoot, `resource "google_kms_key_ring_iam_member" "minter_signs"`))
-	if !strings.Contains(grant, "member=google_service_account.minter.member") {
-		t.Errorf("the signer grant in %s is not the minter's account: the minter is the one service that signs (T13's split), and the grant is where that is decided — an intake here hands the signer role to the internet-facing service", servicesRoot)
-	}
-	if !strings.Contains(grant, `role="projects/${var.project}/roles/${var.signer_role}"`) {
-		t.Errorf("the signer grant in %s is not the custom role keyring/ creates: the narrowest grant that mints is one permission, cloudkms.cryptoKeyVersions.useToSign, while a predefined role also reads the public key and verifies", servicesRoot)
-	}
-	if !strings.Contains(grant, "key_ring_id=data.google_kms_key_ring.signing.id") {
-		t.Errorf("the signer grant in %s is not on the key ring: the grant has to reach the keys keyring/ created rather than a project, and the data source is what fails the plan while S3.8's apply has not run", servicesRoot)
-	}
+	// Each of these is read as the attribute it is rather than searched for in the
+	// block's text: this grant carries a `condition` block and the role a
+	// `description`, both of which hold free text, and a check that found the
+	// sentence it wanted there would pass while the attribute granted someone else
+	// — a second member on the signer role being the whole of what this test
+	// exists to refuse.
+	grant := tfRootBlock(t, servicesRoot, `resource "google_kms_key_ring_iam_member" "minter_signs"`)
+	tfAttrsAre(t, grant, "the signer grant in "+servicesRoot, []struct{ attr, value string }{
+		{"member", "google_service_account.minter.member"},
+		{"role", `"projects/${var.project}/roles/${var.signer_role}"`},
+		{"key_ring_id", "data.google_kms_key_ring.signing.id"},
+	}, "the minter is the one service that signs (T13's split), it signs with the custom role keyring/ creates — the narrowest grant that mints, one permission, while a predefined role also reads the public key and verifies — and the grant is made on the ring keyring/ created. A second member here is a second identity that can mint a licence key (Check 174)")
 
 	// The role the grant names is the role keyring/ defines, and it is the
 	// narrowest one that mints: one permission rather than the predefined
 	// signerVerifier, which also reads the public key and verifies. Without this
 	// the pair above could name a custom role holding useToSign and
 	// useToVerify, or a role id nothing creates.
-	role := tfCompact(tfRootBlock(t, keyringRoot, `resource "google_project_iam_custom_role" "signer"`))
-	for _, want := range []string{
-		"role_id=var.signer_role",
-		`permissions=["cloudkms.cryptoKeyVersions.useToSign"]`,
-	} {
-		if !strings.Contains(role, want) {
-			t.Errorf("the signer role in %s does not write %s: the minter signs and verifies nothing with the private half, and the grant services/ makes names this role", keyringRoot, want)
-		}
-	}
+	role := tfRootBlock(t, keyringRoot, `resource "google_project_iam_custom_role" "signer"`)
+	tfAttrsAre(t, role, "the signer role in "+keyringRoot, []struct{ attr, value string }{
+		{"role_id", "var.signer_role"},
+		{"permissions", `["cloudkms.cryptoKeyVersions.useToSign"]`},
+	}, "the minter signs and verifies nothing with the private half, and the grant services/ makes names this role; a second permission here is a wider grant than the one the design's §3.3 rule allows")
 
 	// And what the grant actually REACHES, which is the other half of the same
 	// pair: both blocks name a variable, so the role the minter is granted is
@@ -791,12 +1006,12 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 		{keyringRoot, `resource "google_kms_key_ring" "signing"`},
 		{servicesRoot, `data "google_kms_key_ring" "signing"`},
 	} {
-		block := tfCompact(tfRootBlock(t, ring.root, ring.header))
-		for _, want := range []string{"project=var.project", "name=var.keyring", "location=var.region"} {
-			if !strings.Contains(block, want) {
-				t.Errorf("the key ring block in %s does not write %s: the signer grant is made on this block's ring, so a name written literally here — and not from the variable both roots hold to one literal — points the grant at a ring no default in this tree decides (Check 174, S3.5)", ring.root, want)
-			}
-		}
+		block := tfRootBlock(t, ring.root, ring.header)
+		tfAttrsAre(t, block, "the key ring block in "+ring.root, []struct{ attr, value string }{
+			{"project", "var.project"},
+			{"name", "var.keyring"},
+			{"location", "var.region"},
+		}, "the signer grant is made on this block's ring, so a name written literally here — and not from the variable both roots hold to one literal — points the grant at a ring no default in this tree decides (Check 174, S3.5)")
 	}
 
 	// The other half of the same boundary, over every grant in the tree rather
@@ -825,10 +1040,14 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 	// intake whose template names the minter's would hold the signer role from
 	// the internet while every grant above stayed exactly as written.
 	for _, service := range []string{"intake", "minter"} {
-		block := tfCompact(tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service" "`+service+`"`))
-		if want := "service_account=google_service_account." + service + ".email"; !strings.Contains(block, want) {
-			t.Errorf("the %s service does not run as its own account: it does not write %s. The split between the intake and the minter is a split of identities, so the internet-facing service must not run as the one the signer role is granted to (Check 174, D450(a))", service, want)
+		block := tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service" "`+service+`"`)
+		template, ok := tfNestedBlock(block, "template")
+		if !ok {
+			t.Fatalf("the %s service writes no template block, so the identity it runs as is not in this tree", service)
 		}
+		tfAttrsAre(t, template, "the "+service+" service", []struct{ attr, value string }{
+			{"service_account", "google_service_account." + service + ".email"},
+		}, "the split between the intake and the minter is a split of identities, so the internet-facing service must not run as the one the signer role is granted to (Check 174, D450(a))")
 	}
 
 	// The two accounts are named in exactly the blocks the design allows, so a
@@ -871,10 +1090,10 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 // an invoker but the intake's own public one, and the minter's only invoker is
 // the intake's account. Check 174 again, from the network's side.
 func TestTheMinterHasNoPublicInvoker(t *testing.T) {
-	minter := tfCompact(tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service" "minter"`))
-	if !strings.Contains(minter, "invoker_iam_disabled=false") {
-		t.Errorf("the minter service in %s does not require IAM: the flag has to be stated false, because a service that stopped checking IAM answers every caller and the one invoker grant this root writes would be the only thing between the internet and the signer (Check 174)", servicesRoot)
-	}
+	minter := tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service" "minter"`)
+	tfAttrsAre(t, minter, "the minter service in "+servicesRoot, []struct{ attr, value string }{
+		{"invoker_iam_disabled", "false"},
+	}, "the flag has to be stated false, because a service that stopped checking IAM answers every caller and the one invoker grant this root writes would be the only thing between the internet and the signer (Check 174)")
 
 	// The count is over the bare token in every block of the tree rather than
 	// over one spelling of one attribute: `member = "allUsers"`, a
@@ -895,37 +1114,26 @@ func TestTheMinterHasNoPublicInvoker(t *testing.T) {
 		t.Errorf("this tree grants allUsers %d times, want exactly 1: the intake is the one public surface, and every other binding — on the minter above all — hands the internet an invoker it should not have", public)
 	}
 
-	publicBlock := tfCompact(tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "intake_public"`))
-	if !strings.Contains(publicBlock, `"allUsers"`) {
-		t.Errorf("the public binding in %s is not the one that writes allUsers: the single public grant has to be this resource, so that a reader finds the internet's one door by its name", servicesRoot)
-	}
-	// The service the binding NAMES is the one it opens: a block that kept the
-	// intake in its location and moved its name to the minter would open the
-	// signer's door while still mentioning the intake, which is why the two
-	// attributes are checked rather than the reference.
-	for _, want := range []string{
-		"name=google_cloud_run_v2_service.intake.",
-		"location=google_cloud_run_v2_service.intake.",
-	} {
-		if !strings.Contains(publicBlock, want) {
-			t.Errorf("the allUsers binding in %s is not on the intake service: it does not write %s", servicesRoot, want)
-		}
-	}
-	if !strings.Contains(publicBlock, `role="roles/run.invoker"`) {
-		t.Errorf("the allUsers binding in %s is not the invoker role: any other role's public grant on a service is a reach nobody asked for", servicesRoot)
-	}
+	// The binding the count above is about, read as the attributes it writes: a
+	// block that kept the intake's name in a condition title or a description
+	// while its `name` pointed at the minter would open the signer's door and
+	// still mention the intake, which is why the two attributes are read rather
+	// than the words around them.
+	publicBlock := tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "intake_public"`)
+	tfAttrsAre(t, publicBlock, "the allUsers binding in "+servicesRoot, []struct{ attr, value string }{
+		{"member", `"allUsers"`},
+		{"name", "google_cloud_run_v2_service.intake.name"},
+		{"location", "google_cloud_run_v2_service.intake.location"},
+		{"role", `"roles/run.invoker"`},
+	}, "the single public grant has to be this resource, on the intake and on nothing else — a public invoker on the minter is the internet reaching the service that signs (Check 174)")
 
-	invoker := tfCompact(tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "intake_invokes_minter"`))
-	for _, want := range []string{
-		"name=google_cloud_run_v2_service.minter.",
-		"location=google_cloud_run_v2_service.minter.",
-		"member=google_service_account.intake.member",
-		`role="roles/run.invoker"`,
-	} {
-		if !strings.Contains(invoker, want) {
-			t.Errorf("the invoker grant on the minter in %s does not write %s: the minter has no public invoker, and the intake's ID token is what the platform checks before its container runs (D450(a))", servicesRoot, want)
-		}
-	}
+	invoker := tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "intake_invokes_minter"`)
+	tfAttrsAre(t, invoker, "the invoker grant on the minter in "+servicesRoot, []struct{ attr, value string }{
+		{"name", "google_cloud_run_v2_service.minter.name"},
+		{"location", "google_cloud_run_v2_service.minter.location"},
+		{"member", "google_service_account.intake.member"},
+		{"role", `"roles/run.invoker"`},
+	}, "the minter has no public invoker, and the intake's ID token is what the platform checks before its container runs (D450(a))")
 }
 
 // TestTheTestsReadEveryFileOfTheTree: everything Terraform would read under
@@ -963,8 +1171,10 @@ func TestTheMinterHasNoPublicInvoker(t *testing.T) {
 // another role and an auto-loaded one in JSON, a second plain HCL file in a root
 // — admitted, because the rule is one FORM per root and not one file — the
 // defaults rule over a tree that changed one of them, the same rule against a
-// block that names the wanted literal in a comment or a string instead of in its
-// default, and the third root above, which is not.
+// block that names the wanted literal in a comment, a string or a heredoc
+// instead of in its default, the reads of a block's own attributes against a
+// grant and a key naming what a check looks for in free text, a second key
+// beside the one block the checks read, and the third root above, which is not.
 func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -1121,6 +1331,58 @@ func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 		want := []string{tfNames(servicesRoot, `variable "signer_role"`) + ` = "editor"`}
 		if got := tfUnheldDefaults(t, root); !slices.Equal(got, want) {
 			t.Errorf("a block whose default names another role reads as %v, want %v: a comment, a description string and a heredoc are not the value, and reading any of them as one pins the literal an apply does not use", got, want)
+		}
+	})
+
+	// And the same rule for the reads the checks above make of a block's
+	// ATTRIBUTES, over a tree this test writes: a block spelling the wanted
+	// sentence out in the free text HCL gives it — a condition title, a labels map
+	// carrying a heredoc — while the attribute itself says something else is to be
+	// read as what it writes. A grant here hands the signer role to an attacker
+	// and names the minter in its condition; a key here is RSA at HSM and its
+	// labels spell out the version_template a search would find.
+	t.Run("a value named in free text", func(t *testing.T) {
+		root := t.TempDir()
+		tfWrite(t, root, "services/main.tf", "resource \"google_kms_key_ring_iam_member\" \"minter_signs\" {\n"+
+			"  key_ring_id = data.google_kms_key_ring.signing.id\n"+
+			"  role        = \"projects/x/roles/fugaroKeySigner\"\n"+
+			"  member      = \"user:attacker@example.com\"\n\n"+
+			"  condition {\n    title      = \"member = google_service_account.minter.member\"\n    expression = \"true\"\n  }\n}\n")
+		tfWrite(t, root, "keyring/main.tf", "resource \"google_kms_crypto_key\" \"signing\" {\n"+
+			"  labels = {\n    note = <<-EOT\n      version_template {\n        algorithm = \"EC_SIGN_ED25519\"\n      }\n    EOT\n  }\n\n"+
+			"  version_template {\n    algorithm        = \"RSA_SIGN_PKCS1_2048_SHA256\"\n    protection_level = \"HSM\"\n  }\n}\n")
+
+		grant := tfRootBlock(t, filepath.Join(root, servicesRoot), `resource "google_kms_key_ring_iam_member" "minter_signs"`)
+		if got, _ := tfAttr(grant, "member"); got != `"user:attacker@example.com"` {
+			t.Errorf("the signer grant's member reads as %s: the condition title spells the minter's account out, and a rule that passed on that sentence would hold nothing while the grant hands the signer role to another identity", got)
+		}
+		key := tfRootBlock(t, filepath.Join(root, keyringRoot), `resource "google_kms_crypto_key" "signing"`)
+		version, ok := tfNestedBlock(key, "version_template")
+		if !ok {
+			t.Fatalf("the key's version_template block is not found at all")
+		}
+		if got, _ := tfAttr(version, "algorithm"); got != `"RSA_SIGN_PKCS1_2048_SHA256"` {
+			t.Errorf("the key's algorithm reads as %s: a heredoc in the labels map spells version_template out, and a check that read that text would hold the algorithm it names while the key is created with another", got)
+		}
+	})
+
+	// And the key set the checks' reads range over: they read the block the
+	// signing key is declared in, so a second key beside it — in a root of its
+	// own, or here — is a key none of them reads, and the signer role is granted
+	// on the RING, so it reaches every key in it. The list below is what refuses
+	// one, keyed by the root holding it as well as by its header, because the
+	// same block moved into the other root is a second key there.
+	t.Run("a second key beside the one block", func(t *testing.T) {
+		root := t.TempDir()
+		tfWrite(t, root, "keyring/main.tf", "resource \"google_kms_crypto_key\" \"signing\" {\n"+
+			"  purpose = \"ASYMMETRIC_SIGN\"\n}\n\n"+
+			"resource \"google_kms_crypto_key\" \"signing_alt\" {\n"+
+			"  name     = \"fugaro-licence-alt\"\n"+
+			"  purpose  = \"ASYMMETRIC_SIGN\"\n\n"+
+			"  version_template {\n    algorithm        = \"RSA_SIGN_PKCS1_2048_SHA256\"\n    protection_level = \"HSM\"\n  }\n}\n")
+		want := []string{tfNames(keyringRoot, `resource "google_kms_crypto_key" "signing_alt"`)}
+		if got := tfUnheldKeys(t, root); !slices.Equal(got, want) {
+			t.Errorf("a second key in the tree reads as %v, want %v: the checks read the signing key's own block, so a key beside it is one none of them reads while the signer role, granted at the ring, reaches it", got, want)
 		}
 	})
 
