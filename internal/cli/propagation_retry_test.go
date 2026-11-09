@@ -235,6 +235,42 @@ func TestPropagationRetryKeepsRetryingAfterItsOwnApplyCreated(t *testing.T) {
 	}
 }
 
+// A retried plan is judged afresh, and in a project that is not managed with
+// --yes the guard is the whole of that judgement: the retry re-plans, so a
+// plan the guard refuses is refused before it is applied, and never applied
+// under the confirmation given to a plan that did not hold what it holds. The
+// refusal here is the one only the guard sees -- a delete nobody allowed --
+// because the failure the retry absorbs is an apply that creates: without the
+// guard on the retry's own plan the delete would go through unnamed.
+func TestPropagationRetryHoldsTheNewPlanToTheGuard(t *testing.T) {
+	noPropagationWaits(t)
+	r := updateRig(t)
+	// The first attempt's plan is the reported failure's own, which the guard
+	// admits; the re-plan holds those changes AND a delete nothing allowed.
+	const runsBucket = "module.installation.google_storage_bucket.runs"
+	r.script["plan@installation"] = map[string]any{"exit": 2}
+	r.script["show@installation"] = []any{
+		map[string]any{"stdout": planJSON(t, credentialsServiceChanges()...)},
+		map[string]any{"stdout": planJSON(t, append(slices.Clone(credentialsServiceChanges()), change(runsBucket, "delete"))...)},
+	}
+	r.script["apply@installation"] = []any{
+		map[string]any{"exit": 1, "stderr": theReported404s},
+		map[string]any{"exit": 0},
+	}
+	r.save(t)
+
+	out, err := updateRun(t, r, "update", "--yes")
+	if err == nil {
+		t.Fatalf("a retried plan holding an unallowed delete was applied:\n%s", out)
+	}
+	if said := ErrorText(err); !strings.Contains(said, "the plan would delete or replace 1 resource(s)") || !strings.Contains(said, runsBucket) {
+		t.Errorf("the retry did not stop in the guard's own words about the re-plan: %v\n%s", err, out)
+	}
+	if got := rootSubs(t, r, "installation", "apply"); len(got) != 1 {
+		t.Errorf("the installation root applied %d times, want 1: the plan the retry was handed was refused before it reached the apply\n%s", len(got), out)
+	}
+}
+
 // The repository step runs the same cycle through the same retry: its own
 // plan, gate and apply, and no saved plan applied twice. The failure here is
 // the repository root's own version of the reported one -- an account this

@@ -673,6 +673,40 @@ func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 			t.Errorf("applied %d times, want %d", n, len(propagationWaits)+1)
 		}
 	})
+	t.Run("a re-plan with a grant member outside the cover", func(t *testing.T) {
+		noPropagationWaits(t)
+		typedThroughYes(t)
+		r := computeRig(t)
+		// The first plan is the gap's own AND one of the module's grants to a
+		// run account the stage read, which the compute cover accepts. The
+		// re-plan holds the SAME address with the same action and another
+		// member: unconfirmed compares addresses and actions and cannot see
+		// that, so the grant rules are the whole of what keeps a re-plan's
+		// member inside the compute cover.
+		reaper := created("module.compute.google_service_account.reaper", "google_service_account",
+			map[string]any{"account_id": infra.ReaperAccountID, "email": infra.ReaperAccountID + "@" + initProject + ".iam.gserviceaccount.com"})
+		grant := func(member string) planChange {
+			return planChange{"address": "module.compute.google_project_iam_member.run_log_writer", "type": "google_project_iam_member",
+				"change": map[string]any{"actions": []string{"create"}, "before": map[string]any{},
+					"after": map[string]any{"project": initProject, "role": "roles/logging.logWriter", "member": member}}}
+		}
+		run := "serviceAccount:fugaro-acme-web@" + initProject + ".iam.gserviceaccount.com"
+		r.script["show@compute"] = []any{
+			map[string]any{"stdout": planJSON(t, reaper, grant(run))},
+			map[string]any{"stdout": planJSON(t, reaper, grant("serviceAccount:stranger@"+initProject+".iam.gserviceaccount.com"))},
+		}
+		r.script["apply@compute"] = []any{map[string]any{"exit": 1, "stderr": propagationStderr}, map[string]any{"exit": 0}}
+		r.save(t)
+		fakeTerminal(t)
+		out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--yes", "--provision-batch")
+		if err == nil || !strings.Contains(err.Error(), "the compute root's plan grants what the compute module does not") ||
+			!strings.Contains(err.Error(), "run_log_writer") {
+			t.Fatalf("err = %v, want the compute stage's grant refusal for the re-plan's member:\n%s", err, out)
+		}
+		if n := strings.Count(strings.Join(subcommands(computeCalls(t, r)), " "), "apply"); n != 1 {
+			t.Errorf("applied %d times, want 1: the re-plan was refused before it reached the apply", n)
+		}
+	})
 	t.Run("a re-plan with something new", func(t *testing.T) {
 		noPropagationWaits(t)
 		typedThroughYes(t)
