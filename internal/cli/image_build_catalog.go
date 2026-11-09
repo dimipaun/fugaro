@@ -517,9 +517,11 @@ func catalogBuildSecrets(cfg *config.Config) ([]config.Secret, error) {
 	return out, nil
 }
 
-// catalogBuildBanner is what a catalog build's confirmation says it does:
-// the entries it submits one build per, the machine each runs on, the
-// account and the registry they push to.
+// catalogBuildBanner is what a catalog build says it does: the entries it
+// submits one build per, the machine each runs on, the account and the registry
+// they push to. It is printed once for the whole invocation, and the same
+// sentence is the What of every entry's document (admitEntry), so what the
+// person read and what the gate judged are one plan.
 func catalogBuildBanner(entries []config.Entry, machineType, account, registry string) string {
 	names := make([]string, len(entries))
 	for i, e := range entries {

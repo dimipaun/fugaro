@@ -20,67 +20,67 @@ import (
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
-// `fugaro image build` under the managed gate: the typed prompt's replacement
-// for a person at their own terminal in a managed project (NP3, the owner's
-// ruling of 2026-11-06, which #1845 and image_refresh_steps.go's askBuild
-// already applied elsewhere).
+// `fugaro image build` under the managed gate: the catalog arm's own document
+// and its own rules (M4, M6, D1011, D1013, D1022).
 //
-// What was wrong. A Cloud Build is billable, so every arm of this command asked
-// for the project's name typed at a real terminal (confirmBuild). In a managed
-// project that is the one thing the ruling says does not happen: the person at
-// a real terminal is asked nothing, and what stands in for the typed name is
-// the gate's verdict over the plan that was printed plus the project's own
-// record of the build. The prompt the owner met by running `fugaro image build
-// go` on the managed project was exactly this one — a catalog entry — and #1845
-// had already given the same treatment to the policy-migration prompt.
+// What this file is, and what it stopped being. Until T4 a billable build was
+// guarded by a confirmation, and in a managed project the gate was what stood in
+// for it: the person at their own terminal was asked nothing, and the gate's
+// verdict over the printed banner plus the project's own record of the build
+// took the typed name's place. The typed name is gone from every arm of this
+// command now (D1540, D1542) and what bounds a build is the lease the caller
+// takes from the project's budget database before each submission
+// (image_build_lease.go, D1543), so there is no confirmation left for the gate
+// to stand in for. What the gate still does here is the managed project's own
+// record: each catalog entry is judged against the row §6 of
+// docs/repo-image-removal/spec.md states for this command, the plan a rule
+// refuses is refused rather than judged again, and the verdict is written as
+// the audit record (D1025). A project that is not managed, a mark that cannot be
+// read and a project whose clients or budget database cannot be opened answer
+// nil from openBuildManaged, and the build then takes its lease and runs — the
+// same answer every session that is not an owner at their own terminal gets.
 //
-// Which arm, and why only that one. The managed gate's rows are the design of
-// record's, and for this command the row is the catalog entry: "admitted for a
-// catalog entry — the entry exists in the effective catalog, the build account
-// is the project's own for that entry's source repository, and the count is
-// within D1013's max_image_builds bound" (docs/repo-image-removal/spec.md §6,
-// D1206). That row is stated for the command the removal leaves, which has no
-// derived arm; until the removal lands, the catalog arm is the part of today's
-// command the row covers. The derived arm — `--workflow`, or a checkout with no
-// catalog — is written by no row anywhere, and the design's own boundary is
-// why: a billable
-// build's prompt is taken away only where the design gave that path a document
-// AND a bound (docs/managed-agent-converge/spec.md §3.1). So the derived arm
-// keeps confirmBuild exactly as it stands, and so does the converge's own first
-// build (init.go's buildImages), whose row §3.1 names as one that still asks.
+// Which arm the gate has a document for, and which it does not. The gate's rows
+// are the design of record's, and for this command the row is the catalog entry:
+// "admitted for a catalog entry — the entry exists in the effective catalog, the
+// build account is the project's own for that entry's source repository, and the
+// count is within D1013's max_image_builds bound" (docs/repo-image-removal/spec.md
+// §6, D1206). The count clause went with the bound (T4, D1543). The derived arm —
+// `--workflow`, or a checkout with no catalog — is written by no row anywhere, so
+// no document of the gate's names it: that arm submits its build under its lease
+// and is recorded by nothing here.
 //
-// Why the bound and the kill switch are read, and read per build. D1013 is what
-// makes this row admissible rather than a licence: a billable build the gate
-// admits is bounded, and the bound (M5's max_image_builds) and the project's
-// kill switches are re-read before EACH build, never once per command — an
-// owner who lowers the bound or stops the project means the build after that to
-// stop, and a command that read either once would keep spending on a project
-// that has just been told to stop (refreshManaged.admitBuild, the same two
-// calls over the same two objects).
+// Why the kill switch is read, and read per build. D1013's bound was what made
+// this row admissible rather than a licence, and the kill switch is the part of
+// it that stands: it is re-read before EACH build, never once per command — an
+// owner who stops the project means the build after that to stop, and a command
+// that read it once would keep spending on a project that has just been told to
+// stop (refreshManaged.admitBuild, the same call over the same object).
 //
 // Why the document is the sentence that was printed (What below). D1022's
 // digest is what lets an owner check, months later, that the document a verdict
 // was reached on is the document the command acted on; for this command the
-// plan the person would have read is the banner line, so the banner is IN the
-// document rather than beside it. A record whose digest covered only the
-// figures the rules were stated over would leave the one thing the person was
-// shown out of what is provably what ran. One document per build, and the entry
-// it is about is named in it: the catalog arm submits one build per entry, and
-// a set of records that all carried one digest would not say which build was
-// admitted (refreshBuildDoc's own reason for naming the build).
+// plan the person reads is the banner line, so the banner is IN the document
+// rather than beside it. A record whose digest covered only the figures the
+// rules were stated over would leave the one thing the person was shown out of
+// what is provably what ran. One document per build, and the entry it is about
+// is named in it: the catalog arm submits one build per entry, and a set of
+// records that all carried one digest would not say which build was admitted
+// (refreshBuildDoc's own reason for naming the build).
 //
-// Why the class is YesOrTyped, and why that is not a widening. A billable build
-// is money, and D1026 keeps a Typed step — money or permanent — out of every
-// plan gate; but this command's confirmation is not a Typed one in the first
-// place: `fugaro image refresh`'s own per-build confirmation is YesOrTyped
-// (D12's answer of 2026-10-20, askBuild), `--yes` has always covered a
-// converge's first build (askCovered), and YesOrTyped is the class D1026's own
-// rule lets a document admit. The three things that keep this from being a
-// licence: the door opens only for initflow.PersonAtTheTerminal (so a coding
-// agent's session and a pipeline keep today's refusal, unchanged and reached
-// before any of this file runs), the rules below are re-stated over the
-// submitted build rather than assumed from the code that computed it, and the
-// admission — not the absence of a prompt — is what the record carries.
+// Why the class is YesOrTyped, and why it decides less than it used to. YesOrTyped
+// is D12's answer of 2026-10-20 and the class `fugaro image refresh`'s per-build
+// document already carried (askBuild), and it is the class a build's admission is
+// still made under. What it decides now is what the verdict is spent on — the
+// record, and the one line a person at their own terminal is shown in place of
+// the questions a typed confirmation used to print (initflow.ConfirmsByGate,
+// GateProceeded) — and no longer whether anything is asked: with the confirmation
+// gone, a managed project's terminal and a coding agent's session submit their
+// builds alike, each under the lease the caller takes immediately after the
+// verdict. What keeps the admission from being a licence is the same as before
+// minus the prompt: the rules below are re-stated over the submitted build rather
+// than assumed from the code that computed it, and the admission — not the
+// absence of a question — is what the record carries.
 
 // buildManaged is `fugaro image build`'s own door: the installation the gate
 // read, the gate itself, and the client the kill switch is re-read with before
@@ -107,24 +107,23 @@ type buildManaged struct {
 }
 
 // openBuildManaged is the door: the gate's read, made once per command, in the
-// one session whose typed prompt the ruling takes away.
+// session these rows are about.
 //
-// Why nil is the answer to every way of not being managed. The prompt this
-// stands in for is confirmBuild's, and in a session that is not a managed
-// project's it is exactly what the run gets. A mark that cannot be read is not
-// a permission (the direction every read in internal/infra/managed takes), a
-// client that cannot be built is an account that cannot act, and a budget
-// database the command cannot open is a project whose ownership question it
-// cannot ask (D1017) — each of them is "the gate did not admit this" and
-// returns nil, so the person is asked the question they have always been asked
-// rather than met with an error about the installation.
+// Why nil is the answer to every way of not being managed. A mark that cannot
+// be read is not a permission (the direction every read in internal/infra/managed
+// takes), a client that cannot be built is an account that cannot act, and a
+// budget database the command cannot open is a project whose ownership question
+// it cannot ask (D1017) — each of them is "the gate did not admit this" and
+// returns nil, so the build is judged by nothing but the lease the caller takes
+// and is never met with an error about the installation.
 //
-// Why nothing is read for a session that is not a person at the terminal. This
-// command refuses --json, a pipe and a coding agent's session before the cloud
-// is opened at all (catalogBuildNotConfirmable), so those sessions never reach
-// here; the predicate is asked anyway, because the door is the one place that
-// decides it and a caller that read the marks for a session the gate cannot
-// answer for would be paying for two calls to widen nothing.
+// Why nothing is read for a session that is not a person at the terminal. The
+// door is the one place that decides which sessions this file judges, and the
+// answer is the session these rows were written for: the owner at their own
+// terminal. A session that is not one pays nothing for the read and submits its
+// build under its lease alone, which is what every arm of the command did before
+// this file existed — and widening the gate to those sessions is a change of
+// behavior this file is not the place for.
 func openBuildManaged(ctx context.Context, env *cloudEnv, c initflow.Conditions) *buildManaged {
 	if !initflow.PersonAtTheTerminal(c) {
 		return nil
@@ -144,14 +143,14 @@ func openBuildManaged(ctx context.Context, env *cloudEnv, c initflow.Conditions)
 	return &buildManaged{lc: env.lc, gate: &gate, db: db}
 }
 
-// standsIn is whether this session's builds are judged by the gate rather than
-// confirmed by a typed name: the door's read answered "managed" and the person
-// who would have typed the name is at their own real terminal.
+// standsIn is whether this session's builds are judged by the gate: the door's
+// read answered "managed" and this is the owner at their own real terminal,
+// which is the session the rows are stated for.
 //
 // The predicate is asked again here rather than remembered from the door,
-// because the session the note is scoped to and the session the typed prompt is
-// scoped to are one reading of the same facts, taken where each is decided: a
-// caller cannot end up printing one session's note to another session.
+// because the session the record is scoped to and the session the door read for
+// are one reading of the same facts, taken where each is decided: a caller
+// cannot end up writing one session's record for another session's build.
 func (m *buildManaged) standsIn(c initflow.Conditions) bool {
 	return m != nil && m.gate != nil && initflow.PersonAtTheTerminal(c)
 }
@@ -223,20 +222,15 @@ func (p buildPlan) bytes() ([]byte, error) {
 // admitEntry is one catalog entry's whole judgement, made immediately before
 // the build it is about.
 //
-// The order is M6's (managed_gate.go's own comment): the bound and the kill
-// switch are read, the document is built and judged, the gate re-reads the
-// marks immediately before the write (D1024) and writes the record of a refusal
-// itself, and only then is the confirmation decided. A gate that refuses the
-// plan is a refusal and never a prompt — a plan a rule refused is not one a
-// person's typed name should confirm — and a gate that finds the project is not
-// managed any more (the second read's own answer, admit's zero Managed) leaves
-// the typed question exactly where it was.
-//
-// The bound's read is the one thing here that is an error rather than a
-// refusal when it answers nothing: a bound nothing recorded is not a bound of
-// zero, it is a verdict the gate cannot reach, so no document is judged, no
-// record is written, and the command stops (M0's rule for a document that could
-// not be read at all).
+// The order is M6's (managed_gate.go's own comment): the kill switch is read,
+// the document is built and judged, the gate re-reads the marks immediately
+// before the write (D1024) and writes the record of a refusal itself, and only
+// then is the verdict spent. A gate that refuses the plan is a refusal and never
+// a judgement to work around, and a gate that finds the project is not managed
+// any more (the second read's own answer, admit's zero Managed) leaves the build
+// to its lease exactly as a session this file does not judge. What is left for
+// the verdict to decide is the record and the line the person reads, because the
+// build's confirmation is gone from every session (T4, D1540).
 func (m *buildManaged) admitEntry(ctx context.Context, cmd *cobra.Command, c initflow.Conditions, cat *config.Catalog, e config.Entry, slug string, p buildPlan) error {
 	if !m.standsIn(c) {
 		return nil

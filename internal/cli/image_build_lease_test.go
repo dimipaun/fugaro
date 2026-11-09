@@ -52,12 +52,16 @@ func buildBudgetWorld(t *testing.T, f *cloudFixture) *gcpfake.RTDB {
 	return db
 }
 
-// adoptBudgetFake marks a budget fake as this installation's own, which is what
-// every door that writes into the database asks before it does (requireOwnBudgetDB):
-// a database holding data and no mark is not ours. auroraMark is the mark
-// `fugaro update --firebase-project` writes, and both fixtures are the same
-// installation — name aurora, gcp_project proj-1234.
+// adoptBudgetFake marks a budget fake as this installation's own, the way
+// `fugaro update --firebase-project` leaves one: the project's name at
+// /fugaro/project and the mark beside it, both written by that door's
+// infra.DB.Plan. The two are what every writer into the database asks before
+// it writes — the name gate (checkDBProject) and then the ownership question
+// (requireOwnBudgetDB) — so a database holding data and no mark, or a name
+// another project owns, is not ours. auroraMark is that mark, and every fixture
+// here is the same installation: name aurora, gcp_project proj-1234.
 func adoptBudgetFake(db *gcpfake.RTDB) {
+	db.Set(budget.PathProject, "aurora")
 	db.Set(budget.PathMark, auroraMark())
 }
 

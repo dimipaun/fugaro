@@ -300,7 +300,7 @@ func catalogBuildCredential(t *testing.T, f *cloudFixture) {
 
 // stubCatalogProviderHook is stubCatalogProvider with a hook that runs the first
 // time the copy's provider is opened: for the one property that needs the
-// project changed WHILE the command runs — D1013's bound and switch are re-read
+// project changed WHILE the command runs — D1013's kill switch is re-read
 // before each build rather than once per command. The copy is opened once per
 // entry, between that entry's admission and its submission, so a hook here
 // changes the marks between two builds and nowhere inside one.
@@ -322,8 +322,8 @@ func stubCatalogProviderHook(t *testing.T, files map[string]string, hook func())
 // project, runs `fugaro image build <entry>`: nothing is typed, the sentence the
 // typed prompt prints is not printed, the verdict's own line is, one build is
 // submitted and the project's audit holds one admission of the document the
-// person read — the document that carries the entry, the bound in force and the
-// count this build was judged against.
+// person read — the document that carries the entry and the kill switch this
+// build was judged under.
 //
 // It failed before this task for the reason the task exists: every arm of this
 // command asked for the project's name typed at a terminal (confirmBuild), and

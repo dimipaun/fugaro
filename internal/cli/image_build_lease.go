@@ -83,9 +83,25 @@ type buildLease struct {
 // *BuildOverCapError (estimate, cap, spent, the one command, exit 1), a missing
 // price is budget.NoPriceError's sentence, and a database that would not answer
 // is the budget backend's own (fail closed, D1550).
+//
+// The database is asked whose it is before any of that, because this takes a
+// reservation in it and moves the day's counters: both are writes into the one
+// shared database, so the build's lease asks the same two questions every other
+// writer asks before it writes (checkDBProject at /fugaro/project, then
+// requireOwnBudgetDB for the mark — the owner's ruling of 2026-10-31). Without
+// them a checkout whose config points budget.rtdb_url at another installation's
+// database would be judged against a cap that bounds nothing here, and would
+// write its reservation and its counters there — spend that installation never
+// made, which its own runs are then refused for.
 func openBuildLease(ctx context.Context, w io.Writer, lc *localcfg.Config, repo, slug string) (*buildLease, error) {
 	_, db, err := budgetDBFor(ctx, lc)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkDBProject(ctx, db, lc); err != nil {
+		return nil, err
+	}
+	if err := requireOwnBudgetDB(ctx, lc, db, "nothing was built"); err != nil {
 		return nil, err
 	}
 	who, err := lc.Me(ctx)
@@ -100,8 +116,11 @@ func openBuildLease(ctx context.Context, w io.Writer, lc *localcfg.Config, repo,
 	if n, err := cost.reclaim(ctx); err != nil {
 		return nil, err
 	} else if n > 0 {
-		fmt.Fprintf(w, "fugaro: gave back %d build lease(s) a CLI that died mid-build left open, so the day no longer counts %s of them\n",
-			n, map[bool]string{true: "it", false: "any"}[n == 1])
+		leases, them := fmt.Sprintf("%d build leases", n), "them"
+		if n == 1 {
+			leases, them = "a build lease", "it"
+		}
+		fmt.Fprintf(w, "fugaro: gave back %s a CLI that died mid-build left open, so the day no longer counts %s\n", leases, them)
 	}
 	l, advisory, err := cost.take(ctx, id)
 	if err != nil {
