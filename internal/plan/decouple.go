@@ -39,14 +39,15 @@ import (
 // `gain` is not a field of Document, so a planner that wrote one is refused by
 // name, the same way it is refused any other key this build does not know.
 type Gain struct {
-	// Broken is how many edges the pass broke: one per entry of the document's
-	// decoupling record.
+	// Broken is how many edges the pass broke: the edges the document's
+	// decoupling record names, each pair once, a record that names one edge
+	// twice having broken one edge.
 	Broken int `json:"broken"`
 	// Kept is how many dependencies the pass left alone: the edges of this
-	// graph that join two nodes that are not the pass's own. An edge onto a
-	// contract, an integration or a change request is the pass's scaffolding
-	// rather than a dependency the plan had before it, so neither figure counts
-	// it — Broken and Kept are the two halves of what the pass decided.
+	// graph that join two tasks, each pair once. An edge onto a contract, an
+	// integration or a change request is the pass's scaffolding rather than a
+	// dependency the plan had before it, so neither figure counts it — Broken
+	// and Kept are the two halves of what the pass decided.
 	Kept int `json:"kept"`
 	// AddedTasks is how many tasks the pass added: every contract, integration
 	// and change-request node of this graph. It is the figure F11's cost is
@@ -101,8 +102,19 @@ func decouplingGain(path string, doc Document) (Gain, error) {
 	for _, n := range doc.Nodes {
 		kinds[n.ID] = kindOf(n)
 	}
+	broken := make([]Edge, 0, len(doc.Decoupling))
+	for _, d := range doc.Decoupling {
+		broken = append(broken, Edge{Task: d.Was.Task, Needs: d.Was.Needs})
+	}
+	kept := make([]Edge, 0, len(doc.Edges))
+	for _, e := range doc.Edges {
+		if kinds[e.Task] == KindTask && kinds[e.Needs] == KindTask {
+			kept = append(kept, e)
+		}
+	}
 	g := Gain{
-		Broken: len(doc.Decoupling),
+		Broken: countPairs(broken),
+		Kept:   countPairs(kept),
 		Before: before,
 		After:  after,
 	}
@@ -111,13 +123,28 @@ func decouplingGain(path string, doc Document) (Gain, error) {
 			g.AddedTasks++
 		}
 	}
-	for _, e := range doc.Edges {
-		if kinds[e.Task] == KindTask && kinds[e.Needs] == KindTask {
-			g.Kept++
-		}
-	}
 	g.Improves = g.After.Weight < g.Before.Weight
 	return g, nil
+}
+
+// countPairs is how many dependencies a list of edges states: a dependency
+// written twice is one dependency, the rule analyze.go counts a diamond's arms
+// by — a figure that counted a repeated edge twice would state the pass's work
+// in terms of how often a planner repeated itself.
+func countPairs(edges []Edge) int {
+	seen := map[string]map[string]bool{}
+	n := 0
+	for _, e := range edges {
+		if seen[e.Task] == nil {
+			seen[e.Task] = map[string]bool{}
+		}
+		if seen[e.Task][e.Needs] {
+			continue
+		}
+		seen[e.Task][e.Needs] = true
+		n++
+	}
+	return n
 }
 
 // beforePath rebuilds the plan the pass ran over and measures it.

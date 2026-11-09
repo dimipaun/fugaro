@@ -1388,8 +1388,8 @@ the `gain` object (computed; the read's, not the artifact's):
 
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
-| `broken` | number | never | never | how many edges the pass broke: one per entry of `decoupling` |
-| `kept` | number | never | never | how many dependencies the pass left alone: the edges of this graph that join two tasks, neither of them a `contract`, an `integration` or a `contract_change` node. An edge onto one of the pass's own nodes is its scaffolding rather than a dependency the plan had before it, so it is in neither figure — `broken` and `kept` are the two halves of what the pass decided |
+| `broken` | number | never | never | how many edges the pass broke: the edges the `decoupling` record names, **each pair once** — a record naming one edge twice broke one edge |
+| `kept` | number | never | never | how many dependencies the pass left alone: the edges of this graph that join two tasks, neither of them a `contract`, an `integration` or a `contract_change` node, and each pair once. An edge onto one of the pass's own nodes is its scaffolding rather than a dependency the plan had before it, so it is in neither figure — `broken` and `kept` are the two halves of what the pass decided |
 | `added_tasks` | number | never | never | how many tasks the pass added: every `contract`, `integration` and `contract_change` node of this graph. The figure the added spend is stated in (D1820), and the difference between the two plans' task counts |
 | `before` | object | never | never | the plan as it stood before the pass, below |
 | `after` | object | never | never | the plan as this document states it, below |
