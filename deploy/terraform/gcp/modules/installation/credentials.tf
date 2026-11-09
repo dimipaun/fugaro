@@ -318,6 +318,15 @@ resource "google_cloud_run_v2_service" "credentials" {
   # layered on top of it, never instead of it.
   invoker_iam_disabled = false
 
+  # The service-level scaling, written out beside the template's: the managed
+  # gate prices a Cloud Run service by its minimum instance count at BOTH
+  # levels, and an attribute the provider computes is unknown at plan time, so
+  # a service that states only one is refused as unpriceable at the other.
+  scaling {
+    scaling_mode       = "AUTOMATIC"
+    min_instance_count = 0
+  }
+
   # The service holds no data of its own: what is worth keeping is the bundle
   # container, and that one carries prevent_destroy above. So dropping the
   # block from the tfvars is NOT a removal a plan may make: with the container in state the
@@ -358,6 +367,16 @@ resource "google_cloud_run_v2_service" "credentials" {
     }
     service_account = google_service_account.credentials[0].email
     timeout         = "3600s"
+
+    # Scale to zero, written out: a managed project's gate prices a Cloud Run
+    # service by its minimum instance count, and an attribute the provider
+    # computes is unknown at plan time, so a service that does not state it is
+    # refused as unpriceable ("write it out literally"). Zero is also the shape
+    # this service has: nothing keeps an instance warm, and a caller waits on a
+    # cold start rather than the installation paying around the clock.
+    scaling {
+      min_instance_count = 0
+    }
 
     containers {
       image = var.credentials_service.image
