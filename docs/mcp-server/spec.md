@@ -508,8 +508,10 @@ model credentials**. That contradicts D923's own "the coordinator mints nothing"
 `TestTheCoordinatorMintsNoCustomToken`. **The owner's ruling of 2026-11-09 replaced that third
 privilege with the start-only `run.jobs.run`** (§8): the front door's account never holds
 `runWithOverrides`, so what the later design item has to build on is **the ability to start an
-execution and nothing else**, and the review's finding stands as the reason the tool was deferred
-rather than as a privilege this design asks for. **So the first slice is the authorization server plus
+execution and nothing else**. **That answers the override half of the contradiction and not the
+minting half**: `signJwt` is not a permission this role touches, so the token minting moves out of
+the public service before the tool can be built, and the review's finding stands as the reason the
+tool was deferred rather than as a privilege this design asks for. **So the first slice is the authorization server plus
 `get_task_status`, `stream_logs`, `get_result` and `list_tasks`; `cancel_task` goes with `spawn_task`
 into the later design item rather than into the first slice**, because the marker it writes is an
 object in the runs bucket (`internal/runstore/runstore.go:1581`, `fugaro cancel`'s own write) and so
@@ -983,8 +985,10 @@ holds no launch grant, no signer and no write on the runs bucket, so this whole 
 **the later slice** rather than about what ships first. When the coordinator is the launcher (D931),
 it holds the one thing a launcher has that no token does: **the ability to set a run's environment
 for one execution**. On Cloud Run that is `run.jobs.runWithOverrides`, which is in `fugaroJobRunner`,
-the role every launcher holds on each job (`internal/cli/doctor_launcher.go:94`, beside
-`fugaroLauncher`, the read and cancel role) and is why the repository already refuses to let a launch
+the role every launcher holds on each job (both role IDs are spelled at
+`internal/infra/tf/cover.go:791-793` — `fugaroJobRunner` beside `fugaroLauncher`, the read and cancel
+role — and `internal/cli/doctor_launcher.go:94` is the prose that a launcher holds both of the
+runner ones) and is why the repository already refuses to let a launch
 decide anything important: `internal/backend/gcp/names.go:182` records that **a launcher may override
 any variable through `run.jobs.runWithOverrides`, so the provider — which decides which repository
 the runner may clone and which git credential the job holds — must come from something only Cloud
@@ -1041,7 +1045,8 @@ implied.**
   ([reconciliation.md](reconciliation.md) §4b). **The mechanism the fence needs is the one §4b of
   [reconciliation.md](reconciliation.md) already asked for in words: per-run input keyed by the
   execution.** Cloud Run injects the execution's own name into the container itself
-  (`CLOUD_RUN_EXECUTION`, read by `internal/backend/codec.go:113`'s `ExecutionFromEnv`, no override
+  (`CLOUD_RUN_EXECUTION`, read by `internal/backend/platform.go:69`'s `ExecutionFromEnv` — the Cloud
+  Run codec's own read of it is `internal/backend/codec.go:113` — and with no override
   involved), so the launcher writes a **launch binding** into the runs bucket named by the execution
   and the runner resolves `<slug>/<run-id>` from it at bootstrap. **Its race is part of the design and
   not an implementation detail**: the execution starts as soon as the run call returns, so the runner

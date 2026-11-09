@@ -194,8 +194,11 @@ args**, the base image's entrypoint being `tini --` (`images/base_test.go:59`), 
 this design is built on is the ability to start an execution and nothing else**, and the two
 statements are not in conflict: the review priced what a launcher holds, the ruling gives the front
 door a role of its own. That is what deferred the tool: the review's finding contradicts the answer's
-own "the coordinator mints nothing" (D923) and M6's `TestTheCoordinatorMintsNoCustomToken`, **which a
-launcher that cannot override no longer does**. The first slice keeps that sentence true by not
+own "the coordinator mints nothing" (D923) and M6's `TestTheCoordinatorMintsNoCustomToken`, **and the
+split launcher role closes only half of that contradiction** — it removes the override permission,
+while the front door still needs `signJwt` to mint the run's token, which the role does not touch and
+which is why minting has to move out of the public service before the tool can be built (the second
+of the four requirements below). The first slice keeps that sentence true by not
 needing `spawn_task` at all. **What a later `spawn_task` design item has to answer** is written in
 [reconciliation.md](reconciliation.md) §4b and in §7 below; the four requirements are: no
 `runWithOverrides` (use `run.jobs.run` with per-run input under a bucket prefix only the coordinator
@@ -996,7 +999,10 @@ tools**, and **M9 leaves the first slice**: it is the task that starts a run fro
 it needs two privileges the front door does not hold — `signJwt` and write on the runs bucket — plus
 **the launcher's `run.jobs.run`, which M11 grants it and which never carries
 `run.jobs.runWithOverrides`** (the owner's ruling of 2026-11-09, [reconciliation.md](reconciliation.md)
-§6 check 0). **What a later `spawn_task` design item has to answer is written in §1 and §7 below**,
+§6 check 0). **M11's grant answers the override half of that and nothing else**: `signJwt` stays a
+privilege the front door would hold, so the minting moves out of the public service (the second of
+the four requirements §1 names) before this task can be built — the role narrows what a launch may set, not what the
+public service may sign. **What a later `spawn_task` design item has to answer is written in §1 and §7 below**,
 and **nothing in the
 first slice starts a run, holds the launch grant or changes `internal/runner`**. The task is written
 here, unchanged, as the plan for when it is designed and the owner approves it.
@@ -1048,7 +1054,7 @@ here, unchanged, as the plan for when it is designed and the owner approves it.
   (`FUGARO_REVIEW_JOB=1`, `internal/cli/run.go:3977`). **The front door's account can set none of
   them**, and this task's own channel — the task — carries the ceiling and the marker of D924 and
   nothing else. So: the identity moves to the **launch binding** M11 builds (the run named by the
-  execution Cloud Run injects itself, `internal/backend/codec.go:113`), with M11's bounded poll and its
+  execution Cloud Run injects itself, `internal/backend/platform.go:69`), with M11's bounded poll and its
   orphan refusal; and **the seal key and the review-job marker have no named channel yet** — they are
   the third part of the question §4b's **D937** puts back to the owner, because a launch that carries a
   minted budget token and cannot hand the run the one thing that opens it is a paid-for run that dies
@@ -1158,7 +1164,7 @@ planner who takes only the first slice takes no part of this task.
 
 - **Files (30):** `deploy/terraform/gcp/modules/installation/iam.tf` (the new custom role, whose
   permissions are exactly `run.jobs.run`, beside `google_project_iam_custom_role.job_runner` at
-  `:27-34`), `deploy/terraform/gcp/modules/installation/variables.tf` (the **closed**
+  `:26-33`), `deploy/terraform/gcp/modules/installation/variables.tf` (the **closed**
   `names.role_ids` object at `:61-66` gains the key — an object left open would let a plan name a role
   nothing creates), `deploy/terraform/gcp/modules/installation/outputs.tf` (`role_ids` gains the role,
   beside the **five** names it publishes at `:46-56`), `deploy/terraform/gcp/modules/installation/coordinator.tf` (**comments only**: the
@@ -1226,8 +1232,9 @@ planner who takes only the first slice takes no part of this task.
   **built by the root from the same two values the module creates them from** (`var.project` with
   `var.names.role_ids.<new>`, and `var.mcp_server.account_id` with `var.project` — which is why no new
   module output is needed and no account attribute is read back) — **because that is what `cover.go`
-  reads**: its principal kinds are matched against a member's literal spelling (`isCoordinatorMember`
-  and its four siblings, `:731-759`), a grant naming an attribute that is unknown until apply could
+  reads**: its principal kinds are matched against a member's literal spelling (`isCoordinatorMember`,
+  `isVerifierMember`, `isCatalogCheckMember` and `isDeployerMember`, `:734-763` — `isCredentialsMember`
+  at `:726` has the same shape and sits just outside it), a grant naming an attribute that is unknown until apply could
   not be classified at all, and `for_each` over a set that is unknown at plan is refused by Terraform
   itself. **`fugaroJobRunner` is left exactly as it is**: every launcher, every operator and the
   history rollover keep both permissions, so nothing about
@@ -1240,7 +1247,7 @@ planner who takes only the first slice takes no part of this task.
   override (`internal/backend/gcp/run.go:172-178`, read back at `internal/cli/exec.go:60`), so an
   account holding `run.jobs.run` alone cannot start a working run until that identity moves out of the
   override too. **It moves to a launch binding keyed by the execution**: Cloud Run injects
-  `CLOUD_RUN_EXECUTION` into the container itself, read by `internal/backend/codec.go:113`'s
+  `CLOUD_RUN_EXECUTION` into the container itself, read by `internal/backend/platform.go:69`'s
   `ExecutionFromEnv` with no override involved, so the launcher writes the binding into the runs
   bucket named by the execution after `jobs.run` returns, and the container resolves its run from it
   at bootstrap. **The race is designed rather than discovered**: the execution starts as soon as the
