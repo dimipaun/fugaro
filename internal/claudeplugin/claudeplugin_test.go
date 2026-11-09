@@ -168,6 +168,42 @@ func TestChangeFailureIsAnError(t *testing.T) {
 	}
 }
 
+// TestRefusedByDeclaration: the one add failure fugaro cannot fix is told
+// apart from every other by what claude printed, because the exit status is the
+// same for all of them and the error on its own carries only that status.
+func TestRefusedByDeclaration(t *testing.T) {
+	add := addMarket("dimipaun/fugaro", "v0.5.2")
+	for _, tc := range []struct {
+		name string
+		said string
+		want bool
+	}{
+		{"the CLI's own wording",
+			`Cannot add marketplace "fugaro": its network source differs from the one declared for it in settings (kind, target, or a fetch-shaping field such as headers / ref / path / sparsePaths); the source must match the one declared for this name in settings (or change the declaration).`, true},
+		{"the plugin screens' wording",
+			"fugaro is already added from a different source (someone/else). To use this source instead, remove that marketplace first with /plugin marketplace remove fugaro.", true},
+		{"a clone that failed", "fatal: unable to access 'https://github.com/dimipaun/fugaro.git/': Could not resolve host", false},
+		{"nothing at all", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := testutil.NewClaudePluginFake(t, "[]", "[]")
+			f.On(t, "fail", tc.said, add...)
+			r, _ := runner(t, f)
+			err := r.Change(t.Context(), add...)
+			if err == nil || RefusedByDeclaration(err) != tc.want {
+				t.Fatalf("err %v: refused %v, want %v", err, RefusedByDeclaration(err), tc.want)
+			}
+		})
+	}
+	// An error from anywhere but a claude call is not something claude said.
+	if RefusedByDeclaration(errors.New("its network source differs from the one declared for it in settings")) {
+		t.Error("an error that is not a claude call was read as claude's own refusal")
+	}
+	if RefusedByDeclaration(nil) {
+		t.Error("no error at all was read as a refusal")
+	}
+}
+
 func TestListsParse(t *testing.T) {
 	f := testutil.NewClaudePluginFake(t,
 		`[{"name":"fugaro","source":"github","repo":"dimipaun/fugaro","installLocation":"/x"}]`,

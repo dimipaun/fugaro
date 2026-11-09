@@ -30,6 +30,10 @@ func TestDecide(t *testing.T) {
 		return Install{ID: "fugaro@fugaro", Version: v, Scope: "project", ProjectPath: at}
 	}
 	add := []string{"plugin", "marketplace", "add", "--scope", "user", "dimipaun/fugaro#v0.5.2"}
+	// What a clear puts back: the marketplace as the release before this one
+	// declared it, at the ref it had and with none when it had none.
+	back := []string{"plugin", "marketplace", "add", "--scope", "user", "dimipaun/fugaro"}
+	backAt := func(ref string) []string { return append(slices.Clone(back[:len(back)-1]), "dimipaun/fugaro#"+ref) }
 	rm := []string{"plugin", "marketplace", "remove", "fugaro", "--scope", "user"}
 	upd := []string{"plugin", "marketplace", "update", "fugaro"}
 	inst := []string{"plugin", "install", "fugaro@fugaro", "--scope", "user"}
@@ -41,29 +45,34 @@ func TestDecide(t *testing.T) {
 		installed []Install
 		want      [][]string
 		before    string
+		restore   []string
 	}{
-		{"a fresh machine", nil, nil, [][]string{add, inst}, ""},
-		{"marketplace only", pinned, nil, [][]string{upd, inst}, ""},
-		{"current: nothing to do", pinned, []Install{user("0.5.2")}, nil, "0.5.2"},
-		{"user install behind", pinned, []Install{user("0.5.1")}, [][]string{upd, updU}, "0.5.1"},
-		{"this checkout's project install behind", pinned, []Install{user("0.5.2"), project("0.5.1", root)}, [][]string{upd, updP}, "0.5.1"},
-		{"another checkout's install is not ours to update", pinned, []Install{user("0.5.2"), project("0.4.0", other)}, nil, "0.5.2"},
-		{"both behind", pinned, []Install{project("0.5.0", root), user("0.5.1")}, [][]string{upd, updP, updU}, "0.5.0"},
-		{"another plugin does not count", pinned, []Install{{ID: "superpowers@claude-plugins-official", Version: "6.4.1", Scope: "user"}}, [][]string{upd, inst}, ""},
-		{"a managed install is left alone", pinned, []Install{{ID: "fugaro@fugaro", Version: "0.4.0", Scope: "managed"}}, [][]string{upd, inst}, ""},
-		{"marketplace missing, plugin current", nil, []Install{user("0.5.2")}, [][]string{add}, "0.5.2"},
+		{"a fresh machine", nil, nil, [][]string{add, inst}, "", nil},
+		{"marketplace only", pinned, nil, [][]string{upd, inst}, "", nil},
+		{"current: nothing to do", pinned, []Install{user("0.5.2")}, nil, "0.5.2", nil},
+		{"user install behind", pinned, []Install{user("0.5.1")}, [][]string{upd, updU}, "0.5.1", nil},
+		{"this checkout's project install behind", pinned, []Install{user("0.5.2"), project("0.5.1", root)}, [][]string{upd, updP}, "0.5.1", nil},
+		{"another checkout's install is not ours to update", pinned, []Install{user("0.5.2"), project("0.4.0", other)}, nil, "0.5.2", nil},
+		{"both behind", pinned, []Install{project("0.5.0", root), user("0.5.1")}, [][]string{upd, updP, updU}, "0.5.0", nil},
+		{"another plugin does not count", pinned, []Install{{ID: "superpowers@claude-plugins-official", Version: "6.4.1", Scope: "user"}}, [][]string{upd, inst}, "", nil},
+		{"a managed install is left alone", pinned, []Install{{ID: "fugaro@fugaro", Version: "0.4.0", Scope: "managed"}}, [][]string{upd, inst}, "", nil},
+		{"marketplace missing, plugin current", nil, []Install{user("0.5.2")}, [][]string{add}, "0.5.2", nil},
 		// A marketplace with no ref follows the repository's default branch, so
 		// on a release main does not carry yet it offers another plugin than
 		// this binary: it is re-declared at this release's tag even when every
 		// install is current (the 0.21.1 failure of 2026-11-09). The clear comes
 		// first, because claude refuses an add of a name already declared from a
 		// different source.
-		{"unpinned marketplace, current install", unpinned, []Install{user("0.5.2")}, [][]string{rm, add, upd}, "0.5.2"},
-		{"unpinned marketplace, install behind", unpinned, []Install{user("0.5.1")}, [][]string{rm, add, upd, updU}, "0.5.1"},
-		{"marketplace at an older tag", older, []Install{user("0.5.1")}, [][]string{rm, add, upd, updU}, "0.5.1"},
+		{"unpinned marketplace, current install", unpinned, []Install{user("0.5.2")}, [][]string{rm, add, upd}, "0.5.2", back},
+		{"unpinned marketplace, install behind", unpinned, []Install{user("0.5.1")}, [][]string{rm, add, upd, updU}, "0.5.1", back},
+		{"marketplace at an older tag", older, []Install{user("0.5.1")}, [][]string{rm, add, upd, updU}, "0.5.1", backAt("v0.5.1")},
+		// A ref that is not a release tag is not one this binary passes to
+		// claude, so the clear puts the plain source back: what the marketplace
+		// was before any fugaro pinned it.
+		{"marketplace on a branch", at("main"), []Install{user("0.5.1")}, [][]string{rm, add, upd, updU}, "0.5.1", back},
 		// U10: a ref a newer fugaro wrote is never lowered, and a plugin that
 		// applies is left to it: nothing to do at all.
-		{"marketplace at a newer tag", newer, []Install{user("0.5.2")}, nil, "0.5.2"},
+		{"marketplace at a newer tag", newer, []Install{user("0.5.2")}, nil, "0.5.2", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p, err := Decide(Input{Root: root, Want: "0.5.2", Ref: "v0.5.2", Repo: "dimipaun/fugaro", Markets: tc.markets, Installed: tc.installed})
@@ -73,9 +82,14 @@ func TestDecide(t *testing.T) {
 			if !slices.EqualFunc(argsOf(p.Calls), tc.want, slices.Equal[[]string]) || p.Before != tc.before {
 				t.Fatalf("calls %q before %q, want %q %q", argsOf(p.Calls), p.Before, tc.want, tc.before)
 			}
-			for _, c := range p.Calls {
-				if err := Allowed(c.Args); err != nil {
-					t.Errorf("a planned call is not allowed: %v", err)
+			if !slices.Equal(p.Restore, tc.restore) {
+				t.Fatalf("restore %q, want %q", p.Restore, tc.restore)
+			}
+			for _, args := range append(argsOf(p.Calls), p.Restore) {
+				if args != nil {
+					if err := Allowed(args); err != nil {
+						t.Errorf("a planned call is not allowed: %v", err)
+					}
 				}
 			}
 		})

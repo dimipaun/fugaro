@@ -77,22 +77,43 @@ func pluginStep(ctx context.Context, u *upgradeCtx) stepResult {
 		return stepResult{state: stepCurrent, reason: "installed " + pluginwire.Printable(plan.Before)}
 	}
 	before, _ := os.ReadFile(u.loc.Settings)
+	// cleared is the declaration a Clear removed, and so what a failed add has
+	// to put back: a failed step must not leave the machine without the
+	// marketplace it had (a clear of a name claude has not declared fails, and
+	// then there is nothing to put back).
+	cleared := false
 	for _, c := range plan.Calls {
 		err := run.Change(ctx, c.Args...)
-		switch {
-		case err == nil:
-		case c.Kind == claudeplugin.Clear:
+		if err == nil {
+			if c.Kind == claudeplugin.Clear {
+				cleared = true
+			}
+			continue
+		}
+		switch c.Kind {
+		case claudeplugin.Clear:
 			// The declaration Claude Code refuses an add by: clearing one it
 			// does not have fails the same way, and the add below is what
 			// decides whether the marketplace ends up at this release's tag.
 			fmt.Fprintf(u.w, "  continuing without clearing: %v\n", err)
-		case c.Kind == claudeplugin.Declare:
-			// Claude Code would not declare the marketplace at this release's
-			// tag, which is the plugin's only route: a source is declared for
-			// the name in settings fugaro does not own and must not rewrite.
-			// The version cannot be had here, and the checkout's other steps
-			// are not this one's to stop: the step says exactly that, and
-			// hands the user the commands that do it by hand.
+		case claudeplugin.Declare:
+			// The one add failure fugaro cannot fix: a source is declared for
+			// the name in settings fugaro does not own and must not rewrite, and
+			// claude's own message says so. The version cannot be had on this
+			// machine, and the checkout's other steps are not this one's to
+			// stop: the step says exactly that, and hands the user the commands
+			// that do it by hand. Any other failure — a clone that failed, a
+			// network that is down — fails the step. Either way the declaration
+			// the clear removed goes back first, so neither outcome leaves the
+			// machine without the marketplace it had.
+			if cleared {
+				if rerr := run.Change(ctx, plan.Restore...); rerr != nil {
+					fmt.Fprintf(u.w, "  the declaration the clear removed could not be put back: %v\n", rerr)
+				}
+			}
+			if !claudeplugin.RefusedByDeclaration(err) {
+				return fail(err)
+			}
 			return stepResult{state: stepSkipped, reason: fmt.Sprintf("claude would not declare the %s marketplace at %s (%s): in Claude Code run /plugin marketplace remove %s, then /plugin marketplace add %s#%s and /plugin install %s, then rerun; this update's other steps do not need it",
 				pluginwire.Marketplace, tag, oneLine(err.Error()), pluginwire.Marketplace, repo, tag, pluginwire.PluginID)}
 		default:

@@ -31,9 +31,12 @@ var (
 	argsListPlugins = []string{"plugin", "list", "--json"}
 	argsAdd         = []string{"plugin", "marketplace", "add", "--scope", "user", "dimipaun/fugaro#v0.5.2"}
 	argsRemove      = []string{"plugin", "marketplace", "remove", "fugaro", "--scope", "user"}
-	argsUpdMarket   = []string{"plugin", "marketplace", "update", "fugaro"}
-	argsInstall     = []string{"plugin", "install", "fugaro@fugaro", "--scope", "user"}
-	argsUpdProject  = []string{"plugin", "update", "fugaro@fugaro", "--scope", "project"}
+	// argsBack is the add that puts back what argsRemove cleared: the plain
+	// source releases before this one declared, which is what ourMarket holds.
+	argsBack       = []string{"plugin", "marketplace", "add", "--scope", "user", "dimipaun/fugaro"}
+	argsUpdMarket  = []string{"plugin", "marketplace", "update", "fugaro"}
+	argsInstall    = []string{"plugin", "install", "fugaro@fugaro", "--scope", "user"}
+	argsUpdProject = []string{"plugin", "update", "fugaro@fugaro", "--scope", "project"}
 )
 
 // refusedAdd is what the real claude answers to an add of a name it has
@@ -155,6 +158,42 @@ func TestUpgradePluginReportsAMarketplaceItCannotDeclare(t *testing.T) {
 		if !strings.Contains(out, w) {
 			t.Errorf("output lacks %q:\n%s", w, out)
 		}
+	}
+}
+
+// TestUpgradePluginPutsBackTheDeclarationItsClearRemoved: the clear runs before
+// the add because claude refuses an add of a name already declared from another
+// source, so an add that then fails must not leave the machine without the
+// marketplace it had — and claude's own refusal of the declaration is the only
+// add failure the step reports and carries on from: anything else (a clone that
+// failed, a network that is down) fails the step.
+func TestUpgradePluginPutsBackTheDeclarationItsClearRemoved(t *testing.T) {
+	for _, tc := range []struct {
+		name, said, want string
+		code             int
+	}{
+		{"a clone that failed", "fatal: unable to access 'https://github.com/dimipaun/fugaro.git/': Could not resolve host",
+			"plugin: failed: claude plugin marketplace add --scope user dimipaun/fugaro#v0.5.2 failed: exit status 1", ExitUserError},
+		{"claude refusing the declaration", refusedAdd, "plugin: skipped: claude would not declare the fugaro marketplace at v0.5.2", ExitOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upgradeEnv(t, "0.5.2")
+			f := testutil.NewClaudePluginFake(t, ourMarket, userInstall("0.5.1"))
+			f.On(t, "fail", tc.said, argsAdd...)
+			useFakeClaude(t, f)
+			root, _ := skillCheckout(t, wiredAt("v0.5.2"))
+			out, _, err := executeStdin(t, "", "upgrade", "--local", root)
+			if ExitCode(err) != tc.code {
+				t.Fatalf("exit %d\n%s", ExitCode(err), out)
+			}
+			want := [][]string{argsRemove, argsAdd, argsBack}
+			if !slices.EqualFunc(f.Changes(t), want, slices.Equal[[]string]) {
+				t.Fatalf("changes %q, want %q\n%s", f.Changes(t), want, out)
+			}
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("output lacks %q:\n%s", tc.want, out)
+			}
+		})
 	}
 }
 

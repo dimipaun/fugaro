@@ -53,8 +53,27 @@ var (
 // addMarket is the add call for a marketplace at a git ref. Claude Code's own
 // source syntax carries the ref as `owner/repo#vX.Y.Z` (its `marketplace add`
 // takes "a URL, path, or GitHub repo"), there is no other call that sets one,
-// and it is what puts the `ref` in the settings the installs then follow.
-func addMarket(repo, ref string) []string { return append(slices.Clone(addPrefix), repo+"#"+ref) }
+// and it is what puts the `ref` in the settings the installs then follow. A ref
+// of "" is the plain source releases before this one declared, which follows
+// the repository's default branch (Allowed accepts both).
+func addMarket(repo, ref string) []string {
+	s := repo
+	if ref != "" {
+		s += "#" + ref
+	}
+	return append(slices.Clone(addPrefix), s)
+}
+
+// restoreRef is the ref to declare a cleared marketplace at again: the one it
+// had, when that is a release tag, and none otherwise — the plain source is
+// what it was before a fugaro pinned one, and no other shape of ref is a word
+// this binary passes to claude.
+func restoreRef(ref string) string {
+	if !pluginwire.ValidTag(ref) {
+		return ""
+	}
+	return ref
+}
 
 func updatePlugin(scope string) []string {
 	return []string{"plugin", "update", pluginwire.PluginID, "--scope", scope}
@@ -93,6 +112,41 @@ func Allowed(args []string) error {
 		return nil
 	}
 	return fmt.Errorf("claude %s is not a call fugaro makes", pluginwire.Printable(strings.Join(args, " ")))
+}
+
+// callError is a claude call that did not finish, with claude's own output
+// beside it: the message stays the same as any other failed call's, and what
+// claude printed is what says which failure this was (claude words the refusal
+// of an add itself, and the exit status is the same for every refusal).
+type callError struct {
+	Name   string // "claude plugin marketplace add ...", without the program
+	Reason string // "failed: exit status 1", or why the call was stopped
+	Output string // stdout then stderr, as the step printed them
+}
+
+func (e *callError) Error() string { return e.Name + " " + e.Reason }
+
+// declarationRefusal says, in claude's own words, that an add was refused
+// because the name is already declared from a different source and removing
+// that declaration is the way through. 2.1.283 words it one way from the CLI
+// (`marketplace add`) and another in the plugin's own screens.
+var declarationRefusal = []string{
+	"differs from the one declared for it in settings",
+	"already added from a different source",
+}
+
+// RefusedByDeclaration reports whether err is claude refusing an add because
+// the name is already declared for it from a different source: the one add
+// failure that is not fugaro's to fix, because the declaration is in settings
+// fugaro does not own. Every other failure — a clone that failed, a network
+// that is down — says nothing about a declaration, and the add is one to run
+// again.
+func RefusedByDeclaration(err error) bool {
+	var ce *callError
+	if !errors.As(err, &ce) {
+		return false
+	}
+	return slices.ContainsFunc(declarationRefusal, func(s string) bool { return strings.Contains(ce.Output, s) })
 }
 
 // ErrNoClaude is Find's error when claude is not on PATH.
@@ -242,13 +296,17 @@ func (r *Runner) call(ctx context.Context, timeout time.Duration, args []string)
 	cmd.WaitDelay = KillWait
 	err = cmd.Run()
 	name := "claude " + strings.Join(args, " ")
+	var reason string
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
-		err = fmt.Errorf("%s did not finish within %s and was stopped", name, timeout)
+		reason = fmt.Sprintf("did not finish within %s and was stopped", timeout)
 	case err != nil:
-		err = fmt.Errorf("%s failed: %v", name, err)
+		reason = fmt.Sprintf("failed: %v", err)
 	}
-	return out.Bytes(), errOut.Bytes(), err
+	if reason == "" {
+		return out.Bytes(), errOut.Bytes(), nil
+	}
+	return out.Bytes(), errOut.Bytes(), &callError{Name: name, Reason: reason, Output: string(out.Bytes()) + string(errOut.Bytes())}
 }
 
 // capped keeps the first maxOutput bytes written to it and drops the rest.

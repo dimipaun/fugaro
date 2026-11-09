@@ -32,11 +32,11 @@ const (
 	// which is the state a clear leaves behind: a failure is printed and the
 	// plan goes on to the add.
 	Clear
-	// Declare declares the marketplace at this release's tag, the one call
-	// here Claude Code can refuse for a reason that is not fugaro's to fix (a
-	// declaration for the name in settings fugaro does not own). The step
-	// says so and stops: the plugin cannot be had on this machine, and an
-	// otherwise complete update is not failed for it.
+	// Declare declares the marketplace at this release's tag. A failure here is
+	// read by the step, not by the plan: claude refusing because the name is
+	// declared elsewhere (RefusedByDeclaration) is the one failure fugaro
+	// cannot fix, and the plugin cannot be had on that machine; anything else
+	// fails the step, after the declaration a Clear removed is put back.
 	Declare
 )
 
@@ -47,11 +47,15 @@ type Call struct {
 	Kind Kind
 }
 
-// Plan is the change calls to make, in order (none: nothing to do), and the
-// plugin version that applied to the checkout before them ("" for none).
+// Plan is the change calls to make, in order (none: nothing to do), the plugin
+// version that applied to the checkout before them ("" for none), and the add
+// that puts back the declaration a Clear removes (nil when nothing is cleared):
+// a Declare that fails for any reason other than the declaration itself runs it
+// first, so a failed add leaves the machine with the marketplace it had.
 type Plan struct {
-	Calls  []Call
-	Before string
+	Calls   []Call
+	Before  string
+	Restore []string
 }
 
 // OtherMarketError: Claude Code's fugaro marketplace on this machine is not
@@ -114,9 +118,9 @@ func refNewer(ref, want string) bool {
 //   - the marketplace pinned at Ref and every applying install at Want: none;
 //   - otherwise the marketplace declared at Ref (missing, or there at another
 //     ref that is not newer, in which case the declaration it is refused by is
-//     cleared first) and refreshed, then the plugin installed at user scope
-//     when no install applies, or each stale scope updated (local, project,
-//     user).
+//     cleared first, and Restore is the add that puts it back) and refreshed,
+//     then the plugin installed at user scope when no install applies, or each
+//     stale scope updated (local, project, user).
 //
 // Every call it returns passes Allowed.
 func Decide(in Input) (Plan, error) {
@@ -167,6 +171,7 @@ func Decide(in Input) (Plan, error) {
 	if market == nil || moved {
 		if moved {
 			p.Calls = append(p.Calls, Call{Args: slices.Clone(removeUser), Kind: Clear})
+			p.Restore = addMarket(in.Repo, restoreRef(market.Ref))
 		}
 		p.Calls = append(p.Calls, Call{Args: addMarket(in.Repo, in.Ref), Kind: Declare})
 	}
