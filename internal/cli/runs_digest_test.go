@@ -22,7 +22,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -780,17 +779,6 @@ func digestControl(r rune) bool {
 	return r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f)
 }
 
-// digestTerminal makes runs digest believe its output is a person's terminal,
-// which is where the Issues section is printed (T-IS16, D1729). execute's
-// buffers are not one, which is why every other test here never sees the
-// section.
-func digestTerminal(t *testing.T) {
-	t.Helper()
-	old := writerIsTerminal
-	writerIsTerminal = func(io.Writer) bool { return true }
-	t.Cleanup(func() { writerIsTerminal = old })
-}
-
 // seedDigestIssue uploads one issue into the fixture project's shared store,
 // under the run stem and summary given, and answers the upload. The store is
 // the one runs digest reads -- the bucket the fixture's config names -- so the
@@ -829,7 +817,7 @@ func TestRunsDigestPrintsIssuesSectionOnTerminal(t *testing.T) {
 	seedDigestRun(t, f, "20261025-120000-abcd", time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC), "acme/app")
 	up := seedDigestIssue(t, f, "run-20261025120000-48213", "the review stage starts twice",
 		time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC))
-	digestTerminal(t)
+	bothTerminals(t)
 	args := []string{"runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir}
 
 	out, errOut, err := execute(t, args...)
@@ -891,7 +879,7 @@ func TestRunsDigestFileUnchangedByIssues(t *testing.T) {
 	dir := t.TempDir()
 	digestClock(t, "2026-10-27")
 	seedDigestRun(t, f, "20261025-120000-abcd", time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC), "acme/app")
-	digestTerminal(t)
+	bothTerminals(t)
 	args := []string{"runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir}
 
 	if _, errOut, err := execute(t, args...); err != nil {
@@ -932,7 +920,7 @@ func TestRunsDigestOmitsSectionOnReadFailure(t *testing.T) {
 	newCloudFixture(t)
 	dir := t.TempDir()
 	digestClock(t, "2026-10-27")
-	digestTerminal(t)
+	bothTerminals(t)
 	old := digestIssuesRows
 	digestIssuesRows = func(context.Context, *blobx.Bucket) ([]issues.SharedRow, error) {
 		return nil, errors.New("the store could not be listed")

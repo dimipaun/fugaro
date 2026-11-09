@@ -347,7 +347,7 @@ func digestIssuesSection(cmd *cobra.Command, ctx context.Context, env *cloudEnv)
 	}
 	rows, err := digestIssuesRows(ctx, env.bucket)
 	if err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: this project's issues could not be read, so the report carries no Issues section: %s\n", safetext.OneLine(err.Error()))
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: this project's issues could not be read, so no Issues section is printed: %s\n", safetext.OneLine(err.Error()))
 		return
 	}
 	th := issues.Thresholds{AfterDays: env.lc.NudgeAfterDays(), Recurrence: env.lc.NudgeRecurrence()}
