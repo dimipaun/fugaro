@@ -616,8 +616,15 @@ func TestRestoreKeepsNoTerraformTailInItsLog(t *testing.T) {
 	if err == nil {
 		t.Fatalf("the restore finished though the creating run's apply failed:\n%s", out)
 	}
-	if !strings.Contains(out, tail) {
-		t.Errorf("terraform's own tail never reached the screen:\n%s", out)
+	// The child run's step line carries one clause of terraform's own error and
+	// names the child's log, which is where the whole of it is (report.Brief) —
+	// this command's log holds no provider output, which the rest of this test
+	// is about, so the tail is read from the log the failing step points at.
+	if !strings.Contains(out, "terraform apply exited 1: Error: creating a bucket") {
+		t.Errorf("terraform's own error never reached the screen:\n%s", out)
+	}
+	if _, setupLog := onlyLog(t, "setup"); !strings.Contains(setupLog, tail) {
+		t.Errorf("terraform's own tail reached neither the screen nor the log the failing step names:\n%s", out)
 	}
 	_, log := onlyLog(t, "restore")
 	if strings.Contains(log, tail) {

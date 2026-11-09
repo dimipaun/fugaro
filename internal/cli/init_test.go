@@ -763,8 +763,14 @@ func TestInitPlanOnly(t *testing.T) {
 	if len(r.ran(t, "show")) != 1 || len(r.ran(t, "apply")) != 0 {
 		t.Fatalf("calls = %q", r.calls(t))
 	}
-	if !strings.Contains(out, "create module.installation.google_storage_bucket.runs") {
+	// The plan block is the counts on the screen and Terraform's own summary —
+	// the addresses — in the run's log (the owner's feedback of 2026-11-09: no
+	// direct Terraform output on the terminal, whatever the plan holds).
+	if !strings.Contains(out, "Plan: 1 to create.") {
 		t.Errorf("no summary:\n%s", out)
+	}
+	if _, log := onlyLog(t, "setup"); !strings.Contains(log, "create module.installation.google_storage_bucket.runs") {
+		t.Errorf("the run's log does not carry the plan Terraform drew:\n%s", log)
 	}
 	if after, _ := os.ReadFile(r.cfg); string(after) != string(before) {
 		t.Error("--plan-only changed the local config")
@@ -1509,8 +1515,13 @@ func TestInitPlanOnlyOnEmptyState(t *testing.T) {
 	if len(r.ran(t, "plan")) != 1 || len(r.ran(t, "apply")) != 0 {
 		t.Fatalf("calls = %q", r.calls(t))
 	}
-	if !strings.Contains(out, "create module.installation.google_storage_bucket.runs") {
+	// The counts on the screen, the addresses in the run's log (the owner's
+	// feedback of 2026-11-09).
+	if !strings.Contains(out, "Plan: 1 to create.") {
 		t.Errorf("no plan summary:\n%s", out)
+	}
+	if _, log := onlyLog(t, "setup"); !strings.Contains(log, "create module.installation.google_storage_bucket.runs") {
+		t.Errorf("the run's log does not carry the plan Terraform drew:\n%s", log)
 	}
 }
 
