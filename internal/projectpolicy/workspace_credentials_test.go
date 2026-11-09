@@ -123,6 +123,113 @@ func TestWorkspaceCredentialsRefusesOneAccountInTwoRows(t *testing.T) {
 	}
 }
 
+// TestWorkspaceCredentialsRefusesARowItCannotResolve: the two shape rules a
+// member's row is held to, and each is a row the workspace's service would
+// otherwise carry and never be able to use.
+//
+// **The account address.** The service resolves a caller by folding the token's
+// `email` and looking it up (foldEmail): an address with no `@`, one with
+// whitespace in it, or one that is not printable ASCII is an address the fold
+// refuses, so a row naming one is a member whose jobs are all refused for a
+// reason nothing in the row explains. The rule is a shape check and not an IAM
+// check — whether the account exists is the platform's answer — which is why it
+// lives with the node and not with the service.
+//
+// **The exchange URL.** The audience a member-bound assertion carries is that
+// URL (spec.md §3), and the endpoint matches it exactly: a URL with a query or a
+// fragment, one that is not https, or one that names no host admits nobody, and
+// a member whose every sign-in is refused reads as a broken exchange rather than
+// as the misconfiguration it is. Both refusals name the FIELD and the index and
+// never what the row wrote: a row is another installation's configuration.
+func TestWorkspaceCredentialsRefusesARowItCannotResolve(t *testing.T) {
+	cases := []struct {
+		name  string
+		field string // the key the refusal has to name
+		value string
+		mut   func(m *WorkspaceCredentialMember)
+	}{
+		{"an account address with no @", "job_accounts", "fugaro-job-1", func(m *WorkspaceCredentialMember) {
+			m.JobAccounts = []string{"fugaro-job-1"}
+		}},
+		{"an account address with whitespace in it", "job_accounts", "fugaro-job-1@project-a. iam.example.com", func(m *WorkspaceCredentialMember) {
+			m.JobAccounts = []string{"fugaro-job-1@project-a. iam.example.com"}
+		}},
+		{"an account address that is not printable ASCII", "job_accounts", "fugaro-job-1@pröject-a.example.com", func(m *WorkspaceCredentialMember) {
+			m.JobAccounts = []string{"fugaro-job-1@pröject-a.example.com"}
+		}},
+		{"an empty account address", "job_accounts", "", func(m *WorkspaceCredentialMember) {
+			m.JobAccounts = []string{""}
+		}},
+		{"a second account that is not an address", "job_accounts", "not-an-address", func(m *WorkspaceCredentialMember) {
+			// The FIRST account is a good one: the rule is asked of every entry
+			// of the list and not of its first, which is the shape a member with
+			// one bad account among several has.
+			m.JobAccounts = []string{"fugaro-job-1@project-a.iam.example.com", "not-an-address"}
+		}},
+		{"an exchange URL that is not https", "exchange_url", "http://exchange.project-a.example.com", func(m *WorkspaceCredentialMember) {
+			m.ExchangeURL = "http://exchange.project-a.example.com"
+		}},
+		{"an exchange URL that names no host", "exchange_url", "https://", func(m *WorkspaceCredentialMember) {
+			m.ExchangeURL = "https://"
+		}},
+		{"an exchange URL whose host is written as a path", "exchange_url", "https:///exchange", func(m *WorkspaceCredentialMember) {
+			m.ExchangeURL = "https:///exchange"
+		}},
+		{"an exchange URL with a query", "exchange_url", "https://exchange.project-a.example.com/?a=1", func(m *WorkspaceCredentialMember) {
+			m.ExchangeURL = "https://exchange.project-a.example.com/?a=1"
+		}},
+		{"an exchange URL with a fragment", "exchange_url", "https://exchange.project-a.example.com/#a", func(m *WorkspaceCredentialMember) {
+			m.ExchangeURL = "https://exchange.project-a.example.com/#a"
+		}},
+		{"an empty exchange URL", "exchange_url", "", func(m *WorkspaceCredentialMember) {
+			m.ExchangeURL = ""
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := credentialsFixture()
+			tc.mut(&w.Members[0])
+			_, err := WorkspaceCredentialsNode(w)
+			if err == nil {
+				t.Fatalf("WorkspaceCredentialsNode with %s = a node, want a refusal: the service could never resolve the row", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.field) {
+				t.Errorf("the refusal %q does not name the field %s: an operator has to be told which part of the row is not one this Fugaro writes", err, tc.field)
+			}
+			if tc.value != "" && strings.Contains(err.Error(), tc.value) {
+				t.Errorf("the refusal %q repeats the value it refused: a row is another installation's configuration and no refusal carries it", err)
+			}
+			// And the refusal is the reader's too: a node hand-edited in the
+			// database is read by the same rules the publisher applied, so the
+			// row that could not be built cannot be read either.
+			doc := map[string]any{
+				"version": WorkspaceCredentialsVersion,
+				"name":    w.Name,
+				"members": []any{map[string]any{
+					"project":          w.Members[0].Project,
+					"firebase_project": w.Members[0].FirebaseProject,
+					"fp":               w.Members[0].FP,
+					"job_accounts":     w.Members[0].JobAccounts,
+					"exchange_url":     w.Members[0].ExchangeURL,
+				}},
+				"shared": []any{},
+			}
+			edited, err := json.Marshal(doc)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if got, found, err := DecodeWorkspaceCredentials(edited); err == nil || !found || got != nil {
+				t.Errorf("DecodeWorkspaceCredentials with %s = (%v, %v, %v), want a refusal", tc.name, got, found, err)
+			}
+		})
+	}
+	// The fixture's own two rows are the shape the rules admit, so the refusals
+	// above are the shape and not the fixture.
+	if _, err := WorkspaceCredentialsNode(credentialsFixture()); err != nil {
+		t.Fatalf("WorkspaceCredentialsNode of the fixture: %v", err)
+	}
+}
+
 // TestWorkspaceCredentialsRefusesOneFirebaseProjectInTwoRows: the member's
 // database is DERIVED from the row's firebase_project (finding 6), so two rows
 // naming one Firebase project are two members whose policy, ledger and outcomes
