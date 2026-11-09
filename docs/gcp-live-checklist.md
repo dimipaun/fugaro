@@ -810,7 +810,7 @@ probe account carries predefined grants only).
 | 146 | The coordinator sweep reads a Bitbucket repository through the service, and its GitHub views are unchanged ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 146, task T2.10 and the script T2.9 writes; D361 and D362): on a sandbox installation with the credentials service on, the sweep's stored view for a Bitbucket repository is **read** rather than `StaleUnsupported`, and the installation's GitHub views — the ones the sweep already writes — are unchanged | See "Check 146" below; **you** run it on a sandbox installation, never `belong`, and **no agent runs any step of it**: `scripts/live-checks/check146.sh --installation <sandbox>`. The script lands with task **T2.9**; this section is task **T0.2**'s and carries no steps of its own until then | One sandbox installation with the service on and one sweep; the script's own Restore says what it leaves behind. **USER-RUN, NOT RUN.** |
 | 149 | The console shows the stored view on the owner's own machine ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 149 and task T1.3; D364, and U9 end to end): `fugaro coordinator status --from-store --all --json --project <name>` reads the stored view as the signed-in person with **no key**, and the console's project view renders it — the read the console could not make while it had to run `coordinator status` itself | See "Check 149" below; **you** run it at your own terminal, on your own machine, read-only, and **no agent runs any step of it** | Nothing: two reads and one window. No project is written, no run is launched and no credential is minted. **USER-RUN, NOT RUN.** |
 | 170 | A key verifies offline in the CLI, the console and the app ([`docs/subscriptions/`](subscriptions/implementation-plan.md), its Check 170, written by task **S3.6** and run by you in task **S3.7**; **R2**, and [design/key-signing-service.md](design/key-signing-service.md) §1–§2): one key the service issued — or the owner minted by hand with S2.10's tool — is installed where each product keeps it (the CLI's `licence.key` at mode 0600, the console's key screen, the app's settings screen), the network is off on the machine and on the phone, and all three read the same tier, seats and expiry with no call made to answer. It is the reading no hermetic test can produce: each verifier's own tests hold a signature vector, and this holds a key the owner's key ring signed | See "Check 170" below; **you** run it, at your own terminal and on a sandbox installation, read-only, with the network off, and **no agent runs any step of it** | Nothing: one key installed in three places, no mint and no deploy. **USER-RUN, NOT RUN.** |
-| 171 | The free seat's three outcomes ([`docs/subscriptions/`](subscriptions/implementation-plan.md), its Check 171, written by task **S3.6** and run by you in task **S3.7**; the design's §4.1–§4.3 and UNVERIFIED **U11**): against the intake that mints with the staging key id, an address at a free email provider and a second application for a domain that already holds a free key are each **queued**, with the same uniform answer and nothing said about an existing key, and a domain the service's event store knows holds a paid subscription is **refused**. Whether an email domain, a free-mail list and the code host's API are enough to enforce "one per organisation" has never been measured | See "Check 171" below; **you** run it, against the intake that mints with the staging key id (D459 is where that intake lives), and **no agent runs any step of it** | Three applications, each declined in the admin page, so no key is minted for any of them. **USER-RUN, NOT RUN.** |
+| 171 | The free seat's three outcomes ([`docs/subscriptions/`](subscriptions/implementation-plan.md), its Check 171, written by task **S3.6** and run by you in task **S3.7**; the design's §4.1–§4.3 and UNVERIFIED **U11**): against the intake that mints with the staging key id, an address at a free email provider and a second application for a domain that already holds a free key are each **queued**, with the same uniform answer and nothing said about an existing key, and a domain the service's event store knows holds a paid subscription is **refused**. Whether an email domain, a free-mail list and the code host's API are enough to enforce "one per organisation" has never been measured | See "Check 171" below; **you** run it, against the intake that mints with the staging key id (D459 is where that intake lives), and **no agent runs any step of it** | Two applications, each declined in the admin page, so no key is minted for either; the third is refused at submission and never queued. **USER-RUN, NOT RUN.** |
 | 172 | The open-source check and proof of control ([`docs/subscriptions/`](subscriptions/implementation-plan.md), its Check 172, written by task **S3.6** and run by you in task **S3.7**; the design's §4.4, **D452**, **F47** and **U11**): a private repository, one carrying no licence and one under a non-OSI licence are each refused; an all-public repository under an OSI licence is refused **without** D452's proof of control and minted with it, valid for one year. It is the other half of U11, and the check's own limit is stated with it: a private repository beside the ones named cannot be seen | See "Check 172" below; **you** run it, against the intake that mints with the staging key id and with repositories you control — never a third party's — and **no agent runs any step of it** | One staging key that expires with its term; the four refusals are recorded in the section below. **USER-RUN, NOT RUN.** |
 | 173 | The admin page and the manual queue ([`docs/subscriptions/`](subscriptions/implementation-plan.md), its Check 173, written by task **S3.6** and run by you in task **S3.7**; the design's §6 and §7.1, and **D454**, **D455** and **D456**): no session and any account but the project owner's are refused; a queued request notifies the owner; an approval mints **once** and writes one audit line naming the tier, the seats, the plan and the actor; applicant free text renders as text in the page that can mint; and a burst of mints inside one window is queued rather than minted | See "Check 173" below; **you** run it, on the service's admin page, against the staging key id, and **no agent runs any step of it** | One staging key for the approval you intend to license, and everything else in the queue declined. **USER-RUN, NOT RUN.** |
 | 174 | The signer's identity and the non-exportable key ([`docs/subscriptions/`](subscriptions/implementation-plan.md), its Check 174, written by task **S3.6** and run by you in task **S3.7**; the design's §3.3 and UNVERIFIED **U9**): the key ring holds an **asymmetric signing** key whose algorithm is the one S2.1 fixes and whose private half cannot be exported; the **intake's** service account and a **run's** identity are each refused a signature, and the **minter's** alone signs. It is the slice's one security boundary, measured where the platform enforces it rather than in code | See "Check 174" below; **you** run it, read-only but for one test signature, and **no agent runs any step of it** | One signature and no key material: nothing written, nothing deployed, no private half outside the key ring. **USER-RUN, NOT RUN.** |
@@ -11221,7 +11221,7 @@ back. **No agent runs any step of it.**
 ## Check 170: a key verifies offline in the CLI, the console and the app (your own machine and a sandbox installation, read-only, with the network off; run by you; NOT RUN)
 
 **Checks 170–179 are the subscriptions work's, and all ten are written below** — the key service's
-own five, the lapse state's two, the coordinator's sweep job, and the merchant's test mode. All ten
+own six, the lapse state's two, the coordinator's sweep job, and the merchant's test mode. All ten
 are **OWNER-RUN**: **no agent runs any step of any of them**, and no agent mints, holds or reaches a
 signing key (R5 as amended by D440).
 
@@ -11280,10 +11280,12 @@ intake lives — so that nothing this check produces can license a customer):
 3. Buy a Team subscription in the merchant's **test mode** (Check 179), so the event store knows the
    domain, then apply for the free seat with an address on that domain. This one is **refused**:
    §10.2(a) gives a Customer on a Paid Plan no free seat.
-4. Record each outcome, the page's own words, and the three requests in the queue.
+4. Record each outcome, the page's own words, and the two requests in the queue — the third never
+   reaches it, because §4.3 refuses it at submission.
 
-**Restore.** The three applications are the owner's own test data: decline each in the admin page
-(Check 173), so no key is minted for any of them, and leave the store's record to D457's retention.
+**Restore.** The two queued applications are the owner's own test data: decline each in the admin
+page (Check 173), so no key is minted for either, and leave the store's record of the refusal to
+D457's retention.
 **No agent runs any step of it.**
 
 ## Check 172: the open-source check needs proof of control, refuses a private or non-OSI repository, and accepts an all-public OSI one (the key service's intake, staging keys only; run by you; NOT RUN)
@@ -11373,8 +11375,9 @@ private half exists outside the key ring. **No agent runs any step of it.**
 takes (170–179)"), and run by the owner in task **S3.7**.
 
 **What the check confirms.** §8 of the design
-([design/key-signing-service.md](design/key-signing-service.md)) and **T26**: that validation is offline, so a stopped service cannot stop an installation's work,
-and that the 30-day overlap is what makes an issuing outage bite only past 60 days.
+([design/key-signing-service.md](design/key-signing-service.md)) and **T26**: that validation is
+offline, so a stopped service cannot stop an installation's work, and that the 30-day overlap is
+what makes an issuing outage bite only past 60 days.
 
 **What you do:**
 
@@ -11485,9 +11488,10 @@ takes (170–179)"), and run by the owner in task **S3.7**, which is also where 
 is configured.
 
 **What the check confirms.** §5 of the design
-([design/key-signing-service.md](design/key-signing-service.md)) — the paid path end to end: the signature, the idempotency, the renewal window, the seat change and
-the cancellation — and the staging pair, which is the whole of §2's second rule: a test-mode key
-cannot license a customer because a production verifier holds production ids only.
+([design/key-signing-service.md](design/key-signing-service.md)) — the paid path end to end: the
+signature, the idempotency, the renewal window, the seat change and the cancellation — and the
+staging pair, which is the whole of §2's second rule: a test-mode key cannot license a customer
+because a production verifier holds production ids only.
 
 **What you do** (in the merchant's **test mode**, so every key this check mints is a staging key):
 
