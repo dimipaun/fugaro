@@ -195,15 +195,17 @@ func refuseCredentialNames(e config.Entry, line string) error {
 // than a build does and a name a build sets goes unchecked, more strictly and a
 // definition that carries no credential is refused. So everything that decides
 // a joined name is the parser's own — the escape character, which the leading
-// comments may set with `# escape=`; the leading whitespace of a fresh line,
-// dropped; the leading whitespace of a continuation line, kept (the halves then
-// are not one word, which is how ARG NPM_\ over an indented TOKEN becomes the
-// harmless ARG NPM_); a comment or a blank line inside a continuation, dropped
-// with it (ARG NPM_\ over a comment over TOKEN is the one arg NPMTOKEN); and a
-// comment's own trailing backslash, which continues nothing, because the parser
-// skips a comment whole. The parser's own idea of whitespace is the one used
-// here, unicode and not "space and tab": a name after a vertical tab is a name
-// to a build. All of it was checked against BuildKit's own parser.
+// comments may set with `# escape=`, and which no directive after the parser's
+// own first non-directive line changes; the leading whitespace of a fresh line,
+// dropped; the leading whitespace of a continuation line, kept, which is what
+// separates the words of a joined line (ARG NPM_\ over an indented TOKEN is the
+// two build arguments NPM_ and TOKEN, and not the one harmless NPM_); a comment
+// or a blank line inside a continuation, dropped with it (ARG NPM_\ over a
+// comment over TOKEN is the one arg NPMTOKEN); and a comment's own trailing
+// backslash, which continues nothing, because the parser skips a comment whole.
+// The parser's own idea of whitespace is the one used here, unicode and not
+// "space and tab": a name after a vertical tab is a name to a build. All of it
+// was checked against BuildKit's own parser.
 func dockerfileLines(data []byte) []string {
 	// A byte-order mark is stripped from the first line and nowhere else, as
 	// the parser strips it: left in place it becomes part of the first
@@ -261,43 +263,56 @@ func trimContinuation(line string, esc byte) (string, bool) {
 	return line, false
 }
 
+// directiveRE is the parser's own idea of a parser directive
+// (DirectiveParser.setComment): a comment whose whole body is key=value. A
+// comment that is not one — a plain note, or anything else without the '='
+// shape — is not a directive, and the parser stops looking for directives at
+// the first line that is not one.
+var directiveRE = regexp.MustCompile(`^#\s*([a-zA-Z][a-zA-Z0-9]*)\s*=\s*(.+?)\s*$`)
+
 // dockerfileEscape returns the character a definition continues a line with:
-// the parser's own backslash, unless the comments before its first instruction
-// set `# escape=` to the backtick. Reading a definition with the wrong one
-// joins lines a build keeps apart and splits lines it joins, and the name a
-// build sets is the one this guard has to read.
+// the parser's own backslash, unless a parser directive before the first
+// instruction sets `# escape=` to the backtick. Reading a definition with the
+// wrong one joins lines a build keeps apart and splits lines it joins, and the
+// name a build sets is the one this guard has to read.
+//
+// The scan stops where the parser's own directive parser stops
+// (DirectiveParser.ParseLine): the first line that is not a key=value comment
+// naming a directive the parser knows ends the block. A blank line, a plain
+// comment and a comment naming anything else (# foo=bar) all end it, so an
+// `# escape=` written after one of them is a comment to a build and is not
+// followed here either. Only `syntax` carries the scan on. What may sit in
+// front of the '#' is the parser's own reading too: the first physical line of
+// a logical line is stripped of its leading whitespace before the directive is
+// matched, and every line here is a first line (a comment never continues one).
 func dockerfileEscape(data string) byte {
 	for _, physical := range strings.Split(data, "\n") {
-		line := strings.TrimSpace(strings.TrimSuffix(physical, "\r"))
-		if line == "" {
-			continue
-		}
+		line := strings.TrimLeftFunc(strings.TrimRight(physical, "\r\n"), unicode.IsSpace)
 		if !strings.HasPrefix(line, "#") {
 			break
 		}
-		if esc, ok := escapeDirective(line[1:]); ok {
-			return esc
+		m := directiveRE.FindStringSubmatch(line)
+		if m == nil {
+			break
+		}
+		switch strings.ToLower(m[1]) {
+		case "escape":
+			// The parser admits the backtick and the backslash and refuses a
+			// definition that names anything else, so that one never builds
+			// and this reading of it does not matter.
+			if m[2] == "`" {
+				return '`'
+			}
+			return '\\'
+		case "syntax":
+			// A directive the parser knows and this guard has no use for: it
+			// does not end the block, so the scan carries on.
+		default:
+			// A key the parser does not know ends the block with the rest.
+			return '\\'
 		}
 	}
 	return '\\'
-}
-
-// escapeDirective reads one comment's `escape=` directive: the character it
-// names and whether the comment is that directive at all. The key is the
-// parser's own and case-insensitive, and the two characters a definition may
-// name are its own too: a comment that names anything else is not a directive
-// this guard follows, and one that names the backtick must be followed or a
-// name split with one goes unseen.
-func escapeDirective(comment string) (byte, bool) {
-	key, value, ok := strings.Cut(comment, "=")
-	if !ok || !strings.EqualFold(strings.TrimSpace(key), "escape") {
-		return 0, false
-	}
-	value = strings.TrimSpace(value)
-	if len(value) != 1 || (value[0] != '\\' && value[0] != '`') {
-		return 0, false
-	}
-	return value[0], true
 }
 
 // dockerSpace is the whitespace the parser separates an instruction from its
@@ -325,16 +340,21 @@ func splitInstruction(line string) (string, string) {
 // instructionNames returns the variable names one ARG or ENV line sets.
 func instructionNames(inst, rest string) []string {
 	if inst == "ARG" {
-		// ARG name, or ARG name=default: the name ends at the first space or
-		// the first '=', whichever comes first.
-		rest = strings.TrimSpace(rest)
-		if rest == "" {
-			return nil
+		// Every whitespace-separated word of an ARG line is its own build
+		// argument (ARG FOO BAR declares both, and each takes the value of a
+		// --build-arg of its own name), so every word is a name this guard has
+		// to read and not only the first: a credential-shaped name written
+		// second is declared by a build all the same. A word is a name, or a
+		// name=default, so the name ends at its '='. The whitespace is the
+		// parser's own here (unicode.IsSpace, parseWords).
+		var names []string
+		for _, word := range strings.FieldsFunc(rest, unicode.IsSpace) {
+			name, _, _ := strings.Cut(word, "=")
+			if name != "" {
+				names = append(names, name)
+			}
 		}
-		if i := strings.IndexAny(rest, dockerSpace+"="); i >= 0 {
-			rest = rest[:i]
-		}
-		return []string{rest}
+		return names
 	}
 	return envNames(rest)
 }
@@ -399,8 +419,11 @@ func envValue(s string) string {
 // one. Two entries cost something and are kept anyway: pwd is how a password is
 // written short (DB_PWD), and it refuses the shell's own PWD and OLDPWD, which
 // a definition has no reason to set and Docker maintains itself; token refuses
-// TOKENIZERS_PARALLELISM, a tokenizer's own variable, and the refusal says what
-// to do about it (rename it in the definition, or the entry needs an issue).
+// TOKENIZERS_PARALLELISM, a tokenizer's parallelism setting that carries no
+// credential. The refusal does not tell the two apart — it names the secret
+// mount, which is not advice about a parallelism setting — so the way out for a
+// definition that has to set one is to rename it, and an entry that cannot be
+// renamed is an issue rather than something a guard can be taught.
 var credentialMarkers = []string{
 	"token", "secret", "passwd", "password", "passphrase", "pwd",
 	"credential", "credentials", "creds",

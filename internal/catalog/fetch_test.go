@@ -255,6 +255,30 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 		// ONBUILD defers the ARG to a child image, which is the image that
 		// then carries the value.
 		"FROM example.invalid/base\nONBUILD ARG NPM_TOKEN\n",
+		// Every whitespace-separated word of an ARG line is its own build
+		// argument, so a credential-shaped name written second is declared by a
+		// build all the same, with the value a --build-arg of that name carries.
+		"FROM example.invalid/base\nARG FOO TOKEN\n",
+		"FROM example.invalid/base\nARG NODE_VERSION NPM_TOKEN=value\n",
+		"FROM example.invalid/base\nARG FOO TOKEN=\"value\"\n",
+		// The continuation line's own leading whitespace is what separates the
+		// two: a build reads ARG NPM_\ over an indented TOKEN as the two build
+		// arguments NPM_ and TOKEN, and TOKEN is a name a credential is carried
+		// in. Reading it as one harmless name is the guard missing a name a
+		// build sets, so it is pinned here rather than left to the reader.
+		"FROM example.invalid/base\nARG NPM_\\\n    TOKEN\n",
+		"FROM example.invalid/base\nARG NPM_\\\n    TOKEN=value\n",
+		// The parser stops looking for directives at the first line that is not
+		// one, so a blank line, a plain comment and a comment naming something
+		// else all end the block: the `# escape=` under each of them is a
+		// comment to a build, the backslash is the escape character again, and
+		// the two halves of the name join into the one ARG NPM_TOKEN.
+		"# note\n# escape=`\nFROM example.invalid/base\nARG NPM_\\\nTOKEN\n",
+		"\n# escape=`\nFROM example.invalid/base\nARG NPM_\\\nTOKEN\n",
+		"# foo=bar\n# escape=`\nFROM example.invalid/base\nARG NPM_\\\nTOKEN\n",
+		// A `# syntax=` directive is one the parser knows, so the block goes on
+		// past it and the `# escape=` after it is followed.
+		"# syntax=docker/dockerfile:1\n# escape=`\nFROM example.invalid/base\nARG NPM_`\nTOKEN=1\n",
 	} {
 		_, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def))
 		if err == nil {
@@ -279,15 +303,22 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 		"FROM example.invalid/base\nENV TFLINT_PLUGIN_DIR=/home/fugaro/.tflint.d/plugins\n",
 		"FROM example.invalid/base\nARG REPO_URL\nARG BASE_BRANCH\nRUN git clone \"$REPO_URL\" /work/repo\n",
 		"FROM example.invalid/base\nENV AUTH_MODE=none\n",
-		// A continuation line keeps its own leading whitespace, which is the
-		// parser's reading and not a tidier one: ARG NPM_\ over an indented
-		// TOKEN is the build argument NPM_ with the default TOKEN, and no
-		// build argument named after a credential, so it is not refused.
-		"FROM example.invalid/base\nARG NPM_\\\n    TOKEN\n",
+		// An ENV keeps the parser's own reading: the legacy form sets the one
+		// variable its first word names, so ENV NPM_\ over an indented TOKEN is
+		// the variable NPM_ with the value TOKEN=value. The same shape on an
+		// ARG line is refused (above), because an ARG declares every word of it.
 		"FROM example.invalid/base\nENV NPM_\\\n    TOKEN=value\n",
 		// With the parser's escape character set to the backtick, a trailing
 		// backslash is a character in the name and not a join.
 		"# escape=`\nFROM example.invalid/base\nARG NPM_\\\nTOKEN\n",
+		// And with the directive stopped by a plain comment before it, the
+		// backslash is the escape character a build uses: ARG NPM` is the one
+		// build argument named NPM`, and the TOKEN line under it is a word no
+		// ARG line sets, so neither is a name a credential is carried in.
+		"# note\n# escape=`\nFROM example.invalid/base\nARG NPM`\nTOKEN\n",
+		// Several words on an ARG line are several names, and none of these is
+		// credential-shaped.
+		"FROM example.invalid/base\nARG NODE_VERSION GOPATH=/go\n",
 	} {
 		if _, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def)); err != nil {
 			t.Errorf("the definition %q was refused: %v", def, err)
