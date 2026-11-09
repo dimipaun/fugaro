@@ -55,6 +55,8 @@ import {
   startSidecar,
 } from '../main/spawn'
 import type {
+  BinaryRefusalKind,
+  BinaryResolution,
   ChildSpawner,
   JSONObject,
   Notice,
@@ -216,13 +218,51 @@ export const FUGARO_INSTALL_COMMAND = 'brew install dimipaun/tap/fugaro'
  * everything design section 6.3's first screen needs, with no document in it.
  * `renderer/screens/degraded.ts` draws it, and `degraded.spec.ts` holds one
  * built here to the renderer's own type, so the two cannot drift.
+ *
+ * **`kind` is the resolution's own** (`BinaryRefusalKind`, `src/main/spawn.ts`),
+ * and it is the whole of what tells the four failures apart: one page is drawn
+ * per kind, each with its own headline and its own remedy (Part G, T-G1). A
+ * state that answered `no-binary` for a machine with no WSL would send the
+ * operator to install a CLI they do not need.
+ *
+ * **What can build a state with a WSL kind is narrower than the four kinds**, and
+ * it is worth knowing here rather than three modules away: `resolveBinary`
+ * answers `no-binary` for every refusal of its own, and the three WSL kinds are
+ * `resolveInstalledBinary`'s (`resolveInDistribution`), which no console call
+ * site resolves through today -- so the carry-through in `CliSource.create` and
+ * the four pages in `degraded.ts` are reached by the tests and the screenshots.
+ * The screen a first run actually meets is `src/main/onboarding.ts`'s
+ * `installCliState`, drawn by the picker and by the rail: it is not built from
+ * this state at all, it takes the reason and the searched list, and it offers
+ * `FUGARO_INSTALL_COMMAND` for every failure.
  */
 export interface NoInstallationState {
-  readonly kind: 'no-binary'
+  readonly kind: BinaryRefusalKind
   /** the resolution's own sentence, kept as the CLI-less reason it is */
   readonly reason: string
+  /**
+   * the install line the screen offers under `install it with`, or the empty
+   * string when installing a CLI on this machine is not this kind's remedy.
+   * `FUGARO_INSTALL_COMMAND` is `no-binary`'s answer; a machine with no WSL, or
+   * no distribution this console can drive, is fixed by installing something no
+   * command here installs, and the page's own sentence says so instead.
+   *
+   * The three WSL kinds carry the empty string and not `FUGARO_INSTALL_COMMAND`:
+   * `brew install dimipaun/tap/fugaro` is not a Windows install and Homebrew is
+   * not inside the distribution (F32), and the one command that would install
+   * WSL installs nothing this console can then run. Their route's install line is
+   * the register procedure in `docs/windows-cli/wsl.md`, **pointed at** rather
+   * than retyped (F32) -- and that line is not drawn here: these pages carry
+   * their remedy as their own sentence, which is `degraded.ts`'s `NO_WSL_REMEDY`.
+   */
   readonly installCommand: string
-  /** every candidate the resolution looked at, in the order it looked */
+  /**
+   * every candidate the resolution looked at, in the order it looked. It is
+   * empty for the three WSL kinds, and not because nothing was looked at: that
+   * route asks `wsl.exe` and the distribution, and walks no directory on this
+   * host -- so there is no count of host places to draw (F30's rule: the count,
+   * and never the paths).
+   */
   readonly searched: readonly string[]
 }
 
@@ -246,26 +286,38 @@ export class NoInstallation extends SourceRefusal {
 }
 
 /**
- * noInstallationState is the state, built from the resolution that failed. The
- * candidate list is re-derived from the same `binDirectories` the resolution
+ * noInstallationState is the state, built from the resolution that failed --
+ * which kind it failed as, and its own sentence.
+ *
+ * The candidate list is re-derived from the same `binDirectories` the resolution
  * walked, with the same options -- so the screen names the directories this
  * machine would actually be searched in, not a list written down twice. The
  * configured path is an *input* and not a field: it is one of those candidates,
  * and the screen draws the count of them and never a path.
+ *
+ * **Only `no-binary` walked them.** The three WSL kinds are answered by
+ * `wsl.exe` and the distribution (`resolveInDistribution`), so they carry an
+ * empty `searched` and no install command: their remedy is not a command on this
+ * machine at all.
  */
 export function noInstallationState(options: {
+  readonly kind?: BinaryRefusalKind
   readonly reason: string
   readonly configuredPath?: string | undefined
   readonly home?: string
 }): NoInstallationState {
+  const kind = options.kind ?? 'no-binary'
+  const walked = kind === 'no-binary'
   return {
-    kind: 'no-binary',
+    kind,
     reason: options.reason,
-    installCommand: FUGARO_INSTALL_COMMAND,
-    searched: binDirectories({
-      ...(options.configuredPath === undefined ? {} : { configuredPath: options.configuredPath }),
-      ...(options.home === undefined ? {} : { home: options.home }),
-    }),
+    installCommand: walked ? FUGARO_INSTALL_COMMAND : '',
+    searched: walked
+      ? binDirectories({
+          ...(options.configuredPath === undefined ? {} : { configuredPath: options.configuredPath }),
+          ...(options.home === undefined ? {} : { home: options.home }),
+        })
+      : [],
   }
 }
 
@@ -288,6 +340,19 @@ export interface CliSourceOptions {
   readonly licenceKey?: ((project: string) => string | undefined) | undefined
   readonly spawner?: ChildSpawner
   readonly spawnLog?: SpawnLogWriter
+  /**
+   * `resolver` replaces `resolveBinary` itself, and it is a seam for the same
+   * reason `spawner` is: it is how a test reaches a resolution this machine
+   * cannot produce. The shipped app leaves it out.
+   *
+   * It exists for exactly one fact: `resolveBinary` answers `no-binary` for
+   * **every** refusal it makes, because the WSL route is `resolveInstalledBinary`
+   * and nothing in `resolveBinary` reaches it. So a state that failed as one of
+   * the three WSL kinds cannot be produced through `create` by any filesystem a
+   * test can build, and the line that carries `resolution.kind` into the refusal
+   * would otherwise be pinned by nothing.
+   */
+  readonly resolver?: ((request: Parameters<typeof resolveBinary>[0]) => Promise<BinaryResolution>) | undefined
   readonly home?: string
   readonly clock?: () => Date
   readonly firstFrameBudgetMs?: number
@@ -337,9 +402,9 @@ export class CliSource implements FugaroSource {
     const directory = options.checkout ?? privateWorkingDirectory()
     const log = options.spawnLog ?? createSpawnLog(env)
     const ownsLog = log !== options.spawnLog
-    let resolution: Awaited<ReturnType<typeof resolveBinary>>
+    let resolution: BinaryResolution
     try {
-      resolution = await resolveBinary({
+      resolution = await (options.resolver ?? resolveBinary)({
         ...(options.configuredBinaryPath === undefined ? {} : { configuredPath: options.configuredBinaryPath }),
         appEnv: env,
         directory,
@@ -356,6 +421,9 @@ export class CliSource implements FugaroSource {
       if (ownsLog) log.close()
       throw new NoInstallation(
         noInstallationState({
+          // The resolution's own kind, carried rather than flattened to
+          // `no-binary`: this is what the screen draws one page per (F26).
+          kind: resolution.kind,
           reason: resolution.reason,
           configuredPath: options.configuredBinaryPath,
           ...(options.home === undefined ? {} : { home: options.home }),

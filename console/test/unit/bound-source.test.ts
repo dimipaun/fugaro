@@ -25,8 +25,16 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { NoInstallation, GRAPH_READ_MIN_INTERVAL_MS, PLAN_STATUS_MIN_INTERVAL_MS, createBoundSource } from '../../src/source/cli'
-import type { BoundInstallation, CliSource } from '../../src/source/cli'
+import {
+  NoInstallation,
+  GRAPH_READ_MIN_INTERVAL_MS,
+  PLAN_STATUS_MIN_INTERVAL_MS,
+  FUGARO_INSTALL_COMMAND,
+  CliSource,
+  createBoundSource,
+  noInstallationState,
+} from '../../src/source/cli'
+import type { BoundInstallation } from '../../src/source/cli'
 import { NO_GRAPH_SCOPE, NO_PLAN_CHECKOUT, SourceRefusal } from '../../src/source/source'
 import type { Snapshot } from '../../src/source/source'
 
@@ -588,5 +596,100 @@ describe('the graph read, whose scope a previous answer taught', () => {
     now += 1_000
     await expect(source.planStatus({ all: false })).rejects.toThrow()
     expect(spawned, 'a failed read was spawned again inside the minute').toBe(2)
+  })
+})
+
+/**
+ * The four ways an installation can have no `fugaro` to read -- the resolution's
+ * own `BinaryRefusalKind` (`src/main/spawn.ts`) -- and the one thing all four
+ * share on this side of the seam: **no sidecar**. The refusal is thrown by
+ * `CliSource.create` before `new CliSource(...)`, which is the object a
+ * `fugaro watch` child lives in, so a console with no installation to read holds
+ * no source, runs no child and has nothing to close.
+ *
+ * The three WSL kinds are the siblings of the absent-binary state (Part G, T-G1):
+ * they reach this path the same way, and the build here is the shipped one's
+ * shape exactly -- it throws the state `noInstallationState` builds from the
+ * resolution's `kind`, at the point `CliSource.create` throws it.
+ *
+ * The second case drives `CliSource.create` itself, through the `resolver` seam,
+ * because the *kind* a refusal carries is the one thing no build over this
+ * machine's filesystem can pin: the three WSL kinds are produced by
+ * `resolveInstalledBinary` and every refusal `resolveBinary` makes is
+ * `no-binary`. Flattening that carry-through back to `'no-binary'` -- the defect
+ * F26 exists to name -- would otherwise leave every test in this suite green.
+ */
+describe('a read that finds no installation to run', () => {
+  it('refuses each of the four kinds as a NoInstallation, and runs no sidecar for any of them', async () => {
+    for (const kind of ['no-binary', 'no-wsl', 'no-distro', 'no-fugaro-in-distro'] as const) {
+      let attempts = 0
+      const source = createBoundSource({
+        installation: () => FIRST,
+        create: () => {
+          attempts += 1
+          throw new NoInstallation(
+            noInstallationState({ kind, reason: `the resolution failed as ${kind}`, home: '/nonexistent-home' }),
+          )
+        },
+      })
+
+      const error = await refusalOf(source.version())
+      expect(error, kind).toBeInstanceOf(NoInstallation)
+      expect((error as NoInstallation).state.kind, `${kind} lost its kind on the way to the screen`).toBe(kind)
+
+      // **No sidecar.** The feed is the one thing this source starts a child
+      // for, and on this path it hands out no stream at all: `latest` is null
+      // before and after the read, so no `fugaro watch` was ever attached --
+      // there is nothing running and nothing to stop.
+      const feed = source.subscribeLive({})
+      expect(feed.latest, `${kind} drew a feed for a console with nothing to read`).toBeNull()
+      await expect(feed.current(), kind).rejects.toBeInstanceOf(NoInstallation)
+      expect(feed.latest, `${kind} kept a feed and its child`).toBeNull()
+      await feed.stop()
+
+      // And the refused build is not cached as this installation's source: the
+      // next read resolves again rather than being handed what was never made.
+      expect(await refusalOf(source.version()), kind).toBeInstanceOf(NoInstallation)
+      expect(attempts, `${kind}: the refused build was cached`).toBe(3)
+    }
+  })
+
+  it('refuses through `create` with the resolution’s own kind, whichever of the four it failed as', async () => {
+    // The pin on the one line that carries the kind: `resolveBinary` answers
+    // `no-binary` for every refusal it makes -- the WSL route is
+    // `resolveInstalledBinary` and nothing in `resolveBinary` reaches it -- so a
+    // build over this machine's filesystem can never hand `create` a resolution
+    // that failed as a WSL kind. The seam is the only way to ask, and asking is
+    // the point: `kind: resolution.kind` written as `'no-binary'` would send a
+    // machine with no WSL to install a CLI, and no test that resolves for real
+    // can tell the two apart.
+    for (const kind of ['no-binary', 'no-wsl', 'no-distro', 'no-fugaro-in-distro'] as const) {
+      const refused = await CliSource.create({
+        target: { project: 'acme' },
+        appEnv: {},
+        home: '/nonexistent-home',
+        resolver: async () => ({ ok: false, path: null, kind, reason: `the resolution failed as ${kind}` }),
+      }).then(
+        () => null,
+        (cause: unknown) => cause,
+      )
+      expect(refused, kind).toBeInstanceOf(NoInstallation)
+      const state = (refused as NoInstallation).state
+      expect(state.kind, `${kind} was flattened on the way to the screen`).toBe(kind)
+      expect(state.reason, kind).toBe(`the resolution failed as ${kind}`)
+      // And the two fields the page draws beside the kind follow it: the install
+      // line for the kind whose remedy is a command this machine can run, and
+      // neither it nor a count of host places for the three the WSL route answers
+      // -- that route asked `wsl.exe` and the distribution and walked no
+      // directory here (F30's rule: the count, and never the paths).
+      expect(state.installCommand, `${kind} offers the wrong remedy`).toBe(
+        kind === 'no-binary' ? FUGARO_INSTALL_COMMAND : '',
+      )
+      if (kind === 'no-binary') {
+        expect(state.searched.length, 'the walk the resolution made was not re-derived').toBeGreaterThan(0)
+      } else {
+        expect(state.searched, `${kind} carries a walk this route never made`).toEqual([])
+      }
+    }
   })
 })
