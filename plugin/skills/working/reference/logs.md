@@ -14,7 +14,7 @@ Ground rules:
 
 ## 1. Find the run
 
-Take the run from the conversation: a `fugaro run` result, a `fugaro runs ls` row's `run`, or what the user says. A run is `<repo-slug>/<run-id>`, or a bare run ID. If you don't have one:
+Take the run from the conversation: a `fugaro run` result, a `fugaro runs ls` row's `run`, or what the user says. A run is `<repo-slug>/<run-id>`, a bare run ID, or the last four or more characters of one — the short ID you tell the user (SKILL.md's ground rules). If you don't have one:
 
 ```bash
 fugaro runs ls --json

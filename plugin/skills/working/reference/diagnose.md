@@ -3,7 +3,7 @@
 
 # Diagnose a Fugaro run
 
-You are explaining what happened to one run from what Fugaro recorded: the stage it reached, the reason, the last test results, the review's findings, the agent's final message, a log tail, the cost and the pull request.
+You are explaining what happened to one run from Fugaro's records: the stage it reached, the reason, the last test results, the review's findings, the agent's final message, a log tail, the cost and the pull request.
 
 You are done when you have told the user what happened and why, where the work is (the branch and the pull request), and what the sensible next step is.
 
@@ -15,7 +15,7 @@ Ground rules:
 
 ## 1. Collect
 
-Take the run from the conversation or `fugaro runs ls --json` (the rows that are not `succeeded`). Then:
+Take the run from the conversation — a short ID will do — or `fugaro runs ls --json` (the rows that are not `succeeded`). Then:
 
 ```bash
 fugaro diagnose <run> --json
@@ -36,7 +36,7 @@ Read the whole thing before concluding. `fugaro logs <run> --json` has every ent
 
 ## 2. The pull request
 
-A run that pushed has a branch (`fugaro/<run-id>`, or the PR's branch for a follow-up) and usually a pull request, in `row.pr_url`. A draft means the run wasn't sure of its work, or was halted or cancelled, and the work is there to read. Open the pull request and its report comment, and say what is in it. A run with `outcome` `none` pushed nothing, so there is no pull request — one exception: a PR a person closed or merged during the run stays in `row.pr_url`, and the reason says so.
+A run that pushed has a branch (`fugaro/<run-id>`, or the PR's branch for a follow-up) and usually a pull request, in `row.pr_url`. A draft means the run wasn't sure of its work, or was halted or cancelled; the work is there to read. Open the pull request and its report comment, and say what is in it. A run with `outcome` `none` pushed nothing, so there is no pull request — one exception: a PR a person closed or merged during the run stays in `row.pr_url`, and the reason says so.
 
 The draft pull request appears **early**: at the run's first checkpoint push (each commit is pushed within about a minute, unverified), while the run is still going, with a **Fugaro status** section the runner keeps current. So a run in progress, a halted one and a cancelled one can all have one. **Reviewers are requested only when the PR becomes ready**; a draft has none, so a draft nobody reviewed is not a sign nobody was told.
 
@@ -109,7 +109,7 @@ This applies only to a workflow whose `agent.auth` is `oauth`: an API key or the
 
 A `failed` run's evidence can say the run's Claude account ran out of its subscription's usage limit — but only when the evidence is Claude Code's own error, not a summary of work it did: `row.reason`, a `log_tail` line, or an `agent_message` that reads as an error (a crash, a refusal, an abrupt stop). A run that otherwise finished its task normally never counts, even when its own `agent_message` happens to mention usage limits — a task that was *about* usage limits can describe them while summarizing finished work, without the run itself ever having hit one.
 
-The exact wording is Claude Code's own (Anthropic's CLI, not Fugaro's) and has not been verified against a live run in this repository (`docs/design/named-oauth-tokens.md` U4) — it may not contain the words "usage limit" at all ("limit reached" or something else entirely is just as plausible), so match loosely: the phrase "usage limit", case-insensitively, in one of the fields above. A miss is the safe direction: no switch, and tell the user the run failed without being sure it was one, rather than forcing a match that isn't there.
+The exact wording is Claude Code's own (Anthropic's CLI, not Fugaro's) and has not been verified against a live run (`docs/design/named-oauth-tokens.md` U4) — it may not contain the words "usage limit" at all ("limit reached" or something else entirely is just as plausible), so match loosely: the phrase "usage limit", case-insensitively, in one of the fields above. A miss is the safe direction: no switch, and tell the user the run failed without being sure it was one, rather than forcing a match that isn't there.
 
 Never treat any other failure as a usage limit: a revoked or expired token, a failing test, a review finding or a plain bug in the task are ordinary `failed` runs (above), each diagnosed and followed up as usual, never by switching accounts.
 

@@ -55,6 +55,7 @@ func SystemPrompt(d PromptData, instructions string) string {
 		buildRule,
 		"- The pull request is marked ready for review only if your final commit has a passing `fugaro verify test` run with a clean working tree. Commit first, then verify.",
 		"- Never end your turn to wait for anything: this run is headless and ends the moment you stop, so pending background commands, notifications and test runs are lost and nothing wakes you later. Run builds and tests in the foreground (`fugaro verify test` blocks until done) and keep working until the result is in before you finish.",
+		"- Refer to runs only by their short ID, the last 4 characters of the run ID; refer to plan tasks by their plan name. Pass the short ID to `logs`, `diagnose` and `artifacts` (the commands that accept it; `cancel`, `run --retry`, `--review-run`, `review show` and `--run-id` take full IDs, which `--json` output carries), and never print the full run ID in anything you write for a person.",
 	}
 	if d.NoWorkflows {
 		lines = append(lines, "- Never create, edit or delete files under .github/workflows/: GitHub refuses Fugaro's push of workflow changes, so the whole run could not be delivered. If the task needs one, describe the change in "+explain+" instead.")

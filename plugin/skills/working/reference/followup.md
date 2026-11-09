@@ -79,7 +79,7 @@ fugaro run --pr N --repo <owner/name> --run-id <id> --json
 Don't pass `--ref` or `--workflow`: a follow-up takes the base branch and workflow of the runs before it, and the CLI refuses them. `--batch` and `--total-timeout` work as for any run.
 
 The JSON has `run`, `branch` (the PR's branch), `pr`, `previous_run` (the run whose work it continues), `execution`, `log_url` and `status` (`launched`, or `already-launched` when this run ID was launched before). Tell the user:
-- the run (`run`), the PR and its branch
+- the run (`run`; tell the user its short ID), the PR and its branch
 - the run it continues (`previous_run`)
 - how to watch it: `fugaro runs ls --pr N --repo <owner/name>`, and `fugaro logs <run> -f` for its live output
 

@@ -131,3 +131,29 @@ func TestFindingsAreBoundedAndQuoted(t *testing.T) {
 		}
 	}
 }
+
+// TestPromptsCarryShortIDRule: the standing instructions name a run the way a
+// person reads it — its short ID, the last four characters of the run ID — and
+// a plan task by its plan name (D1703), while the commands that need the full
+// ID are told to pass it (F11, D1705). The rule is one of the always-on
+// instructions, so a follow-up carries it too; the point of pinning the
+// full-ID commands in the same sentence is that the rule never reads as "keep
+// the ID to yourself" for a command that needs one.
+func TestPromptsCarryShortIDRule(t *testing.T) {
+	for _, d := range []runner.PromptData{
+		{Branch: "fugaro/x", Base: "main", StateDir: "/s"},
+		{Branch: "fugaro/x", Base: "main", StateDir: "/s", FollowUp: []string{"- follow-up rule"}},
+	} {
+		got := runner.SystemPrompt(d, "")
+		for _, want := range []string{
+			"Refer to runs only by their short ID, the last 4 characters of the run ID; refer to plan tasks by their plan name.",
+			"Pass the short ID to `logs`, `diagnose` and `artifacts`",
+			"`cancel`, `run --retry`, `--review-run`, `review show` and `--run-id` take full IDs, which `--json` output carries",
+			"never print the full run ID in anything you write for a person",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("the prompt %+v lacks %q:\n%s", d, want, got)
+			}
+		}
+	}
+}
