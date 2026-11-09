@@ -117,7 +117,9 @@ is only partly true (F4).
 | F32 | Gap | The derived admin list must hold project-scoped admins only (roster grants carry scopes), live outside any path a launcher can write (`runs/`, `tokens/`, `issues/`), and be readable by the intake |
 | F33 | Gap | Database admins bypass the rules on `creds/slips` and can forge a slip. **D1943** |
 | F34 | Gap | Existing pools have no owner; owner-only defaults plus R9 would fail every run on one after `update`. **D1942** |
-| F35 | Gap | The managed deployer holds unconditioned `secrets.create`, so it could pre-create a `fugaro_u_*` container and block or mislabel it. The intake writes only containers it created (annotation `created_by`), and the service reads only containers carrying it (R12) |
+| F35 | Gap | The managed deployer holds unconditioned `secrets.create` (`deployer.tf`), so it could pre-create a `fugaro_u_*` container, setting annotations (even the owner's), ttl, expiry, topics or CMEK. No annotation can be trusted for identity (R12) |
+| F36 | Gap | The launcher class needs its allow-list plumbed like `PersonAccounts` (env in `internal/cli/credentials_serve.go`, set in `credentials.tf`); without it the service fails closed and no slip is ever issued. Cloud Run invoker is per service, not per route, so the launchers' invoker grant lets every member pass IAM on every route and the app-level class check is the only fence |
+| F37 | Gap | A migrated legacy-open pool and a new-version pool with no `owner` look alike and the second would fail open; the intake image needs the same digest-pin validation as the service's |
 | F21 | Open | Workspaces (docs/workspaces W6) plan a workspace credentials service; this design is per project. Not decided here; recorded, not decided here |
 
 ## 6. Decisions
