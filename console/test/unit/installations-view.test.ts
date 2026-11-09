@@ -515,6 +515,29 @@ describe('the picker’s document and its view', () => {
     for (const item of items.children) expect(item.children).toEqual([])
   })
 
+  it('draws a distribution’s name through the display sanitizer, as untrusted text', async () => {
+    // A name is `wsl.exe`'s stdout -- a document's string like the CLI's, which is
+    // why it is drawn through `drawn` and **never written raw**: `wsl.exe` lists
+    // whatever a distribution is called, and a name is not a string this console
+    // vouches for. A token-shaped run inside one is redacted, and a name the
+    // sanitizer refuses is the console's own sentence about the class rather than
+    // the string itself.
+    const token = `${inert('gh', 'p_')}${'a'.repeat(36)}`
+    const redacted = await mount({
+      distros: { kind: 'listed', distributions: [{ name: token, isDefault: false }] },
+    })
+    const first = (redacted.element('picker-distros').children[1] as FakeElement).children[0] as FakeElement
+    expect(first.textContent).toBe(TOKEN_PLACEHOLDER)
+    expect(first.textContent ?? '').not.toContain(token)
+
+    // An over-long name is the simplest string the sanitizer refuses.
+    const refused = await mount({
+      distros: { kind: 'listed', distributions: [{ name: 'x'.repeat(70_000), isDefault: false }] },
+    })
+    const long = (refused.element('picker-distros').children[1] as FakeElement).children[0] as FakeElement
+    expect(long.textContent).toBe(UNDRAWABLE)
+  })
+
   it('draws no distributions and no answer as two different lines', async () => {
     // An empty machine is an answer and a `wsl.exe` that could not answer is the
     // absence of one: a window that drew "no distribution is installed" for a
@@ -579,6 +602,66 @@ describe('the picker’s document and its view', () => {
     // than the page.
     expect(element('picker-distros').children).toEqual([])
     expect(element('picker-list').children).toHaveLength(1)
+  })
+
+  it('gives the controls back when the list has drawn, without waiting for wsl.exe', async () => {
+    // The distro read is two `wsl.exe` queries with a timeout of their own
+    // (`src/main/wsl.ts`), so a cold or hung WSL is up to half a minute of silence
+    // -- and every mutation ends with a re-read of it. A mutation that awaited
+    // that would leave **every control** disabled for the whole of it, after a
+    // click the main process has already applied, which is the opposite of what
+    // the section is for: the list is what `busy` is about, and the distributions
+    // draw themselves when their answer lands (the owner's rule of 2026-10-31).
+    const document = fakeDocument()
+    // The answer a choose leaves behind: the row is still there, so the re-read
+    // draws a control whose state is what this case is about.
+    const chosen: InstallationReply = {
+      ok: true,
+      data: {
+        onboard: { kind: 'none' },
+        rows: [row()],
+        warnings: [],
+        path: DEFAULT_PATH,
+        active: { chosen: true, sentence: 'installation fugaro is chosen' },
+      },
+    }
+    const { bridge, recording } = fakeBridge({ rows: [row()], answer: { choose: chosen } })
+    let answers = true
+    let release: () => void = () => undefined
+    const hung = new Promise<InstallationReply>((resolve) => {
+      release = () => resolve({ ok: true, data: { kind: 'listed', distributions: [] } })
+    })
+    // The first paint's read answers, so the window mounts; every read after it
+    // -- the one the mutation starts -- is the one that never comes back.
+    const view = mountPicker(
+      document,
+      {
+        ...bridge,
+        distros: () => {
+          const answer = bridge.distros()
+          return answers ? answer : hung
+        },
+      },
+      true,
+    )
+    await view.refresh()
+    answers = false
+
+    const list = document.byId.get('picker-list') as FakeElement
+    await (list.children[0] as FakeElement).button('Choose').fire('click')
+
+    // The click landed, the list has drawn, and the controls are enabled again --
+    // while the distro read is still out.
+    const drawn = (document.byId.get('picker-list') as FakeElement).children[0] as FakeElement
+    expect(drawn.button('Choose').disabled).toBe(false)
+    expect(drawn.button('Remove').disabled).toBe(false)
+    expect(recording.calls).toEqual(['list', 'distros', 'choose', 'list', 'distros'])
+
+    // And when it lands the section draws: the read was started, not dropped.
+    release()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect((document.byId.get('picker-distros') as FakeElement).children[1]?.textContent).toBe(NO_DISTROS)
   })
 
   it('asks the machine’s distributions of a Windows host and of no other', async () => {

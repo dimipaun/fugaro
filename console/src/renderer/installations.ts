@@ -638,7 +638,7 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge, wind
     item.appendChild(
       button(row.active ? 'Chosen' : 'Choose', async () => {
         const reply = await bridge.choose(project)
-        await refresh()
+        await reRead()
         if (!reply.ok) say(reply.reason)
       }),
     )
@@ -652,7 +652,7 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge, wind
       item.appendChild(
         button(`Use ${drawn(checkout, 'the row’s checkout')}`, async () => {
           const reply = await bridge.checkout({ ...project, checkout })
-          await refresh()
+          await reRead()
           if (!reply.ok) say(reply.reason)
         }),
       )
@@ -661,7 +661,7 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge, wind
       item.appendChild(
         button('Stop using this checkout', async () => {
           const reply = await bridge.checkout(project)
-          await refresh()
+          await reRead()
           if (!reply.ok) say(reply.reason)
         }),
       )
@@ -687,7 +687,7 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge, wind
       item.appendChild(
         button('Remove', async () => {
           const reply = await bridge.remove(project)
-          await refresh()
+          await reRead()
           if (!reply.ok) say(reply.reason)
         }),
       )
@@ -736,13 +736,37 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge, wind
   /** refresh starts the two reads **together** and settles when both have drawn:
    * the rows are this console's own record and the distro list is the machine's,
    * and neither is a reason to hold the other back (the owner's rule of
-   * 2026-10-31, and what the console's sections are built on). */
+   * 2026-10-31, and what the console's sections are built on).
+   *
+   * This is the window's **first paint** and its one kind of read that waits for
+   * both. What a mutation ends with is `reRead`, which does not. */
   const refresh = (): Promise<void> => Promise.all([refreshList(), refreshDistros()]).then(() => undefined)
 
-  /** act sends one mutation and re-reads, with every control disabled until both
-   * are done. A refusal is shown **after** the re-read, so the operator sees the
-   * sentence over the list as it actually is rather than over a list the failed
-   * action did not change. */
+  /** reRead is what every mutation ends with, and the two halves are deliberately
+   * not waited for alike.
+   *
+   * The **list is awaited**: the click is applied by the main process, and what
+   * the list says afterwards is the thing the operator's click was about -- the
+   * controls come back when the page tells the truth about what happened.
+   *
+   * The **distributions are started and not awaited**: that read is two `wsl.exe`
+   * queries with a timeout of their own (`src/main/wsl.ts`), so a cold or a hung
+   * WSL is up to half a minute, and a control the operator has already used must
+   * not stay disabled for it. The section carries its own busy line and draws
+   * itself when its answer lands -- which is what the console's sections are for
+   * (the owner's rule of 2026-10-31) -- and no `busy` here is about it.
+   *
+   * The promise cannot reject, which is what makes not awaiting it safe: a bridge
+   * answers a refusal rather than throwing (`src/preload/installations.ts`). */
+  const reRead = async (): Promise<void> => {
+    await refreshList()
+    void refreshDistros()
+  }
+
+  /** act sends one mutation and re-reads, with every control disabled until the
+   * list has drawn. A refusal is shown **after** the re-read, so the operator sees
+   * the sentence over the list as it actually is rather than over a list the
+   * failed action did not change. */
   const act = (send: () => Promise<void>): Promise<void> => exclusively(send)
 
   return { refresh }
