@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/issue-record.schema.json",
+  "title": "Fugaro issue record",
+  "description": "A finding `fugaro troubleshoot` saved: one Markdown file under the user's state directory, and the object the shared store keeps once the issue is uploaded. The structured part is the YAML header between the record's two `---` lines, which is what this schema describes; the body under the fence is the free text a person reads — Summary, Diagnosis, Steps and Log — and a `--json` document carries it as the members `summary`, `diagnosis`, `steps` and `logs` (D1726). `fugaro issue list --json` prints an array of these objects and `fugaro issue show --json` one of them, so the record's own `version` is the version of both documents and of the record file (F23). A field never changes meaning: a member is only ever added, and a renamed or re-meant one is a new member under a new name with the version raised, because the console, the mobile app and another CLI read this shape (CLAUDE.md). No object here is closed for that reason: additionalProperties is left true everywhere, since a consumer that refused a member this schema does not know would refuse a newer CLI's record. The header is decoded strictly by the binary that wrote it — an unknown member is an error there — which is a rule of the codec, not of this contract.",
+  "type": "object",
+  "required": [
+    "version",
+    "number",
+    "local_id",
+    "run",
+    "reporter",
+    "created",
+    "failed_command",
+    "class",
+    "fugaro_version",
+    "os",
+    "status",
+    "url",
+    "uploaded",
+    "fingerprint",
+    "resolved_in",
+    "regression",
+    "original_url",
+    "notified"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "The record's format version, written on every record and the only one a reader of this shape reads. A file of another version is refused rather than read as this one, and a member whose meaning has to change raises this number instead of being reused.",
+      "$comment": "RecordVersion in internal/issues/issue.go."
+    },
+    "number": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 999999,
+      "description": "The issue's project-wide number, taken from the shared store's counter when it is uploaded; 0 until then, when the local ID is the name it has (D1723). The file name prints it in four digits, so the field and the name hold the same limit."
+    },
+    "local_id": {
+      "type": "string",
+      "pattern": "^local-[a-z][a-z0-9-]{0,40}-[0-9]{14}-[0-9]{1,7}$",
+      "description": "`local-<run stem>`: the name the issue has before it is uploaded, and the argument `fugaro issue show`, `submit` and `dismiss` take until a number exists (F23)."
+    },
+    "run": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,40}-[0-9]{14}-[0-9]{1,7}$",
+      "description": "The run stem of the command that failed — `<command>-<14-digit UTC>-<pid>` — which names the file while the issue has no number (D1723, D1609). Both shapes are validated before anything builds a path from them, so a value from the shared store cannot become a path outside the store (F20)."
+    },
+    "reporter": {
+      "type": "string",
+      "description": "Who this machine is. The record keeps it and the public post never does: the post strips the reporter, the repository, the project and any home-directory path or email (D1722)."
+    },
+    "created": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the issue was saved, from the clock of the machine that saved it, in UTC."
+    },
+    "failed_command": {
+      "type": "string",
+      "description": "The command that failed, redacted: the name and its flags, with every value that could be a path, a URL or an identifier replaced (D1732). `fugaro update` prints it as the hint that the command may be worth trying again, and never runs it; the public post never carries it (F26)."
+    },
+    "class": {
+      "enum": [
+        "fugaro",
+        "unclear"
+      ],
+      "description": "The bucket the issue is saved in, and the only two there are: `fugaro` for a bug in Fugaro itself, `unclear` for a finding the diagnosis could not attribute. A finding that is only this machine's — a wrong setting, or a bug a newer release already fixes — has no class at all, so nothing can persist one (acceptance 1, F6).",
+      "$comment": "ClassFugaro and ClassUnclear in internal/issues/issue.go."
+    },
+    "fugaro_version": {
+      "type": "string",
+      "description": "The Fugaro version that failed, as the reporter's own binary spelled it."
+    },
+    "os": {
+      "type": "string",
+      "description": "The platform that failed, in the spelling `runtime.GOOS` gives it."
+    },
+    "status": {
+      "enum": [
+        "pending",
+        "submitted",
+        "dismissed"
+      ],
+      "description": "Where the issue stands: saved and not yet filed, filed on GitHub, or set aside by a person. A value is only ever added to this list; a status is never renamed while it keeps its meaning.",
+      "$comment": "StatusPending, StatusSubmitted and StatusDismissed in internal/issues/issue.go."
+    },
+    "url": {
+      "type": "string",
+      "description": "The GitHub issue this was filed as, once it has been, in the shape `https://github.com/dimipaun/fugaro/issues/<n>`; empty until then. A stored URL is accepted for printing only in that shape (F28)."
+    },
+    "uploaded": {
+      "type": "boolean",
+      "description": "Whether the issue is in the shared store. The local file stays the copy this machine reads, and the shared record is the truth once the upload has happened (F13)."
+    },
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "The SHA-256, in lowercase hex, of the diagnosis signature's normal form: the failing command and the error class, case-folded with runs of whitespace folded to one space (D1724). Two reports of one bug share it, which is how an upload finds the issue that is already there instead of filing a second one; a report whose signature differs by a word is a different issue and nothing merges the two (F21).",
+      "$comment": "Fingerprint in internal/issues/verdict.go."
+    },
+    "resolved_in": {
+      "type": "string",
+      "description": "The release that fixes the issue, compared as a release and empty until something fills it in (F27, D1736). It is the field `fugaro update` reads to suggest trying the failed command again, and a dev build matches no release."
+    },
+    "regression": {
+      "type": "boolean",
+      "description": "Whether the reporter's own version is already at or above `resolved_in`, which makes this the same bug back rather than a new one (F25)."
+    },
+    "original_url": {
+      "type": "string",
+      "description": "The issue this one repeats, when `regression` is set, in the same shape as `url`; empty otherwise."
+    },
+    "notified": {
+      "type": "boolean",
+      "description": "Whether the retry hint has already offered this issue's failed command. It is a local flag: it says what this machine has printed, and it is never read from or written to the shared record (D1735)."
+    },
+    "summary": {
+      "type": "string",
+      "description": "The one line a listing shows, and the first section of the record's body."
+    },
+    "diagnosis": {
+      "type": "string",
+      "description": "The cause, in the diagnosis agent's own words: the second section of the record's body. It is data and never an instruction, so every surface that prints it says so (F6)."
+    },
+    "steps": {
+      "type": "string",
+      "description": "How to reproduce the finding, empty when the diagnosis knows no steps: the third section of the record's body."
+    },
+    "logs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "The log excerpts, redacted before anything was written and cut short rather than dumped whole: the fourth section of the record's body, one fenced block per excerpt."
+    }
+  }
+}
