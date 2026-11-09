@@ -4,6 +4,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1123,6 +1124,118 @@ func TestProjectLayerSecurityDecodesStrictly(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := layerProblems(t, layerHead+tc.block); !strings.Contains(got, tc.want) {
 				t.Errorf("problems %q, want one containing %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestProjectLayerSecurityIsInTheTopKeyAllowList: `security` is a top-level key
+// of the layer file (D1501), so it has to be named in layerTopKeys, or the
+// decoder refuses the block as an unknown key — and every repository of the
+// project loses it in silence, because the refusal happens where the layer is
+// read, not where a repository's fugaro.yaml is. The list is also what the
+// refusal message prints, so a key missing from it is missing from the one
+// message an operator uses to find the spelling they wanted.
+//
+// Mutation (run, restored): drop "security" from layerTopKeys and the first
+// sample fails, the refusal naming the list without it.
+func TestProjectLayerSecurityIsInTheTopKeyAllowList(t *testing.T) {
+	if _, ps := ParseProjectLayer([]byte(layerHead+"security:\n  always_level_3: true\n"), testAnchor); len(ps) != 0 {
+		t.Errorf("a security: block at the top level was refused: %v", ps)
+	}
+	if !slices.Contains(layerTopKeys, "security") {
+		t.Error("layerTopKeys does not carry security")
+	}
+	got := layerProblems(t, layerHead+"securityy: {}\n")
+	if want := "is not a project layer key (" + strings.Join(layerTopKeys, ", ") + ")"; !strings.Contains(got, want) {
+		t.Errorf("problems %q, want one containing %q", got, want)
+	}
+	if !strings.Contains(got, "jobs, security") {
+		t.Errorf("problems %q, want the list to end with jobs, security", got)
+	}
+}
+
+// TestProjectLayerSecuritySchemaAgreesWithTheLayerParser: two surfaces read
+// the layer file, the strict decoder a run uses and project-layer.schema.json
+// a repository's CI may check against, and a block one refuses while the other
+// accepts is a red check nobody can reproduce (the reason
+// TestABSchemasMatchDecoder exists for ab:). The schema carries the same
+// $defs.securityPattern, securityFloorName and securityCategory copies
+// fugaro.schema.json does: the layer's rows are judged by the rules the
+// repository's block's are (D1502, D1506).
+//
+// One asymmetry is pinned rather than left unsampled: the schema cannot refuse
+// a glob doublestar itself cannot read — a bracket class it closes wrong, an
+// alternation — because the schema has no glob matcher, and
+// sensitivity.Pattern.Validate is what says no. TestSecurityKeySchemaAgreesWithTheDecoder
+// records the same asymmetry for the repository's block.
+func TestProjectLayerSecuritySchemaAgreesWithTheLayerParser(t *testing.T) {
+	sch := compileABSchema(t, "project-layer.schema.json")
+	floor := sensitivity.Floor()[0].Name
+	const rows = "security:\n  patterns:\n"
+	for _, tc := range []struct {
+		name, body string
+		ok         bool
+	}{
+		{"no block", "", true},
+		{"a null block", "security:\n", true},
+		{"an empty block", "security: {}\n", true},
+		{"an empty list", "security:\n  patterns: []\n", true},
+		{"the switch alone", "security:\n  always_level_3: true\n", true},
+		{"the switch off", "security:\n  always_level_3: false\n", true},
+		{"a null list", "security:\n  patterns:\n", true},
+		{"two rows", rows + "    - { name: payments, match: \"internal/payments/**\", category: credentials }\n    - { name: deploy, match: \"deploy/**\", category: targets }\n", true},
+		// The seven categories, and every value a name or a glob may take
+		// that the two sides accept for the same reason.
+		{"all seven categories", rows + "    - { name: a, match: \"a/**\", category: credentials }\n    - { name: b, match: \"b/**\", category: guards }\n    - { name: c, match: \"c/**\", category: targets }\n    - { name: d, match: \"d/**\", category: infrastructure }\n    - { name: e, match: \"e/**\", category: prompts }\n    - { name: f, match: \"f/**\", category: CI }\n    - { name: g, match: \"g/**\", category: artifacts }\n", true},
+		{"a tree that does not exist", rows + "    - { name: search, match: \"internal/search/**\", category: guards }\n", true},
+		{"a name of 40 characters", rows + "    - { name: " + strings.Repeat("a", 40) + ", match: \"deploy/**\", category: targets }\n", true},
+		{"a name with a space and a dot", rows + "    - { name: 'deploy terraform.v2', match: \"deploy/**\", category: targets }\n", true},
+		{"a match of 200 characters", rows + "    - { name: deep, match: \"" + strings.Repeat("d", 198) + "**\", category: targets }\n", true},
+		{"an unknown key of the block", "security: { severity: high }\n", false},
+		{"an unknown key of a row", rows + "    - { name: deploy, match: \"deploy/**\", category: targets, mode: pro }\n", false},
+		{"a category outside the vocabulary", rows + "    - { name: deploy, match: \"deploy/**\", category: deployment }\n", false},
+		{"a category in the wrong case", rows + "    - { name: deploy, match: \"deploy/**\", category: Credentials }\n", false},
+		{"a row with no category", rows + "    - { name: deploy, match: \"deploy/**\" }\n", false},
+		{"a row with no name", rows + "    - { match: \"deploy/**\", category: targets }\n", false},
+		{"a row with no match", rows + "    - { name: deploy, category: targets }\n", false},
+		{"an empty name", rows + "    - { name: \"\", match: \"deploy/**\", category: targets }\n", false},
+		{"a name with a slash", rows + "    - { name: a/b, match: \"deploy/**\", category: targets }\n", false},
+		{"a name of 41 characters", rows + "    - { name: " + strings.Repeat("a", 41) + ", match: \"deploy/**\", category: targets }\n", false},
+		{"a name the engine's floor carries", rows + "    - { name: " + floor + ", match: \"deploy/**\", category: targets }\n", false},
+		{"an empty match", rows + "    - { name: deploy, match: \"\", category: targets }\n", false},
+		{"a match of *", rows + "    - { name: all, match: \"*\", category: targets }\n", false},
+		{"a match of **", rows + "    - { name: all, match: \"**\", category: targets }\n", false},
+		{"an absolute match", rows + "    - { name: etc, match: \"/etc/**\", category: targets }\n", false},
+		{"a match with a .. component", rows + "    - { name: out, match: \"../secrets/**\", category: targets }\n", false},
+		{"a match of 201 characters", rows + "    - { name: deep, match: \"" + strings.Repeat("d", 199) + "**\", category: targets }\n", false},
+		{"a switch that is not a bool", "security:\n  always_level_3: yes-please\n", false},
+		{"the block under defaults", "defaults:\n  security:\n    always_level_3: true\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			text := layerHead + tc.body
+			_, ps := ParseProjectLayer([]byte(text), testAnchor)
+			if got := len(ps) == 0; got != tc.ok {
+				t.Fatalf("the decoder accepted = %v, want %v (problems: %v)", got, tc.ok, ps)
+			}
+			if got := abSchemaAccepts(t, sch, text); got != tc.ok {
+				t.Errorf("project-layer.schema.json accepted = %v, want %v: the schema and the decoder disagree", got, tc.ok)
+			}
+		})
+	}
+
+	// The schema is the looser side for a glob doublestar cannot read: it
+	// states the shape of a pattern, and the reading is Pattern.Validate's.
+	for _, tc := range []struct{ name, body, why string }{
+		{"an unreadable bracket class", rows + "    - { name: deploy, match: \"deploy/[\", category: targets }\n", "doublestar refuses a bracket class it cannot close"},
+		{"an alternation", rows + "    - { name: deploy, match: \"deploy/{a,b}/**\", category: targets }\n", "Pattern.Validate refuses an alternation for its matching cost"},
+	} {
+		t.Run("schema looser/"+tc.name, func(t *testing.T) {
+			if _, ps := ParseProjectLayer([]byte(layerHead+tc.body), testAnchor); len(ps) == 0 {
+				t.Errorf("the decoder accepted it, want a refusal: %s", tc.why)
+			}
+			if !abSchemaAccepts(t, sch, layerHead+tc.body) {
+				t.Errorf("project-layer.schema.json refused it, and the schema is the looser side here: %s", tc.why)
 			}
 		})
 	}

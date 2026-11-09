@@ -186,6 +186,23 @@
         "reports": { "$ref": "#/$defs/jobState", "description": "The reports job: the project's one writer of reports/ into the runs bucket. Fugaro before 0.22.0 refuses it, in every repository of the project." },
         "catalog_check": { "$ref": "#/$defs/jobState", "description": "The project's catalog check job, scheduled since 0.18.0 (D1148)." }
       }
+    },
+    "security": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "What every repository of the project treats as security-sensitive (docs/security-classification, D1501): the rows a run matches the changed paths against to decide whether the change reaches the adversarial review level, and always_level_3, which asks for that level for every change of every repository. A top-level key of the layer file, like governance and ab and unlike defaults: a security: under defaults: would be replaced whole by a repository's own block, which is the one direction D1506 forbids — read here, the layer's rows and the repository's meet only in the union, where the layer's come first. A repository may not write always_level_3 (only the layer's own block carries it), and no layer may clear the floor: the list in force is the engine's floor, then this block, then the repository's. Fugaro before 0.22.0 refuses the key, in every repository of the project.",
+      "properties": {
+        "patterns": {
+          "type": ["array", "null"],
+          "maxItems": 100,
+          "description": "The project's own rows, judged by the same rules the repository's block's are (sensitivity.Pattern.Validate, config.validateSecurity): one function, two blocks. A row's name is its identity in the union of the three lists — the first writer's row keeps it — so a name the engine's floor already carries, or one repeated in this list, is refused; a pattern that matches nothing is accepted, because a project may write the row before the tree exists.",
+          "items": { "$ref": "#/$defs/securityPattern" }
+        },
+        "always_level_3": {
+          "type": ["boolean", "null"],
+          "description": "Asks for the adversarial review level for every change of every repository of the project (D1517): the whole-repository switch D1503 refuses to express as a `**` pattern. Only the layer's block carries it — a repository writing it is refused, because raising a repository's own review cost for its own changes is not a repository's alone to decide, and a repository has a per-run flag for the one-off case. A layer that writes no always_level_3 keeps the default, false."
+        }
+      }
     }
   },
   "$defs": {
@@ -196,6 +213,26 @@
       "properties": {
         "paused": { "type": ["boolean", "null"], "description": "Stops the job's Cloud Scheduler job. true (paused) is the default: a project that writes no jobs: block, no block for this job or no paused: key deploys the schedule stopped. It is the one key that turns a schedule on, and fugaro update applies it on every run — which is why a `gcloud scheduler jobs resume` does not stick (R13)." }
       }
+    },
+    "securityPattern": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "match", "category"],
+      "description": "One row of a security list: a name to print, a doublestar path glob relative to the repository root, and the category the paths it matches are labelled with. Three of the decoder's refusals are not expressible here and are made by sensitivity.Pattern.Validate instead: a glob doublestar itself cannot read, a glob holding an alternation (`{a,b}`, which costs the matcher a re-entry per group and is refused for that cost), and a row whose name repeats one already in its own list (a name is the row's identity in the union of the three layers, so the repeat is named by nothing). A name the engine's own floor already carries is refused by `name`'s own `not` ($defs.securityFloorName), the same refusal config's validateSecurity makes at the row's own index: a list of names is something this file can carry, and the layer's row would be dropped by the union for the same reason a repeat is.",
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]*$", "not": { "$ref": "#/$defs/securityFloorName" }, "description": "The row's name, which the run record, the pull request body and fugaro watch print when they say which pattern decided. 1 to 40 characters of letters, digits, space, dash, underscore and dot, starting with a letter or a digit. A name the engine's own floor already has is refused: the floor is the union's first writer, so the row would be dropped and the tree it matches would never escalate." },
+        "match": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^/\\s]", "not": { "anyOf": [{ "pattern": "(^|/)\\.\\.(/|$)" }, { "enum": ["*", "**"] }] }, "description": "A doublestar path glob relative to the repository root, matched against the paths the run changed. The same rule rigor.areas and workflows.*.rebuild.paths follow: not empty, not absolute, no \"..\" component, and a pattern doublestar validates. `*` and `**` alone are refused because a row that matches every path is not a pattern: it is the project layer's always_level_3 setting (D1503)." },
+        "category": { "$ref": "#/$defs/securityCategory", "description": "What the paths this row matches are labelled with, in the record, the pull request body and fugaro watch." }
+      }
+    },
+    "securityFloorName": {
+      "enum": ["credentials", "credentials-service", "git-proxy", "model-gateway", "secrets-client", "security-policy", "published-security-policy", "mobile", "subscription-boundary", "settings-writes", "managed-gate", "managed-cli", "policy-merge", "init-flow", "classifier", "console-main", "terraform", "infra-runner", "images", "agent-environment", "agent-environment-runner", "agent-prompts", "followup-prompts", "shared-prompts", "recipes", "repo-config", "claude-md", "agents-md", "claude-dir", "plugin-skills", "review-brief", "ci-workflows", "pending-workflows", "release-streams", "release-script", "plan-graphs", "redesign-screenshot-script", "redesign-logo-script", "website-manifest", "website-lock", "published-downloads", "published-checksums", "install-commands"],
+      "description": "The names the engine's own floor already carries (sensitivity.Floor, D1505): 43 rows of paths a run calls security-sensitive before any project or repository says anything. A layer may not spend one of these names again, because the floor is the union's first writer (sensitivity.Union, D1506) — the row would be dropped and the tree it matches would never escalate, which is the silent no-op config's validateSecurity refuses at the row's own index. This is a copy of a Go table and is held to it by TestSecurityFloorNamesAgreeWithGo in internal/config, the way the agent.auth enum is held to config.AgentAuths."
+    },
+    "securityCategory": {
+      "type": "string",
+      "enum": ["credentials", "guards", "targets", "infrastructure", "prompts", "CI", "artifacts"],
+      "description": "A security category, the closed vocabulary of reconciliation §6 (sensitivity.Categories): credentials, guards, targets, infrastructure, prompts, CI, artifacts. A near miss or a word outside the set is refused where it is written, never read as an unknown label at record time."
     },
     "level": {
       "type": "object",

@@ -153,42 +153,50 @@ workflows:
 	}
 }
 
-// TestSecurityFloorNamesAgreeWithGo holds $defs.securityFloorName's enum to
-// sensitivity.Floor, the one table that decides which names a layer may not
-// spend again (D1505, D1506). The enum is a copy of a Go list, the way
-// agent.auth's is of config.AgentAuths: a copy that lags refuses at authoring
-// time, in an editor and in a repository's CI, a row the binary reads, and a
-// copy that runs ahead refuses a row the binary would have to refuse itself.
+// TestSecurityFloorNamesAgreeWithGo holds $defs.securityFloorName's enum, in
+// fugaro.schema.json and in project-layer.schema.json, to sensitivity.Floor,
+// the one table that decides which names a layer may not spend again (D1505,
+// D1506). The enum is a copy of a Go list, the way agent.auth's is of
+// config.AgentAuths: a copy that lags refuses at authoring time, in an editor
+// and in a repository's CI, a row the binary reads, and a copy that runs ahead
+// refuses a row the binary would have to refuse itself.
 // TestSecurityKeySchemaAgreesWithTheDecoder says both surfaces agree about one
 // floor name; this says they agree about all of them.
 //
 // Mutation (run, restored): drop a name from the enum, or add one, and this
 // fails naming the side that has it.
 func TestSecurityFloorNamesAgreeWithGo(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join("..", "..", "schemas", "fugaro.schema.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var doc struct {
-		Defs map[string]struct {
-			Enum []string `json:"enum"`
-		} `json:"$defs"`
-	}
-	if err := json.Unmarshal(data, &doc); err != nil {
-		t.Fatal(err)
-	}
-	def, ok := doc.Defs["securityFloorName"]
-	if !ok {
-		t.Fatal("fugaro.schema.json has no $defs.securityFloorName")
-	}
 	want := make([]string, 0, len(sensitivity.Floor()))
 	for _, row := range sensitivity.Floor() {
 		want = append(want, row.Name)
 	}
-	got := slices.Clone(def.Enum)
-	slices.Sort(got)
 	slices.Sort(want)
-	if !slices.Equal(got, want) {
-		t.Errorf("$defs.securityFloorName.enum = %v, sensitivity.Floor's names = %v", got, want)
+	// Both schemas carry the copy: the repository's block and the project
+	// layer's are judged by the same table, so a name either one may not
+	// spend is a name neither may.
+	for _, name := range []string{"fugaro.schema.json", "project-layer.schema.json"} {
+		t.Run(name, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("..", "..", "schemas", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc struct {
+				Defs map[string]struct {
+					Enum []string `json:"enum"`
+				} `json:"$defs"`
+			}
+			if err := json.Unmarshal(data, &doc); err != nil {
+				t.Fatal(err)
+			}
+			def, ok := doc.Defs["securityFloorName"]
+			if !ok {
+				t.Fatalf("%s has no $defs.securityFloorName", name)
+			}
+			got := slices.Clone(def.Enum)
+			slices.Sort(got)
+			if !slices.Equal(got, want) {
+				t.Errorf("$defs.securityFloorName.enum = %v, sensitivity.Floor's names = %v", got, want)
+			}
+		})
 	}
 }
