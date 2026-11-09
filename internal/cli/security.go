@@ -249,7 +249,7 @@ func runSecurityPaths(cmd *cobra.Command, o *securityPathsOptions) error {
 
 	// The list in force is the floor alone in this slice (D1504): an absent
 	// project list, an absent repository list and an explicitly empty list all
-	// mean the floor, and no key exists to write yet.
+	// mean the floor, and no run reads the keys that write one yet (SC9).
 	list := sensitivity.Floor()
 	doc.Security.Count = len(list)
 	for _, row := range list {

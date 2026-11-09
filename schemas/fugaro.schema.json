@@ -234,7 +234,7 @@
     "security": {
       "type": "object",
       "additionalProperties": false,
-      "description": "What this repository itself calls security-sensitive (docs/security-classification, D1500): the list a run matches the paths it changed against to decide whether the change reaches the adversarial review level. Additive, never a replacement: the list in force is the engine's own floor, then the project layer's rows, then these, so a repository can only ever say more is sensitive and never less (D1506). The project layer's block carries this list and, beside it, always_level_3 (D1517).",
+      "description": "What this repository itself calls security-sensitive (docs/security-classification, D1500): the list a run matches the paths it changed against to decide whether the change reaches the adversarial review level. Additive, never a replacement: the list in force is the engine's own floor, then the project layer's rows, then these, so a repository can only ever say more is sensitive and never less (D1506). The project layer's block carries this list and, beside it, always_level_3 (D1517). Fugaro 0.22.0 decodes and validates this block, in this file and in the project layer's, but no run reads either half yet: what a run matches, and what `fugaro security paths` prints, is still the engine's floor of 43 rows, so the union above arrives with a later release. What the key costs today is the image gate: a job image older than 0.22.0 refuses the key whole at bootstrap, so writing it needs that repository's job image on 0.22.0.",
       "properties": {
         "patterns": {
           "type": ["array", "null"],
