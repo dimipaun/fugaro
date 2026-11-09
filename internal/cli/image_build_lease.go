@@ -174,7 +174,9 @@ func (b *buildLease) settle(ctx context.Context, waited bool) error {
 	if b == nil {
 		return nil
 	}
-	_, err := b.cost.settle(ctx, b.lease, buildSpend(b.lease, waited, time.Since(b.started)))
+	wctx, cancel := leaseWriteCtx(ctx)
+	defer cancel()
+	_, err := b.cost.settle(wctx, b.lease, buildSpend(b.lease, waited, time.Since(b.started)))
 	return err
 }
 
@@ -185,8 +187,39 @@ func (b *buildLease) release(ctx context.Context) error {
 	if b == nil {
 		return nil
 	}
-	_, err := b.cost.release(ctx, b.lease)
+	wctx, cancel := leaseWriteCtx(ctx)
+	defer cancel()
+	_, err := b.cost.release(wctx, b.lease)
 	return err
+}
+
+// leaseWriteTimeout is how long a lease's closing write may take once the
+// command's own context is gone: the lease node and the day's counters, a few
+// small conditional writes on the credentials the build was submitted with.
+// The 30 seconds are this repository's figure for a write that has to land
+// after a signal (cmd/fugaro/main.go's signalContext, run.go's own release
+// writes): long enough for a slow database, short enough that a person who
+// pressed Ctrl-C is not left waiting.
+const leaseWriteTimeout = 30 * time.Second
+
+// leaseWriteCtx is the context a lease's closing write runs under: the caller's
+// own values, without its cancellation, and with a timeout of its own.
+//
+// Why it is not the caller's context. The settle that matters most runs on the
+// tail of an already-cancelled one: Ctrl-C during the wait cancels the context
+// (first signal cancels and leaves the process alive), Wait returns the lost
+// watch's error, and the settle then has to record a build Cloud Build is still
+// running. Writing that with the cancelled context fails at once, and what that
+// leaves is worse than a missing line: the lease stays OPEN, and once its
+// deadline passes the next command's reclaim (imageCost.reclaim) releases it —
+// refunding the whole reservation and counting 0 µ$ for a build that is really
+// spending money, which is exactly the undercount this settle exists to
+// prevent, reached from the other side. The write is a fact about the past (the
+// build was submitted and may be running), so a signal about the future is not
+// the thing to judge it by; the timeout is what keeps that from hanging on a
+// database that will not answer.
+func leaseWriteCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), leaseWriteTimeout)
 }
 
 // buildSpend is what a submitted build really spent, as far as this command can

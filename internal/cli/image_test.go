@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -437,6 +438,82 @@ func TestImageBuildCountsTheWholeReservationWhenTheWatchIsLost(t *testing.T) {
 		t.Fatalf("the build was submitted %d times, want the one the lost watch is about", buildPosts(fb))
 	}
 	wholeReservationCounted(t, f.db, mustSlug("bitbucket", "acme/app"), "for a build whose watch was lost")
+}
+
+// buildGets are the build status reads the fake served: what tells a test that
+// the watch of a build is under way. The submission itself is a POST to the
+// builds collection, which this does not count.
+func buildGets(fb *gcpfake.Build) int {
+	n := 0
+	for _, r := range fb.Requests() {
+		if r.Method == "GET" && strings.Contains(r.Path, "/builds/") {
+			n++
+		}
+	}
+	return n
+}
+
+// TestImageBuildSettlesItsLeaseWhenTheContextIsCancelled: the interrupt a
+// person sends during a build — Ctrl-C, SIGTERM, SIGHUP, which
+// cmd/fugaro/main.go's signalContext turns into a cancelled command context,
+// leaving the process alive until the command returns — reaches the settle
+// that closes the lease, because that settle runs after the wait the interrupt
+// broke. Made on that cancelled context the write fails at once, and what it
+// leaves is worse than a missing line: the lease stays OPEN, and once its
+// deadline passes the next command's reclaim releases it whole
+// (imageCost.reclaim), counting 0 µ$ for a build Cloud Build is still running.
+// The closing write is therefore made on a context of its own (leaseWriteCtx),
+// and this is the test that really cancels the command's context, rather than
+// handing the settle a context that was never live.
+//
+// Mutation (run, restore): drop the WithoutCancel from leaseWriteCtx and the
+// day counters stay at 0 while the lease node reads open — the reviewer's own
+// reproduction of this finding.
+func TestImageBuildSettlesItsLeaseWhenTheContextIsCancelled(t *testing.T) {
+	fb, f := cloudBuildCheckout(t, false)
+	// WORKING is not terminal, so the watch polls it for as long as it is
+	// allowed to: the build never ends and only the interrupt stops the watch.
+	fb.Outcome = "WORKING"
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// The interrupt arrives once the build is out and being watched: by then
+	// Cloud Build has it and bills for it whatever this command does next.
+	go func() {
+		for buildGets(fb) == 0 {
+			time.Sleep(time.Millisecond)
+		}
+		cancel()
+	}()
+	_, stderr, err := executeBuildCtx(t, ctx, "image", "build", "--base", "b:1")
+	if err == nil {
+		t.Fatalf("a build whose watch was interrupted succeeded:\n%s", stderr)
+	}
+	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "may still be running") {
+		t.Fatalf("exit %d, err %v: want the interrupted watch's own error", ExitCode(err), err)
+	}
+	if buildPosts(fb) != 1 {
+		t.Fatalf("the build was submitted %d times, want the one the interrupt is about", buildPosts(fb))
+	}
+	slug := mustSlug("bitbucket", "acme/app")
+	wholeReservationCounted(t, f.db, slug, "for a build interrupted while this command watched it")
+	// And the lease is closed, not left open for a later command's reclaim.
+	var leases map[string]budget.BuildLease
+	client, err := newBudgetClient(context.Background(), f.db.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Get(context.Background(), budget.PathBuildLeases(slug), &leases); err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 1 {
+		t.Fatalf("%d build leases are in the database, want the one build's this test read: %v", len(leases), leases)
+	}
+	for id, l := range leases {
+		if l.State != budget.BuildLeaseSettled {
+			t.Errorf("the lease %s reads %q, want %q: an interrupt is not a reason to leave a submitted build's reservation open for the next command to give back",
+				id, l.State, budget.BuildLeaseSettled)
+		}
+	}
 }
 
 // TestImageBuildWithoutABudgetBackendBuildsUncounted: the installation of an

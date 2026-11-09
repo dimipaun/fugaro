@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bytes"
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,6 +18,23 @@ func executeBuild(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
 	fakeTerminal(t)
 	return executeStdin(t, "aurora\n", args...)
+}
+
+// executeBuildCtx is executeBuild on a context the test owns, for the one thing
+// a build does after its own context is cancelled: close its lease. It is the
+// shape cmd/fugaro/main.go runs every command in, where the interrupt cancels
+// the context and the command still returns (signalContext).
+func executeBuildCtx(t *testing.T, ctx context.Context, args ...string) (string, string, error) {
+	t.Helper()
+	fakeTerminal(t)
+	cmd := NewRootCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetIn(strings.NewReader("aurora\n"))
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs(NormalizeArgs(args))
+	err := cmd.ExecuteContext(ctx)
+	return out.String(), errOut.String(), err
 }
 
 // A Cloud Build is billable and asks nothing: no session is refused for being
