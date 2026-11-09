@@ -258,7 +258,7 @@ describe('the licence key’s section', () => {
     expect(all(section, LICENCE_SUBMIT_CLASS)).toHaveLength(0)
   })
 
-  it('draws no key and no reason as a key's own sentence, and offers no box where the store cannot answer', () => {
+  it('draws no key and no reason as a key’s own sentence, and offers no box where the store cannot answer', () => {
     // The one refusal that takes the box away is a read the console could not
     // make at all: a machine where the console may not keep records
     // (`refusedLicenceStore`, `src/main/licence-store.ts`). The box would take a

@@ -101,8 +101,9 @@ function b64url(text: string): string {
   return Buffer.from(text, 'utf8').toString('base64url')
 }
 
-/** mint signs one claim set as it is spelled, and `payloadText` exists so a
- * negative vector can spell a payload the signature does not cover. */
+/** mint signs one claim set as it is spelled. `payloadText` is the text the key
+ * both embeds and signs, so a vector whose payload is not a claim set is still
+ * a key a verifier has to read and refuse (`tampered` spells the other one). */
 function mint(s: Signer, claims: LicenceClaims, payloadText = JSON.stringify(claims)): string {
   const payload = Buffer.from(payloadText, 'utf8')
   return [
@@ -110,6 +111,15 @@ function mint(s: Signer, claims: LicenceClaims, payloadText = JSON.stringify(cla
     payload.toString('base64url'),
     Buffer.from(edSign(null, payload, s.privateKey)).toString('base64url'),
   ].join('.')
+}
+
+/** tampered replaces a key's payload with text its signature does not cover:
+ * the id and the signature stay the ones minted, and the claim set beside them
+ * is another one -- the shape a key edited in place has. `mint` cannot spell it,
+ * because it signs the payload it embeds. */
+function tampered(key: string, payloadText: string): string {
+  const parts = key.split('.')
+  return [parts[0] ?? '', b64url(payloadText), parts[2] ?? ''].join('.')
 }
 
 /** claimsFor is a claim set of the shape the design fixes, with the fields a
@@ -215,7 +225,7 @@ describe('the console’s licence-key store', () => {
     // not a claim set at all.
     const refusals = [
       mint(foreign, claimsFor()),
-      mint(good, claimsFor(), JSON.stringify(claimsFor({ seats: 400 }))),
+      tampered(key, JSON.stringify(claimsFor({ seats: 400 }))),
       mint(good, claimsFor(), 'not a claim set'),
     ]
     for (const refused of refusals) {
