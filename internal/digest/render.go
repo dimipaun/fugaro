@@ -45,6 +45,12 @@ func markdownCore(d Digest) []byte {
 			d.Dropped, MaxBytes)
 	}
 
+	if len(d.Failures) > 0 {
+		b.WriteString("## Failures\n\n")
+		b.WriteString("Why the period's runs did not succeed, over every run of the period, not only the rows above.\n\n")
+		b.WriteString(FailuresTable(d.Failures))
+	}
+
 	if len(d.Stages) > 0 {
 		b.WriteString("## Stages\n\n")
 		b.WriteString("Model calls and sub-agents by stage, over every run of the period.\n\n")
@@ -79,6 +85,21 @@ func RunsTable(runs []Run) string {
 		fmt.Fprintf(&b, "| `%s` | %s | %s | %s | %d | %s | %s | %s |\n",
 			r.ID, r.Status, pr(r.PR), yesNo(r.Base), r.Reviews,
 			USD(r.Billed), USD(r.Notional), flagCell(r.Flags))
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// FailuresTable is the report's failure table: one row per class, the class
+// itself and its figures. Every cell is a figure or a value of the closed
+// vocabulary, and the run ID is the example the digest picked out of its own
+// records, so a row can hold no word a record chose (G1).
+func FailuresTable(failures []ClassCount) string {
+	var b strings.Builder
+	b.WriteString("| class | runs | billed | example |\n")
+	b.WriteString("| --- | --- | --- | --- |\n")
+	for _, f := range failures {
+		fmt.Fprintf(&b, "| `%s` | %d | %s | `%s` |\n", f.Class, f.Runs, USD(f.Billed), f.Example)
 	}
 	b.WriteString("\n")
 	return b.String()
@@ -136,6 +157,12 @@ func (d Digest) Summary() Summary {
 			s.Flags = map[string]int{}
 		}
 		s.Flags[f.Name] = f.Count
+	}
+	for _, f := range d.Failures {
+		if s.Failures == nil {
+			s.Failures = map[string]int{}
+		}
+		s.Failures[string(f.Class)] = f.Runs
 	}
 	for name, med := range d.Recipes {
 		if s.Recipes == nil {

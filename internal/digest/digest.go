@@ -34,6 +34,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/stats"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -291,6 +292,7 @@ type Digest struct {
 func Build(recs []runstore.Record, p Period) Digest {
 	all := make([]Run, 0, len(recs))
 	byRecipe := map[string][]budget.Micros{}
+	byClass := map[failure.Class]*ClassCount{}
 	total := Figures{}
 	for i := range recs {
 		rec := &recs[i]
@@ -301,6 +303,18 @@ func Build(recs []runstore.Record, p Period) Digest {
 		all = append(all, r)
 		name := recipeName(rec)
 		byRecipe[name] = append(byRecipe[name], cost(r))
+		if class := runview.ClassOf(rec); class != "" {
+			c := byClass[class]
+			if c == nil {
+				c = &ClassCount{Class: class}
+				byClass[class] = c
+			}
+			c.Runs++
+			c.Billed = satAdd(c.Billed, r.Billed)
+			if r.ID > c.Example {
+				c.Example = r.ID
+			}
+		}
 		total.Runs++
 		if len(r.Flags) > 0 {
 			total.Flagged++
@@ -337,14 +351,35 @@ func Build(recs []runstore.Record, p Period) Digest {
 	}
 
 	d := Digest{
-		Period:  p,
-		Runs:    append(flagged, rest...),
-		Stages:  stages(recs, p),
-		Total:   total,
-		Flags:   flagCounts(all),
-		Recipes: recipeMedians(byRecipe),
+		Period:   p,
+		Runs:     append(flagged, rest...),
+		Stages:   stages(recs, p),
+		Total:    total,
+		Flags:    flagCounts(all),
+		Failures: classCounts(byClass),
+		Recipes:  recipeMedians(byRecipe),
 	}
 	return capTo(d, MaxBytes)
+}
+
+// classCounts is the period's failures in the vocabulary's order, one row per
+// class that holds any run.
+//
+// The class is read by runview.ClassOf, the one reader of a record's ending
+// (D1454): a record written before the field shipped carries a reason
+// instead, and counting classes any other way would drop it from a table that
+// is closed over the period's failures.
+func classCounts(byClass map[failure.Class]*ClassCount) []ClassCount {
+	if len(byClass) == 0 {
+		return nil
+	}
+	out := make([]ClassCount, 0, len(byClass))
+	for _, class := range failure.Classes() {
+		if c := byClass[class]; c != nil {
+			out = append(out, *c)
+		}
+	}
+	return out
 }
 
 // recipeName is the record's recipe as the report names it: the catalog

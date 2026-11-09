@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/recipe"
 )
 
@@ -91,15 +92,17 @@ type Pattern struct {
 	// Rule is the rule that fired, one of RuleNames.
 	Rule string `json:"rule"`
 	// Subject is what the rule counted, for the rules that count one thing: a
-	// flag's name, or a recipe's name -- a catalog recipe's own, "other" for
-	// the runs no catalog recipe names. It is empty for the rules that count
-	// a whole period, and the key is then absent rather than empty.
+	// flag's name, a recipe's name -- a catalog recipe's own, "other" for the
+	// runs no catalog recipe names -- or a failure class's own name. It is
+	// empty for the rules that count a whole period, and the key is then
+	// absent rather than empty.
 	Subject string `json:"subject,omitempty"`
 	// Periods are the period keys the rule read, oldest first, and Figures
 	// are its figures, one per period, as exact decimal strings: whether a
 	// week raised the flag, the review share of a month's cost, a recipe's
-	// median cost in dollars, a week's halts over its runs, or a month's
-	// billed cost per run in dollars.
+	// median cost in dollars, a week's halts over its runs, the subject
+	// class's runs over a week's runs, a month's billed cost per run in
+	// dollars, or the subject class's runs in a week.
 	Periods []string `json:"periods"`
 	Figures []string `json:"figures"`
 }
@@ -123,6 +126,8 @@ func Patterns(prev []Summary, cur Summary) []Pattern {
 	out = append(out, recipeMedianUp(series[ByMonth])...)
 	out = append(out, haltsHigh(series[ByWeek])...)
 	out = append(out, costPerRunRising(series[ByMonth])...)
+	out = append(out, failureClassHigh(series[ByWeek])...)
+	out = append(out, failureClassNew(series[ByWeek])...)
 	return out
 }
 
@@ -398,6 +403,114 @@ func costPerRunRising(months []Summary) []Pattern {
 	return []Pattern{p}
 }
 
+// failuresOK is whether a block is one the failure-class rules read: it
+// carries the field at all, it counted runs of its own, and every count in it
+// is a count this package writes (G1, G5). A block committed before the field
+// shipped carries none, and is read by neither rule -- the release's own week
+// then raises nothing rather than reading as a week that failed in every class
+// (design §6.2).
+func failuresOK(s Summary) bool {
+	if s.Failures == nil || s.Runs <= 0 || s.Runs > maxCount {
+		return false
+	}
+	for _, n := range s.Failures {
+		if n < 0 || n > maxCount {
+			return false
+		}
+	}
+	return true
+}
+
+// failureClassHigh is D326's sixth rule: one class above
+// FailureClassShareNum/FailureClassShareDen of a week's runs,
+// FailureClassWeeks weeks running. It is haltsHigh's shape read per class,
+// with the class as the pattern's subject.
+//
+// The weeks are the last FailureClassWeeks calendar weeks and every one of
+// them must carry the block: reading the weeks that carry it and skipping the
+// rest would splice two weeks a class was above the line in either side of a
+// quiet week it holds no run of, and a week it holds no run of is a week it is
+// not above the line in (G5).
+func failureClassHigh(weeks []Summary) []Pattern {
+	recent, ok := window(weeks, FailureClassWeeks)
+	if !ok {
+		return nil
+	}
+	for _, w := range recent {
+		if !failuresOK(w) {
+			return nil
+		}
+	}
+	var out []Pattern
+	for _, class := range failure.Classes() {
+		p := Pattern{Rule: RuleFailureClassHigh, Subject: string(class)}
+		above := true
+		for _, w := range recent {
+			n := w.Failures[string(class)]
+			if n*FailureClassShareDen <= w.Runs*FailureClassShareNum {
+				above = false
+				break
+			}
+			p.Periods = append(p.Periods, w.Period)
+			p.Figures = append(p.Figures, fmt.Sprintf("%d/%d", n, w.Runs))
+		}
+		if above {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// failureClassNew is D326's seventh rule: a class this week's block names that
+// no block of the last FailureClassNewWindow weeks before it names. It reads
+// the weeks that carry the field -- this week's and, up to the window, the
+// ones before it -- and it needs one of those before it to have carried the
+// class at all: a class cannot be new against nothing, which is what keeps the
+// release's own week from naming every class of it new.
+//
+// A week the class holds no run of counts as a week that does not name it,
+// and the periods it read are the pattern's, so a reader is told what the
+// verdict rests on.
+func failureClassNew(weeks []Summary) []Pattern {
+	carrying := make([]Summary, 0, len(weeks))
+	for _, w := range weeks {
+		if failuresOK(w) {
+			carrying = append(carrying, w)
+		}
+	}
+	if len(carrying) < 2 {
+		return nil
+	}
+	if n := FailureClassNewWindow + 1; len(carrying) > n {
+		carrying = carrying[len(carrying)-n:]
+	}
+	cur, before := carrying[len(carrying)-1], carrying[:len(carrying)-1]
+	var out []Pattern
+	for _, class := range failure.Classes() {
+		n := cur.Failures[string(class)]
+		if n <= 0 {
+			continue
+		}
+		named := false
+		for _, w := range before {
+			if w.Failures[string(class)] > 0 {
+				named = true
+				break
+			}
+		}
+		if named {
+			continue
+		}
+		p := Pattern{Rule: RuleFailureClassNew, Subject: string(class)}
+		for _, w := range carrying {
+			p.Periods = append(p.Periods, w.Period)
+			p.Figures = append(p.Figures, strconv.Itoa(w.Failures[string(class)]))
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 // PatternsMarkdown is the patterns as the report's own section, for a report
 // to append. It renders what Patterns found and nothing else, so the section
 // carries no person and no text a record or a committed file wrote (G1).
@@ -601,6 +714,11 @@ func (s Summary) figuresOK() bool {
 		}
 	}
 	for _, n := range s.Flags {
+		if n < 0 || n > maxCount {
+			return false
+		}
+	}
+	for _, n := range s.Failures {
 		if n < 0 || n > maxCount {
 			return false
 		}

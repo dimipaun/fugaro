@@ -385,12 +385,30 @@ func TestFailureClassHighNeedsItsWeeks(t *testing.T) {
 	}
 
 	// A week the window does not carry the class in is not above the line:
-	// absent is not zero failures of that class.
+	// absent is not zero failures of that class. The seventh rule fires on the
+	// same summaries -- the class is new there -- so the sixth rule is read off
+	// on its own.
 	absent := Patterns([]Summary{
 		weekFailures("2026-W42", 5, map[string]int{string(failure.Cancelled): 1}),
 	}, high("2026-W43", 5, 5))
-	if len(absent) != 0 {
-		t.Errorf("a week the class does not appear in raised %+v", absent)
+	for _, q := range absent {
+		if q.Rule == RuleFailureClassHigh {
+			t.Errorf("a week the class does not appear in raised %+v", q)
+		}
+	}
+
+	// A week of the window that carries no failures block at all is not a week
+	// of no failures: the sixth rule reads the calendar weeks, and reading the
+	// weeks that carry the block alone would splice two bad weeks either side
+	// of a quiet one into a run (G5).
+	quiet := Patterns([]Summary{
+		high("2026-W42", 5, 2),
+		weekBlock("2026-W43", 5, 0),
+	}, high("2026-W44", 5, 2))
+	for _, q := range quiet {
+		if q.Rule == RuleFailureClassHigh {
+			t.Errorf("a week that carries no failures block raised %+v", q)
+		}
 	}
 }
 
