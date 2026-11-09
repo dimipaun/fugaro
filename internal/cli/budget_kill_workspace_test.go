@@ -129,11 +129,12 @@ func TestWorkspaceKillStopsAMemberRunInFlight(t *testing.T) {
 // and a raise is the one form a coding agent's session may not make — a limit
 // the session it bounds can lift is not a limit (D1542, the fence T3 of
 // docs/no-prompt-policy/implementation-plan.md puts on every raise form: "List
-// and fence every raise form ... budget resume"). This scope is where this
-// branch fences it itself: the raise forms older than the scope — budget resume
-// --all, budget set --global — confirm with the typed project name or --yes,
-// which a coding agent's session may pass, so the help here claims the fence of
-// this scope only. The kill is the other direction, and it stays open to the
+// and fence every raise form ... budget resume"). This scope is fenced on the
+// same marker every other raise form is (raiseOwnerOnly: `budget set`'s raises
+// and `budget resume --all|--repo`), and it fenced it itself only because the
+// command that helper hands the owner carries a --project this scope refuses —
+// the refusal this test reads back has to be the one that works here. The kill
+// is the other direction, and it stays open to the
 // session: halting spend is the safe way round, so a kill asks nothing and is
 // fenced by nothing.
 func TestWorkspaceResumeRefusesInAnAgentSession(t *testing.T) {

@@ -93,6 +93,18 @@ func runBudgetKillWorkspace(cmd *cobra.Command, o *budgetKillOptions, kill bool)
 	if err != nil {
 		return err
 	}
+	// This run's account and its log (D1352), opened where the project scopes
+	// open theirs and under the same name (budgetKillLogName): a stop written
+	// through --workspace is the same command's write as one written through
+	// --all, so the log a person reads after it — and the path a failure sends
+	// them to — has to hold it. Everything the refusals above answer, they
+	// answer before this point, as a refusal that reaches no API keeps no log.
+	rep, sink := reporterFor(cmd, budgetKillLogName(kill), nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	defer rep.Summary()
+	out := sayThrough(rep, cmd.OutOrStdout())
 	declined := "nothing was resumed"
 	if kill {
 		declined = "nothing was killed"
@@ -121,7 +133,6 @@ func runBudgetKillWorkspace(cmd *cobra.Command, o *budgetKillOptions, kill bool)
 	if err != nil {
 		return userErr("%v", err)
 	}
-	out := cmd.OutOrStdout()
 	what := "workspace " + lc.Name
 	// The switch is the workspace's own global one and never a repository's: a
 	// workspace's service answers its members, and the stop has to reach all of
@@ -137,16 +148,15 @@ func runBudgetKillWorkspace(cmd *cobra.Command, o *budgetKillOptions, kill bool)
 				// every raise form").
 				return nil
 			}
-			// A resume is that raise. This scope is the one raise form on
-			// this branch that is fenced on the agent marker (agentMarker,
-			// the one classification the package's agent refusals ask): the
-			// scope is new, so T3's list did not have it when it was written,
-			// and the raise forms that were here before it — `budget resume
-			// --all`, `budget set --global` — still confirm with the typed
-			// project name or --yes, which a coding agent's session may pass.
-			// The fence below is this scope's own; T3's helper
-			// (raiseOwnerOnly, budget.go) replaces it when main's side
-			// reaches this branch, so that rule lives in one place.
+			// A resume is that raise, and this scope is fenced on exactly
+			// what every other raise form is fenced on: the agent marker,
+			// the one classification the package's agent refusals ask
+			// (raiseOwnerOnly, budget.go, which `budget set`'s raises and
+			// `budget resume --all|--repo` go through). The helper itself
+			// cannot serve this scope, because the invocation it hands the
+			// owner always carries --project (ownerRaiseCommand) and this
+			// scope refuses that flag, so the command below is built here
+			// and is the one that lifts this stop.
 			//
 			// The refusal carries the exact command its owner runs
 			// themselves, because a session that reads only the refusal has
@@ -162,18 +172,23 @@ func runBudgetKillWorkspace(cmd *cobra.Command, o *budgetKillOptions, kill bool)
 	if err := budgetKillWriteErr(lc, err); err != nil {
 		return err
 	}
+	// One step for the switch this run moved, in one state or the other, as
+	// the project scopes report theirs (G3's three outcomes): the step's own
+	// name is the scope, so a workspace's stop reads the way a project's
+	// does, and "already killed" is a skip rather than a tick.
+	s := rep.Step(what)
 	if res.Already {
 		if kill {
-			fmt.Fprintf(out, "%s is already killed (by %s at %s: %s); nothing changed\n", what, oneLine(res.Previous.By), ms(res.Previous.At), oneLine(res.Previous.Reason))
+			s.Skipped(fmt.Sprintf("is already killed (by %s at %s: %s); nothing changed", oneLine(res.Previous.By), ms(res.Previous.At), oneLine(res.Previous.Reason)))
 		} else {
-			fmt.Fprintf(out, "%s is not killed; nothing changed\n", what)
+			s.Skipped("is not killed; nothing changed")
 		}
 		return nil
 	}
 	if kill {
-		fmt.Fprintf(out, "killed %s (by %s). Its members' runs halt within seconds; undo with fugaro budget resume --workspace %s\n", what, oneLine(me), lc.Name)
+		s.Done(fmt.Sprintf("killed (by %s). Its members' runs halt within seconds; undo with fugaro budget resume --workspace %s", oneLine(me), lc.Name))
 	} else {
-		fmt.Fprintf(out, "resumed %s (by %s)\n", what, oneLine(me))
+		s.Done(fmt.Sprintf("resumed (by %s)", oneLine(me)))
 	}
 	return nil
 }
