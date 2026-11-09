@@ -2429,3 +2429,63 @@ func TestRunsLsFollowsExecutionsWithinFollowWorkers(t *testing.T) {
 		t.Errorf("runs ls followed %d executions at once, want exactly followWorkers (%d): the pass fans out over the runs the listing could not answer for, within its bound", peak, followWorkers)
 	}
 }
+
+// TestRunsWithoutGroupByIsUnchanged: the grouping is additive. A listing that
+// did not ask for it carries the four keys it always has and no `groups` key at
+// all, and the grouped document is that document plus the one block: the flag
+// moves no row and no total. The phone reads this shape strictly, so an extra
+// key is not a bigger document but a frame the app refuses (F14, D1458).
+func TestRunsWithoutGroupByIsUnchanged(t *testing.T) {
+	f := newCloudFixture(t)
+	f.run.Project, f.run.Region = "proj-1234", "us-east5"
+	seedClassedRun(t, f, recentRunID(t, time.Minute, "aaaa"), failure.TestsFailed, 1)
+
+	plain, _, err := execute(t, "runs", "ls", "--json", "--since", "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain, `"groups"`) {
+		t.Errorf("a listing without --group-by carries a groups block:\n%s", plain)
+	}
+	docKeys, rowKeys := lsJSONKeys(t, "--since", "0")
+	if want := []string{"project", "runs", "totals", "warnings"}; !slices.Equal(docKeys, want) {
+		t.Errorf("the plain document's keys are %v, want %v", docKeys, want)
+	}
+	grouped, raw := groupJSON(t, "--since", "0")
+	groupedKeys, groupedRowKeys := lsJSONKeys(t, "--since", "0", "--group-by", "failure_class")
+	if want := []string{"groups", "project", "runs", "totals", "warnings"}; !slices.Equal(groupedKeys, want) {
+		t.Errorf("the grouped document's keys are %v, want the plain document's plus groups (%v)", groupedKeys, want)
+	}
+	if !slices.Equal(rowKeys, groupedRowKeys) {
+		t.Errorf("a row's keys are %v grouped and %v plain, want rows that did not move", groupedRowKeys, rowKeys)
+	}
+	if len(grouped.Rows) != 1 || grouped.Totals.Runs != 1 {
+		t.Errorf("the grouped document lists %d rows and totals %d, want the window's one run: the block is beside the rows, not instead of them",
+			len(grouped.Rows), grouped.Totals.Runs)
+	}
+	if !strings.Contains(raw, `"totals"`) {
+		t.Errorf("the grouped document dropped the totals line:\n%s", raw)
+	}
+}
+
+// TestLegacyRowsAreGroupedByTheirReason: a record written before the field
+// shipped names no class, and the reader answers one for it — so the window is
+// grouped by the cause and not split into before and after (F34, D1455).
+func TestLegacyRowsAreGroupedByTheirReason(t *testing.T) {
+	f := newCloudFixture(t)
+	f.run.Project, f.run.Region = "proj-1234", "us-east5"
+	old := runIDAt(0, "090000", "aaaa")
+	seedRun(t, f, old, "", "someone@example.com", false)
+	writeRecord(t, f, old, &runstore.Record{Version: 1, RunID: old, Repo: "acme/app",
+		Status: runstore.StatusFailed, Stage: "verify", Reason: "tests failing on the final commit"})
+	seedClassedRun(t, f, runIDAt(0, "091000", "bbbb"), failure.TestsFailed, 1)
+
+	got, _ := groupJSON(t, "--since", "0")
+	byClass := map[string]lsGroupWire{}
+	for _, g := range got.Groups {
+		byClass[g.Class] = g
+	}
+	if len(byClass) != 1 || byClass[string(failure.TestsFailed)].Runs != 2 {
+		t.Fatalf("the window grouped as %+v, want the legacy record and the classed one in tests_failed's own group", got.Groups)
+	}
+}
