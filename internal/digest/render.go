@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // Markdown is d as the report's file: the tables a person reads and the
@@ -30,6 +32,7 @@ func Markdown(d Digest) []byte {
 // again and again while rows are dropped.
 func markdownCore(d Digest) []byte {
 	var b strings.Builder
+	endings := shortRuns(d)
 	fmt.Fprintf(&b, "# Run digest: %s\n\n", d.Period.Key)
 	fmt.Fprintf(&b, "Runs of this repository that finished in %s (%s to %s): %d in all, %d shown, %d flagged. Billed %s, notional %s.\n\n",
 		d.Period.Key, d.Period.Start, d.Period.End, d.Total.Runs, len(d.Runs), d.Total.Flagged,
@@ -38,7 +41,7 @@ func markdownCore(d Digest) []byte {
 	if len(d.Runs) == 0 {
 		b.WriteString("No run of this repository finished in this period.\n\n")
 	} else {
-		b.WriteString(RunsTable(d.Runs))
+		b.WriteString(RunsTable(shortenedRuns(d.Runs, endings)))
 	}
 	if d.Dropped > 0 {
 		fmt.Fprintf(&b, "Rows not shown: %d. The report is capped at %d bytes before extra sections, and the cheapest unflagged rows go first.\n\n",
@@ -48,7 +51,7 @@ func markdownCore(d Digest) []byte {
 	if len(d.Failures) > 0 {
 		b.WriteString("## Failures\n\n")
 		b.WriteString("Why the period's runs did not succeed, over every run of the period, not only the rows above.\n\n")
-		b.WriteString(FailuresTable(d.Failures))
+		b.WriteString(FailuresTable(shortenedFailures(d.Failures, endings)))
 	}
 
 	if len(d.Stages) > 0 {
@@ -72,11 +75,58 @@ func markdownCore(d Digest) []byte {
 	return []byte(b.String())
 }
 
+// shortRuns is every run ID markdownCore prints, by the shortest ending of it
+// that no other ID printed in the same report ends with: the run table's rows
+// and the failures table's example runs in one set, so a run that appears in
+// both reads the same in both, and the rule (task.DisplayRuns) is computed
+// over exactly the rows this report prints and not over the bucket (F15,
+// D1706).
+//
+// A digest is one repository's runs, so no two rows carry the same ID and the
+// repository never enters an ending. The list is built from slices, never a
+// map, so the report stays byte-identical for the same records (G3).
+func shortRuns(d Digest) map[task.Ref]string {
+	refs := make([]task.Ref, 0, len(d.Runs)+len(d.Failures))
+	for _, r := range d.Runs {
+		refs = append(refs, task.Ref{RunID: r.ID})
+	}
+	for _, f := range d.Failures {
+		refs = append(refs, task.Ref{RunID: f.Example})
+	}
+	return task.DisplayRuns(refs)
+}
+
+// shortenedRuns is runs as the report prints them: a copy carrying each run's
+// ending. The caller's rows are left whole, so a Digest read again -- by
+// capTo, by a section hook, by the JSON block -- still holds the run IDs
+// (D1705).
+func shortenedRuns(runs []Run, endings map[task.Ref]string) []Run {
+	out := make([]Run, len(runs))
+	for i, r := range runs {
+		r.ID = endings[task.Ref{RunID: r.ID}]
+		out[i] = r
+	}
+	return out
+}
+
+// shortenedFailures is failures as the report prints them, its example run
+// included: a copy, for the reason shortenedRuns is one.
+func shortenedFailures(failures []ClassCount, endings map[task.Ref]string) []ClassCount {
+	out := make([]ClassCount, len(failures))
+	for i, f := range failures {
+		f.Example = endings[task.Ref{RunID: f.Example}]
+		out[i] = f
+	}
+	return out
+}
+
 // RunsTable is the report's run table: its header, one row per run, and the
 // blank line after it. Every cell is a figure or a closed vocabulary, and the
 // first one is the run's own ID -- so a caller that must not print an ID (a
 // draft that leaves the repository) renumbers its copy before handing it here,
-// and the two renderings of one set of figures cannot drift apart.
+// and the two renderings of one set of figures cannot drift apart. It renders
+// the run IDs it is given: the report's own path shortens them first
+// (markdownCore), and the renumbered rows of a draft are untouched by that.
 func RunsTable(runs []Run) string {
 	var b strings.Builder
 	b.WriteString("| run | status | pr | base | reviews | billed | notional | flags |\n")
@@ -93,7 +143,9 @@ func RunsTable(runs []Run) string {
 // FailuresTable is the report's failure table: one row per class, the class
 // itself and its figures. Every cell is a figure or a value of the closed
 // vocabulary, and the run ID is the example the digest picked out of its own
-// records, so a row can hold no word a record chose (G1).
+// records, so a row can hold no word a record chose (G1). Like RunsTable it
+// renders what it is given, and the report's own path shortens the example
+// with the rows above it.
 func FailuresTable(failures []ClassCount) string {
 	var b strings.Builder
 	b.WriteString("| class | runs | billed | example |\n")

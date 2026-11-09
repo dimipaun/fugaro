@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/digest"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/dimipaun/fugaro/internal/updatecheck"
@@ -110,6 +111,28 @@ func TestSubmitDraftHasNoRepoNameOrRunID(t *testing.T) {
 	// the browser drops and a form it never selected.
 	if strings.Contains(out, "--template") {
 		t.Errorf("the draft carries --template, which `gh issue create --web` ignores:\n%s", out)
+	}
+}
+
+// TestDigestSubmitRunsUnchanged: the draft's run table is the report's own,
+// with the rows renumbered because the draft leaves the repository. The
+// shortening the report's markdownCore does to its own table must not reach
+// these rows: a draft that shortened a prefix of "run-1" would name nothing.
+func TestDigestSubmitRunsUnchanged(t *testing.T) {
+	runs := []digest.Run{
+		{ID: "20261025-120000-3bb2", Status: "succeeded"},
+		{ID: "20261025-130001-3bb2", Status: "failed"},
+	}
+
+	out := digestSubmitRuns(runs)
+
+	for _, want := range []string{"| `run-1` | succeeded |", "| `run-2` | failed |"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the draft's run table does not carry %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "3bb2") {
+		t.Errorf("the draft's run table carries a run ID:\n%s", out)
 	}
 }
 

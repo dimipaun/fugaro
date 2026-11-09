@@ -102,7 +102,9 @@ func TestRunsDigestWritesPeriodFile(t *testing.T) {
 	body := digestReport(t, dir, "2026-10-25")
 	for _, want := range []string{
 		"# Run digest: 2026-10-25",
-		"20261025-120000-abcd",
+		// The report's run table carries the short ID of the run, not the
+		// stamp it was launched with (SR6).
+		"| `abcd` | succeeded |",
 		"## Summary",
 		`"period":"2026-10-25"`,
 		`"end":"2026-10-25"`,
@@ -188,16 +190,18 @@ func TestRunsDigestOneRepositoryOnly(t *testing.T) {
 	digestClock(t, "2026-10-27")
 	fin := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
 	seedDigestRun(t, f, "20261025-120000-abcd", fin, "acme/app")
-	seedDigestRun(t, f, "20261025-120001-abcd", fin, "owner/repo-b")
+	seedDigestRun(t, f, "20261025-120001-ffff", fin, "owner/repo-b")
 
 	out, errOut, err := execute(t, "runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir, "--stdout")
 	if err != nil {
 		t.Fatalf("runs digest: %v (%s)", err, errOut)
 	}
-	if !strings.Contains(out, "20261025-120000-abcd") {
+	// The two runs end differently, so the short ID tells which one the report
+	// read rather than proving nothing (SR6).
+	if !strings.Contains(out, "| `abcd` |") {
 		t.Errorf("the report leaves out this repository's own run:\n%s", out)
 	}
-	if strings.Contains(out, "20261025-120001-abcd") {
+	if strings.Contains(out, "ffff") {
 		t.Errorf("the report reads a record of another repository:\n%s", out)
 	}
 	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
@@ -344,7 +348,7 @@ func TestRunsDigestSkipsMalformedReport(t *testing.T) {
 		t.Errorf("the index lost the report beside it:\n%s", index)
 	}
 	// The report being written is written, whatever the folder held.
-	if !strings.Contains(digestReport(t, dir, "2026-10-25"), "20261025-120000-abcd") {
+	if !strings.Contains(digestReport(t, dir, "2026-10-25"), "| `abcd` |") {
 		t.Error("the report being written is missing its own run")
 	}
 }
@@ -496,12 +500,15 @@ func TestRunsDigestWarnsTruncatedListing(t *testing.T) {
 	digestMaxRuns = 2
 	t.Cleanup(func() { digestMaxRuns = bound })
 
+	// The three runs end differently, so the report's own table says which one
+	// the bound kept (SR6).
+	tails := []string{"dead", "beef", "cafe"}
 	for i, at := range []time.Time{
 		time.Date(2026, 10, 25, 10, 0, 0, 0, time.UTC),
 		time.Date(2026, 10, 25, 11, 0, 0, 0, time.UTC),
 		time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC),
 	} {
-		seedDigestRun(t, f, fmt.Sprintf("20261025-1%d0000-abcd", i), at, "acme/app")
+		seedDigestRun(t, f, fmt.Sprintf("20261025-1%d0000-%s", i, tails[i]), at, "acme/app")
 	}
 
 	out, errOut, err := execute(t, "runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir, "--stdout")
@@ -514,10 +521,10 @@ func TestRunsDigestWarnsTruncatedListing(t *testing.T) {
 	if !strings.Contains(out, `"runs":2`) {
 		t.Errorf("the report is not over the newest runs of the bound:\n%s", out)
 	}
-	if strings.Contains(out, "20261025-100000-abcd") {
+	if strings.Contains(out, tails[0]) {
 		t.Errorf("the report reads a run past the bound, so the cap does not keep the newest:\n%s", out)
 	}
-	if !strings.Contains(out, "20261025-120000-abcd") {
+	if !strings.Contains(out, tails[2]) {
 		t.Errorf("the report leaves out the newest run:\n%s", out)
 	}
 

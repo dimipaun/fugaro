@@ -5025,9 +5025,9 @@ func (r *run) rawPRText() (string, string) {
 	if runes := []rune(first); len(runes) > 72 {
 		first = string(runes[:71]) + "…"
 	}
-	body := fmt.Sprintf("Opened by Fugaro run `%s`.\n\n## Task\n\n%s", r.rec.RunID, r.spec.Task)
+	body := fmt.Sprintf("Opened by Fugaro run `%s`.\n\n## Task\n\n%s", task.ShortRun(r.rec.RunID), r.spec.Task)
 	if r.spec.Title != "" {
-		body = fmt.Sprintf("Opened by Fugaro run `%s`.\n\n# %s\n\n## Task\n\n%s", r.rec.RunID, first, r.spec.Task)
+		body = fmt.Sprintf("Opened by Fugaro run `%s`.\n\n# %s\n\n## Task\n\n%s", task.ShortRun(r.rec.RunID), first, r.spec.Task)
 	}
 	return first, body
 }

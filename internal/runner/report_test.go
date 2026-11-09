@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -149,6 +150,34 @@ func TestReportWithoutToleratedDiffersByTheModeLine(t *testing.T) {
 	}
 	if stripped := strings.Replace(got, line, "", 1); stripped != today {
 		t.Errorf("a run that tolerated nothing changed beyond the mode line:\n--- got ---\n%s\n--- want ---\n%s", stripped, today)
+	}
+}
+
+// TestReportHeadingShortID: the report's heading names the run by its short
+// ID (SR6); the full ID is still there, in the marker below (D1705).
+func TestReportHeadingShortID(t *testing.T) {
+	rec := &runstore.Record{RunID: "20261027-120000-abcd", Outcome: runstore.OutcomeReady}
+
+	got := Report(rec, "runs/acme-app/", nil)
+
+	if first, _, _ := strings.Cut(got, "\n"); first != "### Fugaro run `abcd`" {
+		t.Errorf("the report's heading = %q, want the run's short ID", first)
+	}
+	if n := strings.Count(got, rec.RunID); n != 1 {
+		t.Errorf("the report names the full run ID %d times, want once (the marker):\n%s", n, got)
+	}
+}
+
+// TestMarkerKeepsFullID: the hidden marker is what a follow-up reads to find
+// the run a comment came from, so it keeps the full ID however the heading
+// above it is shortened (D1705).
+func TestMarkerKeepsFullID(t *testing.T) {
+	rec := &runstore.Record{RunID: "20261027-120000-abcd", Outcome: runstore.OutcomeReady}
+
+	got := Report(rec, "runs/acme-app/", nil)
+
+	if id, ok := gitprov.FugaroRun(got); !ok || id != rec.RunID {
+		t.Errorf("FugaroRun(report) = %q, %v; want the full ID %q", id, ok, rec.RunID)
 	}
 }
 

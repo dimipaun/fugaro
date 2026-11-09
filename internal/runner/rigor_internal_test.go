@@ -510,9 +510,25 @@ func TestFinalSectionWithoutAFindingToTolerateIsUnchanged(t *testing.T) {
 	section := r.finalSection(true, "", nil)
 
 	const want = "**Ready for review** · rigor: startup (repo) · no test run yet · senior review: ship in round 2 · model cost $0.00 · finished 2026-10-24 12:00Z\n" +
-		"Run `20261024-120000-abcd` (a stale time here means the run died: `fugaro diagnose 20261024-120000-abcd`)"
+		"Run `abcd` (a stale time here means the run died: `fugaro diagnose abcd`)"
 	if section != want {
 		t.Errorf("the status section of a run with nothing to tolerate:\n got %q\nwant %q", section, want)
+	}
+}
+
+// TestStatusLineShortID: the status section a run posts on its pull request
+// names the run by its short ID, the diagnose hint included, so the command a
+// reader pastes is one they can see on the line (SR6).
+func TestStatusLineShortID(t *testing.T) {
+	r, _ := modeRun(t, "startup", runstore.ReviewSummary{Round: 2, Tier: runstore.TierSenior, Verdict: "ship"})
+
+	section := r.finalSection(true, "", nil)
+
+	if !strings.Contains(section, "Run `abcd` (a stale time here means the run died: `fugaro diagnose abcd`)") {
+		t.Errorf("the status section does not name the run by its short ID:\n%s", section)
+	}
+	if strings.Contains(section, "20261024-120000-") {
+		t.Errorf("the status section prints the full run ID:\n%s", section)
 	}
 }
 

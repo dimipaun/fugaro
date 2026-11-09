@@ -50,9 +50,23 @@ func TestPRTitleOfARunWithoutATitleIsUnchanged(t *testing.T) {
 	if title != "Add a feature" {
 		t.Fatalf("PR title = %q, want the task's first line", title)
 	}
-	want := "Opened by Fugaro run `20261018-120000-abcd`.\n\n## Task\n\nAdd a feature\nand more"
+	want := "Opened by Fugaro run `abcd`.\n\n## Task\n\nAdd a feature\nand more"
 	if body != want {
 		t.Fatalf("PR body =\n%q\nwant\n%q", body, want)
+	}
+}
+
+// TestOpenedByLineShortID: the description code writes for a person names the
+// run by its short ID, and prints the full one nowhere (SR6). The branch a
+// reader finds on the pull request still carries it whole (D1705).
+func TestOpenedByLineShortID(t *testing.T) {
+	spec := &task.Spec{Repo: "acme/app", Task: "Add a feature"}
+	_, body := prTitleRun(t.TempDir(), spec, "20261018-120000-abcd").rawPRText()
+	if !strings.HasPrefix(body, "Opened by Fugaro run `abcd`.") {
+		t.Errorf("the description opens with %q, want the run's short ID", body)
+	}
+	if strings.Contains(body, "20261018-120000-") {
+		t.Errorf("the description prints the full run ID:\n%s", body)
 	}
 }
 

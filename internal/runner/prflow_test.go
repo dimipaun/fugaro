@@ -1076,7 +1076,7 @@ func TestMarkerOnlyTitleFallsBack(t *testing.T) {
 	if rec, err := h.run(t, mk, review("ship", 0)); err != nil || rec.Outcome != runstore.OutcomeReady {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
-	if title := onlyPR(t, h.provider).Title; title != "Fugaro run "+runID {
+	if title := onlyPR(t, h.provider).Title; title != "Fugaro run abcd" {
 		t.Fatalf("title = %q", title)
 	}
 }

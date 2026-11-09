@@ -466,6 +466,44 @@ func TestDigestClosedPeriodsUTC(t *testing.T) {
 	}
 }
 
+// TestDigestRunTableShortID: the report's run table names each run by its
+// short ID, extended where two of the rows it prints would otherwise read the
+// same (SR6, D1706, F15).
+func TestDigestRunTableShortID(t *testing.T) {
+	p := week43(t)
+	recs := []runstore.Record{
+		run(t, "20261021-090000-3bb2", "2026-10-21T09:00:00Z", 3, 0),
+		run(t, "20261021-090001-3bb2", "2026-10-21T09:00:00Z", 2, 0),
+		run(t, "20261019-090000-a1b2", "2026-10-19T09:00:00Z", 1, 0),
+	}
+	out := string(Markdown(Build(recs, p)))
+	for _, want := range []string{"| `0-3bb2` |", "| `1-3bb2` |", "| `a1b2` |"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the report's run table does not carry %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "20261021-0900") || strings.Contains(out, "20261019-0900") {
+		t.Errorf("the report's run table prints a full run ID:\n%s", out)
+	}
+}
+
+// TestDigestFailureExampleShortID: the failures table's example run is named
+// the same way as the rows above it, so one run reads alike in both tables
+// (SR6). The report's own record keeps the full ID -- the table shortens what
+// it prints, not what Build put in d.
+func TestDigestFailureExampleShortID(t *testing.T) {
+	p := week43(t)
+	rec := failing(t, "20261021-090000-3bb2", 0.10, failure.TestsFailed, "")
+
+	d := Build([]runstore.Record{rec}, p)
+	if len(d.Failures) != 1 || d.Failures[0].Example != "20261021-090000-3bb2" {
+		t.Fatalf("the digest's own failure rows = %+v, want the record's full ID", d.Failures)
+	}
+	if out := string(Markdown(d)); !strings.Contains(out, "| `tests_failed` | 1 | $0.10 | `3bb2` |") {
+		t.Errorf("the failures table does not name its example run by its short ID:\n%s", out)
+	}
+}
+
 // TestDigestAbsentCallsPrintNA pins G5: a stage nobody counted prints n/a,
 // never 0.
 func TestDigestAbsentCallsPrintNA(t *testing.T) {
@@ -760,14 +798,20 @@ func TestDigestHasNoPersonField(t *testing.T) {
 // first, and the report says how many it left out.
 func TestDigestSizeCap(t *testing.T) {
 	p := week43(t)
-	// A budget small enough to make the rule exact.
-	small := Build([]runstore.Record{
-		flaggedRun(t, "20261021-090000-0001", 0.01),
-		flaggedRun(t, "20261021-090000-0002", 0.02),
-		run(t, "20261021-090000-0003", "2026-10-21T09:00:00Z", 1, 0),
-		run(t, "20261021-090000-0004", "2026-10-21T09:00:00Z", 2, 0),
-		run(t, "20261021-090000-0005", "2026-10-21T09:00:00Z", 3, 0),
-	}, p)
+	// A budget small enough to make the rule exact. The period holds 21 runs,
+	// so the selection keeps the two flagged ones and the four dearest of the
+	// unflagged ones (Build), and the note reporting a drop costs more than
+	// three of the rows it reports: the cap takes the three cheapest of those
+	// four and the dearest unflagged row stays.
+	id := func(i int) string { return fmt.Sprintf("20261021-0900%02d-%04x", i, i+1) }
+	var recs []runstore.Record
+	recs = append(recs,
+		flaggedRun(t, "20261021-085900-0001", 0.01),
+		flaggedRun(t, "20261021-085901-0002", 0.02))
+	for i := range 19 {
+		recs = append(recs, run(t, id(i), "2026-10-21T09:00:00Z", float64(i+1), 0))
+	}
+	small := Build(recs, p)
 	// A budget one byte under the report's own size, so the rule is exercised
 	// exactly: which rows go, and what the report says about them. How many go
 	// is not pinned here -- the note that reports a drop costs bytes of its
@@ -811,10 +855,10 @@ func TestDigestSizeCap(t *testing.T) {
 	if dropped != got.Dropped {
 		t.Errorf("capTo says it dropped %d rows, %d are gone from the table", got.Dropped, dropped)
 	}
-	if _, ok := shown["20261021-090000-0005"]; !ok {
+	if _, ok := shown[id(18)]; !ok {
 		t.Error("capTo dropped the dearest unflagged row")
 	}
-	if _, ok := shown["20261021-090000-0003"]; ok {
+	if _, ok := shown[id(15)]; ok {
 		t.Error("capTo kept the cheapest unflagged row in an over-budget report")
 	}
 
@@ -825,11 +869,11 @@ func TestDigestSizeCap(t *testing.T) {
 	for flagged < 500 && len(Markdown(Build(flaggedRuns(t, flagged+1), p))) < MaxBytes-256 {
 		flagged++
 	}
-	recs := flaggedRuns(t, flagged)
+	bigRecs := flaggedRuns(t, flagged)
 	for i := 1; i <= 10; i++ {
-		recs = append(recs, run(t, fmt.Sprintf("20261021-1100%02d-abcd", i), "2026-10-21T09:00:00Z", float64(i), 0))
+		bigRecs = append(bigRecs, run(t, fmt.Sprintf("20261021-1100%02d-abcd", i), "2026-10-21T09:00:00Z", float64(i), 0))
 	}
-	big := Build(recs, p)
+	big := Build(bigRecs, p)
 	if big.Dropped == 0 {
 		t.Fatalf("the fixture no longer exceeds the %d-byte cap: it tests nothing", MaxBytes)
 	}
@@ -914,7 +958,7 @@ func TestDigestRendersNoRecordText(t *testing.T) {
 			if strings.Contains(out, planted) {
 				t.Errorf("the report prints %q, planted in the record's %s", planted, leaf.path)
 			}
-			if leaf.path != ".RunID" && !strings.Contains(out, id) {
+			if leaf.path != ".RunID" && !strings.Contains(out, task.ShortRun(id)) {
 				t.Errorf("the report does not show the run whose %s holds %q: the check proves nothing", leaf.path, planted)
 			}
 		}
