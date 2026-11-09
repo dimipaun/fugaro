@@ -28,14 +28,12 @@ func frontDoorMember(project string) string {
 	return "serviceAccount:" + infra.MCPServerAccountID + "@" + project + ".iam.gserviceaccount.com"
 }
 
-// withCoordinatorOptIn turns the coordinator on in the rig's config and points
-// its endpoints at an IAM fake, which is where a custom role's permissions are
-// resolved from.
-func (r *doctorRig) withCoordinatorOptIn(t *testing.T) *gcpfake.IAM {
+// withIAMEndpoint points the rig's config at an IAM fake, which is where a
+// custom role's permissions are resolved from.
+func (r *doctorRig) withIAMEndpoint(t *testing.T) *gcpfake.IAM {
 	t.Helper()
 	iam := gcpfake.NewIAM(t)
-	cfg := strings.Replace(r.cfg, "endpoints: { ", "endpoints: { iam: "+iam.URL+"/, ", 1) +
-		"terraform: { coordinator: true }\n"
+	cfg := strings.Replace(r.cfg, "endpoints: { ", "endpoints: { iam: "+iam.URL+"/, ", 1)
 	if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +45,7 @@ func (r *doctorRig) withCoordinatorOptIn(t *testing.T) *gcpfake.IAM {
 // a finding.
 func TestDoctorCoordinatorHoldsNoOverrides(t *testing.T) {
 	r := newDoctorRig(t)
-	iam := r.withCoordinatorOptIn(t)
+	iam := r.withIAMEndpoint(t)
 	iam.AddRole("proj-1234", infra.RoleJobStarter, "Fugaro job starter", false)
 	iam.SetRolePermissions("projects/proj-1234/roles/"+infra.RoleJobStarter, "run.jobs.run")
 	r.crm.SetPolicy("proj-1234",
@@ -68,7 +66,7 @@ func TestDoctorCoordinatorHoldsNoOverrides(t *testing.T) {
 // the coordinator is the regression the ruling forbids — and it is named.
 func TestDoctorReportsTheCoordinatorsOverridesGrant(t *testing.T) {
 	r := newDoctorRig(t)
-	iam := r.withCoordinatorOptIn(t)
+	iam := r.withIAMEndpoint(t)
 	iam.AddRole("proj-1234", infra.RoleJobRunner, "Fugaro job runner", false)
 	iam.SetRolePermissions("projects/proj-1234/roles/"+infra.RoleJobRunner, "run.jobs.run", "run.jobs.runWithOverrides")
 	r.crm.SetPolicy("proj-1234",
@@ -94,7 +92,6 @@ func TestDoctorReportsTheCoordinatorsOverridesGrant(t *testing.T) {
 // the permission the coordinator's account holds, not about who granted it.
 func TestDoctorReportsAPredefinedOverridesGrant(t *testing.T) {
 	r := newDoctorRig(t)
-	r.withCoordinatorOptIn(t)
 	r.crm.SetPolicy("proj-1234",
 		gcpfake.Binding{Role: "roles/owner", Members: []string{"user:owner@example.com"}},
 		gcpfake.Binding{Role: "roles/run.admin", Members: []string{frontDoorMember("proj-1234")}})
@@ -113,15 +110,54 @@ func TestDoctorReportsAPredefinedOverridesGrant(t *testing.T) {
 	}
 }
 
-// An installation with no coordinator gets nothing: the accounts do not exist,
-// so there is no fact to report.
-func TestDoctorSaysNothingAboutOverridesWithoutACoordinator(t *testing.T) {
+// An installation whose policy names neither account gets no line at all:
+// there is no fact to report, and doctor does not print a check for one.
+func TestDoctorSaysNothingAboutOverridesWhenNoCoordinatorAccountIsGranted(t *testing.T) {
 	r := newDoctorRig(t)
 	r.crm.SetPolicy("proj-1234",
 		gcpfake.Binding{Role: "roles/owner", Members: []string{"user:owner@example.com"}},
-		gcpfake.Binding{Role: "roles/run.admin", Members: []string{coordinatorMember("proj-1234")}})
+		gcpfake.Binding{Role: "roles/run.admin", Members: []string{"user:someone@example.com"}})
 
 	if c, found := doctorCheckByID(r.runDoctorJSON(t).Checks, "coordinator-overrides"); found {
-		t.Errorf("doctor reports %+v on an installation with no coordinator", c)
+		t.Errorf("doctor reports %+v on an installation that grants neither account anything", c)
+	}
+}
+
+// A custom role of another installation is judged by its own permissions and
+// not by its name: this one is not a Fugaro role at all, and it carries the
+// permission.
+func TestDoctorResolvesAForeignCustomRole(t *testing.T) {
+	r := newDoctorRig(t)
+	iam := r.withIAMEndpoint(t)
+	iam.AddRole("proj-1234", "theirRunner", "Their runner", false)
+	iam.SetRolePermissions("projects/proj-1234/roles/theirRunner", "run.jobs.run", "run.jobs.runWithOverrides")
+	r.crm.SetPolicy("proj-1234",
+		gcpfake.Binding{Role: "roles/owner", Members: []string{"user:owner@example.com"}},
+		gcpfake.Binding{Role: "projects/proj-1234/roles/theirRunner", Members: []string{coordinatorMember("proj-1234")}})
+
+	c, found := doctorCheckByID(r.runDoctorJSON(t).Checks, "coordinator-overrides")
+	if !found || c.OK || c.Severity != "warning" {
+		t.Fatalf("check = %+v found=%v, want a warning about a role whose permissions carry the override", c, found)
+	}
+	if !strings.Contains(c.Problem, "theirRunner") {
+		t.Errorf("Problem does not name the role: %s", c.Problem)
+	}
+}
+
+// A custom role whose permissions could not be read is an unknown, and an
+// unknown is not a pass.
+func TestDoctorFailsClosedOnAnUnreadableCustomRole(t *testing.T) {
+	r := newDoctorRig(t)
+	r.withIAMEndpoint(t)
+	r.crm.SetPolicy("proj-1234",
+		gcpfake.Binding{Role: "roles/owner", Members: []string{"user:owner@example.com"}},
+		gcpfake.Binding{Role: "projects/proj-1234/roles/notThere", Members: []string{coordinatorMember("proj-1234")}})
+
+	c, found := doctorCheckByID(r.runDoctorJSON(t).Checks, "coordinator-overrides")
+	if !found || c.OK || c.Severity != "warning" {
+		t.Fatalf("check = %+v found=%v, want a warning", c, found)
+	}
+	if !strings.Contains(c.Problem, "could not tell") {
+		t.Errorf("Problem does not say the read is unknown rather than fine: %s", c.Problem)
 	}
 }

@@ -479,6 +479,10 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		o.Checks = append(o.Checks, *c)
 	}
 	o.Checks = append(o.Checks, doctorLauncherReach(ctx, lc)...)
+	// The owner's ruling of 2026-11-09, beside the launcher reach it splits:
+	// who may start a run is one question, and who may override one is the
+	// other, and the coordinator's accounts may never hold the second.
+	o.Checks = append(o.Checks, doctorCoordinatorOverrides(ctx, lc, crmSvc)...)
 	// What a run drops of a job's own environment, per job (docs/image-env,
 	// reconciliation D1377): a measurement, so the default screen is untouched
 	// and --all and --json carry it.
