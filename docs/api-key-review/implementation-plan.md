@@ -31,8 +31,8 @@ field. Where this file and
 the tree does today, **D1410–D1429** and **D1418**'s answer of 2026-11-09) and
 [security-review.md](security-review.md) (the review of the merged AK4 and AK5, and the conditions it
 places on AK6a, AK6b and AK7). Every path and symbol cited here exists on `main` at
-`aa26f322f` — except the ones the review read at `9fa5fd90`, which it says so about; the findings in
-parentheses are the reconciliation's.
+`aa26f322f`, and the security review (§7) read the tree the two landed tasks produced (`1d2591d5`,
+`0944d4d4` and `9fa5fd90`); the findings in parentheses are the reconciliation's.
 
 ## 1. The slices, the levels and the critical path
 
@@ -46,7 +46,7 @@ a slice the owner does not want is simply not started.
 | --- | --- | --- | --- |
 | **L1** | **AK1**, **AK2**, **AK3** | the in-job path named and pinned: tests (**F5**), docs (**F9**), a field of the record's own for the credential a stage ran on (**F18**, **D1415**) | no shared file, no service change, no ordering between them |
 | **L2** | **AK4**, **AK5** | the cloud Anthropic-key half: the class may be served by the project's key (**F12**, **F13**, **F14**), and the runner admits it, so the review-only variant — already deployed and admitted for a project with no Claude account (**F17**) — is served by it (**F11**). **This was code for a launch E7 refused when it was written; the flip of 2026-11-08 admits it** (**F10**, **U6**) | AK4 is `internal/credsvc` + `internal/config` + `internal/projectpolicy` + `internal/localcfg`, with one refusal's sentence in `internal/infra` (§2's declared exception), and AK5 is `internal/runner` + `internal/cli` + `internal/infra`; the two share that one file, AK4 first |
-| **L3** | **AK6a**, **AK6b**, **AK7** | the OpenRouter half: the provider key gets its own value on the account axis, so a profile can publish it and a policy admit it (**F15**, **F25**), the bundle holds the key and the service forwards to the provider's endpoint (**F15**, **F16**, **F24**, **D1418**), and the review run's model path reaches it (**F22**) | **AK6a and AK6b share no file** — AK6a is `internal/config`, `internal/projectpolicy`, `internal/localcfg`, `internal/infra`, `internal/cli`, `internal/task`, `schemas/task.schema.json` and the module, and AK6b is `internal/credsvc` and `schemas/creds-bundle.schema.json` (§2 books both) — and AK6a is first because AK6b's offer rule matches the axis value AK6a defines; AK7 is `internal/runner` and nothing else, because the provider's base URL never leaves the bundle (**D1418**, **F26**) |
+| **L3** | **AK6a**, **AK6b**, **AK7** | the OpenRouter half: the provider key gets its own value on the account axis, so a profile can publish it and a policy admit it (**F15**, **F25**), the bundle holds the key and the service forwards to the provider's endpoint (**F15**, **F16**, **F24**, **D1418**), and the review run's model path reaches it (**F22**) | **AK6a and AK6b share no file** — AK6a is `internal/config`, `internal/projectpolicy`, `internal/localcfg`, `internal/infra`, `internal/cli`, `internal/task`, `schemas/task.schema.json` and the module, and AK6b is `internal/credsvc`, `internal/creds` and `schemas/creds-bundle.schema.json` (§2 books both) — and AK6a is first because AK6b's offer rule matches the axis value AK6a defines; AK7 is `internal/runner` and nothing else, because the provider's base URL never leaves the bundle (**D1418**, **F26**) |
 | **L4** | **AK8** | the live check, **Check 330** (§5) | owner-run, after everything else |
 
 **The critical path is `AK1 → AK4 → AK5 → AK6a → AK6b → AK7 → AK8`**, and it is the shortest chain the
@@ -58,7 +58,10 @@ result on a real installation. **AK2 and AK3 are off the critical path** — AK2
 AK3 is the record — and either may land at any point in L1 without moving it. **AK9 and AK10 are off
 it too**: they are the security review's two findings (a wording pair that says a review job's account
 is a Claude account, and the credential write that can outrun the service that reads it), and neither
-blocks a cloud task.
+blocks a cloud task. **The OpenRouter half of the critical path carries one more gate, and no task
+holds it: Check 50** (§6 item 10) — the live check the tree's own tier-C refusal names, which the owner
+has not run — so AK6a, AK6b and AK7 may all land and be unit-tested while a review **served** by a
+provider key is still refused, and §5's step C may not be run before it.
 
 **D1410, D1421 and the gates in §6 that a decision settles are settled as of 2026-11-07, before any
 task starts; §6's items 6 and 7 are not decisions, and item 6 partly stands.** **D1410**
@@ -80,7 +83,7 @@ spells, carrying the Anthropic key's admissions and its meaning, and `offeredToR
 name **and** tier would have to offer two credentials where the class's whole rule is exactly one with
 no fallback. So the provider key gets a value of its own (**AK6a**, 24 files — AK4's and AK5's readers
 for a second value, which is what §6.7's "6–8" estimate was short of) and the service half is
-**AK6b** (9 files). §6.7 is amended to say so in the same commit (§6 item 9).
+**AK6b** (9 files). §6.7 is amended to say so in the same pass (§6 item 9).
 
 ## 2. The shared-files table
 
@@ -523,12 +526,12 @@ and its test, `internal/projectpolicy/accounts.go` and its test, `internal/proje
 `internal/cli/run.go`, `internal/task/task.go` and its test, `schemas/task.schema.json` and
 `schemas/schemas_test.go`, `deploy/terraform/gcp/modules/project/variables.tf`, `docs/project-layer.md`,
 and `internal/credsvc/review.go`, `internal/credsvc/review_test.go` and
-`internal/credsvc/sharedjobs_test.go`. **Twenty-three of them are L2's own readers of the axis**, which
-is what §2's preamble means by `then AK6a`, and the twenty-fourth — `internal/credsvc/review.go` and
-its test, the pairing's type and its offer rule — is the file §6.7's CSR17 booked and this plan's AK6
-did not: that is the disagreement the reconciliation settled in CSR17's favour. **No new secret, no
-new resource, no new grant:** the value is an axis value, and the credential it names is AK6b's
-bundle key.
+`internal/credsvc/sharedjobs_test.go`. **All twenty-four are rows §2 already books at L2** — the axis's
+readers AK4 and AK5 built, which is what its preamble means by `then AK6a` — and two of them,
+`internal/credsvc/review.go` and `internal/credsvc/review_test.go` (the pairing's own type and its
+offer rule), are the file §6.7's CSR17 booked and this plan's AK6 did not: that is the disagreement the
+reconciliation settled in CSR17's favour. **No new secret, no new resource, no new grant:** the value is
+an axis value, and the credential it names is AK6b's bundle key.
 
 **Interfaces:** the account axis gains **a second value of its own** beside
 `config.AnthropicKeyAccount` — a constant in `internal/config/claude_accounts.go`, called here the
@@ -666,10 +669,12 @@ this plan had not, is kept.
 bundle, so the runner names no provider endpoint and no host — the property §7's third attack question
 answers.
 
-**Interfaces:** the class's model path stops being the service's Anthropic forward alone — the
-upstream a provider-served review call carries is the service's own, and `internal/runner/agentenv.go`'s
-gateway variables carry what a provider's model list needs. The pins and the allow-list are
-unchanged: the review is still held to the project policy's `budget.allowed_models` (**D1425**).
+**Interfaces:** `checkReviewClassModelPath` stops refusing the provider-served pairing: the class takes
+the provider-key account as a pairing it admits (AK6a's value), and the call the service then forwards
+is the provider's, which the runner names no part of — `internal/runner/agentenv.go`'s gateway
+variables carry what a provider's model list needs and no host. The pins and the allow-list are
+unchanged: the review is still held to the project policy's `budget.allowed_models` (**D1425**), and
+`agentenv.go` is the only file here that writes an environment.
 
 **Tests and command:**
 `GOFLAGS=-p=2 go test ./internal/runner/ -run 'TestReviewRunOnAProviderKeyReachesTheProvider|TestReviewRunIsStillHeldToTheAllowList|TestReviewRunIsServedByTheProjectsAnthropicKey' -count=1`
@@ -731,8 +736,8 @@ of which spells "no email or no Claude account") and the module's prose for `rev
 variable's description and the comment above its validation) name **a Claude account** where AK4 made
 that inexact: the account a review variant's calls are served by may be `config.AnthropicKeyAccount`,
 which names the project's own Anthropic API key and, in `internal/credsvc/review.go`'s own words, **is
-not an account**. The fix is the words and nothing else — the type, the validation, the audit line and
-the number of lines stay exactly as they are — so the refusal says what the value is: the **account
+not an account**. The fix is the words and nothing else — the type, the validation and the one audit
+line a refusal writes stay exactly as they are — so the refusal says what the value is: the **account
 axis** value a review job is served by.
 
 **Tests and command:**
@@ -971,7 +976,7 @@ of 2026-11-09 and item 10 a gate no task carried, which that reconciliation foun
    both are the bundle's, so nothing moves) and `internal/runner/runner.go`'s call site with it, while
    `internal/runner/agentenv_test.go` is kept. **§2 books every file of both tasks, drops the
    conditional gateway row, and says which L2 rows AK6a re-enters**, and **§6.7 itself is amended in
-   the same commit** — CSR17 and CSR18 now point at AK6a, AK6b and AK7 rather than at this plan's old
+   the same pass** — CSR17 and CSR18 now point at AK6a, AK6b and AK7 rather than at this plan's old
    AK6, and CSR17's "**Files (sketched, 6–8)**" is corrected: it covered the service half only and was
    short of the axis's own readers.
 10. **A gate no task carried, found by that reconciliation: Check 50 is not run, and the OpenRouter
