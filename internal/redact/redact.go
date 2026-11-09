@@ -131,6 +131,7 @@ func patternPass(s string) string {
 	s = authScheme.ReplaceAllString(s, "$1 "+redacted)
 	s = signedParam.ReplaceAllString(s, "$1$2="+redacted)
 	s = connString.ReplaceAllString(s, "$1:"+redacted+"@")
+	s = connStringCut.ReplaceAllString(s, "$1:"+redacted)
 	s = dsnString.ReplaceAllString(s, "$1"+redacted+"$3")
 	s = passwordEscaped.ReplaceAllString(s, "$1$2$3$4$5$6$9"+redacted+"$8")
 	s = redactPasswords(s)
@@ -403,7 +404,42 @@ var (
 	// line. A single quote does not end it: that byte is legal in the userinfo
 	// of a URL (`postgres://app:ab'cdefgh@db.example.com/app`), and a rule that
 	// stopped at it redacted the head of the password and left the rest.
-	connString = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*://[^\s:/@?#]*):([^\s"]+)@`)
+	//
+	// A double quote inside the password is read the way passwordValueTail
+	// reads one: as a byte of the value where the text continues past it
+	// (`postgres://app:ab"cdefgh12@db.example.com/app`), and as the record's own
+	// delimiter where the byte after it ends a field. The value class is the
+	// pair unit for that reason, and the pairing is not a refinement: with the
+	// base class alone the rule did not shorten its match around such a quote,
+	// it made none at all — the `@` and the host have to follow the value — and
+	// the password went into the text whole.
+	connString = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*://[^\s:/@?#]*):((?:[^\s"]|"[^\s,;&}\])])+)@`)
+
+	// connStringCut is the same userinfo where the excerpt stops before the
+	// host: the URL of a `.env` line, of a config value or of an error message
+	// that was cut short (`postgres://app:<password>` with nothing after it),
+	// and the same URL written in a record, where the field's own quote stands
+	// where the host would. There is no `@` to end the value, so the value is
+	// what has to carry the reading: a port is digits and nothing else, so a
+	// run holding a letter is the password and one without a letter is left as
+	// the port it is — which is what keeps a URL that merely carries a port out
+	// of the rule (`https://api.example.com:8080/v1/runs`,
+	// `http://localhost:3000`), the way the host keeps it out of connString
+	// above. The value ends where the URL's path or query begins, at an `@`, at
+	// a double quote and at whitespace: a record keeps the fields beside the
+	// one the URL is written in (`{"dsn":"postgres://app:…","step":"terraform
+	// apply"}`), and it is connString that reads the password of a URL that
+	// does have a host, whole, before this rule sees the text.
+	//
+	// What is not claimed is stated rather than guessed at: a cut-off value
+	// with no letter in it, which cannot be told from a port, and one that
+	// holds a `/`, a `?`, a `#` or an `@` past the point where the rule stops,
+	// which is left half redacted rather than read as part of a credential. A
+	// backslash is read as a pair with the byte after it and never alone,
+	// because a record that has itself been escaped carries its closing quote
+	// as `\"`, and a value that took the backslash left the quote it escapes
+	// bare.
+	connStringCut = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*://[^\s:/@?#]*):((?:\\[^"]|[^\s"/?#@\\])*[A-Za-z](?:\\[^"]|[^\s"/?#@\\])*)`)
 
 	// dsnString is the same userinfo where no scheme introduces it: the DSN the
 	// MySQL driver reads, `app:<password>@tcp(db:3306)/app`, which a Go program
@@ -550,8 +586,12 @@ var (
 	// failed, which is what a diagnosis quotes.
 	// This is the one spelling of it with nothing between the name and the
 	// value to read by, so the dashes before the name are what keeps a
-	// sentence out of the rule.
-	passwordFlag = regexp.MustCompile(`(?i)(-{1,2}(?:pass(?:word|phrase|wd)?s?|pwd|secret(?:[_-]?(?:access[_-])?key)?|token|api[_-]?key|access[_-]?key|auth[_-]?token))\s+` + passwordValueTail)
+	// sentence out of the rule. The space it reads is a space on the flag's
+	// own line: a flag whose line ends after it has no value in the text, and
+	// the word that starts the next line is that line's own — a rule that
+	// crossed the break took the word for the password and joined two lines of
+	// the diagnosis into one.
+	passwordFlag = regexp.MustCompile(`(?i)(-{1,2}(?:pass(?:word|phrase|wd)?s?|pwd|secret(?:[_-]?(?:access[_-])?key)?|token|api[_-]?key|access[_-]?key|auth[_-]?token))[ \t]+` + passwordValueTail)
 
 	// keyBlock is a PEM private key, terminated or not: an unterminated block
 	// is still a key, so an END that never comes redacts to the end of the

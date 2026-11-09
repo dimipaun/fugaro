@@ -403,6 +403,26 @@ var patternCases = []struct {
 		keep: "cache.example.com:6379 timed out",
 	},
 	{
+		name: "password holding a double quote in a connection string",
+		in: "postgres://app:" + fake(`ab"`, strings.Repeat("Qw3", 3)) +
+			"@db.example.com:5432/app refused",
+		leak: fake(`ab"`, strings.Repeat("Qw3", 3)),
+		keep: "db.example.com:5432/app refused",
+	},
+	{
+		name: "connection string stopping before its host",
+		in:   "postgres://app:" + fake(strings.Repeat("Qw3", 5)) + " refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "refused",
+	},
+	{
+		name: "connection string with its host outside the excerpt",
+		in: `{"dsn":"postgres://app:` + fake(strings.Repeat("Qw3", 5)) +
+			`","step":"terraform apply"}`,
+		leak: strings.Repeat("Qw3", 5),
+		keep: `","step":"terraform apply"}`,
+	},
+	{
 		name: "password field of a keyword connection string",
 		in: "Server=db.example.com;User Id=app;Pwd=" + fake(strings.Repeat("Qw3", 5)) +
 			";Database=app",
@@ -965,6 +985,8 @@ func TestRedactPassesLeaveCleanTextAlone(t *testing.T) {
 		"the pass: it was accepted by the runner",
 		"the word 'pass' in quotes: it is not a field",
 		"see https://api.example.com:8080/v1/runs for the endpoint",
+		"the server is at http://localhost:3000 and up",
+		"fugaro run --password\nError: flag needs an argument",
 	} {
 		if got := Text(s, []string{"a-secret-value"}); got != s {
 			t.Errorf("Text(%q) = %q, want it unchanged", s, got)
