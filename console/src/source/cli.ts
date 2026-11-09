@@ -224,6 +224,17 @@ export const FUGARO_INSTALL_COMMAND = 'brew install dimipaun/tap/fugaro'
  * per kind, each with its own headline and its own remedy (Part G, T-G1). A
  * state that answered `no-binary` for a machine with no WSL would send the
  * operator to install a CLI they do not need.
+ *
+ * **What can build a state with a WSL kind is narrower than the four kinds**, and
+ * it is worth knowing here rather than three modules away: `resolveBinary`
+ * answers `no-binary` for every refusal of its own, and the three WSL kinds are
+ * `resolveInstalledBinary`'s (`resolveInDistribution`), which no console call
+ * site resolves through today -- so the carry-through in `CliSource.create` and
+ * the four pages in `degraded.ts` are reached by the tests and the screenshots.
+ * The screen a first run actually meets is `src/main/onboarding.ts`'s
+ * `installCliState`, drawn by the picker and by the rail: it is not built from
+ * this state at all, it takes the reason and the searched list, and it offers
+ * `FUGARO_INSTALL_COMMAND` for every failure.
  */
 export interface NoInstallationState {
   readonly kind: BinaryRefusalKind

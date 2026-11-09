@@ -43,10 +43,14 @@
 //     searched -- a count and never the paths themselves, because no path is ever
 //     drawn on this console (the `path` class, `sanitize.ts`) -- and the three WSL
 //     pages draw a sentence each instead, because their remedy is not a command
-//     this console can run for the operator. **There is no choose-the-binary
-//     affordance** (the design's section 6.3 row, as the owner's ruling of
-//     2026-10-20 amended it): the console asks the operator for no path, and the
-//     screen that used to draw one drew a control that wired nothing.
+//     this console can run for the operator. They are drawn where a caller hands
+//     one of those kinds to `renderUnavailable` (`refusedState` is the union's
+//     other half), and the screen a first run actually meets is
+//     `src/main/onboarding.ts`'s `installCliState`, which this file does not draw.
+//     **There is no choose-the-binary affordance** (the design's section 6.3 row,
+//     as the owner's ruling of 2026-10-20 amended it): the console asks the
+//     operator for no path, and the screen that used to draw one drew a control
+//     that wired nothing.
 //
 // Every string a document or the CLI wrote reaches the window through `putText`
 // (and every number through `putReading`); only the console's own vocabulary is
