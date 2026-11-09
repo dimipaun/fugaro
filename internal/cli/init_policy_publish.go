@@ -118,7 +118,10 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 	// differs from a node that still maps something, which is the removal an
 	// operator has to see.
 	if lc.ImageMap != nil {
-		add("image_map", lc.ImageMapEffective(nil), p.ImageMap, false)
+		// Both sides are the block's own type, so what is compared is the JSON
+		// the node is written with — the escaped keys — and not the config
+		// spelling of a name against the node's (ImageMap).
+		add("image_map", projectpolicy.ImageMap(lc.ImageMapEffective(nil)), p.ImageMap, false)
 	}
 	// The bake switch reaches a run off this node too (D1901), so a config that
 	// states it where the node states the other answer is a difference a publish

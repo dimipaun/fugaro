@@ -1243,10 +1243,12 @@ func TestImageCatalogIsUnknownToAReaderThatPredatesIt(t *testing.T) {
 }
 
 // imageMapNode is the published node the image setup skill's map lands in
-// (D1906): one repository to the catalog entry its jobs run. It carries no
-// bake_repos, so the two members are exercised apart: a project that answered
-// nothing keeps D1901's default.
-const imageMapNode = `{"version": 4, "image_map": {"acme/app": "api", "acme/web": "frontend"}}`
+// (D1906): one repository to the catalog entry its jobs run, under the key the
+// node holds it as — escKey's spelling, because RTDB refuses a key containing
+// the "/" every repository name has (ImageMap). It carries no bake_repos, so
+// the two members are exercised apart: a project that answered nothing keeps
+// D1901's default.
+const imageMapNode = `{"version": 4, "image_map": {"acme%2Fapp": "api", "acme%2Fweb": "frontend"}}`
 
 // TestPolicyImageMapStrictDecode: the map is a key this Fugaro reads, and
 // what it refuses is what a silently dropped entry would cost — a repository
@@ -1260,7 +1262,7 @@ func TestPolicyImageMapStrictDecode(t *testing.T) {
 	if len(p.UnknownKeys) != 0 {
 		t.Errorf("UnknownKeys = %v, want none: image_map is a key this Fugaro reads", p.UnknownKeys)
 	}
-	want := map[string]string{"acme/app": "api", "acme/web": "frontend"}
+	want := ImageMap{"acme/app": "api", "acme/web": "frontend"}
 	if !reflect.DeepEqual(p.ImageMap, want) {
 		t.Errorf("ImageMap = %v, want %v", p.ImageMap, want)
 	}
@@ -1284,7 +1286,7 @@ func TestPolicyImageMapStrictDecode(t *testing.T) {
 	for _, tc := range []struct{ name, node, want string }{
 		{
 			"a value that is not a catalog entry name",
-			`{"version": 4, "image_map": {"acme/app": "API Image"}}`,
+			`{"version": 4, "image_map": {"acme%2Fapp": "API Image"}}`,
 			"must be a catalog entry name",
 		},
 		{
@@ -1294,17 +1296,27 @@ func TestPolicyImageMapStrictDecode(t *testing.T) {
 		},
 		{
 			"a key in another case",
-			`{"version": 4, "image_map": {"Acme/App": "api"}}`,
+			`{"version": 4, "image_map": {"Acme%2FApp": "api"}}`,
 			"image_map key is a repository name",
 		},
 		{
+			"a key with a truncated escape",
+			`{"version": 4, "image_map": {"acme%2": "api"}}`,
+			"truncated escape",
+		},
+		{
 			"one key twice",
-			`{"version": 4, "image_map": {"acme/app": "api", "acme/app": "web"}}`,
+			`{"version": 4, "image_map": {"acme%2Fapp": "api", "acme%2Fapp": "web"}}`,
 			"twice",
 		},
 		{
+			"one repository under two spellings",
+			`{"version": 4, "image_map": {"acme%2Fapp": "api", "acme/app": "web"}}`,
+			"are both the repository",
+		},
+		{
 			"a value that is not a string",
-			`{"version": 4, "image_map": {"acme/app": 7}}`,
+			`{"version": 4, "image_map": {"acme%2Fapp": 7}}`,
 			"cannot unmarshal",
 		},
 	} {
@@ -1317,6 +1329,35 @@ func TestPolicyImageMapStrictDecode(t *testing.T) {
 				t.Errorf("Decode(%s) = %v, want it to name %q", tc.node, err, tc.want)
 			}
 		})
+	}
+}
+
+// TestPolicyImageMapMarshalsEscapedKeys: the node's spelling of a mapping is
+// the escaped one, because RTDB rejects a key containing the "/" of a
+// repository name — the write is refused whole, with a 400 and nothing stored —
+// so a map published under the names themselves would leave every run of the
+// project on the catalog's default image with the publish failed. What is read
+// back is the name a --repo reads as, so the escape never reaches a reader.
+func TestPolicyImageMapMarshalsEscapedKeys(t *testing.T) {
+	p, found, err := Decode([]byte(imageMapNode))
+	if err != nil || !found {
+		t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
+	}
+	raw, err := json.Marshal(p.ImageMap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(raw); got != `{"acme%2Fapp":"api","acme%2Fweb":"frontend"}` {
+		t.Errorf("the block marshals %s, want the escaped keys: a key with a slash in it is refused by RTDB and the publish of the whole node fails", got)
+	}
+	// The other direction: the bytes this package writes are the bytes it reads,
+	// and what comes back is the names the map was built from.
+	var again ImageMap
+	if err := json.Unmarshal(raw, &again); err != nil {
+		t.Fatalf("this package's own bytes are not read back: %v", err)
+	}
+	if !reflect.DeepEqual(again, p.ImageMap) {
+		t.Errorf("the round trip gives ImageMap = %v, want %v", again, p.ImageMap)
 	}
 }
 

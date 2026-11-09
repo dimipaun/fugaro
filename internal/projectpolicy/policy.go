@@ -403,7 +403,7 @@ type Policy struct {
 	// A map with no entry is nil, so a project that maps nothing writes no
 	// member and its node is byte for byte what it was before this member
 	// existed.
-	ImageMap map[string]string `json:"image_map,omitempty"`
+	ImageMap ImageMap `json:"image_map,omitempty"`
 
 	// BakeRepos is whether a repository is baked into the image its job runs
 	// (D1901): the setup wizard's "Bake your repos into the Docker images?",
@@ -1337,13 +1337,8 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 		p.ImageCatalog = catalog
 	}
 	if mraw, ok := doc["image_map"]; ok && !IsNull(mraw) {
-		names, err := objectMemberNames(mraw)
-		if err != nil {
-			return nil, true, fmt.Errorf("projectpolicy: image_map: %w", err)
-		}
-		if err := checkNoDuplicateNames("image_map", names); err != nil {
-			return nil, true, fmt.Errorf("projectpolicy: %w", err)
-		}
+		// The block's own rules — the escaped keys, no name twice, no two keys
+		// one repository — are ImageMap's decode, which this call is.
 		if err := json.Unmarshal(mraw, &p.ImageMap); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: image_map: %w", err)
 		}
@@ -1550,6 +1545,80 @@ func (p *Policy) CloneURL(canonical string) string { return p.CloneURLs[canonica
 // that never answered as one that said no — the opposite of the default the
 // wizard asks with. The zero policy, and a nil one, bake.
 func (p *Policy) BakesRepos() bool { return p == nil || p.BakeRepos == nil || *p.BakeRepos }
+
+// ImageMap is the image_map block of a policy: the catalog entry each of the
+// project's repositories runs, keyed by the repository's canonical name
+// ("acme/app", what every reader here looks a job's own repository up by).
+//
+// It is a map in Go and an object on the node, but its *keys* are not repository
+// names on the node: RTDB refuses a key containing "/" — the write is rejected
+// whole, with a 400 and nothing stored — and every canonical repository name has
+// one. So the block is stored under escKey(repo) (paths.go), the escape a slug
+// gets in config/policy/repos/$slug, and unescKey reads it back; the decoded
+// map, which is what every reader in Go sees, keeps the name a --repo reads as.
+// model_prices is the same split, with model IDs that carry a slash or a dot.
+//
+// The escape lives in MarshalJSON and UnmarshalJSON rather than in a step a
+// writer has to remember, so every encoding of a Policy is a document RTDB
+// accepts and the two directions cannot drift apart. A key with no escape in it
+// is read as it is, which is the tolerant half Prices keeps — and a key that is
+// no repository name, escaped or not, is refused by ValidImageMap either way.
+type ImageMap map[string]string
+
+// MarshalJSON writes the block as the node holds it: one member per repository,
+// under escKey(repo). It is a value receiver, so a nil ImageMap marshals to an
+// empty object exactly as a nil map does — and omitempty then drops the member,
+// which is what keeps a project that maps nothing byte for byte what its node
+// was before the key existed.
+func (m ImageMap) MarshalJSON() ([]byte, error) {
+	out := make(map[string]string, len(m))
+	for repo, entry := range m {
+		out[escKey(repo)] = entry
+	}
+	return json.Marshal(out)
+}
+
+// UnmarshalJSON reads the block off a node: one member per repository, unescaped
+// back into the canonical name. A key that is not an escape this package wrote
+// is an error rather than a name taken on trust, and the block's keys are held
+// to two rules of their own beside that: no name twice (checkNoDuplicateNames,
+// on the keys as the document spells them) and no two keys unescaping to one
+// repository, because the image a repository's jobs run would otherwise depend
+// on the order the block's keys are in. A value that is not a string is an error
+// too: the member is a catalog entry's name, and a number there would be an
+// image no selection can look up.
+func (m *ImageMap) UnmarshalJSON(raw []byte) error {
+	names, err := objectMemberNames(raw)
+	if err != nil {
+		return err
+	}
+	if err := checkNoDuplicateNames("image_map", names); err != nil {
+		return err
+	}
+	var entries map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return err
+	}
+	out := make(ImageMap, len(entries))
+	spelled := make(map[string]string, len(entries)) // canonical name -> the key it was written under
+	for _, key := range sortedStringKeys(entries) {
+		repo, err := unescKey(key)
+		if err != nil {
+			return fmt.Errorf("%q: %w", key, err)
+		}
+		if first, dup := spelled[repo]; dup {
+			return fmt.Errorf("%q and %q are both the repository %q, and a repository may be mapped once: the image its jobs run would otherwise depend on the order the block's keys are in", first, key, repo)
+		}
+		spelled[repo] = key
+		var entry string
+		if err := json.Unmarshal(entries[key], &entry); err != nil {
+			return fmt.Errorf("%q: %w", repo, err)
+		}
+		out[repo] = entry
+	}
+	*m = out
+	return nil
+}
 
 // ValidImageMap checks the image_map block, entry by entry: each key the
 // canonical name of a repository, and each value the name of a catalog entry
