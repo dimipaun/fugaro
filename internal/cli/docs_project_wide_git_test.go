@@ -332,10 +332,14 @@ func TestDocsStateTheBitbucketProjectTokenReach(t *testing.T) {
 		"every enrolled repository's pull requests and comments carry the same author",
 		// The live check (D468 = no).
 		"Not yet live-checked with a workspace or project token (Check 180).",
-		// The pointer sentence the 2026-10-27 amendment added (D490): the page
-		// describes the token reaching the job, and the one design that would
-		// keep it out of the job is a plan, not code.
-		"A proxy that keeps the token out of the job is designed in [docs/secrets-brokering](secrets-brokering/README.md) and not built: every reading above is a run that holds the token's value itself (D490).",
+		// The pointer sentence the 2026-10-27 amendment added (D490), as
+		// B1.10 moved its fact: the page describes the token reaching the
+		// job, the one design that keeps it out of the job is built, and
+		// every reading above is now scoped to a repository the published
+		// node does not proxy -- the run reads no token only where that
+		// node admits the repository with `proxy: true`.
+		"A proxy that keeps the token out of the job is designed in [docs/secrets-brokering](secrets-brokering/README.md) and **built** (D490, \"What the agent gets\" below): on a repository the published node admits with `proxy: true` the runner reads no token, the run's git environment carries none, and the service puts the credential on the wire",
+		"while every reading above is a run of a repository the node does not proxy, which still holds the token's value itself.",
 	} {
 		if !strings.Contains(providers, strings.Join(strings.Fields(want), " ")) {
 			t.Errorf("docs/git-providers.md does not say %q: it is the page an operator reads to opt in to one Bitbucket token for many repositories", want)

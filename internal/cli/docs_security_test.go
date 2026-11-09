@@ -521,3 +521,89 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 		}
 	}
 }
+
+// TestSecurityMdStatesTheBitbucketGitProxy is task B1.10's headline: with the
+// Bitbucket proxy shipped (B1.5, B1.6, B1.7), SECURITY.md has to say what a
+// proxied run may do and what it no longer holds, in the document's own
+// "state the limit" voice. The claims pinned here are the ones the plan's
+// task B1.10 names: the agent can act as the run at the proxy (R3, O1), the
+// reach it is narrowed to (one repository, the run's branch and pull
+// requests, the run's life), D462's reach ending for a proxied repository and
+// the flip that has not landed on this tree, the build account's copy until
+// S4, D501's cold starts and no redundancy, D504's revocation and what a
+// cancel does not end, and O6's cross-repository fetch refusal.
+//
+// The section is read on its own (docSection), like the credentials service's
+// claims: a bullet in "In short" that points here must not satisfy a pin on
+// its own.
+//
+// Mutation (verified, run and restored): the R3 sentence removed from the
+// section -- "The agent can act as the run at the proxy (R3, O1)." -- fails
+// this on that pin and on the "one repository" sentence that follows it.
+func TestSecurityMdStatesTheBitbucketGitProxy(t *testing.T) {
+	s := readDoc(t, "SECURITY.md")
+	const heading = "### The Bitbucket git proxy"
+	if !strings.Contains(s, "\n"+heading+"\n") {
+		t.Fatalf("SECURITY.md has no `%s` section: a proxied Bitbucket run changes what the agent can reach and what the job holds, and the section is where that is stated", heading)
+	}
+	section := flattenDoc(docSection(t, "SECURITY.md", s, heading))
+	for _, want := range []string{
+		// R3 and O1: the agent acts as the run, and the run is what the proxy
+		// narrows. No agent sandbox is planned, said rather than assumed.
+		"The agent can act as the run at the proxy",
+		"one repository",
+		"the run's own branch",
+		"the run's own pull requests",
+		"the run's life",
+		"There is no agent sandbox, and none is planned",
+		// The switch a repository is proxied by, and the one source of that
+		// fact (G15): the published node's block with `proxy: true`.
+		"bitbucket_token",
+		"proxy: true",
+		// The forwarder's shape (G5): loopback, the job's ID token, no
+		// credential of its own.
+		"loopback forwarder",
+		"no credential of its own",
+		// D462's reach ends for a proxied repository, and the flip that takes
+		// the mount is not on this tree -- the claim is "the job reads no
+		// token", not "the token is out of the job".
+		"config.ProxiedGitSecretNames",
+		"empty on this tree",
+		"reads no token at all",
+		"not that the token is out of the job",
+		// The build account's copy until S4.
+		"build account still holds the token",
+		"until S4",
+		// D501: cold starts on the critical path, and no redundancy.
+		"scales to zero",
+		"cold start",
+		"no redundancy",
+		// D504: what stops the proxy, and what a cancel does not end.
+		"fugaro cancel",
+		"kill switch",
+		"until the run's write-once outcome exists",
+		"at most the ID token's hour",
+		// O6: only this run's repository is fetched.
+		"fetches only its own repository",
+		"submodule",
+		// R2: names only, one line per request.
+		"names only",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the `%s` section never says %q: a proxied run's reach and the credential it no longer reads are what this section is for", heading, want)
+		}
+	}
+	// The overclaims a rewrite drifts into: the proxy is not a sandbox, the
+	// token is not out of the job on this tree, and the reach is not "no
+	// reach". Read out of the whole document, because a bullet that points
+	// here is as wrong as the section.
+	for _, banned := range []string{
+		"the agent cannot reach Bitbucket at all",
+		"the Bitbucket token is out of the job",
+		"a proxied run is sandboxed",
+	} {
+		if strings.Contains(flattenDoc(s), banned) {
+			t.Errorf("SECURITY.md says %q: the proxy narrows the run, and the flip that takes the mount has not landed on this tree", banned)
+		}
+	}
+}
