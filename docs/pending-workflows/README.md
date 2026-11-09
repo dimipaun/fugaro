@@ -3110,12 +3110,12 @@ apply" so the two halves of the procedure cannot part:
 1. **The opening line's second sentence shrinks, and then goes.** That is the
    one beginning *Four further files here are not workflows at all*. While one
    fragment is still here, drop the names that are gone from its list; when the
-   **last** one is applied, delete the sentence outright, so the opening states
-   the two pending files and the two files kept by design and names nothing that
-   is no longer in this directory.
-2. **This whole section goes with the last fragment** — `## The comment-only
-   fragments`, down to the line before `## Before you copy: check the action
-   pins`.
+   **last** of them is applied, delete the sentence outright, so the opening
+   states the two pending files and the two files kept by design and names
+   nothing that is no longer in this directory.
+2. **This whole section goes with the fragment applied last**, whichever of the
+   four it is — `## The comment-only fragments`, down to the line before
+   `## Before you copy: check the action pins`.
 3. **The dated note at the top of this page loses the clause that points
    here.** Its last sentence is *Every sentence below that says a person
    approves a deployment … and `## The comment-only fragments` below holds the
