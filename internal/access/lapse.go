@@ -14,7 +14,7 @@ import "errors"
 // surface asks its question through (Limit), the seam the licence state fills
 // (SetSubscriptionLimit) and the one decision that combines the two
 // (SubscriptionAllowed). Which actions a lapse keeps is the licence's answer and
-// lives in ee/ (ee/licence), which is the only caller of the setter — the rule
+// lives in ee/ (installed from ee/register), the only caller of the setter — the rule
 // every moved feature's seam obeys (design ee-boundary-moves.md §5.5, roles.md
 // D694).
 

@@ -125,12 +125,18 @@ func TestLapseLimitsSubscriptionSurfacesOnly(t *testing.T) {
 
 // TestLapseLimitIsSetOnce: the seam is filled once, by this package, and a
 // second installation is refused — a limit installed after the build's own would
-// be a way to hand every paid surface back in a lapsed binary (design §5.5).
+// be a way to hand every paid surface back in a lapsed binary (design §5.5). The
+// refusal is whatever the second caller offers, this package's own limit
+// included, and the installed one is the licence's either way: the surface
+// answers of the test above are read after this one has tried and failed.
 func TestLapseLimitIsSetOnce(t *testing.T) {
 	if err := access.SetSubscriptionLimit(func(access.Action) bool { return true }); err == nil {
 		t.Error("a second access.SetSubscriptionLimit was accepted: the tagged binary's limit is the licence's, and a later caller must not be able to replace it")
 	}
-	if err := access.SetSubscriptionLimit(nil); err == nil {
-		t.Error("access.SetSubscriptionLimit(nil) was accepted after the seam was set: a nil limit is a panic in the reader rather than a decision")
+
+	lapsed := lapseInput(t, access.RoleAdmin)
+	lapsed.Lapse = true
+	if access.SubscriptionAllowed(lapsed, lapseCaller, access.ActionLaunch, lapseRepo) {
+		t.Error("a Subscription surface lets an admin launch while the subscription lapsed, after a second installation was refused: the refused caller's permissive limit must not have replaced the licence's")
 	}
 }

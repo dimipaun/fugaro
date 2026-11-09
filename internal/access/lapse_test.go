@@ -8,8 +8,8 @@ import "testing"
 // grant edit breaks — no assignment moves, and the state is read at the moment
 // of the decision rather than stamped onto the grants. What a Subscription
 // surface keeps while the input lapsed is the licence's own answer and is held
-// in ee/ (ee/licence), beside the table it lists; what the core answers is
-// Allowed, which no licence state reaches.
+// in ee/ (installed from ee/register); what the core answers is Allowed, which
+// no licence state reaches.
 
 // lapseAsks is one ask of the resolver, paired with the repository it names: a
 // project-level action takes none.
@@ -25,7 +25,7 @@ type lapseAsk struct {
 func lapseAsks(callers ...string) []lapseAsk {
 	var out []lapseAsk
 	for action, rule := range actionRules {
-		repo := "github/acme/api"
+		repo := "github/acme/api-v2"
 		if rule.project {
 			repo = ""
 		}
@@ -52,7 +52,7 @@ func TestLapseKeepsAssignments(t *testing.T) {
 	lapsed.Lapse = true
 
 	for _, c := range []struct{ caller, repo string }{
-		{alice, "github/acme/api"},
+		{alice, "github/acme/api-v2"},
 		{alice, "github/acme/app"},
 		{bob, "github/acme/group/nested"},
 		{carol, "bitbucket/other/thing"},
@@ -69,6 +69,24 @@ func TestLapseKeepsAssignments(t *testing.T) {
 		if after := Allowed(lapsed, ask.caller, ask.action, ask.repo); after != before {
 			t.Errorf("Allowed answers %v for %s doing %s while the input lapsed and %v without it: the core asks Allowed, so a lapse that changed this answer would stop the MIT CLI, which no licence state may do (D1582)", after, ask.caller, ask.action, before)
 		}
+	}
+}
+
+// TestLapseLimitRefusesNil: an installation with nothing to install is refused
+// rather than accepted, and a refused one changes nothing — the seam is still
+// the default the reader calls, which is a build that keeps every action. The
+// second half is what makes the refusal worth having: a nil limit would be a
+// panic on the first surface that asked, and the core default is deliberately
+// not one.
+func TestLapseLimitRefusesNil(t *testing.T) {
+	if err := SetSubscriptionLimit(nil); err == nil {
+		t.Error("SetSubscriptionLimit(nil) was accepted: SubscriptionAllowed calls the limit whenever the input lapsed, so a nil one is a panic rather than a decision")
+	}
+
+	lapsed := knows(grant(alice, RoleOperator, scope(t, "github/acme/api-*")))
+	lapsed.Lapse = true
+	if !SubscriptionAllowed(lapsed, alice, ActionLaunch, "github/acme/api-v2") {
+		t.Error("a Subscription surface refuses a launch after SetSubscriptionLimit(nil) was refused: a refused installation leaves the seam at its default, which keeps every action (the untagged build's own behaviour)")
 	}
 }
 
