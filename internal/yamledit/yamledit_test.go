@@ -1387,6 +1387,30 @@ func TestUpsertSeqItemListByKeyKeepsTheCommentsAroundTheField(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, bareWant)
 	}
 	reparses(t, got)
+
+	// The items are replaced and nothing after them is: a field written under
+	// the same item, below the list, keeps its own line and its comment, which
+	// is where a splice running one line too far would have eaten it.
+	const below = "pools:\n" +
+		"  - name: claude\n" +
+		"    members:\n" +
+		"      - oauth-one\n" +
+		"      - key-one\n" +
+		"    strategy: failover   # keep this comment\n"
+	got, err = yamledit.UpsertSeqItemListByKey([]byte(below), []string{"pools"}, "name", "claude", "members",
+		[]string{"oauth-two"})
+	if err != nil {
+		t.Fatalf("UpsertSeqItemListByKey (a field below the list): %v", err)
+	}
+	const belowWant = "pools:\n" +
+		"  - name: claude\n" +
+		"    members:\n" +
+		"      - oauth-two\n" +
+		"    strategy: failover   # keep this comment\n"
+	if string(got) != belowWant {
+		t.Fatalf("got %q, want %q", got, belowWant)
+	}
+	reparses(t, got)
 }
 
 // TestAFlowCollectionElsewhereIsUntouched: a flow collection this package will
