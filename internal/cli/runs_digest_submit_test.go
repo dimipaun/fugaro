@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/digest"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/dimipaun/fugaro/internal/updatecheck"
@@ -185,5 +186,31 @@ func TestSubmitDraftRefusesReportFlags(t *testing.T) {
 		if !strings.Contains(err.Error(), flag) {
 			t.Errorf("--submit-draft %s refused with %q, want the flag named", flag, err)
 		}
+	}
+}
+
+// TestDigestSubmitRunsUnchanged: the draft renders the report's own run table
+// with its rows renumbered, byte for byte, so the report's short run IDs
+// reached no further than the report (D327, G1). A draft leaves the repository
+// for a public issue, and a run ID names this repository and one of its runs.
+//
+// The two runs below share their four hex digits: the report would extend both
+// through the dash to tell them apart, and the draft shows neither.
+func TestDigestSubmitRunsUnchanged(t *testing.T) {
+	runs := []digest.Run{
+		{ID: "20261025-120000-abcd", Status: "succeeded"},
+		{ID: "20261025-130000-abcd", Status: "failed"},
+	}
+	const head = "## Runs\n\nRenumbered: a run ID names this repository and one of its runs, and this draft\n" +
+		"leaves the repository.\n\n"
+	want := head + digest.RunsTable([]digest.Run{
+		{ID: "run-1", Status: "succeeded"},
+		{ID: "run-2", Status: "failed"},
+	})
+	if got := digestSubmitRuns(runs); got != want {
+		t.Errorf("the draft's run table:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+	if runs[0].ID != "20261025-120000-abcd" || runs[1].ID != "20261025-130000-abcd" {
+		t.Errorf("digestSubmitRuns renamed the rows it was handed: %+v", runs)
 	}
 }
