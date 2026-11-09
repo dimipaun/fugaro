@@ -4284,6 +4284,14 @@ carries: the `halted (run_cap)` cell is --state halted, and --help lists the
 states the flag takes. A run's state is in its result.json, so this filter
 reads every run it filters -- it narrows the listing, never the reads.
 
+--group-by failure_class adds a block to the listing: one row per class of the
+closed vocabulary, with the runs of the window that ended in it, their share
+of the window's runs, and what they cost. It groups the rows the listing has
+already read and reads nothing new, and it moves nothing: the rows and the
+totals are the ones without it, and --json gains the `groups` block beside
+them. A page of a grouped listing is a page's total, so --group-by doesn't go
+with --limit, --after or --watch.
+
 --pr N lists the runs on pull request N of one repository (the first run and
 its follow-ups), over the last 90d unless --since says otherwise; the totals
 line is then the PR's total cost.
@@ -4299,6 +4307,7 @@ Flags:
 | `--batch` | string | "" | no | only runs of this batch |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `--group-by` | string | "" | no | group the listing by one field (failure_class) |
 | `-h`, `--help` | bool | `false` | no | help for ls |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--limit` | int | `0` | no | print only the newest N rows (0, the default, is every row of the window; the totals stay the window's) |

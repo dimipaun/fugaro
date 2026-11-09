@@ -575,6 +575,7 @@ int64, none `omitempty`.
 | `project` | string | no | the Fugaro project |
 | `runs` | `[]runview.Row` | no | `[]` when none |
 | `totals` | `runview.Totals` | no | below |
+| `groups` | `[]object` | **yes** | **only under `runs ls --group-by failure_class`** (`internal/cli/runs_group.go`): the window's failures grouped, one object per class of the closed vocabulary of `docs/design/failure-classes.md` §3 that some run of the window ended in, beside the `runs` array rather than instead of it. Each group carries `class` (one of the nineteen names), `runs` (how many of the window's runs ended in it), `share` (that count's share **of the window's runs**, never of the spend — D1465) and `spend_usd` (what those runs cost). The order is the vocabulary's own (`failure.Classes()`), so two readers of one window read the same block. **`omitempty` is what keeps the phone's degraded feed alive**: the degraded watch document embeds this shape and the app refuses a key it does not know, so a block printed by a listing that never grouped would break the degraded screen (`internal/cli/watch.go`) |
 | `warnings` | `[]string` | no | the lines a human listing prints before its table |
 
 `runview.Row` (`internal/runview/runview.go`) is the run shape behind

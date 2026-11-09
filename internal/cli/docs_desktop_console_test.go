@@ -357,6 +357,12 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 	shapes := []reflect.Type{
 		reflect.TypeOf(runview.Row{}),
 		reflect.TypeOf(runview.Totals{}),
+		// §5's own document and the group inside --group-by's block (FC6):
+		// lsDoc is the shape §5 documents, and namedTypes admits exactly the
+		// types listed, so the embedded lsDoc watchDegradedDoc carries below
+		// is not walked into unless it is named here.
+		reflect.TypeOf(lsDoc{}),
+		reflect.TypeOf(lsGroup{}),
 		reflect.TypeOf(logLine{}),
 		reflect.TypeOf(secretEntry{}),
 		reflect.TypeOf(gcp.SecretInfo{}),
@@ -634,6 +640,10 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 	}
 	shapes := []reflect.Type{
 		reflect.TypeOf(runview.Row{}), reflect.TypeOf(runview.Totals{}),
+		// §5's own document and the group inside --group-by's block (FC6), as
+		// in the test above: the two shapes the `groups` row of §5 is read
+		// against.
+		reflect.TypeOf(lsDoc{}), reflect.TypeOf(lsGroup{}),
 		reflect.TypeOf(logLine{}), reflect.TypeOf(secretEntry{}),
 		reflect.TypeOf(gcp.SecretInfo{}), reflect.TypeOf(accountsListDoc{}),
 		reflect.TypeOf(cancelResult{}), reflect.TypeOf(budgetShowDoc{}),
