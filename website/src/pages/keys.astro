@@ -1,0 +1,252 @@
+---
+/**
+ * website/src/pages/keys.astro — the key request page (subscriptions plan, Task S3.3; the
+ * design `docs/design/key-signing-service.md` §3.1, §4 and §7.2).
+ *
+ * **What the page is.** The three ways a person asks for a Fugaro licence key, each a plain
+ * HTML form the reader submits:
+ *
+ *   - the **free seat** (the Terms' §6.3, D432/T15): one free evaluation seat per
+ *     organisation, an individual being an organisation of one, asked for with an email
+ *     address;
+ *   - the **open-source programme** (§10.2(b), §6.3, the design's §4.4): the URLs of the
+ *     repositories the applicant maintains and an email address, checked against the code
+ *     host's API for public visibility and an OSI-approved licence;
+ *   - the **manual request** (the design's §4.5): everything the checks cannot decide — an
+ *     academic or nonprofit application, a multi-seat trial, an individual whose address is
+ *     not on their organisation's domain — which the owner reads and answers from the queue.
+ *
+ * **The forms post to the intake and to nothing else.** Each action is the key service's
+ * intake origin (`src/lib/keys-intake.mjs`, the one host the site sends a request to) plus
+ * the route for its own check. The service does not exist yet: it is built after the entity
+ * exists (S3.2, S3.5, the design's §1) and deployed by the owner (S3.7), so until then the
+ * page exists in the repository and is not published — the publish is the owner's (S7.4) and
+ * it waits for S7.3 as well. The routes are this page's own half of the intake's contract,
+ * and `website/test/keys.mjs` pins them.
+ *
+ * **The CSP's `form-action` is what makes the posting possible.** `form-action 'self'` blocks
+ * a form whose action is another origin, so the deployed policy in `firebase.json` admits the
+ * intake's one exact host — the owner approved that change for this task (the design's D451,
+ * option (a): one directive, one exact host) — and `website/test/origins.mjs` is where the
+ * policy's token list and the check that reads a built page's `<form action>` are held to it.
+ * A form posting anywhere else is still refused, by that check, on every page.
+ *
+ * **The privacy statement's key sign-up section is S7.3's, and this page does not write it.**
+ * What the intake collects, how long it keeps it and who receives it is counsel's and the
+ * owner's copy on `/privacy/` (the design's §7.3), so this page carries a pointer to the
+ * statement and no sentence of its own about the data — the page's `website/test/privacy.mjs`
+ * and `website/test/consent.mjs` claims are the ones S7.3 restates.
+ *
+ * The look is the site's (P1's `base.css` §2c): the headline is the display scale's largest
+ * step with the accent's gradient on it, the three forms are cards in the one column, and the
+ * fields are the hero's own field shape — a real form control, so it keeps its edge and its
+ * focus ring.
+ */
+import Base from '../layouts/Base.astro'
+import { loadSite } from '../content.ts'
+import { keysIntakeOrigin } from '../lib/keys-intake.mjs'
+
+const facts = loadSite().facts
+const intake = keysIntakeOrigin(facts.canonicalURL)
+
+/** One form's action: the intake origin and the route the check it starts listens on. */
+const action = (route: string): string => `${intake}${route}`
+---
+
+<Base
+  title="Get a key"
+  description="Request a Fugaro licence key: the free seat, the open-source programme, and the requests a person reads."
+>
+  <div class="keys-head">
+    <h1 class="keys-title display-xl"><span class="gradient-text">Get a key</span></h1>
+    <p class="lede">
+      Fugaro is free for open-source projects and academic work, and every organisation gets
+      one free evaluation seat. Tell us which one is yours and where to send the key.
+    </p>
+  </div>
+
+  <section class="keys-section" id="free-seat">
+    <h2 class="keys-heading display-lg">The free seat</h2>
+    <p class="keys-note">
+      One seat per organisation, for evaluation. An individual counts as an organisation of
+      one.
+    </p>
+    <form class="card keys-form" method="post" action={action('/free-seat')}>
+      <div class="keys-field">
+        <label for="free-seat-email">Email address</label>
+        <input
+          id="free-seat-email"
+          name="email"
+          type="email"
+          autocomplete="email"
+          required
+        />
+      </div>
+      <button class="keys-submit" type="submit">Request the free seat</button>
+    </form>
+  </section>
+
+  <section class="keys-section" id="open-source">
+    <h2 class="keys-heading display-lg">Open source</h2>
+    <p class="keys-note">
+      A year, for maintainers of public repositories under a licence the Open Source
+      Initiative approves. Name every repository the project keeps.
+    </p>
+    <form class="card keys-form" method="post" action={action('/open-source')}>
+      <div class="keys-field">
+        <label for="open-source-repositories">Repository URLs, one per line</label>
+        <textarea
+          id="open-source-repositories"
+          name="repositories"
+          rows="4"
+          spellcheck="false"
+          required></textarea>
+      </div>
+      <div class="keys-field">
+        <label for="open-source-email">Email address</label>
+        <input
+          id="open-source-email"
+          name="email"
+          type="email"
+          autocomplete="email"
+          required
+        />
+      </div>
+      <button class="keys-submit" type="submit">Request the open-source key</button>
+    </form>
+  </section>
+
+  <section class="keys-section" id="request">
+    <h2 class="keys-heading display-lg">Anything else</h2>
+    <p class="keys-note">
+      Academic and nonprofit applications, a trial with more than one seat, or an address
+      that is not on your organisation's domain: these are read by a person.
+    </p>
+    <form class="card keys-form" method="post" action={action('/request')}>
+      <div class="keys-field">
+        <label for="request-email">Email address</label>
+        <input
+          id="request-email"
+          name="email"
+          type="email"
+          autocomplete="email"
+          required
+        />
+      </div>
+      <div class="keys-field">
+        <label for="request-detail">What you are asking for</label>
+        <textarea id="request-detail" name="request" rows="4" required></textarea>
+      </div>
+      <button class="keys-submit" type="submit">Send the request</button>
+    </form>
+  </section>
+
+  <p class="keys-privacy">
+    What the project keeps, and for how long, is in the <a href="/privacy/">privacy
+    statement</a>.
+  </p>
+</Base>
+
+<style>
+  /* The page's own layout, in the site's tokens (W1.2, D104): no colour is named here, and the
+     shapes the site repeats — the display scale, `.gradient-text`, `.card` and the `lede` the
+     FAQ opens with — are `base.css` §2c. What is this file's own is the room between its
+     bands, the one column the forms are laid in, and the fields, which are the hero's own
+     field shape (`Hero.astro`'s `.hero-ask-field`) because a form control that looks like the
+     site's one other field is the same control to a reader. */
+
+  .keys-head {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    padding-block: var(--space-2xl) var(--space-xl);
+  }
+
+  .keys-title {
+    margin: 0;
+  }
+
+  .lede {
+    margin: 0;
+    max-width: var(--measure);
+    color: var(--text-muted);
+    font-size: var(--font-size-xl);
+    line-height: var(--leading-snug);
+  }
+
+  .keys-section {
+    margin-block: var(--space-3xl);
+  }
+
+  .keys-heading {
+    margin: 0 0 var(--space-sm);
+  }
+
+  .keys-note {
+    margin: 0 0 var(--space-md);
+    max-width: var(--measure);
+    color: var(--text-muted);
+  }
+
+  .keys-form {
+    display: grid;
+    gap: var(--space-md);
+    max-width: var(--measure);
+  }
+
+  .keys-field {
+    display: grid;
+    gap: var(--space-3xs);
+  }
+
+  .keys-field label {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  /* The field itself: a real form control, so it keeps its edge (the house rules leave form
+     fields their lines), and 17 px or more in the one font, so a phone does not zoom. */
+  .keys-field input,
+  .keys-field textarea {
+    box-sizing: border-box;
+    width: 100%;
+    padding: var(--space-2xs) var(--space-xs);
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--ground);
+    color: var(--text);
+    font: inherit;
+    font-size: var(--font-size-lg);
+    line-height: var(--leading-snug);
+    resize: vertical;
+  }
+
+  .keys-field input:focus-visible,
+  .keys-field textarea:focus-visible {
+    border-color: var(--accent);
+  }
+
+  /* The submit: the accent as the fill and the ground as the label, the pair `a11y.mjs`
+     computes, at the 44 px target the brief of 2026-10-19 measures every control against. */
+  .keys-submit {
+    justify-self: start;
+    box-sizing: border-box;
+    min-height: 44px;
+    padding: var(--space-2xs) var(--space-lg);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: var(--accent);
+    color: var(--ground);
+    font: inherit;
+    font-size: var(--font-size-lg);
+    font-weight: var(--weight-black);
+    cursor: pointer;
+  }
+
+  .keys-privacy {
+    margin: 0;
+    max-width: var(--measure);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+</style>
