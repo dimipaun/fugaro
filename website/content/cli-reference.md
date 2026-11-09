@@ -3035,6 +3035,7 @@ Subcommands:
 
 - `fugaro orchestrator events` -- Read the orchestrator's audit log
 - `fugaro orchestrator patch` -- Apply one typed patch document to the orchestrator's state
+- `fugaro orchestrator run` -- Run the project's orchestrator daemon in the foreground
 - `fugaro orchestrator state` -- Print the orchestrator's state: the generated summary of its live node
 
 ## `fugaro orchestrator events`
@@ -3095,6 +3096,42 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for patch |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro orchestrator run`
+
+Run the project's orchestrator daemon in the foreground
+
+Run the project's orchestrator daemon: take the id's lease, tick every
+interval — and sooner when the database's own stream says the node moved —
+start the runs the state's plan calls for over the same launch path fugaro
+run takes, and rewrite the session-start cache after every cycle. It stops
+when the lease goes to another machine, and it exits cleanly (releasing the
+lease) when the binary the unit names has moved on, so the login unit starts
+the new one.
+
+The command is the person's own credential and the daemon's own loop: it
+never converges, publishes or installs anything, and a state node this
+release does not read is reported as an update being due rather than
+touched. Run it in the foreground to watch it; the login unit is what keeps
+it running (fugaro setup installs it).
+
+Usage: `fugaro orchestrator run`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--binary` | string | "" | no | the stable path of the fugaro binary the login unit names: the daemon exits cleanly when the version there differs from this process |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for run |
+| `--interval` | duration | `30s` | no | how long to wait between cycles when the node says nothing moved |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
