@@ -523,10 +523,13 @@ later design item has to answer. **M9 is out of the first slice**, M6's
 The launch grant D931 asks for is a launcher's, and **the owner ruled the fence around it on
 2026-11-09, as recommended: a split launcher role** — the front door's own account holds
 `run.jobs.run` and never `run.jobs.runWithOverrides`, with D924's ceiling and the marker that a launch
-carries one travelling in the signed task in the runs bucket (§6 check 0). **The design is therefore
+carries one travelling in the task in the runs bucket (§6 check 0). **The design is therefore
 closed and the code is not**: the grant is deliberately absent from
 `deploy/terraform/gcp/modules/installation/coordinator.tf:377`, the task that builds it is **M11**,
-and **D931 and M9 wait on M11 being built rather than on any answer of the owner's**.
+and **D931 and M9 wait on M11 being built rather than on any answer of the owner's** — with one
+correction this folder owes its own ruling: the fence **cannot** start a working run while the run's
+identity is the `FUGARO_RUN` override (`internal/backend/gcp/run.go:172-178`), so M11 carries the
+launch binding that replaces it and **D937** (§4b) reopens that premise with the owner.
 
 ### D932 — amended (finding M-g)
 
@@ -702,12 +705,47 @@ the job's template, its environment or its arguments at all; the installation's 
 `fugaroJobRunner` role, which carries both permissions and which every launcher and the scheduler hold,
 is left as it is, and the front door is given a role of its own rather than a share of that one.
 **The per-launch data the design needs — D924's token ceiling and the marker that says a launch carries
-one — travels in the signed task in the runs bucket** (`internal/task/task.go:57`, the `Spec` the
-runner reads there at bootstrap), which is the run's own trusted input rather than an environment a
-caller could rewrite. **Why the mechanism is the IAM grant and not a runner-side allowlist:** the
-requirement of 2026-11-04 asked the runner to tell a template value from an override value inside one
-merged environment, and the container cannot — but a role that cannot override makes the two questions
-one, so **the fence costs the runner nothing and is one IAM role and one job-scoped binding per project job in Terraform**.
+one — travels in the task in the runs bucket** (`internal/task/task.go:57`, the `Spec` the runner reads
+there at bootstrap), which is the run's own input rather than an environment a caller could rewrite —
+**the task and not "the signed task": nothing signs `task.json`** (`docs/design/bucket-iam.md:412` lists
+signing it as a non-goal), so what the fence buys there is that the ceiling is not on the override
+surface, not that its bytes are authenticated, and the residual that leaves is written out below.
+**Why the mechanism is the IAM grant and not a runner-side allowlist:** the requirement of 2026-11-04
+asked the runner to tell a template value from an override value inside one merged environment, and the
+container cannot — but a role that cannot override makes the two questions one. **The fence is one IAM
+role and one job-scoped binding per project job in Terraform, and it is NOT free for the runner: it
+costs the runner its own way of learning which run it is, which the ruling's first statement of the
+mechanism assumed away** — see "The premise the ruling got wrong" below, and **D937**, the question
+that premise reopens.
+
+**The premise the ruling got wrong (2026-11-09, on this folder's own re-read of the tree).** The ruling
+as first written said the fence costs the runner nothing. **It cannot be built that way**: the run's
+identity reaches the container only as the `FUGARO_RUN` **execution override** — the launcher puts
+`<slug>/<run-id>` into `Overrides.ContainerOverrides`
+(`internal/backend/gcp/run.go:172-178`), the container entrypoint reads it as its own run
+(`internal/cli/exec.go:60`), and the fake refuses a shared project job's execution without it
+(`internal/gcpfake/run.go:973`, because the job's name no longer says which run it is) — so **an account
+holding `run.jobs.run` alone cannot start a working run at all**: setting an override is exactly what
+`run.jobs.runWithOverrides` authorizes, and the request is refused. **What the mechanism therefore
+needs, and what the design's §4b already asked for in words**: per-run input **keyed by the execution**.
+Cloud Run injects the execution's own name into the container itself (`CLOUD_RUN_EXECUTION`, read back by
+`internal/backend/codec.go:113`'s `ExecutionFromEnv`, which needs no override), so the launcher writes a
+**launch binding** into the runs bucket named by the execution — after `jobs.run` returns the execution
+name — and the runner resolves `<slug>/<run-id>` from that binding at bootstrap instead of from
+`FUGARO_RUN`. **Its race is named rather than hidden:** the execution starts as soon as the call
+returns, so the runner can reach the bucket before the binding lands, which the runner answers by
+polling for a bounded window (the shape `internal/runstore/launch.go:117`'s `ClaimTTL` already sets),
+and a binding that never arrives is a named bootstrap refusal; a launcher that dies between the start
+and the write leaves an execution that was **paid for** and belongs to no run, which the operator has
+to be able to see (`fugaro ls`/doctor naming an execution with no binding) and which the plan's M11 and
+M9 carry as a refusal rather than a silence. **This is a runner and backend change, and the two tasks
+name its files**: `internal/backend/gcp/run.go` (start with no override at all),
+`internal/cli/exec.go` (resolve the run from the binding), `internal/runstore/launch.go` (the binding
+and its key), `internal/gcpfake/run.go` (the fake's project-job rule inverts: it refuses an execution
+that carries the identity as an override), and the runner's bootstrap that reads the store, with their
+tests. **The goal the owner ruled is untouched** — the front door's account still never holds
+`run.jobs.runWithOverrides` — **and what is reopened is the ruling's premise**, which is why **D937**
+asks the owner to confirm the mechanism that replaces the override rather than the goal.
 
 **What it moves.**
 
@@ -722,7 +760,9 @@ one, so **the fence costs the runner nothing and is one IAM role and one job-sco
   built by a task of its own — **M11** in [implementation-plan.md](implementation-plan.md) §3, the
   split launcher role, which is where `coordinator.tf`'s deliberate absence of the grant
   (`:377`) is filled in. **M9 waits on M11 being built**, and so does D931: **the gate is a task, not
-  an answer**, and no owner question is outstanding (§6 check 0, spec.md §8 and §11).
+  an answer** — **and one question of that ruling came back the same day: D937**, its premise about the
+run's identity and the content the fence does not cover (§4a's "The premise the ruling got wrong",
+§4b). Everything else is closed (§6 check 0, spec.md §8 and §11).
 - **M11's level, and the shared-files table.** M11 writes `coordinator.tf`, `outputs.tf` and
   `SECURITY.md` beside M4, so it takes **L1** — beside M2, whose files it does not touch — and M9 stops
   being a writer of the two Terraform files (§2, §4 of the plan). **No level holds two writers of one
@@ -734,7 +774,12 @@ one, so **the fence costs the runner nothing and is one IAM role and one job-sco
   **not** `run.jobs.runWithOverrides` in a real project. It is the shape of check 2 for a grant — a
   claim about who reaches something, which only a project can answer — and the plan proves the
   hermetic half of it (no role the installation creates for the front door carries the override
-  permission, asserted against the plan rather than described).
+  permission, asserted against the plan rather than described). **And the premise the ruling assumed
+  away is an owner question again (D937, §4b)**: the goal stands, but the mechanism that replaces
+  `FUGARO_RUN` — the launch binding keyed by the execution, and its poll, its orphan and the runner
+  files it touches — is a runner and backend change the first statement of the ruling did not carry.
+  **Until the owner confirms it, M9 and M11 are gated on both M11 being built and D937 being
+  answered**, and no run may start from the front door.
 
 ## 4b. The decision the amendment added
 
@@ -758,8 +803,12 @@ not a shrug:
   caller could otherwise rewrite. **The owner ruled the mechanism of this fence on 2026-11-09, as
   recommended (§6 check 0): a split launcher role whose account holds `run.jobs.run` alone and never
   `run.jobs.runWithOverrides`, with D924's ceiling and the marker that a launch carries one travelling
-  in the signed task in the runs bucket.** It is decided and **not built**; the plan's task **M11**
-  builds it, and **M9 waits on that task rather than on the decision**.
+  in the task in the runs bucket.** It is decided and **not built**; the plan's task **M11**
+  builds it, and **M9 waits on that task rather than on the decision**. **"Keyed by the execution" is
+  now a change and not a phrase**: the run's identity travels as the `FUGARO_RUN` override today
+  (`internal/backend/gcp/run.go:172-178`), which `run.jobs.run` alone cannot set, so M11 and M9 carry
+  the launch binding that replaces it — the mechanism, its race and its files are in §4a's "The
+  premise the ruling got wrong", and **D937** is the owner question that premise reopens.
 - **Run-token minting moves out of the public service**, so the service that answers strangers holds
   no signer.
 - **An argument allowlist**: no `--no-budget-check` (`internal/cli/run.go:325`), no `--token`
@@ -769,6 +818,27 @@ not a shrug:
 **What this moves**: M9 and the parts of M10 that depend on it leave the first slice; the shared-files
 table (§4 of the plan) and the release slot (§5) are re-cut; and **the plan's own statement of the
 tool set is narrower** — the first slice serves the read tools and no run starts from the front door.
+
+### D937 — The premise the ruling got wrong, and the content the fence does not cover
+
+**D937 is raised here rather than answered**, because it reopens a premise of the owner's ruling of
+2026-11-09 and only the owner closes it. It has two halves, and both are corrections of an
+overstatement this folder carried, not a new requirement.
+
+| D | The question | This folder's recommendation (2026-11-09) | Why |
+| --- | --- | --- | --- |
+| **D937** | **Can the split launcher role start a run at all, and does the fence cover what the run is told to do?** | **The goal stands — the front door's account never holds `run.jobs.runWithOverrides` — and two corrections follow.** (a) **The identity moves out of the override too**, along with D924's ceiling and the marker: the launcher writes a **launch binding** into the runs bucket named by the execution, and the runner resolves `<slug>/<run-id>` from it at bootstrap, reading the execution name Cloud Run injects itself (`CLOUD_RUN_EXECUTION` through `internal/backend/codec.go:113`) — because `FUGARO_RUN` as an override (`internal/backend/gcp/run.go:172-178`) is the one thing `run.jobs.run` alone cannot set. (b) **The fence is stated for what it is**: an override-surface fence, which does not authenticate `task.json` and does not confine what a compromised coordinator writes into it | §4a's "The premise the ruling got wrong" has the mechanism, its race (the binding lands after the execution starts, so the runner polls for a bounded window; a launcher that dies in between leaves a paid-for execution the operator must be able to see) and its files; (b) is why **`task.json` is unsigned text the launcher wrote** (`docs/design/bucket-iam.md:412`) and why M9's runs-bucket write means the fence bounds the channel and not the content |
+
+**What (b) means, in one sentence**: with the fence built, a compromised coordinator **cannot rewrite
+the job's environment, its template or its arguments**, and it **can still write a task whose
+`repo`, `prompt`, `workflow` and `recipe` it chose** — which is the same thing it can do today, and
+which the fence was never going to close, because the front door has to be able to say what the run
+should do. **The two controls that do bound it** are the ones this folder already has: the argument
+allowlist (no `--no-budget-check`, no `--token`, no free-form `--run-id`), which is what keeps the
+task from being a way around the pre-launch checks, and the budget pre-check and the kill switch,
+which are what bound what the run can spend before its content matters at all. **Spec §8 states
+this residual beside the requirement** rather than leaving the fence reading as a total one, and
+**M9's Interface says the same of its own launch path**.
 
 ### The store: D935's answer, and what this folder's review adds to it
 
@@ -803,7 +873,7 @@ moved a long way in three days and a block that was free at launch is not free b
 **This work keeps D920–D934**, the fifteen decisions above, **and D935** — the answer of 2026-11-05,
 which this work's own reservation had left free and which its review asked for, and which says where
 the token records live — **and D936**, the one decision the security review's own findings made
-(§4b): the first MCP slice, with `spawn_task` deferred out of it. **D937–D939 stay reserved
+(§4b): the first MCP slice, with `spawn_task` deferred out of it. **D938–D939 stay reserved
 and unused**; the amendment notes of §4a take **no** number, because they amend a decision rather
 than replace it — a number here is never reused for a new meaning, so an amended answer keeps its own
 number and gains a dated note beside it. They do not collide: on `main` the strings "D920", "D934"
@@ -824,7 +894,7 @@ question to the owner the answer is recorded in the check rather than left as an
 the things this design **cannot** verify hermetically, and they belong on the live checklist, in the
 owner's hands, before the first code task starts:
 
-0. **The launch-override fence is a split launcher role — the owner's ruling of 2026-11-09 — and it is built before M9 or D931.** Spec §8 states the owner's requirement (the runner ignores the override environment except an allowlist) as NOT BUILT: the runner reads its ceiling and wiring from variables `runWithOverrides` can rewrite today, and the container sees one merged environment, so it cannot tell a template value from an override value. **The owner answered the mechanism on 2026-11-09, as recommended: the fence is a split launcher role.** The front door's own account holds only the permission to **start an execution** — `run.jobs.run` — and **never `run.jobs.runWithOverrides`**, so no caller of this front door can rewrite the job's template, its environment or its arguments at all; and **the per-launch data this design adds — D924's token ceiling and the marker that says a launch carries one — travels in the signed task in the runs bucket** (`internal/task/task.go:57`, the `Spec` the runner reads there at bootstrap), the run's own trusted input rather than an environment a caller could rewrite. **Why this and not a runner-side allowlist:** the requirement asked the runner to tell a template value from an override value inside one merged environment, which it cannot do; a role that cannot override makes the two questions one, so **the fence costs the runner nothing and is one IAM role and one job-scoped binding per project job in Terraform**. **The mechanism is decided and the fence is NOT BUILT**: no role of this installation grants `run.jobs.run` alone, the front door's launch grant is deliberately absent (`deploy/terraform/gcp/modules/installation/coordinator.tf:377`), and the task that builds it is **M11** ([implementation-plan.md](implementation-plan.md) §3). **What gates M9 and D931 is that task being built, not the decision**: until M11 lands nothing here may start a run, and no owner answer is outstanding. **What stays the owner's to read is the live IAM** — that the front door's account holds `run.jobs.run` and not `run.jobs.runWithOverrides` in a real project — which is check 2's shape for a grant rather than a live step.
+0. **The launch-override fence is a split launcher role — the owner's ruling of 2026-11-09 — and it is built before M9 or D931.** Spec §8 states the owner's requirement (the runner ignores the override environment except an allowlist) as NOT BUILT: the runner reads its ceiling and wiring from variables `runWithOverrides` can rewrite today, and the container sees one merged environment, so it cannot tell a template value from an override value. **The owner answered the mechanism on 2026-11-09, as recommended: the fence is a split launcher role.** The front door's own account holds only the permission to **start an execution** — `run.jobs.run` — and **never `run.jobs.runWithOverrides`**, so no caller of this front door can rewrite the job's template, its environment or its arguments at all; and **the per-launch data this design adds — D924's token ceiling and the marker that says a launch carries one — travels in the task in the runs bucket** (`internal/task/task.go:57`, the `Spec` the runner reads there at bootstrap), the run's own input rather than an environment a caller could rewrite — **the task, not "the signed task": nothing signs it** (`docs/design/bucket-iam.md:412`), which is the residual this check states below. **Why this and not a runner-side allowlist:** the requirement asked the runner to tell a template value from an override value inside one merged environment, which it cannot do; a role that cannot override makes the two questions one, so **the fence is one IAM role and one job-scoped binding per project job in Terraform**. **And it is not free for the runner.** The run's identity reaches the container only as the `FUGARO_RUN` **override** (`internal/backend/gcp/run.go:172-178`, read at `internal/cli/exec.go:60`, refused when absent for a shared project job at `internal/gcpfake/run.go:973`), which `run.jobs.run` alone cannot set — so the mechanism needs the **launch binding keyed by the execution** that §4a names, with its race and its files, and **the premise that the fence costs the runner nothing is withdrawn here**. **The mechanism is decided and the fence is NOT BUILT**: no role of this installation grants `run.jobs.run` alone, the front door's launch grant is deliberately absent (`deploy/terraform/gcp/modules/installation/coordinator.tf:377`), and the task that builds it is **M11** ([implementation-plan.md](implementation-plan.md) §3), which carries the runner half too. **What gates M9 and D931 is that task being built, not the decision** — and, on the identity question, **D937** (§4b), which reopens the premise with the owner rather than answering it here: **until both, nothing here may start a run**. **What stays the owner's to read is the live IAM** — that the front door's account holds `run.jobs.run` and not `run.jobs.runWithOverrides` in a real project — which is check 2's shape for a grant rather than a live step, **and the residual the fence does not close**: the front door holds the runs-bucket write M9 needs, so a compromised coordinator can still choose what the task's `repo`, `prompt`, `workflow` and `recipe` say. The fence bounds the override surface and not the content, §8 of [spec.md](spec.md) says so beside the requirement, and the controls that do bound the content are the argument allowlist and the budget pre-check.
 1. **`zitadel/oidc`'s licence is confirmed — by the owner or by counsel — before any build**, and
    **the owner wrote the M5 gate file on 2026-11-07.** D921 was answered with the licence
    **UNCONFIRMED**: the library's Apache 2.0 claim is the library's own and nothing in this
