@@ -323,19 +323,19 @@ func TestHumanOutputHasNoFullRunID(t *testing.T) {
 // field name, and holds the rest to fullRunIDSites.
 //
 // Two things a printer may be written with are read only where the signature
-// says what they hold: inside a function that takes the run's slug, a bare `id`
-// is the run's id (readRunVia and readTask say so, and a message that names
-// `id` there names a run), and the message builders (readerNames) count as
-// print sites. Everywhere else `id` is whatever else a function calls an id (a
-// model, a secret, a build), and a `userErr` about a `--run-id` the person
-// supplied names their own input.
+// says what they hold: inside a reader — a function handed the run's slug
+// beside the run itself (runReader) — a bare `id` or `root` is the run
+// (readRunVia and readTask say `id`, checkRoot says `root`, and a message that
+// names one of them there names a run), and the message builders (readerNames)
+// count as print sites. Everywhere else `id` is whatever else a function calls
+// an id (a model, a secret, a build), `root` is a directory, and a `userErr`
+// about a `--run-id` the person supplied names their own input.
 //
 // It is a reading of the source and not a proof: an ID a format string prints
 // as a value the scanner cannot see (a struct marshalled, an ID carried in a
-// variable through three functions, a run a function renames to `root` or reads
-// off a store's own `Slug()`) is not a site. The sweep's driven renderers are
-// what covers those, and this is what covers a printer the registry does not
-// know.
+// variable through three functions, a run read off a store's own `Slug()`) is
+// not a site. The sweep's driven renderers are what covers those, and this is
+// what covers a printer the registry does not know.
 func assertNoPrintSiteNamesARunID(t *testing.T) {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -371,7 +371,7 @@ func assertNoPrintSiteNamesARunID(t *testing.T) {
 					return true
 				}
 				called := lastName(call.Fun)
-				if !printNames[called] && !(reader && readerNames[called]) {
+				if !printNames[called] && !(len(reader) > 0 && readerNames[called]) {
 					return true
 				}
 				for _, a := range call.Args {
@@ -419,9 +419,9 @@ func lastName(fun ast.Expr) string {
 // carriesRunID reports whether e carries a run ID into the call it is an
 // argument of: the ID reaches the output through calls and operators, and not
 // through a shortener, a map key (the key names the run, the value is what is
-// printed) or a field name. reader says the enclosing function is one of the
-// package's slug, id readers, where a bare `id` names the run (runReader).
-func carriesRunID(e ast.Expr, reader bool) bool {
+// printed) or a field name. reader is the enclosing function's run-naming
+// parameters (runReader), the names a bare ident has to be to be the run.
+func carriesRunID(e ast.Expr, reader map[string]bool) bool {
 	var stack []ast.Node
 	found := false
 	ast.Inspect(e, func(n ast.Node) bool {
@@ -440,27 +440,28 @@ func carriesRunID(e ast.Expr, reader bool) bool {
 
 // namesRunID reports whether n is an expression a run ID is read off: a field
 // of the row, run or task it belongs to (runIDNames), or a name the enclosing
-// function gives the run's id — `runID` anywhere, and the bare `id` of a reader,
-// whose own signature says which value is the run.
-func namesRunID(n ast.Node, reader bool) bool {
+// function gives the run — `runID` anywhere, and the bare ident a reader's own
+// signature says is the run (runReader).
+func namesRunID(n ast.Node, reader map[string]bool) bool {
 	switch v := n.(type) {
 	case *ast.SelectorExpr:
 		return runIDNames[v.Sel.Name]
 	case *ast.Ident:
-		return v.Name == "runID" || (reader && v.Name == "id")
+		return v.Name == "runID" || reader[v.Name]
 	}
 	return false
 }
 
-// runReader reports whether fn is one of the package's run readers: it is
-// handed the run's slug and its id together (readRun, readRunVia, readTask,
-// scanRun), so in its body `id` is the run's id. Nearly every command's helper
-// takes a slug without one — a repository, a project layer, a spec — and there
-// `id` is whatever else it calls an id (a model, a secret, a build), so only
-// the named fields count.
-func runReader(fn *ast.FuncDecl) bool {
+// runReader is what fn calls the run it is handed, for one of the package's
+// readers: a function given the run's slug beside the run itself names it,
+// either `id` (readRun, readRunVia, readTask, scanRow) or `root`, the run a
+// branch names (checkRoot). A helper handed one without the other names no run
+// this way — a repository, a project layer, a spec and a directory all come
+// under some `id` or `root` elsewhere in the package — so only the fields of
+// runIDNames count there.
+func runReader(fn *ast.FuncDecl) map[string]bool {
 	if fn.Type.Params == nil {
-		return false
+		return nil
 	}
 	named := map[string]bool{}
 	for _, p := range fn.Type.Params.List {
@@ -468,7 +469,16 @@ func runReader(fn *ast.FuncDecl) bool {
 			named[n.Name] = true
 		}
 	}
-	return named["slug"] && named["id"]
+	if !named["slug"] {
+		return nil
+	}
+	runs := map[string]bool{}
+	for _, name := range []string{"id", "root"} {
+		if named[name] {
+			runs[name] = true
+		}
+	}
+	return runs
 }
 
 // shortens reports whether any ancestor in stack takes the ID out of the
