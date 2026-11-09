@@ -201,6 +201,115 @@ func TestCatalogFetchIsBounded(t *testing.T) {
 	}
 }
 
+// inlineEntry is a catalog entry whose definition is held in the catalog
+// itself, the other source a credential-shaped definition reaches a build
+// through.
+func inlineEntry(def string) config.Entry {
+	return config.Entry{Name: "agent", Source: config.Source{Kind: config.SourceInline, Inline: def}}
+}
+
+// TestDockerfileSecretArgRefused: a definition that names a credential in an
+// ARG or an ENV is refused wherever it came from — an inline entry and a file
+// fetched out of a repository both reach the same bucket key and the same
+// build — and the refusal names the secret mount a build uses instead. The
+// name is enough on its own: an ARG whose default is empty still carries the
+// value a --build-arg passes through the layer.
+//
+// A definition that names no credential is accepted, so the rule pins the
+// shapes it is about rather than every definition.
+func TestDockerfileSecretArgRefused(t *testing.T) {
+	ctx := context.Background()
+	for _, def := range []string{
+		"FROM example.invalid/base\nARG NPM_TOKEN\nRUN true\n",
+		"FROM example.invalid/base\nARG GIT_TOKEN=value\n",
+		"FROM example.invalid/base\nENV GITHUB_TOKEN=value\n",
+		"FROM example.invalid/base\nENV AWS_SECRET_ACCESS_KEY=value\n",
+		"FROM example.invalid/base\nARG CI_JOB_TOKEN=\"value\"\n",
+		"FROM example.invalid/base\nenv npm_config_//registry.npmjs.org/:_authToken=value\n",
+		"FROM example.invalid/base\nARG FUGARO_BASE\nARG \\\n    DEPLOY_PASSWORD\n",
+	} {
+		_, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def))
+		if err == nil {
+			t.Errorf("the inline definition %q was accepted", def)
+		} else if !strings.Contains(err.Error(), "--mount=type=secret") {
+			t.Errorf("the inline refusal does not name the secret mount: %v", err)
+		}
+		o := &fetchOpener{
+			p:    &fake.Provider{Repo: "acme/app", State: fake.State{Files: map[string]string{"docker/agent.Dockerfile": def}}},
+			cred: fakeCredential(t),
+		}
+		_, err = Fetch(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", ""))
+		if err == nil {
+			t.Errorf("the fetched definition %q was accepted", def)
+		} else if !strings.Contains(err.Error(), "--mount=type=secret") {
+			t.Errorf("the fetched refusal does not name the secret mount: %v", err)
+		}
+	}
+	for _, def := range []string{
+		"FROM example.invalid/base\nARG NODE_VERSION=22\nRUN true\n",
+		"FROM example.invalid/base\nENV PATH=/usr/local/bin:$PATH\n",
+		"FROM example.invalid/base\nENV TFLINT_PLUGIN_DIR=/home/fugaro/.tflint.d/plugins\n",
+		"FROM example.invalid/base\nARG REPO_URL\nARG BASE_BRANCH\nRUN git clone \"$REPO_URL\" /work/repo\n",
+		"FROM example.invalid/base\nENV AUTH_MODE=none\n",
+	} {
+		if _, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def)); err != nil {
+			t.Errorf("the definition %q was refused: %v", def, err)
+		}
+	}
+}
+
+// TestDockerfileUserinfoURLRefused: a definition that carries a URL with
+// userinfo is refused, inline and fetched alike, and the refusal names the
+// secret mount — the shape the project's own builds use (D1150, the
+// git-credentials mount) rather than a token written into the definition.
+//
+// The token is built at run time and asserted absent from the refusal: a
+// message that named the URL would leak into the log exactly the credential
+// this refusal keeps out of the definition. A URL without userinfo, and the
+// scp-like clone form that can hold no password, are accepted.
+func TestDockerfileUserinfoURLRefused(t *testing.T) {
+	ctx := context.Background()
+	token := fakeCredential(t)
+	for _, def := range []string{
+		"FROM example.invalid/base\nRUN git clone https://user:" + token + "@example.invalid/acme/app.git /work/repo\n",
+		"FROM example.invalid/base\nRUN git clone https://" + token + "@example.invalid/acme/app.git /work/repo\n",
+		"FROM example.invalid/base\nRUN git clone ssh://git:" + token + "@example.invalid/acme/app.git /work/repo\n",
+		"FROM example.invalid/base\nENV DATABASE_URL=postgres://user:" + token + "@db.internal/app\n",
+	} {
+		_, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def))
+		if err == nil {
+			t.Errorf("the inline definition %q was accepted", def)
+		} else {
+			if !strings.Contains(err.Error(), "--mount=type=secret") {
+				t.Errorf("the inline refusal does not name the secret mount: %v", err)
+			}
+			if strings.Contains(err.Error(), token) {
+				t.Errorf("the refusal carries the credential: %v", err)
+			}
+		}
+		o := &fetchOpener{
+			p:    &fake.Provider{Repo: "acme/app", State: fake.State{Files: map[string]string{"docker/agent.Dockerfile": def}}},
+			cred: fakeCredential(t),
+		}
+		_, err = Fetch(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", ""))
+		if err == nil {
+			t.Errorf("the fetched definition %q was accepted", def)
+		} else if strings.Contains(err.Error(), token) {
+			t.Errorf("the fetched refusal carries the credential: %v", err)
+		}
+	}
+	for _, def := range []string{
+		"FROM example.invalid/base\nRUN git clone \"$REPO_URL\" /work/repo\n",
+		"FROM example.invalid/base\nRUN git clone git@example.invalid:acme/app.git /work/repo\n",
+		"FROM example.invalid/base\nRUN curl -fsSL https://example.invalid/tool.tar.gz | tar xz\n",
+		"FROM example.invalid/base\n# see https://example.invalid/issues/1 for person@example.invalid\n",
+	} {
+		if _, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def)); err != nil {
+			t.Errorf("the definition %q was refused: %v", def, err)
+		}
+	}
+}
+
 // noReader is a provider of a kind that cannot read a file out of its
 // repository: an opener hands one back for a kind this package's list does
 // not admit, and the fetch must refuse the source rather than call a method
