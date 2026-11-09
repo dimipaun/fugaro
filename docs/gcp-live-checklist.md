@@ -817,7 +817,7 @@ probe account carries predefined grants only).
 | 175 | The overlap, with the service stopped ([`docs/subscriptions/`](subscriptions/implementation-plan.md), its Check 175, written by task **S3.6** and run by you in task **S3.7**; the design's §8 and **T26**): with the service stopped a run on the sandbox installation still works, because nothing in the product checks a key at run time; the next key's `expires` is the end of the term its predecessor covered, not `issued` plus the bare term; and with both keys installed the verifier takes the later one while the earlier still verifies | See "Check 175" below; **you** run it, on a sandbox installation and with the key service stopped, and **no agent runs any step of it** | One second key in the store, which holds at most two; the service is restarted. **USER-RUN, NOT RUN.** |
 | 176 | The packed console after the grace ([`docs/subscriptions/`](subscriptions/implementation-plan.md), its Check 176, written by task **S3.6** and run by you in task **S6.4**; [design/lapse-read-only.md](design/lapse-read-only.md) §3, §5 and §7; **T12**, **D436** and **D523**): within the grace everything works; after it every read stays — watch, logs, Spend, the coordinator's project view and the kill switch's state — and cancel works when it lands, while `run.launch` and `settings.edit` are refused **in the console's main process**, a crafted renderer call meets the same refusal, the rail's own operations still work, and the MIT CLI launches and cancels throughout. **It does not apply until enforcement ships: nothing refuses and nothing warns today (D523)** | See "Check 176" below; **you** run it, on your own machine, with a packed console carrying **S6.2** and the enforcement release, and **no agent runs any step of it** | The console's key screen cleared and the test key deleted. **USER-RUN, NOT RUN.** |
 | 177 | The app after the grace ([`docs/subscriptions/`](subscriptions/implementation-plan.md), its Check 177, written by task **S3.6** and run by you in task **S6.4**; [design/lapse-read-only.md](design/lapse-read-only.md) §4 and §7; **T12**, **D436**, **D523** and **D111/D232**): after the grace, cancel through the mailbox works — with the paid orchestrator agent stopped, since it may not depend on it — the kill switch works, and launch and configuration changes are refused at the mailbox client; `SECRET_ITEMS` is still the two items it was. **It does not apply until enforcement ships (D523)** | See "Check 177" below; **you** run it, on your own phone and installation, with an app build carrying **S6.3** and the enforcement release, and **no agent runs any step of it** | The app's key screen cleared. **USER-RUN, NOT RUN.** |
-| 178 | The coordinator's key-gated sweep job ([`docs/subscriptions/`](subscriptions/implementation-plan.md), its Check 178, registered by task **S3.6** and run by you in task **S1.10**; **D524**, **O4** and the plan's S1.9): on a sandbox installation the coordinator's job runs the image built with the `ee` tag and mounts **no** key secret; one sweep's log shows the paid build rather than the core stub (E1.1, D522); and `fugaro coordinator status --from-store --all --json --project <name>` and the console's project view read the same stored view, with no key. **DEFERRED until enforcement**: a key check and its refusal come only with enforcement, so the two halves above are what can be read | See "Check 178" below; **you** run it, on a sandbox installation only, and **no agent runs any step of it** | One `fugaro update` and one sweep; no project written and no credential minted. **USER-RUN, NOT RUN — DEFERRED.** |
+| 178 | The coordinator's key-gated sweep job ([`docs/subscriptions/`](subscriptions/implementation-plan.md), its Check 178, registered by task **S3.6** and run by you in task **S1.10**; **D524**, **O4** and the plan's S1.9): on a sandbox installation the coordinator's job runs the image built with the `ee` tag and mounts **no** key secret; one sweep's log shows the paid build rather than the core stub (E1.1, D522); and `fugaro coordinator status --from-store --all --json --project <name>` and the console's project view read the same stored view, with no key. **DEFERRED until enforcement**: a key check and its refusal come only with enforcement, so the two halves above are what can be read | See "Check 178" below; **you** run it, on a sandbox installation only, and **no agent runs any step of it** | One `fugaro update` and one sweep; no project written and no credential minted. **USER-RUN, NOT RUN.** |
 | 179 | The merchant's test mode and the staging pair ([`docs/subscriptions/`](subscriptions/implementation-plan.md), its Check 179, written by task **S3.6** and run by you in task **S3.7**; the design's §5 and §2's second rule; **D442**, **T25** and **T26**): a purchase in the merchant's **test mode** mints a **staging** key production verifiers refuse and the sandbox installation reads; the same event delivered twice mints once; a renewal issues 30 days before the current key expires and a seat change reissues; and a cancellation stops the reissue while the key in hand keeps working until it expires | See "Check 179" below; **you** run it, in the merchant's test mode, with the service's staging key id only, and **no agent runs any step of it** | The test-mode subscription cancelled in the merchant's dashboard; the staging keys are the sandbox's and may stay. **USER-RUN, NOT RUN.** |
 | 180 | One Bitbucket project or workspace access token serving many repositories, live ([`docs/bitbucket-workspace-token/`](bitbucket-workspace-token/implementation-plan.md), its Check 180, written by task **T1.3** and run by you in task **T1.4**; the reconciliation's **U1**–**U7**, **F3**, and D468 = no): on a sandbox installation and a **Premium** sandbox workspace, a **project access token** with `repository:write` and `pullrequest:write` is allow-listed for two sandbox repositories and stored project-wide, each repository's `fugaro update --repo` **asks nothing**, and one run per repository is recorded — a clone and a push the token authenticates, the pull request it opens and that pull request's author, `TestLiveBitbucket` and `GET /2.0/user`, whether **approve and merge** work with those scopes, and whether a repository **added to the Bitbucket project afterwards** is reachable; then the token is rotated and **the next run uses the new version**, and a second machine without the entry records what `fugaro update --repo <path> --plan-only` plans. It is the only place this path is ever measured with such a token: nothing offline can say what a Bitbucket token authenticates | See "Check 180" below; **you** run it, on a sandbox installation and a **Premium** sandbox workspace only, **never `belong`**, with the token file you name and the script never printing it — every argument is required, and the section below says what each is: `scripts/live-checks/check180.sh --installation <sandbox> --token-file <the token file> --repo <owner/name>=<checkout path> --repo <owner/name>=<checkout path> --probe-repo <owner/name>`. Its dry driver is `scripts/live-checks/check180_test.sh`, and **no agent runs any step of it** | A Premium sandbox workspace, one project access token created there with the two write scopes, two sandbox repositories in one Bitbucket project, one run per repository, one rotation and one approve-and-merge; the script's own Restore says what it leaves behind. **USER-RUN, NOT RUN.** |
 | 190 | git fetch, a blobless clone and a >32 MiB push through a throwaway, IAM-only Cloud Run proxy ([`docs/secrets-brokering/`](secrets-brokering/implementation-plan.md), its task **B0.4** and its "Checks 190–192"; the reconciliation's **F13**, **F14**, **U2**, **U7** and **U8**): against a sandbox Bitbucket repository, through a Cloud Run service deployed **with IAM required and no public invoker** — a **full clone** and a **blobless clone** (request count, bytes and time each), a **push above 32 MiB** on HTTP/1.1 (chunked) and what the front end answers, a **small push**, the **cold start** of the first git request after 35 idle minutes (D501: the service keeps scaling to zero), and what the front end does with a push held open past the service's **3600 s** timeout. It is the measurement S1's proxy is designed against: a large push that passes on HTTP/1.1 is what S1 is built on, and one that does not is what makes B1.5 serve h2c end to end | See "Check 190" below; **you** run it, on installation `fugaro` only (project `fugaro-dev`, region `us-east5`, hard-coded — the check refuses another installation), against a sandbox repository only, never `belong`, with the token file at mode `0600` that [secrets-brokering/check190-steps.md](secrets-brokering/check190-steps.md) writes; the script is `scripts/live-checks/check190.sh`, its own test `scripts/live-checks/check190_test.sh`, and **no agent runs any step of it** | One throwaway Cloud Run service with IAM required and no public invoker, the Artifact Registry repository and the image it is built into, the Secret Manager container that holds the sandbox repository's token for the proxy, its own staging bucket for the build's source, two grants to the installation's build account on those two only (registry writer, bucket object viewer), and one branch on the sandbox repository — every one of them deleted by the Restore, which asserts four counts read `0` and reads the bucket back; the installation's own `gs://fugaro-dev_cloudbuild` is not touched. **Wall clock, not money: about two hours at the terminal**, one build and one idle instance billed to the project while it runs. **USER-RUN. RUN 2026-10-30: FAILED — THE GATE** — the >32 MiB push answered **413** on HTTP/1.1, so S1 serves **h2c end to end** (B1.0, B1.5); the **3600 s** hold was **not measured** and the run's branch was left behind, both of them rows of the head that run read and both fixed afterwards (`f46ccf0a`, #1409), so what is left is a re-run of that row. The run's own facts are recorded in the section below. |
@@ -11240,9 +11240,10 @@ the owner's own key ring signed.
 
 **What you do:**
 
-1. Install the one key where each product keeps it ([licensing/licence-key.md](licensing/licence-key.md),
-   "Storage and hand-off"): the CLI's `licence.key` file in its own config directory at mode 0600,
-   the console's key screen, and the app's settings screen. The console hands it to the CLI it
+1. Install the one key where each product keeps it
+   ([licensing/licence-key.md](licensing/licence-key.md), "Storage and hand-off"): the CLI's
+   `licence.key` file in its own config directory at mode 0600, the console's key screen, and the
+   app's settings screen. The console hands it to the CLI it
    spawns in `FUGARO_LICENCE_KEY` and never in argv.
 2. Turn the network off on the machine and on the phone — the interface down, not a browser
    setting — and start each product: the CLI (a build carrying the `ee` tag), the console and the
@@ -11297,8 +11298,8 @@ visibility and licence are read per repository from the code host's API, that **
 control is required, and that a private repository beside the ones named cannot be seen — the
 check's own stated limit, with the Terms as the enforcement.
 
-**What you do** (against the intake that mints with the **staging** key id, and with repositories the
-owner controls — never a third party's):
+**What you do** (against the intake that mints with the **staging** key id, and with repositories
+the owner controls — never a third party's):
 
 1. Apply with a **private** repository's URL: refused. Apply with a public repository carrying no
    licence, and with one under a licence the OSI does not approve: each refused.
@@ -11371,8 +11372,8 @@ private half exists outside the key ring. **No agent runs any step of it.**
 ([subscriptions/implementation-plan.md](subscriptions/implementation-plan.md), its "Checks this plan
 takes (170–179)"), and run by the owner in task **S3.7**.
 
-**What the check confirms.** §8 of the design ([design/key-signing-service.md](design/key-signing-service.md))
-and **T26**: that validation is offline, so a stopped service cannot stop an installation's work,
+**What the check confirms.** §8 of the design
+([design/key-signing-service.md](design/key-signing-service.md)) and **T26**: that validation is offline, so a stopped service cannot stop an installation's work,
 and that the 30-day overlap is what makes an issuing outage bite only past 60 days.
 
 **What you do:**
@@ -11392,7 +11393,7 @@ too. **No agent runs any step of it.**
 
 ## Check 176: the packed console after the grace — reads and cancel stay, launch and configuration are refused in the main process (your own machine; run by you; NOT RUN)
 
-**NOT RUN, and it does not apply yet.** It needs a packed console carrying **S6.2** and the
+**NOT RUN.** And it does not apply yet: it needs a packed console carrying **S6.2** and the
 enforcement release (T17); **until enforcement ships nothing refuses and nothing warns** (D523), so a
 console built today would pass every step below by doing nothing. Written by task **S3.6** of the
 subscriptions plan ([subscriptions/implementation-plan.md](subscriptions/implementation-plan.md), its
@@ -11422,7 +11423,7 @@ step of it.**
 
 ## Check 177: the app after the grace — cancel through the mailbox and the kill switch work, launch and configuration are refused (your own phone and installation; run by you; NOT RUN)
 
-**NOT RUN, and it does not apply yet**, for the reason Check 176 gives: it needs an app build
+**NOT RUN.** And it does not apply yet, for the reason Check 176 gives: it needs an app build
 carrying **S6.3** and the enforcement release (T17), and nothing refuses until enforcement ships
 (D523). Written by task **S3.6** of the subscriptions plan
 ([subscriptions/implementation-plan.md](subscriptions/implementation-plan.md), its "Checks this plan
@@ -11446,13 +11447,14 @@ which is the app's only write path.
 
 ## Check 178: the coordinator's sweep job runs the tagged build, and the console's project view still reads the stored view (a sandbox installation; run by you; NOT RUN — DEFERRED until enforcement)
 
-**DEFERRED until enforcement (2026-10-29, D524).** The check measured the release date before
-2026-10-27; **O4** withdrew that, and what replaced it is the coordinator's key-gated job. A key
-check and its refusal come only with enforcement, and **no key is mounted today**, so there is no
-refusal to measure: the two halves written below are what can be read, and they are run by the owner
-in task **S1.10** when the enforcement release lands. Registered here by task **S3.6** of the
-subscriptions plan ([subscriptions/implementation-plan.md](subscriptions/implementation-plan.md), its
-"Checks this plan takes (170–179)").
+**NOT RUN.** And it is **deferred until enforcement (2026-10-29, D524)**. The check measured the
+release date before 2026-10-27; **O4** withdrew that, and what replaced it is the coordinator's
+key-gated job. A key check and its refusal come only with enforcement, and **no key is mounted
+today**, so there is no refusal to measure: the two halves written below are what can be read, and
+they are run by the owner in task **S1.10** when the enforcement release lands. Registered here by
+task **S3.6** of the subscriptions plan
+([subscriptions/implementation-plan.md](subscriptions/implementation-plan.md), its "Checks this plan
+takes (170–179)").
 
 **What the check confirms.** That the sweep job runs the **tagged** build — the one image the
 one-binary release produces (S1.9, E1.4) — so the paid coordinator is what runs where no person
@@ -11478,8 +11480,8 @@ and no credential is minted. **No agent runs any step of it.**
 takes (170–179)"), and run by the owner in task **S3.7**, which is also where the merchant's webhook
 is configured.
 
-**What the check confirms.** §5 of the design ([design/key-signing-service.md](design/key-signing-service.md))
-— the paid path end to end: the signature, the idempotency, the renewal window, the seat change and
+**What the check confirms.** §5 of the design
+([design/key-signing-service.md](design/key-signing-service.md)) — the paid path end to end: the signature, the idempotency, the renewal window, the seat change and
 the cancellation — and the staging pair, which is the whole of §2's second rule: a test-mode key
 cannot license a customer because a production verifier holds production ids only.
 
