@@ -4284,6 +4284,12 @@ carries: the `halted (run_cap)` cell is --state halted, and --help lists the
 states the flag takes. A run's state is in its result.json, so this filter
 reads every run it filters -- it narrows the listing, never the reads.
 
+--debt lists only the runs filed from a triage deferral: a task whose own spec
+is marked debt, which is work a run's review left behind rather than work
+somebody asked for. Like --state it reads the runs it filters, since the
+mark is in the run's task.json; a run whose task.json is unreadable is
+left out rather than guessed in, because nothing there says it is one.
+
 --pr N lists the runs on pull request N of one repository (the first run and
 its follow-ups), over the last 90d unless --since says otherwise; the totals
 line is then the PR's total cost.
@@ -4298,6 +4304,7 @@ Flags:
 | `--all` | bool | `false` | no | every repository in the runs bucket |
 | `--batch` | string | "" | no | only runs of this batch |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--debt` | bool | `false` | no | only runs filed from a triage deferral (a task marked debt) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for ls |
 | `--json` | bool | `false` | no | print machine-readable output |
