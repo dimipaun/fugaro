@@ -440,6 +440,14 @@ func (s CatalogBuildSpec) contextDir() string {
 // else: the credential reaches no image, because it is never a build
 // argument, a secret of the build step or a file under the context.
 //
+// The helper goes to git, never to clone: git's own -c is process config and
+// is not written into the new repository's config, while clone's own -c is,
+// and a credential.helper in that config would be copied into any image whose
+// Dockerfile COPYs the context and would fail the smoke's checkout check —
+// which the context entry's Dockerfile does instead of calling
+// finalize-checkout, because there is nothing to strip (context-design.md A4,
+// D1397, D1407).
+//
 // The clone is shallow, so it holds the branch tip and not an arbitrary
 // commit: the commit is fetched by itself when it is not there, and a commit
 // the remote no longer has fails the build saying so rather than building

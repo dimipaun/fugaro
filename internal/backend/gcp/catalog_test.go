@@ -627,8 +627,17 @@ func TestCatalogBuildHasACheckoutStepForAContextEntry(t *testing.T) {
 	// The credential is the repository's own, read from the file the
 	// credential step wrote into the volume — mounted into the steps that
 	// clone and into no other — and it is never part of the clone URL.
-	if !strings.Contains(script, "credential.helper='store --file=/creds/git-credentials'") {
+	helper := "credential.helper='store --file=/creds/git-credentials'"
+	if !strings.Contains(script, helper) {
 		t.Fatalf("the checkout step does not clone with the credential file: %q", script)
+	}
+	// Both git invocations — the clone and the fetch by sha — take it as
+	// git's own -c, which is process config, and never as clone's own -c,
+	// which git writes into the new repository's config: a credential.helper
+	// in that config is copied into any image whose Dockerfile COPYs the
+	// context, and the smoke's checkout check fails it (A4, D1407).
+	if named, toGit := strings.Count(script, helper), strings.Count(script, "git -c "+helper); named != toGit || toGit != 2 {
+		t.Fatalf("the checkout step names the credential helper %d times and gives it to git %d times, want 2 and 2: since git writes clone's own -c into the checkout's config, both the clone and the fetch must pass it as git's own -c: %q", named, toGit, script)
 	}
 	if strings.Contains(script, "@$$REPO_URL") || strings.Contains(script, "$$REPO_URL:") {
 		t.Fatalf("the checkout step carries the credential in the clone URL: %q", script)
