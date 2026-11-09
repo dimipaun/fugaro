@@ -791,7 +791,8 @@ func countOccurrences(ctx context.Context, b *blobx.Bucket, number int) (int, er
 // file it (F9, F22). A claim another holder has taken and not let lapse is
 // refused with ClaimedError; one that has lapsed is taken over the same way,
 // conditioned on the version it was read at. The issue itself is refused once
-// it has been filed.
+// it is decided — filed, or fixed by a release (Status.decided): a resolved
+// issue is not filed again as if the fix never happened.
 func Claim(ctx context.Context, b *blobx.Bucket, number int, holder string, now time.Time) (*Claimed, error) {
 	if err := validateNumber(number); err != nil {
 		return nil, err
@@ -804,8 +805,8 @@ func Claim(ctx context.Context, b *blobx.Bucket, number int, holder string, now 
 		if err != nil {
 			return nil, err
 		}
-		if rec.Issue.Status == StatusSubmitted {
-			return nil, fmt.Errorf("issues: shared issue %d was filed and is final", number)
+		if rec.Issue.Status.decided() {
+			return nil, fmt.Errorf("issues: shared issue %d is %q and is decided", number, rec.Issue.Status)
 		}
 		if c := rec.Claim; c != nil && c.Holder != holder && now.Before(c.ExpiresAt) {
 			return nil, &ClaimedError{Holder: c.Holder, Expires: c.ExpiresAt}
@@ -838,15 +839,16 @@ func Release(ctx context.Context, b *blobx.Bucket, c *Claimed) error {
 
 // RecordSubmitted files the issue: the URL and `submitted` are written with the
 // claim cleared, in the one write conditioned on still holding it (F22). A
-// record already filed is final (F9): the issue is on GitHub, and the store is
-// not told otherwise.
+// record that is decided (Status.decided) is final (F9): the issue is on
+// GitHub, and nothing but the resolver's own transition out of `submitted`
+// (SetResolved, SetClosed) rewrites it.
 func RecordSubmitted(ctx context.Context, b *blobx.Bucket, c *Claimed, url string) error {
 	if !projectIssueURL(url) {
 		return fmt.Errorf("issues: %q is not an issue URL of %s", url, updatecheck.Repo)
 	}
 	return c.finish(ctx, b, func(rec *sharedRecord) error {
-		if rec.Issue.Status == StatusSubmitted {
-			return fmt.Errorf("issues: shared issue %d was filed and is final", c.Number)
+		if rec.Issue.Status.decided() {
+			return fmt.Errorf("issues: shared issue %d is %q and is decided", c.Number, rec.Issue.Status)
 		}
 		rec.Issue.Status, rec.Issue.URL, rec.Issue.Uploaded = StatusSubmitted, url, true
 		return rec.setRecord()
@@ -879,8 +881,10 @@ func (c *Claimed) finish(ctx context.Context, b *blobx.Bucket, change func(*shar
 // SetSharedStatus sets an uploaded issue aside where the team reads it. A
 // dismissal is the only status the store is told from outside the claim: a
 // submission goes through RecordSubmitted, which holds the claim, and the store
-// never reopens an issue — one that was set aside or filed stays that way and a
-// later hit is an occurrence (F21).
+// never reopens an issue — one that was filed or fixed stays that way and a
+// later hit is an occurrence (F21). Setting an issue aside again is the one
+// write that lands on a dismissed record, and it is a no-op: burying a fix the
+// resolver recorded is not this call's to do.
 func SetSharedStatus(ctx context.Context, b *blobx.Bucket, number int, status Status) error {
 	if status != StatusDismissed {
 		return fmt.Errorf("issues: the shared store sets a dismissal, not %q", status)
@@ -893,8 +897,8 @@ func SetSharedStatus(ctx context.Context, b *blobx.Bucket, number int, status St
 		if rec.Issue.Status == status {
 			return nil
 		}
-		if rec.Issue.Status == StatusSubmitted {
-			return fmt.Errorf("issues: shared issue %d was filed and is final", number)
+		if rec.Issue.Status.decided() {
+			return fmt.Errorf("issues: shared issue %d is %q and is decided", number, rec.Issue.Status)
 		}
 		rec.Issue.Status = status
 		if err := rec.setRecord(); err != nil {
@@ -912,6 +916,135 @@ func SetSharedStatus(ctx context.Context, b *blobx.Bucket, number int, status St
 		return nil
 	}
 	return fmt.Errorf("issues: shared issue %d kept changing; giving up", number)
+}
+
+// SetResolved marks a filed issue fixed by release: the transition the pass
+// `fugaro update` runs makes when GitHub shows the issue closed as completed
+// and its milestone is at or below the version that was installed (F27,
+// D1736). The release is the milestone, normalized to `X.Y.Z`, and it is what
+// a reporter's own version is compared against to recognise the bug coming
+// back (F25).
+//
+// gen is the generation the caller read the record at, or zero when it read
+// none: either way the write is conditioned on the generation read here, so
+// two machines resolving one issue write one transition and the second one
+// answers as the no-op it is rather than writing the copy it read over the
+// first one's (F18). A caller that read the issue before the first machine
+// resolved it passes a generation the record has left, and still gets that
+// no-op: the issue is where this call was going.
+func SetResolved(ctx context.Context, b *blobx.Bucket, number int, release string, gen int64) error {
+	canonical, ok := updatecheck.CanonicalRelease(release)
+	if !ok {
+		return fmt.Errorf("issues: %q is not the release that fixed issue %d, want X.Y.Z", release, number)
+	}
+	return transitionSubmitted(ctx, b, number, gen, StatusResolved, func(rec *sharedRecord) {
+		rec.Issue.ResolvedIn = canonical
+	})
+}
+
+// SetClosed sets a filed issue aside with the reason GitHub gave, which fixes
+// nothing: an issue closed as not planned or as a duplicate leaves the
+// recurring list without a retry hint (F9, D1752).
+func SetClosed(ctx context.Context, b *blobx.Bucket, number int, reason ClosedAs, gen int64) error {
+	if reason != ClosedNotPlanned && reason != ClosedDuplicate {
+		return fmt.Errorf("issues: %q is not a way an issue closed, want %q or %q", reason, ClosedNotPlanned, ClosedDuplicate)
+	}
+	return transitionSubmitted(ctx, b, number, gen, StatusDismissed, func(rec *sharedRecord) {
+		rec.Issue.ClosedAs = reason
+	})
+}
+
+// transitionSubmitted is the one transition out of `submitted` the resolver
+// makes, and the only way a filed record is rewritten (F5 amended, F18):
+// everything else about an issue filed on GitHub is final, and an issue that
+// is already where this caller is going is left exactly as it is — including
+// when another machine got there first, which is the same no-op and not a
+// record that "changed since it was read" for a caller that read it at an
+// older generation (so the target is checked before the caller's generation).
+func transitionSubmitted(ctx context.Context, b *blobx.Bucket, number int, gen int64, target Status, change func(*sharedRecord)) error {
+	if err := validateNumber(number); err != nil {
+		return err
+	}
+	for attempt := 0; attempt < sharedRetries; attempt++ {
+		rec, v, err := readShared(ctx, b, number)
+		if err != nil {
+			return err
+		}
+		if rec.Issue.Status == target {
+			return nil
+		}
+		if gen != 0 && v.gen != gen {
+			return fmt.Errorf("issues: shared issue %d changed since it was read", number)
+		}
+		if rec.Issue.Status != StatusSubmitted {
+			return fmt.Errorf("issues: shared issue %d is %q, and the resolver moves a filed issue", number, rec.Issue.Status)
+		}
+		rec.Issue.Status = target
+		change(&rec)
+		if err := rec.setRecord(); err != nil {
+			return err
+		}
+		raw, err := json.Marshal(rec)
+		if err != nil {
+			return fmt.Errorf("issues: %w", err)
+		}
+		if _, err := replaceRaw(ctx, b, recordKey(number), raw, v); errors.Is(err, blobx.ErrConflict) {
+			continue
+		} else if err != nil {
+			return fmt.Errorf("issues: writing shared issue %d: %w", number, err)
+		}
+		return nil
+	}
+	return fmt.Errorf("issues: shared issue %d kept changing; giving up", number)
+}
+
+// Reporters is who hit one issue: the reporter the record was filed by, then
+// the reporter of every occurrence, each name once, in the order the store
+// lists them — the record's own name first, then the hits oldest first (F10).
+//
+// The names are whatever the machines that wrote them put there, and every
+// launcher can rewrite them (F24): they are shared strings, for a caller to
+// print through safetext and never as an identity it acts on. An occurrence
+// the store could not hold or read is left out rather than failing the read,
+// the way the listing leaves one record alone.
+func Reporters(ctx context.Context, b *blobx.Bucket, number int) ([]string, error) {
+	rec, _, err := readShared(ctx, b, number)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	seen := make(map[string]bool)
+	add := func(name string) {
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	add(rec.Issue.Reporter)
+	iter := b.List(&blob.ListOptions{Prefix: occurrencePrefix(number)})
+	for {
+		obj, err := iter.Next(ctx)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("issues: listing the occurrences of issue %d: %w", number, err)
+		}
+		if obj.IsDir {
+			continue
+		}
+		raw, _, err := b.ReadMax(ctx, obj.Key, blobx.MaxReadBytes)
+		if err != nil {
+			continue
+		}
+		var occ Occurrence
+		if err := decodeStrict(raw, &occ); err != nil {
+			continue
+		}
+		add(occ.Reporter)
+	}
+	return out, nil
 }
 
 // AttachOccurrence records one more time an issue happened, under the issue's
