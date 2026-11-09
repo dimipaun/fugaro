@@ -1179,8 +1179,15 @@ func TestArtifactsGetRefusesANamedFetchOfADoublyRecordedName(t *testing.T) {
 	}
 	// A name the record really does not carry still gets the missing-name
 	// message, pointing at the listing.
-	if _, _, err := execute(t, "artifacts", "get", appSlug+"/"+id, "b.png"); err == nil || !strings.Contains(err.Error(), "recorded no artifact named") {
+	_, _, err = execute(t, "artifacts", "get", appSlug+"/"+id, "b.png")
+	if err == nil || !strings.Contains(err.Error(), "recorded no artifact named") {
 		t.Errorf("get of a name the record does not carry = %v, want the missing-name refusal", err)
+	}
+	// The listing it points at is given the full ID: this run's artifacts may
+	// have outlived the window an ending is looked up in (D1702), and a
+	// suggested command that refuses is not a way out.
+	if err != nil && !strings.Contains(err.Error(), "fugaro artifacts ls "+appSlug+"/"+id) {
+		t.Errorf("the refusal does not print the full ID its suggested listing takes: %v", err)
 	}
 }
 

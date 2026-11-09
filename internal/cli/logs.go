@@ -144,7 +144,7 @@ func locateLaunched(ctx context.Context, env *cloudEnv, ref string, o resolveRun
 		return nil, nil, "", err
 	}
 	if l == nil || l.Execution == "" {
-		return nil, nil, "", userErr("run %s was never launched (see fugaro run --retry, which takes its full ID)", task.ShortRun(slug+"/"+id))
+		return nil, nil, "", userErr("run %s was never launched (see fugaro run --retry %s, which takes its full ID)", task.ShortRun(slug+"/"+id), oneLine(slug+"/"+id))
 	}
 	return s, l, slug + "/" + id, nil
 }
