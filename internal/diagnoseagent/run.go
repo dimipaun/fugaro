@@ -126,8 +126,9 @@ func (s *syncWriter) do(f func()) {
 // Every rule is home-relative, which is what lets one list cover both
 // platforms: a store that sits somewhere else on Windows is named where it
 // sits there. That is %APPDATA% — ~/AppData/Roaming from the person's home —
-// for gh's hosts.yml, gcloud's configuration, rclone's, Terraform's plugin
-// directory and GnuPG's keyring; and the netrc curl and Python read on Windows
+// for Fugaro's own configuration (localcfg reads it from APPDATA there), gh's
+// hosts.yml, gcloud's configuration, rclone's, Terraform's plugin directory
+// and GnuPG's keyring; and the netrc curl and Python read on Windows
 // is `_netrc`, with no leading dot. A name that matches nothing on the
 // platform in hand (every directory under ~/AppData on a Linux or macOS
 // machine) closes nothing and costs nothing. The client's own state file is a
@@ -151,6 +152,7 @@ var childReadDeny = []string{
 	"~/.claude.json",
 	"~/.claude.json.backup",
 	"~/.config/fugaro/**",
+	"~/AppData/Roaming/fugaro/**",
 	"~/.config/gh/**",
 	"~/AppData/Roaming/GitHub CLI/**",
 	"~/.config/rclone/**",

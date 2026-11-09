@@ -17,19 +17,24 @@ import (
 // assert the command line runs a fake `claude`: the wrapper internal/testutil
 // gives the rest of this repository, which sources a script and records the
 // argv it was run with. What this file has to pin is the contract the child is
-// started under — one credential and no other, three tools and no fourth, two
-// readable folders and no third, and a cap — and the fake child
-// (runChildScript) acts on that contract out of its own argv rather than out
-// of the test: it reads its own --tools, runs a command only when the
-// allow-list covers it, and reads a file only under a root it was handed.
+// started under — one credential and no other, three tools and no fourth, and
+// a cap — and the fake child (runChildScript) acts on that contract out of its
+// own argv rather than out of the test: it reads its own --tools and runs a
+// command only when the allow-list covers it, and it reads its own --settings
+// payload and reads no file that payload names.
 //
-// The tools half is the installed client's own behaviour. The roots half is
-// this file's reading of the argv: what confines a real client to those roots
-// is the client, and no hermetic test reaches it, so what is pinned here is
-// that the argv names those roots and no others. Either way a mutation is
-// behavioural rather than structural — add Bash to the allow-list, or widen a
-// root, and the fake child *does the thing*: the sentinel appears, or the file
-// nobody may read is read.
+// There is one model of the client here, and it is run.go's: its file tools
+// are not confined to the working directory and the --add-dir folders, so the
+// deny payload is the whole of what closes a path (F16). Whether the pinned
+// client confines them is U2, still unverified, and the fake deliberately does
+// not model a confinement the argv does not ask for and run.go does not
+// promise: it refuses a read because the payload names it, and for no other
+// reason. What the argv does say about the two folders is pinned where it
+// belongs — the contract case counts the --add-dir values and
+// TestRunStartsTheChildInTheSourceTree pins the working directory. Either way
+// a mutation is behavioural rather than structural: add Bash to the allow-list,
+// or empty the deny payload, and the fake child *does the thing* — the sentinel
+// appears, or the file nobody may read is read.
 
 func TestMain(m *testing.M) {
 	cleanup, err := testutil.PrepareFakeCommands()
@@ -85,9 +90,10 @@ func runFolders(t *testing.T) (source, evidence string) {
 // mutation in run.go that widens the contract changes what the child *does*:
 //
 //   - it reads --tools and refuses a command the allow-list does not cover;
-//   - it reads its working directory and every --add-dir and refuses a read
-//     outside them, and it collapses the roots to "everything" when
-//     --dangerously-skip-permissions is present, which is what that flag means;
+//   - it reads its --settings payload and refuses a read the payload names,
+//     with the ~ of a rule expanded through its own HOME, and it refuses
+//     nothing at all when --dangerously-skip-permissions is present, which is
+//     what that flag means for a permission check of any kind;
 //   - it ends the way the client ends when a cap stopped the run.
 //
 // The prompt is a line-oriented script so that one child covers every case:
@@ -107,12 +113,12 @@ func runFolders(t *testing.T) (source, evidence string) {
 func runChildScript(record string) string {
 	return `
 prompt=$(cat)
-tools=""; add=""; bypass=""
+tools=""; settings=""; bypass=""
 prev=""
 for a in "$@"; do
   case "$prev" in
     --tools) tools="$a" ;;
-    --add-dir) add="$add $a" ;;
+    --settings) settings="$a" ;;
   esac
   case "$a" in --dangerously-skip-permissions) bypass=1 ;; esac
   prev="$a"
@@ -127,17 +133,26 @@ if [ -n "$cmd" ]; then
 fi
 want=$(printf '%s\n' "$prompt" | sed -n 's/^READ: //p' | head -1)
 if [ -n "$want" ]; then
-  allowed=0
-  [ "$bypass" = "1" ] && allowed=1
-  case "$want" in "$PWD"/*) allowed=1 ;; esac
-  for d in $add; do
-    d=${d%/}
-    case "$want" in "$d"/*) allowed=1 ;; esac
+  denied=0
+  rules=$(printf '%s' "$settings" | sed 's/.*"deny":\[//; s/\].*//' | tr ',' '\n' | sed -n 's/^"Read(\(.*\))"$/\1/p')
+  oldifs=$IFS
+  # The rules are patterns themselves, so the list must not be globbed on its
+  # way into the loop: an unquoted /proc/** would expand to that directory's
+  # own contents and the rule would never be seen.
+  set -f
+  IFS='
+'
+  for rule in $rules; do
+    case "$rule" in "~/"*) rule="$HOME/${rule#"~/"}" ;; esac
+    case "$want" in $rule) denied=1 ;; esac
   done
-  if [ "$allowed" = "1" ]; then
-    did="read:$(cat "$want" 2>/dev/null)"
+  IFS=$oldifs
+  set +f
+  [ "$bypass" = "1" ] && denied=0
+  if [ "$denied" = "1" ]; then
+    did="denied $want"
   else
-    did="refused $want"
+    did="read:$(cat "$want" 2>/dev/null)"
   fi
 fi
 printf 'tools=%s\ndid=%s\ncwd=%s\n' "$tools" "$did" "$(pwd -P)" > '` + record + `'
@@ -306,7 +321,8 @@ func TestRunArgsIsTheReadOnlyContract(t *testing.T) {
 	for _, path := range []string{
 		"~/.ssh/**", "~/.aws/**", "~/.config/gcloud/**", "~/AppData/Roaming/gcloud/**",
 		"~/.claude/**", "~/.claude.json", "~/.claude.json.backup",
-		"~/.config/fugaro/**", "~/.config/gh/**", "~/AppData/Roaming/GitHub CLI/**",
+		"~/.config/fugaro/**", "~/AppData/Roaming/fugaro/**",
+		"~/.config/gh/**", "~/AppData/Roaming/GitHub CLI/**",
 		"~/.config/rclone/**", "~/AppData/Roaming/rclone/**",
 		"~/.docker/**", "~/.terraform.d/**", "~/AppData/Roaming/terraform.d/**",
 		"~/.terraformrc", "~/terraform.rc",
@@ -491,39 +507,50 @@ func TestRunRefusesToStartWithoutTheTwoFolders(t *testing.T) {
 	}
 }
 
-// TestRunConfinesTheChildToTwoFolders: the log asks the agent to read a file
-// outside both folders, and the child refuses, because its working directory
-// and one --add-dir are the whole of what the argv makes readable. The file
-// outside is the evidence: a mutation that widens a root, or that adds
-// --dangerously-skip-permissions, makes the child read it and the value appear
-// in the child's own record.
+// TestRunDeniesTheReadsItsPayloadNames: the log asks the agent to read a file
+// its --settings payload names, and the child refuses it — the file is outside
+// both folders, so what stopped the read is the rule and not where the file
+// sits, which is the confinement run.go is written against (F16): the payload
+// is the line, and the two folders are the roots the argv names rather than a
+// boundary the client draws.
 //
-// The reading inside is the control, and it is what keeps this test from
-// passing on a child that refuses everything: the same request pointed at the
-// evidence folder is read, so a refusal means the root was refused and not
-// that the fake never reads.
-func TestRunConfinesTheChildToTwoFolders(t *testing.T) {
+// The control is the reading that no rule names, in the evidence folder: it is
+// read, so a denial above means the rule denied and not that the fake refuses
+// everything.
+//
+// Mutation (run and restored): empty childReadDeny -> the payload names
+// nothing, the child reads the file, and the value appears in its own record.
+// That is the case the structural pin cannot make: a payload that denies
+// nothing is still a well-formed --settings argument.
+func TestRunDeniesTheReadsItsPayloadNames(t *testing.T) {
 	s := newRunSetup(t)
-	outside := filepath.Join(t.TempDir(), "elsewhere.txt")
-	if err := os.WriteFile(outside, []byte(s.value), 0o600); err != nil {
+	// The home is this test's own, so the ~ of a rule expands inside the test
+	// and never to the machine's real profile.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	named := filepath.Join(home, ".config", "fugaro", "projects.yaml")
+	if err := os.MkdirAll(filepath.Dir(named), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	inside := filepath.Join(s.req.EvidenceDir, "log.txt")
-	if _, err := s.run(t, "READ: "+inside, answer(t, fence(s.nonce, "outcome: bug\nsignature: update config invalid\nbody"))); err != nil {
+	if err := os.WriteFile(named, []byte(s.value), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	block := answer(t, fence(s.nonce, "outcome: bug\nsignature: update config invalid\nbody"))
+	if _, err := s.run(t, "READ: "+filepath.Join(s.req.EvidenceDir, "log.txt"), block); err != nil {
 		t.Fatal(err)
 	}
 	if did := s.did(t); !strings.Contains(did, "read:a step failed") {
-		t.Errorf("the child could not read the evidence folder either, so a refusal outside it proves nothing: %q", did)
+		t.Errorf("the child could not read a file no rule names, so a denial below proves nothing: %q", did)
 	}
-	if _, err := s.run(t, "READ: "+outside, answer(t, fence(s.nonce, "outcome: bug\nsignature: update config invalid\nbody"))); err != nil {
+	if _, err := s.run(t, "READ: "+named, block); err != nil {
 		t.Fatal(err)
 	}
 	did := s.did(t)
-	if !strings.Contains(did, "refused "+outside) {
-		t.Errorf("the child did not refuse the outside read, so this case proves nothing: %q", did)
+	if !strings.Contains(did, "denied "+named) {
+		t.Errorf("the child read a file its payload names, so the payload confines nothing: %q", did)
 	}
 	if strings.Contains(did, s.value) {
-		t.Errorf("the child read a file outside the two folders: %q", did)
+		t.Errorf("the child read a file the payload names: %q", did)
 	}
 }
 
