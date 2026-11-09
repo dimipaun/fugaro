@@ -298,7 +298,7 @@ const SHELL = (body) => `<!DOCTYPE html><html lang="en"><head><title>t</title></
 /** The page's three forms, as the page writes them: a labelled field each. */
 const THREE_FORMS = FORMS.map(
   (one) =>
-    `<section id="${one.id}"><h2>${one.id}</h2><form id="${one.id}" method="post" action="${INTAKE}${one.route}">` +
+    `<section id="${one.id}"><h2>${one.id}</h2><form method="post" action="${INTAKE}${one.route}">` +
     `<label for="${one.id}-email">Email address</label><input id="${one.id}-email" name="email" type="email"></form></section>`,
 ).join('')
 

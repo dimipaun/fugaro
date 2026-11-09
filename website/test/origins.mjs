@@ -279,8 +279,9 @@ export function refuse(raw, context, facts) {
   if (context === 'form') {
     // The token is the origin and not the URL, so every path on the intake is a submission this
     // check admits: the route set is `keys.mjs`'s, which reads the page's three actions.
-    if (new URL(url).origin === intakeOrigin(facts)) return null
-    return `${host} is not the key service's intake: a form on this site posts to this site or to ${intakeOrigin(facts)}, the one service the site sends a request to (S3.3; the design's §7.2, D451)`
+    const intake = intakeOrigin(facts)
+    if (new URL(url).origin === intake) return null
+    return `${host} is not the key service's intake: a form on this site posts to this site or to ${intake}, the one service the site sends a request to (S3.3; the design's §7.2, D451)`
   }
   if (context === 'embed') {
     // Nothing a build emits frames another host. The campaign page's inline booking widget is
@@ -291,7 +292,7 @@ export function refuse(raw, context, facts) {
   }
   if (context === 'media' && facts.allowedHosts.has(host)) return null
   if (context !== 'media' && facts.allowedHosts.has(host)) {
-    return `${host} is on the allowed-host list as a link target, but a script, stylesheet, font, preload or form may only come from this site (D106: no CDN)`
+    return `${host} is on the allowed-host list as a link target, but a script, stylesheet, font or preload may only come from this site (D106: no CDN)`
   }
   return `${host} is not on the allowed-host list`
 }
@@ -683,9 +684,9 @@ export function gateFailures(js, rel, facts) {
 // visitor who declines loads nothing, so what the policy admits is what a consenting visitor
 // may reach, host by host, and nothing else. `frame-src` is the new directive: Calendly's
 // widget embeds the booking page in an iframe, and the host is the booking link's own — the
-// one `landing.yaml` writes — rather than the assets host its script comes from.
-// one `form-action` scope: `form-action` is the one directive the site sends something under,
-// and its second token is the key service's intake — the owner approved that widening for the
+// one `landing.yaml` writes — rather than the assets host its script comes from. And there is
+// one directive the site SENDS something under rather than loads: `form-action`, whose second
+// token is the key service's intake — the owner approved that widening for the
 // key request page (S3.3; the design's §7.2, D451 option (a): one directive, one exact host).
 // The token is derived from site.yaml's canonical URL, so it is the same origin the page's own
 // three form actions are built from and the same one `linkcheck.mjs` resolves them against.
