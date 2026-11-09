@@ -2216,25 +2216,28 @@ the six a fact rather than an intention:
   binary: the pinned `@electron/fuses` refuses that itself, both calls rejecting
   with "Could not find sentinel in the provided Electron binary", which
   `fuses.test.ts` asserts rather than assumes.)
-- **It refuses a platform this build is not packaged for** instead of skipping.
-  A build on Windows would produce no bundle to flip — no `Contents/MacOS` on
-  macOS, no bare executable in the pack directory on Linux — and a silently
-  skipped hook is the one outcome that ships the fuses unset. So `fuseTarget`
-  resolves the binary **per platform in one place**, from
+- **It refuses a platform nobody decided** instead of skipping. A build on one
+  would produce no binary to flip — no `Contents/MacOS` on macOS, no bare
+  executable in the pack directory on Linux, no `.exe` on Windows — and a
+  silently skipped hook is the one outcome that ships the fuses unset. So
+  `fuseTarget` resolves the binary **per platform in one place**, from
   `electronPlatformName`: darwin's
-  `<appOutDir>/<productName>.app/Contents/MacOS/<productName>`, and Linux's
+  `<appOutDir>/<productName>.app/Contents/MacOS/<productName>`, Linux's
   `<appOutDir>/<executableName>` (the name `build.linux.executableName` sets,
-  or the sanitized product name lowercased when it sets none), and it
-  **refuses anything that is not darwin or linux**, naming the platform and the
-  two it packages. `SUPPORTED_PLATFORMS` is the one list both this hook and
+  or the sanitized product name lowercased when it sets none), and Windows's
+  `<appOutDir>/<productFilename>.exe` (the packer's own extension for `win32`,
+  and the name electron-builder gives the app, so `Fugaro Console` **with the
+  space** and not the sanitized `fugaro-console`), and it **refuses anything
+  that is not darwin, linux or win32**, naming the platform and the three it
+  packages. `SUPPORTED_PLATFORMS` is the one list both this hook and
   `src/main/spawn.ts`'s location table are keyed on, so "which platforms does
   this build support" has one answer. **The fuse set does not vary by
-  platform**: the same six flips, byte for byte, on both executables — including
-  `EnableEmbeddedAsarIntegrityValidation`, which Electron enforces on macOS and
-  ignores on Linux, because a per-platform fuse table would be a second policy
-  to keep in step. The one macOS-shaped word in the hook is the
+  platform**: the same six flips, byte for byte, on all three executables —
+  including `EnableEmbeddedAsarIntegrityValidation`, which Electron enforces on
+  macOS and ignores on Linux, because a per-platform fuse table would be a
+  second policy to keep in step. The one macOS-shaped word in the hook is the
   `resetAdHocDarwinSignature` option, documented below as deliberately unset
-  for both platforms.
+  for all three platforms.
 - **It refuses a wire it has not accounted for.** After the flips, the hook
   compares the wire's length with the fuses `fuses.ts` decides about (six
   flipped, three left alone, none beyond the pin: nine) and stops the build if they
@@ -2432,7 +2435,7 @@ The two facts this rests on were **run, not assumed**, after `npm run build`:
 
 ```sh
 $ node -e "console.log(Object.keys(require('./dist/main/fuses.js')).join(','))"
-FLIPPED_FUSES,LEFT_ALONE_FUSES,BEYOND_PIN_FUSES,ACCOUNTED_FUSE_COUNT,SUPPORTED_PLATFORMS,fuseConfig,macExecutable,linuxExecutable,fuseTarget,afterPack
+FLIPPED_FUSES,LEFT_ALONE_FUSES,BEYOND_PIN_FUSES,ACCOUNTED_FUSE_COUNT,SUPPORTED_PLATFORMS,fuseConfig,macExecutable,linuxExecutable,win32Executable,fuseTarget,afterPack
 $ node -e "console.log(JSON.stringify(require('./dist/main/fuses.js').fuseConfig()))"
 {"0":false,"2":false,"3":false,"4":true,"5":true,"7":false,"version":"1"}
 ```
@@ -2443,7 +2446,7 @@ uses), the six flips arrive at their documented indices with nothing else set,
 and calling the hook for a darwin context reaches the real `flipFuses` rather
 than a stub: it failed inside the Electron framework lookup for a path that has
 no bundle, which is what a real flip attempt against a non-bundle path does.
-**`fuseTarget` and the two platform functions are exported for the same reason
+**`fuseTarget` and the three platform functions are exported for the same reason
 the table is**: the resolution is the rule, and a test that could not call it
 with an injected platform could only assert one platform's answer.
 
@@ -2561,9 +2564,10 @@ nobody should trust:
 | `EnableNodeCliInspectArguments` given the index of the fuse above it (a copy-paste) | four named tests, including "knows every fuse this build names, at the index this build names it at" and "accounts for every fuse this pin knows" |
 | a value the plist parser does not understand (`<integer>`, a nested dict, a root array) | the parser fixtures: each throws rather than reporting an empty set |
 | a wire with `RunAsNode` left enabled, or with a fuse "removed" rather than set | the two `afterPack` verification tests, whose failure messages name the fuse and the binary |
-| `electronPlatformName: 'win32'` handed to the hook | "refuses a platform this build does not package, rather than shipping an unflipped binary", naming the platform and the two it packages, and `flipFuses` is never called |
+| the `win32` row removed from `fuseTarget`, or `win32Executable` made to read the sanitized name instead of `productFilename` | two named tests: "names the Windows executable electron-builder produced, by its productFilename" and "flips the same six fuses into the Windows executable, with the same configuration" |
+| `electronPlatformName: 'freebsd'` handed to the hook, or the unknown-platform throw replaced with `return linuxExecutable(context)` | "refuses a platform nobody decided, rather than shipping an unflipped binary", naming the platform and the three it packages, and `flipFuses` is never called |
 | `macExecutable` returned for a linux context, or the linux branch made to read `productName` instead of `executableName` | "names the Linux executable electron-builder produced, by its executableName", "falls back to the packager's sanitized name when no executableName is configured" and "refuses a Linux context that names no binary, rather than guessing a path to flip" |
-| `SUPPORTED_PLATFORMS` cut back to `['darwin']`, or `PLATFORM_LOCATIONS`'s `linux` row deleted from `src/main/spawn.ts` | that half's own list test: "refuses a platform this build does not package…" in `fuses.test.ts`, and the location-table test in `spawn.test.ts` — each module asserts the platform list it is keyed on, so neither can lose a platform unnoticed |
+| `SUPPORTED_PLATFORMS` cut back to `['darwin']`, or `PLATFORM_LOCATIONS`'s `linux` row deleted from `src/main/spawn.ts` | that half's own list test: "refuses a platform nobody decided, rather than shipping an unflipped binary" in `fuses.test.ts`, and the location-table test in `spawn.test.ts` — each module asserts the platform list it is keyed on, so neither can lose a platform unnoticed |
 | any entry added to `build.files`, or `asar` turned off, or `afterPack` repointed, or `productName` renamed | the packaging-configuration tests in `fuses.test.ts`, one named test each |
 | `asarUnpack: ["**/*"]`, `extraResources`, `extraFiles` or a `mas` block added to `build`; `extraResources` added to `build.mac` | "has exactly the build keys this task decided…" / "has exactly the mac keys this task decided" |
 | `publish` deleted (absent rather than `null`) | "publishes nowhere: publish is null, not merely absent" and the exact-keys test |

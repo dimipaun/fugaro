@@ -1354,28 +1354,31 @@ POSIX repairs below worth doing. The e2e suite is not run here — it drives the
 console's real window under its real CSP and needs a display, which is the
 owner's manual checklist's job, not a runner's.
 
-**Read this before copying it in: it is red until three things in `console/` have
-landed, and they are not this directory's to do.**
+**Read this before copying it in: it is red until the last edit below has landed
+in `console/`, and they are not this directory's to do.**
 
-1. `console/package.json` has no `package:win` script and no `win` block, and
-   `console/src/main/fuses.ts`'s `SUPPORTED_PLATFORMS` is `['darwin','linux']`
-   with `fuseTarget` **throwing** for anything else. `afterPack` is the pack's
-   only fuse flipper, so `electron-builder --win` produces **no artifact at
-   all** today, and the pack step cannot succeed
-   ([docs/console-windows/reconciliation.md](../console-windows/reconciliation.md)
-   F35, and implementation-plan.md Part B).
-2. The unit suite has never run on Windows: `spawn.ts`'s `isExecutableFile`
-   reads `stat.mode & 0o111`, which Windows never sets, and the suite's stubs
-   are host executables (F4, F33) — so the test step is red on a Windows runner
-   until that is platform-aware, along with the `':'` split of the app's own
-   `PATH` (F5).
+1. **Landed** (2026-11-09): `console/package.json` has the `package:win` script
+   (`npm run build && electron-builder --win --publish never`), and
+   `console/src/main/fuses.ts`'s `SUPPORTED_PLATFORMS` is
+   `['darwin','linux','win32']` with a `win32Executable` row beside the other two
+   — so `afterPack`, the pack's only fuse flipper, no longer refuses the Windows
+   pack (implementation-plan.md Part B, T-B1 and T-B2;
+   [docs/console-windows/reconciliation.md](../console-windows/reconciliation.md)
+   F35). What has **not** landed with it is the `win` block that names the target,
+   the arch and the artifact name (T-B4), so the packer still inherits its
+   Windows target rather than one this repository decided.
+2. **Landed**: the unit suite's POSIX assumptions. `spawn.ts`'s
+   `isExecutableFile` takes the platform now (on `win32`, a regular file is
+   runnable), and `binDirectories` splits the app's own `PATH` on the **host's**
+   separator while `childPath` keeps the child's `':'` (F4, F5, F33; Parts A
+   and C).
 3. `console/package.json`'s `build.electronDownload.checksums` pins three zips —
    `darwin-arm64`, `darwin-x64`, `linux-x64` — and **no `win32-x64` one**, so the
    Electron step downloads its distribution against no pinned hash on this
    runner. That fourth hash is a supply-chain pin and an owner-reviewable edit
-   rather than a convenience (F37, Part B), and it lands with the other two.
+   rather than a convenience (F37, Part B T-B3).
 
-The order the plan gives is: **stage this file, land those three edits, then copy
+The order the plan gives is: **stage this file, land those edits, then copy
 it in.** Staging it now is the point of this directory — the file is reviewable
 while it is still a proposal, and the header's first paragraph says the same
 thing to whoever opens the file rather than this page.
