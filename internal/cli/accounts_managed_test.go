@@ -163,6 +163,12 @@ const (
 	// the gate admitted the declaration to.
 	accountsAddRefusalToken = "No token was stored for Claude account team-a: a session may write the declaration, and never the token.\n" +
 		"Run this in your own terminal, not in an agent session."
+	// accountsAddRefusalCredential is the grant --type would create: creating a
+	// credential is the owner's own step (D1628), and the declaration the gate
+	// does admit is the narrower step the session can take, so the second line
+	// is it.
+	accountsAddRefusalCredential = "This creates the credential credentials.team-a, and a managed project's owner is the one who creates credentials.\n" +
+		"Declare the account without --type, or run this in your own terminal."
 )
 
 // fakeOutputTerminal is the other half of fakeTerminal for the commands whose
@@ -382,6 +388,38 @@ func TestAccountsAddManagedRefusesClaudeInAnAgentSession(t *testing.T) {
 	}
 	if !slices.ContainsFunc(recs[0].Rules, func(rule string) bool { return strings.Contains(rule, "no plan is a token") }) {
 		t.Errorf("the refused record's rules (%v) do not name the rule that refused", recs[0].Rules)
+	}
+}
+
+// The credential entry: --type declares credentials.<name>, which is a pool's
+// member and a craft's access — a spending and data-egress grant, created at
+// the project/local layer at the owner's terminal (D1628, F12), never by a
+// session's plan gate. It is refused in a coding agent's session before
+// anything is written, in this command's own two lines, and the second line is
+// the narrower step the session can take: the account's own declaration is what
+// the gate admits. The control is the owner's own terminal
+// (TestAccountsAddManagedOwnerTerminalDeclaresTheCredential).
+func TestAccountsAddManagedRefusesACredentialInAnAgentSession(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+	before := readFileString(t, r.cfg)
+	t.Setenv(accountsAddAgent, "1")
+
+	out, _, err := executeStdin(t, "", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--type", "claude-oauth", "--yes")
+	if err == nil {
+		t.Fatalf("a coding agent's session declared a credential:\n%s", out)
+	}
+	if err.Error() != accountsAddRefusalCredential {
+		t.Errorf("the credential entry's refusal is:\n%q\nwant:\n%q", err.Error(), accountsAddRefusalCredential)
+	}
+	if after := readFileString(t, r.cfg); after != before {
+		t.Errorf("the file changed under a refused credential entry:\n%s", after)
+	}
+	recs := r.audits(t)
+	if len(recs) != 1 || recs[0].Verdict != managedmode.AuditRefused {
+		t.Fatalf("the refusal left %+v, want exactly one refused record", recs)
+	}
+	if !slices.ContainsFunc(recs[0].Rules, func(rule string) bool { return strings.Contains(rule, "credentials.team-a") }) {
+		t.Errorf("the refused record's rules (%v) do not name the entry that refused", recs[0].Rules)
 	}
 }
 
@@ -838,6 +876,42 @@ func TestAccountsAddManagedOwnerTerminalRunsTheClaudeLogin(t *testing.T) {
 		accountsAddOptions{claude: true}, "team-a", "standard", nil, nil, []byte("version: 1\n"))
 	if err == nil || err.Error() != accountsAddRefusalSession {
 		t.Fatalf("--claude in a coding agent's session was not refused in this command's own two lines: %v", err)
+	}
+	if recs := r.audits(t); len(recs) != 1 || recs[0].Verdict != managedmode.AuditRefused {
+		t.Errorf("the session's refusal left %+v, want exactly one refused record", recs)
+	}
+}
+
+// The credential entry's other door is the owner's own terminal: --type
+// declares credentials.<name>, which D1628/F12 keep at the project/local layer,
+// so the flag has to work for the owner at that terminal — the same boundary
+// --claude has, and the caller behind it prints its own sentence, writes on the
+// admission false and asks nothing. The control is the same call in a coding
+// agent's session (TestAccountsAddManagedRefusesACredentialInAnAgentSession).
+func TestAccountsAddManagedOwnerTerminalDeclaresTheCredential(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+	lc := r.addLocal(t)
+	ownerAtTheTerminal(t)
+
+	m, gate, err := accountsAddGate(t.Context(), gateCmd(), lc,
+		accountsAddOptions{typ: "claude-oauth"}, "team-a", "standard", nil, []string{"owner/repo-a"}, []byte("version: 1\n"))
+	if err != nil {
+		t.Fatalf("--type at the owner's own terminal was refused: %v", err)
+	}
+	if want := (initflow.Managed{Managed: true}); m != want {
+		t.Errorf("--type at the owner's own terminal was answered %+v, want %+v: the project IS managed, and creating a credential is the owner's own step, so the admission stays false", m, want)
+	}
+	if err := gate.recorded(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if recs := r.audits(t); len(recs) != 0 {
+		t.Errorf("--type at the owner's own terminal filed %+v", recs)
+	}
+	t.Setenv(accountsAddAgent, "1")
+	_, _, err = accountsAddGate(t.Context(), gateCmd(), lc,
+		accountsAddOptions{typ: "claude-oauth"}, "team-a", "standard", nil, nil, []byte("version: 1\n"))
+	if err == nil || err.Error() != accountsAddRefusalCredential {
+		t.Fatalf("--type in a coding agent's session was not refused in this command's own two lines: %v", err)
 	}
 	if recs := r.audits(t); len(recs) != 1 || recs[0].Verdict != managedmode.AuditRefused {
 		t.Errorf("the session's refusal left %+v, want exactly one refused record", recs)
