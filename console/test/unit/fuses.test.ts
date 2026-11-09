@@ -847,18 +847,24 @@ describe('the packaging configuration the fuses belong to', () => {
 
   it('verifies every Electron archive it downloads against the pinned Electron’s own checksums', () => {
     // A universal build downloads the darwin arm64 and x64 Electron archives at
-    // pack time, the Linux leg downloads `electron-v<version>-linux-x64.zip` on
-    // the ubuntu runner, and the Windows leg `electron-v<version>-win32-x64.zip`
-    // on the windows runner. Without inline checksums electron-builder verifies
+    // pack time, and the Linux leg downloads `electron-v<version>-linux-x64.zip`
+    // on the ubuntu runner. Without inline checksums electron-builder verifies
     // them against a SHASUMS256.txt fetched from the same release host; with
     // these, against hashes in this repository, which must equal the ones the
     // lockfile-pinned `electron` package carries in its `checksums.json`
     // (present after `npm ci --ignore-scripts`: it is in the tarball).
     //
+    // `electron-v<version>-win32-x64.zip` is pinned **ahead of the leg that will
+    // download it**: `build.win` and `package:win` do not exist yet
+    // (docs/console-windows/implementation-plan.md T-B1 and T-B4), so nothing
+    // fetches it today. The pin lands with the archive it names rather than with
+    // the runner that needs it, so a Windows pack cannot be the first thing to
+    // need the hash.
+    //
     // The list is pinned exactly, so a build that started downloading an archive
     // nobody pinned -- a third arch, a different version -- fails here rather
     // than trusting a hash fetched over the network at pack time. `linux-arm64`
-    // is deliberately not in it: every leg this build packages is x64.
+    // is deliberately not in it: this build produces x64 Linux only.
     const version = manifest.devDependencies.electron
     const checksums = build.electronDownload?.checksums ?? {}
     expect(Object.keys(build.electronDownload ?? {})).toEqual(['checksums'])

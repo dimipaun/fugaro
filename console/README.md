@@ -4703,7 +4703,7 @@ create or edit anything under `.github/workflows/`:
 
 - **`console-linux.yml`** — one job, `console-linux`, on `ubuntu-latest`:
   `contents: read`, **no environment and no secret**, the pinned toolchain,
-  Electron's own download verified against the three checksums `package.json`
+  Electron's own download verified against the checksums `package.json`
   pins, `npm run build`, `npm run package:linux`, an assertion that exactly one
   `.AppImage` and one `.deb` came out, and `upload-artifact`. It runs on every
   pull request and every push to `main`, with no path filter.
