@@ -20,30 +20,32 @@
 # match the applied ones.)
 #
 # DO NOT COPY THIS IN YET. Read this paragraph first, because it is not a
-# formality: **this job is red until three things in console/ have landed**, and a
-# red pack is worse than no pack, because it arrives at release time.
+# formality: **this job is red until the last edit below has landed in console/**,
+# and a red pack is worse than no pack, because it arrives at release time.
 #
-#   1. `console/package.json` has no `package:win` script and no `win` block,
-#      and `console/src/main/fuses.ts`'s `SUPPORTED_PLATFORMS` is
-#      `['darwin','linux']` with `fuseTarget` **throwing** for anything else.
-#      `afterPack` is the pack's only fuse flipper, so `electron-builder --win`
-#      produces **no artifact at all** today, and the pack step below cannot
-#      succeed. (docs/console-windows/implementation-plan.md Part B, findings
-#      F35 and F36.)
-#   2. The unit suite has never run on Windows. `spawn.ts`'s `isExecutableFile`
-#      reads `stat.mode & 0o111`, which Windows never sets, and the suite's
-#      stubs are host executables -- so the test step below is red on a Windows
-#      runner until that is platform-aware, along with the `':'` split of the
-#      app's own `PATH`. (Parts A and C.)
+#   1. **Landed** (2026-11-09): `console/package.json` has the `package:win`
+#      script (`npm run build && electron-builder --win --publish never`), and
+#      `console/src/main/fuses.ts`'s `SUPPORTED_PLATFORMS` is
+#      `['darwin','linux','win32']` with a `win32Executable` row beside the other
+#      two -- so `afterPack`, the pack's only fuse flipper, no longer refuses the
+#      Windows pack. What has **not** landed with it is the `win` block that
+#      names the target, the arch and the artifact name (implementation-plan.md
+#      T-B4), so the packer still inherits its Windows target rather than one
+#      this repository decided. (Part B, T-B1, T-B2 and F36.)
+#   2. **Landed**: the unit suite's POSIX assumptions. `spawn.ts`'s
+#      `isExecutableFile` takes the platform now (on `win32`, a regular file is
+#      runnable), and `binDirectories` splits the app's own `PATH` on the
+#      **host's** separator while `childPath` keeps the child's `':'`. (Parts A
+#      and C.)
 #   3. `console/package.json`'s `build.electronDownload.checksums` pins three
 #      zips -- darwin-arm64, darwin-x64, linux-x64 -- and no `win32-x64` one, so
 #      the Electron step below downloads its distribution against **no pinned
 #      hash** on this runner. Adding the fourth is a supply-chain pin and
-#      therefore an owner-reviewable edit rather than a convenience, and it
-#      lands with the other two. (Part B, finding F37.)
+#      therefore an owner-reviewable edit rather than a convenience. (Part B,
+#      T-B3, finding F37.)
 #
-# The order the plan gives is: stage this file, land those three edits, then copy
-# it in. Staging it now is the point of the staging directory -- the file is
+# The order the plan gives is: stage this file, land those edits, then copy it
+# in. Staging it now is the point of the staging directory -- the file is
 # reviewable while it is still a proposal.
 #
 # WHEN THIS RUNS, AND WHY THAT IS THE OWNER'S RULING RATHER THAN A CHOICE HERE

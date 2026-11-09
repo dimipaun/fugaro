@@ -32,7 +32,8 @@ type KillGetter interface {
 }
 
 // ReadKills reads the two switches a run of slug honours: the global one and
-// the repository's, exactly the pair checkKills reads for a running run.
+// the repository's, exactly the pair checkKills reads for a running run. A
+// caller with no repository in hand reads ReadGlobalKill instead.
 //
 // It is exported for the credentials service (C1.11), whose stop flag is this
 // pair — the owner's answer of 2026-10-19 is that an operator stops the
@@ -56,6 +57,34 @@ func ReadKills(ctx context.Context, db KillGetter, slug string) (Kills, error) {
 	}
 	if fr {
 		k.Repo = &kr.Kill
+	}
+	return k, nil
+}
+
+// ReadGlobalKill reads the global switch alone, for the caller that has no
+// repository in hand: the credentials service's person-facing routes — the two
+// git reads and the read mint — name a person and no repository, and they are
+// stopped by the global switch only (docs/bitbucket-credentials/
+// reconciliation.md §4, F34: "The read mint has no slug, so it is stopped by
+// the global switch only").
+//
+// It is not ReadKills with an empty slug, and it must not become that.
+// ReadKills builds the repository's path out of the slug and PathKillRepo
+// panics on an empty one, because an empty segment would collapse the path onto
+// another node; that panic is the right answer for a caller that has a
+// repository and lost its slug, because the alternative is a stop read that
+// answers "is this repository stopped" by ignoring the repository's switch. So
+// the caller that means the global switch alone says so by name, here, and the
+// two readers stay two.
+func ReadGlobalKill(ctx context.Context, db KillGetter) (Kills, error) {
+	var kg killNode
+	fg, err := db.Get(ctx, PathKillGlobal, &kg)
+	if err != nil {
+		return Kills{}, err
+	}
+	var k Kills
+	if fg {
+		k.Global = &kg.Kill
 	}
 	return k, nil
 }

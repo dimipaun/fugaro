@@ -130,10 +130,17 @@ carries.`,
 // the file is touched, and what lets the sentence this run prints name the
 // secret's ID.
 type accountsRmPlan struct {
-	name     string
-	profile  string
-	entry    bool // the profile's list loses the name
-	drop     bool // the declaration, its secret and its job go too
+	name    string
+	profile string
+	entry   bool // the profile's list loses the name
+	drop    bool // the declaration, its secret and its job go too
+	// typed is the account's own entry in the credentials block: the one
+	// `accounts add --type claude-oauth` declares beside the account, which is
+	// what lets a craft or a pool spend the name. It goes with the account —
+	// an entry left behind is a credential no service holds that a pool of
+	// this very file is still allowed to list, which is the state add's own
+	// --type refusal exists to keep out of the file (accounts_add.go).
+	typed    bool
 	allow    []string
 	secretID string
 	rest     []string // the profiles that still list the account after the edit
@@ -269,6 +276,7 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 		name:     name,
 		profile:  want,
 		entry:    want != "",
+		typed:    accountsRmTyped(lc, name),
 		allow:    slices.Clone(lc.ClaudeAccounts[name].AllowDataTo),
 		secretID: gcp.ProjectSecretID(lc.Name, config.ClaudeAccountSecret(name)),
 	}
@@ -296,6 +304,21 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 		}
 		next = n
 	}
+	// The typed half goes with the declaration, on the same bytes: the entry the
+	// account was declared as is the account's, and a name left in the
+	// credentials block by this removal is a credential whose secret and job are
+	// gone that a pool would still be admitted to list.
+	if plan.drop && plan.typed {
+		if err := accountsRmTypedNamed(lc, name); err != nil {
+			return accountsRmPlan{}, nil, nil, err
+		}
+		n, err := yamledit.RemoveSeqItemByKeyWithOptions(next, []string{"credentials"}, "name", name,
+			yamledit.RemoveOptions{DropEmptyParents: true})
+		if err != nil {
+			return accountsRmPlan{}, nil, nil, userErr("credentials.%s: %v", pluginwire.Printable(name), err)
+		}
+		next = n
+	}
 	// The edit is read back strictly before it is written, as add's is: a file
 	// this Fugaro cannot load is a file the owner's very next command refuses,
 	// and this command is the one that can leave one — a declaration removed
@@ -305,6 +328,46 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 		return accountsRmPlan{}, nil, nil, userErr("the local config this would write does not read back: %v", err)
 	}
 	return plan, next, after, nil
+}
+
+// accountsRmTyped is whether this account carries a typed half: the entry in
+// the credentials block that names it as the credential a craft or a pool may
+// spend. Only the type this pair's own token step serves is one `accounts add
+// --type` wrote, so an entry of another type is a declaration this command did
+// not make and is left where it is.
+func accountsRmTyped(lc *localcfg.Config, name string) bool {
+	for _, c := range lc.Credentials {
+		if c.Name == name && c.Type == config.CredentialTypeClaudeOAuth {
+			return true
+		}
+	}
+	return false
+}
+
+// accountsRmTypedNamed refuses an account whose typed entry is still named: the
+// entry goes with the account, and a craft's access or a pool's members left
+// pointing at a credential no run can serve is the state the --type guard in
+// `accounts add` exists to keep out of the file. It is the refusal
+// `accounts pool rm` makes for a pool a craft names, at the other end of the
+// same name.
+func accountsRmTypedNamed(lc *localcfg.Config, name string) error {
+	var named []string
+	for _, craft := range config.CraftNames {
+		if lc.Crafts.Of(craft).Access == name {
+			named = append(named, "crafts."+craft+".access")
+		}
+	}
+	for _, p := range lc.Pools {
+		if slices.Contains(p.Members, name) {
+			named = append(named, "pools."+pluginwire.Printable(p.Name)+".members")
+		}
+	}
+	if len(named) == 0 {
+		return nil
+	}
+	where := strings.Join(named, " and ")
+	return userErr("credentials.%s is still named by %s, so removing the account would leave it with nothing to spend: point it at another credential or pool first, then run this again; nothing was written",
+		pluginwire.Printable(name), where)
 }
 
 // accountsRmServing is the profiles that list the account, in the order every
@@ -843,6 +906,10 @@ func accountsRmWhat(plan accountsRmPlan) string {
 	}
 	parts = append(parts, fmt.Sprintf("remove claude_accounts.%s (its allow_data_to was [%s])",
 		pluginwire.Printable(plan.name), strings.Join(plan.allow, ", ")))
+	if plan.typed {
+		parts = append(parts, fmt.Sprintf("remove credentials.%s (the typed entry the account was declared with)",
+			pluginwire.Printable(plan.name)))
+	}
 	parts = append(parts,
 		fmt.Sprintf("delete the secret %s (Secret Manager's own delete, which cannot be undone here)", plan.secretID),
 		fmt.Sprintf("deleting the secret does not revoke the token at the provider: %s's token stays valid until it expires or you revoke it in Anthropic's own console, which no command here reaches",
@@ -1016,7 +1083,11 @@ func accountsRmReport(cmd *cobra.Command, lc *localcfg.Config, stages map[string
 		row("profile", plan.profile, "profiles."+pluginwire.Printable(plan.profile)+".claude_accounts -= "+pluginwire.Printable(plan.name))
 	}
 	if plan.drop {
-		row("account", plan.name, "claude_accounts."+pluginwire.Printable(plan.name)+" removed, its allow_data_to was ["+strings.Join(plan.allow, ", ")+"]")
+		gone := "claude_accounts." + pluginwire.Printable(plan.name) + " removed, its allow_data_to was [" + strings.Join(plan.allow, ", ") + "]"
+		if plan.typed {
+			gone += ", and credentials." + pluginwire.Printable(plan.name) + " with it"
+		}
+		row("account", plan.name, gone)
 		// The account's name is the value column and the secret's ID opens the
 		// rest, as add's report has it: the ID is longer than that column, so
 		// naming it there would run into the sentence that says what happened to

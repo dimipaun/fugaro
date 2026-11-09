@@ -35,8 +35,15 @@ import (
 type accountsAddOptions struct {
 	repos   string
 	profile string
-	claude  bool
-	yes     bool
+	// typ is --type: the credential type this command declares the name AS.
+	// Left out, the name is declared in claude_accounts alone, which is what
+	// this command has always written; given, the credentials entry is written
+	// beside it, which is what makes the name a typed credential a pool may
+	// list as a member (config.ValidatePools: a member names a credential of
+	// the document that defines the pool, or the built-in vertex).
+	typ    string
+	claude bool
+	yes    bool
 	// ask is --ask (the owner's rule of 2026-11-04, and --yes's symmetric
 	// half): in a project whose marks say it is managed the declaration and
 	// the converge below are written on the gate's verdict with no prompt, and
@@ -64,6 +71,15 @@ every repository on it: an account that covers less is refused before the file
 is touched, naming the repositories it is missing, because widening the account
 silently is what that rule exists to prevent.
 
+--type declares the name as a typed credential as well, in this prefix's
+credentials block: the entry that lets a pool list the name as a member
+(fugaro accounts pool add). claude-oauth is the type this command's token step
+serves. vertex is built in and is never defined, and the two types the spec
+lists as future work are refused in words that say so. A type whose key no
+command stores yet is refused too: the entry would name a credential no run
+could authenticate with. Without the flag nothing but claude_accounts and the
+profile is written, which is what this command has always done.
+
 Then it converges, in one command and behind the one sentence it prints: the
 token is stored project-wide as a new version of the account's own secret, the
 account's broken mark is cleared, and the publisher, the job set and this
@@ -81,11 +97,11 @@ leaves you the prompt.
 
 Run it at your own terminal. This file decides where a credential may be sent
 and this command then stores the token itself, so in a project whose marks say
-it is managed it asks YOU and nobody else: it prints the repositories the token
-may be used by, says that a job on those repositories can read it, and asks you
-to type the project's own name to confirm. A flag never answers that — --yes
-included — and a pipe, a run with no terminal and a coding agent's session are
-refused before a byte is written.
+it is managed the token is written for YOU and nobody else: before the token
+prompt it prints the repositories the token may be used by and says that a job
+on those repositories can read it. Nothing is asked — the terminal is what makes
+a run yours, and --yes does not stand in for one — so a pipe and a run with no
+terminal are refused before a byte is written.
 
 A coding agent's session may still declare a bounded account: the repositories
 it names are the only ones the token may be used by, and none of them is beyond
@@ -100,7 +116,8 @@ step no plan admits.`,
 	f.StringVar(&o.repos, "repos", "", "the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin)")
 	f.StringVar(&o.profile, "profile", "", "the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one)")
 	f.BoolVar(&o.claude, "claude", false, "run Anthropic's own claude setup-token login on this terminal first, then paste the token at the hidden prompt")
-	f.BoolVar(&o.yes, "yes", false, "confirm the run without a prompt: it answers the converge's own questions and never the confirmation a managed project asks its owner")
+	f.StringVar(&o.typ, "type", "", "declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth, the one type this command's token step serves (without it, the name is declared in claude_accounts alone, as it always was)")
+	f.BoolVar(&o.yes, "yes", false, "confirm the run without a prompt: it answers the converge's own questions and never makes a run the owner at their own terminal on a managed project")
 	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this declaration would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed; refused beside --yes")
 	return cmd
 }
@@ -121,10 +138,45 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	if ps := config.ValidateClaudeAccounts(map[string]config.ClaudeAccount{name: {}}); len(ps) > 0 {
 		return userErr("%s", ps[0].Message)
 	}
+	// --type is a DEFINITION's type, so the block's own rule judges it
+	// (config.ValidateCredentials): the sentence for a type that does not ship,
+	// for the built-in vertex and for an empty or unknown type is the one the
+	// loader prints for the same entry in the file, so the two cannot part
+	// company.
+	if o.typ != "" {
+		if ps := config.ValidateCredentials([]config.Credential{{Name: name, Type: o.typ}}); len(ps) > 0 {
+			return userErr("%s", ps[0].Message)
+		}
+		// Only the Claude OAuth type has a secret this command can store, and a
+		// credential entry is inert config: nothing would be written that
+		// authenticates, and a pool naming the name would be admitted at load
+		// (config.ValidatePools sees the entry) and fail at a run. So a type
+		// whose key has no command yet is refused here, before the file is
+		// read, rather than half-declared.
+		if o.typ != config.CredentialTypeClaudeOAuth {
+			return userErr("--type %s: a credential of this type authenticates with a key, and no command stores one under a credential's own name yet — this command's secret step is the Claude OAuth token's, and a %s entry written without one would be a name no run could authenticate with and a pool would still be allowed to list; declare it when that path ships (today a key is the project's, and fugaro secrets set stores it there); nothing was written",
+				pluginwire.Printable(o.typ), pluginwire.Printable(o.typ))
+		}
+	}
 
 	sel, lc, err := settingsSelection()
 	if err != nil {
 		return err
+	}
+	// --type DECLARES an entry; it never retypes one. A name the config already
+	// defines with another type is the owner's own definition — what this
+	// command adds beside it is the account, and the entry is not its to
+	// rewrite. Retyping through this command is not one edit either: every pool
+	// that lists the name would be served on the other tier (for claude-oauth,
+	// into the subscription switch of D1622), the sentence above would read as
+	// a plain declaration, and `accounts rm` would afterwards read the entry as
+	// the account's own (accountsRmTyped) and remove a definition this command
+	// never wrote. The owner retypes it in the file, where a type is a decision.
+	if o.typ != "" {
+		if cur := accountsAddCredentialType(lc, name); cur != "" && cur != o.typ {
+			return userErr("credentials.%s is already defined as %s; nothing was written — this command declares a credential, and retyping one here would serve every pool that lists the name on the new type; change its type in the file",
+				pluginwire.Printable(name), pluginwire.Printable(cur))
+		}
 	}
 	repos, err := accountsAddRepos(cmd.Context(), o.repos, name)
 	if err != nil {
@@ -152,6 +204,16 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 			return userErr("profiles.%s.claude_accounts: %v", profile, err)
 		}
 	}
+	// The typed entry, on the same bytes: the name becomes a credential a
+	// pool's members may list (D1621, D1631). It is written only when --type
+	// was given, so a run of this command without the flag leaves the file
+	// byte-identical to what it has always written.
+	if o.typ != "" {
+		if next, err = yamledit.UpsertSeqItemByKey(next, []string{"credentials"}, "name", name,
+			map[string]string{"type": o.typ}); err != nil {
+			return userErr("credentials.%s: %v", pluginwire.Printable(name), err)
+		}
+	}
 	// Read the edit back strictly before it is written: a file this Fugaro
 	// cannot read is a file the next command of the owner's would refuse, and
 	// the refusal belongs here, with nothing written.
@@ -167,8 +229,8 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// token written for it replaces the one in use, and the sentence says so. It is read from the config as it was, before the edit above.
 	_, rotation := lc.ClaudeAccounts[name]
 	beyond := accountsAddBeyond(cmd.Context(), repos)
-	what := accountsAddWhat(after, name, profile, beyond, rotation)
-	command := accountsAddCommand(name, repos, profile, o.claude)
+	what := accountsAddWhat(after, name, profile, beyond, rotation, o.typ)
+	command := accountsAddCommand(name, repos, profile, o.claude, o.typ)
 	changed := yamledit.Changed(old, next)
 
 	// The managed gate, before anything is screened or written
@@ -311,6 +373,19 @@ func accountsAddRepos(ctx context.Context, flag, name string) ([]string, error) 
 		return nil, userErr("--repos: name at least one repository, as owner/name")
 	}
 	return out, nil
+}
+
+// accountsAddCredentialType is the type this config's credentials block defines
+// under the name, or "" when the name is not a credential in it. It is read
+// from the config as it is, before the edit: what the command may write is
+// decided by what is already there.
+func accountsAddCredentialType(lc *localcfg.Config, name string) string {
+	for _, c := range lc.Credentials {
+		if c.Name == name {
+			return c.Type
+		}
+	}
+	return ""
 }
 
 // accountsAddProfile is the profile whose claude_accounts gains the name: the
@@ -472,9 +547,14 @@ func accountsAddBeyond(ctx context.Context, repos []string) []string {
 // the derivation's — the account's repositories qualified with the provider of
 // the profile that serves it — so what the node will carry is stated, not
 // guessed.
-func accountsAddWhat(lc *localcfg.Config, name, profile string, beyond []string, rotation bool) string {
+func accountsAddWhat(lc *localcfg.Config, name, profile string, beyond []string, rotation bool, typ string) string {
 	allow := lc.ClaudeAccounts[name].AllowDataTo
 	what := fmt.Sprintf("declare claude_accounts.%s.allow_data_to = [%s]", pluginwire.Printable(name), strings.Join(allow, ", "))
+	if typ != "" {
+		// The typed entry is named first because it is what the name becomes:
+		// the credential a pool may list (D1621, D1631).
+		what = fmt.Sprintf("declare credentials.%s.type = %s; %s", pluginwire.Printable(name), pluginwire.Printable(typ), what)
+	}
 	if rotation {
 		what += " (a rotation: the account already exists, and the token written for it replaces the one in use)"
 	}
@@ -518,8 +598,11 @@ func accountsAddPublishedRepos(lc *localcfg.Config, name string) ([]string, bool
 // the run that was refused asked for it: the login is half of what that run
 // would have done, and a command without the flag would send the person to a
 // different one.
-func accountsAddCommand(name string, repos []string, profile string, claude bool) string {
+func accountsAddCommand(name string, repos []string, profile string, claude bool, typ string) string {
 	parts := []string{"fugaro", "accounts", "add", quoteWord(name), "--repos", quoteWord(strings.Join(repos, ","))}
+	if typ != "" {
+		parts = append(parts, "--type", quoteWord(typ))
+	}
 	if claude {
 		parts = append(parts, "--claude")
 	}

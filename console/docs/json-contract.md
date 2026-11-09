@@ -107,8 +107,10 @@ The columns below say which field needs which state. The recurring shapes:
 
 Emitted **compact, one object per line** (`json.NewEncoder(d.Out).Encode(...)`,
 `WatchDeps.emit`, `internal/cli/watch.go`), which is what makes the feed
-line-delimited JSON — one of exactly two line-delimited documents the console
-reads, the other being `logs RUN --json` (§6.2, §9).
+line-delimited JSON — one of the three line-delimited documents the console
+reads, the others being `logs RUN --json` (§6.2) and the graph's own live feed
+(§6.22 — CG9b's row, the one that puts that document in the console's set;
+§9.2).
 
 ### `JSONDoc` (`internal/watch/json.go`)
 
@@ -830,8 +832,8 @@ they cannot be combined**: `runLogs` refuses `--url` with `--json` or
 - `logs RUN --json` prints **one compact `logLine` object per line** — not an
   indented document: `printLogEntry` marshals each entry with
   `json.Marshal` and writes it with a trailing newline, the same one-object-
-  per-line shape as the `watch` feed, and the other of the two line-delimited
-  documents the console reads. `logLine`: `time` (RFC 3339),
+  per-line shape as the `watch` feed, and one of the three line-delimited
+  documents the console reads (§6.22's live feed is the third). `logLine`: `time` (RFC 3339),
   `severity`, `stage`°, `stream`°, `event`°, `message` (no `omitempty` on
   time/severity/message). Every field is **redacted** (`redactEntry`,
   `redactEntry`), and `message` is job-written text: the display layer
@@ -858,7 +860,7 @@ future v1.1 button would consume. `cancelResult`:
 (§6.2) rather than the indented one every command in the console's set emits:
 `printCancel` marshals the struct with `json.Marshal` and
 writes it with a trailing newline. A v1.1 button that parsed it as an indented
-document would read nothing; `cancel` is one of the three commands this file
+document would read nothing; `cancel` is one of the four commands this file
 describes that are line-delimited, and the only one outside the console's set
 (§9.2).
 
@@ -1306,6 +1308,7 @@ The document:
 | `edges` | array | never | never | the dependencies; `[]` is a plan with no dependencies yet |
 | `decoupling` | array | **yes** | never | one entry per edge the contract-first decoupling pass broke, below. A **schema-3** field, absent when the planner broke nothing — so a v1 or v2 artifact, and a v3 one whose plan kept every edge, prints no such key. Every entry is checked against the graph: the contract is a `contract` node, the integration is an `integration` node that depends on both endpoints of the edge the entry records, and that edge is **not** still in `edges` |
 | `contract_changes` | array | **yes** | never | the change requests raised against contracts that have already merged, below. A **schema-3** field, absent when there are none |
+| `gain` | object | **yes** | never | what the decoupling pass bought, below. **Computed by the read and never written by a planner**: it is the before graph rebuilt from the recorded `was` edges, the sizes and the node kinds, measured by the CLI, so a planner that writes the key is **refused** as an unknown field. Absent from a v1 or v2 artifact and from a v3 one that broke no edge — a gain of zero would be noise where no pass ran |
 | `levels` | number | never | never | how many levels the plan has — the longest chain of dependencies plus one; `0` for a plan with no tasks |
 | `critical_path` | object | never | never | the longest chain of tasks in the plan, below |
 | `bottleneck` | string | never | **yes** | the task the critical path runs through; null only when the plan has no tasks |
@@ -1328,6 +1331,7 @@ one entry of `nodes`:
 | `blocked` | bool | never | never | the task is not done and at least one task it needs is not done |
 | `critical_path_length` | number | never | never | the longest chain of tasks *starting* at this one, counting it: `1` for a task nothing waits on |
 | `downstream` | number | never | never | how many tasks wait on this one, directly or through others; the raw count D26 keeps as the cheap fallback beside the critical path |
+| `stubs_present` | array of strings | **yes** | never | the contract's own `stubs` that still exist under the checkout the graph was read in, in the contract's own order: the whole files the integration task has not deleted yet (D1815). **Computed by the read**, set on a `contract` node that names stubs and on no other, and **absent when none of them remains** — an absent key beside a non-empty `stubs` is "none remain", not "the CLI did not say" |
 
 **A task is done, ready or blocked — exactly one of the three, always.** The
 three are fields rather than a rule a screen applies, so two screens colour one
@@ -1381,6 +1385,28 @@ one entry of `contract_changes` (schema 3):
 | `raised_by` | string | never | never | the id of the node that found the change |
 | `reason` | string | never | never | what has to change and why; an entry with no reason is refused |
 | `affects` | array of strings | never | never | the ids of the tasks the change reaches, each a node of this graph. An entry that reaches none is emitted as `[]` and never as a null, so a null here is a document no reader has to allow for (§1) |
+
+the `gain` object (computed; the read's, not the artifact's):
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `broken` | number | never | never | how many edges the pass broke: the edges the `decoupling` record names, **each pair once** — a record naming one edge twice broke one edge |
+| `kept` | number | never | never | how many dependencies the pass left alone: the edges of this graph that join two tasks, neither of them a `contract`, an `integration` or a `contract_change` node, and each pair once. An edge onto one of the pass's own nodes is its scaffolding rather than a dependency the plan had before it, so it is in neither figure — `broken` and `kept` are the two halves of what the pass decided |
+| `added_tasks` | number | never | never | how many tasks the pass added: every `contract`, `integration` and `contract_change` node of this graph. The figure the added spend is stated in (D1820), and the difference between the two plans' task counts |
+| `before` | object | never | never | the plan as it stood before the pass, below |
+| `after` | object | never | never | the plan as this document states it, below |
+| `improves` | bool | never | never | whether the break paid: `after.weight` is **below** `before.weight`. The **weighted** path and not the task count — breaking one edge adds two tasks, so counting tasks reports a loss for the simplest break (F5), and a plan whose break lengthens the weighted path says so here instead of reporting a gain nobody got |
+
+the `before` and the `after` object (**one shape, the plan's critical path measured both ways**):
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `tasks` | number | never | never | the longest chain of dependencies, **in tasks**: the same figure as `critical_path.length`, which `after` equals and `before` answers for the plan that stood before the pass |
+| `weight` | number | never | never | the plan's **heaviest** chain of dependencies, weighed: every task on it counted as its `size`, a task carrying none counting as `1`. The two figures are measured **independently**, so they need not be the same chain: a plan whose longest chain runs through small tasks can have a shorter, heavier one beside it, and one `before` or `after` object can therefore describe two chains. Reporting both is the point |
+
+**The before graph is rebuilt, and it is the only one the document admits.** Every `contract`, `integration` and `contract_change` node is the pass's own and comes out; the recorded `was` edges go back in beside the edges that were kept; and an edge that ran **through** a removed `integration` node is rewritten onto **what that node runs** — the endpoints of the edges it re-joins, anything else it depends on, and through any `integration` node it waits on in turn theirs, because a task that waited on an integration waited on the whole of the work behind it, however many hops away. A record whose `was` edge names a node of the pass itself is **refused**: the before graph has nowhere to restore it, and dropping it quietly would report the gain of a plan nobody wrote. So is a task that **waits on a contract no decoupling entry names**: a consumer's edge is one the pass moved onto the contract, so the entry whose `was` names that task is where the before graph restores it from, and a consumer the record does not name would leave one of the plan's own dependencies out of the before graph — the same gain nobody got. So is a task that **waits on an integration node with no task behind it** — one no decoupling entry covers, or one chained onto integrations that reach none — for the same reason: a wait on an integration is put on the tasks the integration runs, and a wait with none to stand on is refused rather than dropped. So is a task that waits on an integration whose chain reaches a **`contract` or a `contract_change`**: what those stand for is the pass's own, so there is no task of the plan before the pass for that wait to stand on, and it is refused rather than dropped. So is a document whose recorded breaks **restore a cycle** — the before graph is a reconstruction rather than a graph the CLI validated, and a cyclic one has no critical path to measure. And so is a graph whose rewrite asks for more than **262144** steps — every edge onto an integration node counts once per task that node runs, and every node the rewrite walks under that node to find them counts once more, because one walk per edge that asks is the other half of the cost: a chain of integration nodes under the one a hundred tasks wait on is a hundred walks of the whole chain, and each of them ends in the same one task. An artifact inside the megabyte cap can state a product of tens of millions of either, and the CLI refuses it rather than allocate them or read them slowly, the way the contract-file rule refuses a graph past its own bound. So, lastly, is a graph whose sizes **weigh a path past what a number can hold**: a size is a positive number and a path is a sum of them, so two of them at a float's own edge weigh infinity, and a figure `json.Marshal` refuses (`json: unsupported value: +Inf`) is one no `--json` reader could be handed — the read refuses the graph where the sum is known.
+
+**`stubs_present` is the one answer that opens a tree, and it opens the right one.** A stub path is untrusted plan text, so it is resolved through a root: a symlink leaving the checkout — in the stub's own last element or in a directory above it — is **not** followed, and the path is reported as not there, which is what a stub the integration task has to delete in a checkout it cannot reach is. A path that names a **directory** is not reported either: a stub is a whole *file* the contract names (D1815), so what is at the path decides, and a directory there is nothing of the contract's to delete. The tree is **the git top level of the artifact** — the checkout the plan describes — and the read requires it to be the working directory's own checkout: a graph that names stubs and was read from **another** checkout is **refused** rather than answered, a checkout **nested inside** the working directory's included, because every checkout of a repository has the same stub paths and a read that resolved them against another tree would say "this stub is gone" about a repository the plan does not describe. A working directory, or an artifact, in no checkout at all is refused the same way. A graph that names **no** stubs opens no tree and takes no such decision, which is why a v2 artifact's read is byte-for-byte what it was.
 
 **Four refusals, and they are refusals rather than partial renders:** a document
 from a schema version this build does not read (the message names both
@@ -1437,8 +1463,9 @@ match — and **refuses a graph past the bound** rather than read it slowly. The
 console shows the CLI's sentence in each case, like every other refusal here.
 
 **What the read computes, and why the done set is passed in.** `level`, `done`,
-`ready`, `blocked`, `critical_path_length`, `downstream`, `levels`,
-`critical_path` and `bottleneck` are **not in the artifact**: the planner cannot
+`ready`, `blocked`, `critical_path_length`, `downstream`, `stubs_present`,
+`levels`, `critical_path`, `bottleneck` and `gain` are **not in the artifact**:
+the planner cannot
 know them, and a planner that guessed them would be a second answer to a
 question the CLI already answers (design F7). They are computed in Go, beside
 the read, so two consoles reading the same graph and the same facts get the same
@@ -1484,7 +1511,7 @@ number exists for.
 
 **The computed fields are additive, and they are not the artifact's.** They are
 fields of the *read's* document and not of the artifact: the artifact carries the
-field set above and nothing else — the nine computed keys are not among them, and
+field set above and nothing else — the eleven computed keys are not among them, and
 a planner that wrote one would be refused by name — so `--done` is a flag on the
 read rather than a field a planner writes. A console built before
 these keys existed ignores them and draws the graph it drew before; a console
@@ -3082,9 +3109,10 @@ per line** — so §10's guarantees and the console's reader apply to it unchang
 a slow reader makes the child block and never drops a document (§10.3), and a
 closed stdout ends the child on its next write (§10.4). **A lost document needs
 no repair**: the next one is the whole graph. §9 rule 2 counts the
-line-delimited commands of the console's own set, and the graph is not in that
-set yet — the spawn row that puts it there is CG9b's, and that task moves the
-count with its row.
+line-delimited commands of the console's own set, and the graph's stream is in
+that set since CG9b put its spawn row there — `graph --watch --json`, the row
+the console counts in `MAX_LIVE_FEEDS` and stops when the Graph tab is hidden
+(H6).
 
 **`stream_id` and `seq`, and why both.** Each child draws a `stream_id` once and
 prints it in every document it writes; `seq` starts at `1` and rises by one per
@@ -3351,21 +3379,24 @@ table against the live constructors.
    `link.openPullRequest` took it to twenty-five and writes nothing, and C4c's
    `coordinator.intents` took it to twenty-six and writes nothing — **the
    counts in this parenthesis are the history up to that commit, and rule 5's
-   thirty-six is today's**), and no other argv that writes is reachable
+   thirty-seven is today's**), and no other argv that writes is reachable
    from a renderer. Two further commands this file
    describes are writes, and **neither is in the console's set**: `fugaro cancel
    RUN --json` (§6.3), which is on the design's "never" table and which no v1
    console spawns, and `fugaro accounts clear NAME` (§6.5a, credentials-service
    C1.21), the operator's own write to the cascade's state. Nothing else here
    names a write.
-2. **Exactly two of the commands in the console's set are line-delimited:
-   `watch --json` and `logs RUN
-   --json`** (§2, §6.2 — the feed through
+2. **Three of the commands in the console's set are line-delimited:
+   `watch --json`, `logs RUN
+   --json` and `graph --watch --json`** (§2, §6.2, §6.22 — the feed through
    `json.NewEncoder` with no `SetIndent`, the log lines through
-   `json.Marshal`). **Every other command in that set is indented over several
+   `json.Marshal`, the graph's stream through `WriteDoc`, which marshals the
+   whole document and writes one newline). **Every other command in that set is indented over several
    lines** — `version` is the exception that is no document at all: it prints
-   one plain line (§6.7) — so a line-based parser is right for those two and
-   wrong for the rest of the set. The one command outside the set that is line-delimited too
+   one plain line (§6.7) — so a line-based parser is right for those three and
+   wrong for the rest of the set. **The graph's one-shot read is not one of
+   them**: `graph --json` prints §6.22's document indented, and the stream is
+   the sibling argv that carries `--watch`. The one command outside the set that is line-delimited too
    is `fugaro cancel RUN --json` (§6.3, a write): compact, one object per line,
    the same parser as `logs`.
 3. **A null, an absent key and an empty array are three different things**, and

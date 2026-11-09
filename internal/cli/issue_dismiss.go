@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -60,7 +61,7 @@ func runIssueDismiss(cmd *cobra.Command, ref string) error {
 		}
 		return userErr("nothing was dismissed: %s was already filed%s, and dismiss marks an issue as not worth submitting", issueRef(i), filed)
 	}
-	if err := store.SetStatus(ref, issues.StatusDismissed); err != nil {
+	if err := store.SetStatus(ref, issues.StatusDismissed, time.Now()); err != nil {
 		return userErr("nothing was dismissed: %v", err)
 	}
 	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Dismissed %s. Nothing is filed for it.\n", issueRef(i))

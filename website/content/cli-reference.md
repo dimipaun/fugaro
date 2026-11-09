@@ -91,6 +91,7 @@ Subcommands:
 - `fugaro accounts add` -- Declare a named Claude account and the repositories its token may be used by
 - `fugaro accounts clear` -- Clear one account's broken or exhausted credential mark, after replacing its token
 - `fugaro accounts ls` -- List the named Claude accounts (claude_accounts in the local config) a repository may use with fugaro run --token
+- `fugaro accounts pool` -- List, declare and remove the named pools a craft's access may name
 - `fugaro accounts rm` -- Remove a named Claude account, its secret and the job that served it
 
 ## `fugaro accounts add`
@@ -110,6 +111,15 @@ every repository on it: an account that covers less is refused before the file
 is touched, naming the repositories it is missing, because widening the account
 silently is what that rule exists to prevent.
 
+--type declares the name as a typed credential as well, in this prefix's
+credentials block: the entry that lets a pool list the name as a member
+(fugaro accounts pool add). claude-oauth is the type this command's token step
+serves. vertex is built in and is never defined, and the two types the spec
+lists as future work are refused in words that say so. A type whose key no
+command stores yet is refused too: the entry would name a credential no run
+could authenticate with. Without the flag nothing but claude_accounts and the
+profile is written, which is what this command has always done.
+
 Then it converges, in one command and behind the one sentence it prints: the
 token is stored project-wide as a new version of the account's own secret, the
 account's broken mark is cleared, and the publisher, the job set and this
@@ -127,11 +137,11 @@ leaves you the prompt.
 
 Run it at your own terminal. This file decides where a credential may be sent
 and this command then stores the token itself, so in a project whose marks say
-it is managed it asks YOU and nobody else: it prints the repositories the token
-may be used by, says that a job on those repositories can read it, and asks you
-to type the project's own name to confirm. A flag never answers that — --yes
-included — and a pipe, a run with no terminal and a coding agent's session are
-refused before a byte is written.
+it is managed the token is written for YOU and nobody else: before the token
+prompt it prints the repositories the token may be used by and says that a job
+on those repositories can read it. Nothing is asked — the terminal is what makes
+a run yours, and --yes does not stand in for one — so a pipe and a run with no
+terminal are refused before a byte is written.
 
 A coding agent's session may still declare a bounded account: the repositories
 it names are the only ones the token may be used by, and none of them is beyond
@@ -149,7 +159,8 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--profile` | string | "" | no | the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one) |
 | `--repos` | string | "" | no | the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin) |
-| `--yes` | bool | `false` | no | confirm the run without a prompt: it answers the converge's own questions and never the confirmation a managed project asks its owner |
+| `--type` | string | "" | no | declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth, the one type this command's token step serves (without it, the name is declared in claude_accounts alone, as it always was) |
+| `--yes` | bool | `false` | no | confirm the run without a prompt: it answers the converge's own questions and never makes a run the owner at their own terminal on a managed project |
 
 Subcommands:
 
@@ -269,6 +280,122 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | repository as owner/name, or a path inside its checkout (default: this checkout's origin) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts pool`
+
+List, declare and remove the named pools a craft's access may name
+
+Usage: `fugaro accounts pool`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for pool |
+
+Subcommands:
+
+- `fugaro accounts pool add` -- Declare a pool with these members, in this order
+- `fugaro accounts pool ls` -- List the named pools and the members each one walks
+- `fugaro accounts pool rm` -- Remove a pool from this project's config
+
+## `fugaro accounts pool add`
+
+Declare a pool with these members, in this order
+
+Declare pools.<NAME> in this project: the credentials it walks, in the order it
+walks them.
+
+The members are credential names the same config defines (fugaro accounts ls
+names the accounts; the Claude OAuth ones a credential entry each), and they are
+written in the order given — failover tries them in that order and round-robin
+starts from the first. A credential the config does not define, a repeated
+member, a name this command may not use and a strategy that is not failover or
+round-robin are all refused before the file is touched.
+
+--strategy failover (the default) or round-robin. A pool that already exists
+keeps the strategy it has when the flag is left out, and this command replaces
+its members with the list on the command line: it is the whole list every time,
+so a member you leave out is dropped.
+
+Run it at your own terminal: a pool decides where a project's calls may be
+spent and whose key they may carry, so a coding agent's session is refused,
+--yes included.
+
+Usage: `fugaro accounts pool add NAME MEMBER...`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--strategy` | string | "" | no | how the pool walks its members: failover (the default: try them in order) or round-robin (share the load). Left out, a pool that exists keeps the strategy it has |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts pool ls`
+
+List the named pools and the members each one walks
+
+List the pools the installation's own config defines (pools, docs/model-crafts/spec.md §2): each pool's
+strategy, its members in the order it walks them, and which half of a run
+serves them.
+
+An OpenRouter or Vertex member is served by a run's own gateway; a Claude OAuth
+or Anthropic-key member by the credentials service, which selects by tier
+(OAuth before key: D154). A pool whose members need both is one that can only
+fail over where the credential is chosen again, at a stage boundary.
+
+The read is offline: it reads the selected project's config file and reaches no
+bucket, no database and no host.
+
+Usage: `fugaro accounts pool ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts pool rm`
+
+Remove a pool from this project's config
+
+Remove pools.<NAME> from this project's config: the pool goes, and a craft whose
+access names it is refused rather than left pointing at nothing.
+
+It removes the pool from the installation's config only. A repository that
+selected the pool keeps its own file untouched, and this release's fugaro update
+leaves the pools the policy node already carries as they are: it never publishes
+this config's pools, which is MC4's job, so the removal withdraws nothing from
+the node.
+
+Run it at your own terminal: a pool decides where a project's calls may be
+spent, so a coding agent's session is refused, --yes included.
+
+Usage: `fugaro accounts pool rm NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--yes` | bool | `false` | no | confirm the removal without a prompt |
 
 Subcommands:
 
@@ -790,7 +917,7 @@ Flags:
 
 Subcommands:
 
-- `fugaro budget kill` -- Halt every run of the project or of one repository (budget admins)
+- `fugaro budget kill` -- Halt every run of the project, of one repository or of one workspace (budget admins)
 - `fugaro budget preview` -- Estimate a batch's worst-case model spend against today's caps
 - `fugaro budget prices` -- Show the effective model price table, offline
 - `fugaro budget resume` -- Clear a kill switch (budget admins)
@@ -799,18 +926,22 @@ Subcommands:
 
 ## `fugaro budget kill`
 
-Halt every run of the project or of one repository (budget admins)
+Halt every run of the project, of one repository or of one workspace (budget admins)
 
-Set the project's kill switch (--all) or one repository's (--repo [owner/name]),
-recording who, when and why. --repo with no value means the repository this
-checkout belongs to, as it does for set. show takes owner/name (its empty
---repo means no repository filter, not a checkout), and preview already
-means this checkout's repository without the flag.
+Set the project's kill switch (--all), one repository's (--repo [owner/name]) or
+one workspace's (--workspace <name>), recording who, when and why. --repo with
+no value means the repository this checkout belongs to, as it does for set. show
+takes owner/name (its empty --repo means no repository filter, not a checkout),
+and preview already means this checkout's repository without the flag.
 Runs in flight halt within seconds (a run in its last stage finishes pushing
 its work first) and new runs refuse. Nothing is asked for it: halting runs
-spends nothing, and only a resume is a raise.
+spends nothing, and only a resume is a raise. --workspace sets the stop flag
+of the workspace's own service, in the workspace's own database, so every
+member's runs that reach it with its shared credentials halt, and nothing of
+a member's own — its credentials, its caps, its sign-in, its runs that never
+reach the workspace — is touched.
 
-Usage: `fugaro budget kill (--all | --repo [owner/name]) [--reason TEXT]`
+Usage: `fugaro budget kill (--all | --repo [owner/name] | --workspace <name>) [--reason TEXT]`
 
 Flags:
 
@@ -824,6 +955,7 @@ Flags:
 | `--reason` | string | "" | no | why (recorded, shown by budget show and watch) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | one repository, given as owner/name or a path inside its checkout (no value: this checkout's origin) |
+| `--workspace` | string | "" | no | one workspace, named as its own project is; its own service's stop flag, in the workspace's own database, so the project it names has to declare one (workspace_members) |
 | `--yes` | bool | `false` | no | accepted and ignored: this command asks nothing |
 
 Subcommands:
@@ -938,13 +1070,14 @@ This command has no subcommands.
 
 Clear a kill switch (budget admins)
 
-Clear the project's kill switch (--all) or one repository's (--repo [owner/name]),
-recording who and when. --repo with no value means the repository this checkout
-belongs to, as it does for set. Runs start spending again, so nothing is
-asked for it and a coding agent's session is refused, exactly as a raise is
-(D1542).
+Clear the project's kill switch (--all), one repository's (--repo [owner/name])
+or one workspace's (--workspace <name>), recording who and when. --repo with
+no value means the repository this checkout belongs to, as it does for set.
+Runs start spending again, so nothing is asked for it and a coding agent's
+session is refused, exactly as a raise is (D1542). A workspace is named by
+its own name alone and takes neither of the other scopes.
 
-Usage: `fugaro budget resume (--all | --repo [owner/name]) [--reason TEXT]`
+Usage: `fugaro budget resume (--all | --repo [owner/name] | --workspace <name>) [--reason TEXT]`
 
 Flags:
 
@@ -958,6 +1091,7 @@ Flags:
 | `--reason` | string | "" | no | why (recorded, shown by budget show and watch) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | one repository, given as owner/name or a path inside its checkout (no value: this checkout's origin) |
+| `--workspace` | string | "" | no | one workspace, named as its own project is; its own service's stop flag, in the workspace's own database, so the project it names has to declare one (workspace_members) |
 | `--yes` | bool | `false` | no | accepted and ignored: this command asks nothing |
 
 Subcommands:

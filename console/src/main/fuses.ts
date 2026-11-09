@@ -291,15 +291,14 @@ export interface AfterPackContext {
  * hook's refusal is its complement: a platform that is not in it is a hard
  * failure rather than a skip.
  *
- * `win32` is deliberately absent. The owner's ruling of 2026-10-20 is "yes,
- * Linux for 0.10.0, unsigned"; Windows stays out of this release (design D10:
- * the CLI has no Windows build, and signing there is a certificate the owner
- * would have to buy and hold). A Windows leg would need its own executable
- * resolution (`<appOutDir>/<productFilename>.exe`) and its own signing story,
- * and neither is decided yet -- so the hook refuses it rather than flipping a
- * path it has never been run against.
+ * `win32` joined it under the owner's ruling of 2026-10-20: the console is built
+ * for Windows -- driving the Linux CLI inside a WSL distribution, not a
+ * `fugaro.exe` -- and the pack runs at release time only (D7(c), from the
+ * staged `docs/pending-workflows/console-windows.yml`), never on a pull
+ * request. Its executable resolution is `win32Executable` below. Signing is
+ * still the owner's and nothing here touches it: the installer ships unsigned.
  */
-export const SUPPORTED_PLATFORMS: readonly string[] = Object.freeze(['darwin', 'linux'])
+export const SUPPORTED_PLATFORMS: readonly string[] = Object.freeze(['darwin', 'linux', 'win32'])
 
 /** FuseTools is the two `@electron/fuses` calls this hook makes, as an
  * injectable pair so the suite can drive `afterPack` with a fake -- including a
@@ -373,6 +372,28 @@ export function linuxExecutable(context: AfterPackContext): string {
 }
 
 /**
+ * win32Executable is the path `@electron/fuses` is given on Windows:
+ * `<appOutDir>/<productFilename>.exe` -- no bundle, and the one `.exe` the
+ * packer wrote into `win-unpacked`.
+ *
+ * It mirrors electron-builder's resolution rather than inventing one, in the
+ * same way as the two above. The extension is the packer's own: the table
+ * `addElectronFuses` uses is `{ darwin: '.app', mas: '.app', win32: '.exe',
+ * linux: '' }`, and the name beside it is `appInfo.productFilename` --
+ * `sanitizeFileName(productName)` unless a platform-specific `executableName`
+ * overrides it, which nothing here configures on Windows. So the file is named
+ * by `package.json`'s `productName`, `Fugaro Console`, **with the space**, and
+ * not by the package's sanitized `name` -- the Linux row's precedent, where the
+ * name is the packer's and not ours.
+ *
+ * Unlike Linux's two candidates there is no fallback to resolve and nothing to
+ * refuse: `productFilename` is the one name this context always carries.
+ */
+export function win32Executable(context: AfterPackContext): string {
+  return join(context.appOutDir, `${context.packager.appInfo.productFilename}.exe`)
+}
+
+/**
  * fuseTarget is the executable the fuses are written into, resolved per
  * platform **in one place**: `afterPack` calls this and nothing else, so there
  * is one table of "where the binary is on this platform" rather than one per
@@ -386,6 +407,8 @@ export function fuseTarget(context: AfterPackContext): string {
       return macExecutable(context)
     case 'linux':
       return linuxExecutable(context)
+    case 'win32':
+      return win32Executable(context)
     default:
       throw new Error(
         `the Fugaro console is packaged for ${SUPPORTED_PLATFORMS.join(' and ')}, and the fuse ` +

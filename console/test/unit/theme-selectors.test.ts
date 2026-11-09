@@ -163,7 +163,7 @@ const SUFFIX = /^-[a-z0-9-]+(?:\/-[a-z0-9-]+)*$/
  * §2 whole must not quietly license either set, so they are subtracted here by
  * name -- which is what keeps both sentences true of the scan.
  *
- * **Seven of §2.11's nine, and not the other two.** `data-key` and `data-view`
+ * **Eight of §2.11's ten, and not the other two.** `data-key` and `data-view`
  * are listed in §2.11 because *the graph* emits them and no graph rule selects
  * them, but the same two names are §2's hooks elsewhere: §2.3's table and §2.4's
  * prose license `data-key` on a spend chart's points and rows and on the caps
@@ -171,7 +171,12 @@ const SUFFIX = /^-[a-z0-9-]+(?:\/-[a-z0-9-]+)*$/
  * `data-view` on `nav.console-views button.console-view` and §2.5 on
  * `section.spend-people`. The scan licenses by attribute **name**, not by name
  * and screen, so subtracting those two would refuse rules the design asked for;
- * §2.11's paragraph says which of its eight this list holds to. */
+ * §2.11's paragraph says which of its ten stay out of this list.
+ *
+ * `data-kept` is the newest of the eight: §2.11 lists it because no rule selects
+ * it -- the kept row says `last read` in words, which is the channel H10 asks
+ * for -- and the PR whose rule tones that row moves it into §2.11's table of
+ * attributes a rule selects and out of this list, in the same commit. */
 const NOT_A_LICENCE: readonly string[] = Object.freeze([
   'data-hidden',
   'data-skew',
@@ -182,6 +187,7 @@ const NOT_A_LICENCE: readonly string[] = Object.freeze([
   'data-release',
   'data-word',
   'data-source',
+  'data-kept',
 ])
 
 /** readDesign reads the design document, failing by name rather than with an
