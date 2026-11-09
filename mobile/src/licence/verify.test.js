@@ -103,9 +103,19 @@ const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
  * over the same raw 32-byte public key the app's dependency takes.
  *
  * It is strict, like the app's own wiring: `crypto.verify` is OpenSSL, which
- * rejects the malleable spellings a lenient verifier would accept.
+ * rejects the malleable spellings a lenient verifier would accept. It also
+ * refuses a wrong-length key or signature by throwing, as the dependency
+ * (`index.js`, `@noble/curves`) does and `crypto.verify` alone does not -- the
+ * guard that keeps those lengths off the port is only pinned by a port that
+ * would throw.
  */
 function nodeEd25519(signature, message, publicKey) {
+  if (Buffer.from(publicKey).length !== 32) {
+    throw new RangeError('"publicKey" expected Uint8Array of length 32');
+  }
+  if (Buffer.from(signature).length !== 64) {
+    throw new RangeError('"signature" expected Uint8Array of length 64');
+  }
   const key = createPublicKey({
     key: Buffer.concat([ED25519_SPKI_PREFIX, Buffer.from(publicKey)]),
     format: 'der',
@@ -528,7 +538,44 @@ test('a signature that is not 64 bytes is refused', () => {
   const acme = signer('acme-2026');
   const short = spell(acme.id, Buffer.from(JSON.stringify(claimsFor()), 'utf8'), Buffer.alloc(32, 7));
 
+  // The port refuses wrong lengths by throwing, as the dependency does, so the
+  // refusal below is the length guard's own: without the guard this case fails
+  // with the port's throw instead of passing for the wrong reason.
+  assert.throws(() => nodeEd25519(Buffer.alloc(32, 7), Buffer.alloc(0), acme.raw), RangeError);
   assert.equal(refusalOf(verifier(acme.keyring).verify(short, at(ISSUED))).code, LICENCE_CODES.SIGNATURE);
+});
+
+test('a payload that is not UTF-8 is refused as claims, and never thrown from', () => {
+  const acme = signer('acme-2026');
+  for (const bytes of [
+    // Past U+10FFFF: `F4 90 80 80` decodes to U+110000, which
+    // `String.fromCodePoint` throws on -- the shape a bound on the first byte
+    // alone lets through, so a refusal here is what keeps the module total.
+    [0xf4, 0x90, 0x80, 0x80],
+    [0xf4, 0xbf, 0xbf, 0xbf],
+    // A first byte that starts no sequence at all.
+    [0xf5, 0x80, 0x80, 0x80],
+    [0x80],
+    [0xc0, 0xaf],
+    // Overlong forms of a code point a shorter form carries.
+    [0xf0, 0x80, 0x80, 0x80],
+    [0xe0, 0x80, 0x80],
+    // A surrogate, and a sequence cut short.
+    [0xed, 0xa0, 0x80],
+    [0xe2, 0x82],
+  ]) {
+    const payload = Uint8Array.from(bytes);
+    const key = spell(acme.id, payload, edSign(null, Buffer.from(payload), acme.privateKey));
+
+    // The signature is good and the refusal is the text's, not the signature's:
+    // a failed signature would answer `signature` and never reach the decoder.
+    assert.deepEqual(
+      refusalOf(verifier(acme.keyring).verify(key, at(ISSUED))),
+      { ok: false, code: LICENCE_CODES.CLAIMS, field: 'claims' },
+      bytes.map((byte) => byte.toString(16)).join(' '),
+    );
+    assert.equal(verifier(acme.keyring).latest([key], at(ISSUED)), null);
+  }
 });
 
 test('a key that is not three parts is refused, and one surrounded by whitespace is read', () => {

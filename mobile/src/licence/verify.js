@@ -214,6 +214,10 @@ function decodePublicKey(entry) {
  * text, and a payload that is not text is not a claim set. It is written here
  * rather than taken from the platform for the same reason the base64 decoder is.
  *
+ * It is also total: every byte string is text or nothing, so a refusal stays a
+ * value. The bound on the last form matters for that -- `F4 90 80 80` decodes to
+ * U+110000, and `String.fromCodePoint` throws on it rather than answering.
+ *
  * @param {Uint8Array} bytes
  * @returns {string | null}
  */
@@ -246,11 +250,13 @@ function textOf(bytes) {
       if (next < 0x80 || next > 0xbf) return null;
       codePoint = (codePoint << 6) | (next & 0x3f);
     }
-    // The two forms whose first byte allows a shorter encoding of the same code
-    // point are refused by the bounds above only for the general case; these are
-    // the specific ones (E0 A0.., ED 80..9F, F0 90.., F4 8F..).
+    // The forms whose first byte admits a shorter encoding of the same code
+    // point, and the ones the standard puts outside the range at all: an overlong
+    // sequence, a surrogate, and the 4-byte forms past U+10FFFF (F4 90.. and
+    // above, which is the shape a bound on the first byte alone lets through).
     if (length === 3 && codePoint < 0x800) return null;
     if (length === 4 && codePoint < 0x10000) return null;
+    if (codePoint > 0x10ffff) return null;
     if (codePoint >= 0xd800 && codePoint <= 0xdfff) return null;
     out += String.fromCodePoint(codePoint);
     i += length;
