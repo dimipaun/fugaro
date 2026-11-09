@@ -137,12 +137,27 @@ the policy stage refused the write without `--yes` when a run was in flight and
 told the operator to wait (`refuseRunsInFlight`). The owner's requirement of
 2026-11-09 makes that unacceptable — a team of ten or twenty always has runs in
 flight — so the update door no longer refuses, and it announces the runs once
-instead (`announceRunsInFlight`, `internal/cli/init_stages.go`). The refusal
-stays where it is not the update door's: `fugaro upgrade`'s own policy step, and
-`fugaro project policy publish --delete` / `fugaro project repos rm`, which are
-not the whole upgrade and are their own commands.
+instead (`announceRunsInFlight`, `internal/cli/update_in_flight.go`, called from
+the converge before the first stage). The line is one sentence, it is not a
+question, and it never asks anybody to wait; it is absent when nothing runs,
+under `--json` and `--print-vars` (whose stdout is a document), and under
+`--plan-only` (which applies nothing). The refusal stays where it is not the
+update door's: `fugaro upgrade`'s own policy step, and `fugaro project policy
+publish --delete` / `fugaro project repos rm`, which are not the whole upgrade
+and are their own commands.
 
 The one row with an open question is the budget-mode raise: it can bound a run
 that bootstrapped under `observe`, from its next lease. It is the operator's own
 caps becoming effective rather than the update stopping a run, so it is recorded
-here rather than deferred — and it is named in the pull request for the owner.
+here rather than deferred, and the door's line names it where the raise can
+happen (`budgetModeBindsRuns`) instead of calling the runs unaffected without
+saying so. The alternative — the raise waiting for the runs to finish — would be
+the update asking a person to stop work for it, which is what the requirement
+forbids; it is named in the pull request for the owner.
+
+The tests are `TestUpdateLeavesARunInFlightRunning` and its siblings
+(`internal/cli/update_in_flight_test.go`): an installation one release behind
+converges under `fugaro update` while a run of its own repository is in flight,
+and that run's later writes — its lease, the ledger and the counters the report
+settles, the outcome it ends with, its record and its review session — still
+land under the new rules and the migrated policy.
