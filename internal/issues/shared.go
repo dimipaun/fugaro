@@ -65,11 +65,6 @@ const claimLease = 15 * time.Minute
 // a row is not a race but a store somebody is rewriting.
 const sharedRetries = 5
 
-// maxSharedBytes bounds one object read. A record is a few KB of Markdown, and
-// the prefix is writable by every launcher (F24), so an object past this is not
-// one this package wrote.
-const maxSharedBytes = 64 << 10
-
 // occurrenceExcerptMax caps the one line of the reporter's text an occurrence
 // carries: it goes into a store the whole team reads, and one line is what a
 // list shows.
@@ -505,10 +500,11 @@ func decodeStrict(raw []byte, v any) error {
 }
 
 // readVersion reads one object and the version a later write about it has to
-// match. The object is bounded: the prefix is writable by every launcher (F24),
-// and nothing this package writes is bigger than a record.
+// match. Records are read with ReadMax (F24) at the package's own bound: the
+// prefix is writable by every launcher, so a read here is never unbounded, and
+// a record is a few KB of a report and well inside it.
 func readVersion(ctx context.Context, b *blobx.Bucket, key string) (version, error) {
-	raw, gen, err := b.ReadMax(ctx, key, maxSharedBytes)
+	raw, gen, err := b.ReadMax(ctx, key, blobx.MaxReadBytes)
 	if err != nil {
 		return version{}, err
 	}
@@ -590,7 +586,7 @@ func numberFromRecordKey(key string) (int, bool) {
 		return 0, false
 	}
 	number, err := strconv.Atoi(rest)
-	if err != nil || validateNumber(number) != nil {
+	if err != nil || validateNumber(number) != nil || key != recordKey(number) {
 		return 0, false
 	}
 	return number, true
@@ -684,7 +680,9 @@ func RecordSubmitted(ctx context.Context, b *blobx.Bucket, c *Claimed, url strin
 
 // finish writes the record the claim was taken on, with the claim cleared, and
 // reports a version somebody else changed in between as itself: the submitter
-// that previewed a record is the only one whose write lands (F19).
+// that previewed a record is the only one whose write lands (F19). A claim that
+// lost that race is spent either way — the caller claims and previews again
+// rather than reuse a preview of a version that is gone (T-IS12).
 func (c *Claimed) finish(ctx context.Context, b *blobx.Bucket, change func(*sharedRecord) error) error {
 	if c.value.Claim == nil || c.value.Claim.Holder != c.Holder {
 		return fmt.Errorf("issues: shared issue %d is not held by %q", c.Number, c.Holder)
