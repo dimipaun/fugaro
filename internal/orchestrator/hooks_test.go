@@ -85,6 +85,8 @@ func TestTheBatchSeamAnswersTheShippedDefaultAndRefusesARaise(t *testing.T) {
 		{"a person asks for the shipped default", orchestrator.Batch{Covered: policy.DefaultBatchSize, By: orchestrator.Person}, policy.DefaultBatchSize, true},
 		{"a person asks for more than the shipped default", orchestrator.Batch{Covered: 25, ProjectCap: 25, By: orchestrator.Person}, 0, false},
 		{"a person asks for more than the project's cap", orchestrator.Batch{Covered: 5, ProjectCap: 4, By: orchestrator.Person}, 0, false},
+		{"nobody asked and the project carries a raised setting", orchestrator.Batch{ProjectCap: 25, By: orchestrator.Person}, policy.DefaultBatchSize, true},
+		{"a batch of a negative number of work items", orchestrator.Batch{Covered: -1, By: orchestrator.Person}, 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := orchestrator.ApprovalBatch(tc.b)

@@ -201,28 +201,32 @@ func SetBatch(f BatchFuncs) error {
 // itself.
 func ApprovalBatch(b Batch) (int64, error) { return batchHooks.Size(b) }
 
-// coreBatchFuncs is the untagged build's batch rule: the project's own setting,
-// the shipped default when it wrote none, and no raise above that default at
-// all — what a person may raise is ee/'s rule, over the project's governance
-// (D1222, F14). A build that links ee/register replaces this with the one
-// ee/orchestrator carries. A request above the ceiling is refused rather than
-// cut down: an answer of ten to a request of twenty-five is a caller approving
-// ten work items believing it approved twenty-five.
+// coreBatchFuncs is the untagged build's batch rule: the project's own setting
+// when it is below the shipped default, the shipped default everywhere else, and
+// no answer above it at all — what a person may raise, and how far, is ee/'s
+// rule, over the project's governance (D1222, F14). A build that links
+// ee/register replaces this with the one ee/orchestrator carries. A request above
+// the ceiling is refused rather than cut down: an answer of ten to a request of
+// twenty-five is a caller approving ten work items believing it approved
+// twenty-five. The ceiling is held to the shipped default here rather than taken
+// from the project as it stands, because a project may carry a batch this build
+// has no rule to raise — a setting above the ten is a raise, and a build without
+// the shared half raises nothing.
 func coreBatchFuncs() BatchFuncs {
 	return BatchFuncs{
 		Size: func(b Batch) (int64, error) {
+			if b.Covered < 0 {
+				return 0, fmt.Errorf("%w: %d is not a number of work items: a batch is a count of them and cannot be negative", ErrActorNotAllowed, b.Covered)
+			}
 			ceiling := b.ProjectCap
-			if ceiling <= 0 {
+			if ceiling <= 0 || ceiling > policy.DefaultBatchSize {
 				ceiling = policy.DefaultBatchSize
 			}
-			if b.Covered <= 0 {
-				return ceiling, nil
-			}
 			if b.Covered > ceiling {
-				return 0, fmt.Errorf("%w: %d work items in one approval is above the project's %d, and an approval never widens the project's cap", ErrActorNotAllowed, b.Covered, ceiling)
+				return 0, fmt.Errorf("%w: %d work items in one approval is above the %d this build covers, and raising a batch needs the shared half this build does not carry", ErrActorNotAllowed, b.Covered, ceiling)
 			}
-			if b.Covered > policy.DefaultBatchSize {
-				return 0, fmt.Errorf("%w: one approval covers at most the %d work items Fugaro ships, and raising a batch needs the shared half this build does not carry", ErrActorNotAllowed, policy.DefaultBatchSize)
+			if b.Covered == 0 {
+				return ceiling, nil
 			}
 			return b.Covered, nil
 		},

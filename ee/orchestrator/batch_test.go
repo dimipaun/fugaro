@@ -61,6 +61,14 @@ func TestBatchDefaultIsTenAndOnlyAPersonRaisesIt(t *testing.T) {
 			orchestrator.Batch{Covered: 11, ProjectCap: 11, By: orchestrator.Class("launcher")}, 0, false},
 		{"the daemon asks for the shipped ten",
 			orchestrator.Batch{Covered: 10, By: orchestrator.Daemon}, 10, true},
+		{"nobody asked and the daemon reads the project's raised number",
+			orchestrator.Batch{ProjectCap: 25, By: orchestrator.Daemon}, 0, false},
+		{"nobody asked and a session reads the project's raised number",
+			orchestrator.Batch{ProjectCap: 25, By: orchestrator.Session}, 0, false},
+		{"the decision agent reads the project's raised number",
+			orchestrator.Batch{Covered: 25, ProjectCap: 25, By: orchestrator.DecisionAgent}, 0, false},
+		{"a batch of a negative number of work items",
+			orchestrator.Batch{Covered: -1, ProjectCap: 25, By: orchestrator.Person}, 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := eeorch.BatchSize(tc.b)
@@ -131,17 +139,40 @@ func TestBatchNeverWidensTheProjectCap(t *testing.T) {
 // ee/register: a build without the shared half carries no raise at all, so a
 // batch above the shipped ten is refused rather than quietly cut to ten — a
 // caller that was answered ten for a request of twenty-five would approve ten
-// work items believing it had approved twenty-five.
+// work items believing it had approved twenty-five — and a project that carries
+// a raised setting of its own is answered with the ten as well, because that
+// setting is a raise and this build has no rule to make one.
 func TestBuildWithoutEEKeepsTheBatchAtTheShippedDefault(t *testing.T) {
-	got, err := orchestrator.ApprovalBatch(orchestrator.Batch{By: orchestrator.Person})
-	if err != nil {
-		t.Fatalf("a build without ee/ refused a default batch: %v", err)
-	}
-	if got != policy.DefaultBatchSize {
-		t.Errorf("a build without ee/ answers %d work items for an approval that asked for none, want the %d it ships", got, policy.DefaultBatchSize)
-	}
-
-	if got, err := orchestrator.ApprovalBatch(orchestrator.Batch{Covered: 25, ProjectCap: 25, By: orchestrator.Person}); !errors.Is(err, orchestrator.ErrActorNotAllowed) {
-		t.Fatalf("a build without ee/ answered %d, %v for an approval of 25 work items, want the core's refusal: the raise is the shared half's", got, err)
+	for _, tc := range []struct {
+		name string
+		b    orchestrator.Batch
+		want int64
+		ok   bool
+	}{
+		{"nobody asked", orchestrator.Batch{By: orchestrator.Person}, policy.DefaultBatchSize, true},
+		{"a project that tightened its batch", orchestrator.Batch{ProjectCap: 4, By: orchestrator.Person}, 4, true},
+		{"nobody asked and the project carries a raised setting", orchestrator.Batch{ProjectCap: 25, By: orchestrator.Person}, policy.DefaultBatchSize, true},
+		{"an approval of twenty-five work items", orchestrator.Batch{Covered: 25, ProjectCap: 25, By: orchestrator.Person}, 0, false},
+		{"an approval above a project's tightened four", orchestrator.Batch{Covered: 5, ProjectCap: 4, By: orchestrator.Person}, 0, false},
+		{"a batch of a negative number of work items", orchestrator.Batch{Covered: -1, By: orchestrator.Person}, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := orchestrator.ApprovalBatch(tc.b)
+			if !tc.ok {
+				if !errors.Is(err, orchestrator.ErrActorNotAllowed) {
+					t.Fatalf("a build without ee/ answered %d, %v, want the core's refusal: the raise is the shared half's", got, err)
+				}
+				if got != 0 {
+					t.Errorf("a refused batch answered %d work items, want none", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ApprovalBatch: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("a build without ee/ answers %d work items, want %d", got, tc.want)
+			}
+		})
 	}
 }
