@@ -23,11 +23,13 @@ var commandWordRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 // more characters of a run ID — and fullFormRE the words for the form a
 // command is given. Claims are read by these words rather than by one phrasing,
 // so a rule reworded into "give `fugaro logs` the short ID" is read the same
-// way the plan's own sentence was.
+// way the plan's own sentence was. negationRE matches the words that turn a
+// sentence into a rule not to do something, contractions included, so that a
+// sentence carrying one is reported rather than read (shortFormClaims).
 var (
 	shortFormRE = regexp.MustCompile(`(?i)\b(short(?:er|est)?(?: run)? ID|shortest ending|last (?:four|4)(?: or more)? characters)`)
 	fullFormRE  = regexp.MustCompile(`(?i)\bfull(?: run)? ID\b`)
-	negationRE  = regexp.MustCompile(`(?i)\b(never|not|don't|do not)\b`)
+	negationRE  = regexp.MustCompile(`(?i)(\bnever\b|\bnot\b|\bcannot\b|\w+n't\b)`)
 	sentenceRE  = regexp.MustCompile(`[.;]\s+`)
 )
 
@@ -96,39 +98,47 @@ func runArgLeaves(c *cobra.Command) []*cobra.Command {
 }
 
 // shortFormClaims returns the commands of this CLI that a text names as taking
-// a short run ID, and the sentences that name one beside the full form in one
-// breath, which no scan can read: every code span of a sentence about the short
-// form alone that resolves to a command taking a run, unless the sentence
-// negates it ("never pass the short ID to `fugaro cancel`" claims the
-// opposite).
-func shortFormClaims(root *cobra.Command, text string) (claims, mixed []string) {
+// a short run ID, and the sentences no scan can read: one that names a command
+// beside the full form in one breath, and one that negates anything at all. A
+// negation is not a licence to skip the sentence — "never pass the short ID to
+// `fugaro cancel`" claims the opposite, but "if the run has not finished, pass
+// the short ID to `fugaro logs`" claims the rule, and no scan tells a negation
+// of the claim from a negation elsewhere in the sentence. Reporting both keeps
+// the promise that this guard holds whatever words a rule is written in: the
+// text is reworded, rather than read the wrong way. A claim is every code span
+// of a readable sentence about the short form alone that resolves to a command
+// taking a run.
+func shortFormClaims(root *cobra.Command, text string) (claims, unreadable []string) {
 	seen := map[string]bool{}
+	report := func(sentence string) {
+		if trimmed := strings.TrimSpace(sentence); !seen[trimmed] {
+			seen[trimmed] = true
+			unreadable = append(unreadable, trimmed)
+		}
+	}
 	for _, sentence := range sentences(text) {
-		short := shortFormRE.FindAllStringIndex(sentence, -1)
-		if len(short) == 0 {
+		if len(shortFormRE.FindAllStringIndex(sentence, -1)) == 0 {
 			continue
 		}
-		full := fullFormRE.FindAllStringIndex(sentence, -1)
+		negated := negationRE.MatchString(sentence)
+		full := len(fullFormRE.FindAllStringIndex(sentence, -1)) > 0
 		for _, span := range codeSpanRE.FindAllStringSubmatchIndex(sentence, -1) {
 			name := commandIn(sentence[span[2]:span[3]])
-			if name == "" || negationRE.MatchString(sentence[:span[0]]) {
+			if name == "" {
 				continue
 			}
 			cmd, _, err := root.Find(strings.Fields(name))
 			if err != nil || cmd == nil || cmd == root || len(runArgLeaves(cmd)) == 0 {
 				continue
 			}
-			if len(full) > 0 {
-				if trimmed := strings.TrimSpace(sentence); !seen[trimmed] {
-					seen[trimmed] = true
-					mixed = append(mixed, trimmed)
-				}
+			if negated || full {
+				report(sentence)
 				continue
 			}
 			claims = append(claims, name)
 		}
 	}
-	return claims, mixed
+	return claims, unreadable
 }
 
 // shortIDRuleTexts returns every text that carries the rule for an agent: the
@@ -174,7 +184,9 @@ func endingRefusalText(t *testing.T, path, ending string) string {
 // -- SR3's resolveRun has no caller until SR14 wires `logs`, `diagnose` and
 // `artifacts` to it -- so no text claims one, and the rule names no command at
 // all; this is the test that fails if the naming comes back before the wiring
-// does, whatever words the sentence is written in.
+// does, whatever words the sentence is written in. A sentence the scan cannot
+// read is reported rather than skipped (shortFormClaims), so a rule cannot slip
+// past by phrasing itself around the scan.
 func TestShortIDRuleNamesOnlyCommandsThatTakeOne(t *testing.T) {
 	f := newCloudFixture(t)
 	id := recentRunID(t, time.Minute, "abcd")
@@ -183,23 +195,30 @@ func TestShortIDRuleNamesOnlyCommandsThatTakeOne(t *testing.T) {
 
 	// The scan is exercised on the wordings a rule may use, because a guard
 	// that knows one phrasing passes whatever the texts say once they change.
+	// The two negations are the trap: skipping a sentence because it carries
+	// one reads "if the run has not finished, pass the short ID to `fugaro
+	// logs`" as a rule not to, and lets the claim through. No scan tells a
+	// negation of the claim from a negation elsewhere in the sentence, so both
+	// are reported and the text fails the guard either way.
 	for _, c := range []struct {
-		text  string
-		short []string
-		mixed []string
+		text       string
+		short      []string
+		unreadable []string
 	}{
 		{"Pass the short ID to `logs`, `diagnose` and `artifacts` (the commands that accept it)", []string{"logs", "diagnose", "artifacts"}, nil},
 		{"Give `fugaro logs` the short ID", []string{"logs"}, nil},
 		{"`diagnose` takes the short ID", []string{"diagnose"}, nil},
 		{"`fugaro logs` takes the last four characters of a run ID", []string{"logs"}, nil},
 		{"`fugaro logs`, `fugaro diagnose` and `fugaro artifacts` take the full ID", nil, nil},
-		{"Never pass the short ID to `fugaro cancel`", nil, nil},
 		{"The `run` field of a row is the full ID, and a plan task is its name", nil, nil},
+		{"Never pass the short ID to `fugaro cancel`", nil, []string{"Never pass the short ID to `fugaro cancel`"}},
+		{"If the run has not finished, pass the short ID to `fugaro logs` to follow it.", nil, []string{"If the run has not finished, pass the short ID to `fugaro logs` to follow it."}},
+		{"When the user does not want the run, give `fugaro cancel` the short ID.", nil, []string{"When the user does not want the run, give `fugaro cancel` the short ID."}},
 		{"`fugaro logs` takes the short ID and `fugaro cancel` the full ID", nil, []string{"`fugaro logs` takes the short ID and `fugaro cancel` the full ID"}},
 	} {
-		short, mixed := shortFormClaims(root, c.text)
-		if !slices.Equal(short, c.short) || !slices.Equal(mixed, c.mixed) {
-			t.Errorf("shortFormClaims(%q) = %v, %v, want %v, %v", c.text, short, mixed, c.short, c.mixed)
+		short, unreadable := shortFormClaims(root, c.text)
+		if !slices.Equal(short, c.short) || !slices.Equal(unreadable, c.unreadable) {
+			t.Errorf("shortFormClaims(%q) = %v, %v, want %v, %v", c.text, short, unreadable, c.short, c.unreadable)
 		}
 	}
 
@@ -212,9 +231,9 @@ func TestShortIDRuleNamesOnlyCommandsThatTakeOne(t *testing.T) {
 	}
 
 	for path, text := range shortIDRuleTexts(t) {
-		claims, mixed := shortFormClaims(root, text)
-		for _, sentence := range mixed {
-			t.Errorf("%s names a command beside both the short and the full form in one sentence, which no scan can read: %q -- one form per sentence, or word the claim so this guard can check it", path, sentence)
+		claims, unreadable := shortFormClaims(root, text)
+		for _, sentence := range unreadable {
+			t.Errorf("%s carries a sentence this guard cannot read -- it names a command beside both the short and the full form, or it negates something: %q -- one form per sentence, and no negation in a sentence that names a command, or word the claim so this guard can check it", path, sentence)
 		}
 		for _, name := range claims {
 			cmd, _, err := root.Find(strings.Fields(name))
