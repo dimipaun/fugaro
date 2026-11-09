@@ -3,13 +3,13 @@
 // The licence module's one door (subscriptions plan S2.5; D308, D303 as
 // amended).
 //
-// A screen or a store imports `src/licence/index.js` and gets the app's
-// verifier and the vocabulary it answers in -- the codes, the states' names and
-// the numbers behind them. It does not get `verify.js`'s factory, and that is
-// the point of this file rather than a tidiness: the factory takes a keyring,
-// and a caller that could build a verifier could build one that trusts a key
-// this build does not hold, which is the whole of what the compiled-in ring
-// fences.
+// A screen imports `src/licence/index.js` and gets the app's verifier, the
+// store the key is kept in (S2.8, below) and the vocabulary it answers in --
+// the codes, the states' names and the numbers behind them. It does not get
+// `verify.js`'s factory, and that is the point of this file rather than a
+// tidiness: the factory takes a keyring, and a caller that could build a
+// verifier could build one that trusts a key this build does not hold, which is
+// the whole of what the compiled-in ring fences.
 //
 // **This is the one file under `src/licence/` that names a package**, and the
 // reason is `mobile/README.md`'s: the suite runs in a fresh clone with no
@@ -50,3 +50,11 @@ const ed25519Port = (signature, message, publicKey) => ed25519.verify(signature,
 export const LICENCE_VERIFIER = createLicenceVerifier({ ed25519: ed25519Port });
 
 export { GRACE_DAYS, LICENCE_CODES, PRODUCTION_KEYRING, TIER_MAX_LIFETIME_DAYS };
+
+// The store is exported here and not reached for where it is written, for the
+// reason the whole door exists: a screen that imported `store.js` would build
+// its own -- and the store a caller builds is the store a caller hands a
+// verifier, which is the one thing that must stay this build's. The screen
+// S2.1's table names is the caller: it takes the pasted text, calls `install`,
+// and reads `keys` and `active` to say what is installed.
+export { LICENCE_KEYS_ENTRY, LICENCE_KEYS_MAX, LICENCE_KEY_PREFIX, LICENCE_STORE_CODES, LicenceStore } from './store.js';

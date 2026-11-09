@@ -752,7 +752,7 @@ test('the primitive imports nothing at all, so it reaches no network, no clock a
   }
 });
 
-test('the door names one package and one file, and the package is the Ed25519 dependency', () => {
+test('the door names one package and its own two files, and the package is the Ed25519 dependency', () => {
   const specifiers = importSpecifiers(INDEX_SOURCE);
   assert.ok(specifiers.length > 0, 'the scan found no imports: it no longer reads the file');
 
@@ -761,7 +761,10 @@ test('the door names one package and one file, and the package is the Ed25519 de
   // The suite never loads this file, so nothing here is a claim a test can make
   // by running it -- the scan is the claim.
   assert.deepEqual(specifiers.filter((specifier) => !specifier.startsWith('.')), ['@noble/curves/ed25519.js']);
-  assert.deepEqual(specifiers.filter((specifier) => specifier.startsWith('.')), ['./verify.js']);
+  // The two files the door is the door TO: the verifier (S2.5) and the store
+  // (S2.8). The list is exact on purpose -- a third module reached through the
+  // door is a decision, and this is where it is made.
+  assert.deepEqual(specifiers.filter((specifier) => specifier.startsWith('.')), ['./verify.js', './store.js']);
   assert.deepEqual(specifiers.filter((specifier) => NETWORK_MODULES.includes(specifier)), []);
   assert.equal(/\bprocess\.env\b/.test(INDEX_SOURCE), false, 'the door reads no environment either');
 
