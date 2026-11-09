@@ -188,6 +188,53 @@ func TestPropagationRetryRerunsTheInstallationStep(t *testing.T) {
 	}
 }
 
+// A retry's failure is judged against what the STEP has created, and not only
+// against the plan of the attempt that just failed. The two are not the same
+// plan, and they differ exactly where this retry lives: the first apply
+// creates the service and the grants on it are refused, so by the time the
+// retry plans, the service is in the state and the re-plan holds the leftover
+// grants alone. Judged against that plan alone the second failure names a
+// resource no plan of the attempt creates -- a real 404 as far as the
+// classifier could tell -- and the step stopped at "attempt 1 of 3": one retry
+// after 20s instead of the three waits it was given, and the compute step's
+// four applies (~4 min) gone with it. The two failures here are the same gap
+// on the same service, which is the whole case.
+func TestPropagationRetryKeepsRetryingAfterItsOwnApplyCreated(t *testing.T) {
+	noPropagationWaits(t)
+	r := updateRig(t)
+	// The first attempt's plan is the reported failure's own: the service this
+	// apply creates and the two grants on it. The re-plan holds the grants
+	// alone, which is what terraform finds left to do once its own apply
+	// created the service; the fake repeats the last answer, so the third
+	// attempt plans the same leftover.
+	r.script["plan@installation"] = map[string]any{"exit": 2}
+	r.script["show@installation"] = []any{
+		map[string]any{"stdout": planJSON(t, credentialsServiceChanges()...)},
+		map[string]any{"stdout": planJSON(t, credentialsServiceChanges()[1:]...)},
+	}
+	r.script["apply@installation"] = []any{
+		map[string]any{"exit": 1, "stderr": theReported404s},
+		map[string]any{"exit": 1, "stderr": theReported404s},
+		map[string]any{"exit": 0},
+	}
+	r.save(t)
+
+	out, err := updateRun(t, r, "update", "--yes")
+	if err != nil {
+		t.Fatalf("the retried installation step failed: %v\n%s", err, out)
+	}
+	for i, wait := range propagationWaits[:2] {
+		want := "retrying the installation step in " + strconv.Itoa(int(wait.Seconds())) +
+			"s: Google had not yet caught up with a resource it just created (attempt " + strconv.Itoa(i+1) + " of " + strconv.Itoa(len(propagationWaits)) + ")"
+		if n := strings.Count(out, want); n != 1 {
+			t.Errorf("the retry line for wait %d appears %d times, want one: the second failure is the same gap on the resource the first apply created, and the re-plan no longer creates it\n%q\n%s", i+1, n, want, out)
+		}
+	}
+	if got := rootSubs(t, r, "installation", "apply"); len(got) != 3 {
+		t.Errorf("the installation root applied %d times, want 3: the two failures and the apply that closed the gap\n%s", len(got), out)
+	}
+}
+
 // The repository step runs the same cycle through the same retry: its own
 // plan, gate and apply, and no saved plan applied twice. The failure here is
 // the repository root's own version of the reported one -- an account this

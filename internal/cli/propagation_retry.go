@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/infra/tf"
@@ -55,18 +56,29 @@ func sleepFor(ctx context.Context, d time.Duration) error {
 // is -- the failure a person would have read before any of this existed. A
 // context that is done ends the wait, and its error is what comes back.
 //
-// cycle returns the plan the apply was on, which is what the closed list is
-// judged against: without it there is nothing to say the refused resource is
-// one this apply created. It is nil when the cycle failed before it had a
-// plan, or when the plan it had changed nothing. what is the step's name in
-// the one line a retry prints, such as "the installation step".
+// cycle returns the plan the apply was on, and the closed list is judged
+// against what THIS STEP has created: the creates of every plan its attempts
+// applied, not only the newest one. The two are not the same plan, and the
+// difference is the gap this retry exists for: the first apply creates the
+// service or the account before the grants on it are refused, so it lands
+// those creates in the state and the plan of the next attempt no longer holds
+// them. Judged against that plan alone, the same failure a second time would
+// name a resource no plan of the attempt creates -- a real 404 as far as the
+// classifier could tell -- and the step would stop after its first wait
+// instead of using the three. Every plan is judged on its own terms still: a
+// failure off the closed list, or one whose resource no plan of any attempt
+// created, stops the step at once. cycle returns a nil plan when it failed
+// before it had one, or when the plan it had changed nothing. what is the
+// step's name in the one line a retry prints, such as "the installation step".
 func propagationRetry(ctx context.Context, w io.Writer, what string, cycle func(context.Context) (*tf.Plan, error)) error {
+	var planned []*tf.Plan
 	for attempt := 0; ; attempt++ {
 		plan, err := cycle(ctx)
+		planned = append(planned, plan)
 		if err == nil {
 			return nil
 		}
-		if attempt >= len(propagationWaits) || !tf.PropagationFailure(err, plan) {
+		if attempt >= len(propagationWaits) || !tf.PropagationFailure(err, createdBy(planned)) {
 			return err
 		}
 		wait := propagationWaits[attempt]
@@ -76,4 +88,31 @@ func propagationRetry(ctx context.Context, w io.Writer, what string, cycle func(
 			return err
 		}
 	}
+}
+
+// createdBy is every create the step's attempts applied, as the changes of one
+// plan -- the form the classifier reads (tf.PropagationFailure). Only creates
+// are kept, because they are the whole of what the closed list asks of a plan:
+// whether the resource the error names is one this step made. A resource two
+// attempts both planned is kept once, and a step that created nothing gives
+// nil, which the classifier reads as any plan without a create in it.
+func createdBy(plans []*tf.Plan) *tf.Plan {
+	var out *tf.Plan
+	seen := map[string]bool{}
+	for _, p := range plans {
+		if p == nil {
+			continue
+		}
+		for _, rc := range p.ResourceChanges {
+			if !slices.Contains(rc.Change.Actions, "create") || seen[rc.Address] {
+				continue
+			}
+			seen[rc.Address] = true
+			if out == nil {
+				out = &tf.Plan{}
+			}
+			out.ResourceChanges = append(out.ResourceChanges, rc)
+		}
+	}
+	return out
 }
