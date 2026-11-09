@@ -919,10 +919,12 @@ const gated: ConsoleHandlers = {
   // joined here for the reason the four above are: neither is a read of the
   // active installation's *source*, so `handlersFor` leaves them out
   // (`CliBackedHandlers` in `src/source/source.ts` says so from the other side)
-  // -- `command: null` is the same fact from the table's side, and these are the
-  // only rows on it that spawn nothing at all. Both read `licenceStore`, which
-  // is built above and answers for the active installation, and both are
-  // unreachable in a reduced console's withheld views by not being on one: a
+  // -- `command: null` is the same fact from the table's side. Eleven rows of
+  // the surface spawn nothing at all (the nine that answer the console's own
+  // state or open a window, and these two), and these are the only two of the
+  // eleven that keep a **credential**. Both read `licenceStore`, which is built
+  // above and answers for the active installation, and both are unreachable in
+  // a reduced console's withheld views by not being on one: a
   // lapsed installation is exactly the case in which the box that takes a
   // renewal has to open (`docs/design/lapse-read-only.md`).
   'licence.read': () => licenceRead(),

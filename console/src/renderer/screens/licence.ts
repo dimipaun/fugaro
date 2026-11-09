@@ -84,10 +84,11 @@ export const LICENCE_OUTCOME_CLASS = 'projects-licence-outcome'
 
 /** LICENCE_OPERATION and LICENCE_SAVE_OPERATION are the two operations this
  * section draws, in the surface's own spellings (`src/main/ipc.ts`, S2.7). They
- * are the first two rows of that table whose command is `null`: the console
- * keeps the key itself, so there is no argv for a key to be in -- which is
- * S2.1's hand-off read from this side, and the "never in argv" case the store's
- * own test asserts one layer down. */
+ * are two of the eleven rows of that table whose `command` is `null`, and the
+ * first two of those that keep a credential: the console keeps the key itself,
+ * so there is no argv for a key to be in -- which is S2.1's hand-off read from
+ * this side, and the "never in argv" case the store's own test asserts one
+ * layer down. */
 export const LICENCE_OPERATION = 'licence.read'
 export const LICENCE_SAVE_OPERATION = 'licence.save'
 

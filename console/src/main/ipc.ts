@@ -1559,10 +1559,10 @@ export const CONSOLE_OPERATIONS = [
   },
   // **The licence section's two operations** (subscriptions plan S2.7; the
   // design is `docs/licensing/licence-key.md`, "Storage and hand-off (F41)"),
-  // and they are the first two rows on this table that **spawn nothing at all**:
-  // the console keeps the key in its own store (`src/main/licence-store.ts`), so
-  // a paste is a verify and a write of a file this process owns rather than a
-  // child's argv. `command: null` is that fact, and it is also why neither row
+  // and they are two of the eleven rows on this table that **spawn nothing at
+  // all** -- the first two of those that keep a **credential**: the console
+  // keeps the key in its own store (`src/main/licence-store.ts`), so a paste is
+  // a verify and a write of a file this process owns rather than a child's argv. `command: null` is that fact, and it is also why neither row
   // carries a flag -- there is no argv for a flag to be part of -- and why
   // neither is on `SPAWN_COMMANDS` (`src/main/spawn.ts`).
   //
