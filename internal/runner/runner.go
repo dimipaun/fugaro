@@ -4705,6 +4705,11 @@ func (r *run) finalize(ctx context.Context) error {
 	// this run's too. A failed read keeps the set read at the top of
 	// finalize, which is still this run's work.
 	r.recordChangedFiles(ctx)
+	// The escalation's own last look, and the only moment it can leave nothing
+	// but a refusal: a file the agent wrote and never committed is invisible to
+	// both of its seams, and the leftover commit above is what makes it this
+	// run's work (security.go, D1509).
+	r.escalateSecurityAtFinalize(ctx)
 	// The run's own diff is now measured, which is D22's third moment: the
 	// mode is resolved from it before Decide reads the run's gates, so the
 	// value a later slice's rules act on is the one the run's whole diff
@@ -4749,9 +4754,10 @@ func (r *run) finalize(ctx context.Context) error {
 	// A run whose diff matched a security row and whose escalation was refused
 	// is not ready, whatever Decide answered (D1509): the level the
 	// classification required never ran, so the review the record shows did not
-	// cover the change. The run's own failure still outranks it (the override
-	// below), and the uncommitted case above keeps its more specific sentence
-	// when both hold.
+	// cover the change. It replaces the uncommitted case's sentence above when
+	// both hold — a refusal found at finalize is found there because the run
+	// committed work nobody reviewed, and the member's own `at` says so — and
+	// the run's own failure still outranks it (the override below).
 	ready, reason, class = r.applySecurityRefusal(ready, reason, class)
 	// The class follows the reason, and it is chosen by this same three-way
 	// choice in the same place by the same lines (design §4.2): the run's own

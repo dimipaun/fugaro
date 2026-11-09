@@ -31,6 +31,12 @@ import (
 // can see does not cover the change the classification asked it to. A diff that
 // cannot be read is not a match and records nothing.
 //
+// finalize reads the run's whole diff once more (escalateSecurityAtFinalize):
+// the seams see only committed paths, and the leftover commit finalize makes is
+// what turns work the agent never committed into this run's own. That reading
+// can only leave a refusal — the rounds are over — and it is the one reason
+// this member's `at` carries a moment no level was ever turned on at.
+//
 // The forced level is raise-only (D1517): a layer that wrote level 3's own
 // off-switch does not defeat the escalation, which clears it and says so
 // (plan.go's forcedLevelsAreRaiseOnly). Every other rule a level's settings
@@ -107,6 +113,48 @@ func (r *run) escalateSecurity(ctx context.Context, at string) {
 	}
 	r.d.Log.Info("the run's diff matched a security pattern, so review level 3 is on for it",
 		"at", at, "pattern", matched[0].Name, "category", string(matched[0].Category))
+}
+
+// escalateSecurityAtFinalize classifies the run's whole diff once finalize has
+// committed the work the agent left behind, and records a refusal when that
+// diff matches a row and the run never escalated: the escalation's two seams
+// read the committed diff, and a file the agent wrote without committing it is
+// invisible to both of them (gitops' ChangedFiles diffs workBase...HEAD), so
+// the row it matches reaches the run for the first time here — after the last
+// review round, when there is no level left to turn on (D1509).
+//
+// It records rather than escalates, and that is the whole of it: level 3 is the
+// round that would have to run, the rounds are over, and a member claiming the
+// escalation happened while no adversarial step ran would be the lie D1509's
+// member exists to prevent. What it leaves keeps the run out of ready
+// (applySecurityRefusal below), which is the same answer a run the seams
+// refused gets.
+//
+// Nothing is recorded when the run already carries a member — an escalation it
+// took, or a refusal at a seam — or when level 3 ran for it: the classification
+// asked for a level, and the record already says what became of that.
+//
+// The read is the seams' own, and a fresh one rather than the set the record
+// carries: runstore bounds that set (MaxChangedFiles, MaxChangedPathBytes), and
+// a big enough diff would drop the very path this is here to catch. A read that
+// fails records nothing, as it does at the seams.
+func (r *run) escalateSecurityAtFinalize(ctx context.Context) {
+	if r.rec.Security != nil || levelOn(r.levels, policy.LevelL3) {
+		return
+	}
+	paths, err := r.repo.ChangedFiles(ctx, r.workBase())
+	if err != nil {
+		r.d.Log.Warn("reading the run's whole diff for the security escalation at finalize failed; nothing is recorded for it",
+			"at", runstore.SecurityAtFinalize, "err", r.redact(err.Error()))
+		return
+	}
+	matched := sensitivity.Match(paths, sensitivity.Floor())
+	if len(matched) == 0 {
+		return
+	}
+	r.d.Log.Warn("the run's whole diff matched a security pattern and the run never escalated: the path reached the run at finalize, which commits the work the agent left uncommitted, and the review rounds are over, so the level cannot be turned on",
+		"at", runstore.SecurityAtFinalize, "pattern", matched[0].Name, "category", string(matched[0].Category))
+	r.recordRefusedSecurity(runstore.SecurityAtFinalize, matched[0])
 }
 
 // levelThreeTurnedOff reports whether a layer wrote level 3's own off-switch,

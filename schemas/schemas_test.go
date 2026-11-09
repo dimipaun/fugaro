@@ -1159,9 +1159,12 @@ func TestTierAdversarialInSchema(t *testing.T) {
 // TestSecurityEscalationInSchema: the record's security block is the
 // escalation's own account of why a run's review got harder
 // (docs/security-classification SC6, D1507, D1509), and its vocabulary is
-// internal/runstore's and internal/orchestrator/sensitivity's: a seam the
+// internal/runstore's and internal/orchestrator/sensitivity's: a moment the
 // runner can write and the enum lacks is a result.json its own published
-// schema refuses, and a value only the enum knows is a seam no run reaches.
+// schema refuses, and a value only the enum knows is a moment no run reaches.
+// The three moments are the escalation's two seams and finalize's own reading
+// of the run's whole diff, which is the one of them that can only leave a
+// refusal (runstore.SecurityAtFinalize).
 // The row's name is bounded exactly as the classifier bounds one, in both
 // directions, so a name the runner legally recorded is never one its own
 // schema calls too long.
@@ -1208,8 +1211,8 @@ func TestSecurityEscalationInSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	sec := doc.Properties.Security.Properties
-	if want := []string{runstore.SecurityAtImplement, runstore.SecurityAtFix}; !slices.Equal(sec.At.Enum, want) {
-		t.Errorf("result.schema.json security.at enum = %v, runstore's seams are %v", sec.At.Enum, want)
+	if want := []string{runstore.SecurityAtImplement, runstore.SecurityAtFix, runstore.SecurityAtFinalize}; !slices.Equal(sec.At.Enum, want) {
+		t.Errorf("result.schema.json security.at enum = %v, runstore's moments are %v", sec.At.Enum, want)
 	}
 	cats := make([]string, len(sensitivity.Categories))
 	for i, c := range sensitivity.Categories {

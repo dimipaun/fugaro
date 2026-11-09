@@ -18,9 +18,13 @@ import (
 // and whose level was refused is not absent: it is the same member with Refused
 // set, so a reader can tell that run from one whose diff met nothing.
 
-// The two moments the escalation is decided at (D1507). Both are the runner's
-// own seams, not D22's rigor moments: the first reads the diff once implement
-// has run, the second once a fix round has.
+// The moments the escalation is decided at (D1507). The first two are the
+// runner's own seams, not D22's rigor moments: the first reads the diff once
+// implement has run, the second once a fix round has. The third is finalize,
+// and it is the one moment the escalation is never *taken* at: it is where the
+// run reads the whole diff one last time, after committing the work the agent
+// left behind, and records a refusal for a row that only reached it there —
+// with no review round left to turn a level on for.
 const (
 	// SecurityAtImplement is the post-implement seam: the diff the implement
 	// stage left.
@@ -28,14 +32,22 @@ const (
 	// SecurityAtFix is the post-fix seam, beside roundRigor: a fix round can
 	// add a path the implement round did not touch.
 	SecurityAtFix = "fix"
+	// SecurityAtFinalize is finalize's own reading of the run's whole diff,
+	// after the leftover commit. It is always a refusal: the rounds are over,
+	// so the only thing the escalation can leave here is the record that it
+	// did not happen.
+	SecurityAtFinalize = "finalize"
 )
 
 // SecurityEscalation is the escalation a run recorded: the moment it was
 // decided at, and the row that decided it.
 type SecurityEscalation struct {
-	// At is the moment the run escalated at: SecurityAtImplement or
-	// SecurityAtFix. The first one a run takes is kept — the escalation is
-	// raise-only, so a later moment that matches again escalates nothing.
+	// At is the moment the escalation was decided at: SecurityAtImplement or
+	// SecurityAtFix for the escalation itself, and SecurityAtFinalize for a
+	// refusal the run's whole diff earned there. The first moment that has
+	// anything to say is kept — the escalation is raise-only, so a later moment
+	// that matches again escalates nothing, and a refusal is never overwritten
+	// by a second one.
 	At string `json:"at"`
 	// Pattern is the matched row's name, as its layer wrote it — the word that
 	// answers "why did this run a level-3 review?" for whoever reads the run
