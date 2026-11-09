@@ -48,36 +48,87 @@ const (
 // is where a change is explained. A comment saying "no external key here" is not
 // an external key, and a check that read it as one would make explaining the
 // rule the same act as breaking it.
+//
+// All three comment forms HCL has are removed, because a comment is invisible to
+// Terraform and reading one as a value is a hole in the safe direction: with only
+// `#` removed, a line reading `//default = "fugaroKeySigner"` beside a real
+// `default = "editor"` would be the value this suite pinned while the apply read
+// the other one — the same fault as a variable file, one level down.
 func tfSource(t *testing.T, rel string) string {
 	t.Helper()
 	b, err := os.ReadFile(rel)
 	if err != nil {
 		t.Fatalf("reading %s: %v", rel, err)
 	}
-	var out []string
-	for _, line := range strings.Split(string(b), "\n") {
-		quoted := false
-		for i, r := range line {
-			if r == '"' {
-				quoted = !quoted
-				continue
+	return tfStripComments(string(b))
+}
+
+// tfStripComments removes `#` and `//` to the end of their line, and `/* */`
+// wherever it starts, while leaving quoted strings and the line structure alone:
+// a `#` inside a string is text, and a whole-line comment leaves its newline
+// behind so that the block cuts every sweep makes still hold.
+func tfStripComments(src string) string {
+	var b strings.Builder
+	b.Grow(len(src))
+	for i := 0; i < len(src); {
+		switch c := src[i]; {
+		case c == '"':
+			j, ok := tfSkipString(src, i)
+			if !ok {
+				b.WriteString(src[i:])
+				return b.String()
 			}
-			if r == '#' && !quoted {
-				line = line[:i]
-				break
+			b.WriteString(src[i:j])
+			i = j
+		case c == '#':
+			i = tfToLineEnd(src, i)
+		case c == '/' && strings.HasPrefix(src[i:], "//"):
+			i = tfToLineEnd(src, i)
+		case c == '/' && strings.HasPrefix(src[i:], "/*"):
+			end := strings.Index(src[i+2:], "*/")
+			if end < 0 {
+				return b.String()
 			}
+			i += 2 + end + 2
+		default:
+			b.WriteByte(c)
+			i++
 		}
-		out = append(out, line)
 	}
-	return strings.Join(out, "\n")
+	return b.String()
+}
+
+// tfSkipString answers the index just past the closing quote of the string
+// starting at i, and whether there was one: a backslash escapes the character
+// after it, so a quote inside a description does not end the string.
+func tfSkipString(src string, i int) (int, bool) {
+	for j := i + 1; j < len(src); j++ {
+		switch src[j] {
+		case '\\':
+			j++
+		case '"':
+			return j + 1, true
+		}
+	}
+	return len(src), false
+}
+
+// tfToLineEnd answers the index of the newline ending the line that holds i, so
+// that the newline itself is kept.
+func tfToLineEnd(src string, i int) int {
+	if j := strings.IndexByte(src[i:], '\n'); j >= 0 {
+		return i + j
+	}
+	return len(src)
 }
 
 // tfBlocks answers every block in one file whose header starts with the given
 // text, so that a sweep covers a resource a later change adds rather than the
-// one name it was written for. The cut is the next resource header, which is
-// enough for a sweep over resources, and no block is reported twice.
+// one name it was written for. The cut is the next block header of either kind a
+// root declares a name with, which is enough for a sweep over those blocks, and
+// no block is reported twice.
 func tfBlocks(src, header string) []string {
-	return tfBlocksUntil(src, header, []string{"\nresource \""})
+	return tfBlocksUntil(src, header, []string{"\nresource \"", "\ndata \""})
 }
 
 // tfBlocksUntil answers every block whose header starts with the given text and
@@ -301,13 +352,21 @@ func tfRootFiles(t *testing.T, root string) []string {
 // whichever of that root's files holds it: Terraform refuses a resource declared
 // twice in one directory, so a root has exactly one, and a check that read
 // services/main.tf alone would read a file the block had been moved out of.
+//
+// Both kinds of block that declare a name are swept, `resource` and `data`,
+// because the checks here read the key ring's two spellings through it: keyring/
+// CREATES the ring and services/ READS it, and a sweep that saw only resources
+// would answer "no such block" for the half the signer grant hangs off.
 func tfRootBlock(t *testing.T, root, header string) string {
 	t.Helper()
 	var found []string
 	for _, rel := range tfRootFiles(t, root) {
-		for _, block := range tfBlocks(tfSource(t, filepath.Join(root, rel)), `resource "`) {
-			if tfHeader(block) == header {
-				found = append(found, block)
+		src := tfSource(t, filepath.Join(root, rel))
+		for _, kind := range tfBlockKinds {
+			for _, block := range tfBlocks(src, kind) {
+				if tfHeader(block) == header {
+					found = append(found, block)
+				}
 			}
 		}
 	}
@@ -321,6 +380,11 @@ func tfRootBlock(t *testing.T, root, header string) string {
 	}
 	return ""
 }
+
+// tfBlockKinds are the two kinds of block a root declares a name with: the
+// resources it creates and the data sources it reads. A check about what one of
+// them writes asks for the block by header, and the header carries the kind.
+var tfBlockKinds = []string{`resource "`, `data "`}
 
 // tfWrite writes one file of a scratch tree, so that a case reads as the tree it
 // builds rather than as three calls to the os package.
@@ -344,6 +408,11 @@ func tfWrite(t *testing.T, root, rel, body string) {
 // ring, with every block above still reading exactly as written. Both roots must
 // therefore write the same literal, and it is written here so that a change to it
 // is a change to this line too.
+//
+// The defaults are half of that rule and the other half is that the two blocks
+// which name the ring READ these variables rather than writing the value beside
+// them: a pinned default holds nothing about a block that ignores it. Both halves
+// are asserted in TestOnlyTheMinterHoldsTheSignerRole.
 var tfSignerDefaults = []struct{ name, want string }{
 	{"signer_role", `"fugaroKeySigner"`},
 	{"keyring", `"fugaro-licence"`},
@@ -385,23 +454,102 @@ var tfVarBlockEnds = []string{"\nvariable \"", "\nresource \"", "\ndata \"", "\n
 // tfDefaultLiteral answers a variable block's default as the quoted literal it is
 // written with, so that `default = "a"` and `default="a"` are one value. A
 // default in another shape (a number, a list, a reference) is returned as the
-// rest of the block, which no literal compared against it can equal — the shape
+// rest of its line, which no literal compared against it can equal — the shape
 // these roots use is a string, and anything else fails rather than passing
-// quietly.
+// quietly. A variable that writes no default reads as the empty string.
 func tfDefaultLiteral(block string) string {
-	compact := tfCompact(block)
-	i := strings.Index(compact, "default=")
+	value, _ := tfAttr(block, "default")
+	return value
+}
+
+// tfAttr answers the value written for one of a block's own top-level
+// attributes. It is a read of the block rather than a search of its text: `attr`
+// is matched at word boundaries and only outside quoted strings, so a word merely
+// ending in the name, a `default = ` inside a `description` string, and a
+// `default` written in a nested block are none of them the attribute — each of
+// which a plain substring search reads as it, and reading a comment or a sentence
+// as a value is how a rule about what a block MEANS stops holding anything.
+func tfAttr(block, name string) (string, bool) {
+	body, ok := tfBlockBody(block)
+	if !ok {
+		return "", false
+	}
+	depth := 0
+	for i := 0; i < len(body); {
+		switch c := body[i]; {
+		case c == '"':
+			j, ok := tfSkipString(body, i)
+			if !ok {
+				return "", false
+			}
+			i = j
+		case c == '{' || c == '[' || c == '(':
+			depth++
+			i++
+		case c == '}' || c == ']' || c == ')':
+			depth--
+			i++
+		case depth == 0 && tfIdentStart(c):
+			j := i
+			for j < len(body) && tfIdentChar(body[j]) {
+				j++
+			}
+			if word := body[i:j]; word == name {
+				k := j
+				for k < len(body) && (body[k] == ' ' || body[k] == '\t' || body[k] == '\n' || body[k] == '\r') {
+					k++
+				}
+				if k < len(body) && body[k] == '=' {
+					return tfValue(body, k+1), true
+				}
+			}
+			i = j
+		default:
+			i++
+		}
+	}
+	return "", false
+}
+
+// tfBlockBody answers a block's text between its own braces, or false for a
+// block whose braces this reader cannot see — which no comparison below can
+// mistake for a value.
+func tfBlockBody(block string) (string, bool) {
+	i := strings.IndexByte(block, '{')
 	if i < 0 {
-		return ""
+		return "", false
 	}
-	rest := compact[i+len("default="):]
-	if !strings.HasPrefix(rest, `"`) {
-		return rest
+	body := strings.TrimRight(block[i+1:], " \t\r\n")
+	if !strings.HasSuffix(body, "}") {
+		return "", false
 	}
-	if j := strings.Index(rest[1:], `"`); j >= 0 {
-		return rest[:j+2]
+	return body[:len(body)-1], true
+}
+
+// tfValue answers the value starting at i: a quoted string with its quotes, so
+// that two spellings of one literal compare equal, and anything else as the rest
+// of its line, which no quoted literal equals.
+func tfValue(body string, i int) string {
+	for i < len(body) && (body[i] == ' ' || body[i] == '\t' || body[i] == '\n' || body[i] == '\r') {
+		i++
 	}
-	return rest
+	if i < len(body) && body[i] == '"' {
+		if j, ok := tfSkipString(body, i); ok {
+			return body[i:j]
+		}
+	}
+	return strings.TrimSpace(body[i:tfToLineEnd(body, i)])
+}
+
+// tfIdentStart reports whether c can begin an HCL attribute name.
+func tfIdentStart(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_'
+}
+
+// tfIdentChar reports whether c can continue one: HCL's names carry digits,
+// dashes and dots.
+func tfIdentChar(c byte) bool {
+	return tfIdentStart(c) || c >= '0' && c <= '9' || c == '-' || c == '.'
 }
 
 // tfWantedDefaults renders the literals above, so that a failure names the whole
@@ -582,6 +730,26 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 		t.Errorf("this tree's roots do not hold the defaults the signer grant is decided by:\n  %s\nthe grant in %s names var.signer_role and its data source names var.keyring, so a default is the role the minter holds and the ring it is granted on; both roots write the same literal, and it is this suite's to hold (Check 174, S3.5). Want:\n%s", strings.Join(bad, "\n  "), servicesRoot, tfWantedDefaults())
 	}
 
+	// And that the pair above is what the two blocks READ, because pinning a
+	// default holds nothing about a block that names the value literally beside
+	// it: `data "google_kms_key_ring" "signing" { name = "attacker-ring" }`
+	// leaves every default in the tree exactly as pinned while the grant is made
+	// on another ring. The two blocks that name the ring — keyring/ creating it,
+	// services/ reading it — each write all three of the ring's attributes from
+	// their variables, so the ring the grant reaches is keyring/'s var.keyring,
+	// and with the defaults held above it is one ring under one name.
+	for _, ring := range []struct{ root, header string }{
+		{keyringRoot, `resource "google_kms_key_ring" "signing"`},
+		{servicesRoot, `data "google_kms_key_ring" "signing"`},
+	} {
+		block := tfCompact(tfRootBlock(t, ring.root, ring.header))
+		for _, want := range []string{"project=var.project", "name=var.keyring", "location=var.region"} {
+			if !strings.Contains(block, want) {
+				t.Errorf("the key ring block in %s does not write %s: the signer grant is made on this block's ring, so a name written literally here — and not from the variable both roots hold to one literal — points the grant at a ring no default in this tree decides (Check 174, S3.5)", ring.root, want)
+			}
+		}
+	}
+
 	// The other half of the same boundary, over every grant in the tree rather
 	// than the signer one: the intake's account is granted exactly one thing, the
 	// invoker role on the minter. A second grant is a reach nothing else here
@@ -744,8 +912,10 @@ func TestTheMinterHasNoPublicInvoker(t *testing.T) {
 // `useToVerify` to the signer role, a JSON file granting the signer role, an
 // override in JSON naming the intake in the signer grant, a variable file naming
 // another role and an auto-loaded one in JSON, a second plain HCL file in a root
-// — admitted, because the rule is one FORM per root and not one file — and the
-// third root above, which is not.
+// — admitted, because the rule is one FORM per root and not one file — the
+// defaults rule over a tree that changed one of them, the same rule against a
+// block that names the wanted literal in a comment or a string instead of in its
+// default, and the third root above, which is not.
 func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -880,6 +1050,28 @@ func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 		want := []string{tfNames(servicesRoot, `variable "signer_role"`) + ` = "fugaroKeyAdmin"`}
 		if got := tfUnheldDefaults(t, root); !slices.Equal(got, want) {
 			t.Errorf("a services/ default naming another role reads as %v, want %v: the rule has to fail on the root that changed, and name it — the grant in services/ still reads roles/${var.signer_role}, so the default is the only place this is visible", got, want)
+		}
+	})
+
+	// The same rule against a block that says the wanted literal somewhere other
+	// than in its default: a comment (in each of the three forms HCL has) and a
+	// description string holding `default = `. Both are places a search of the
+	// block's text finds "default" first and reads as the value — with only `#`
+	// stripped and `default=` looked for anywhere, a `//` line above the real
+	// default is what this suite pins while the apply reads the other one. The
+	// block's own default is the value, and it is the one that has to be held.
+	t.Run("a decoy default in a comment or a string", func(t *testing.T) {
+		root := t.TempDir()
+		tfWrite(t, root, "keyring/variables.tf", "variable \"signer_role\" {\n  default = \"fugaroKeySigner\"\n}\n\n"+
+			"variable \"keyring\" {\n  /* default = \"attacker-ring\" */\n  default = \"fugaro-licence\"\n}\n")
+		tfWrite(t, root, "services/variables.tf", "variable \"signer_role\" {\n"+
+			"  description = \"The default = of this variable is the role the minter holds.\"\n"+
+			"  //default = \"fugaroKeySigner\"\n"+
+			"  default    = \"editor\"\n}\n\n"+
+			"variable \"keyring\" {\n  #default = \"fugaro-licence\"\n  default = \"fugaro-licence\"\n}\n")
+		want := []string{tfNames(servicesRoot, `variable "signer_role"`) + ` = "editor"`}
+		if got := tfUnheldDefaults(t, root); !slices.Equal(got, want) {
+			t.Errorf("a block whose default names another role reads as %v, want %v: a comment and a description are not the value, and reading either as one pins the literal an apply does not use", got, want)
 		}
 	})
 
