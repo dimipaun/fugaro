@@ -199,6 +199,14 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro image promote":        {args: []string{"base"}},
 	"fugaro image record":         {args: []string{"--in", "r", "--digest-from", "a", "--base-digest-from", "b", "--image", "i", "--base", "ba", "--build-id", "x", "--slug", "s", "--bucket", "file:///nonexistent"}},
 	"fugaro image rm":             {args: []string{"base"}},
+	// show and dismiss are the two leaves whose argument is an issue's name, and
+	// this world saved none: the reference is a well-formed local ID the store
+	// does not hold, so the run reaches the command's own body and its "no issue"
+	// answer, which is the whole of what a closed stdin can be shown here. The
+	// same reference in both is the point — neither leaf may ask a question of a
+	// missing issue.
+	"fugaro issue dismiss":        {args: []string{"local-update-20261107183012-1"}},
+	"fugaro issue show":           {args: []string{"local-update-20261107183012-1"}},
 	"fugaro logs":                 {args: []string{"run-1"}},
 	"fugaro managed apply":        {args: []string{"root"}},
 	"fugaro managed flag":         {args: []string{"proj-1234"}},
@@ -283,6 +291,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro image render":      "refuses outside a git checkout, which is what the world is",
 	"fugaro image selftest":    "reads its spec from the closed stdin and returns on the EOF",
 	"fugaro image status":      "prints the no-project-config refusal",
+	"fugaro issue list":        "reads this machine's issue folder, which holds nothing in this world, and prints no row",
 	"fugaro managed status":    "prints the no-project-config refusal",
 	"fugaro models ls":         "prints the built-in list with no project selected",
 	// The orchestrator family reads and writes the state its project's daemon
