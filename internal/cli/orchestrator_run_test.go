@@ -343,6 +343,207 @@ func TestOrchestratorRunIsRegistered(t *testing.T) {
 	}
 }
 
+// newerReleaseState is a state node a newer release wrote: this binary reads
+// schema_version 1 and stops over it (G8).
+const newerReleaseState = `{"schema_version":2,"rev":9,"agent_id":"aurora","role":"orchestrator",
+	"goal":"from a newer release","work_items":[],"decisions":[],"facts":{},"archived":[],"intents":[]}`
+
+// TestWaitHonoursTheInterval: the wait is the interval's, not the stream's.
+// Every connection opens with a full put of the node as it stands, which is a
+// snapshot and not a change — the cycle that just ran read the same node — so a
+// wait that returned on it would end in microseconds and spin the loop at a
+// speed --interval never sets.
+func TestWaitHonoursTheInterval(t *testing.T) {
+	f := newDaemonFixture(t)
+	d, _ := f.daemon(t, "")
+	d.wake = nil
+	d.interval = 200 * time.Millisecond
+
+	start := time.Now()
+	if err := d.wait(context.Background()); err != nil {
+		t.Fatalf("a wait with nothing moving: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < d.interval {
+		t.Errorf("the wait ended after %s with nothing changed and an interval of %s: the stream's own connect put is being read as a change", elapsed, d.interval)
+	}
+}
+
+// TestWaitEndsItsStreamAndWakesOnAChange: the two halves of the same wait. A
+// change to the node ends it long before the interval, so the stream is still
+// what wakes the daemon; and the stream is cancelled on the way out, because
+// one left behind holds a connection, a goroutine and its 64KiB scanner buffer
+// for ever — one per cycle is a leak with no bound at all.
+func TestWaitEndsItsStreamAndWakesOnAChange(t *testing.T) {
+	f := newDaemonFixture(t)
+	d, _ := f.daemon(t, "")
+	d.wake = nil
+	d.interval = 10 * time.Second
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	path := f.statePath(t)
+	baseline := runtime.NumGoroutine()
+	// A writer that keeps the node moving the way the database tells its
+	// streams: a write through the client. A test's own seed (the fake's Set)
+	// changes the node without notifying a stream, which is not what a wake-up
+	// is about.
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for i := 1; ; i++ {
+			select {
+			case <-stop:
+				return
+			case <-time.After(20 * time.Millisecond):
+				_ = d.db.Patch(context.Background(), path, map[string]any{"rev": i})
+			}
+		}
+	}()
+
+	start := time.Now()
+	if err := d.wait(ctx); err != nil {
+		t.Fatalf("a wait over a moving node: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > d.interval/2 {
+		t.Errorf("the wait ended after %s, and a change to the node must wake it long before its interval (%s)", elapsed, d.interval)
+	}
+
+	// Six more waits, so that a stream left behind each time would leave six
+	// goroutines and six open connections here.
+	for range 6 {
+		if err := d.wait(ctx); err != nil {
+			t.Fatalf("a repeated wait: %v", err)
+		}
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for got := runtime.NumGoroutine(); got > baseline+2 && time.Now().Before(deadline); got = runtime.NumGoroutine() {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := runtime.NumGoroutine(); got > baseline+2 {
+		t.Errorf("goroutines went from %d to %d over seven waits, so each wait leaves its stream connected", baseline, got)
+	}
+}
+
+// TestRunHoldsWhileAnUpdateIsDue: a daemon the unit runs does not exit over an
+// update being due. The unit starts it again after any exit (KeepAlive on
+// launchd, Restart=always on systemd, O9), so exiting would be the same old
+// binary dying and being started again to print the same line, for ever. It
+// holds instead — no lease, no tick, no write — and the thing it waits for is
+// the one thing that helps: the new binary arriving at the path the unit names,
+// which is what `fugaro update` puts there.
+func TestRunHoldsWhileAnUpdateIsDue(t *testing.T) {
+	f := newDaemonFixture(t)
+	binary := stubBinary(t, t.TempDir(), "fugaro", "echo v9.9.9")
+	d, out := f.daemon(t, binary)
+	f.setState(t, newerReleaseState)
+	waits := 0
+	d.wake = func(context.Context) error {
+		waits++
+		if waits > 1 {
+			f.cancel()
+		}
+		return nil
+	}
+	before := f.db.Value(f.statePath(t))
+
+	if err := d.start(f.ctx); err != nil {
+		t.Fatalf("a daemon holding over an update being due returned %v", err)
+	}
+	if !strings.Contains(out.String(), "an update is due") || !strings.Contains(out.String(), "holding") {
+		t.Errorf("the report does not say the daemon is holding over an update: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "exiting cleanly") {
+		t.Errorf("the binary at the unit's path moved on and the daemon did not exit for the unit to start it: %q", out.String())
+	}
+	if after := f.db.Value(f.statePath(t)); !reflect.DeepEqual(before, after) {
+		t.Errorf("a daemon holding over an update wrote the node:\nafter  %v\nbefore %v", after, before)
+	}
+	if execs := f.run.Executions(); len(execs) != 0 {
+		t.Errorf("a daemon holding over an update started %d execution(s)", len(execs))
+	}
+	state, err := d.lease.Read(context.Background())
+	if err != nil {
+		t.Fatalf("reading the lease node: %v", err)
+	}
+	if state.Held || state.Holder != "" {
+		t.Errorf("the lease names %q, and a daemon that drives nothing claims nothing", state.Holder)
+	}
+}
+
+// TestDaemonRearmsTheBreakerWhenTheAnswerLands is the loop's half of D1228:
+// the count is this process's and the question is the node's, so a streak a
+// person has answered has to start again here. A breaker that is never
+// re-armed is silent from its first trip on — the observe reports only the
+// cycle that reaches the threshold — so the process would ask one question in
+// its whole life and then pause with nothing for anybody to look at.
+func TestDaemonRearmsTheBreakerWhenTheAnswerLands(t *testing.T) {
+	f := newDaemonFixture(t)
+	d, _ := f.running(t, "")
+	ctx := context.Background()
+
+	// Three cycles with nothing to do, as the loop runs them: the third
+	// reaches the threshold and leaves its question on the node.
+	for i := range orchestrator.BreakerThreshold {
+		if _, err := d.tick.Step(ctx); err != nil {
+			t.Fatalf("cycle %d: %v", i+1, err)
+		}
+	}
+	if !d.tick.Breaker.Tripped() {
+		t.Fatal("three empty cycles did not trip the breaker, so this test proves nothing")
+	}
+	s, _, err := d.node.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !orchestrator.BreakerOpen(s) {
+		t.Fatal("the trip left no unanswered question on the node, so there is nothing for a person to answer")
+	}
+
+	// The question stands: the streak is the pause's own, and a breaker
+	// re-armed here would count a second streak over a node that is stopped.
+	d.rearmBreaker(ctx)
+	if !d.tick.Breaker.Tripped() {
+		t.Error("the breaker was re-armed while its question was still unanswered")
+	}
+
+	answerBreakerQuestion(t, f, s, d)
+	d.rearmBreaker(ctx)
+	if d.tick.Breaker.Tripped() {
+		t.Error("the breaker is still standing after the person answered, so the next streak reports nothing and the process asks once in its life")
+	}
+}
+
+// answerBreakerQuestion closes the breaker's question the way a person's own
+// patch does: a resolve from the person class, over the id the trip left.
+func answerBreakerQuestion(t *testing.T, f *daemonFixture, s orchestrator.State, d *orchestratorDaemon) {
+	t.Helper()
+	id := ""
+	for _, dec := range s.Decisions {
+		if !dec.Resolved() {
+			id = dec.ID
+		}
+	}
+	if id == "" {
+		t.Fatal("the node carries no unanswered decision to answer")
+	}
+	next, err := orchestrator.Apply(s, orchestrator.Patch{BaseRev: s.Rev, Ops: []orchestrator.Op{
+		{Op: orchestrator.OpDecisionResolve, Resolve: &orchestrator.ResolveOp{ID: id, Answer: "carry on"}},
+	}}, orchestrator.Actor{Class: orchestrator.Person, Name: "owner", Now: time.Now().UTC()})
+	if err != nil {
+		t.Fatalf("answering the breaker's question: %v", err)
+	}
+	raw, err := orchestrator.EncodeState(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.setState(t, string(raw))
+	if after, _, err := d.node.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	} else if orchestrator.BreakerOpen(after) {
+		t.Fatal("the answer did not close the question, so the re-arm below would prove nothing")
+	}
+}
+
 // TestRunOnceTakesOneCycleAndReleasesTheLease: the daemon's contract is not to
 // return, and --once is the one cycle a person can hold it to — the lease is
 // taken for that cycle and released with it, so an inspection never keeps the

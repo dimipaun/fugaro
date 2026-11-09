@@ -164,7 +164,7 @@ func (d *orchestratorDaemon) start(ctx context.Context) error {
 	if due, err := d.updateDue(ctx); err != nil {
 		return err
 	} else if due {
-		return nil
+		return d.holdForUpdate(ctx)
 	}
 	state, err := d.lease.Acquire(ctx)
 	if err != nil {
@@ -208,8 +208,8 @@ func (d *orchestratorDaemon) stateVersion(ctx context.Context) (int, bool, error
 }
 
 // updateDue reports whether the state node was written by a newer release, and
-// says so when it was: the daemon then does nothing else at all — no lease, no
-// write, no run (G8). It is asked before the lease is taken, because a daemon
+// says so when it was: the daemon then drives nothing, claims nothing and
+// writes nothing (G8). It is asked before the lease is taken, because a daemon
 // that is not going to drive the id must not claim it even for a moment: a
 // state node this release does not read is the person's cue to run `fugaro
 // update`, and nothing here touches it.
@@ -221,9 +221,52 @@ func (d *orchestratorDaemon) updateDue(ctx context.Context) (bool, error) {
 	if v <= orchestrator.SchemaVersion {
 		return false, nil
 	}
-	fmt.Fprintf(d.out, "orchestrator %s: the state node is at schema_version %d and this binary reads %d, so an update is due: it was written by a newer release, and nothing is started until this machine runs `fugaro update`. This daemon is stopping; the running one was not touched.\n",
-		safetext.Field(d.id), v, orchestrator.SchemaVersion)
+	// What the report promises next depends on who would start this process
+	// again: a unit is written to start a daemon after any exit, so there the
+	// report is not the end of anything, and holdForUpdate says what happens
+	// instead.
+	ending := "This daemon is stopping; the running one was not touched."
+	if d.binary != "" && !d.once {
+		ending = "This daemon is holding instead of exiting, because the unit starts it again after any exit: it claims nothing and drives nothing, and it exits only once the binary the unit names has moved on."
+	}
+	fmt.Fprintf(d.out, "orchestrator %s: the state node is at schema_version %d and this binary reads %d, so an update is due: it was written by a newer release, and nothing is started until this machine runs `fugaro update`. %s\n",
+		safetext.Field(d.id), v, orchestrator.SchemaVersion, ending)
 	return true, nil
+}
+
+// holdForUpdate is what a daemon does with an update due while a unit runs it:
+// nothing at all, for as long as it takes.
+//
+// It must not exit. The unit is written with KeepAlive on launchd and
+// Restart=always on systemd (O9), so a clean exit does not stop anything: it is
+// the same old binary started again, printing the same line, for ever — and
+// the report that announces a stop would be a lie. What ends the hold is the
+// one thing that can help: the binary at the path the unit names moving on,
+// which is what `fugaro update` does. This process then exits cleanly, so the
+// unit starts the new binary, which can read the node.
+func (d *orchestratorDaemon) holdForUpdate(ctx context.Context) error {
+	// A foreground run with no --binary is nobody's unit — there is nothing to
+	// start it again, so the report is the end of it — and --once is one cycle
+	// by its own contract, wherever it is asked for.
+	if d.binary == "" || d.once {
+		return nil
+	}
+	for {
+		if err := d.wait(ctx); err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+		moved, err := d.handOver(ctx)
+		if err != nil {
+			fmt.Fprintf(d.warn, "orchestrator %s: the binary at %s could not be read: %s\n", safetext.Field(d.id), safetext.Field(d.binary), safetext.OneLine(err.Error()))
+			continue
+		}
+		if moved {
+			return d.stop(ctx)
+		}
+	}
 }
 
 // migrate is the daemon's own start-up convergence of its state node (O0, Q2's
@@ -326,6 +369,7 @@ func (d *orchestratorDaemon) loop(ctx context.Context) error {
 		}
 		rep, err := orchestrator.StepWithCache(ctx, d.tick, d.cache)
 		d.report(rep, err)
+		d.rearmBreaker(ctx)
 		if d.once {
 			return d.oneCycle(ctx)
 		}
@@ -367,6 +411,32 @@ func (d *orchestratorDaemon) handOver(ctx context.Context) (bool, error) {
 	return binaryMoved(ctx, d.binary, d.running)
 }
 
+// rearmBreaker is the loop's half of the breaker (D1228): the count is this
+// process's and the question the trip raised is the node's, so a streak a
+// person has answered has to start again here. A breaker that is never
+// re-armed is silent from the trip on — a fourth failure in a row reports the
+// question the streak already reached, so without this the daemon could never
+// ask a second person anything, and the next streak would pause it with
+// nothing for anybody to look at.
+//
+// The node is read only while the streak stands at the threshold, which is the
+// one state the answer can change: any other cycle has already settled the
+// count by its own outcome. A read that fails is logged and leaves the streak
+// where it is; the next cycle tries again.
+func (d *orchestratorDaemon) rearmBreaker(ctx context.Context) {
+	if d.tick == nil || d.tick.Breaker == nil || !d.tick.Breaker.Tripped() {
+		return
+	}
+	s, _, err := d.node.Load(ctx)
+	if err != nil {
+		fmt.Fprintf(d.warn, "orchestrator %s: the breaker could not be re-armed: %s\n", safetext.Field(d.id), safetext.OneLine(err.Error()))
+		return
+	}
+	if !orchestrator.BreakerOpen(s) {
+		d.tick.Breaker.Reset()
+	}
+}
+
 // oneCycle ends a --once run. The lease is released with the cycle it covered:
 // one pass held at a terminal must not keep the orchestrator id from the daemon
 // that drives it for the whole TTL.
@@ -402,13 +472,28 @@ func (d *orchestratorDaemon) report(rep orchestrator.Report, err error) {
 // a change made while the stream was down is never lost — and the interval as
 // the ceiling. A stream that ends falls back to the interval alone rather than
 // stopping the daemon.
+//
+// The connection's first event is passed over, because it is not news: the
+// cycle that just ran read that same node, and the snapshot is what every
+// connection opens with rather than a change. Returning on it would end every
+// wait in microseconds and spin the loop at the speed of the interval it never
+// honours — and the writes that follow it in the same connection are the
+// changes a wake-up is for, so nothing is lost by sitting out the first one.
+//
+// The stream is cancelled on the way out. It holds a connection, a goroutine
+// and a 64KiB scanner buffer for as long as its context lives, and the stream
+// of a wait that left its context behind would still be connected to the node
+// a day later: one per cycle is a leak with no bound at all.
 func (d *orchestratorDaemon) wait(ctx context.Context) error {
 	if d.wake != nil {
 		return d.wake(ctx)
 	}
 	timer := time.NewTimer(d.interval)
 	defer timer.Stop()
-	events := d.db.Stream(ctx, d.node.Path())
+	sctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	events := d.db.Stream(sctx, d.node.Path())
+	connected := true
 	for {
 		select {
 		case <-ctx.Done():
@@ -418,8 +503,13 @@ func (d *orchestratorDaemon) wait(ctx context.Context) error {
 				events = nil
 				continue
 			}
+			snapshot := connected
+			connected = false
 			switch ev.Type {
 			case "put", "patch":
+				if snapshot {
+					continue
+				}
 				return nil
 			case "keep-alive":
 				continue

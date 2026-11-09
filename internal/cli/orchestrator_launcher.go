@@ -82,11 +82,26 @@ func (l *orchestratorLauncher) prepare(ctx context.Context, spec orchestrator.Sp
 	if err != nil {
 		return "", nil, err
 	}
+	// The project layer goes into the task's own copy, the way `fugaro run`
+	// puts it there: the runner resolves the run's configuration from the
+	// task and nowhere else, so a launch that skipped this would start a run
+	// without the project's shared defaults — the daemon's own project
+	// selection is not something a run can read back.
+	if _, err := embedProjectLayer(ctx, l.env, ts, l.stderr); err != nil {
+		return "", nil, err
+	}
 	// The budget pre-check, before the task is stored and before the claim:
 	// a launch the budget refuses costs no claim to release, which is the
 	// order `fugaro run` refuses in too. It fails closed, so an unreachable
 	// database stops the launch rather than starting a run nothing counts.
 	if err := l.env.budgetPrecheck(ctx, slug, ts, l.stderr); err != nil {
+		return "", nil, err
+	}
+	// The policy gate, after the pre-check and before anything of this launch
+	// is written (run.go's finishLaunch refuses in this order): the repository
+	// must be admitted and the policy must not be newer than this binary, so a
+	// launch the policy refuses leaves no task behind and no claim to release.
+	if err := launchPolicyGates(ctx, l.env, slug, ts); err != nil {
 		return "", nil, err
 	}
 	s := runstore.Open(l.env.bucket.Bucket, slug, ts.RunID)

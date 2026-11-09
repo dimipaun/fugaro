@@ -89,6 +89,59 @@ func TestRunLauncherUsesTheLaunchClaim(t *testing.T) {
 	}
 }
 
+// TestRunLauncherCarriesTheProjectLayer: the task the launcher stores carries
+// the project layer, the way `fugaro run` puts it there. The runner resolves a
+// run's configuration from the task's own copy and nowhere else, so a launch
+// that skipped this step would start a run without the project's shared
+// defaults — the daemon's own project selection is not something a run can read
+// back.
+func TestRunLauncherCarriesTheProjectLayer(t *testing.T) {
+	f := newLauncherFixture(t)
+	ctx := context.Background()
+	publishedLayer(t, f.cloudFixture, testProjectLayer)
+	l := f.launcher(t)
+	spec := orchestrator.Spec{ItemID: "wi-1", Title: "land the daemon", Repo: "acme/app", Recipe: "standard", Brief: "Start the run this attempt recorded."}
+	const runID = "20261109-101500-abcd"
+
+	if _, err := l.Launch(ctx, spec, runID); err != nil {
+		t.Fatalf("launching: %v", err)
+	}
+	ts, err := f.runStore(t, runID).ReadTask(ctx)
+	if err != nil {
+		t.Fatalf("reading the task the launch stored: %v", err)
+	}
+	if ts.ProjectLayer == nil {
+		t.Fatal("the task carries no project layer, so the run would resolve its configuration without the project's shared defaults")
+	}
+	if !strings.Contains(ts.ProjectLayer.YAML, "project: aurora") {
+		t.Errorf("the task's project layer is not the one published for this installation:\n%s", ts.ProjectLayer.YAML)
+	}
+}
+
+// TestRunLauncherRunsThePolicyGate: the project's policy is read before
+// anything of the launch is written, as `fugaro run` reads it. A repository the
+// policy does not admit is a refusal with no task and no claim behind it.
+func TestRunLauncherRunsThePolicyGate(t *testing.T) {
+	f := newLauncherFixture(t)
+	ctx := context.Background()
+	// A policy that admits a different repository: what refuses below is the
+	// allow-list and not the budget, which the fixture leaves enforcing.
+	publishPolicy(t, f.launchBudgetFixture, `{"version":4,"allow_repos":["acme/other"]}`)
+	l := f.launcher(t)
+	spec := orchestrator.Spec{ItemID: "wi-1", Title: "land the daemon", Repo: "acme/app", Recipe: "standard", Brief: "This is the launch the policy refuses."}
+	const runID = "20261109-101500-abcd"
+
+	if _, err := l.Launch(ctx, spec, runID); err == nil {
+		t.Fatal("a launch the project's policy does not admit went through")
+	}
+	if execs := f.run.Executions(); len(execs) != 0 {
+		t.Fatalf("a refused launch started %d execution(s): %v", len(execs), execs)
+	}
+	if _, err := f.runStore(t, runID).ReadTask(ctx); err == nil {
+		t.Fatal("a refused launch stored a task, and the gate refuses before anything is written")
+	}
+}
+
 // TestRunLauncherRunsPrecheck: the budget's own pre-check runs before anything
 // is started, and a refusal is a refusal — no task is stored, no claim is taken
 // and no execution is started. It is the order `fugaro run` refuses in too: a
