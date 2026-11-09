@@ -51,11 +51,13 @@ func groupJSON(t *testing.T, args ...string) (groupDoc, string) {
 }
 
 // seedClassedRun seeds one run whose record names class and spent spend, so a
-// window can hold a class with the runs and the money a test needs.
+// window can hold a class with the runs and the money a test needs. The cost
+// is the whole of spend -- model only, no compute -- because the rows are read
+// without an execution to price and a group's spend is summed off the rows.
 func seedClassedRun(t *testing.T, f *cloudFixture, id string, class failure.Class, spend float64) {
 	t.Helper()
 	seedRun(t, f, id, "", "someone@example.com", false)
-	c := runstore.NewCost(spend-0.5, 0.5, runstore.BasisAPIList)
+	c := runstore.NewCost(spend, 0, runstore.BasisAPIList)
 	writeRecord(t, f, id, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web",
 		Status: runstore.StatusFailed, Stage: "verify", Reason: "the run did not finish its work",
 		FailureClass: class, CostUSD: spend, Cost: &c})
@@ -105,6 +107,24 @@ func TestRunsGroupByRefusesAnotherValue(t *testing.T) {
 	}
 }
 
+// TestRunsGroupByRefusesAPage: a grouped listing is a reading of the whole
+// window -- the shares are shares of its runs and the totals are the window's
+// -- so a page of it (--limit, --after) or a redraw of it (--watch) would put
+// a figure computed over something else beside the block (design §6.1).
+func TestRunsGroupByRefusesAPage(t *testing.T) {
+	newCloudFixture(t)
+	for _, args := range [][]string{
+		{"runs", "ls", "--group-by", "failure_class", "--limit", "5"},
+		{"runs", "ls", "--group-by", "failure_class", "--after", "20261109-090000-aaaa"},
+		{"runs", "ls", "--group-by", "failure_class", "--watch"},
+	} {
+		_, _, err := execute(t, args...)
+		if err == nil || !strings.Contains(err.Error(), "--group-by") {
+			t.Errorf("%v: err = %v, want a refusal naming what does not go with --group-by", args, err)
+		}
+	}
+}
+
 // TestRunsGroupByShareIsRunsNotSpend: the share column is a share of the
 // window's runs, never of its spend (D1465). The window is built so the two
 // readings disagree -- one expensive class against three cheap ones -- and the
@@ -151,7 +171,7 @@ func TestWatchDocumentCarriesNoGroups(t *testing.T) {
 	f.run.Project, f.run.Region = "proj-1234", "us-east5"
 	// A failed run, so the block would be non-empty if the watch path emitted
 	// one: absence is the shape, not an empty window.
-	seedClassedRun(t, f, recentRunID(t, time.Minute, "aaaa"), failure.TestsFailed, 1)
+	seedClassedRun(t, f, runID(time.Minute, "deed"), failure.TestsFailed, 1)
 
 	out, _, err := execute(t, "watch", "--once", "--json")
 	if err != nil {
@@ -175,7 +195,13 @@ var updateRunsGroupGolden = flag.Bool("update-runs-group", false, "rewrite testd
 // TestRunsGroupByGolden pins the whole grouped listing -- the table a person
 // reads and the block the console reads -- for a window of two classes, so a
 // column, an order or a rounding that moved is a diff rather than a reading.
+// The clock is pinned and the run IDs are minted from it: the table carries
+// the ids and the ages, and a golden of them against the wall clock would be
+// a different file tomorrow.
 func TestRunsGroupByGolden(t *testing.T) {
+	defer func(old func() time.Time) { lsNow = old }(lsNow)
+	at := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	lsNow = func() time.Time { return at }
 	f := newCloudFixture(t)
 	f.run.Project, f.run.Region = "proj-1234", "us-east5"
 	seedClassedRun(t, f, recentRunID(t, 3*time.Minute, "aaaa"), failure.TestsFailed, 4)

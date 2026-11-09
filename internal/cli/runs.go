@@ -50,6 +50,7 @@ type lsOptions struct {
 	cloud                    cloudOptions
 	repo, since, batch       string
 	state                    string
+	groupBy                  string
 	all, mine, watch, asJSON bool
 	interval                 time.Duration
 	pr                       int    // only the runs on this pull request, when set
@@ -216,6 +217,13 @@ type lsDoc struct {
 	Project string         `json:"project"` // the Fugaro project
 	Runs    []runview.Row  `json:"runs"`
 	Totals  runview.Totals `json:"totals"`
+	// Groups is --group-by's block: one row per failure class of the window,
+	// beside the rows rather than instead of them. It is omitted whenever no
+	// grouping was asked for, and omitempty is what makes that safe: the
+	// degraded watch document embeds this type (watchDegradedDoc) and the
+	// phone refuses a key it does not know, so a block printed by a listing
+	// that never grouped would break the app's degraded screen (F14, D1458).
+	Groups []lsGroup `json:"groups,omitempty"`
 	// Warnings are the lines a human listing prints before its table.
 	Warnings []string `json:"warnings"`
 }
@@ -258,6 +266,13 @@ func newLsCmd() *cobra.Command {
 			"carries: the `halted (run_cap)` cell is --state halted, and --help lists the\n" +
 			"states the flag takes. A run's state is in its result.json, so this filter\n" +
 			"reads every run it filters -- it narrows the listing, never the reads.\n\n" +
+			"--group-by failure_class adds a block to the listing: one row per class of the\n" +
+			"closed vocabulary, with the runs of the window that ended in it, their share\n" +
+			"of the window's runs, and what they cost. It groups the rows the listing has\n" +
+			"already read and reads nothing new, and it moves nothing: the rows and the\n" +
+			"totals are the ones without it, and --json gains the `groups` block beside\n" +
+			"them. A page of a grouped listing is a page's total, so --group-by doesn't go\n" +
+			"with --limit, --after or --watch.\n\n" +
 			"--pr N lists the runs on pull request N of one repository (the first run and\n" +
 			"its follow-ups), over the last " + prLookback + " unless --since says otherwise; the totals\n" +
 			"line is then the PR's total cost.",
@@ -271,6 +286,7 @@ func newLsCmd() *cobra.Command {
 	f.StringVar(&o.since, "since", lsDefaultSince, "only runs started within this long ("+lsDefaultSince+", 36h, 90m; 0 for all)")
 	f.StringVar(&o.batch, "batch", "", "only runs of this batch")
 	f.StringVar(&o.state, "state", "", "only runs in this state ("+strings.Join(lsStates, ", ")+")")
+	f.StringVar(&o.groupBy, "group-by", "", "group the listing by one field ("+strings.Join(lsGroupings, ", ")+")")
 	f.IntVar(&o.limit, "limit", 0, "print only the newest N rows (0, the default, is every row of the window; the totals stay the window's)")
 	f.StringVar(&o.after, "after", "", "print only the rows after this run id in the listing")
 	f.IntVar(&o.pr, "pr", 0, "only runs on this pull request (needs one repository; --since defaults to "+prLookback+")")
@@ -322,6 +338,18 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 	if o.state != "" && !slices.Contains(lsStates, o.state) {
 		return userErr("--state %q: use one of %s", o.state, strings.Join(lsStates, ", "))
 	}
+	if o.groupBy != "" && !slices.Contains(lsGroupings, o.groupBy) {
+		return userErr("--group-by %q: use one of %s", o.groupBy, strings.Join(lsGroupings, ", "))
+	}
+	// A grouped listing is a reading of the whole window -- the totals and the
+	// shares are the window's -- so a page of it or a redraw of it would be a
+	// figure computed over something else.
+	if o.groupBy != "" && (cmd.Flags().Changed("limit") || cmd.Flags().Changed("after")) {
+		return userErr("--group-by reads the whole window: a page of a grouped listing is a page's total, so --limit and --after don't go with it")
+	}
+	if o.groupBy != "" && o.watch {
+		return userErr("--group-by reads the whole window: --watch redraws the listing until every run has settled, so the two don't go together")
+	}
 	env, err := openCloud(ctx, o.cloud)
 	if err != nil {
 		return err
@@ -364,7 +392,12 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 		if clear {
 			fmt.Fprint(out, "\x1b[H\x1b[2J")
 		}
-		if err := printRowsWithTotals(out, env.lc.Name, page, runview.Sum(rows), warnings, now, o.asJSON); err != nil {
+		if o.groupBy != "" {
+			err = printGroupsWithTotals(out, env.lc.Name, page, runview.Sum(rows), warnings, now, o.asJSON)
+		} else {
+			err = printRowsWithTotals(out, env.lc.Name, page, runview.Sum(rows), warnings, now, o.asJSON)
+		}
+		if err != nil {
 			return err
 		}
 		if !o.watch || allSettled(rows) {
@@ -800,10 +833,26 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 // from the rows: a listing that printed a page still totals the window it read
 // (D818), so the number beside a page is never the page's own.
 func printRowsWithTotals(w io.Writer, project string, rows []runview.Row, tot runview.Totals, warnings []string, now time.Time, asJSON bool) error {
+	return printDoc(w, project, rows, tot, nil, warnings, now, asJSON)
+}
+
+// printGroupsWithTotals is printRowsWithTotals with --group-by's block: the
+// same rows under the same totals -- neither moves -- and the window's failure
+// classes printed under them, or carried beside them in the document. It is
+// the only caller that hands groups to printDoc, and the only thing --group-by
+// changes about a listing.
+func printGroupsWithTotals(w io.Writer, project string, rows []runview.Row, tot runview.Totals, warnings []string, now time.Time, asJSON bool) error {
+	return printDoc(w, project, rows, tot, groupRows(rows), warnings, now, asJSON)
+}
+
+// printDoc prints rows as a table with a totals line, or as one JSON document,
+// with groups -- nil unless the listing was grouped -- as the block beside
+// them.
+func printDoc(w io.Writer, project string, rows []runview.Row, tot runview.Totals, groups []lsGroup, warnings []string, now time.Time, asJSON bool) error {
 	if asJSON {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(lsDoc{Project: project, Runs: rows, Totals: tot, Warnings: warnings})
+		return enc.Encode(lsDoc{Project: project, Runs: rows, Totals: tot, Groups: groups, Warnings: warnings})
 	}
 	for _, line := range warnings {
 		fmt.Fprintln(w, line)
@@ -906,7 +955,13 @@ func printRowsWithTotals(w io.Writer, project string, rows []runview.Row, tot ru
 	if _, err := fmt.Fprintln(w, line); err != nil {
 		return err
 	}
-	return printOwnerWaiting(w, rows)
+	if err := printOwnerWaiting(w, rows); err != nil {
+		return err
+	}
+	if groups == nil {
+		return nil
+	}
+	return printGroupsTable(w, groups)
 }
 
 // printOwnerWaiting prints, under the table, what each listed run is waiting
