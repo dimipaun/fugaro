@@ -1247,13 +1247,16 @@ const SCREEN_FILES: readonly string[] = Object.freeze(
   walkFiles(SCREENS).sort((a, b) => a.localeCompare(b)),
 )
 
-/** SINK_FLOOR is the fewest sink calls a screen may have, for the one screen
- * whose drawing is smaller than that: `reading.ts` draws the panel's two
+/** SINK_FLOOR is the fewest sink calls a screen may have, less one -- the case
+ * below asserts the count is *greater* than the floor -- for the screens whose
+ * drawing is smaller than the default: `reading.ts` draws the panel's two
  * sentences (the placeholder and the line a slow read adds) and calls the sink
- * twice. Every other screen draws more, so the floor stays where it was -- the
- * case below is a non-vacuity guard, and lowering it everywhere to fit one
- * screen would be the weakened guard rather than the honest exception. */
-const SINK_FLOOR: Readonly<Record<string, number>> = Object.freeze({ 'reading.ts': 1 })
+ * twice, and `environment.ts` draws the environment view's two credential
+ * sentences and calls it twice. Every other screen draws more, so the floor
+ * stays where it was -- the case below is a non-vacuity guard, and lowering it
+ * everywhere to fit two screens would be the weakened guard rather than the
+ * honest exception. */
+const SINK_FLOOR: Readonly<Record<string, number>> = Object.freeze({ 'reading.ts': 1, 'environment.ts': 1 })
 
 /** SHARED_FILES are the modules outside `src/renderer/screens` that may draw --
  * `src/shared/notice.ts` writes the notice card's text slots, and
@@ -1298,6 +1301,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
       'coordinator.ts',
       'credentialsservice.ts',
       'degraded.ts',
+      'environment.ts',
       'graph.ts',
       'launch.ts',
       'licence.ts',
@@ -1643,6 +1647,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'screens/coordinator.ts',
       'screens/credentialsservice.ts',
       'screens/degraded.ts',
+      'screens/environment.ts',
       'screens/graph.ts',
       'screens/launch.ts',
       'screens/licence.ts',
