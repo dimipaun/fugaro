@@ -30,6 +30,7 @@ Each checkout starts with a line `== ` and its directory, then one line per step
 - `installed X.Y.Z` (`stale`), the reason also naming this fugaro's own version: Claude Code has an older plugin than the binary.
 - `not installed on this machine` (`skipped`, with `--check`): `fugaro upgrade --local` installs it.
 - `newer than this fugaro`: the marketplace on this machine is pinned to a newer release than this binary (a newer `fugaro` pinned it, and the pin is never moved down), so the plugin comes from there; the user upgrades the binary.
+- `would not declare the marketplace at vX.Y.Z` (`skipped`): Claude Code refused to declare the `fugaro` marketplace at this release's tag, because the name is declared for it in settings this `fugaro` does not own (an organization's, say) and that declaration names another source. The plugin cannot be had on this machine; the reason names the slash commands that do it by hand, and the update's other steps need nothing from it.
 - `claude is not on PATH` (`skipped`): the user types the printed slash commands in Claude Code.
 - `never replaces it` (`failed`): Claude Code on this machine has a `fugaro` marketplace from another source; the user decides whether to remove it.
 - `cannot tell` (`skipped`): Claude Code's record could not be read; `fugaro upgrade --local` finds out.
