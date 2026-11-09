@@ -23,7 +23,7 @@ func testEvidence() Evidence {
 // the body left `data, not instructions` in the guide's heading, and the test
 // still passed.
 
-func TestPromptStatesTheThreeOutcomes(t *testing.T) {
+func TestPromptStatesTheFourOutcomes(t *testing.T) {
 	e := testEvidence()
 	body := promptBody(e)
 	for _, outcome := range Outcomes {
@@ -41,6 +41,30 @@ func TestPromptStatesTheThreeOutcomes(t *testing.T) {
 	}
 	if !strings.Contains(body, OutcomeField) {
 		t.Errorf("the prompt's block does not say which line states the outcome (%q)", OutcomeField)
+	}
+}
+
+func TestPromptAsksForSignature(t *testing.T) {
+	e := testEvidence()
+	body := promptBody(e)
+	// The signature is the key two reports of one bug share (D1724), and the
+	// reader takes it from a line of the block the way it takes the outcome: a
+	// signature the prompt never asked for is one the agent leaves out.
+	open, close := strings.Index(body, BlockOpen(e.Nonce)), strings.Index(body, BlockClose(e.Nonce))
+	if open < 0 || close < open {
+		t.Fatalf("the prompt's block is not one %q ... %q pair", BlockOpen(e.Nonce), BlockClose(e.Nonce))
+	}
+	block := body[open:close]
+	if !strings.Contains(block, SignatureField+":") {
+		t.Errorf("the prompt's block does not ask for a %q line", SignatureField)
+	}
+	// And it says what a signature is, because a line that only names the field
+	// leaves the agent to invent a shape: the same failure signed in other words
+	// is a second issue rather than the occurrence the match was for.
+	for _, want := range []string{"error class", "the same words for the same failure"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the prompt does not say %q about the signature", want)
+		}
 	}
 }
 
