@@ -300,9 +300,9 @@ const (
 // which is how a config line, a `.env` line or a shell line writes one
 // (`postgres://app:"<password>"@host`), and the same value one encoding in,
 // where a record that has itself been escaped carries the quotes as `\"`. It is
-// written once because the two connection-string rules below read it the same
-// way, as passwordValueTail is written once for the password rules, and
-// connStringCutQuoted below is the one difference between them. The unquoted
+// written once because the two connection-string rules below open with it, as
+// passwordValueTail is written once for the password rules; where they part is
+// below, at connStringCutQuoted's letter, body and tail. The unquoted
 // class beside it cannot read such a value — it stops at the quote that opens
 // it, and the value's first byte is that quote — and that is the whole of the
 // asymmetry the two answer: the same password in single quotes is a value to
@@ -317,12 +317,40 @@ const (
 // here is read with.
 const connStringQuoted = `\\*"(?:\\.|[^"\\\r\n]){4,}\\*"`
 
+// connStringCutBody is what a quoted value of that rule holds between its
+// delimiters, read at the level its escaping leaves it at: a plain byte, the
+// byte a backslash introduces (`\\` and `\"` are one byte each), or the quote a
+// value holding one of its own carries, which is read together with the byte
+// behind it. That byte is what tells the value's own quote from the one closing
+// it — the value goes on after the first (`postgres://app:"ab\"cd" refused`) and
+// stops at the second — and this rule needs the distinction more than the one
+// above, which has an `@` behind the value to end it.
+const connStringCutBody = `(?:\\"[^\s,;&}\])"]|\\[^"]|[^"\\\r\n])*`
+
 // connStringCutQuoted is that value under the letter connStringCut reads a
 // password with, and is that rule's alone: with no `@` and no host to tell a
 // password from a port by, a letter is its evidence rather than a length, and
 // the two kinds of quote come out alike there only if a quoted port — which is
-// not how a port is written — is read the way the bare class reads one.
-const connStringCutQuoted = `\\*"(?:\\.|[^"\\\r\n])*[A-Za-z](?:\\.|[^"\\\r\n])*\\*"`
+// not how a port is written — is read the way the bare class reads one. What
+// the text writes after the closing quote is connStringCutTail below: a quote
+// the text goes on writing after is a byte of the value rather than the value's
+// last one, and a rule that ended the value there would put its marker halfway
+// through a password and leave the rest of it standing in the text.
+const connStringCutQuoted = `\\*"` + connStringCutBody + `[A-Za-z]` +
+	connStringCutBody + `\\*"` + connStringCutTail
+
+// connStringCutTail is the rest of such a value: the bytes the text writes
+// after a quote that turned out to be a byte of it
+// (`postgres://app:"ab12"Zyxw9876secret refused`, a password holding a quote,
+// which is what an excerpt cut before the host leaves). The value ends where
+// connStringCut ends an unquoted one — at the URL's path or query, at an `@`,
+// at whitespace — and where a field ends: a `,`, a `;`, an `&`, a brace or a
+// bracket behind the quote closes the value rather than continuing it, which is
+// what keeps the fields beside a URL written in a record. A quote is read as a
+// pair with the byte after it, as connString reads one, so a second quoted
+// segment of the same value is read as well, and a backslash before a quote is
+// the escaped record's own delimiter and stops the value there.
+const connStringCutTail = `(?:\\[^"]|[^\s"/?#@\\,;&}\])]|"[^\s,;&}\]])*`
 
 var (
 	// authHeaderEscaped is the same header one encoding further in: a JSON
@@ -503,7 +531,11 @@ var (
 	// A value written in quotes is connStringCutQuoted above, and the letter is
 	// its guard as it is the class's: an excerpt that stops inside such a quote
 	// holds bytes this class cannot read at all, so what tells a password from a
-	// port is the same letter and nothing more.
+	// port is the same letter and nothing more. That value does not end at the
+	// quote closing it either, which is what connStringCutTail reads: the bytes
+	// the text goes on writing after a quote are the value's own, so a password
+	// holding one comes out whole where a rule that stopped at the first quote
+	// would have put its marker halfway through it and left the rest standing.
 	connStringCut = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*://[^\s:/@?#]*):(?:` + connStringCutQuoted + `|(?:\\[^"]|[^\s"/?#@\\])*[A-Za-z](?:\\[^"]|[^\s"/?#@\\])*)`)
 
 	// dsnString is the same userinfo where no scheme introduces it: the DSN the

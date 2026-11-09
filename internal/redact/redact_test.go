@@ -450,6 +450,13 @@ var patternCases = []struct {
 		keep: `@db.example.com:5432/app refused`,
 	},
 	{
+		name: "quoted password the excerpt goes on writing after",
+		in: "postgres://app:" + fake(`"`, "ab12", `"`, "Zyxw9876secret") +
+			" refused",
+		leak: "Zyxw9876secret",
+		keep: "refused",
+	},
+	{
 		name: "password field of a keyword connection string",
 		in: "Server=db.example.com;User Id=app;Pwd=" + fake(strings.Repeat("Qw3", 5)) +
 			";Database=app",
@@ -802,6 +809,33 @@ func TestRedactKeepsNoHalfOfAValue(t *testing.T) {
 			"a quoted password in an excerpt that stops before the host",
 			"postgres://app:" + fake(`"`, strings.Repeat("Qw3", 5), `"`) + " refused",
 			"postgres://app:" + redacted + " refused",
+		},
+		{
+			"a quoted password the excerpt goes on writing after",
+			"postgres://app:" + fake(`"`, "ab12", `"`, "Zyxw9876secret") + " refused",
+			"postgres://app:" + redacted + " refused",
+		},
+		{
+			"the same password written in single quotes",
+			"postgres://app:" + fake(`'`, "ab12", `'`, "Zyxw9876secret") + " refused",
+			"postgres://app:" + redacted + " refused",
+		},
+		{
+			"a quoted password holding its own escaped quote",
+			"postgres://app:" + fake(`"`, "ab", `\"`, "cd", `"`) + " refused",
+			"postgres://app:" + redacted + " refused",
+		},
+		{
+			"a quoted password in the record its field is written in",
+			`{"dsn":"postgres://app:\"` + password + `\"","step":"terraform apply"}`,
+			`{"dsn":"postgres://app:` + redacted + `","step":"terraform apply"}`,
+		},
+		{
+			// the value ends at the quote closing it rather than at the byte
+			// behind it, so the record's own `,` is left where it was written.
+			"a quoted password in a record whose quotes are plain",
+			`{"dsn":"postgres://app:"` + password + `","step":"terraform apply"}`,
+			`{"dsn":"postgres://app:` + redacted + `,"step":"terraform apply"}`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
