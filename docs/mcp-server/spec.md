@@ -6,7 +6,7 @@ prerequisite before any binary links the front door (the owner's ruling of 2026-
 except the reading of the installation's published state its lists come from, which no task of this
 plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
 half and not started; M8 is built except the wiring that would serve its four read tools, which is
-the task M5b gates; M9 is not started; this folder approves no task.** The owner's spec of
+the task M5b gates; M9 and M11 are not started; this folder approves no task.** The owner's spec of
 2026-10-24 is §0, copied **verbatim**; the design that follows (§1 onward) is written to the
 **answers the owner gave on 2026-11-04** to the fifteen decisions in
 [reconciliation.md](reconciliation.md) §4 (D920–D934) — **every one of them the recommendation at
@@ -505,7 +505,13 @@ not hold (F3 is `roles/storage.objectViewer`); and **`run.jobs.runWithOverrides`
 override **container arguments** — the base image's entrypoint is `tini --`
 (`images/base_test.go:59`), so an override can run **any command beside the job's mounted git and
 model credentials**. That contradicts D923's own "the coordinator mints nothing" and M6's
-`TestTheCoordinatorMintsNoCustomToken`. **So the first slice is the authorization server plus
+`TestTheCoordinatorMintsNoCustomToken`. **The owner's ruling of 2026-11-09 replaced that third
+privilege with the start-only `run.jobs.run`** (§8): the front door's account never holds
+`runWithOverrides`, so what the later design item has to build on is **the ability to start an
+execution and nothing else**. **That answers the override half of the contradiction and not the
+minting half**: `signJwt` is not a permission this role touches, so the token minting moves out of
+the public service before the tool can be built, and the review's finding stands as the reason the
+tool was deferred rather than as a privilege this design asks for. **So the first slice is the authorization server plus
 `get_task_status`, `stream_logs`, `get_result` and `list_tasks`; `cancel_task` goes with `spawn_task`
 into the later design item rather than into the first slice**, because the marker it writes is an
 object in the runs bucket (`internal/runstore/runstore.go:1581`, `fugaro cancel`'s own write) and so
@@ -514,8 +520,8 @@ condition it can meet. No task in [implementation-plan.md](implementation-plan.m
 **What a later `spawn_task` design item has to answer** is written in
 [reconciliation.md](reconciliation.md) §4b (D936): no `runWithOverrides`, per-run input under a
 bucket prefix only the coordinator writes, run-token minting moved out of the public service, and an
-**argument allowlist** — no `--no-budget-check` (`internal/cli/run.go:325`), no `--token` (`:313`),
-no free-form `--run-id`, and `mode = max(requested, the token's minimum)`.
+**argument allowlist** — no `--no-budget-check` (`internal/cli/run.go:335`), no `--token` (`:322`),
+no free-form `--run-id` (`:313`), and `mode = max(requested, the token's minimum)`.
 
 **And when it is built there is one launch path, not two** (D931, the owner's answer of
 2026-11-04). `spawn_task` does not reach the run's job by a route of its own: **concurrency, rate, idempotency and the kill
@@ -525,7 +531,7 @@ launch claim in the runs bucket (`internal/runstore/launch.go:112`, `ClaimKey`, 
 `:117`) before it starts anything, which is what makes one submit one run and a repeated submit an
 answer about the run already in flight rather than a second one; and it runs the same budget
 pre-check of kill switches, caps and headroom — `internal/budget/precheck.go:58` (`budget.Precheck`),
-which `internal/cli/launch_budget.go:283` is the CLI's own call to — before it mints anything. The
+which `internal/cli/launch_budget.go:302` is the CLI's own call to — before it mints anything. The
 front door's own concurrency and rate limits are enforced **at that same point**, not beside it. A
 second path is the failure this rule exists to prevent: a front door that skipped the kill switch or
 the claim would spend money a person's launch could not, and would let a retrying agent turn one
@@ -566,11 +572,16 @@ so this paragraph states both rules and says plainly that the way to *use* them 
 token's spend limit is never sent to the
 agent as its own budget figure. It is applied where the run's ceiling is applied: the run's ceiling
 is `min(the project's configured cap, the token's limit)`, the same "only tighten" merge the budget
-already does between a repository's cap and the installation's. Concretely, a submitted run starts
-with an environment override on the job carrying the token's limit in **a variable of its own**, and
+already does between a repository's cap and the installation's. Concretely, a submitted run carries
+the token's limit in **a field of its own, on the run's own task**, and
 the run's ceiling is the tighter of that and the job's own — so **the gateway enforces the token's
 spend limit**, the run's ledger charges against it, and a wrong number at the coordinator cannot
-widen a ceiling, because the run takes the tighter side itself. The one thing the design refuses
+widen a ceiling, because the run takes the tighter side itself. **The answer of 2026-11-04 named the
+execution's environment override as the channel; the owner's ruling of 2026-11-09 on the
+launch-override fence moved the channel and left the rule as it was** (§8): the front door's account
+holds no `runWithOverrides`, so nothing it launches reaches the container's environment at all, and
+the limit travels in the task in the runs bucket beside the marker that says a launch carries one —
+**the task, not "the signed task": nothing signs it** (`docs/design/bucket-iam.md:412`). The one thing the design refuses
 outright is routing the limit through the agent's own `--max-budget-usd` flag: that figure is the
 agent's own estimate of cost, and the repository's own dogfooding notes record that it misprices
 non-Anthropic models by roughly an order of magnitude. A limit enforced there would be a limit
@@ -973,14 +984,17 @@ part of what the deferral of `spawn_task` (D936, finding H2) buys: the service t
 holds no launch grant, no signer and no write on the runs bucket, so this whole paragraph is about
 **the later slice** rather than about what ships first. When the coordinator is the launcher (D931),
 it holds the one thing a launcher has that no token does: **the ability to set a run's environment
-for one execution**. On Cloud Run that is `run.jobs.runWithOverrides`, which is in the launcher role
-(`internal/cli/doctor_launcher.go:246`) and is why the repository already refuses to let a launch
-decide anything important: `internal/backend/gcp/names.go:175` records that **a launcher may override
+for one execution**. On Cloud Run that is `run.jobs.runWithOverrides`, which is in `fugaroJobRunner`,
+the role every launcher holds on each job (both role IDs are spelled at
+`internal/infra/tf/cover.go:791-793` — `fugaroJobRunner` beside `fugaroLauncher`, the read and cancel
+role — and `internal/cli/doctor_launcher.go:94` is the prose that a launcher holds both of the
+runner ones) and is why the repository already refuses to let a launch
+decide anything important: `internal/backend/gcp/names.go:182` records that **a launcher may override
 any variable through `run.jobs.runWithOverrides`, so the provider — which decides which repository
 the runner may clone and which git credential the job holds — must come from something only Cloud
-Run sets**, and `internal/backend/launchenv.go:91` (`LaunchEnv`) is where the seam refuses an entry
+Run sets**, and `internal/backend/launchenv.go:104` (`LaunchEnv`) is where the seam refuses an entry
 naming a reserved variable at all, with the platform's five (`PlatformEnvNames`, `:32`, whose
-reservation `ReservedEnvNames` at `:52` hands both backends) pinned so a platform variable cannot be
+reservation `ReservedEnvNames` at `:65` hands both backends) pinned so a platform variable cannot be
 silently rewritten. **The owner's requirement of 2026-11-04 is that the runner ignores the override environment except for an
 allowlist, and that fence is NOT BUILT.** Today `internal/runner` reads its ceiling and wiring from plain
 environment variables that `runWithOverrides` can rewrite (`FUGARO_MAX_RUN_USD`, `FUGARO_BUDGET_MODE`
@@ -993,8 +1007,64 @@ variables this design adds (the token's ceiling of D924 and the marker that says
 and the requirement is that nothing else a caller could put there is read. Until a mechanism lets the
 runner read its non-allowlisted configuration from something an override cannot set, **a compromised
 coordinator can change what a run does, not only narrow its ceiling**, and the privilege the owner is
-asked to grant is that of a launcher with an unfenced environment. Building the mechanism is a gate on
-M9 and D931, and which mechanism is an owner decision (§11).
+asked to grant is that of a launcher with an unfenced environment.
+
+**The owner decided the mechanism on 2026-11-09, and the fence is still not built.** It is **a split
+launcher role**: the front door's own account holds only the permission to **start an execution** —
+`run.jobs.run` — and **never `run.jobs.runWithOverrides`**, so no caller of this front door can
+rewrite the job's template, its environment or its arguments at all. **The per-launch data this design
+adds — D924's token ceiling and the marker that says a launch carries one — travels in the task
+in the runs bucket** (`internal/task/task.go:57`, the `Spec` the runner reads there at bootstrap),
+the run's own input rather than an environment a caller could rewrite. **That is the
+allowlist read the other way round:** rather than the runner telling a template value from an override
+value inside one merged environment, which it cannot do, there is no override to tell apart — so the
+fence is one IAM role and one job-scoped binding per project job in Terraform. **It is decided and
+NOT BUILT**: no role of this installation grants `run.jobs.run` alone, the front door's launch grant is
+deliberately absent (`deploy/terraform/gcp/modules/installation/coordinator.tf:377`), and the task
+that builds it is **M11** ([implementation-plan.md](implementation-plan.md) §3). **What gates M9 and
+D931 is that task being built, not the decision** (§11). **One question of that ruling is open again
+with the owner — D937**, its premise about the run's identity and the content the fence does not cover
+([reconciliation.md](reconciliation.md) §4b).
+
+**Two corrections this section owes its own ruling (2026-11-09), and both are stated rather than
+implied.**
+
+- **The fence is not free for the runner, and it cannot start a run without a runner change.** The
+  run's identity reaches the container only as the `FUGARO_RUN` **execution override**
+  (`internal/backend/gcp/run.go:173`, read back at `internal/cli/exec.go:60`, and refused when
+  absent for a shared project job at `internal/gcpfake/run.go:973`), and setting an override is exactly
+  what `run.jobs.runWithOverrides` authorizes — so an account holding `run.jobs.run` alone cannot start
+  a working run at all. **And the identity is not the only value a launch carries that way**: a launch
+  that minted puts the budget token's seal key in a *secret* override (`FUGARO_BUDGET_TOKEN`, the sealed
+  token itself in the runs bucket — `internal/cli/run.go:3956`, `internal/cli/launch_budget.go:708`,
+  `internal/backend/backend.go:136`), and a review job carries `FUGARO_REVIEW_JOB=1` the same way
+  (`internal/cli/run.go:3977`). **The design names a channel for the ceiling and the marker and for
+  none of these**: the identity moves to the launch binding, and **the seal key and the review-job
+  marker have no named channel yet** — a launch that cannot hand the run the key that opens its token
+  is a run that dies at bootstrap after it was paid for, which is the third part of **D937**
+  ([reconciliation.md](reconciliation.md) §4b). **The mechanism the fence needs is the one §4b of
+  [reconciliation.md](reconciliation.md) already asked for in words: per-run input keyed by the
+  execution.** Cloud Run injects the execution's own name into the container itself
+  (`CLOUD_RUN_EXECUTION`, read by `internal/backend/platform.go:69`'s `ExecutionFromEnv` — the Cloud
+  Run codec's own read of it is `internal/backend/codec.go:113` — and with no override
+  involved), so the launcher writes a **launch binding** into the runs bucket named by the execution
+  and the runner resolves `<slug>/<run-id>` from it at bootstrap. **Its race is part of the design and
+  not an implementation detail**: the execution starts as soon as the run call returns, so the runner
+  may reach the bucket before the binding lands — it polls for a bounded window, in the shape
+  `internal/runstore/launch.go:117`'s `ClaimTTL` already sets — and a binding that never arrives is a
+  named bootstrap refusal; a launcher that dies between the start and the write leaves an execution
+  that was paid for and belongs to no run, which the operator has to be able to see. **`M11` and `M9`
+  carry that change and its files**, and **`D937`** ([reconciliation.md](reconciliation.md) §4b) puts
+  the premise back to the owner.
+- **The fence bounds the override surface, not what the run is told to do.** `task.json` is **unsigned
+  text a launcher wrote** — signing it is an explicit non-goal of the runs-bucket design
+  (`docs/design/bucket-iam.md:412`) — and M9 gives the front door the runs-bucket write, so a
+  compromised coordinator **can still write a task whose `repo`, `prompt`, `workflow` and `recipe` it
+  chose**. That is the same reach it has today, the fence was never going to close it (the front door
+  has to be able to say what the run should do), and **what does bound it is the argument allowlist
+  and the budget pre-check** — no `--no-budget-check`, no `--token`, no free-form `--run-id`, and a
+  kill switch and headroom check before anything starts. Nothing in this design calls the task
+  authenticated, and a reader who takes the fence as one that does has read it too widely.
 
 **And the workspaces work is the second surface an approval has to agree across** — §10 states the
 dependency and the identity mismatch, and it is the reason the accepted risk above is not only this
@@ -1052,9 +1122,13 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
 - **`spawn_task`, and the whole write half of the front door** (**D936**, the owner's answer of
   2026-11-04 to finding H2). The tool is **deferred out of the first slice** — which is the
   authorization server and the read tools — because it needs three privileges the coordinator does
-  not have and contradicts D923's "the coordinator mints nothing". **What a later design item has to
+  not have and contradicts D923's "the coordinator mints nothing". **The third of those privileges is
+  now the start-only `run.jobs.run`** and not `runWithOverrides` (the owner's ruling of 2026-11-09,
+  §8: the front door's account never holds the override permission). **What a later design item has to
   answer** is written in [reconciliation.md](reconciliation.md) §4b and summarised in §5: no
-  `runWithOverrides`, per-run input under a bucket prefix only the coordinator writes, run-token
+  `runWithOverrides`, per-run input under a bucket prefix only the coordinator writes — the
+  per-launch data on the run's own **task**, which nothing signs, and the run's identity from the
+  launch binding the fenced launcher writes — run-token
   minting moved out of the public service, and an argument allowlist. **Nothing in the current plan
   builds it**, and the launch grant M9 asks for is **out of the first slice** with it.
 - **The change that would close H1's accepted residual risk** (§3, §8): **a device-held signing key,
@@ -1128,7 +1202,19 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   workspaces text is in this tree and read here** (`docs/workspaces/spec.md:209-210`, `:217-219`), so
   what is open is the **implementation** agreement the two designs' tasks have to keep rather than
   the text ([reconciliation.md](reconciliation.md) §4a, the workspaces dependency).
-- **The override fence is unbuilt and its mechanism is undecided** (§8): how the runner reads non-allowlisted configuration from something `runWithOverrides` cannot set. It gates M9 and D931; the owner decides the mechanism before either is built.
+- **The override fence's mechanism is decided and the fence is not built** (§8): the owner ruled on
+  2026-11-09 that it is **a split launcher role** — the front door's own account holds `run.jobs.run`
+  and never `run.jobs.runWithOverrides`, and D924's token ceiling and the marker that says a launch
+  carries one travel in the task in the runs bucket, so no caller of this front door can rewrite
+  the job's template and the runner needs no allowlist of its own. **It gates M9 and D931 by being
+  built rather than by being decided**: the task that builds it is **M11**
+  ([implementation-plan.md](implementation-plan.md) §3), and until it lands the launch grant is absent
+  and nothing here starts a run. **Two corrections are open with the owner rather than answered here**
+  (§8): the run's identity travels as the `FUGARO_RUN` override today, which `run.jobs.run` alone
+  cannot set, so the fence needs the launch binding keyed by the execution **and M11 carries that
+  runner and backend change**; and `task.json` is unsigned, so the fence bounds the override surface
+  and not the run's own content. **Both are D937** ([reconciliation.md](reconciliation.md) §4b), which
+  is why **the owner question is open again** and why M9 and M11 wait on it as well as on the build.
 - The three open items of the owner's spec are answered or narrowed: the library is **zitadel/oidc**
   (§3, D921, answered 2026-11-04 with its licence **UNCONFIRMED** and cleared by the owner on
   2026-11-07, so **§6's first check is met**: [licence-gate.md](licence-gate.md) is the record, and
