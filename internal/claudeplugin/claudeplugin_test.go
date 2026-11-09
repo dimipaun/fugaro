@@ -22,6 +22,9 @@ func TestAllowed(t *testing.T) {
 		{"plugin", "marketplace", "update", "fugaro"},
 		{"plugin", "marketplace", "add", "--scope", "user", "dimipaun/fugaro"},
 		{"plugin", "marketplace", "add", "--scope", "user", "some-one/fugaro.fork_2"},
+		{"plugin", "marketplace", "add", "--scope", "user", "dimipaun/fugaro#v0.5.2"},
+		{"plugin", "marketplace", "add", "--scope", "user", "dimipaun/fugaro#v10.0.3"},
+		{"plugin", "marketplace", "remove", "fugaro", "--scope", "user"},
 		{"plugin", "install", "fugaro@fugaro", "--scope", "user"},
 		{"plugin", "update", "fugaro@fugaro", "--scope", "user"},
 		{"plugin", "update", "fugaro@fugaro", "--scope", "project"},
@@ -44,6 +47,17 @@ func TestAllowed(t *testing.T) {
 		{"plugin", "marketplace", "add", "--scope", "user", "owner/.."},
 		{"plugin", "marketplace", "add", "--scope", "user", "owner/name;rm"},
 		{"plugin", "marketplace", "add", "--scope", "user", "https://evil.example/x"},
+		{"plugin", "marketplace", "add", "--scope", "user", "dimipaun/fugaro#v0.5"},
+		{"plugin", "marketplace", "add", "--scope", "user", "dimipaun/fugaro#0.5.2"},
+		{"plugin", "marketplace", "add", "--scope", "user", "dimipaun/fugaro#main"},
+		{"plugin", "marketplace", "add", "--scope", "user", "dimipaun/fugaro#--scope"},
+		{"plugin", "marketplace", "add", "--scope", "user", "dimipaun/fugaro#"},
+		{"plugin", "marketplace", "add", "--scope", "user", "dimipaun/fugaro#v0.5.2#x"},
+		{"plugin", "marketplace", "add", "--scope", "user", "#v0.5.2"},
+		{"plugin", "marketplace", "remove", "fugaro"},
+		{"plugin", "marketplace", "remove", "fugaro", "--scope", "project"},
+		{"plugin", "marketplace", "remove", "other", "--scope", "user"},
+		{"plugin", "marketplace", "remove", "fugaro", "--scope", "user", "-y"},
 		{"plugin", "marketplace", "add", "--scope", "project", "dimipaun/fugaro"},
 		{"plugin", "marketplace", "add", "dimipaun/fugaro"},
 		{"--dangerously-skip-permissions", "plugin", "list", "--json"},
@@ -154,13 +168,54 @@ func TestChangeFailureIsAnError(t *testing.T) {
 	}
 }
 
+// TestRefusedByDeclaration: the one add failure fugaro cannot fix is told
+// apart from every other by what claude printed, because the exit status is the
+// same for all of them and the error on its own carries only that status.
+func TestRefusedByDeclaration(t *testing.T) {
+	add := addMarket("dimipaun/fugaro", "v0.5.2")
+	for _, tc := range []struct {
+		name string
+		said string
+		want bool
+	}{
+		{"the CLI's own wording",
+			`Cannot add marketplace "fugaro": its network source differs from the one declared for it in settings (kind, target, or a fetch-shaping field such as headers / ref / path / sparsePaths); the source must match the one declared for this name in settings (or change the declaration).`, true},
+		{"the plugin screens' wording",
+			"fugaro is already added from a different source (someone/else). To use this source instead, remove that marketplace first with /plugin marketplace remove fugaro.", true},
+		{"a clone that failed", "fatal: unable to access 'https://github.com/dimipaun/fugaro.git/': Could not resolve host", false},
+		{"nothing at all", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := testutil.NewClaudePluginFake(t, "[]", "[]")
+			f.On(t, "fail", tc.said, add...)
+			r, _ := runner(t, f)
+			err := r.Change(t.Context(), add...)
+			if err == nil || RefusedByDeclaration(err) != tc.want {
+				t.Fatalf("err %v: refused %v, want %v", err, RefusedByDeclaration(err), tc.want)
+			}
+		})
+	}
+	// An error from anywhere but a claude call is not something claude said.
+	if RefusedByDeclaration(errors.New("its network source differs from the one declared for it in settings")) {
+		t.Error("an error that is not a claude call was read as claude's own refusal")
+	}
+	if RefusedByDeclaration(nil) {
+		t.Error("no error at all was read as a refusal")
+	}
+}
+
 func TestListsParse(t *testing.T) {
+	// The marketplace list as claude 2.1.283 prints it (an entry the add of a
+	// source with a ref wrote, `owner/repo#vX.Y.Z`), and one from before that
+	// has no ref at all: the second is what every marketplace a release before
+	// this one declared looks like, and it is what makes the step declare the
+	// name again at this release's tag.
 	f := testutil.NewClaudePluginFake(t,
-		`[{"name":"fugaro","source":"github","repo":"dimipaun/fugaro","installLocation":"/x"}]`,
+		`[{"name":"fugaro","source":"github","repo":"dimipaun/fugaro","ref":"v0.5.2","installLocation":"/x"},{"name":"other","source":"github","repo":"someone/other","installLocation":"/y"}]`,
 		`[{"id":"fugaro@fugaro","version":"0.5.1","scope":"project","enabled":true,"projectPath":"/p"}]`)
 	r, _ := runner(t, f)
 	ms, err := r.Markets(t.Context())
-	if err != nil || len(ms) != 1 || ms[0] != (Market{Name: "fugaro", Source: "github", Repo: "dimipaun/fugaro"}) {
+	if err != nil || len(ms) != 2 || ms[0] != (Market{Name: "fugaro", Source: "github", Repo: "dimipaun/fugaro", Ref: "v0.5.2"}) || ms[1] != (Market{Name: "other", Source: "github", Repo: "someone/other"}) {
 		t.Fatalf("markets %+v %v", ms, err)
 	}
 	is, err := r.Installed(t.Context())
@@ -361,7 +416,7 @@ func TestOnlyProjectAndLocalUpdatesRunInTheCheckout(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(r.Dir, "dimipaun"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{addMarket("dimipaun/fugaro"), updateMarket, installUser, updatePlugin("user"), updatePlugin("project"), updatePlugin("local")} {
+	for _, args := range [][]string{addMarket("dimipaun/fugaro", "v0.5.2"), updateMarket, installUser, updatePlugin("user"), updatePlugin("project"), updatePlugin("local")} {
 		if err := r.Change(t.Context(), args...); err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}

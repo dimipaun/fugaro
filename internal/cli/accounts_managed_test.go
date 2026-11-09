@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	managed "github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -33,14 +31,16 @@ import (
 // token — which no build without the gate can do.
 //
 // The owner's ruling of 2026-11-09 adds the other door, and the tests for it
-// are the same shape. A managed project asks its owner for this step and
-// nobody else, so the red step there is the owner's own run CONVERGING after
-// the one confirmation — which no build that refuses every caller can do — and
-// the refusals are every caller that is not that person: a marker, a pipe, a
-// run with no terminal, --yes, a terminal on stdin but not on stdout, and an
-// answer that does not name the project. Each of those is what one term of
+// are the same shape. A managed project writes this step's token for its owner
+// and nobody else, so the red step there is the owner's own run CONVERGING
+// after the repositories the token may be used by are printed — which no build
+// that refuses every caller can do — and the refusals are every caller that is
+// not that person: a marker, a pipe, a run with no terminal, --yes, and a
+// terminal on stdin but not on stdout. Each of those is what one term of
 // accountsAddOwnTerminal answers for, and the table below names the term so a
-// build with that term dropped fails on the case it would admit.
+// build with that term dropped fails on the case it would admit. Nothing is
+// asked of the owner: the list is printed and no answer is read (the same
+// ruling), so a test that found a prompt there would fail.
 //
 // Every world here is hermetic: internal/gcpfake's GCS and Resource Manager
 // behind the endpoints the rig writes, the installation rig's own budget
@@ -163,12 +163,19 @@ const (
 	// the gate admitted the declaration to.
 	accountsAddRefusalToken = "No token was stored for Claude account team-a: a session may write the declaration, and never the token.\n" +
 		"Run this in your own terminal, not in an agent session."
+	// accountsAddRefusalCredential is the grant --type would create: creating a
+	// credential is the owner's own step (D1628), and the declaration the gate
+	// does admit is the narrower step the session can take, so the second line
+	// is it.
+	accountsAddRefusalCredential = "This creates the credential credentials.team-a, and a managed project's owner is the one who creates credentials.\n" +
+		"Declare the account without --type, or run this in your own terminal."
 )
 
 // fakeOutputTerminal is the other half of fakeTerminal for the commands whose
-// owner's door is a real terminal on BOTH streams: the confirmation prints the
-// repositories the token may be sent to, and a person who cannot read them is
-// not being asked. A test that is about the owner's own run replaces both.
+// owner's door is a real terminal on BOTH streams: the repositories the token
+// may be used by are printed before the prompt, and a person who cannot read
+// them is not being told what the token is for. A test that is about the
+// owner's own run replaces both.
 func fakeOutputTerminal(t *testing.T) {
 	t.Helper()
 	old := writerIsTerminal
@@ -185,20 +192,11 @@ func ownerAtTheTerminal(t *testing.T) {
 	fakeOutputTerminal(t)
 }
 
-// ownerAddStdin is what the owner types at this command's two reads, in the
-// order the command makes them: the project's own name at the one confirmation
-// this step has, and then the token.
-func ownerAddStdin() string { return initProjectName + "\n" + addToken() + "\n" }
-
-// gateCmdStdin is gateCmd with this run's input: the helper's boundary tests
-// call the gate directly, and the confirmation reads the command's own stdin.
-// Without it the command would read the test binary's own, which is green on a
-// developer's terminal and blocked in CI.
-func gateCmdStdin(in string) *cobra.Command {
-	cmd := gateCmd()
-	cmd.SetIn(strings.NewReader(in))
-	return cmd
-}
+// ownerAddStdin is what the owner types at this command's one read: the token.
+// The repositories the token may be used by are printed and no answer is asked
+// for them (the owner's ruling of 2026-11-09), so the token is the whole of
+// what a run at the owner's own terminal delivers.
+func ownerAddStdin() string { return addToken() + "\n" }
 
 // The red step: in a managed project's coding agent session, the declaration
 // is written and its admission is recorded, where every refusal this command
@@ -319,7 +317,7 @@ func TestAccountsAddManagedFilesTheAdmissionOnlyAfterTheWrite(t *testing.T) {
 // The widening: a declaration whose allow_data_to names a repository beyond the
 // checkout the command runs in is refused in a coding agent's session, before
 // anything is written, and the refusal is recorded. This is D868's widening —
-// the sentence the owner's own confirmation carries — and what the managed case
+// the sentence the owner's own statement carries — and what the managed case
 // may not do is answer it on the owner's behalf.
 func TestAccountsAddManagedRefusesAWideningInAnAgentSession(t *testing.T) {
 	r := newManagedAddRig(t, managedAddLocalWide(t), addMarksManaged)
@@ -390,6 +388,38 @@ func TestAccountsAddManagedRefusesClaudeInAnAgentSession(t *testing.T) {
 	}
 	if !slices.ContainsFunc(recs[0].Rules, func(rule string) bool { return strings.Contains(rule, "no plan is a token") }) {
 		t.Errorf("the refused record's rules (%v) do not name the rule that refused", recs[0].Rules)
+	}
+}
+
+// The credential entry: --type declares credentials.<name>, which is a pool's
+// member and a craft's access — a spending and data-egress grant, created at
+// the project/local layer at the owner's terminal (D1628, F12), never by a
+// session's plan gate. It is refused in a coding agent's session before
+// anything is written, in this command's own two lines, and the second line is
+// the narrower step the session can take: the account's own declaration is what
+// the gate admits. The control is the owner's own terminal
+// (TestAccountsAddManagedOwnerTerminalDeclaresTheCredential).
+func TestAccountsAddManagedRefusesACredentialInAnAgentSession(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+	before := readFileString(t, r.cfg)
+	t.Setenv(accountsAddAgent, "1")
+
+	out, _, err := executeStdin(t, "", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--type", "claude-oauth", "--yes")
+	if err == nil {
+		t.Fatalf("a coding agent's session declared a credential:\n%s", out)
+	}
+	if err.Error() != accountsAddRefusalCredential {
+		t.Errorf("the credential entry's refusal is:\n%q\nwant:\n%q", err.Error(), accountsAddRefusalCredential)
+	}
+	if after := readFileString(t, r.cfg); after != before {
+		t.Errorf("the file changed under a refused credential entry:\n%s", after)
+	}
+	recs := r.audits(t)
+	if len(recs) != 1 || recs[0].Verdict != managedmode.AuditRefused {
+		t.Fatalf("the refusal left %+v, want exactly one refused record", recs)
+	}
+	if !slices.ContainsFunc(recs[0].Rules, func(rule string) bool { return strings.Contains(rule, "credentials.team-a") }) {
+		t.Errorf("the refused record's rules (%v) do not name the entry that refused", recs[0].Rules)
 	}
 }
 
@@ -522,7 +552,7 @@ func TestAccountsAddManagedUnreadMarksKeepTheRefusal(t *testing.T) {
 // token of an account a managed project is owed a question about.
 //
 // --yes is the case worth naming: it is a flag, and a flag answers nothing
-// here. It never satisfies the confirmation, so a scripted `accounts add
+// here. It never makes a run the owner's own, so a scripted `accounts add
 // --yes` on a managed project is refused exactly as a bare pipe is.
 func TestAccountsAddManagedRefusesARunThatAnswersNothing(t *testing.T) {
 	for _, tc := range []struct {
@@ -601,8 +631,8 @@ func TestAccountsAddManagedRefusesARunThatAnswersNothing(t *testing.T) {
 // The marker case is the one that ends differently, and deliberately: a session
 // is not refused the declaration (D1012 admits a bounded one), so what it reads
 // is the token step's own two lines and what it leaves behind is the
-// declaration. A build with the marker term dropped would ask that session for
-// the confirmation and converge, which is the failure this case catches.
+// declaration. A build with the marker term dropped would print that session
+// the statement and converge, which is the failure this case catches.
 func TestAccountsAddManagedAdmitsOnlyTheOwnerAtTheirOwnTerminal(t *testing.T) {
 	for _, tc := range []struct {
 		what   string
@@ -684,16 +714,22 @@ func TestAccountsAddManagedAdmitsOnlyTheOwnerAtTheirOwnTerminal(t *testing.T) {
 	}
 }
 
-// The owner's own terminal is admitted on a managed project after the one
-// confirmation this step has: the repositories the token may be sent to, the
-// sentence saying what that means, and the project's own name typed at the
-// terminal. The run then converges like any other first-account run — the
-// declaration, the token, the policy, the job — so the red step here is the
-// installation being ready, which no build that refuses every caller can reach.
+// The owner's own terminal is admitted on a managed project with the
+// repositories the token may be used by printed before the token prompt: the
+// list the file will carry, and the one sentence saying what that means. The run
+// then converges like any other first-account run — the declaration, the token,
+// the policy, the job — so the red step here is the installation being ready,
+// which no build that refuses every caller can reach.
+//
+// Nothing is asked. The owner's ruling of 2026-11-09 dropped the typed project
+// name this door used to ask for: the name is not a secret and the terminal is
+// the guard, so what the run does before the prompt is print and not ask, and
+// this test fails on a build that put a question back (and on one that printed
+// nothing, which is the other half).
 //
 // Nothing is recorded and nothing is refused: the record is the GATE's verdict,
 // and this step is the owner's, answered at the door D1552 and D1555 name.
-func TestAccountsAddManagedOwnerTerminalIsAskedWhatTheTokenMayBeUsedBy(t *testing.T) {
+func TestAccountsAddManagedOwnerTerminalIsShownWhatTheTokenMayBeUsedBy(t *testing.T) {
 	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
 	writes := r.secretWrites(t)
 	ownerAtTheTerminal(t)
@@ -702,17 +738,23 @@ func TestAccountsAddManagedOwnerTerminalIsAskedWhatTheTokenMayBeUsedBy(t *testin
 	if err != nil {
 		t.Fatalf("the owner's own terminal was refused: %v\nstdout:\n%s", err, out)
 	}
-	// The confirmation names the repositories and what they mean, in the words
-	// the ruling gives: a job on these repositories can read this token.
-	wantConfirm := "⚠ CONFIRM (project " + initProjectName + "): claude_accounts.team-a.allow_data_to = [owner/repo-a], and a job on these repositories can read this token"
-	if !strings.Contains(out, wantConfirm) {
-		t.Errorf("the confirmation does not print the repositories and the sentence:\n%s", out)
+	// The list is printed whole, and it is the list the file carries: the
+	// sentence beside it is what the list means, and the two are one statement.
+	wantList := "claude_accounts.team-a.allow_data_to = [owner/repo-a]\nA job on these repositories can read this token."
+	if !strings.Contains(out, wantList) {
+		t.Errorf("the owner's own run does not print the repositories and the sentence:\n%s", out)
 	}
-	if !strings.Contains(out, "Type "+initProjectName+" to confirm:") {
-		t.Errorf("the run did not ask for the project's own name:\n%s", out)
+	lc := r.addLocal(t)
+	if got := lc.ClaudeAccounts["team-a"].AllowDataTo; !slices.Equal(got, []string{"owner/repo-a"}) {
+		t.Errorf("claude_accounts.team-a.allow_data_to = %v, want the declared repository", got)
 	}
-	if lc := r.addLocal(t); !slices.Equal(lc.ClaudeAccounts["team-a"].AllowDataTo, []string{"owner/repo-a"}) {
-		t.Errorf("claude_accounts.team-a.allow_data_to = %v, want the declared repository", lc.ClaudeAccounts["team-a"].AllowDataTo)
+	// No question is asked, and none of the confirmation this door used to
+	// carry is left: the printed list is the whole of what the owner reads
+	// about it.
+	for _, prompt := range []string{"Type " + initProjectName + " to confirm:", "⚠ CONFIRM", "make this change?"} {
+		if strings.Contains(out, prompt) {
+			t.Errorf("the owner's own run asks %q, and the ruling dropped the question:\n%s", prompt, out)
+		}
 	}
 	if len(writes.created) == 0 && len(writes.added) == 0 {
 		t.Errorf("the owner's own run stored no token: created %v, added %v", writes.created, writes.added)
@@ -735,15 +777,17 @@ func TestAccountsAddManagedOwnerTerminalIsAskedWhatTheTokenMayBeUsedBy(t *testin
 // something false about the file it is about to write — and the question must be
 // a question: with nothing typed for it the run stops, writes nothing and stores
 // nothing, which a build that printed a line about a question would pass.
+//
+// Nothing precedes the question any more: the repositories the token may be used
+// by are printed and no answer is read for them (the owner's ruling of
+// 2026-11-09), so the run reaches --ask's question with the input untouched.
 func TestAccountsAddManagedOwnerTerminalKeepsTheAskPromise(t *testing.T) {
 	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
 	writes := r.secretWrites(t)
 	before := readFileString(t, r.cfg)
 	ownerAtTheTerminal(t)
 
-	// The name answers the confirmation this step asks for the token; nothing is
-	// left for the question --ask restores.
-	out, _, err := executeOwnerStdin(t, initProjectName+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--ask")
+	out, _, err := executeOwnerStdin(t, "", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--ask")
 	if err == nil {
 		t.Fatalf("--ask asked for nothing and the run went through:\n%s", out)
 	}
@@ -764,58 +808,12 @@ func TestAccountsAddManagedOwnerTerminalKeepsTheAskPromise(t *testing.T) {
 	}
 }
 
-// The confirmation refused: the question is asked and the answer is not the
-// project's name, so the step stops there — before the login, before the diff
-// is applied and before the token is read. The run that answers nothing at all
-// is the same refusal, which is what makes the typed name a confirmation rather
-// than a formality.
-func TestAccountsAddManagedOwnerTerminalRefusesWithoutTheAnswer(t *testing.T) {
-	for _, tc := range []struct {
-		what string
-		feed string
-	}{
-		{"another line typed", "yes\n"},
-		{"nothing typed", ""},
-	} {
-		t.Run(tc.what, func(t *testing.T) {
-			r := newManagedAddRig(t, addRigLocal, addMarksManaged)
-			writes := r.secretWrites(t)
-			before := readFileString(t, r.cfg)
-			ownerAtTheTerminal(t)
-
-			out, _, err := executeStdin(t, tc.feed, "accounts", "add", "team-a", "--repos", "owner/repo-a")
-			if err == nil {
-				t.Fatalf("a run that did not answer the confirmation converged:\n%s", out)
-			}
-			if ExitCode(err) != ExitUserError {
-				t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
-			}
-			// The question was asked — the run reached the door and stopped at
-			// the answer, which is the half a refusal alone could not show.
-			if !strings.Contains(out, "Type "+initProjectName+" to confirm:") {
-				t.Errorf("the run did not ask the confirmation it refused:\n%s", out)
-			}
-			if !strings.Contains(err.Error(), "nothing was changed") {
-				t.Errorf("the refusal does not say the run changed nothing: %v", err)
-			}
-			if after := readFileString(t, r.cfg); after != before {
-				t.Errorf("the file changed for an unanswered confirmation:\n%s", after)
-			}
-			if len(writes.created) != 0 || len(writes.added) != 0 {
-				t.Errorf("an unanswered confirmation stored a token: created %v, added %v", writes.created, writes.added)
-			}
-			if recs := r.audits(t); len(recs) != 0 {
-				t.Errorf("an unanswered confirmation filed %+v", recs)
-			}
-		})
-	}
-}
-
 // The widening at the owner's own terminal, which is the door it has. A
 // widening is D868's question and only the owner can answer it, so at that
-// terminal the confirmation is asked and the declaration is written; the same
-// run in a coding agent's session is refused, because a session cannot answer
-// for a repository the run cannot see (TestAccountsAddManagedRefusesAWideningInAnAgentSession).
+// terminal the list naming the repository beyond this checkout is printed and
+// the declaration is written; the same run in a coding agent's session is
+// refused, because a session cannot answer for a repository the run cannot see
+// (TestAccountsAddManagedRefusesAWideningInAnAgentSession).
 func TestAccountsAddManagedOwnerTerminalWidensTheDeclaration(t *testing.T) {
 	r := newManagedAddRig(t, managedAddLocalWide(t), addMarksManaged)
 	writes := r.secretWrites(t)
@@ -829,11 +827,11 @@ func TestAccountsAddManagedOwnerTerminalWidensTheDeclaration(t *testing.T) {
 	if got := lc.ClaudeAccounts["team-a"].AllowDataTo; !slices.Equal(got, []string{"owner/repo-a", "acme/other"}) {
 		t.Errorf("claude_accounts.team-a.allow_data_to = %v, want the declaration this run asked for", got)
 	}
-	// The confirmation carries the whole list, both repositories, because the
-	// list is what the owner is answering for.
-	wantConfirm := "claude_accounts.team-a.allow_data_to = [owner/repo-a, acme/other], and a job on these repositories can read this token"
-	if !strings.Contains(out, wantConfirm) {
-		t.Errorf("the confirmation does not name every repository the token may be sent to:\n%s", out)
+	// The printed list is the whole list, both repositories, because the list is
+	// what the owner is being told the token may be used by.
+	wantList := "claude_accounts.team-a.allow_data_to = [owner/repo-a, acme/other]\nA job on these repositories can read this token."
+	if !strings.Contains(out, wantList) {
+		t.Errorf("the run does not print every repository the token may be sent to:\n%s", out)
 	}
 	if len(writes.created) == 0 && len(writes.added) == 0 {
 		t.Errorf("the owner's own run stored no token: created %v, added %v", writes.created, writes.added)
@@ -846,18 +844,17 @@ func TestAccountsAddManagedOwnerTerminalWidensTheDeclaration(t *testing.T) {
 // The other class the door covers is the token entry: --claude runs a login and
 // then reads a token, which is the step no plan gate admits (accountsAddRules),
 // so in a managed project the flag has to work at the owner's own terminal —
-// after the same confirmation, and only there. The control is the gate's own
+// after the printed list, and only there. The control is the gate's own
 // boundary, which answers "managed and not admitted" for that run: the caller
-// behind it asks the question --ask restores and writes on the confirmation the
-// owner answered, never on a verdict — the admission is the flag GateConfirms
-// reads, and it is false — and the login below is the one the value never comes
-// from.
+// behind it prints its sentence and asks nothing, never writing on a verdict —
+// the admission is the flag GateConfirms reads, and it is false — and the login
+// below is the one the value never comes from.
 func TestAccountsAddManagedOwnerTerminalRunsTheClaudeLogin(t *testing.T) {
 	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
 	lc := r.addLocal(t)
 	ownerAtTheTerminal(t)
 
-	m, gate, err := accountsAddGate(t.Context(), gateCmdStdin(initProjectName+"\n"), lc,
+	m, gate, err := accountsAddGate(t.Context(), gateCmd(), lc,
 		accountsAddOptions{claude: true}, "team-a", "standard", nil, []string{"owner/repo-a"}, []byte("version: 1\n"))
 	if err != nil {
 		t.Fatalf("--claude at the owner's own terminal was refused: %v", err)
@@ -879,6 +876,42 @@ func TestAccountsAddManagedOwnerTerminalRunsTheClaudeLogin(t *testing.T) {
 		accountsAddOptions{claude: true}, "team-a", "standard", nil, nil, []byte("version: 1\n"))
 	if err == nil || err.Error() != accountsAddRefusalSession {
 		t.Fatalf("--claude in a coding agent's session was not refused in this command's own two lines: %v", err)
+	}
+	if recs := r.audits(t); len(recs) != 1 || recs[0].Verdict != managedmode.AuditRefused {
+		t.Errorf("the session's refusal left %+v, want exactly one refused record", recs)
+	}
+}
+
+// The credential entry's other door is the owner's own terminal: --type
+// declares credentials.<name>, which D1628/F12 keep at the project/local layer,
+// so the flag has to work for the owner at that terminal — the same boundary
+// --claude has, and the caller behind it prints its own sentence, writes on the
+// admission false and asks nothing. The control is the same call in a coding
+// agent's session (TestAccountsAddManagedRefusesACredentialInAnAgentSession).
+func TestAccountsAddManagedOwnerTerminalDeclaresTheCredential(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+	lc := r.addLocal(t)
+	ownerAtTheTerminal(t)
+
+	m, gate, err := accountsAddGate(t.Context(), gateCmd(), lc,
+		accountsAddOptions{typ: "claude-oauth"}, "team-a", "standard", nil, []string{"owner/repo-a"}, []byte("version: 1\n"))
+	if err != nil {
+		t.Fatalf("--type at the owner's own terminal was refused: %v", err)
+	}
+	if want := (initflow.Managed{Managed: true}); m != want {
+		t.Errorf("--type at the owner's own terminal was answered %+v, want %+v: the project IS managed, and creating a credential is the owner's own step, so the admission stays false", m, want)
+	}
+	if err := gate.recorded(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if recs := r.audits(t); len(recs) != 0 {
+		t.Errorf("--type at the owner's own terminal filed %+v", recs)
+	}
+	t.Setenv(accountsAddAgent, "1")
+	_, _, err = accountsAddGate(t.Context(), gateCmd(), lc,
+		accountsAddOptions{typ: "claude-oauth"}, "team-a", "standard", nil, nil, []byte("version: 1\n"))
+	if err == nil || err.Error() != accountsAddRefusalCredential {
+		t.Fatalf("--type in a coding agent's session was not refused in this command's own two lines: %v", err)
 	}
 	if recs := r.audits(t); len(recs) != 1 || recs[0].Verdict != managedmode.AuditRefused {
 		t.Errorf("the session's refusal left %+v, want exactly one refused record", recs)

@@ -87,7 +87,7 @@ const (
 )
 
 // The audit's two figures (F1): the registry's rows, and the rows the generic
-// write path's allowlist carries -- eighty-eight by name and the rest through
+// write path's allowlist carries -- ninety-four by name and the rest through
 // the nine prefixes. They are re-counted below rather than trusted, because the
 // whole of §1's argument is that the rows no writer carries are the defect.
 //
@@ -100,12 +100,13 @@ const (
 // added to the registry and not to the allowlist widens the gap the audit is
 // about rather than narrowing it, and with CB1 of docs/catalog-build-context/,
 // whose image_catalog.entries.*.source.context row is the image catalog's own.
-// This branch moved it to 384: planning.decoupling's own row, at
-// internal/settings/registry.go:301, and the defaults.planning.decoupling layer
-// row at :542, are two rows the merged tree holds and main's did not.
+// This branch moved it to 390 with the six concrete spellings of
+// stages.*.claude_account, one per config.RunStages name (settings_stages_test.go),
+// which are the whole of the growth: planning.decoupling's two rows
+// (registry.go:301, and the layer row at :543) are already on main.
 const (
-	cfmRegistryRows   = 384
-	cfmAllowlistNamed = 88
+	cfmRegistryRows   = 390
+	cfmAllowlistNamed = 94
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {

@@ -69,6 +69,7 @@ import {
   fuseTarget,
   linuxExecutable,
   macExecutable,
+  win32Executable,
   type AfterPackContext,
   type FuseTools,
 } from '../../src/main/fuses'
@@ -101,6 +102,7 @@ const build = manifest.build as {
   readonly electronDownload?: { readonly checksums?: Record<string, string> }
   readonly mac?: Record<string, unknown>
   readonly linux?: Record<string, unknown>
+  readonly win?: Record<string, unknown>
 }
 
 /** flips is the configuration's value per fuse, keyed by the enum, with the
@@ -168,6 +170,17 @@ const LINUX_CONTEXT: AfterPackContext = {
     appInfo: { productFilename: 'Fugaro Console', sanitizedName: 'fugaro-console' },
     executableName: 'fugaro-console',
   },
+}
+
+/** WIN_CONTEXT is the same context for a Windows build. There is no bundle and
+ * no executable name on this platform: electron-builder writes
+ * `appOutDir/<productFilename>.exe`, so the packager's name for the app is the
+ * whole of what the hook reads -- and it is `productName`'s string with its
+ * space, not the package's sanitized `name`. */
+const WIN_CONTEXT: AfterPackContext = {
+  electronPlatformName: 'win32',
+  appOutDir: '/tmp/out/win-unpacked',
+  packager: { appInfo: { productFilename: 'Fugaro Console' } },
 }
 
 describe('the six fuses the console is built with', () => {
@@ -463,19 +476,41 @@ describe('the afterPack hook', () => {
     await expect(afterPack(LINUX_CONTEXT, fuses)).rejects.toThrow(/fugaro-console/)
   })
 
-  it('refuses a platform this build does not package, rather than shipping an unflipped binary', async () => {
-    // Windows is the platform this build does not produce (design D10: the CLI
-    // has no Windows build, and signing is the owner's). A build on it would
-    // produce a binary this hook has no path for, and silently skipping would
-    // be the one outcome that ships the fuses unset.
-    expect([...SUPPORTED_PLATFORMS]).toEqual(['darwin', 'linux'])
+  it('names the Windows executable electron-builder produced, by its productFilename', () => {
+    // Windows has no `.app` either, but it has the packer's own extension
+    // table -- `{ darwin: '.app', mas: '.app', win32: '.exe', linux: '' }` --
+    // and the name beside it is `appInfo.productFilename`, the packer's name
+    // for the app. That is the Linux row's precedent: this string is the
+    // packer's and not ours, so it is `Fugaro Console` with the space and not
+    // the package's sanitized `fugaro-console`.
+    expect(win32Executable(WIN_CONTEXT)).toBe(join(WIN_CONTEXT.appOutDir, 'Fugaro Console.exe'))
+  })
+
+  it('flips the same six fuses into the Windows executable, with the same configuration', async () => {
+    // The fuse set is a property of the application, not of the platform, so
+    // the EXE `win-unpacked` holds is flipped with byte-for-byte the
+    // configuration the macOS bundle and the Linux executable get.
     const fuses = fakeFuses()
-    const elsewhere: AfterPackContext = { ...CONTEXT, electronPlatformName: 'win32' }
-    await expect(afterPack(elsewhere, fuses)).rejects.toThrow(/win32/)
+    await afterPack(WIN_CONTEXT, fuses)
+    expect(fuses.calls).toHaveLength(1)
+    expect(fuses.calls[0]?.path).toBe(win32Executable(WIN_CONTEXT))
+    expect(fuses.calls[0]?.config).toEqual(fuseConfig())
+  })
+
+  it('refuses a platform nobody decided, rather than shipping an unflipped binary', async () => {
+    // Windows is a platform this build packages now (the owner's ruling of
+    // 2026-10-20 and D7(c): the pack runs at release time only), so the
+    // refusal is kept for a platform nobody decided at all. A build on one
+    // would produce a binary this hook has no path for, and silently skipping
+    // would be the one outcome that ships the fuses unset.
+    expect([...SUPPORTED_PLATFORMS]).toEqual(['darwin', 'linux', 'win32'])
+    const fuses = fakeFuses()
+    const elsewhere: AfterPackContext = { ...CONTEXT, electronPlatformName: 'freebsd' }
+    await expect(afterPack(elsewhere, fuses)).rejects.toThrow(/freebsd/)
     // and the message names what *is* packaged, so the refusal is actionable
-    await expect(afterPack(elsewhere, fuses)).rejects.toThrow(/darwin and linux/)
+    await expect(afterPack(elsewhere, fuses)).rejects.toThrow(/darwin and linux and win32/)
     expect(fuses.calls).toEqual([])
-    expect(() => fuseTarget(elsewhere)).toThrow(/win32/)
+    expect(() => fuseTarget(elsewhere)).toThrow(/freebsd/)
   })
 })
 
@@ -685,6 +720,7 @@ describe('the packaging configuration the fuses belong to', () => {
         'npmRebuild',
         'productName',
         'publish',
+        'win',
       ].toSorted(),
     )
     for (const widening of ['asarUnpack', 'extraResources', 'extraFiles', 'mas', 'dmg', 'electronDist']) {
@@ -781,6 +817,41 @@ describe('the packaging configuration the fuses belong to', () => {
     expect(existsSync(join(CONSOLE_DIR, 'build', 'icon.png'))).toBe(true)
   })
 
+  it('has exactly the win keys this task decided, and none of the ways to widen the bundle', () => {
+    // The Windows block carries the Linux block's key set and for the same
+    // reason: anything else is a platform block the top-level allow-list does
+    // not reach, where `files`/`asar` would replace the very rules the fuses
+    // depend on and the rest would add files to the package.
+    expect(Object.keys(build.win ?? {}).toSorted()).toEqual(['artifactName', 'target'].toSorted())
+    for (const widening of ['asar', 'asarUnpack', 'extraResources', 'extraFiles', 'files', 'electronDist']) {
+      expect(build.win, `build.win.${widening} must be absent`).not.toHaveProperty(widening)
+    }
+  })
+
+  it('names the Windows target, its arch and its artifact name rather than inheriting them', () => {
+    // NSIS is *named*: it is electron-builder's default Windows target today,
+    // and a default is a decision nobody wrote down -- a future bump of the
+    // packer could change it without a line of this repository changing.
+    // The arch nests inside the target entry, as it does on the Linux leg:
+    // `WindowsConfiguration` is `additionalProperties: false` and has no
+    // top-level `arch`, so `win.arch` is a configuration electron-builder
+    // refuses outright ("Invalid configuration object") before it packs
+    // anything -- on every platform, not just `--win`.
+    // x64 only, matching the Linux leg: an arm64 leg would cross-build an
+    // architecture nothing here has run. T-B3 pinned the `win32-x64` Electron
+    // archive in `build.electronDownload.checksums` on 2026-11-09 (the gap the
+    // plan recorded as F37), so the arch this target names and the archive the
+    // pack downloads agree.
+    const win = (build.win ?? {}) as Record<string, unknown>
+    expect(win['target']).toEqual([{ target: 'nsis', arch: ['x64'] }])
+    // Following the Linux pattern: the name the release notes, the checksum
+    // file and the installer job all have to agree on. `${arch}` is
+    // electron-builder's own substitution, and a build that produced another
+    // architecture would produce another name rather than a mislabelled file.
+    expect(win['artifactName']).toBe('Fugaro.Console-${version}-win-${arch}.${ext}')
+    expect(win['artifactName']).not.toMatch(/\s/)
+  })
+
   it('configures no signature for Linux: the owner ruled it unsigned, and signing is the owner’s', () => {
     // The owner's ruling of 2026-10-20 is "yes, Linux for 0.10.0, unsigned".
     // There is deliberately no code-signing key here, no `forceCodeSigning` that
@@ -854,6 +925,12 @@ describe('the packaging configuration the fuses belong to', () => {
     // lockfile-pinned `electron` package carries in its `checksums.json`
     // (present after `npm ci --ignore-scripts`: it is in the tarball).
     //
+    // `electron-v<version>-win32-x64.zip` is the archive the Windows leg
+    // downloads: `package:win` and the `win` block landed on 2026-11-09
+    // (docs/console-windows/implementation-plan.md T-B1 and T-B4), and no host
+    // has completed a `--win` pack yet, so this pin is what the first one is
+    // verified against rather than a `SHASUMS256.txt` fetched at pack time.
+    //
     // The list is pinned exactly, so a build that started downloading an archive
     // nobody pinned -- a third arch, a different version -- fails here rather
     // than trusting a hash fetched over the network at pack time. `linux-arm64`
@@ -866,6 +943,7 @@ describe('the packaging configuration the fuses belong to', () => {
         `electron-v${version}-darwin-arm64.zip`,
         `electron-v${version}-darwin-x64.zip`,
         `electron-v${version}-linux-x64.zip`,
+        `electron-v${version}-win32-x64.zip`,
       ].toSorted(),
     )
     for (const hash of Object.values(checksums)) expect(hash).toMatch(/^[0-9a-f]{64}$/)
@@ -909,6 +987,44 @@ describe('the packaging configuration the fuses belong to', () => {
     )
     expect(entry?.integrity).toMatch(/^sha512-/)
     expect(entry?.dev).toBe(true)
+  })
+
+  it('packs Windows with the lockfile’s own electron-builder, and never publishes', () => {
+    // The Windows leg's script, and it lives here rather than in the staged
+    // `console-windows.yml` for the reason `package:linux`'s own comment gives:
+    // `--publish never` is in the script so that no invocation of the packer can
+    // add one, and the packer named is the lockfile's exact electron-builder
+    // rather than whatever `npx` would resolve in the shell the job runs in.
+    const script = manifest.scripts['package:win'] ?? ''
+    expect(script).toBe('npm run build && electron-builder --win --publish never')
+    expect(script).not.toMatch(/\bnpx\b/)
+    expect(script).not.toMatch(/--publish\s+(?:always|onTag|onTagOrDraft)/)
+    expect(script).not.toMatch(/electron-builder@/)
+  })
+
+  it('describes every packaging script the manifest declares, in console/README.md', () => {
+    // Everything above reads the *manifest*. Nothing read the document a reader
+    // actually opens, so a packaging script could land in `package.json`, pass
+    // every test in this file, and reach no prose at all -- which is what
+    // happened to `package:win`: the script and the artifact it produces were
+    // pinned here and described nowhere, so the only account of the Windows pack
+    // was the manifest itself.
+    //
+    // The list is read out of the manifest rather than written out again: a
+    // fifth packaging script has to be described, and a test carrying its own
+    // copy of the four would be satisfied by the copy. And each name is matched
+    // as the command it is run as, with the name boundary respected -- `npm run
+    // package` must not be satisfied by `npm run package:linux`.
+    const readme = readFileSync(join(CONSOLE_DIR, 'README.md'), 'utf8')
+    const packaging = Object.keys(manifest.scripts).filter(
+      (name) => name === 'package' || name.startsWith('package:'),
+    )
+    expect(packaging.toSorted()).toEqual(
+      ['package', 'package:linux', 'package:targets', 'package:win'].toSorted(),
+    )
+    for (const name of packaging) {
+      expect(readme, `console/README.md must describe ${name}`).toMatch(new RegExp(`npm run ${name}(?![\\w:.-])`))
+    }
   })
 
   it('runs this hook, compiled to the file the build emits', () => {

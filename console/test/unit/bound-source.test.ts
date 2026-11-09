@@ -25,8 +25,16 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { NoInstallation, GRAPH_READ_MIN_INTERVAL_MS, PLAN_STATUS_MIN_INTERVAL_MS, createBoundSource } from '../../src/source/cli'
-import type { BoundInstallation, CliSource } from '../../src/source/cli'
+import {
+  NoInstallation,
+  GRAPH_READ_MIN_INTERVAL_MS,
+  PLAN_STATUS_MIN_INTERVAL_MS,
+  FUGARO_INSTALL_COMMAND,
+  CliSource,
+  createBoundSource,
+  noInstallationState,
+} from '../../src/source/cli'
+import type { BoundInstallation } from '../../src/source/cli'
 import { NO_GRAPH_SCOPE, NO_PLAN_CHECKOUT, SourceRefusal } from '../../src/source/source'
 import type { Snapshot } from '../../src/source/source'
 
@@ -288,6 +296,12 @@ describe('the source bound to the active installation', () => {
               ? Promise.reject(new SourceRefusal('watch failed: the feed ended'))
               : Promise.resolve({ document: { child: stream.n }, receivedAt: '2026-10-15T12:00:00Z' }),
           stop: async () => undefined,
+          // A feed says it has ended through `onEnded` and not through a
+          // rejection -- a `current()` can be refused for a document that did not
+          // arrive in time while the child is alive -- and the bound source
+          // listens for it. This feed never ends on its own; the case sets
+          // `ended` itself, and the `watch` feed holds no floor either way.
+          onEnded: () => () => undefined,
         }
       },
     } as unknown as CliSource
@@ -305,6 +319,84 @@ describe('the source bound to the active installation', () => {
       'the poll after the feed ended was answered by the dead stream',
     ).toEqual({ child: 2 })
     expect(started).toBe(2)
+  })
+
+  it('watches the end of a stream once, however many polls a live feed takes', async () => {
+    // `current()` asks the source for the feed again on every poll (`lazyFeed`),
+    // and a source answers the **same stream** for the same key while it is live:
+    // an end listener registered per call would grow that stream's own set by one
+    // a second for as long as the Graph tab is open, and every one of them would
+    // run when the child finally ended. So the end is watched once per stream --
+    // and the floor that reading feeds is still re-armed for the stream that
+    // replaces it, which is what the second half of this case holds.
+    let started = 0
+    let now = Date.parse('2026-11-09T12:00:00Z')
+    let live: { ended: boolean; n: number } | null = null
+    let listeners: (() => void)[] = []
+    const watching: number[] = []
+    let stream: unknown = null
+    const real = {
+      version: async () => ({ text: FIRST.id, receivedAt: '2026-10-15T12:00:00Z' }),
+      close: async () => undefined,
+      subscribeGraph: () => {
+        if (live === null || live.ended) {
+          started += 1
+          live = { ended: false, n: started }
+          listeners = []
+          watching.push(0)
+          const state = live
+          stream = {
+            latest: null,
+            current: () =>
+              state.ended
+                ? Promise.reject(new SourceRefusal('graph failed: the feed ended'))
+                : Promise.resolve({ document: { child: state.n }, receivedAt: '2026-10-15T12:00:00Z' }),
+            stop: async () => undefined,
+            onEnded: (listener: () => void) => {
+              watching[watching.length - 1] = (watching[watching.length - 1] ?? 0) + 1
+              listeners.push(listener)
+              if (state.ended) listener()
+              return () => undefined
+            },
+          }
+        }
+        return stream
+      },
+    } as unknown as CliSource
+    const source = createBoundSource({
+      installation: () => FIRST,
+      clock: () => new Date(now),
+      create: async () => real,
+    })
+    const args = { source: 'all' }
+
+    for (let poll = 0; poll < 5; poll += 1) {
+      expect((await source.subscribeGraph(args).current()).document, 'a poll did not answer the live feed').toEqual({
+        child: 1,
+      })
+    }
+    expect(started, 'a poll started a child of its own').toBe(1)
+    expect(watching, 'an end listener was registered per poll').toEqual([1])
+
+    // The child exits. A poll inside the floor is answered with what that feed
+    // last gave -- the document it had, or the refusal a child that died before
+    // its first one left (`graph-watch.test.ts`) -- and starts nothing. The stream
+    // that replaces it afterwards is watched in its turn: one listener for the
+    // feed that ended, one for the feed that is new.
+    if (live === null) throw new Error('no feed was started: the case proves nothing')
+    ;(live as { ended: boolean }).ended = true
+    for (const listener of listeners) listener()
+    expect(
+      (await source.subscribeGraph(args).current()).document,
+      'a poll inside the floor did not hold the answer the feed left',
+    ).toEqual({ child: 1 })
+    expect(started, 'a poll inside the floor started a child').toBe(1)
+
+    now += GRAPH_READ_MIN_INTERVAL_MS
+    expect((await source.subscribeGraph(args).current()).document, 'the poll past the floor drew a dead feed').toEqual({
+      child: 2,
+    })
+    expect(watching).toEqual([1, 1])
   })
 
 describe('the plan read, whose directory is the binding’s', () => {
@@ -588,5 +680,100 @@ describe('the graph read, whose scope a previous answer taught', () => {
     now += 1_000
     await expect(source.planStatus({ all: false })).rejects.toThrow()
     expect(spawned, 'a failed read was spawned again inside the minute').toBe(2)
+  })
+})
+
+/**
+ * The four ways an installation can have no `fugaro` to read -- the resolution's
+ * own `BinaryRefusalKind` (`src/main/spawn.ts`) -- and the one thing all four
+ * share on this side of the seam: **no sidecar**. The refusal is thrown by
+ * `CliSource.create` before `new CliSource(...)`, which is the object a
+ * `fugaro watch` child lives in, so a console with no installation to read holds
+ * no source, runs no child and has nothing to close.
+ *
+ * The three WSL kinds are the siblings of the absent-binary state (Part G, T-G1):
+ * they reach this path the same way, and the build here is the shipped one's
+ * shape exactly -- it throws the state `noInstallationState` builds from the
+ * resolution's `kind`, at the point `CliSource.create` throws it.
+ *
+ * The second case drives `CliSource.create` itself, through the `resolver` seam,
+ * because the *kind* a refusal carries is the one thing no build over this
+ * machine's filesystem can pin: the three WSL kinds are produced by
+ * `resolveInstalledBinary` and every refusal `resolveBinary` makes is
+ * `no-binary`. Flattening that carry-through back to `'no-binary'` -- the defect
+ * F26 exists to name -- would otherwise leave every test in this suite green.
+ */
+describe('a read that finds no installation to run', () => {
+  it('refuses each of the four kinds as a NoInstallation, and runs no sidecar for any of them', async () => {
+    for (const kind of ['no-binary', 'no-wsl', 'no-distro', 'no-fugaro-in-distro'] as const) {
+      let attempts = 0
+      const source = createBoundSource({
+        installation: () => FIRST,
+        create: () => {
+          attempts += 1
+          throw new NoInstallation(
+            noInstallationState({ kind, reason: `the resolution failed as ${kind}`, home: '/nonexistent-home' }),
+          )
+        },
+      })
+
+      const error = await refusalOf(source.version())
+      expect(error, kind).toBeInstanceOf(NoInstallation)
+      expect((error as NoInstallation).state.kind, `${kind} lost its kind on the way to the screen`).toBe(kind)
+
+      // **No sidecar.** The feed is the one thing this source starts a child
+      // for, and on this path it hands out no stream at all: `latest` is null
+      // before and after the read, so no `fugaro watch` was ever attached --
+      // there is nothing running and nothing to stop.
+      const feed = source.subscribeLive({})
+      expect(feed.latest, `${kind} drew a feed for a console with nothing to read`).toBeNull()
+      await expect(feed.current(), kind).rejects.toBeInstanceOf(NoInstallation)
+      expect(feed.latest, `${kind} kept a feed and its child`).toBeNull()
+      await feed.stop()
+
+      // And the refused build is not cached as this installation's source: the
+      // next read resolves again rather than being handed what was never made.
+      expect(await refusalOf(source.version()), kind).toBeInstanceOf(NoInstallation)
+      expect(attempts, `${kind}: the refused build was cached`).toBe(3)
+    }
+  })
+
+  it('refuses through `create` with the resolution’s own kind, whichever of the four it failed as', async () => {
+    // The pin on the one line that carries the kind: `resolveBinary` answers
+    // `no-binary` for every refusal it makes -- the WSL route is
+    // `resolveInstalledBinary` and nothing in `resolveBinary` reaches it -- so a
+    // build over this machine's filesystem can never hand `create` a resolution
+    // that failed as a WSL kind. The seam is the only way to ask, and asking is
+    // the point: `kind: resolution.kind` written as `'no-binary'` would send a
+    // machine with no WSL to install a CLI, and no test that resolves for real
+    // can tell the two apart.
+    for (const kind of ['no-binary', 'no-wsl', 'no-distro', 'no-fugaro-in-distro'] as const) {
+      const refused = await CliSource.create({
+        target: { project: 'acme' },
+        appEnv: {},
+        home: '/nonexistent-home',
+        resolver: async () => ({ ok: false, path: null, kind, reason: `the resolution failed as ${kind}` }),
+      }).then(
+        () => null,
+        (cause: unknown) => cause,
+      )
+      expect(refused, kind).toBeInstanceOf(NoInstallation)
+      const state = (refused as NoInstallation).state
+      expect(state.kind, `${kind} was flattened on the way to the screen`).toBe(kind)
+      expect(state.reason, kind).toBe(`the resolution failed as ${kind}`)
+      // And the two fields the page draws beside the kind follow it: the install
+      // line for the kind whose remedy is a command this machine can run, and
+      // neither it nor a count of host places for the three the WSL route answers
+      // -- that route asked `wsl.exe` and the distribution and walked no
+      // directory here (F30's rule: the count, and never the paths).
+      expect(state.installCommand, `${kind} offers the wrong remedy`).toBe(
+        kind === 'no-binary' ? FUGARO_INSTALL_COMMAND : '',
+      )
+      if (kind === 'no-binary') {
+        expect(state.searched.length, 'the walk the resolution made was not re-derived').toBeGreaterThan(0)
+      } else {
+        expect(state.searched, `${kind} carries a walk this route never made`).toEqual([])
+      }
+    }
   })
 })

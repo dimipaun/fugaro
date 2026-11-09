@@ -24,7 +24,8 @@
     "package": "npm run build && npm run symbols:inject && electron-builder --mac --universal --publish never",
     "package:targets": "electron-builder --mac --universal --publish never",
     "symbols:inject": "node scripts/upload-sentry-symbols.mjs inject",
-    "package:linux": "electron-builder --linux --publish never"
+    "package:linux": "electron-builder --linux --publish never",
+    "package:win": "npm run build && electron-builder --win --publish never"
   },
   "build": {
     "appId": "io.github.dimipaun.fugaro-console",
@@ -85,7 +86,8 @@
       "checksums": {
         "electron-v45.2.3-darwin-arm64.zip": "4d7c429064087a47b855d9bd06c76ead4819b7f02b385de232d4a5c37ecef55f",
         "electron-v45.2.3-darwin-x64.zip": "d87323533cc8750ef177e5b48058f7a8b381f677d4e103cc63360006c08829c2",
-        "electron-v45.2.3-linux-x64.zip": "a87fe741f6d121285117e574da6c9a2e65210d410123bbc04713b099add0263b"
+        "electron-v45.2.3-linux-x64.zip": "a87fe741f6d121285117e574da6c9a2e65210d410123bbc04713b099add0263b",
+        "electron-v45.2.3-win32-x64.zip": "489cd061908e697394b004298bf5ffd345c935d10e8ca197ba819f019ab2dec0"
       }
     },
     "mac": {
@@ -120,6 +122,17 @@
       "synopsis": "A desktop console for fugaro: live run monitoring and spending graphs.",
       "description": "A desktop application for watching fugaro runs: live run monitoring and spending graphs. It is strictly read-only, and the fugaro CLI is its data plane -- it has no backend, no service account and no credential of its own.",
       "maintainer": "Fugaro Console <dimipaun@users.noreply.github.com>"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Fugaro.Console-${version}-win-${arch}.${ext}"
     }
   },
   "devDependencies": {

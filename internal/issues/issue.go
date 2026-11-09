@@ -168,12 +168,27 @@ type Issue struct {
 	FugaroVersion string `yaml:"fugaro_version"`
 	// OS is the platform that failed.
 	OS string `yaml:"os"`
+	// Installation is the installation this issue was saved in: the digest of
+	// the runs bucket URL (`Digest`), so a machine that serves two projects
+	// never files one project's issue into the other and `issue mine` in one
+	// never prints the other's (F8b). Empty on a record saved before there was
+	// a field to stamp, which no project claims.
+	Installation string `yaml:"installation"`
 	// Status is where the issue stands.
 	Status Status `yaml:"status"`
 	// ClosedAs is why an issue closed without being fixed, empty otherwise:
 	// the reason GitHub gives, recorded when the pass `fugaro update` runs
 	// sets the issue aside (D1752).
 	ClosedAs ClosedAs `yaml:"closed_as"`
+	// SubmittedAt, ResolvedAt and DismissedAt are when the issue reached that
+	// status, stamped by the one writer that makes the transition (D1781).
+	// This is the one part of the header a record may leave out: an absent one
+	// is a transition that has not happened, and the reader that shows a date
+	// shows nothing for it. The retirement of a finished issue is what needs
+	// them, so a record that carries none is never hidden (F4).
+	SubmittedAt *time.Time `yaml:"submitted_at,omitempty"`
+	ResolvedAt  *time.Time `yaml:"resolved_at,omitempty"`
+	DismissedAt *time.Time `yaml:"dismissed_at,omitempty"`
 	// URL is the GitHub issue this was filed as, once it has been.
 	URL string `yaml:"url"`
 	// Uploaded says the issue is in the shared store.
@@ -216,8 +231,9 @@ func (i Issue) FileName() (string, error) {
 
 // Validate refuses a record this package would not write: a version it does
 // not read, a run stem that is not D1609's shape, a number outside the field
-// the file name prints, a class or a status it does not know, and a header
-// value that spans lines — which would break the fence the body follows.
+// the file name prints, a class or a status it does not know, an installation
+// that is not a digest, a transition time that is not UTC, and a header value
+// that spans lines — which would break the fence the body follows.
 func (i Issue) Validate() error {
 	if i.Version != 0 && i.Version != RecordVersion {
 		return fmt.Errorf("issues: the record is version %d, and this fugaro writes %d", i.Version, RecordVersion)
@@ -245,6 +261,21 @@ func (i Issue) Validate() error {
 	if !i.ClosedAs.Valid() {
 		return fmt.Errorf("issues: %q is not a way an issue closed, want %q or %q", i.ClosedAs, ClosedNotPlanned, ClosedDuplicate)
 	}
+	if err := validateInstallation(i.Installation); err != nil {
+		return err
+	}
+	for _, f := range []struct {
+		name string
+		at   *time.Time
+	}{
+		{"submitted_at", i.SubmittedAt},
+		{"resolved_at", i.ResolvedAt},
+		{"dismissed_at", i.DismissedAt},
+	} {
+		if err := validateStamp(f.name, f.at); err != nil {
+			return err
+		}
+	}
 	if i.Created.IsZero() {
 		return errors.New("issues: the record has no creation time")
 	}
@@ -271,6 +302,38 @@ func (i Issue) Validate() error {
 		return fmt.Errorf("issues: %q is not a fingerprint, want the SHA-256 of the signature in lowercase hex", i.Fingerprint)
 	}
 	return nil
+}
+
+// validateInstallation refuses a value that is not the digest a saved issue
+// carries. It is the shape the snapshot's file name takes, because it is the
+// same value — a digest of the runs bucket URL — and one rule for it is one a
+// reader cannot get wrong. Empty is the value of a record saved before there
+// was a field to stamp, and of one a caller saved with no project to name.
+func validateInstallation(digest string) error {
+	if digest == "" || installationRE.MatchString(digest) {
+		return nil
+	}
+	return fmt.Errorf("issues: %q is not an installation digest", digest)
+}
+
+// validateStamp refuses a transition time that is not UTC. A record is read by
+// the whole team and by machines in other zones, and a header that spelled an
+// instant with an offset — a hand-edit, or a writer that kept its own zone —
+// would print a time a reader has to convert before comparing it with another
+// issue's.
+func validateStamp(name string, at *time.Time) error {
+	if at == nil || at.Location() == time.UTC {
+		return nil
+	}
+	return fmt.Errorf("issues: %s is %s, which is not UTC", name, at.Format(time.RFC3339))
+}
+
+// stamp is the instant a transition is recorded at: the caller's own clock, in
+// UTC, to the second, because what a reader of a date column needs is the
+// instant and not a fraction of a second.
+func stamp(now time.Time) *time.Time {
+	at := now.UTC().Truncate(time.Second)
+	return &at
 }
 
 // Marshal renders the record: its header, then the body's four sections in
