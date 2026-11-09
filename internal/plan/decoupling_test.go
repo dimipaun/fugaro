@@ -529,6 +529,88 @@ func TestContractFilesBelongToTheContractAndItsChanges(t *testing.T) {
 			`{"id": "I1", "title": "the integration", "kind": "integration", "footprint": {"prediction": true, "paths": ["internal/contract/types.go"]}}`),
 			`node "I1"'s footprint covers "internal/contract/types.go"`)
 	})
+
+	// A `*` stands for a name of any length, so an element carrying one is a
+	// glob over names, not an element that writes a dot: `*.*`, `docs/.*` and
+	// `**/.*` are ordinary multi-extension globs and are read, and `**/*.*` reaches
+	// the contract's file into the bargain — refused by the contract-file rule
+	// below and not by the respelling rule above, which is the reading this
+	// subtest is for: a refusal for the wrong reason would refuse a valid plan.
+	t.Run("an ordinary multi-extension glob is not a dot respelling", func(t *testing.T) {
+		for _, tc := range []struct {
+			pattern string
+			covers  bool
+		}{
+			{"*.*", false},
+			{"docs/.*", false},
+			{"**/*.*", true},
+			{"**/.*", false},
+		} {
+			_, err := Parse("graph.json", []byte(v3Doc(t,
+				`"paths": ["internal/dep/**"]`,
+				fmt.Sprintf(`"paths": [%q]`, tc.pattern))))
+			if !tc.covers {
+				if err != nil {
+					t.Errorf("the footprint pattern %q was refused: %v", tc.pattern, err)
+				}
+				continue
+			}
+			if err == nil {
+				t.Fatalf("the footprint pattern %q covers the contract's file and was read", tc.pattern)
+			}
+			if !strings.Contains(err.Error(), `covers "internal/contract/types.go"`) {
+				t.Errorf("the footprint pattern %q was refused as a respelling rather than read as a glob: %v", tc.pattern, err)
+			}
+		}
+	})
+}
+
+// TestContractFileMatchingIsBounded: the contract-file rule is a product of two
+// sides that both come from the file — every contract's files against every
+// other task's patterns — so a graph well inside the artifact's own cap can
+// still ask for minutes of doublestar. Two halves: the shapes an index reads
+// cheaply (a pattern whose literal suffix no file carries) are read, and one
+// that survives every cheap test is refused rather than matched a million times.
+func TestContractFileMatchingIsBounded(t *testing.T) {
+	const files, tasks = 1100, 1100
+	build := func(pattern string) string {
+		var b strings.Builder
+		b.WriteString(`{"schema_version":3,"plan":"p.md","nodes":[{"id":"C","title":"the contract","kind":"contract","footprint":{"prediction":true,"paths":[`)
+		for i := 0; i < files; i++ {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			fmt.Fprintf(&b, "%q", fmt.Sprintf("internal/contract/f%04d.go", i))
+		}
+		b.WriteString(`]}}`)
+		for i := 0; i < tasks; i++ {
+			fmt.Fprintf(&b, `,{"id":"n%d","title":"a task","footprint":{"prediction":true,"paths":[%q]}}`,
+				i, fmt.Sprintf(pattern, i))
+		}
+		b.WriteString(`],"edges":[]}`)
+		return b.String()
+	}
+
+	// Every pair is asked, and every one of them leaves on the pattern's own
+	// suffix: a graph of many contracts and many tasks reads in the time the
+	// JSON takes, which is what the index is for.
+	if _, err := Parse("graph.json", []byte(build("**/*q%04d.go"))); err != nil {
+		t.Errorf("a graph whose patterns no file can carry was refused: %v", err)
+	}
+
+	// These patterns carry the suffix and the element count of every file, so
+	// each of the 1100 x 1100 pairs reaches doublestar and fails there. The rule
+	// counts the matches it asks for and refuses the graph past its bound: the
+	// answer is the same refusal, and the read stays a read.
+	_, err := Parse("graph.json", []byte(build("*/*/x%04d*.go")))
+	if err == nil {
+		t.Fatal("a graph asking for more than the bound in footprint matches was read")
+	}
+	for _, want := range []string{"more than 1048576 footprint matches", "refused rather than read slowly", "F10"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
 }
 
 // TestChangeRequestAffectsIsAlwaysAnArray: `affects` is written without

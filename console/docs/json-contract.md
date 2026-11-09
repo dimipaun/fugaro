@@ -1425,7 +1425,12 @@ element a glob expands to a `.` or a `..`**, as in
 `[.]/internal/contract/types.go`: `path.Clean` collapses a literal `./` or
 `../` in a pattern but reads past a dot a class or a wildcard spells, so those
 respell the contract's file while the rule reading the path reads none of them —
-an ordinary `*` or `?` element carries no dot and is untouched. The console
+an element carrying a `*` stands for a name of any length, so `*.*`, `docs/.*`
+and `**/.*` are ordinary multi-extension globs and are read. A graph inside the
+artifact's own cap can still ask for more matching than a read should take —
+every contract's files against every other task's patterns is a product of two
+sides that both come from the file — so the rule counts the matches it asks for
+and **refuses a graph past the bound** rather than read it slowly. The console
 shows the CLI's sentence in each case, like every other refusal here.
 
 **What the read computes, and why the done set is passed in.** `level`, `done`,

@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"slices"
 	"strings"
 	"unicode"
@@ -542,28 +543,165 @@ func validateSchema3(path string, doc Document) error {
 	// F10: a merged contract is a single point both sides trust, so its files
 	// appear in no other task's footprint — only the contract's own, the change
 	// requests against it, and the integration node for the stubs it deletes.
-	for _, n := range doc.Nodes {
+	//
+	// The rule is a product of two sides that both come from the file — every
+	// contract's files against every other task's patterns — so both sides are
+	// read once, up front, and each pattern carries the little of itself a file
+	// has to carry before doublestar is worth asking. What is left is bounded by
+	// maxFootprintMatches: a graph can be small enough for the artifact's cap and
+	// still ask for minutes of matching, and the rule refuses such a graph rather
+	// than read it slowly.
+	index := make([]nodeFootprint, len(doc.Nodes))
+	for i, n := range doc.Nodes {
+		index[i] = indexFootprint(n.Footprint)
+	}
+	matches := 0
+	for ci, n := range doc.Nodes {
 		if kindOf(n) != KindContract {
 			continue
 		}
-		for _, other := range doc.Nodes {
-			if other.ID == n.ID || changes[n.ID][other.ID] {
+		files := literalPaths(n.Footprint)
+		if len(files) == 0 {
+			continue
+		}
+		var stubbed map[string]bool
+		if len(n.Stubs) > 0 {
+			stubbed = make(map[string]bool, len(n.Stubs))
+			for _, stub := range n.Stubs {
+				stubbed[repoPath(stub)] = true
+			}
+		}
+		for oi, other := range doc.Nodes {
+			if oi == ci || changes[n.ID][other.ID] {
 				continue
 			}
 			integration := integrations[n.ID] == other.ID
-			for _, f := range literalPaths(n.Footprint) {
-				if !other.Footprint.Matches(f) {
+			ix := index[oi]
+			for _, f := range files {
+				if integration && stubbed[f] {
 					continue
 				}
-				if integration && slices.Contains(n.Stubs, f) {
-					continue
+				covered := ix.literals[f]
+				for _, g := range ix.globs {
+					if covered {
+						break
+					}
+					if !g.couldMatch(f) {
+						continue
+					}
+					matches++
+					if matches > maxFootprintMatches {
+						return refuse(path, "the graph's contracts and tasks ask for more than %d footprint matches to check that no task's footprint covers a contract's file; a graph that large is refused rather than read slowly (F10)",
+							maxFootprintMatches)
+					}
+					if ok, err := doublestar.Match(g.pattern, f); err == nil && ok {
+						covered = true
+					}
 				}
-				return refuse(path, "node %q's footprint covers %q, which is a file of the contract %q; a contract's files are named only by the contract and by the change requests against it (F10)",
-					other.ID, f, n.ID)
+				if covered {
+					return refuse(path, "node %q's footprint covers %q, which is a file of the contract %q; a contract's files are named only by the contract and by the change requests against it (F10)",
+						other.ID, f, n.ID)
+				}
 			}
 		}
 	}
 	return nil
+}
+
+// maxFootprintMatches bounds the work the contract-file rule does on one graph.
+// Every other task's pattern is tried against every file of every contract, so a
+// graph inside the artifact's own cap can still ask for more matching than the
+// read should take — a mebibyte of distinct patterns against a mebibyte of files
+// is minutes of doublestar. Past this many matches the graph is refused: the
+// count is what makes the cost of the rule a property of the rule rather than of
+// the file, and a graph a person would write does not come near it.
+const maxFootprintMatches = 1 << 20
+
+// nodeFootprint is one node's footprint in the shape the contract-file rule asks
+// it: the paths that name a file, in a set, and the patterns that do not, each
+// carrying the prefix, the suffix and the element count a file must have before
+// doublestar is asked. The index is built once per node and read for every
+// contract, which is what keeps the rule from rebuilding a footprint's paths
+// once per pair.
+type nodeFootprint struct {
+	literals map[string]bool
+	globs    []globPath
+}
+
+// indexFootprint reads a footprint into the shape above. A path is one or the
+// other: literalRepoPath decides, exactly as literalPaths does for a contract's
+// own files, so a file a contract names is protected by the same reading that
+// the other side is tested with.
+func indexFootprint(f Footprint) nodeFootprint {
+	var ix nodeFootprint
+	for _, p := range f.Paths {
+		c := repoPath(p)
+		if literalRepoPath(c) {
+			if ix.literals == nil {
+				ix.literals = make(map[string]bool)
+			}
+			ix.literals[c] = true
+			continue
+		}
+		ix.globs = append(ix.globs, newGlobPath(path.Clean(c)))
+	}
+	return ix
+}
+
+// globPath is a pattern with the two ends of itself that a file has to carry,
+// and the number of elements it matches when that number is fixed. Only
+// couldMatch uses them, and they are all conservative: each one drops a file
+// that the pattern cannot match, so a glob doublestar would have refused is
+// never handed to it.
+type globPath struct {
+	pattern string
+	prefix  string
+	suffix  string
+	elems   int // -1 when the count is not fixed
+}
+
+// metachars are the characters that stop a run of text from being a literal one.
+// `]` and `}` are in the set although they mean nothing on their own: a set that
+// is too wide only makes prefix and suffix shorter, which loses nothing.
+const metachars = `*?[]{}\`
+
+func newGlobPath(pattern string) globPath {
+	g := globPath{pattern: pattern, elems: -1}
+	first, last := len(pattern), -1
+	for i, r := range pattern {
+		if strings.ContainsRune(metachars, r) {
+			if i < first {
+				first = i
+			}
+			last = i
+		}
+	}
+	if first < len(pattern) {
+		g.prefix = pattern[:first]
+	}
+	if last >= 0 {
+		g.suffix = pattern[last+1:] // every metacharacter is one byte
+	}
+	// A `**` matches any number of elements and a brace group may carry a `/`
+	// of its own, so the count is only a bound when neither is there.
+	if !strings.Contains(pattern, "**") && !strings.ContainsAny(pattern, "{}") {
+		g.elems = strings.Count(pattern, "/") + 1
+	}
+	return g
+}
+
+// couldMatch reports whether p is worth handing to doublestar. Every test is a
+// string comparison next to a glob match of the whole path, which is the whole
+// point of the index: the rule asks this of every pair, and the pairs that a
+// pattern could never cover leave without the match.
+func (g globPath) couldMatch(p string) bool {
+	if !strings.HasPrefix(p, g.prefix) || !strings.HasSuffix(p, g.suffix) {
+		return false
+	}
+	if g.elems >= 0 && strings.Count(p, "/")+1 != g.elems {
+		return false
+	}
+	return true
 }
 
 // validKind reports whether kind is one of the four a node may be.
@@ -589,15 +727,15 @@ func carriesEdge(doc Document, task, needs string) bool {
 // contract-file rule below read none of them. Refused by name, beside the
 // escape, the leading slash and the brace group.
 //
-// An element is judged only when it writes a dot *and* a metacharacter: the
-// literal `./internal/x.go` is a respelling `path.Clean` already reads as
-// internal/x.go, and it is read — the F10 rule is written on the cleaned path.
-// An ordinary wildcard (`*`, `**`, `?`) matches the string "." to doublestar
-// without carrying one, names an element of the path rather than respelling
-// one, and refusing it would refuse every ordinary glob in the tree.
+// An element is judged only when it writes a dot, carries no `*`, and can
+// expand to `.` or `..`. The literal `./internal/x.go` is a respelling
+// `path.Clean` already reads as internal/x.go, so it is read; a `*` stands for a
+// name of any length, so an element carrying one names names — `*.*`, `docs/.*`
+// and `**/.*` are ordinary globs and are read — while the narrow forms write the
+// dot element itself: `[.]`, `[.][.]` and `.?`.
 func respellsDotElement(p string) bool {
 	for _, elem := range strings.Split(p, "/") {
-		if !strings.Contains(elem, ".") || !strings.ContainsAny(elem, "*?[]{}") {
+		if !strings.Contains(elem, ".") || strings.Contains(elem, "*") || !strings.ContainsAny(elem, "?[]{}") {
 			continue
 		}
 		for _, dot := range []string{".", ".."} {
