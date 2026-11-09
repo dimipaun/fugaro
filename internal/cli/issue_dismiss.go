@@ -22,6 +22,8 @@ func newIssueDismissCmd() *cobra.Command {
 			"status is written in the issue's own file and nothing else changes: the\n" +
 			"record stays where it is, so a listing still shows what was set aside\n" +
 			"and who did it, and nothing is filed.\n\n" +
+			"An issue that has already been filed is refused: it is open on GitHub,\n" +
+			"and setting it aside here would not close it.\n\n" +
 			"A coding agent's session may not dismiss an issue: a steered diagnosis\n" +
 			"could otherwise bury a real bug, so a person sets one aside (D1730).",
 		Args: cobra.ExactArgs(1),
@@ -45,6 +47,18 @@ func runIssueDismiss(cmd *cobra.Command, ref string) error {
 	i, err := store.Get(ref)
 	if err != nil {
 		return userErr("nothing was dismissed: %v", err)
+	}
+	// dismiss marks an issue as not worth submitting (spec 4), so it has nothing
+	// to say about one that is already filed: setting `dismissed` over
+	// `submitted` would drop the record's own statement that the issue is open on
+	// GitHub and print that nothing is filed for it, which is then false. The
+	// record is left as it is.
+	if i.Status == issues.StatusSubmitted {
+		filed := ""
+		if u := issueURL(i.URL); u != "" {
+			filed = " at " + u
+		}
+		return userErr("nothing was dismissed: %s was already filed%s, and dismiss marks an issue as not worth submitting", issueRef(i), filed)
 	}
 	if err := store.SetStatus(ref, issues.StatusDismissed); err != nil {
 		return userErr("nothing was dismissed: %v", err)

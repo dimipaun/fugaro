@@ -60,6 +60,19 @@ func runIssueShow(cmd *cobra.Command, ref string, asJSON bool) error {
 // shape and the slug the updater knows cannot drift apart.
 var issueURLShape = regexp.MustCompile(`^https://github\.com/` + regexp.QuoteMeta(updatecheck.Repo) + `/issues/[0-9]+$`)
 
+// issueURL is the record's stored URL as far as a person may be shown it: the
+// GitHub issue an uploader here files, and nothing else (F28). A record is a
+// file on this machine and the shared store can be rewritten by any launcher,
+// so a URL of any other shape is a line that reads like a link to the issue and
+// is not one; it is dropped rather than printed, the way an empty header value
+// is.
+func issueURL(raw string) string {
+	if !issueURLShape.MatchString(raw) {
+		return ""
+	}
+	return raw
+}
+
 // printIssue prints one record for a person to read: the header a reader needs
 // to tell one issue from another and to find it again, then the body's
 // sections. A header value and the body's text are the record's own — a
@@ -69,11 +82,8 @@ var issueURLShape = regexp.MustCompile(`^https://github\.com/` + regexp.QuoteMet
 // the file's, and a person does not need three empty headings.
 func printIssue(w io.Writer, i issues.Issue) error {
 	// The stored URL is the one header value with a shape of its own, and it is
-	// the one a reader would click: only a URL this project's uploader could
-	// have written is shown (F28).
-	if !issueURLShape.MatchString(i.URL) {
-		i.URL = ""
-	}
+	// the one a reader would click (F28).
+	i.URL = issueURL(i.URL)
 	if _, err := fmt.Fprintln(w, oneLine(issueRef(i))); err != nil {
 		return err
 	}

@@ -2536,6 +2536,9 @@ status is written in the issue's own file and nothing else changes: the
 record stays where it is, so a listing still shows what was set aside
 and who did it, and nothing is filed.
 
+An issue that has already been filed is refused: it is open on GitHub,
+and setting it aside here would not close it.
+
 A coding agent's session may not dismiss an issue: a steered diagnosis
 could otherwise bury a real bug, so a person sets one aside (D1730).
 

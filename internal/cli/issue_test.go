@@ -186,6 +186,62 @@ func TestIssueShowPrintsOnlyAnUploadedURL(t *testing.T) {
 	}
 }
 
+// TestIssueShowPrintsHostileHeaderAsData: the header's values are as untrusted
+// as the body's — a teammate's machine wrote them and the record is a file on
+// this machine — so they go through the terminal pass too (F6). Issue.Validate
+// refuses a header value that spans lines and nothing else, so a reporter or a
+// failed command can carry a CSI clear or an OSC 8 hyperlink; `show` prints
+// their words and neither sequence.
+func TestIssueShowPrintsHostileHeaderAsData(t *testing.T) {
+	store := issueState(t)
+	i := savedIssue("48225", issues.StatusPending, false)
+	i.Reporter = "ana\x1b[2J\x1b]8;;https://evil.test\x07@example.test"
+	i.FailedCommand = "fugaro update\x1b]8;;https://evil.test\x07 --check"
+	if err := store.Save(i); err != nil {
+		t.Fatalf("saving: %v", err)
+	}
+
+	out, _, err := execute(t, "issue", "show", i.LocalID)
+	if err != nil {
+		t.Fatalf("issue show: %v\n%s", err, out)
+	}
+	if strings.ContainsRune(out, 0x1b) {
+		t.Errorf("issue show prints an escape sequence:\n%q", out)
+	}
+	if strings.Contains(out, "evil.test") {
+		t.Errorf("issue show prints an OSC 8 hyperlink's target:\n%s", out)
+	}
+	if !strings.Contains(out, "ana@example.test") || !strings.Contains(out, "fugaro update --check") {
+		t.Errorf("issue show drops the header's own words:\n%s", out)
+	}
+}
+
+// TestIssueDismissRefusesAFiledIssue: dismiss marks an issue as not worth
+// submitting (spec 4), so it has nothing to say about one that is already
+// filed. Writing `dismissed` over `submitted` would drop the record's own
+// statement that the issue is open on GitHub and print that nothing is filed
+// for it, which is then false. The record is left as it is and the refusal
+// names what it is.
+func TestIssueDismissRefusesAFiledIssue(t *testing.T) {
+	store := issueState(t)
+	i := savedIssue("48226", issues.StatusSubmitted, true)
+	if err := store.Save(i); err != nil {
+		t.Fatalf("saving: %v", err)
+	}
+
+	_, _, err := execute(t, "issue", "dismiss", "7")
+	if err == nil || !strings.Contains(err.Error(), "already filed") {
+		t.Fatalf("dismiss of a filed issue: err = %v, want the refusal naming it as filed", err)
+	}
+	got, err := store.Get("7")
+	if err != nil {
+		t.Fatalf("reading the issue back: %v", err)
+	}
+	if got.Status != issues.StatusSubmitted {
+		t.Errorf("a refused dismiss left the issue %q, want %q", got.Status, issues.StatusSubmitted)
+	}
+}
+
 // TestIssueCommandsTakeTheNameAListingPrints: `list` prints a numbered issue as
 // `#0007`, and a name the listing prints has to be a name `show` and `dismiss`
 // take — a reference a reader copies out of a row and the commands then refuse
