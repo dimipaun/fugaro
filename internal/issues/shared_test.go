@@ -1109,6 +1109,48 @@ func TestSubmittedStaysFinalOtherwise(t *testing.T) {
 	}
 }
 
+// A resolved issue is as decided as a filed one: the fix a release recorded is
+// not filed a second time as a fresh issue and is not set aside, which would
+// bury it (F9, F21). A claim is read where the record stands, so a submission
+// that reaches the store after the resolver moved the record is refused by the
+// same guard rather than rewriting the fix away.
+func TestResolvedIssueIsNeitherFiledNorSetAside(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	up, url := resolved(t, ctx, b, fingerprint("26"), "0.22.0")
+	holder := "user:bo@example.test"
+
+	if _, err := Claim(ctx, b, up.Number, holder, sharedAt.Add(time.Hour)); err == nil {
+		t.Error("a resolved issue was claimed again")
+	}
+	if err := RecordSubmitted(ctx, b, heldOn(t, ctx, b, up.Number, holder), url); err == nil {
+		t.Error("a resolved issue was filed again")
+	}
+	if err := SetSharedStatus(ctx, b, up.Number, StatusDismissed); err == nil {
+		t.Error("a resolved issue was set aside, burying the fix")
+	}
+	rec, _, err := readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", up.Number, err)
+	}
+	if rec.Issue.Status != StatusResolved || rec.Issue.ResolvedIn != "0.22.0" || rec.Issue.URL != url {
+		t.Errorf("the resolved issue = %+v, want it resolved in 0.22.0 at %s", rec.Issue, url)
+	}
+}
+
+// heldOn reads a shared record and answers it as a claim holder holds at the
+// version just read: the state a submission is in when it reaches the store
+// with the claim it took, which is what the guards in front of it see.
+func heldOn(t *testing.T, ctx context.Context, b *blobx.Bucket, number int, holder string) *Claimed {
+	t.Helper()
+	rec, v, err := readShared(ctx, b, number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", number, err)
+	}
+	rec.Claim = &Lease{Holder: holder, ClaimedAt: sharedAt, ExpiresAt: sharedAt.Add(claimLease)}
+	return &Claimed{Number: number, Holder: holder, Issue: rec.Issue, value: rec, version: v}
+}
+
 // resolved is a filed issue the resolver has marked fixed, and the URL it was
 // filed at: the state every later reader — the report, `issue list`, another
 // pass — reads (the update spec's F27).
@@ -1168,6 +1210,39 @@ func TestSetResolvedIsIdempotentUnderRace(t *testing.T) {
 	}
 	if rec.Issue.ResolvedIn != "0.23.0" {
 		t.Errorf("a second pass rewrote resolved_in to %q", rec.Issue.ResolvedIn)
+	}
+}
+
+// A machine that read the issue before another one resolved it hands in a
+// generation the record has left, and still gets the no-op a second pass gets:
+// the precondition is about what this caller read, and the issue is already
+// where it was going — telling it the record "changed" would be an error for
+// the ordinary case of two machines' passes meeting (F18).
+func TestSetResolvedIsANoOpFromAGenerationThatMoved(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	up, _ := filedIssue(t, ctx, b, fingerprint("27"))
+	_, read, err := readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", up.Number, err)
+	}
+	if err := SetResolved(ctx, b, up.Number, "0.22.0", read.gen); err != nil {
+		t.Fatalf("the machine that resolved first: %v", err)
+	}
+	if err := SetResolved(ctx, b, up.Number, "0.23.0", read.gen); err != nil {
+		t.Fatalf("a pass over an issue another machine resolved: %v", err)
+	}
+	rec, _, err := readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", up.Number, err)
+	}
+	if rec.Issue.ResolvedIn != "0.22.0" {
+		t.Errorf("the issue is fixed in %q, want the first machine's 0.22.0", rec.Issue.ResolvedIn)
+	}
+	// The generation is still a precondition: the same moved record, this time
+	// with a transition that is not where the issue already is, is refused.
+	if err := SetClosed(ctx, b, up.Number, ClosedNotPlanned, read.gen); err == nil {
+		t.Error("the resolver set aside a record at a generation it did not read")
 	}
 }
 

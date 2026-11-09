@@ -94,6 +94,16 @@ func (s Status) Valid() bool {
 	return s == StatusPending || s == StatusSubmitted || s == StatusDismissed || s == StatusResolved
 }
 
+// decided reports whether the issue stands where something outside this
+// machine put it: filed on GitHub, or confirmed fixed by a release the
+// resolver recorded. Neither is moved back — a hit on one is an occurrence and
+// a bug that came back is a new upload, never a rewrite of the record (F9,
+// F21) — so the shared store refuses to claim, to file and to set aside an
+// issue that carries one. `dismissed` is not decided: it is the value
+// SetSharedStatus itself writes, and no other caller reaches the store from a
+// dismissed record.
+func (s Status) decided() bool { return s == StatusSubmitted || s == StatusResolved }
+
 // UnmarshalYAML refuses a status outside the four, for the reason Class
 // gives.
 func (s *Status) UnmarshalYAML(node *yaml.Node) error {

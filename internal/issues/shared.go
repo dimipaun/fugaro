@@ -791,7 +791,8 @@ func countOccurrences(ctx context.Context, b *blobx.Bucket, number int) (int, er
 // file it (F9, F22). A claim another holder has taken and not let lapse is
 // refused with ClaimedError; one that has lapsed is taken over the same way,
 // conditioned on the version it was read at. The issue itself is refused once
-// it has been filed.
+// it is decided — filed, or fixed by a release (Status.decided): a resolved
+// issue is not filed again as if the fix never happened.
 func Claim(ctx context.Context, b *blobx.Bucket, number int, holder string, now time.Time) (*Claimed, error) {
 	if err := validateNumber(number); err != nil {
 		return nil, err
@@ -804,8 +805,8 @@ func Claim(ctx context.Context, b *blobx.Bucket, number int, holder string, now 
 		if err != nil {
 			return nil, err
 		}
-		if rec.Issue.Status == StatusSubmitted {
-			return nil, fmt.Errorf("issues: shared issue %d was filed and is final", number)
+		if rec.Issue.Status.decided() {
+			return nil, fmt.Errorf("issues: shared issue %d is %q and is decided", number, rec.Issue.Status)
 		}
 		if c := rec.Claim; c != nil && c.Holder != holder && now.Before(c.ExpiresAt) {
 			return nil, &ClaimedError{Holder: c.Holder, Expires: c.ExpiresAt}
@@ -838,16 +839,16 @@ func Release(ctx context.Context, b *blobx.Bucket, c *Claimed) error {
 
 // RecordSubmitted files the issue: the URL and `submitted` are written with the
 // claim cleared, in the one write conditioned on still holding it (F22). A
-// record already filed is final (F9): the issue is on GitHub, and nothing but
-// the resolver's own transition out of `submitted` (SetResolved, SetClosed)
-// rewrites it.
+// record that is decided (Status.decided) is final (F9): the issue is on
+// GitHub, and nothing but the resolver's own transition out of `submitted`
+// (SetResolved, SetClosed) rewrites it.
 func RecordSubmitted(ctx context.Context, b *blobx.Bucket, c *Claimed, url string) error {
 	if !projectIssueURL(url) {
 		return fmt.Errorf("issues: %q is not an issue URL of %s", url, updatecheck.Repo)
 	}
 	return c.finish(ctx, b, func(rec *sharedRecord) error {
-		if rec.Issue.Status == StatusSubmitted {
-			return fmt.Errorf("issues: shared issue %d was filed and is final", c.Number)
+		if rec.Issue.Status.decided() {
+			return fmt.Errorf("issues: shared issue %d is %q and is decided", c.Number, rec.Issue.Status)
 		}
 		rec.Issue.Status, rec.Issue.URL, rec.Issue.Uploaded = StatusSubmitted, url, true
 		return rec.setRecord()
@@ -880,8 +881,10 @@ func (c *Claimed) finish(ctx context.Context, b *blobx.Bucket, change func(*shar
 // SetSharedStatus sets an uploaded issue aside where the team reads it. A
 // dismissal is the only status the store is told from outside the claim: a
 // submission goes through RecordSubmitted, which holds the claim, and the store
-// never reopens an issue — one that was set aside or filed stays that way and a
-// later hit is an occurrence (F21).
+// never reopens an issue — one that was filed or fixed stays that way and a
+// later hit is an occurrence (F21). Setting an issue aside again is the one
+// write that lands on a dismissed record, and it is a no-op: burying a fix the
+// resolver recorded is not this call's to do.
 func SetSharedStatus(ctx context.Context, b *blobx.Bucket, number int, status Status) error {
 	if status != StatusDismissed {
 		return fmt.Errorf("issues: the shared store sets a dismissal, not %q", status)
@@ -894,8 +897,8 @@ func SetSharedStatus(ctx context.Context, b *blobx.Bucket, number int, status St
 		if rec.Issue.Status == status {
 			return nil
 		}
-		if rec.Issue.Status == StatusSubmitted {
-			return fmt.Errorf("issues: shared issue %d was filed and is final", number)
+		if rec.Issue.Status.decided() {
+			return fmt.Errorf("issues: shared issue %d is %q and is decided", number, rec.Issue.Status)
 		}
 		rec.Issue.Status = status
 		if err := rec.setRecord(); err != nil {
@@ -926,7 +929,9 @@ func SetSharedStatus(ctx context.Context, b *blobx.Bucket, number int, status St
 // none: either way the write is conditioned on the generation read here, so
 // two machines resolving one issue write one transition and the second one
 // answers as the no-op it is rather than writing the copy it read over the
-// first one's (F18).
+// first one's (F18). A caller that read the issue before the first machine
+// resolved it passes a generation the record has left, and still gets that
+// no-op: the issue is where this call was going.
 func SetResolved(ctx context.Context, b *blobx.Bucket, number int, release string, gen int64) error {
 	canonical, ok := updatecheck.CanonicalRelease(release)
 	if !ok {
@@ -952,7 +957,10 @@ func SetClosed(ctx context.Context, b *blobx.Bucket, number int, reason ClosedAs
 // transitionSubmitted is the one transition out of `submitted` the resolver
 // makes, and the only way a filed record is rewritten (F5 amended, F18):
 // everything else about an issue filed on GitHub is final, and an issue that
-// is already where this caller is going is left exactly as it is.
+// is already where this caller is going is left exactly as it is — including
+// when another machine got there first, which is the same no-op and not a
+// record that "changed since it was read" for a caller that read it at an
+// older generation (so the target is checked before the caller's generation).
 func transitionSubmitted(ctx context.Context, b *blobx.Bucket, number int, gen int64, target Status, change func(*sharedRecord)) error {
 	if err := validateNumber(number); err != nil {
 		return err
@@ -962,11 +970,11 @@ func transitionSubmitted(ctx context.Context, b *blobx.Bucket, number int, gen i
 		if err != nil {
 			return err
 		}
-		if gen != 0 && v.gen != gen {
-			return fmt.Errorf("issues: shared issue %d changed since it was read", number)
-		}
 		if rec.Issue.Status == target {
 			return nil
+		}
+		if gen != 0 && v.gen != gen {
+			return fmt.Errorf("issues: shared issue %d changed since it was read", number)
 		}
 		if rec.Issue.Status != StatusSubmitted {
 			return fmt.Errorf("issues: shared issue %d is %q, and the resolver moves a filed issue", number, rec.Issue.Status)
