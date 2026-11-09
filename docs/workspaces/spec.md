@@ -179,9 +179,9 @@ ever presented. The endpoint verifies it and mints the **member-bound assertion*
 
 **The workspace token is accepted nowhere but the workspace's own signer endpoint**, which refuses a
 token whose signature is not **Google's published Firebase signing keys** (`GoogleKeysURL`,
-`internal/credsvc/auth.go`:1371-1373 — one global set, the same document for every Firebase project),
+`internal/credsvc/auth.go`:1388-1390 — one global set, the same document for every Firebase project),
 whose `aud` is not the workspace's own project id, whose `iss` is not that project's securetoken
-issuer (`:1072`), whose `email_verified` is not true (fact 2), or whose **`firebase.sign_in_provider`
+issuer (`:1089`), whose `email_verified` is not true (fact 2), or whose **`firebase.sign_in_provider`
 is not one of the pinned providers** — the next paragraph. That endpoint is the workspace's, deployed
 in the workspace's project, and **no member verifies a Firebase token at all**.
 
@@ -311,9 +311,9 @@ but the checks around it are pinned to one installation today, and they have to 
   what names the member. **A member name in a request body, a header or a query parameter is never
   identity** — a job's own launcher can write any header, so a member read off one would be a member
   a caller chooses.
-- **The token's own pins have to admit the member.** `verifyRun` (`:1047`) refuses a token whose
-  `aud` is not this service's Firebase project (`:1069`), whose `iss` is not that project's
-  securetoken issuer (`:1072`), or whose `fp` is not this service's Fugaro project (`:1105`). A
+- **The token's own pins have to admit the member.** `verifyRun` (`:1064`) refuses a token whose
+  `aud` is not this service's Firebase project (`:1086`), whose `iss` is not that project's
+  securetoken issuer (`:1089`), or whose `fp` is not this service's Fugaro project (`:1122`). A
   workspace-deployed service therefore has to accept **each member's** Firebase project as the issuer
   and **each member's** Fugaro project as `fp`, and hold the member it found to both: the account's
   member, the issuer's member and the `fp`'s member must be the **same** member, or the call is
@@ -331,7 +331,7 @@ but the checks around it are pinned to one installation today, and they have to 
   splice would be invisible: the account resolves, the tokens verify, and the policy that answers is
   another member's. So the database is **derived from the Firebase project the caller's verified
   `iss` names**, and a member whose declared values and verified `iss` disagree is refused before any
-  read. `checkLive` (`internal/credsvc/auth.go`:1196) and its outcomes reader
+  read. `checkLive` (`internal/credsvc/auth.go`:1213) and its outcomes reader
   (`RTDBOutcomes`, `:217`) are **per member** and chosen by the member the call resolved to, not by a
   process-wide setting: one deployment serves N members, so one configured database is one member's
   state answering for all of them. W6 owns the derivation and the test.
@@ -734,6 +734,23 @@ already has over the member's own credentials today; grouping it means one membe
 reaches the *pool*, not just that member. It is why the allow-list is mandatory and why a shared
 credential's allow-list should name the fewest members that need it.
 
+**The member's leg is asked by NAME, and the repository leg is an accepted divergence.** A member's
+policy can narrow a credential to **some of that member's repositories**
+(`accounts.<name>.allow_repos`), which is a leg the member's own service enforces for its calls. The
+workspace's service cannot ask it: the only thing that reaches it about the repository a run is on is
+the sanitised slug inside the run identity's `fs`, and the canonical `github/owner/repo` an
+`allow_repos` list carries cannot be recovered from it (F18) — and asking a leg whose input the
+caller supplied would be exactly the "read whatever the caller said" shape this service refuses
+everywhere else. So the leg asked is the **name**: whether the member's policy holds the credential
+at all. A credential the member narrowed to some of its repositories is therefore served to that
+member's jobs on the others, and that is a divergence from a plain reading of §9's "cannot serve a
+credential a member's policy excludes". It is stated here rather than left to be found, and it is
+narrow: the workspace's allow-list is still mandatory, the member's policy must still declare the
+credential, and option (B) the owner refused is still refused. Whether to close it is the owner's
+call, and closing it is a column rather than a redesign: a canonical repository beside each job
+account in the owner's per-member table — the pair `credsvc.JobAccount` already carries for the
+installation's own jobs, and the column this table does not.
+
 **The workspace cap's integrity, after the amendment.** The cap is enforced at the service (D1299)
 and **metered there too** (D1301 as amended, §5): the service reserves before each call it pays for
 and settles on the response's usage, atomically in the workspace's own database. So the accounting no
@@ -837,6 +854,13 @@ ceiling is decided.
    (The exchange's `email_verified` requirement, §3 fact 2, is not a mitigation against this: setting
    that flag is exactly what a custom token can do. It is there because an unverified address is one
    nobody proved they own, and the provider pin is what answers this risk.)
+7. A shared credential the member's policy narrows to some of that member's repositories is served to
+   that member's jobs on the others, because the workspace's service reads the member's leg by name
+   and cannot verify the repository a run is on (stated in full above). Mitigation: the workspace's
+   allow-list and the member's own declaration of the credential are both still required, so the pool
+   serves only names the member already admits, and a member that needs the narrowing enforced keeps
+   that credential in its own project rather than sharing it. Closing it is an owner decision and a
+   column, not a redesign.
 
 ## 9. What a workspace never does
 

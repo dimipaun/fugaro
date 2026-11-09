@@ -508,8 +508,7 @@ func (w *Workspace) Policy(ctx context.Context, c MemberCall) (*projectpolicy.Po
 // credentials the workspace offers this member AND the member's own policy
 // admits (D1298). offered is the workspace's declaration — the node's shared
 // entries with the tiers the bundle carries — and the member side is read from
-// the member's own policy in the member's own database, for the repository the
-// run is on.
+// the member's own policy in the member's own database.
 //
 // The refusal an operator reads for one named credential is creds.AdmitShared's,
 // and this answers the SET, which is what the cascade is offered: the two legs

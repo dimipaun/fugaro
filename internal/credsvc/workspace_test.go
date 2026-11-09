@@ -34,7 +34,13 @@ const (
 	// with one account per member would leave a rewrite that bound only the
 	// first one green: the account table is what names the member, and every
 	// account of it has to.
-	wsAccountA2 = "fugaro-job-2@project-a.iam.example.com"
+	//
+	// It is the one address here that is NOT all lower case, and that is its
+	// second job: the fold is what matches a claim to this row, and what the
+	// caller is answered with is the configured spelling (Caller's Account) and
+	// never the presented one, so a fixture of lowercase addresses would leave a
+	// rewrite that echoed the claim green.
+	wsAccountA2 = "Fugaro-Job-2@Project-A.iam.example.com"
 	wsOwner     = "owner@example.com"
 	// wsMemberPerson is a member's own person: an address a member's launcher
 	// list would name and this deployment holds no grant to read, so it is a
@@ -284,6 +290,75 @@ func TestWorkspaceServiceRefusesAJobServiceAccountOutsideTheWorkspace(t *testing
 		if caller.Class != ClassWorkspaceMember || caller.Member.Project != tc.member || caller.Account != tc.account {
 			t.Errorf("Caller for %s = %+v, want the member %s's job with the configured spelling", tc.account, caller, tc.member)
 		}
+	}
+}
+
+// TestWorkspaceServiceRefusesACallerTokenForAnotherAudience: the front door's
+// audience check is the ONLY gate that holds one of the workspace owner's
+// people to this service. A member's caller is checked again further down — its
+// own verifier re-runs the same audience check against the same configured
+// value on the run identity's route (Verify -> verifyJob) — but the owner's
+// person reaches a workspace-wide route through Caller alone, and nothing above
+// re-checks it. An ID token Google minted for any other service is a token
+// whose signature, issuer and window are all in order, so without this check it
+// is admitted; the installation has the same case for the same reason
+// (auth_test.go's audience test).
+//
+// Both classes are asserted, because the two take different paths out of Caller
+// and only one of them is re-checked later: a test of the member's class alone
+// would leave the owner's leg — the one with no second check behind it —
+// unheld.
+func TestWorkspaceServiceRefusesACallerTokenForAnotherAudience(t *testing.T) {
+	f := newWSFixture(t)
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{"another service's audience", func(c map[string]any) {
+			c["aud"] = "https://creds-other-installation-uc.a.run.app"
+		}},
+		{"no audience at all", func(c map[string]any) { delete(c, "aud") }},
+	} {
+		for _, addr := range []string{wsAccountA, wsOwner} {
+			t.Run(tc.name+" / "+addr, func(t *testing.T) {
+				if _, err := f.ws.Caller(ctx, f.jobToken(addr, tc.mutate)); !errors.Is(err, ErrUnverifiedJob) {
+					t.Errorf("Caller for %s with %s = %v, want ErrUnverifiedJob: the audience this service accepts is its own", addr, tc.name, err)
+				}
+			})
+		}
+	}
+	// The honest token of each class is admitted, so the refusals above are the
+	// audience and not the shape of the fixture.
+	if _, err := f.ws.Caller(ctx, f.jobToken(wsAccountA)); err != nil {
+		t.Errorf("Caller for a member's job with this service's audience = %v, want it admitted", err)
+	}
+	if _, err := f.ws.Caller(ctx, f.ownerToken()); err != nil {
+		t.Errorf("Caller for one of the workspace owner's people = %v, want it admitted", err)
+	}
+}
+
+// TestWorkspaceServiceAnswersTheConfiguredSpellingOfAnAccount: what a caller is
+// answered with is the address the OPERATOR configured, not the one the token
+// presented. The fold is what matches them, and two spellings that fold together
+// are one account — so the answer is the spelling an operator can search a log
+// for, which is the same reason verifyJob answers the configured one.
+//
+// The token here presents the lower-cased form of the fixture's mixed-case
+// account, which is the shape a real caller has: Google normalises an address
+// claim, the operator's table carries what the operator typed, and the two have
+// to resolve to the same member with the configured spelling coming back.
+func TestWorkspaceServiceAnswersTheConfiguredSpellingOfAnAccount(t *testing.T) {
+	f := newWSFixture(t)
+	caller, err := f.ws.Caller(context.Background(), f.jobToken(strings.ToLower(wsAccountA2)))
+	if err != nil {
+		t.Fatalf("Caller for the folded spelling of a configured account: %v", err)
+	}
+	if caller.Account != wsAccountA2 {
+		t.Errorf("the caller was answered as %q, want the configured %q: an address that folds to the same account is that account, and the spelling an operator searches for is theirs", caller.Account, wsAccountA2)
+	}
+	if caller.Member.Project != wsMemberA || caller.Class != ClassWorkspaceMember {
+		t.Errorf("the folded spelling resolved to %+v, want the member %s's job", caller, wsMemberA)
 	}
 }
 

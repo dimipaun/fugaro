@@ -170,10 +170,10 @@ key, so a workspace cannot move a member's trust by publishing a different one,
 
 **The issuer is checked against the project, not trusted on its own.** The signature is verified
 against **Google's published Firebase signing keys**, which are one global set — `GoogleKeysURL`
-(`internal/credsvc/auth.go`:1371-1373) names the one x509 document, and it is the same document for
+(`internal/credsvc/auth.go`:1388-1390) names the one x509 document, and it is the same document for
 every Firebase project, so "the keys the pinned project publishes" is not a thing that exists. What
 distinguishes one project's tokens from another's is the pair `aud`/`iss`, and main derives the
-second from the first: `"https://securetoken.google.com/"+a.cfg.FirebaseProject` (`:1072`). The pin
+second from the first: `"https://securetoken.google.com/"+a.cfg.FirebaseProject` (`:1089`). The pin
 therefore carries both values and **`Validate` refuses a pair that disagrees** — the issuer must be
 exactly `https://securetoken.google.com/<firebase_project>` — so a member that mistypes one of the
 two is refused at the write and again at the load, rather than being admitted by one and refused by
@@ -343,7 +343,7 @@ converges rather than half-applies).
 member's authorization server (the MCP design's §3) accepts it **at `/oauth/authorize`, as the
 sign-in proof** — not as a grant at `/oauth/token` (finding 2 of the post-merge security review), and
 with **no second endpoint of this design's own**. The signer endpoint verifies the workspace's
-Firebase ID token against **Google's published Firebase signing keys** (`internal/credsvc/auth.go`:1371-1373
+Firebase ID token against **Google's published Firebase signing keys** (`internal/credsvc/auth.go`:1388-1390
 — one global set, which is why the pin's project tells tokens apart by its `aud`/`iss` pair and not by
 any per-project keys), against the workspace's own project as `aud` and its securetoken issuer as
 `iss`, against `email_verified`, and against the **pinned `firebase.sign_in_provider` set**; and it
@@ -442,9 +442,9 @@ allow-list, and the effective set is that list intersected with the member's own
 service resolves a caller by folding the token's `email` and looking it up in its own account table
 (`internal/credsvc/auth.go`:727), and it returns the configured spelling of what it found (`:738`) —
 that, and nothing in a request body, header or query, is what names the member. `verifyRun`
-(`:1047`) additionally refuses a token whose `aud` is not this service's Firebase project (`:1069`),
-whose `iss` is not that project's securetoken issuer (`:1072`), or whose `fp` is not this service's
-Fugaro project (`:1105`), so the workspace deployment accepts **each member's** Firebase project as
+(`:1064`) additionally refuses a token whose `aud` is not this service's Firebase project (`:1086`),
+whose `iss` is not that project's securetoken issuer (`:1089`), or whose `fp` is not this service's
+Fugaro project (`:1122`), so the workspace deployment accepts **each member's** Firebase project as
 the issuer and **each member's** Fugaro project as `fp` and holds all three to the same member: the
 account's, the issuer's and the `fp`'s must name one member, or the call is refused. This is a change
 to `verifyRun`'s pinning and not only to the list it looks the account up in, and it is the half of
@@ -464,7 +464,7 @@ one the comparison cannot read is reported as an alarm by W7's reconciliation: a
 unreadable one.
 
 **A member's policy and its outcomes are read per member, from the database its own verified `iss`
-names.** `checkLive` (`internal/credsvc/auth.go`:1196) and the outcomes reader it uses
+names.** `checkLive` (`internal/credsvc/auth.go`:1213) and the outcomes reader it uses
 (`RTDBOutcomes`, `internal/credsvc/auth.go`:217) take the database to read from the call rather than
 from a field the owner set: the member the call resolved to decides it, so two members' accounts can
 never be pointed at one database. The credentials service's own guard that a database URL is
@@ -483,9 +483,10 @@ is what makes the class checkable at all: the list that names a member's people 
 launcher/operator file, which this service holds no grant to read (§5), so an admission it cannot
 check is an admission it does not make.
 
-**Files (9):** `internal/credsvc/workspace.go`, `internal/credsvc/workspace_test.go`,
+**Files (10):** `internal/credsvc/workspace.go`, `internal/credsvc/workspace_test.go`,
 `internal/credsvc/bundle_workspace.go`, `internal/credsvc/bundle_workspace_test.go`,
-`internal/creds/workspace.go`, `internal/creds/workspace_test.go`,
+`internal/credsvc/auth.go` (the run identity's pinning — `verifyRun`'s `aud`, `iss` and `fp` held to
+one member), `internal/creds/workspace.go`, `internal/creds/workspace_test.go`,
 `internal/projectpolicy/workspace_credentials.go`,
 `internal/projectpolicy/workspace_credentials_test.go`, `internal/cli/creds.go`.
 
