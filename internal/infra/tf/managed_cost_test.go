@@ -675,7 +675,9 @@ func TestManagedCostIdleManualCount(t *testing.T) {
 		"automatic mode idles the unknown count": {
 			serviceScaling(map[string]any{"scaling_mode": "AUTOMATIC", "min_instance_count": 0}, "manual_instance_count"), false},
 		"an unknown mode does not idle it": {
-			serviceScaling(map[string]any{"min_instance_count": 0}, "manual_instance_count", "scaling_mode"), true},
+			// The mode is also written into after, as AUTOMATIC, while after_unknown
+			// marks it unknown: only the sibling's own unknown check refuses this.
+			serviceScaling(map[string]any{"scaling_mode": "AUTOMATIC", "min_instance_count": 0}, "manual_instance_count", "scaling_mode"), true},
 		"a missing mode does not idle it": {
 			serviceScaling(map[string]any{"min_instance_count": 0}, "manual_instance_count"), true},
 		"manual mode does not idle it": {
