@@ -11,6 +11,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // The daemon's launcher over `fugaro run`'s pre-launch path (O8, F11, T2).
@@ -222,5 +223,144 @@ func TestRunLauncherRunsPrecheck(t *testing.T) {
 	}
 	if _, err := f.runStore(t, runID).ReadClaim(ctx); err == nil {
 		t.Fatal("a refused launch took the claim, and a refusal must cost no claim")
+	}
+}
+
+// launchLauncher runs one daemon launch of the fixture's own work item through
+// the real launcher, the way a daemon tick does, and answers with the refusal
+// when there is one.
+func launchLauncher(t *testing.T, f *launcherFixture, runID string) error {
+	t.Helper()
+	spec := orchestrator.Spec{ItemID: "wi-1", Title: "land the daemon", Repo: "acme/app", Recipe: "standard", Brief: "Start the run this attempt recorded."}
+	_, err := f.launcher(t).Launch(context.Background(), spec, runID)
+	return err
+}
+
+// launcherCascadeCheckout lays down the checkout of acme/app a daemon stands
+// in when its repository asks for the cascade: one commit on the default
+// branch and nothing else, since a daemon's launch names no ref. cascadeCLI is
+// the file such a repository writes.
+func launcherCascadeCheckout(t *testing.T) {
+	t.Helper()
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/app.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": cascadeCLI})
+	testutil.Git(t, dir, "add", "fugaro.yaml")
+	testutil.Git(t, dir, "commit", "-q", "-m", "the repository asks for the cascade")
+	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+	t.Chdir(dir)
+}
+
+// TestRunLauncherPassesTheCommandsLaunchGates: the daemon's launch is `fugaro
+// run`'s launch, and what must not exist is a second launch path that skips a
+// gate the command passes — a run started here onto a runner that cannot read
+// what the task carries is an approved attempt spent on a job that dies at
+// bootstrap. The launcher runs the command's own block (freshLaunchGates), so
+// this pins it a gate at a time: each gate's own refusal, and nothing of the
+// launch written behind it — no task, no claim, no execution.
+//
+// The gates listed are the ones a daemon's own launch shape reaches. The rest
+// of that block fires only on a shape the daemon does not have and stays with
+// the command's own tests: the --attach caps and recipe gate (the daemon
+// attaches nothing), the named-token and plan-task field gates (no work item
+// carries either), the mode: artifact and mode: review gates (the daemon
+// starts neither), the proxy gate (nothing here brokers Bitbucket), the
+// checkout: clone and checkout: shared gates, and the per-field gates of the
+// configuration the command reads from a checkout.
+//
+// Mutation (run, restored): drop the freshLaunchGates call from the launcher's
+// prepare — every subtest below launches and fails.
+func TestRunLauncherPassesTheCommandsLaunchGates(t *testing.T) {
+	const first, second = "20261109-101500-aaaa", "20261109-101500-bbbb"
+	for _, tc := range []struct {
+		name    string
+		prepare func(t *testing.T, f *launcherFixture)
+		// holding is a successful launch that must happen first, for the one
+		// gate that judges what the installation already holds.
+		holding bool
+		want    []string
+	}{
+		{
+			name:    "the cascade's own gate, first of all",
+			prepare: func(t *testing.T, f *launcherFixture) { launcherCascadeCheckout(t) },
+			want:    []string{"agent.auth: cascade cannot run here", "published no policy"},
+		},
+		{
+			name: "the job title's own field gate",
+			prepare: func(t *testing.T, f *launcherFixture) {
+				writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, titlesSince, -1))
+			},
+			want: []string{"a job title (--title, kept by --pr follow-ups and --retry) needs a job image", "fugaro " + titlesSince},
+		},
+		{
+			name: "the seal's gate",
+			// The daemon's installation mints its budget tokens (the fixture's
+			// mode is enforce), so a launch here seals whatever it starts and
+			// is judged against an image whose runner can read the seal. The
+			// image is the oldest that still carries the title above, so this
+			// is the seal's refusal and not the title's.
+			prepare: func(t *testing.T, f *launcherFixture) {
+				writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+titlesSince)
+			},
+			want: []string{"sealed budget token", "fugaro " + sealSince},
+		},
+		{
+			name: "the owner's review-level floor",
+			// The floor lives in the owner-only policy node and the daemon
+			// passes no --mode and no --review-levels, so it is exactly the
+			// ask its launch has to carry on its own (D722, G1): a run whose
+			// default mode is pro (Fugaro's own default) is refused on an
+			// image older than the release that reads levels.
+			prepare: func(t *testing.T, f *launcherFixture) {
+				publishPolicy(t, f.launchBudgetFixture, `{"version":4,"allow_repos":["github/acme/*"],"review_floor":{"pro":["l2"]}}`)
+				writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, reviewLevelsSince, -1))
+			},
+			want: []string{"the owner's review-level floor", "fugaro " + reviewLevelsSince},
+		},
+		{
+			name:    "the parallel cap",
+			prepare: func(t *testing.T, f *launcherFixture) { setMaxParallel(t, 1) },
+			holding: true,
+			want:    []string{"runs active", "max_parallel is 1"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLauncherFixture(t)
+			if tc.prepare != nil {
+				tc.prepare(t, f)
+			}
+			ran := 0
+			if tc.holding {
+				if err := launchLauncher(t, f, first); err != nil {
+					t.Fatalf("the launch that fills the cap: %v", err)
+				}
+				ran = 1
+			}
+			err := launchLauncher(t, f, second)
+			if err == nil {
+				t.Fatalf("a launch %s went through", tc.name)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want a user error", err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %q: %v", want, err)
+				}
+			}
+			ctx := context.Background()
+			s := f.runStore(t, second)
+			if _, err := s.ReadTask(ctx); err == nil {
+				t.Error("a refused launch stored a task, so a run the gate refuses is on record")
+			}
+			if _, err := s.ReadClaim(ctx); !errors.Is(err, runstore.ErrNotFound) {
+				t.Errorf("a refused launch took the launch claim: %v", err)
+			}
+			if execs := f.run.Executions(); len(execs) != ran {
+				t.Errorf("executions = %v, want the %d the gate left running", execs, ran)
+			}
+		})
 	}
 }
