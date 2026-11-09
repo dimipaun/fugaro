@@ -403,10 +403,29 @@ func stubGraph(t *testing.T) string {
 
 // checkout is a working directory this test owns: a tree with a `.git` entry,
 // which is what makes it the checkout a stub is resolved against.
+//
+// It answers with the same tree however many times one test asks — the marker
+// is what says the checkout is one a test made, so a test that writes a stub
+// into it and then reads keeps reading its own tree — and a test that has none
+// yet gets one. That second half is what keeps the package's tests off the
+// repository they happen to be run in: the read resolves a graph's stubs
+// against the checkout it stands in, so a test that reads a graph without
+// saying which tree it is read in would pass here and fail wherever there is no
+// `.git` above the test's directory (CLAUDE.md, "hermetic tests").
+const checkoutMarker = "fugaro-test-checkout"
+
 func checkout(t *testing.T) string {
 	t.Helper()
+	if root := checkoutRoot("."); root != "" {
+		if _, err := os.Lstat(filepath.Join(root, ".git", checkoutMarker)); err == nil {
+			return root
+		}
+	}
 	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".git", checkoutMarker), []byte("a checkout the plan tests own\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(dir)
