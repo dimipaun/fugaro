@@ -79,7 +79,10 @@ and the definition differ, and this command is the definition.
   on the command line, and the flag carries no value.
 - **`--yes`** — answer the one confirmation for everything the command is about to write (§2.6),
   including a widening of `allow_data_to`. It does not apply in a coding agent's session: that refusal
-  stands, and the command never works around it (§2.4).
+  stands, and the command never works around it (§2.4). **It never answers the confirmation a managed
+  project asks its owner for either** (the owner's ruling of 2026-11-09): that confirmation is the
+  owner's own word about where a token may be sent, a flag is not a person, and a run with `--yes` in a
+  managed project is refused with the caller that answers nothing (§2.4).
 - There is **no `--json`**: the command's whole output is a diff a person reads at a terminal, and it is
   refused where no person is (§2.4). The machine-readable surface stays `fugaro accounts ls --json`
   (`accountsListDoc`, `internal/cli/accounts.go`).
@@ -105,7 +108,11 @@ stopped:
    exists to prevent.
 3. **Read the token.** The hidden prompt, or stdin. With `--claude`, act one runs the login first, in
    the owner's own terminal, and this step is the one paste that follows it (§3) — the login's output
-   is never a source. Nothing is written before this succeeds.
+   is never a source. Nothing is written before this succeeds. In a project whose marks say it is
+   managed this step's owner answers for it first (§2.4): the repositories the token may be sent to are
+   printed, the sentence saying a job on them can read it with them, and the project's own name is
+   typed to confirm. A caller that is not that person is refused before step 4, so a file is never
+   written for a token nobody answered for.
 4. **Write the local config.** `claude_accounts.<name>.allow_data_to`, then the profile's
    `claude_accounts` list, through the shared comment-preserving editor (§2.3). The old file is backed
    up and the new one written atomically, through the update package's own helpers (§2.6).
@@ -146,9 +153,13 @@ read back is never written.
 
 ### 2.4 Refusals
 
+**A refusal is at most two short plain lines: what happened, and the one next step.** No rule number, no marker variable and no list of the rules that fired reaches the person reading one — the design's vocabulary is the audit record's and the code's (`internal/cli/accounts_managed.go`), and the sentence exists to be acted on. The two next steps the managed refusals print are `Run this in your own terminal, not in an agent session.` and `Name only this checkout's repository, or run without --repos.`
+
 | Refusal | Sentence (shape) | Where the rule comes from |
 | --- | --- | --- |
-| a coding agent's session | names the marker, says the owner runs it in a normal terminal, and writes nothing — `--yes` included | `agentenv.Marker` as `agentEnv` (`internal/cli/initsecrets.go`); the models design's D789 and the settings design's SD8 are the precedent |
+| a coding agent's session, for a declaration that widens `allow_data_to` | two lines: the repositories the token would reach beyond this checkout, and `Name only this checkout's repository, or run without --repos.` | `agentenv.Marker` as `agentEnv` (`internal/cli/initsecrets.go`); the models design's D789 and the settings design's SD8 are the precedent, and D868's widening is the rule that refuses |
+| a coding agent's session, for the token itself | two lines: that the declaration is the whole of what a session may write, and `Run this in your own terminal, not in an agent session.` | D1026: a secret is the class no plan gate admits, so the value is read by nobody in a session |
+| a run that is not the owner's own terminal — a pipe, no terminal, `--json`, `--yes` — in a project whose marks say it is managed | two lines: the step and that a managed project asks its owner for it, and `Run this in your own terminal.` | the owner's ruling of 2026-11-09: the step is the owner's, and only a real terminal on both streams with no marker is the owner (D1552, D1555) |
 | `bitbucket-token` | `reservedAccountNameMessage`, naming the fix (a different name) | `ValidClaudeAccountRef` → `reservedClaudeAccountName`, `internal/config/claude_accounts.go` |
 | `default` | `"default" is reserved for the unnamed claude-oauth-token secret and may not be configured here` — the definition's rule, not the reference's: a profile may list `default`, `claude_accounts` may not define it | `ValidateClaudeAccounts`, same file |
 | a name that does not match the pattern | the pattern, never the name | `ValidClaudeAccountRef` |
@@ -160,6 +171,20 @@ read back is never written.
 
 The command **never works around the agent refusal**: it does not unset `CLAUDECODE` or any other
 marker, and its message is what tells the owner where to run it.
+
+**In a managed project the door is the owner's own terminal, and the owner is asked there** (the
+owner's ruling of 2026-11-09, against the managed plan's row that left the whole command refused).
+The two halves of this command are two steps: the declaration is a document a plan gate reads, so a
+coding agent's session is admitted to a bounded one, and the token is money or permanent, so it is the
+one step no plan gate admits. What the person admits themselves to is therefore the token, and the
+question is the one D868 already puts to them — the repositories it may be sent to and the sentence
+saying a job on those repositories can read it — answered by typing the project's own name, on the same
+confirmation seam every other owner-only step of this program uses (`confirmTypedStrict`,
+`internal/cli/budget.go`). A real terminal on the run's **input and output**, no coding agent's marker
+in the environment, and no `--yes`: those four are what make a caller the owner, and all four are read
+the way this tree already reads them, never from a flag or a variable a session can set. Every other
+caller is refused before the file is touched — which is the half this command was missing, since the
+hidden prompt is fed by a pipe as readily as by a hand.
 
 ### 2.5 The publish and the deploy
 

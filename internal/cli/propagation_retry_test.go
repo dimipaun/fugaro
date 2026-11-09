@@ -345,7 +345,21 @@ func TestPropagationRetryRerunsTheFirebaseStep(t *testing.T) {
 	}
 	p.ri.save(t)
 
-	applied, stop, err := p.run.applyRoot(t.Context(), p.c, p.tfr, p.wd, "firebase", "to the Firebase project "+initProject, nil)
+	// The Firebase root plans in a workdir of its own, whose tfvars the step
+	// before it writes (initFirebase's fwd.WriteVars): terraform reads
+	// -var-file=terraform.tfvars.json out of the directory it runs in, and the
+	// fake refuses a plan whose vars are not there. This rig reaches the step
+	// directly, so it builds the same pair -- the root's workdir and its vars --
+	// rather than borrowing the repository's.
+	fwd, ft, err := p.run.terraform("terraform", t.TempDir(), "firebase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fwd.WriteVars([]byte("{}\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	applied, stop, err := p.run.applyRoot(t.Context(), p.c, ft, fwd, "firebase", "to the Firebase project "+initProject, nil)
 	if err != nil || !applied || stop {
 		t.Fatalf("applied = %v, stop = %v, err = %v, want the retried Firebase step to have applied:\n%s", applied, stop, err, p.out.String())
 	}
@@ -354,7 +368,7 @@ func TestPropagationRetryRerunsTheFirebaseStep(t *testing.T) {
 	if n := strings.Count(out, line); n != 1 {
 		t.Errorf("the retry was reported %d times, want one line:\n%s", n, out)
 	}
-	if got, want := rootSubs(t, p.ri, filepath.Base(p.wd.Root), "plan", "show", "apply"), []string{"plan", "show", "apply", "plan", "show", "apply"}; !slices.Equal(got, want) {
+	if got, want := rootSubs(t, p.ri, filepath.Base(fwd.Root), "plan", "show", "apply"), []string{"plan", "show", "apply", "plan", "show", "apply"}; !slices.Equal(got, want) {
 		t.Errorf("the Firebase root's plan/show/apply = %q, want the whole cycle again\n%s", got, out)
 	}
 }
