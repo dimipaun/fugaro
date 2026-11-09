@@ -36,6 +36,18 @@ type PromptData struct {
 	LintConfigured bool
 }
 
+// runIDRule is the naming rule every implement and fix stage reads (SR7): what
+// an agent writes for a person names a run by its short ID — the last 4
+// characters, the form every surface shows it in — and a plan task by the name
+// its plan gives it, because a plan task has no ID of its own (D1703). The
+// commands that take an ID exactly are named beside it: `cancel`, a retry, an
+// independent review's findings and `--run-id` launch or read one stored run,
+// so an ending is not an ID they may be given, and `--json` is where the full
+// one is read. Naming them is what keeps the rule from reading as "withhold an
+// ID a command needs", which would break the launch and follow-up references
+// that pass a full ID (F11).
+const runIDRule = "- Refer to runs only by their short ID, the last 4 characters of the run ID; refer to plan tasks by their plan name. Pass the short ID to `logs`, `diagnose` and `artifacts` (the commands that accept it; `cancel`, `run --retry`, `--review-run`, `review show` and `--run-id` take full IDs, which `--json` output carries), and never print the full run ID in anything you write for a person."
+
 // SystemPrompt is appended to Claude Code's system prompt for implement and fix stages.
 func SystemPrompt(d PromptData, instructions string) string {
 	explain := "the pull request description"
@@ -55,6 +67,7 @@ func SystemPrompt(d PromptData, instructions string) string {
 		buildRule,
 		"- The pull request is marked ready for review only if your final commit has a passing `fugaro verify test` run with a clean working tree. Commit first, then verify.",
 		"- Never end your turn to wait for anything: this run is headless and ends the moment you stop, so pending background commands, notifications and test runs are lost and nothing wakes you later. Run builds and tests in the foreground (`fugaro verify test` blocks until done) and keep working until the result is in before you finish.",
+		runIDRule,
 	}
 	if d.NoWorkflows {
 		lines = append(lines, "- Never create, edit or delete files under .github/workflows/: GitHub refuses Fugaro's push of workflow changes, so the whole run could not be delivered. If the task needs one, describe the change in "+explain+" instead.")

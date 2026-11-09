@@ -31,6 +31,40 @@ func TestPickPromptPairsNumbersWithTheirOwnDirectory(t *testing.T) {
 	}
 }
 
+// TestPromptsCarryShortIDRule (SR7): every implement and fix stage's standing
+// instructions carry the naming rule — a run is referred to by its short ID,
+// the last 4 characters every surface shows it in, and a plan task by the name
+// its plan gives it (D1703) — together with the commands that still take the
+// full ID, so the rule cannot be read as "withhold an ID a command needs"
+// (F11). The three data sets are the shapes a prompt takes: a plain run, one
+// with every optional rule on, and a follow-up.
+func TestPromptsCarryShortIDRule(t *testing.T) {
+	rule := []string{
+		"Refer to runs only by their short ID, the last 4 characters of the run ID",
+		"refer to plan tasks by their plan name",
+		"Pass the short ID to `logs`, `diagnose` and `artifacts`",
+		"`cancel`, `run --retry`, `--review-run`, `review show` and `--run-id` take full IDs, which `--json` output carries",
+		"never print the full run ID in anything you write for a person",
+	}
+	for _, d := range []runner.PromptData{
+		{Branch: "fugaro/20261108-115248-3bb2", Base: "main", StateDir: "/state"},
+		{Branch: "fugaro/20261108-115248-3bb2", Base: "main", StateDir: "/state", Checkpoints: true, NoWorkflows: true, LintConfigured: true},
+		{Branch: "fugaro/20261108-115248-3bb2", Base: "main", StateDir: "/state", FollowUp: []string{"- follow-up rule"}},
+	} {
+		got := runner.SystemPrompt(d, "")
+		for _, want := range rule {
+			if !strings.Contains(got, want) {
+				t.Errorf("the prompt for %+v lacks %q:\n%s", d, want, got)
+			}
+		}
+		// The rule is one instruction, not one per optional rule: a prompt that
+		// stated it twice is a rule that can drift from itself.
+		if n := strings.Count(got, "Refer to runs only by their short ID"); n != 1 {
+			t.Errorf("the prompt for %+v states the run-ID rule %d times, want once:\n%s", d, n, got)
+		}
+	}
+}
+
 // TestFindingsAreBoundedAndQuoted is the untrusted-input rule applied to
 // reviewer output (spec §7, D887): the issues a review wrote are derived from
 // the pull request's own diff, so they reach a coder's prompt as bounded,
