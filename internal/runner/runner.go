@@ -1921,8 +1921,8 @@ const bashTimeoutSlack = 2 * time.Minute
 // own ref is fetched separately either way (CheckoutNewBranch).
 //
 // A checkout the image baked is not always at the work directory: on the
-// shared image D1900 gives every per-repository job it is at the per-slug path
-// bakedRepoDir names, and bootstrap makes that path the work directory when it
+// shared image D1900 gives every per-repository job it is at a per-slug path
+// under bakedRepoRoot, and bootstrap makes that path the work directory when it
 // is this run's repository's (openBakedCheckout). Every arm below therefore
 // works on r.d.WorkDir alone.
 //
@@ -1947,7 +1947,7 @@ func (r *run) openCheckout(ctx context.Context, remote string, cloneVars map[str
 
 // bakedRepoRoot is the directory a shared image lays the repositories it baked
 // out under: one checkout per repository, named by the repository's storage
-// slug (bakedRepoDir). Both sides of the layout are Fugaro's own code — the
+// slug (openBakedCheckout). Both sides of the layout are Fugaro's own code — the
 // generated Dockerfile bakes into this path, and a run of the image reads it
 // here — so the name is fixed rather than discovered. It is a sibling of the
 // work directory and never a path inside it, because the work directory is the
