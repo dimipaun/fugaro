@@ -146,8 +146,12 @@ func surveyRepo(ctx context.Context, env *cloudEnv, open gitprov.Opener, repo st
 		row.Unread = "this machine cannot tell which git provider it is on: set provider in its repos entry of the local config, or run the survey from its checkout"
 		return row
 	}
+	// catalog.Readable is the offline list of the kinds whose adapter can read
+	// a file, and the type assertion below is what the opened provider
+	// actually is: the first refuses before a credential is resolved, the
+	// second is the truth for a host this build does not know.
 	if !catalog.Readable(row.Provider) {
-		row.Unread = "the " + pluginwire.Printable(row.Provider) + " provider cannot read a file out of a repository, so its signals cannot be read"
+		row.Unread = unreadableProvider(row.Provider)
 		return row
 	}
 	p, _, err := open(ctx, row.Provider, repo)
@@ -157,7 +161,7 @@ func surveyRepo(ctx context.Context, env *cloudEnv, open gitprov.Opener, repo st
 	}
 	r, ok := p.(gitprov.ContentsReader)
 	if !ok {
-		row.Unread = "the " + pluginwire.Printable(row.Provider) + " provider cannot read a file out of a repository, so its signals cannot be read"
+		row.Unread = unreadableProvider(row.Provider)
 		return row
 	}
 	findings, err := imagesurvey.Read(ctx, r, "")
@@ -167,6 +171,13 @@ func surveyRepo(ctx context.Context, env *cloudEnv, open gitprov.Opener, repo st
 	}
 	row.Signals = findings
 	return row
+}
+
+// unreadableProvider is why a row on a provider with no file API has no
+// signals: one sentence, for the two places that can decide it — the offline
+// list of readable kinds, and the provider the opener actually returned.
+func unreadableProvider(kind string) string {
+	return "the " + pluginwire.Printable(kind) + " provider cannot read a file out of a repository, so its signals cannot be read"
 }
 
 // surveySetup is the setup a rerun of the skill compares against (F16). The
@@ -241,7 +252,9 @@ func surveyPolicySetup(ctx context.Context, env *cloudEnv) (map[string]string, b
 // then the setup.
 func printImageSurvey(w io.Writer, out imageSurveyOut) error {
 	if len(out.Repos) == 0 {
-		fmt.Fprintf(w, "this project lists no repositories: add one to the local project config, then run the survey again\n")
+		fmt.Fprintf(w, "project %s lists no repositories in its local config, so there is nothing to survey: the repository stage of fugaro setup and of fugaro update records the checkouts this machine has, and their repos entries are what the survey reads\n", oneLine(out.Project))
+	} else {
+		fmt.Fprintf(w, "project %s: %d repositories\n", oneLine(out.Project), len(out.Repos))
 	}
 	for _, r := range out.Repos {
 		head := oneLine(r.Repo)
