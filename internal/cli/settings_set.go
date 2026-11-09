@@ -332,6 +332,18 @@ one member at a time. A list emptied by --remove or --remove-entry is refused:
 an absent key and an empty list mean different things to the loader, so use
 unset to remove the key.
 
+A stage's Claude account is a key of its own — ` + "`stages.<stage>.claude_account`" + `, one
+per stage name this binary runs (plan, implement, review_first, review,
+adversarial, fix) — and it is how a stage is repointed from one account to
+another without editing the local config by hand. Its value is a name the local
+config's claude_accounts declares, or ` + "`default`" + ` for the unsuffixed account: an
+undeclared name is refused naming the declared ones, and an account whose
+allow_data_to does not cover every repository this project onboards is refused
+naming the repositories it misses — a stage's account is chosen for the
+repository a run is for, so an account that covers less has every run on the
+rest refused at the launch. ` + "`unset stages.<stage>.claude_account`" + ` puts the key
+back to the project's default account.
+
 Loosening a ceiling key (budget.*, governance.*, the agent caps
 agent.max_budget_usd and agent.max_run_tokens with the layer's own spellings),
 adding a name to a followup.* list or turning one of those keys on, is a
@@ -569,7 +581,7 @@ func settingsStageAccountRule(key, value string, lc *localcfg.Config) error {
 		if len(names) > 0 {
 			instead = "this project declares " + strings.Join(names, ", ")
 		}
-		return userErr("stages.%s.claude_account: the account %s is not one this project declares — %s. A stage's account is a name of the local config's claude_accounts, where the account's own allow_data_to decides which repositories may use its token, or %q for the unsuffixed default account: declare it with `fugaro accounts add %s --repos owner/name`, or name one of the declared accounts; nothing was written",
+		return userErr("stages.%s.claude_account: the account %q is not defined here — %s. A stage's account is a name of this file's claude_accounts block, where the account's own allow_data_to decides which repositories may use its token, or %q for the unsuffixed default account: declare it with `fugaro accounts add %s --repos owner/name`, or name one of the declared accounts; nothing was written",
 			stage, value, instead, config.DefaultClaudeAccount, value)
 	}
 	missing := []string{}
