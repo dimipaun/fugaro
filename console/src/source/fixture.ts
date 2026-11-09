@@ -50,7 +50,7 @@
 
 import { createHash } from 'node:crypto'
 
-import { FeedTracker } from '../main/spawn'
+import { FeedTracker, GraphStreamGate } from '../main/spawn'
 import type { Notice, SettingsEditPhase, Timers } from '../main/spawn'
 import type { OperationName, ValidatedArguments } from '../main/ipc'
 import { stringifyDeep } from '../shared/stringify'
@@ -508,7 +508,39 @@ export class FixtureSource implements FugaroSource {
    * dropped past `MAX_LIVE_FEEDS`. A feed that has ended is not live, so the
    * next call replays the recording from its first record. */
   subscribeLive(args: ValidatedArguments): LiveFeed {
+    return this.#replay(argsKey(args), null)
+  }
+
+  /**
+   * subscribeGraph replays the recording through the graph's own rule
+   * (`GraphStreamGate`, `FugaroSource.subscribeGraph`): the same records, the
+   * same clock, and a document whose `seq` does not move forward within its
+   * `stream_id` is not an answer at all. The recording's envelope is the same for
+   * either stream -- an arrival stamp and a `decodeFeedLine` document -- so a
+   * recording made from `graph --watch --json` replays here exactly as one made
+   * from `watch --json` replays above.
+   *
+   * A fixture is the *stream*, so it is the one place a stale frame can be
+   * arranged on purpose: a recording (or a synthetic fixture) that repeats a
+   * `seq` is how the console's own rule is held to what it promises.
+   */
+  subscribeGraph(args: ValidatedArguments): LiveFeed {
+    return this.#replay(argsKey(args), new GraphStreamGate())
+  }
+
+  /** stopGraphWatch ends the replay these arguments name and forgets it, so a
+   * later subscription starts a fresh one -- `FugaroSource.stopGraphWatch`, whose
+   * other half is that it never refuses: a feed that is not there is the state
+   * the caller asked for. */
+  async stopGraphWatch(args: ValidatedArguments): Promise<void> {
     const key = argsKey(args)
+    const feed = this.#feeds.get(key)
+    if (feed === undefined) return
+    this.#feeds.delete(key)
+    await feed.stop()
+  }
+
+  #replay(key: string, gate: GraphStreamGate | null): LiveFeed {
     const live = this.#feeds.get(key)
     if (live !== undefined) {
       this.#feeds.delete(key)
@@ -525,6 +557,7 @@ export class FixtureSource implements FugaroSource {
     const feed = new ReplayFeed(this.#fixture.records, {
       timers: this.#timers,
       firstFrameBudgetMs: this.#budget,
+      gate,
     })
     this.#feeds.set(key, feed)
     feed.onEnded(() => {
@@ -698,10 +731,13 @@ const NODE_TIMERS: Timers = {
   },
 }
 
-/** ReplayFeedDeps is what one replay is scheduled with. */
+/** ReplayFeedDeps is what one replay is scheduled with: the clock, the first
+ * frame's budget, and the stream's own rule on its documents (`gate`, `null` for
+ * a stream that draws every document the recording holds). */
 interface ReplayFeedDeps {
   readonly timers: Timers
   readonly firstFrameBudgetMs: number
+  readonly gate: GraphStreamGate | null
 }
 
 /**
@@ -730,6 +766,7 @@ class ReplayFeed implements LiveFeed {
   #ended: FeedEnd | null = null
   readonly #timers: Timers
   readonly #budget: number
+  readonly #gate: GraphStreamGate | null
   readonly #handles: ReturnType<typeof setTimeout>[] = []
   readonly #change = new Set<(snapshot: Snapshot) => void>()
   readonly #noticeListeners = new Set<(notice: Notice) => void>()
@@ -743,6 +780,7 @@ class ReplayFeed implements LiveFeed {
   constructor(records: readonly FixtureRecord[], deps: ReplayFeedDeps) {
     this.#timers = deps.timers
     this.#budget = deps.firstFrameBudgetMs
+    this.#gate = deps.gate
     const first = records[0]
     if (first === undefined) {
       // A fixture with no records is refused by the loader; a feed that is built
@@ -841,6 +879,9 @@ class ReplayFeed implements LiveFeed {
       for (const listener of [...this.#noticeListeners]) listener(notice)
       return
     }
+    // The rule is asked before the document is stamped, exactly as
+    // `LiveStream` asks it: a refused record is not a frame at all.
+    if (this.#gate !== null && !this.#gate.keep(record.document)) return
     const frame = this.#tracker.push(record.document, record.at)
     this.#snapshots += 1
     const snapshot: Snapshot = {

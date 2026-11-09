@@ -471,6 +471,15 @@ export const SPAWN_FLAGS: readonly string[] = Object.freeze([
   '--pr',
   '--project-wide',
   '--from-store',
+  // The graph stream's own mode word (the graph plan's CG9b), and the graph
+  // watch's argv is its only user: it is a fixed word of that row's command path
+  // (`graph --watch --json`) rather than a declared flag, so nothing a renderer
+  // sends can turn it on or off. It is on this list because `assertArgvFlags`
+  // holds every word of every argv to it -- and the never table's `--watch` row,
+  // which refuses the word on every other command, carries `graph.watch` as its
+  // one `except` (`src/main/ipc.ts`), so this list's admission and that table's
+  // exception are the same fact read from two sides.
+  '--watch',
   // `graph`'s own scope selector, and the graph read's argv is its only user:
   // the value behind it is the closed scope of `src/main/ipc.ts`'s
   // `graphSource` kind, and every row of the table emits it as a value rather
@@ -906,6 +915,36 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     words: ['graph', '--json'],
     takesProject: true,
     args: [{ key: 'source', flag: '--source', kind: 'value' }],
+    dirFlag: false,
+  },
+  {
+    // The Graph's own live feed (the graph plan's CG9b): `fugaro graph --watch
+    // --json`, the same versioned document the row above reads, printed again
+    // whole on every change (contract §6.22, §10).
+    //
+    // **It is the one row whose command path carries a mode**, and that is why
+    // it is a row of its own rather than a flag on the read above: `--watch` is
+    // what makes the child long-lived, and a `flags` member would be a word a
+    // renderer could turn off. The CLI has no `graph watch` word, so this is the
+    // graph's only streaming form -- which is exactly the exception the never
+    // table's `--watch` row states (it is the flag the console refuses on every
+    // other command because `watch` is the read it uses there).
+    //
+    // `--source` is the row above's own scope argument, held to the same grammar
+    // and to the same membership (`src/main/ipc.ts`'s `graphSource`,
+    // `createBoundSource`'s F21 rule). `visible` is the one argument here that
+    // emits no word at all (`flag: null`, the way the launch's task text is
+    // declared): it decides whether the child runs, not what it is asked, and
+    // `src/source/cli.ts` is where a poll and a stop are told apart. Both are
+    // optional, so the whole of what this row can build is `graph --watch --json`
+    // with at most one `--source <v>` on it, plus the installation's flags.
+    operation: 'graph.watch',
+    words: ['graph', '--watch', '--json'],
+    takesProject: true,
+    args: [
+      { key: 'source', flag: '--source', kind: 'value' },
+      { key: 'visible', flag: null, kind: 'boolean' },
+    ],
     dirFlag: false,
   },
   {
@@ -1833,7 +1872,14 @@ export function assertArgvFlags(operation: string, argv: readonly string[]): voi
     if (!SPAWN_FLAGS.includes(element)) {
       refused(`${operation} would emit ${element}, which is not a flag this console may spawn`)
     }
-    const forbidden = isNeverReachable({ command, flags: argv })
+    // **The operation is named here**, because a flag row's `except` is about
+    // one operation's argv and not about a word: `--watch` is refused on every
+    // command but `graph.watch` (`src/main/ipc.ts`), and a caller that did not
+    // say which operation this argv belongs to could not be told apart from the
+    // one that may carry it. The command is still the argv's own (`commandPathIn`
+    // above) rather than the operation's, so an `argv` row is matched against
+    // what would actually be spawned.
+    const forbidden = isNeverReachable({ name: operation, command, flags: argv })
     if (forbidden !== null) {
       refused(`${operation} would emit ${forbidden.value}: ${forbidden.why} (${forbidden.where})`)
     }
@@ -4461,6 +4507,51 @@ export class FeedTracker {
     const rolled = day !== null && this.#day !== null && day !== this.#day
     this.#day = day ?? this.#day
     return { document, receivedAt, sequence: this.#sequence, day, rolled }
+  }
+}
+
+/**
+ * GraphStreamGate is the graph stream's own document rule, the way `FeedTracker`
+ * is the live stream's: **it keeps the latest document per `stream_id`, and a
+ * `seq` that does not move forward within one is not an answer** (contract
+ * section 6.22; the graph plan's CG9b and H4).
+ *
+ * It is here, beside `FeedTracker`, for the same reason that one is: the rule is
+ * about the *documents*, not about the process, so the real child's frames
+ * (`src/source/cli.ts`) and a replay of a recording (`src/source/fixture.ts`) are
+ * held to one implementation of it rather than two that can drift.
+ *
+ * A document it refuses is refused **whole**: the reader drops the frame, so
+ * nothing downstream can draw a state the console has already superseded.
+ *
+ * Three cases, and the third is why this is lenient about what it cannot read:
+ *
+ *   - a `seq` at or below the highest already seen **for the same `stream_id`**
+ *     is refused: the console's copy is only ever behind the child's, so such a
+ *     frame is a document it already has, delivered late or twice.
+ *   - a **new** `stream_id` is kept whatever its `seq` says. The identity is
+ *     drawn once per child, so a new one is a child that restarted, and its `seq`
+ *     starts again at one -- holding the old watermark against it would drop the
+ *     first documents of every restart.
+ *   - a document with no readable `stream_id` or `seq` is **kept and changes
+ *     nothing**. This gate orders documents; it does not judge them. What a
+ *     document must *be* is decided where every document is decoded
+ *     (`decodeGraphDocument`, `src/shared/schema.ts`), and dropping one here on a
+ *     rule about equality would be refusing a document for the wrong reason.
+ */
+export class GraphStreamGate {
+  #streamId: string | null = null
+  #seq = 0
+
+  /** keep answers whether this document is one the console may draw. */
+  keep(document: JSONObject): boolean {
+    const id = typeof document['stream_id'] === 'string' ? document['stream_id'] : null
+    const seq = typeof document['seq'] === 'number' && Number.isSafeInteger(document['seq']) ? document['seq'] : null
+    if (id === null || seq === null) return true
+    if (id === this.#streamId && seq <= this.#seq) return false
+    this.#streamId = id
+    this.#seq = seq
+    return true
   }
 }
 

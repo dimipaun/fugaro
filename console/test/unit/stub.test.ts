@@ -49,6 +49,11 @@ describe('the stub’s command keys', () => {
       // the command word, because `--source` and its value are the row's own
       // argument and never a word of the key.
       'graph',
+      // The graph plan's CG9b (`graph.watch` / `graphWatch`): the same document
+      // as a live feed, on a long-lived child. It shares the read's command
+      // word, so `--watch` is what tells the two apart -- and a key shared with
+      // the read above would leave this row's scenarios answered by `default`.
+      'graph --watch',
       'diagnose',
       'logs',
       'logs --url',

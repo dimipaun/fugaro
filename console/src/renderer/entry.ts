@@ -491,7 +491,7 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
 }
 
 /**
- * ReadBridge is the twenty reads the screens make (Task 3.4c; console L5b
+ * ReadBridge is the twenty-one reads the screens make (Task 3.4c; console L5b
  * added `statsRuns`, Bitbucket credentials T1.2 added `coordinatorStatus`,
  * GV2.3b added `planStatus`, coordinator v2 K3 added `coordinatorShow`, K5 added
  * `coordinatorIntents`, console 0.119.0 added `summaryRuns` -- the
@@ -503,7 +503,8 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
  * same tab's four later sections and its policy panel's own document, and the
  * subscriptions plan's S2.7 added `readLicence`, the licence key's own section of
  * the same tab -- **the one read here that spawns no child at all**, because the
- * console keeps that key itself), named one
+ * console keeps that key itself -- and the graph plan's CG9b added `graphWatch`,
+ * the same tab's live feed of the graph document), named one
  * by one for the reason `CompatibilityBridge` names one: this file should reach
  * for exactly the operations it draws, and a reader should be able to see which
  * those are without reading the preload.
@@ -530,13 +531,14 @@ export interface ReadBridge {
   runLogLink(args: Readonly<Record<string, unknown>>): Promise<unknown>
   planStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
   graphRead(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  graphWatch(args: Readonly<Record<string, unknown>>): Promise<unknown>
   managedStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
   policyShow(args: Readonly<Record<string, unknown>>): Promise<unknown>
   environmentReport(args: Readonly<Record<string, unknown>>): Promise<unknown>
   readLicence(args: Readonly<Record<string, unknown>>): Promise<unknown>
 }
 
-/** readBridgeFrom is the twenty reads over the structural bridge. A missing
+/** readBridgeFrom is the twenty-one reads over the structural bridge. A missing
  * member answers `null` rather than rejecting, and so does a member that fails
  * to answer -- by throwing before it returns, or by returning a promise that
  * rejects, which is what `invoke` does on a channel with nothing behind it.
@@ -575,6 +577,7 @@ export function readBridgeFrom(fugaro: unknown): ReadBridge {
     runLogLink: (args) => ask('runLogLink', args),
     planStatus: (args) => ask('planStatus', args),
     graphRead: (args) => ask('graphRead', args),
+    graphWatch: (args) => ask('graphWatch', args),
     managedStatus: (args) => ask('managedStatus', args),
     policyShow: (args) => ask('policyShow', args),
     environmentReport: (args) => ask('environmentReport', args),
@@ -3156,9 +3159,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * a graph draws the same feed's stages (GV2.3b). The graph's *plan* is a
    * different read at a different cadence, and `maybeRefreshGraph` is where that
    * one is decided.
+   *
+   * **The graph's own feed is started and stopped here too** (`syncGraphWatch`),
+   * and not from `showGraph`: the two conditions are the same pair, and a tab
+   * switch, a hidden window and a re-entry are all the same question. It is
+   * called before the interval is settled so that a tab that has just come into
+   * view is not left holding no feed until the next tick.
    */
   const syncPolling = (): void => {
     const wanted = (currentView === 'live' || currentView === 'graph') && scopeVisible()
+    syncGraphWatch()
     if (wanted && live.timer === null) {
       live.timer = setInterval(() => {
         void pollLive()
@@ -3432,8 +3442,18 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // the graph's: a node's stage is the frame's stage for the run the plan
       // joined it to (GV2.3b), so the graph takes the same rows rather than a
       // second `live.watch` of its own.
-      if (currentView === 'graph') await frameGraph(frame)
-      else drawLive(frame)
+      if (currentView === 'graph') {
+        await frameGraph(frame)
+        // **And the graph's own feed is polled here, beside it, and not awaited.**
+        // The two are independent reads of the same tab -- the frame moves the
+        // stages, the feed replaces the document -- so they are started together
+        // (the owner's rule of 2026-10-31); the feed's first call waits for the
+        // child's first document (the source's first-frame budget), and a tick
+        // held for that long would stop drawing the frames the stages move with.
+        // `graph.feedInFlight` is what keeps the next tick from starting a second
+        // poll of the feed.
+        void pollGraph()
+      } else drawLive(frame)
       // The rigor join is asked for **after** the frame is drawn, so a read that
       // refuses cannot keep a frame off the screen: what the poll is for is the
       // frame, and the join is one cell of a row that the next frame draws with.
@@ -3580,6 +3600,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * in-flight flag: the two are different reads of the same tab, and the
      * decoration must not hold up the plan's cadence. */
     decorating: boolean
+    /** watching is whether the console has a graph feed it must stop: it is set
+     * when the Graph tab comes into view and cleared when the stop is sent, so a
+     * tab that is left does not send one stop per tick -- and, more to the point,
+     * so a feed that is wanted is never stopped by a second look at the same
+     * conditions (`syncGraphWatch`). */
+    watching: boolean
+    /** feedInFlight is whether a poll of the graph feed is outstanding. It is
+     * `decorating`'s rule for the feed: the tick must not start a second poll
+     * while the first is waiting for its document. */
+    feedInFlight: boolean
     /** scope is the scope the operator is looking at (CG10). It is the entry's
      * own memory of a **choice** and not the screen's drawing state: the screen
      * is put on a scope by the document it is handed (`load` and `loadScope`),
@@ -3616,6 +3646,8 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     queuedToken: null,
     runs: [],
     decorating: false,
+    watching: false,
+    feedInFlight: false,
     scope: GRAPH_SCOPE_PLAN,
     chosen: false,
     notice: null,
@@ -3646,9 +3678,95 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   const graphRead = sectionRead({ factory, theme })
 
   /** leaveGraph ends the section's busy state when the operator moves to another
-   * tab: nothing is in flight for a screen nobody is looking at. */
+   * tab: nothing is in flight for a screen nobody is looking at. The graph's
+   * **feed** is not ended here, because this door is for the busy mark alone: the
+   * child's lifetime is `syncGraphWatch`'s, which the switch already ran. */
   leaveGraph = () => {
     graphRead.end()
+  }
+
+  /**
+   * syncGraphWatch decides whether the graph feed is wanted, and it is the one
+   * place that decides it: the Graph tab is the view on screen and the window is
+   * visible. **The tab is H6's condition**, and the cost it exists for is the
+   * CLI's own subscription on the project's scope subtree: a console whose
+   * operator is on another tab, or whose window is behind another window, must
+   * not be holding one. `close()` on the source would stop it anyway; what this
+   * buys is that it is never held in the first place.
+   *
+   * It is called from `syncPolling`, so the tab switch (`markCurrent`), the
+   * visibility change and the first read all go through it and cannot disagree.
+   *
+   * **The stop names the scope the subscription was made with**, because that
+   * argv is the feed's key in the main process: a stop with a different `source`
+   * would name a feed that is not running and leave this one's child alive until
+   * quit. The reply is not awaited and not drawn -- the state the caller asked for
+   * is "no child", and `stopGraphWatch` never refuses.
+   */
+  const syncGraphWatch = (): void => {
+    if (currentView === 'graph' && scopeVisible()) {
+      graph.watching = true
+      // The poll is what starts the child: the main process's `graph.watch`
+      // subscribes the feed and answers the document it holds, so entering the
+      // tab makes one call now rather than waiting for the next tick of the
+      // interval -- and the first document is drawn rather than thrown away.
+      void pollGraph()
+      return
+    }
+    if (!graph.watching) return
+    graph.watching = false
+    void bridge.graphWatch({ source: GRAPH_SCOPE_ALL, visible: false })
+  }
+
+  /**
+   * pollGraph draws what the graph feed is holding.
+   *
+   * **It is a poll of a child that is already running, and never a read of its
+   * own**: `graph.watch` answers the feed's `current()`, so the call that starts a
+   * child waits for its first document and every later one answers at once. The
+   * screen's `loadScope` is what lays the document out, and a document that
+   * changed nothing lays out to the same picture.
+   *
+   * **At most one call in flight**, the rule every other read here keeps: the flag
+   * is set before the await and cleared in a `finally`, so a slow first document
+   * cannot be overtaken by the next tick. And a document that lands after the
+   * operator has moved on is dropped, twice over: this view is not the one on
+   * screen, or the scope in hand is not this feed's (`all`), which is the plan
+   * scope's drawing and not this document's to replace (CG10).
+   *
+   * **A refusal is not a drawing.** A child that died, or one the ceiling
+   * evicted, must leave the figures the operator is reading exactly where they
+   * are: `graph.read` is the read that answers a screen with a sentence about this
+   * scope (`readScope`, `refuseScope`), and it is still made on its own cadence
+   * (`maybeRefreshGraph`), so a feed that is not there costs the console the
+   * stream and not the picture. This is `frameGraph`'s own rule for the live
+   * frame, for the same reason.
+   */
+  const pollGraph = async (): Promise<void> => {
+    if (graph.feedInFlight) return
+    graph.feedInFlight = true
+    try {
+      const reply = await bridge.graphWatch({ source: GRAPH_SCOPE_ALL })
+      if (currentView !== 'graph' || graph.scope !== GRAPH_SCOPE_ALL) return
+      const answer = replyData(reply)
+      if (!answer.ok) return
+      const envelope = answer.data as Record<string, unknown>
+      const decoded = decodeGraphDocument(envelope['document'], 'graph.watch')
+      if (!decoded.ok) return
+      const drawn = graphScreenNow().loadScope(decoded.value, null)
+      if (drawn === null) return
+      // The refusal a scope read left on screen goes with the document that
+      // answers it: this document **is** the coordinator scope's, so a sentence
+      // about a read of it is no longer true. The plan scope's notice is not
+      // this call's to clear, and the guard above has already turned it away.
+      graph.notice = null
+      redraw(drawn, stopNow())
+    } catch {
+      // `readBridgeFrom` answers `null` rather than rejecting, so this is a throw
+      // this file did not expect; the picture already on screen is the answer.
+    } finally {
+      graph.feedInFlight = false
+    }
   }
 
   /** graphSlot is the slot the current drawing's mark and stamp go into, or
@@ -8031,6 +8149,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     graph.chosen = false
     graph.notice = null
     graph.fellBack = false
+    // The feed is the old installation's project, and the main process has
+    // already stopped it as part of the switch (`sourceFor`'s own `close`): what
+    // this clears is the entry's memory of holding one, so the next tab visit
+    // starts a child for the installation that is now open.
+    graph.watching = false
+    graph.feedInFlight = false
     // The plan and the run list the Graph cache holds are this installation's
     // own: a plan of the old one is never drawn under the new one's positions.
     graphViews.clear()

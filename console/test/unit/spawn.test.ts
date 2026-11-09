@@ -163,7 +163,10 @@ const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
  * CG9a's `graph.read`, the twenty-first, and the managed screens' plan's CM4's
  * two reads, `managed.status` and `policy.show`, the twenty-second and
  * twenty-third (the Project tab's managed state and its published policy node,
- * the two commands the plan's CM3 put on `consoleReadPaths`). The
+ * the two commands the plan's CM3 put on `consoleReadPaths`), and the graph
+ * plan's feed, CG9b's `graph.watch`, the twenty-fourth -- the same `graph`
+ * command as CG9a's read above, exactly as `logs`'s and `settings`'s two rows
+ * are one command each. The
  * complement -- the commands
  * that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
@@ -180,6 +183,7 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'runs.summary',
   'plan.status',
   'graph.read',
+  'graph.watch',
   'run.diagnose',
   'run.logs',
   'run.logLink',
@@ -506,7 +510,7 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: twenty-five argvs, twenty-three commands, twenty-three of them with --project', () => {
+  it('fixes the design allow-list exactly: twenty-six argvs, twenty-four commands, twenty-four of them with --project', () => {
     // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
     // the rail's read (`config list --json`, the case above) used to be the
     // picker's own row in a second table until the owner's ruling of 2026-10-25,
@@ -548,6 +552,10 @@ describe('the spawn table and the argv it builds', () => {
       'runs summary --json',
       'plan status --json',
       'graph --json',
+      // The same command with one word more (the graph plan's CG9b): the feed a
+      // screen subscribes to while the Graph tab is on screen, whose `--watch`
+      // is a word of the command path rather than a flag a caller controls.
+      'graph --watch --json',
       'diagnose --json',
       'logs --json',
       'logs --url',
@@ -606,7 +614,7 @@ describe('the spawn table and the argv it builds', () => {
         'run',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(23)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(24)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))

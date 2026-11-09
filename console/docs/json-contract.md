@@ -107,8 +107,10 @@ The columns below say which field needs which state. The recurring shapes:
 
 Emitted **compact, one object per line** (`json.NewEncoder(d.Out).Encode(...)`,
 `WatchDeps.emit`, `internal/cli/watch.go`), which is what makes the feed
-line-delimited JSON — one of exactly two line-delimited documents the console
-reads, the other being `logs RUN --json` (§6.2, §9).
+line-delimited JSON — one of the three line-delimited documents the console
+reads, the others being `logs RUN --json` (§6.2) and the graph's own live feed
+(§6.22 — CG9b's row, the one that puts that document in the console's set;
+§9.2).
 
 ### `JSONDoc` (`internal/watch/json.go`)
 
@@ -830,8 +832,8 @@ they cannot be combined**: `runLogs` refuses `--url` with `--json` or
 - `logs RUN --json` prints **one compact `logLine` object per line** — not an
   indented document: `printLogEntry` marshals each entry with
   `json.Marshal` and writes it with a trailing newline, the same one-object-
-  per-line shape as the `watch` feed, and the other of the two line-delimited
-  documents the console reads. `logLine`: `time` (RFC 3339),
+  per-line shape as the `watch` feed, and one of the three line-delimited
+  documents the console reads (§6.22's live feed is the third). `logLine`: `time` (RFC 3339),
   `severity`, `stage`°, `stream`°, `event`°, `message` (no `omitempty` on
   time/severity/message). Every field is **redacted** (`redactEntry`,
   `redactEntry`), and `message` is job-written text: the display layer
@@ -858,7 +860,7 @@ future v1.1 button would consume. `cancelResult`:
 (§6.2) rather than the indented one every command in the console's set emits:
 `printCancel` marshals the struct with `json.Marshal` and
 writes it with a trailing newline. A v1.1 button that parsed it as an indented
-document would read nothing; `cancel` is one of the three commands this file
+document would read nothing; `cancel` is one of the four commands this file
 describes that are line-delimited, and the only one outside the console's set
 (§9.2).
 
@@ -3082,9 +3084,10 @@ per line** — so §10's guarantees and the console's reader apply to it unchang
 a slow reader makes the child block and never drops a document (§10.3), and a
 closed stdout ends the child on its next write (§10.4). **A lost document needs
 no repair**: the next one is the whole graph. §9 rule 2 counts the
-line-delimited commands of the console's own set, and the graph is not in that
-set yet — the spawn row that puts it there is CG9b's, and that task moves the
-count with its row.
+line-delimited commands of the console's own set, and the graph's stream is in
+that set since CG9b put its spawn row there — `graph --watch --json`, the row
+the console counts in `MAX_LIVE_FEEDS` and stops when the Graph tab is hidden
+(H6).
 
 **`stream_id` and `seq`, and why both.** Each child draws a `stream_id` once and
 prints it in every document it writes; `seq` starts at `1` and rises by one per
@@ -3358,14 +3361,17 @@ table against the live constructors.
    console spawns, and `fugaro accounts clear NAME` (§6.5a, credentials-service
    C1.21), the operator's own write to the cascade's state. Nothing else here
    names a write.
-2. **Exactly two of the commands in the console's set are line-delimited:
-   `watch --json` and `logs RUN
-   --json`** (§2, §6.2 — the feed through
+2. **Three of the commands in the console's set are line-delimited:
+   `watch --json`, `logs RUN
+   --json` and `graph --watch --json`** (§2, §6.2, §6.22 — the feed through
    `json.NewEncoder` with no `SetIndent`, the log lines through
-   `json.Marshal`). **Every other command in that set is indented over several
+   `json.Marshal`, the graph's stream through `WriteDoc`, which marshals the
+   whole document and writes one newline). **Every other command in that set is indented over several
    lines** — `version` is the exception that is no document at all: it prints
-   one plain line (§6.7) — so a line-based parser is right for those two and
-   wrong for the rest of the set. The one command outside the set that is line-delimited too
+   one plain line (§6.7) — so a line-based parser is right for those three and
+   wrong for the rest of the set. **The graph's one-shot read is not one of
+   them**: `graph --json` prints §6.22's document indented, and the stream is
+   the sibling argv that carries `--watch`. The one command outside the set that is line-delimited too
    is `fugaro cancel RUN --json` (§6.3, a write): compact, one object per line,
    the same parser as `logs`.
 3. **A null, an absent key and an empty array are three different things**, and

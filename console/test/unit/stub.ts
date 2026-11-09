@@ -278,9 +278,11 @@ main()
 
 /** commandKey is the stub's own reading of its argv: the leading words that do
  * not start with a dash, with `logs --url` told apart from `logs` because the
- * console's two log operations differ by exactly that flag, and the settings
- * write told apart from the settings read because the two share the command word
- * `settings` and differ by whether a subcommand word follows it.
+ * console's two log operations differ by exactly that flag, with `graph
+ * --watch` told apart from `graph` for that same reason -- the one-shot read
+ * and the live feed share the command word and differ by `--watch` -- and the
+ * settings write told apart from the settings read because the two share the
+ * command word `settings` and differ by whether a subcommand word follows it.
  *
  * It is not a copy of anything: `STUB_COMMAND_KEYS` below is derived from the
  * spawn table by calling *this* function on each row's `words`, and the generated
@@ -295,6 +297,11 @@ export function commandKey(argv: readonly string[]): string {
     words.push(element)
   }
   if (words[0] === 'logs') return argv.includes('--url') ? 'logs --url' : 'logs'
+  // The graph is two operations on one command word the way the log is: the
+  // read of the stored view and the live feed of the same document, told apart
+  // by `--watch`. Sharing the read's key would make the feed's row unreachable
+  // and answer its scenarios from `default`.
+  if (words[0] === 'graph') return argv.includes('--watch') ? 'graph --watch' : 'graph'
   // A settings write is the one argv whose leading words are not a stable key:
   // `set`/`unset` and the key it names are the edit's own, so `settings set
   // budget.cap_usd` would be a key per edit, and a scenario key that only

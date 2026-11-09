@@ -40,6 +40,7 @@
 // on screen explaining why.
 
 import {
+  GraphStreamGate,
   MAX_FEED_LINE_LENGTH,
   SPAWN_COMMANDS,
   assertSpawnSurface,
@@ -454,11 +455,9 @@ export class CliSource implements FugaroSource {
   }
 
   /**
-   * subscribeLive is **idempotent for the same arguments while a feed is live**
-   * (the contract `FugaroSource.subscribeLive` states). The surface is
-   * `invoke`-only, so the Live screen reaches `live.watch` once per poll; a
-   * stream per call would be a `fugaro watch` child per poll, and nothing would
-   * ever stop them until `close()`.
+   * #live is where a long-lived child is made and counted -- the one place, so
+   * that every streaming read of this console is held to the same ceiling and
+   * stopped by the same `close()`.
    *
    * The key is the argv, because the argv is what decides which child this is:
    * two calls that plan the same argv are the same subscription, and two that do
@@ -470,9 +469,11 @@ export class CliSource implements FugaroSource {
    * moves its entry to the end), and a new subscription past the ceiling stops
    * the oldest one first.
    */
-  subscribeLive(args: ValidatedArguments): LiveFeed {
-    const plan = this.#plan('live.watch', args)
-    const key = plan.argv.join('\u0000')
+  #live(
+    key: string,
+    plan: SpawnPlan,
+    feed: { readonly operation: OperationName; readonly gate?: GraphStreamGate | undefined },
+  ): LiveStream {
     const live = this.#feeds.get(key)
     if (live !== undefined) {
       this.#feeds.delete(key)
@@ -492,6 +493,8 @@ export class CliSource implements FugaroSource {
       log: this.#log,
       clock: this.#clock,
       firstFrameBudgetMs: this.#options.firstFrameBudgetMs ?? FIRST_FRAME_BUDGET_MS,
+      operation: feed.operation,
+      ...(feed.gate === undefined ? {} : { gate: feed.gate }),
     })
     this.#feeds.set(key, stream)
     // The listener is what makes the map mean "live": it is also called
@@ -501,6 +504,55 @@ export class CliSource implements FugaroSource {
       if (this.#feeds.get(key) === stream) this.#feeds.delete(key)
     })
     return stream
+  }
+
+  /**
+   * subscribeLive is **idempotent for the same arguments while a feed is live**
+   * (the contract `FugaroSource.subscribeLive` states). The surface is
+   * `invoke`-only, so the Live screen reaches `live.watch` once per poll; a
+   * stream per call would be a `fugaro watch` child per poll, and nothing would
+   * ever stop them until `close()`.
+   */
+  subscribeLive(args: ValidatedArguments): LiveFeed {
+    const plan = this.#plan('live.watch', args)
+    return this.#live(plan.argv.join('\u0000'), plan, { operation: 'live.watch' })
+  }
+
+  /**
+   * subscribeGraph is the graph's live feed (`graph --watch --json`, CG9b), and
+   * it goes through `#live` with everything else that streams: **the argv is the
+   * key**, so a poll with the same scope is answered by the child that is
+   * already running, and the feed counts toward `MAX_LIVE_FEEDS` beside the
+   * `watch` feeds -- the ceiling is a ceiling on children, and a graph stream is
+   * a child like any other.
+   *
+   * What it adds is the ordering rule of `FugaroSource.subscribeGraph`, which is
+   * the gate below: the console draws the newest document it has been given, and
+   * a document that has already been superseded is not drawn at all.
+   */
+  subscribeGraph(args: ValidatedArguments): LiveFeed {
+    const plan = this.#plan('graph.watch', args)
+    return this.#live(plan.argv.join('\u0000'), plan, { operation: 'graph.watch', gate: new GraphStreamGate() })
+  }
+
+  /**
+   * stopGraphWatch stops the graph feed these arguments name -- the same key
+   * `subscribeGraph` built, so it stops the child that is running and not a
+   * second one -- and forgets it, so a later subscription starts a fresh child
+   * rather than handing back a stopped stream.
+   *
+   * It is idempotent and never a refusal: a feed that is not there is the state
+   * the caller asked for. It is deliberately narrower than `subscribeGraph`
+   * rather than a general "stop everything": a screen leaving the Graph tab must
+   * not stop the Live screen's `watch` child, so what is stopped is named by the
+   * arguments and nothing else.
+   */
+  async stopGraphWatch(args: ValidatedArguments): Promise<void> {
+    const key = this.#plan('graph.watch', args).argv.join('\u0000')
+    const feed = this.#feeds.get(key)
+    if (feed === undefined) return
+    this.#feeds.delete(key)
+    await feed.stop()
   }
 
   showBudget(args: ValidatedArguments): Promise<Snapshot> {
@@ -1114,23 +1166,27 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
   })
 
   /**
-   * lazyFeed wraps one subscription. It is deliberately small: the three
-   * listeners attach once the source exists (nothing in this console calls them
-   * yet -- the surface is `invoke`-only and `live.watch` is a poll), and
-   * `current`/`stop` are the two the handler uses.
+   * lazyFeed wraps one subscription, and the caller names which subscription it
+   * is (`subscribeLive` or `subscribeGraph`) rather than this function choosing:
+   * the two are different children with different contracts, and the only thing
+   * they share is that both are reached asynchronously and polled.
+   *
+   * It is deliberately small: the three listeners attach once the source exists
+   * (nothing in this console calls them yet -- the surface is `invoke`-only and
+   * both feeds are polls), and `current`/`stop` are the two the handler uses.
    *
    * Every `current()` asks the bound source for the feed again rather than
-   * keeping the first stream it was handed. `CliSource.subscribeLive` answers
-   * the same stream while it is live and drops one that has *ended*, so the
-   * poll after a `watch` child exited (or was evicted past `MAX_LIVE_FEEDS`)
-   * starts a fresh child; a stream held here would be polled dead forever.
+   * keeping the first stream it was handed. Both subscription methods answer the
+   * same stream while it is live and drop one that has *ended*, so the poll after
+   * a child exited (or was evicted past `MAX_LIVE_FEEDS`) starts a fresh child; a
+   * stream held here would be polled dead forever.
    */
-  const lazyFeed = (args: ValidatedArguments): LiveFeed => {
+  const lazyFeed = (subscribe: (source: CliSource) => LiveFeed): LiveFeed => {
     let real: LiveFeed | null = null
     let attaching: Promise<LiveFeed> | null = null
     const attach = (): Promise<LiveFeed> => {
       attaching = resolve().then((source) => {
-        real = source.subscribeLive(args)
+        real = subscribe(source)
         return real
       })
       return attaching
@@ -1219,9 +1275,73 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
       const key = `${installation.id}\u0000${JSON.stringify(sortedArguments(args))}`
       const existing = feeds.get(key)
       if (existing !== undefined) return existing
-      const feed = lazyFeed(args)
+      const feed = lazyFeed((source) => source.subscribeLive(args))
       feeds.set(key, feed)
       return feed
+    },
+    /**
+     * subscribeGraph is `subscribeLive`'s shape over the graph's own child, and
+     * it differs in three ways, all of them the read above's rather than the
+     * `watch` feed's:
+     *
+     *   - **the scope is admitted here**, on `graphScopes` alone and before
+     *     `resolve`: an id no previous answer of this installation listed is
+     *     refused with `NO_GRAPH_SCOPE` with no binary probed and no child
+     *     spawned (F21). The feed does **not** teach new scopes and does not need
+     *     to: a live feed is opened for a scope a document already listed, and
+     *     `all` -- the selector, not a member -- is admitted without being
+     *     listed. What the CLI itself rejects inside an admitted scope is its own
+     *     refusal, with its own sentence, on the frame or on the child's exit.
+     *   - **no cadence.** A floor exists to keep a *read* from spawning once per
+     *     poll; a live feed is one child for as long as it is wanted, and the
+     *     thing that bounds it is `MAX_LIVE_FEEDS` on the source below.
+     *   - **no checkout is required**, exactly as `graphRead` requires none: the
+     *     stream reads the project's stored view through the caller's own
+     *     credential, from wherever the child runs.
+     *
+     * The key is the installation and the arguments, as above, so a poll with the
+     * same scope is answered by the feed that is already live. The `visible`
+     * argument is part of that key only in the sense that it is an argument like
+     * any other: it reaches no argv (`src/main/spawn.ts`), so a poll and a stop
+     * for the same scope name the same subscription, which is what makes
+     * `stopGraphWatch` below stop the running child rather than look past it.
+     */
+    subscribeGraph(args: ValidatedArguments): LiveFeed {
+      const installation = deps.installation()
+      if (installation === null) throw noInstallation()
+      const scope = typeof args['source'] === 'string' ? args['source'] : GRAPH_SCOPE_ALL
+      if (scope !== GRAPH_SCOPE_ALL && !(graphScopes.get(bindingKey(installation))?.has(scope) ?? false)) {
+        throw new SourceRefusal(NO_GRAPH_SCOPE)
+      }
+      const key = `${installation.id}\u0000${JSON.stringify(sortedArguments(args))}`
+      const existing = feeds.get(key)
+      if (existing !== undefined) return existing
+      const feed = lazyFeed((source) => source.subscribeGraph(args))
+      feeds.set(key, feed)
+      return feed
+    },
+    /**
+     * stopGraphWatch stops the feed these arguments name, and the act is
+     * **forgetting it as well as stopping it**: the entry leaves the map here, so
+     * the next `subscribeGraph` for the same scope builds a new child rather than
+     * handing back the stopped one. The stop itself is the source's own (H6): the
+     * child's `SIGTERM`, then `SIGKILL` after the grace period, the shutdown
+     * every other long-lived child of this console gets.
+     *
+     * It never refuses and never throws. An arguments object that names no feed
+     * -- a second stop, a scope whose feed the ceiling already evicted, a console
+     * whose installation has just gone -- is the state the caller asked for: a tab
+     * that is not on screen must not be able to fail, and there is nothing here
+     * for it to fail at.
+     */
+    stopGraphWatch: async (args) => {
+      const installation = deps.installation()
+      if (installation === null) return
+      const key = `${installation.id}\u0000${JSON.stringify(sortedArguments(args))}`
+      const feed = feeds.get(key)
+      if (feed === undefined) return
+      feeds.delete(key)
+      await feed.stop()
     },
     showBudget: (args) => read('budget.show', (source) => source.showBudget(args)),
     runReport: (args) => read('spend.report', (source) => source.runReport(args)),
@@ -1561,15 +1681,31 @@ function logEntryOf(document: JSONObject): JSONObject | null {
  * LiveStream is `LiveFeed` over a supervised child: the sidecar's frames become
  * snapshots, its notices accumulate onto the next snapshot (so a degraded mode's
  * sentence travels with the document a screen draws), and an end that is not a
- * stop is a refusal the screen can show.
+ * stop is a refusal the screen can show. `deps.gate`, where a feed has one, is
+ * the rule a frame must pass to become a snapshot at all (`GraphStreamGate`).
  */
-/** LiveStreamDeps is what a feed is built from: the supervisor's own four
- * arguments plus the first-frame budget `current()` uses. */
+/**
+ * LiveStreamDeps is what a feed is built from: the supervisor's own four
+ * arguments, the first-frame budget `current()` uses, and the two facts the
+ * graph's feed adds.
+ *
+ * `operation` is the operation the stream belongs to, and it is here for the
+ * refusals: a feed that ends before its first document, or that says nothing
+ * within the budget, is refused **in the name of the read the screen asked
+ * for** -- `live.watch` for the Live screen's child and `graph.watch` for the
+ * graph's -- so the sentence on screen names the command that is actually
+ * running (`SourceRefusal` is shown verbatim).
+ *
+ * `gate` is the feed's own rule on its frames, absent for a feed that draws
+ * every one it is given; see `GraphStreamGate` for the one that does not.
+ */
 interface LiveStreamDeps {
   readonly spawner?: ChildSpawner | undefined
   readonly log?: SpawnLogWriter | undefined
   readonly clock?: (() => Date) | undefined
   readonly firstFrameBudgetMs?: number | undefined
+  readonly operation: OperationName
+  readonly gate?: GraphStreamGate | undefined
 }
 
 class LiveStream implements LiveFeed {
@@ -1579,6 +1715,10 @@ class LiveStream implements LiveFeed {
   #ended: FeedEnd | null = null
   readonly #sidecar: Sidecar
   readonly #budget: number
+  readonly #operation: OperationName
+  /** #gate is the feed's rule on its frames, `null` for a feed that draws every
+   * one it is given. */
+  readonly #gate: GraphStreamGate | null
   readonly #change = new Set<(snapshot: Snapshot) => void>()
   readonly #noticeListeners = new Set<(notice: Notice) => void>()
   readonly #endedListeners = new Set<(end: FeedEnd) => void>()
@@ -1595,13 +1735,20 @@ class LiveStream implements LiveFeed {
 
   constructor(plan: SpawnPlan, deps: LiveStreamDeps) {
     this.#budget = deps.firstFrameBudgetMs ?? FIRST_FRAME_BUDGET_MS
+    this.#operation = deps.operation
+    this.#gate = deps.gate ?? null
     this.#sidecar = startSidecar(plan, {
       onFrame: (frame) => {
+        // The gate is asked first, so a refused frame is not a snapshot at all:
+        // it is not counted, it reaches no listener and it answers no
+        // `current()`. A screen therefore cannot draw a document this feed has
+        // already superseded, whichever door it used.
+        if (this.#gate !== null && !this.#gate.keep(frame.document)) return
         this.#snapshots += 1
         const snapshot: Snapshot = {
           document: frame.document as JSONDoc,
           receivedAt: frame.receivedAt,
-          sequence: frame.sequence,
+          sequence: this.#snapshots,
           day: frame.day,
           rolled: frame.rolled,
           notices: this.#notices,
@@ -1630,7 +1777,7 @@ class LiveStream implements LiveFeed {
         const waiting = [...this.#waiting]
         this.#waiting.clear()
         for (const waiter of waiting) {
-          waiter.reject(refusalFrom('watch', end.sentence ?? 'the live feed ended before its first document'))
+          waiter.reject(refusalFrom(this.#operation, end.sentence ?? 'the live feed ended before its first document'))
         }
         for (const listener of [...this.#endedListeners]) listener(finished)
       },
@@ -1678,7 +1825,7 @@ class LiveStream implements LiveFeed {
     if (this.#latest !== null) return Promise.resolve(this.#latest)
     if (this.#ended !== null) {
       return Promise.reject(
-        refusalFrom('watch', this.#ended.sentence ?? 'the live feed ended before its first document'),
+        refusalFrom(this.#operation, this.#ended.sentence ?? 'the live feed ended before its first document'),
       )
     }
     return new Promise<Snapshot>((resolve, reject) => {
@@ -1695,7 +1842,7 @@ class LiveStream implements LiveFeed {
       }
       timer = setTimeout(() => {
         this.#waiting.delete(waiter)
-        reject(refusalFrom('watch', `no document arrived within ${Math.round(this.#budget / 1000)}s`))
+        reject(refusalFrom(this.#operation, `no document arrived within ${Math.round(this.#budget / 1000)}s`))
       }, this.#budget)
       this.#waiting.add(waiter)
     })

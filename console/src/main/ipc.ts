@@ -508,7 +508,7 @@ export const LAUNCH_PAYLOAD_WIDTH =
   LAUNCH_TASK_RAW_LIMIT + LAUNCH_TITLE_RAW_LIMIT + LAUNCH_PLAN_TASK_RAW_LIMIT + 4096
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Thirty-six operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Thirty-seven operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -533,6 +533,14 @@ export const LAUNCH_PAYLOAD_WIDTH =
  * only argv here whose one argument is held to a closed grammar *and* to a
  * membership a previous read of the same document listed (F21) -- its own row
  * below says why.
+ *
+ * **CG9b's `graph --watch --json` is this surface's twenty-second argv** (the
+ * graph plan's CG9b): the same document, streamed. It is the first argv here
+ * whose child is meant to live past its answer, which is why it is the first row
+ * whose command path carries a **mode** (`graph --watch`) rather than only the
+ * command's own words, and why its row below says what stops it: the Graph tab
+ * leaving the screen, which the renderer states with the one argument of this
+ * surface that reaches no argv at all.
  *
  * **T1.2's `coordinator status --from-store --all --json` is this surface's
  * fifteenth argv** (Bitbucket credentials T1.2, D364): the project view, read
@@ -892,8 +900,8 @@ export const CONSOLE_OPERATIONS = [
   // the CLI's own sources array never mentioned, is a refusal and not a spawn.
   // The read is also the one place the console may name a *paid* command
   // (`ee/graph`, D1362), which is why it takes no other word: the `--watch`
-  // stream that would hold a child open is a different argv and a later task's
-  // row (CG9b).
+  // stream that holds a child open is a different argv and its own row
+  // (`graph.watch`, below, which CG9b landed).
   {
     name: 'graph.read',
     method: 'graphRead',
@@ -906,6 +914,43 @@ export const CONSOLE_OPERATIONS = [
         kind: 'graphSource',
         required: false,
         why: '`newGraphCmd` has this flag and its set is closed: `all` (the command’s own default, the union of the scopes that exist), `coordinator` (the stored view), and `orchestrator:<id>` / `local:<id>` for the scopes a later release adds -- both of which today answer "no orchestrator is installed in this build", which is a refusal and not an empty graph. The pattern is the CLI’s own (`graph.ParseScope`), so a value this surface admits is a value that command reads. It is optional because the command has a default of its own (`all`), so a caller that names no scope is answered rather than refused.',
+      },
+    ],
+  },
+  // The Graph's own live feed (the graph plan's CG9b; `console/docs/
+  // json-contract.md` §6.22 and §10, the design's H4 to H6): `fugaro graph
+  // --watch --json`, the same versioned document the read above prints, printed
+  // again as a whole on every change.
+  //
+  // **It is the surface's first long-lived child**, and three things follow from
+  // that which no read above needed. It is held **only while the Graph tab is on
+  // screen** (`visible` below, H6), so the console does not pay for a
+  // subscription nobody is looking at. It is counted with the live feeds against
+  // `MAX_LIVE_FEEDS` (`src/source/cli.ts`), because a long-lived child is what
+  // that ceiling exists for. And `--watch` is a word of its **command path**
+  // rather than a member of its `flags`: the surface fixes nothing here that a
+  // screen can turn off, and the never table's `--watch` row carries this one
+  // operation as its `except` -- the graph has no `watch` word for the console to
+  // use instead, which is what makes its streaming form a row of its own rather
+  // than a second name for another read.
+  {
+    name: 'graph.watch',
+    method: 'graphWatch',
+    command: 'graph --watch',
+    flags: ['--json'],
+    summary: 'the dependency graph, re-printed as one whole document on every change',
+    args: [
+      {
+        key: 'source',
+        kind: 'graphSource',
+        required: false,
+        why: 'the scope the stream is about, on `graph.read`’s own terms: `all` (the command’s default, the union of the scopes that exist), `coordinator`, or `orchestrator:<id>` / `local:<id>` for the scopes a later release adds. It is the same closed grammar the read above is held to (`GRAPH_SCOPE_RE`) and, at the source, the same membership rule: a scope no previous document of this installation listed is refused before a child exists (F21), so a renderer cannot hold a stream open on a scope that exists nowhere. It is optional because the command has a default of its own, exactly as the read’s is.',
+      },
+      {
+        key: 'visible',
+        kind: 'flag',
+        required: false,
+        why: '**the one argument on this surface that reaches no word of any argv** (`src/main/spawn.ts`’s row declares it with `flag: null`, the way the launch’s task text is declared): it decides whether the child runs at all. A caller sends `visible: false` when the Graph tab is left or the window is hidden, and the handler stops the feed instead of polling it -- so the console holds a `graph --watch` child only while somebody is looking at the graph (H6). It is `false` and never absent because absent means "poll it": the two states are the whole of what a screen has to say about a feed it started.',
       },
     ],
   },
@@ -1685,6 +1730,27 @@ export interface NeverReachable {
    * other two shapes: a `command` row *is* the command, and a `flag` row is
    * about every command at once. */
   readonly command?: string
+  /**
+   * `except` is the operations a `flag` row does **not** apply to, by operation
+   * name, and it is how one argv on this surface may carry a word the table
+   * refuses everywhere else. It exists for a word that is the *only* way into a
+   * command's stream rather than a second name for a read the console already
+   * has: `--watch` on `runs ls` is `watch` under another name and stays refused
+   * on every command, but `graph --watch` is `graph`'s own streaming form --
+   * there is no `fugaro graph watch` word to use instead -- so `graph.watch` is
+   * the one name here.
+   *
+   * **It is keyed by operation and never by command.** A name is the whole of
+   * what this surface has: a caller that does not say which operation it is
+   * asking about gets the row's refusal like any other (`isNeverReachable`
+   * below), so `assertReachableSurface` and the per-row tests still refuse the
+   * bare word, and a second argv on `graph` would be a second surface row rather
+   * than a second member of this list. The check that an exception is *used* is
+   * `src/main/spawn.ts`'s: a row whose argv carries the word is refused there
+   * unless the operation is on this list, and this list admits nothing the spawn
+   * table does not build.
+   */
+  readonly except?: readonly string[]
 }
 
 /**
@@ -2110,6 +2176,16 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     value: '--watch',
     why: '`watch` under another name; the console uses `watch`',
     where: 'internal/cli/runs.go:107',
+    // The one exception on this table (the graph plan's CG9b): `graph --watch
+    // --json` is the graph's own stream and not a second name for another read
+    // -- `fugaro graph` has no `watch` word and no other command prints the
+    // graph -- so `graph.watch` is the one operation that may carry it. Every
+    // other command's `--watch` is refused exactly as before, and the exception
+    // is one operation's: the word is matched against `operation.flags` *and*
+    // against the argv's command path (`src/main/spawn.ts`'s `assertArgvFlags`),
+    // so what is admitted is the row that builds `graph --watch --json` and
+    // nothing else.
+    except: ['graph.watch'],
   },
   {
     shape: 'flag',
@@ -2144,14 +2220,30 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
  * and a command path is not a prefix of another command path here (`runs ls` is
  * not `run`) -- and its flags are matched one by one, so `doctor --json` is
  * allowed while `doctor --json --check-github-app` is not.
+ *
+ * A flag row's `except` names the operations that row does not apply to, and it
+ * is read only when the caller names the operation it is asking about: the word
+ * itself is refused for every other operation and for a caller that names none,
+ * so an exception is a fact about one argv on the surface rather than a
+ * permission for a word (`graph.watch`'s row above).
  */
 export function isNeverReachable(operation: {
+  /** `name` is the operation asking, and it is **optional on purpose**: the
+   * table's flag rows are blanket refusals, and only a caller that says which
+   * operation it is asking about can be one of a row's `except` names. A caller
+   * that names none -- a test asking whether the bare word is reachable at all --
+   * gets the refusal, which is what keeps "the word alone is never allowed" the
+   * answer here. */
+  readonly name?: string | null
   readonly command: string | null
   readonly flags: readonly string[]
 }): NeverReachable | null {
   for (const entry of NEVER_REACHABLE) {
     if (entry.shape === 'command' && entry.value === operation.command) return entry
-    if (entry.shape === 'flag' && operation.flags.includes(entry.value)) return entry
+    if (entry.shape === 'flag' && operation.flags.includes(entry.value)) {
+      const name = operation.name ?? null
+      if (name === null || entry.except === undefined || !entry.except.includes(name)) return entry
+    }
     // An `argv` row is about one word on one command, and it matches an
     // operation whose command path is that command *or* a longer path under it,
     // because the launch's own command carries two fixed words of its argv

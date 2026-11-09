@@ -884,14 +884,20 @@ func TestDocsDesktopConsoleContractStatesTheRunsStatsOwnViewRefusal(t *testing.T
 }
 
 // TestDocsDesktopConsoleContractStatesWhichDocumentsAreLineDelimited: the
-// console's own set has exactly two line-delimited documents, and they do it
-// through two different code paths -- the watch feed through json.NewEncoder
-// with no SetIndent, the log lines through json.Marshal in printLogEntry. A
-// document that claims only the feed is line-delimited, or that calls the log
-// form indented, builds the log reader on the wrong parser, which is what a
-// review of the first revision found here.
+// console's own set has three line-delimited documents, and they do it through
+// two different code paths -- the watch feed through json.NewEncoder with no
+// SetIndent and the graph's stream through WriteDoc, the log lines through
+// json.Marshal in printLogEntry. A document that claims only the feed is
+// line-delimited, or that calls the log form indented, builds the log reader on
+// the wrong parser, which is what a review of the first revision found here.
 //
-// The claim is scoped to the console's set, and the third line-delimited
+// The count moved once, and the move is why the graph's stream is quoted here:
+// the graph plan's CG9b puts `graph --watch --json` on the console's spawn
+// table, which is what makes section 6.22's compact stream a document of the
+// console's own set -- before it, the document said the graph was not in the
+// set and named CG9b as the task that would move the count with its row.
+//
+// The claim is scoped to the console's set, and the fourth line-delimited
 // document this file describes -- `fugaro cancel RUN --json` (section 6.3),
 // which is a write the console never spawns -- is stated separately and
 // asserted here too. A second review found the document claiming "exactly two
@@ -905,12 +911,12 @@ func TestDocsDesktopConsoleContractStatesWhichDocumentsAreLineDelimited(t *testi
 		what   string
 		quotes []string
 	}{
-		{"the two in the console's set are line-delimited", []string{
+		{"the three in the console's set are line-delimited", []string{
 			"one compact `logLine` object per line",
 			"printLogEntry",
 			"json.Marshal",
-			"Exactly two of the commands in the console's set are line-delimited",
-			"`watch --json` and `logs RUN\n   --json`",
+			"Three of the commands in the console's set are line-delimited",
+			"`watch --json`, `logs RUN\n   --json` and `graph --watch --json`",
 			"Every other command in that set is indented",
 		}},
 		{"cancel's document is compact, outside that set", []string{
@@ -1345,7 +1351,7 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the twenty-six argvs and nothing else -- the console's one spawn table
+// the twenty-seven argvs and nothing else -- the console's one spawn table
 // (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
 // dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
@@ -1400,6 +1406,15 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// optional the way `plan status --json`'s `--all` is: the row's cell
 		// spells the command's argv and names the argument in its parenthesis.
 		"graph --json",
+		// The same graph as a live feed (the graph plan's CG9b, the
+		// `graph.watch` operation): a long-lived child that re-prints the whole
+		// document on every change, which is what makes this the one row here
+		// whose command path carries `--watch` -- the never table's flag, given
+		// this one operation as its exception. Read-only and no path, for the
+		// row above's reason exactly; its scope is the row above's, and the
+		// `visible` argument the window sends to stop the child reaches no word
+		// of this argv, so the row spells the command's argv back whole.
+		"graph --watch --json",
 		// The project view (Bitbucket credentials T1.2, the
 		// `coordinator.status` operation): read-only, no path in the argv.
 		// `--from-store` is what makes it need no host credential at all --
