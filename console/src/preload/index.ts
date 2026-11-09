@@ -89,7 +89,7 @@ export const BRIDGE_VERSION = 1
  * nothing failing, because the runtime tests in `test/unit/ipc.test.ts` pin the
  * same sets against the table and the object is built from that table anyway.
  * `satisfies` checks each row's shape without widening anything, so a row that
- * is not a name and a method is still a compile error, and the thirty-six names
+ * is not a name and a method is still a compile error, and the thirty-seven names
  * stay literal -- which is what makes `ExposedName`, `ExposedMethod` and
  * `ConsoleBridge` below the closed things their comments say they are.
  *
@@ -258,8 +258,8 @@ export const BRIDGE_VERSION = 1
  * set (`GRAPH_SCOPE_RE`, `src/main/ipc.ts`), and `src/source/cli.ts` refuses a
  * scope no previous document of this read listed, so a renderer can name only a
  * scope the document itself offered (F21). The command is a **paid** one
- * (`ee/graph`, D1362), and its `--watch` stream form is a different argv: it is
- * not on this surface, and CG9b is the task that will put it there.
+ * (`ee/graph`, D1362), and its `--watch` stream form is a different argv, which
+ * CG9b put on this surface as the thirty-seventh row (`graph.watch`).
  *
  * **The managed screens' plan's CM4 added the thirty-third and thirty-fourth**
  * (`managed.status` / `managedStatus` and `policy.show` / `policyShow`, the
@@ -287,6 +287,18 @@ export const BRIDGE_VERSION = 1
  * (`src/main/licence-store.ts`), and the CLI is handed the key in its
  * **environment** and never in an argv (S2.1's hand-off, rule 8), so these two
  * have no argv for a row to describe at all.
+ *
+ * **The graph plan's CG9b added the thirty-seventh** (`graph.watch` /
+ * `graphWatch`, the same screen's live feed -- `fugaro graph --watch --json`)
+ * and left the other thirty-six exactly where they were. It is **not in 0.119.0**
+ * through 0.122.0 as they shipped: it lands in the release that carries CG9b. It
+ * sits directly under `graph.read`, whose argv it is with one word added, and it
+ * is the third row here whose method has an argument that **reaches no word of
+ * any argv** (the settings write's layer and the two licence rows' keys are the
+ * others, and the reason is theirs: what a renderer may vary is bounded by this
+ * table, and a value that can name no word cannot widen a command line). Its
+ * `visible` argument is what the Graph tab says when it goes away (H6): `false`
+ * stops the child, and there is no value of it that starts one.
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],
@@ -314,9 +326,21 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // one argument is the scope, and it is the surface's narrowest: `src/main/
   // ipc.ts`'s `GRAPH_SCOPE_RE` admits the CLI's own closed set and nothing
   // else, and `src/source/cli.ts` refuses a scope the previous document did not
-  // list -- so a renderer cannot name one the read never offered (F21). The
-  // `--watch` stream form is a different argv and is not on this surface.
+  // list -- so a renderer cannot name one the read never offered (F21).
   ['graph.read', 'graphRead'],
+  // The same graph, live (the graph plan's CG9b): `fugaro graph --watch --json`,
+  // the document re-printed whole on every change, which is the argv CG9a's
+  // comment above said was a different one and not on this surface yet. It is
+  // its **own row and not an argument of the read above**, because it is an
+  // operation of its own kind: its child does not end, so what it answers is
+  // whatever the feed has now, and the console stops it when the Graph tab
+  // leaves the screen instead of leaving it to the ceiling (H6, `MAX_LIVE_FEEDS`
+  // = 4, shared with `live.watch`). Its two arguments are the same scope and a
+  // **visibility flag that reaches no word of any argv**: the renderer sends
+  // `false` when the tab goes away, and what the main process does with it is
+  // stop the child -- so the one thing this flag can do is stop a process, never
+  // start a command or add a word to one.
+  ['graph.watch', 'graphWatch'],
   ['run.diagnose', 'diagnoseRun'],
   ['run.logs', 'readRunLogs'],
   ['run.logLink', 'runLogLink'],
@@ -446,7 +470,7 @@ export const EXPOSED_OPERATIONS = Object.freeze([
 
 /**
  * ExposedName is the closed union of the operation names this file exposes --
- * thirty-six string literals, not `string`. It is the type of the `operations` list
+ * thirty-seven string literals, not `string`. It is the type of the `operations` list
  * a screen switches on, so the closure is what lets a screen be exhaustive.
  */
 export type ExposedName = (typeof EXPOSED_OPERATIONS)[number][0]
@@ -566,9 +590,9 @@ async function invokeOperation(
  *
  * The returned object is not cast into `ConsoleBridge`: it is checked against
  * it, like any other value, and that is the point of the accumulator's type. It
- * is `Record<ExposedMethod, ConsoleMethod>` -- thirty-six *named* properties,
+ * is `Record<ExposedMethod, ConsoleMethod>` -- thirty-seven *named* properties,
  * because `ExposedMethod` is a union of literals -- so spreading it gives the
- * object literal those thirty-six properties as properties rather than as an index
+ * object literal those thirty-seven properties as properties rather than as an index
  * signature. (Before that type was literal, this line needed `as ConsoleBridge`
  * to silence the compiler, which is what made the claim untested rather than
  * checked.) The loop is what actually writes them, and a loop is a thing the
@@ -597,7 +621,7 @@ export function createConsoleBridge(ipcRenderer: RendererLike): ConsoleBridge {
  * `exposeInMainWorld` is what keeps rule 5's promise concrete: the renderer gets
  * a copy of this object, in its own world, with `contextIsolation` in between.
  * It cannot reach the preload's scope, `ipcRenderer`, or Node -- only these
- * thirty-six methods.
+ * thirty-seven methods.
  */
 export function exposeConsoleBridge(
   contextBridge: ContextBridgeLike,

@@ -17,11 +17,20 @@
 //      `formaction`, SVG `image`/`use`/`feImage` hrefs, and every CSS `url()`, `@import` and
 //      `@font-face` source in a `<style>`, a `style` attribute or a shipped `.css` file — names
 //      an origin the check admits:
-//        - scripts, stylesheets, preloads, fonts, forms and CSS urls: FIRST-PARTY ONLY (a
+//        - scripts, stylesheets, preloads, fonts and CSS urls: FIRST-PARTY ONLY (a
 //          relative URL, or the canonical origin from site.yaml). This is deliberately
 //          stricter than "on the allowed list": `allowed_hosts` lists the hosts the site LINKS
 //          to (github.com, raw.githubusercontent.com), and a link target is not a host the
 //          project may execute or style a page from (D106: no CDN).
+//        - form submissions (`form[action]`, `formaction`): first-party, OR the key service's
+//          intake and that alone (S3.3). The intake is the one service this site SENDS
+//          something to — a reader's key request — it is served on a subdomain of the site's
+//          own domain, its origin is derived from site.yaml's canonical URL by
+//          `src/lib/keys-intake.mjs` rather than written down anywhere, and admitting it is
+//          the `form-action` widening the owner approved (the design's §7.2, D451 option (a):
+//          one directive, one exact host). Nothing else about the host moves: it is not a
+//          host a page may fetch from, and a form posting to a host the site merely LINKS to
+//          is still refused.
 //        - images and media: first-party, or a host on `allowed_hosts` — which is the
 //          rule W2.4's video slot will meet: a player host that is not on the list fails here.
 //        - embedded documents (`iframe`, `frame`, `embed`, `object`): FIRST-PARTY ONLY, and
@@ -71,8 +80,9 @@
 //      none of them.
 //   6. The deployed policy, in `firebase.json`, admits exactly the origins Google documents
 //      for Google Analytics 4 without any Ads features, the exact three the campaign's three
-//      vendors document, and nothing else — no `'unsafe-inline'`, no `'unsafe-eval'`, no
-//      nonce, no hash, and no wildcard beyond the two Google documents.
+//      vendors document, the key service's intake in `form-action`, and nothing else — no
+//      `'unsafe-inline'`, no `'unsafe-eval'`, no nonce, no hash, and no wildcard beyond the two
+//      Google documents.
 //
 // The red step this file was written against: the check, run over a page carrying a Google
 // Fonts stylesheet, has to report `fonts.googleapis.com is not on the allowed-host list` —
@@ -108,6 +118,9 @@ import { buildCopy } from './lib/build.mjs'
 // configuration is allowed to appear on are `website/data/landing.yaml`'s own (G2.1), and a
 // fifth campaign is a row in that file (G2.3).
 import { loadLanding } from '../src/lib/landing.mjs'
+// The key service's intake origin, from the same one function the key request page builds its
+// form actions from (S3.3): the page and this check cannot point at two different hosts.
+import { keysIntakeOrigin } from '../src/lib/keys-intake.mjs'
 
 // ---- the allow-lists -------------------------------------------------------------------
 
@@ -215,12 +228,32 @@ const REFERENCE_RELS = new Set(['canonical', 'alternate', 'sitemap', 'author', '
 const EXECUTABLE = new Set(['', 'text/javascript', 'application/javascript', 'module'])
 const DATA_BLOCK = new Set(['application/ld+json', 'application/json'])
 
+// ---- the key service's intake (S3.3) ---------------------------------------------------
+
+/**
+ * The one origin a form on this site may post to: the key service's intake, derived from the
+ * site's canonical URL by `src/lib/keys-intake.mjs` — the same function the key request page
+ * builds its three form actions from, so the page, this check and the deployed policy's
+ * `form-action` token are one host rather than three copies of it.
+ *
+ * A function of the facts rather than a constant, because a fixture page below states its own
+ * canonical URL and is held to its own intake: `refuse` reads the origin off the facts it was
+ * handed, which is what makes the refusal provable on a page whose site is `site.example`.
+ */
+export const intakeOrigin = (facts) => keysIntakeOrigin(facts.canonicalURL)
+
+// The intake for THIS site: the policy contract below is a module-level list rather than a
+// function of the facts, so the `form-action` token it carries is derived once, here. It is the
+// one place in this file that reads site.yaml twice (the gate's own `FACTS` is the other), and
+// both are pure reads of one file.
+const SITE_INTAKE = intakeOrigin(siteFacts())
+
 // ---- classifying one URL ---------------------------------------------------------------
 
 /**
  * Why `raw` may not be loaded in `context`, or null when it may. `context` is one of
- * 'first-party' (scripts, styles, fonts, forms, CSS), 'media' (images and media) or 'embed'
- * (a framed document).
+ * 'first-party' (scripts, styles, fonts, CSS), 'form' (a form's action or a control's
+ * `formaction`), 'media' (images and media) or 'embed' (a framed document).
  */
 export function refuse(raw, context, facts) {
   // Read the URL the way a browser's URL parser does before deciding it is relative: it
@@ -243,6 +276,21 @@ export function refuse(raw, context, facts) {
     return `${url} is not a URL`
   }
   if (host === facts.canonicalHost) return null
+  if (context === 'form') {
+    // The token is the origin and not the URL, so every path on the intake is a submission this
+    // check admits: the route set is `keys.mjs`'s, which reads the page's three actions.
+    const intake = intakeOrigin(facts)
+    if (new URL(url).origin === intake) return null
+    return `${host} is not the key service's intake: a form on this site posts to this site or to ${intake}, the one service the site sends a request to (S3.3; the design's §7.2, D451)`
+  }
+  // And the intake is a form host in every OTHER context too, `media` included — which is where
+  // an entry of `allowed_hosts` would otherwise admit it, since that list is the one the media
+  // rule reads. The list carries the host so `linkcheck.mjs` can resolve the forms' actions;
+  // admitting a form host as an image host is not what that entry is for, and `site.yaml` says
+  // so beside it (S3.3).
+  if (host === new URL(intakeOrigin(facts)).host) {
+    return `${host} is the key service's intake: the one address the site SENDS a key request to, admitted in form-action and in nothing else — a page loads nothing from the service (S3.3, D106)`
+  }
   if (context === 'embed') {
     // Nothing a build emits frames another host. The campaign page's inline booking widget is
     // the site's one third-party frame and the consent gate builds it at runtime, after a
@@ -252,7 +300,7 @@ export function refuse(raw, context, facts) {
   }
   if (context === 'media' && facts.allowedHosts.has(host)) return null
   if (context !== 'media' && facts.allowedHosts.has(host)) {
-    return `${host} is on the allowed-host list as a link target, but a script, stylesheet, font, preload or form may only come from this site (D106: no CDN)`
+    return `${host} is on the allowed-host list as a link target, but a script, stylesheet, font or preload may only come from this site (D106: no CDN)`
   }
   return `${host} is not on the allowed-host list`
 }
@@ -436,13 +484,13 @@ export function pageOriginFailures(html, rel, facts, { analyticsEnabled = facts.
         check(el, 'data', 'embed')
         break
       case 'form':
-        check(el, 'action', 'first-party')
+        check(el, 'action', 'form')
         break
       case 'button':
-        check(el, 'formaction', 'first-party')
+        check(el, 'formaction', 'form')
         break
       case 'input':
-        check(el, 'formaction', 'first-party')
+        check(el, 'formaction', 'form')
         check(el, 'src', 'media')
         break
       case 'image':
@@ -644,7 +692,12 @@ export function gateFailures(js, rel, facts) {
 // visitor who declines loads nothing, so what the policy admits is what a consenting visitor
 // may reach, host by host, and nothing else. `frame-src` is the new directive: Calendly's
 // widget embeds the booking page in an iframe, and the host is the booking link's own — the
-// one `landing.yaml` writes — rather than the assets host its script comes from.
+// one `landing.yaml` writes — rather than the assets host its script comes from. And there is
+// one directive the site SENDS something under rather than loads: `form-action`, whose second
+// token is the key service's intake — the owner approved that widening for the
+// key request page (S3.3; the design's §7.2, D451 option (a): one directive, one exact host).
+// The token is derived from site.yaml's canonical URL, so it is the same origin the page's own
+// three form actions are built from and the same one `linkcheck.mjs` resolves them against.
 export const CSP_DIRECTIVES = new Map([
   ['default-src', ["'self'"]],
   ['script-src', ["'self'", ANALYTICS_ORIGIN, 'https://connect.facebook.net', 'https://snap.licdn.com', 'https://assets.calendly.com']],
@@ -656,7 +709,7 @@ export const CSP_DIRECTIVES = new Map([
   ['manifest-src', ["'self'"]],
   ['object-src', ["'none'"]],
   ['base-uri', ["'self'"]],
-  ['form-action', ["'self'"]],
+  ['form-action', ["'self'", SITE_INTAKE]],
   ['frame-ancestors', ["'none'"]],
   ['upgrade-insecure-requests', []],
 ])
@@ -685,7 +738,7 @@ export function cspFailures(policy) {
     for (const value of values) {
       if (!allowed.includes(value)) {
         out.push(
-          `${name} admits ${value}: the policy carries exactly the tokens this contract lists for ${name} (${allowed.join(', ')}) — the origins Google documents for Google Analytics 4 without Ads features, the exact three the campaign's vendors document, and this site's own — and no 'unsafe-inline', 'unsafe-eval', nonce, hash or wildcard beyond the three the vendors themselves document (Google's two and, in img-src alone, the owner's ruling of 2026-10-31 on LinkedIn's)`,
+          `${name} admits ${value}: the policy carries exactly the tokens this contract lists for ${name} (${allowed.join(', ')}) — the origins Google documents for Google Analytics 4 without Ads features, the exact three the campaign's vendors document, and this site's own — and no 'unsafe-inline', 'unsafe-eval', nonce, hash or wildcard beyond the three the vendors themselves document (Google's two and, in img-src alone, the owner's ruling of 2026-10-31 on LinkedIn's). form-action carries the key service's intake, where the key request page's three forms post (S3.3), and that host is admitted in no other directive`,
         )
       }
     }
@@ -947,6 +1000,9 @@ test('every way a page can fetch from another host is refused', () => {
     ['a tab-split protocol-relative script', { head: '<script src="/&#9;/cdn.example.net/x.js"></script>' }, /protocol-relative/],
     ['a plain-http image', { body: '<img src="http://site.example/a.png" alt="">' }, /http:/],
     ['a form posting elsewhere', { body: '<form action="https://collect.example.net/"><label>e<input name="e"></label></form>' }, /collect\.example\.net/],
+    ['a form posting to a host the site links to', { body: '<form action="https://github.com/"><label>e<input name="e"></label></form>' }, /is not the key service's intake/],
+    ['a formaction posting elsewhere', { body: '<form action="/x"><label>e<input name="e"></label></form><button formaction="https://collect.example.net/">s</button>' }, /collect\.example\.net/],
+    ["an image fetched from the site's own intake", { body: '<img src="https://keys.site.example/p.gif" alt="">' }, /keys\.site\.example is the key service's intake/],
     ['a <base>', { head: '<base href="https://cdn.example.net/">' }, /<base>/],
     ['a meta refresh', { head: '<meta http-equiv="refresh" content="0;url=https://elsewhere.example.net/">' }, /refresh/],
     ['an inline handler', { body: '<a href="/" onclick="track()">x</a>' }, /onclick/],
@@ -961,6 +1017,22 @@ test('every way a page can fetch from another host is refused', () => {
     const failures = failuresOf(page(fixture))
     assert.ok(failures.some((f) => expected.test(f)), `${what} was not refused as expected (${expected}); the check said:\n  ${failures.join('\n  ') || '(nothing)'}`)
   }
+})
+
+test('a form posting to the site\'s own intake passes, and a host that merely starts with it does not', () => {
+  // The control for the form context (S3.3): without it, the refusal above would be provable by a
+  // rule that refuses every form, and the key request page could not post anywhere at all.
+  const intake = intakeOrigin(FIXTURE_FACTS)
+  const form = (action) => page({ body: `<form method="post" action="${action}"><label for="e">e</label><input id="e" name="e"></form>` })
+  assert.deepEqual(failuresOf(form(`${intake}/free-seat`)), [], 'a form posting to the site\'s own intake is refused, so the page cannot make the one request it exists to make')
+
+  // The classic prefix defect: a host whose name begins with the admitted one. The comparison is
+  // the origin, not a string prefix, and this is the case that says which.
+  const lookalike = failuresOf(form(`https://keys.site.example.attacker.example/free-seat`))
+  assert.ok(
+    lookalike.some((f) => /is not the key service's intake/.test(f)),
+    `a host that merely starts with the intake's name is admitted, so the form context compares a prefix rather than the origin:\n  ${lookalike.join('\n  ') || '(nothing)'}`,
+  )
 })
 
 test('with the flag off a link naming a vendor is a reference, and a load of one is still refused', () => {
@@ -1113,6 +1185,43 @@ test('the deployed policy carries what Google documents for GA4 without Ads feat
     [new URL(loadLanding().calendlyURL).origin],
     'the policy frames a page and website/data/landing.yaml writes another: the campaign has one booking address',
   )
+})
+
+test('the key request page posts to the one host the deployed policy admits a form on', () => {
+  // The form half of the policy contract, read from both ends at once: the origin the page's own
+  // actions are built from (site.yaml's canonical URL through `src/lib/keys-intake.mjs`), the
+  // directive the policy admits it in, and nowhere else in the policy (S3.3; the design's §7.2,
+  // D451 option (a) — one directive, one exact host).
+  const intake = intakeOrigin(FACTS)
+  const page = builtPages(DIST).find((p) => p.url === '/keys/')
+  assert.ok(
+    page,
+    'the build carries no /keys/ page: the deployed policy admits a form host and this case reads it against the page whose forms post there (S3.3; website/test/keys.mjs holds the routes)',
+  )
+  const actions = [...walk(parse(page.html))]
+    .filter((el) => el.name === 'form' && el.attrs.has('action'))
+    .map((el) => el.attrs.get('action'))
+  assert.equal(actions.length, 3, `${page.rel} carries ${actions.length} form action(s); the key request page is the three ways to ask for a key`)
+  assert.deepEqual(
+    [...new Set(actions.map((action) => new URL(action).origin))],
+    [intake],
+    `${page.rel} posts to ${actions.join(', ')} and the intake derived from site.yaml is ${intake}: the page's actions and the policy's token are one host, derived rather than written down twice`,
+  )
+
+  const directives = new Map(deployedCSP().split(';').map((part) => part.trim().split(/\s+/).filter(Boolean)).filter((t) => t.length).map(([name, ...values]) => [name, values]))
+  assert.deepEqual(
+    directives.get('form-action'),
+    ["'self'", intake],
+    `firebase.json's form-action is ${JSON.stringify(directives.get('form-action'))}: the key request page's forms post to the intake, and form-action 'self' alone would block the one request the page exists to make (S3.3)`,
+  )
+  for (const [name, values] of directives) {
+    if (name === 'form-action') continue
+    assert.ok(
+      !values.includes(intake),
+      `firebase.json admits ${intake} in ${name}: the intake is the host the site SENDS a key request to, and the approved widening is ` +
+        "form-action 'self' plus that one host alone (the design's §7.2, D451 option (a)) — admitting it anywhere else would let a page fetch from the service",
+    )
+  }
 })
 
 test('a shipped stylesheet or script file naming another host is refused', () => {

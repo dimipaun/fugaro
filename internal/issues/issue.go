@@ -82,14 +82,29 @@ const (
 	StatusSubmitted Status = "submitted"
 	// StatusDismissed was filed or set aside by a person.
 	StatusDismissed Status = "dismissed"
+	// StatusResolved was confirmed fixed by a release, which the pass
+	// `fugaro update` runs records in ResolvedIn (the update command's own
+	// spec, D1736). Only the shared store's transition writes it: a local
+	// file carries one because `fugaro issue sync` copied it from there.
+	StatusResolved Status = "resolved"
 )
 
-// Valid reports whether s is one of the three statuses a record may carry.
+// Valid reports whether s is one of the four statuses a record may carry.
 func (s Status) Valid() bool {
-	return s == StatusPending || s == StatusSubmitted || s == StatusDismissed
+	return s == StatusPending || s == StatusSubmitted || s == StatusDismissed || s == StatusResolved
 }
 
-// UnmarshalYAML refuses a status outside the three, for the reason Class
+// decided reports whether the issue stands where something outside this
+// machine put it: filed on GitHub, or confirmed fixed by a release the
+// resolver recorded. Neither is moved back — a hit on one is an occurrence and
+// a bug that came back is a new upload, never a rewrite of the record (F9,
+// F21) — so the shared store refuses to claim, to file and to set aside an
+// issue that carries one. `dismissed` is not decided: it is the value
+// SetSharedStatus itself writes, and setting an issue aside again is that
+// call's own no-op.
+func (s Status) decided() bool { return s == StatusSubmitted || s == StatusResolved }
+
+// UnmarshalYAML refuses a status outside the four, for the reason Class
 // gives.
 func (s *Status) UnmarshalYAML(node *yaml.Node) error {
 	var raw string
@@ -98,11 +113,29 @@ func (s *Status) UnmarshalYAML(node *yaml.Node) error {
 	}
 	v := Status(raw)
 	if !v.Valid() {
-		return fmt.Errorf("issues: %q is not a status, want %q, %q or %q", raw, StatusPending, StatusSubmitted, StatusDismissed)
+		return fmt.Errorf("issues: %q is not a status, want %q, %q, %q or %q", raw, StatusPending, StatusSubmitted, StatusDismissed, StatusResolved)
 	}
 	*s = v
 	return nil
 }
+
+// ClosedAs is why an issue closed without being fixed. A person setting an
+// issue aside here records nothing — they are the reason, and the file says so
+// by its status — while GitHub's own reasons are carried into the shared
+// record, so the team reads why an issue closed and not only that it did
+// (D1752).
+type ClosedAs string
+
+const (
+	// ClosedNotPlanned was closed as not planned.
+	ClosedNotPlanned ClosedAs = "not_planned"
+	// ClosedDuplicate was closed as a duplicate of another issue.
+	ClosedDuplicate ClosedAs = "duplicate"
+)
+
+// Valid reports whether c is one of the two reasons a record may carry, or
+// the empty value of an issue that did not close this way.
+func (c ClosedAs) Valid() bool { return c == "" || c == ClosedNotPlanned || c == ClosedDuplicate }
 
 // Issue is one issue: the header a reader outside this binary consumes and
 // the body the user reads. The header's field names are the wire names, so
@@ -135,8 +168,27 @@ type Issue struct {
 	FugaroVersion string `yaml:"fugaro_version"`
 	// OS is the platform that failed.
 	OS string `yaml:"os"`
+	// Installation is the installation this issue was saved in: the digest of
+	// the runs bucket URL (`Digest`), so a machine that serves two projects
+	// never files one project's issue into the other and `issue mine` in one
+	// never prints the other's (F8b). Empty on a record saved before there was
+	// a field to stamp, which no project claims.
+	Installation string `yaml:"installation"`
 	// Status is where the issue stands.
 	Status Status `yaml:"status"`
+	// ClosedAs is why an issue closed without being fixed, empty otherwise:
+	// the reason GitHub gives, recorded when the pass `fugaro update` runs
+	// sets the issue aside (D1752).
+	ClosedAs ClosedAs `yaml:"closed_as"`
+	// SubmittedAt, ResolvedAt and DismissedAt are when the issue reached that
+	// status, stamped by the one writer that makes the transition (D1781).
+	// This is the one part of the header a record may leave out: an absent one
+	// is a transition that has not happened, and the reader that shows a date
+	// shows nothing for it. The retirement of a finished issue is what needs
+	// them, so a record that carries none is never hidden (F4).
+	SubmittedAt *time.Time `yaml:"submitted_at,omitempty"`
+	ResolvedAt  *time.Time `yaml:"resolved_at,omitempty"`
+	DismissedAt *time.Time `yaml:"dismissed_at,omitempty"`
 	// URL is the GitHub issue this was filed as, once it has been.
 	URL string `yaml:"url"`
 	// Uploaded says the issue is in the shared store.
@@ -179,8 +231,9 @@ func (i Issue) FileName() (string, error) {
 
 // Validate refuses a record this package would not write: a version it does
 // not read, a run stem that is not D1609's shape, a number outside the field
-// the file name prints, a class or a status it does not know, and a header
-// value that spans lines — which would break the fence the body follows.
+// the file name prints, a class or a status it does not know, an installation
+// that is not a digest, a transition time that is not UTC, and a header value
+// that spans lines — which would break the fence the body follows.
 func (i Issue) Validate() error {
 	if i.Version != 0 && i.Version != RecordVersion {
 		return fmt.Errorf("issues: the record is version %d, and this fugaro writes %d", i.Version, RecordVersion)
@@ -203,7 +256,25 @@ func (i Issue) Validate() error {
 		return fmt.Errorf("issues: %q is not a class, want %q or %q", i.Class, ClassFugaro, ClassUnclear)
 	}
 	if !i.Status.Valid() {
-		return fmt.Errorf("issues: %q is not a status, want %q, %q or %q", i.Status, StatusPending, StatusSubmitted, StatusDismissed)
+		return fmt.Errorf("issues: %q is not a status, want %q, %q, %q or %q", i.Status, StatusPending, StatusSubmitted, StatusDismissed, StatusResolved)
+	}
+	if !i.ClosedAs.Valid() {
+		return fmt.Errorf("issues: %q is not a way an issue closed, want %q or %q", i.ClosedAs, ClosedNotPlanned, ClosedDuplicate)
+	}
+	if err := validateInstallation(i.Installation); err != nil {
+		return err
+	}
+	for _, f := range []struct {
+		name string
+		at   *time.Time
+	}{
+		{"submitted_at", i.SubmittedAt},
+		{"resolved_at", i.ResolvedAt},
+		{"dismissed_at", i.DismissedAt},
+	} {
+		if err := validateStamp(f.name, f.at); err != nil {
+			return err
+		}
 	}
 	if i.Created.IsZero() {
 		return errors.New("issues: the record has no creation time")
@@ -231,6 +302,38 @@ func (i Issue) Validate() error {
 		return fmt.Errorf("issues: %q is not a fingerprint, want the SHA-256 of the signature in lowercase hex", i.Fingerprint)
 	}
 	return nil
+}
+
+// validateInstallation refuses a value that is not the digest a saved issue
+// carries. It is the shape the snapshot's file name takes, because it is the
+// same value — a digest of the runs bucket URL — and one rule for it is one a
+// reader cannot get wrong. Empty is the value of a record saved before there
+// was a field to stamp, and of one a caller saved with no project to name.
+func validateInstallation(digest string) error {
+	if digest == "" || installationRE.MatchString(digest) {
+		return nil
+	}
+	return fmt.Errorf("issues: %q is not an installation digest", digest)
+}
+
+// validateStamp refuses a transition time that is not UTC. A record is read by
+// the whole team and by machines in other zones, and a header that spelled an
+// instant with an offset — a hand-edit, or a writer that kept its own zone —
+// would print a time a reader has to convert before comparing it with another
+// issue's.
+func validateStamp(name string, at *time.Time) error {
+	if at == nil || at.Location() == time.UTC {
+		return nil
+	}
+	return fmt.Errorf("issues: %s is %s, which is not UTC", name, at.Format(time.RFC3339))
+}
+
+// stamp is the instant a transition is recorded at: the caller's own clock, in
+// UTC, to the second, because what a reader of a date column needs is the
+// instant and not a fraction of a second.
+func stamp(now time.Time) *time.Time {
+	at := now.UTC().Truncate(time.Second)
+	return &at
 }
 
 // Marshal renders the record: its header, then the body's four sections in

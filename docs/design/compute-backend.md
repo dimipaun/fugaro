@@ -3455,13 +3455,53 @@ recipe — the one route it leaves, the gid baked into the image, is untested
   fresh project (§1.9, Task 6). **Built** (Task 6): the module's bindings are
   `google_project_iam_member` resources that name the accounts it creates, so
   Terraform orders the account before the binding — but ordering is not a
-  wait, so the stage also retries: an apply that fails with "Service account
-  … does not exist" waits (15 s, 30 s, 60 s, 120 s), re-plans, and applies
-  what is left, and only when the new plan passes the guard and the grant
-  rules and holds nothing the confirmed plan did not (`computeStage.apply`,
-  `TestComputeStageRetriesIAMPropagation`). Which message GCP gives for the
+  wait, so the stage also retries: an apply that fails only on that gap is
+  planned, guarded and granted again, on the same three waits (20 s, 60 s,
+  120 s), and what is left is applied, and only when the new plan passes the
+  guard and the grant rules and holds nothing the confirmed plan did not
+  (`computeStage.apply`, `propagationRetry`, `TestComputeStageRetriesIAMPropagation`).
+  The gap is one entry of the closed list `tf.PropagationFailure` holds, and
+  **every** cloud root of the converge runs its plan/gate/apply cycle through
+  the retry on that list: `installRoot` for the installation, `planRepo` for
+  the repository, `applyRoot` for the Firebase root (whose signer account and
+  the binding that names it are created in one apply,
+  `modules/firebase/iam.tf`) and `computeStage.apply` here. Two applies INSIDE
+  those roots are not wrapped, and they are named here rather than left to the
+  "every":
+
+  - The Installation stage's second apply, `fillCredentialsAudience` (the
+    service's own URL written back onto the revision the apply before it
+    created). Its plan is an in-place update of a service the earlier apply
+    left in the state, and the closed list asks for a resource the SAME apply
+    creates, so nothing in that plan can be classified at all: the gap there
+    would be the earlier apply's, and that one retries.
+  - The retirement's own apply, `retirePlan` (reached by a plain managed
+    update and by `--retire`). This one is a real gap and it is left open: a
+    retirement is the one apply whose document the second confirmation — typed,
+    or the managed gate's admission in its place — is about, and a retry that
+    applied a re-plan under it would be applying a document that flow never
+    confirmed. Closing it is a decision about what a re-plan may hold before it
+    is applied in the confirmed document's place (the containment
+    `unconfirmed` gives the compute stage's re-plan, and a retirement has no
+    equivalent of it), not a swap of the call — and until it is closed, a
+    propagation error in a retirement still stops the run and asks for the
+    re-run the HARD RULE forbids.
+  The list reads a tail of the apply's stderr that is the classifier's own and
+  much longer than the 4096 bytes the message shows (`tf.go`'s
+  `stderrEvidence`): a fresh project's binding set is more diagnostics than a
+  terminal's worth of text, and reading the display tail as the whole would
+  make the retry do nothing in exactly the case it exists for. Past that bound
+  it fails closed, as it must.
+  A retried step leaves its trail: an apply a managed project's gate admitted
+  records that admission before the retry judges the next plan
+  (`initRun.applyAndRecord`, D1014), because the failure the retry absorbs is
+  one where the apply created what the plan named — a record written only after
+  the retry would carry the digest of the plan that landed and of nothing that
+  came before it.
+  Which message GCP gives for the
   gap is what a live run (57b) has to confirm rather than a fake; a gap
-  reported in other words fails the stage, and rerunning it applies the rest.
+  reported in other words is not on the list, fails the stage, and rerunning
+  it applies the rest.
   What Task 6 also retries is the call that follows the apply: starting the preload
   rebuild, whose scheduler agent's binding on the preload account is seconds
   old (`infra.RunSchedulerJob`: a 403 is retried for about a minute, a 404 —
