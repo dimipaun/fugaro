@@ -2979,6 +2979,33 @@ The third is the wall rather than the first two: **any** new staged workflow fil
 
 **Everything that has to move with it if it is staged later.** The copy is `cp docs/pending-workflows/ci.yml .github/workflows/ci.yml` followed by a `git rm` of the staged copy, **re-based on the live `.github/workflows/ci.yml` first** — a staged copy is a snapshot, and copying a stale one in silently reverts every edit main made to `ci.yml` since it was staged. The two guards above and `docs/plans/2026-10-19-compute-backend.md`'s Global Constraint 3 have to be rewritten in that commit, and this document's opening line and `website/README.md`'s last paragraph because the file is staged at all. `CONTRIBUTING.md:25` and `:32` — read at those line numbers by `internal/cli/docs_contributing_cla_test.go` — are not moved by the staging itself, which leaves them green; they go false when the file is copied in, so they belong in the same commit. The other half of this section, the `internal/runner` bound above, is the same shape and can go in the same commit.
 
+**The change outstanding now, a third one: the key service's Terraform never runs in CI (2026-11-09, S3.5).** `ee/keyservice/terraform/` holds the key service's two roots — the key ring with the licence-signing keys and the signer role, and the intake/minter pair with their identities — and its suite is `ee/keyservice/terraform/infra_test.go`, a `//go:build terraform` file. No job runs it. The `test` job's `go vet -tags terraform ./...` (.github/workflows/ci.yml:60) **type-checks** it, so it cannot rot into not compiling, and its own `go test -race ./...` is untagged, so it compiles the package to no test at all; the `terraform` job's `terraform fmt -check -recursive deploy/terraform` covers the other tree, its root loop covers the four roots under `deploy/terraform/gcp/roots/`, and its last step names `./internal/infra/... ./deploy/terraform/...`. So a push to main can widen the signer role, hand the signer grant to another account or flip the minter's `invoker_iam_disabled` with every check green — the suite that refuses each of those is simply never invoked. **Written in this section rather than staged as a copy of the file**, for the reason the two changes above give: `TestDocsComputeBackendCIReachMatchesTheTree` fails while `docs/pending-workflows/ci.yml` exists at all, and `TestStagedCIWorkflowIsTheRealOnePlusTheComputeRoot` holds a staged copy to one differing line — both were re-verified red on 2026-11-09 by staging the file with exactly the change below and running the two tests, then removing it.
+
+**What the owner changes**, in the `terraform` job: a format step of its own, so the existing line stays as it reads, a second root loop, and one more package on the last step's command.
+
+    - run: terraform fmt -check -recursive ee/keyservice/terraform
+
+    # The key service's roots: a project the owner applies with their own
+    # credentials, never an installation (§3.4 of the design). No `terraform
+    # test` step of its own — this tree carries no .tftest.hcl, its suite is
+    # the Go file the last step runs. The data directory stays outside the
+    # tree for a second reason here: the licence-notice tests walk ee/, and a
+    # provider directory under it would land in that walk.
+    - name: validate the key service's roots
+      run: |
+        for r in keyring services; do
+          [ -d "ee/keyservice/terraform/$r" ] || { echo "no Terraform root $r" >&2; exit 1; }
+          export TF_DATA_DIR="$RUNNER_TEMP/tf-ks-$r"
+          terraform -chdir=ee/keyservice/terraform/$r init -backend=false -lockfile=readonly -input=false
+          terraform -chdir=ee/keyservice/terraform/$r validate
+        done
+
+    - run: go test -tags terraform ./internal/infra/... ./deploy/terraform/... ./ee/keyservice/...
+
+The first line is the one step that needs nothing but the binary; it goes beside the `deploy/terraform` format step rather than widening it, so a failure names the tree that drifted. The `-chdir` form is the one the `deploy/terraform` loop uses in its own shape, and `-lockfile=readonly` is what makes the two committed `.terraform.lock.hcl` files the ones init uses — without it a provider update would be absorbed on a runner and never seen. `tflint` and `deploy/terraform/scan.sh` are scoped to `deploy/terraform` and this change does not extend them: the key service's tree is linted by nothing, which is a gap this section records rather than closes.
+
+**The command is verified green**, on the run that wrote this (2026-11-09): `terraform fmt -check -recursive ee/keyservice/terraform` prints nothing, `terraform -chdir=ee/keyservice/terraform/{keyring,services} init -backend=false -lockfile=readonly -input=false` and `validate` both succeed with terraform 1.16.4 and no credentials, and `GOFLAGS=-p=2 go test -tags terraform ./ee/keyservice/... -count=1` passes. Until it is applied, the suite runs where the plan's command runs it — a contributor's own machine, with the tag — and nowhere else.
+
 ## `core-without-ee.yml`
 
 **Status: `core-without-ee.yml` is applied, not pending.** It is licensing plan task **L1.7**: the check that the core builds and passes its tests with `ee/` deleted, which is the claim `LICENSING.md`, `ee/README.md` and the boundary tests under `internal/eeboundary/` all rest on. `ee/` is reserved for future organisation features under their own licence, and the one thing no test in this repository can do is delete the directory and run the suite without it — that needs a runner. One job, `core-without-ee`, on `ubuntu-latest`, `contents: read`, **no environment and no secret at all**, `timeout-minutes: 90`, every action pinned by full commit SHA: `rm -rf ee` (the deletion is never committed — it is the checkout's own working tree, which is why the job needs no write scope), then `go build ./...` and `go vet ./...` **with the default build tags**, then the tests in two steps.

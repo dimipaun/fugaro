@@ -28,6 +28,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -102,13 +103,23 @@ func tfCompact(src string) string {
 	return strings.NewReplacer(" ", "", "\t", "", "\n", "", "\r", "").Replace(src)
 }
 
-// tfHeader answers a block's first line — its kind and its name — which is what
-// the list of sanctioned grants is keyed by.
+// tfHeader answers a block's first line — its kind and its name.
 func tfHeader(block string) string {
 	if i := strings.Index(block, "{"); i >= 0 {
 		block = block[:i]
 	}
 	return strings.TrimSpace(block)
+}
+
+// tfNames names a block by the root that holds it and its header, which is how
+// every allow-list here is keyed. A header alone is not a block's identity:
+// Terraform refuses a resource declared twice in one directory, but the same
+// header in a SECOND root is a second resource, and one worth reviewing — the
+// signer role granted to a `user:` in keyring/ is a holder of it as surely as
+// one granted in services/, and a list keyed by the header alone reads the two
+// as the same line and inspects neither.
+func tfNames(root, header string) string {
+	return root + "/ " + header
 }
 
 // tfGrants reports whether a block hands an identity a role. It is deliberately
@@ -131,9 +142,9 @@ func tfGrants(header, compact string) bool {
 	return false
 }
 
-// tfList renders a map of the grants this service may hold, one per line and
-// sorted, so that a failure names the whole list rather than only the block it
-// refused: the point of the list is that a person reads it.
+// tfList renders a map of the blocks this service may hold a grant in, one per
+// line and sorted, so that a failure names the whole list rather than only the
+// block it refused: the point of the list is that a person reads it.
 func tfList(grants map[string]string) string {
 	lines := make([]string, 0, len(grants))
 	for header, why := range grants {
@@ -208,13 +219,36 @@ func tfTerraform(t *testing.T, root string) []string {
 	return files
 }
 
+// tfStrayRoots answers the files of a listing that live in no root of this
+// service. A root is a whole configuration — its own provider, its own state,
+// its own resources — and the checks here walk the two there are, so Terraform
+// under a third one is infrastructure nobody reads: the signer role granted to
+// a `user:` in a root a later change adds is a holder of it no list above
+// inspects, which is exactly how the list keyed by a header alone went wrong.
+func tfStrayRoots(files []string) []string {
+	var out []string
+	for _, rel := range files {
+		switch path.Dir(rel) {
+		case keyringRoot, servicesRoot:
+		default:
+			out = append(out, rel)
+		}
+	}
+	return out
+}
+
 // tfFiles lists the whole tree's readable Terraform, so that a sweep covers a
-// file a later change adds as well as the two roots there are today.
+// file a later change adds as well as the two roots there are today — and
+// refuses a file in a root that is not one of them, because the sweeps are
+// written against the two and a third is a configuration they never enter.
 func tfFiles(t *testing.T) []string {
 	t.Helper()
 	files := tfTerraform(t, ".")
 	if len(files) < 6 {
 		t.Fatalf("found %d .tf files: the walk did not see both roots, and a sweep over a tree it half-read proves nothing", len(files))
+	}
+	if stray := tfStrayRoots(files); len(stray) != 0 {
+		t.Errorf("this tree holds Terraform in %v, outside %s/ and %s/: a root is a whole configuration, and every check over this tree walks those two — the signer role granted to another identity in a third root is a holder of it none of them reads. Keep the configuration in the two roots, or teach these tests to walk the new one (S3.5)", stray, keyringRoot, servicesRoot)
 	}
 	return files
 }
@@ -328,8 +362,11 @@ func TestTheSigningKeyIsNonExportable(t *testing.T) {
 // intake's identity [is] refused" is this test's no.
 //
 // The mutations this fails on, and the red step the plan names first: the
-// grant's member spelled google_service_account.intake.member, and the intake
-// service's template.service_account set to the minter's account.
+// grant's member spelled google_service_account.intake.member, the intake
+// service's template.service_account set to the minter's account, and — the
+// same grant header the list already carries — a second signer grant appended
+// to keyring/, or written in a root this tree does not have today, which is why
+// both allow-lists name a root beside the header and tfFiles refuses a third.
 func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 	// Every block in the tree that grants anything at all is one of the four
 	// grants this service is allowed to hold, and the list is the whole of it.
@@ -340,11 +377,17 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 	// var.signer_role, a plain `user:` added beside the minter's account — so
 	// the discriminator is "this block grants a role" whatever it is called, and
 	// the answer for a grant nobody has reviewed is this list's absence.
+	//
+	// Each entry is keyed by the root holding it as well as by the block's
+	// header, because the header alone is not an identity: the same signer grant
+	// appended to keyring/main.tf is a second holder of the role, in a root this
+	// test's own detailed checks call home for the keys, and a list keyed by the
+	// header alone would read it as the grant services/ makes and pass it.
 	sanctioned := map[string]string{
-		`resource "google_project_iam_custom_role" "signer"`:                        "the signer role itself (keyring/), and the whole of what signing takes",
-		`resource "google_kms_key_ring_iam_member" "minter_signs"`:                  "its one grant, to the minter's account",
-		`resource "google_cloud_run_v2_service_iam_member" "intake_public"`:         "the intake's public invoker, which reaches no key at all",
-		`resource "google_cloud_run_v2_service_iam_member" "intake_invokes_minter"`: "the intake's one reach, the authenticated call to the minter",
+		tfNames(keyringRoot, `resource "google_project_iam_custom_role" "signer"`):                         "the signer role itself, and the whole of what signing takes",
+		tfNames(servicesRoot, `resource "google_kms_key_ring_iam_member" "minter_signs"`):                  "its one grant, to the minter's account",
+		tfNames(servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "intake_public"`):         "the intake's public invoker, which reaches no key at all",
+		tfNames(servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "intake_invokes_minter"`): "the intake's one reach, the authenticated call to the minter",
 	}
 	for _, rel := range tfFiles(t) {
 		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
@@ -352,8 +395,8 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 			if !tfGrants(header, tfCompact(block)) {
 				continue
 			}
-			if _, ok := sanctioned[header]; !ok {
-				t.Errorf("%s holds a grant this service is not allowed:\n%s\nthe signer role is granted in one place, to one account, so that a reader of the plan sees every identity that can mint a licence key (Check 174). The whole list of grants is:\n%s", rel, strings.TrimSpace(block), tfList(sanctioned))
+			if _, ok := sanctioned[tfNames(path.Dir(rel), header)]; !ok {
+				t.Errorf("%s holds a grant this service is not allowed:\n%s\nthe signer role is granted in one place, to one account, so that a reader of the plan sees every identity that can mint a licence key (Check 174). The whole list of grants, by the root holding each, is:\n%s", rel, strings.TrimSpace(block), tfList(sanctioned))
 			}
 		}
 	}
@@ -424,12 +467,12 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 	// value handed out is not a reach.
 	referrers := map[string]map[string]string{
 		"google_service_account.minter.": {
-			`resource "google_cloud_run_v2_service" "minter"`:          "the service that runs as it",
-			`resource "google_kms_key_ring_iam_member" "minter_signs"`: "the one identity granted the signer role",
+			tfNames(servicesRoot, `resource "google_cloud_run_v2_service" "minter"`):          "the service that runs as it",
+			tfNames(servicesRoot, `resource "google_kms_key_ring_iam_member" "minter_signs"`): "the one identity granted the signer role",
 		},
 		"google_service_account.intake.": {
-			`resource "google_cloud_run_v2_service" "intake"`:                           "the service that runs as it",
-			`resource "google_cloud_run_v2_service_iam_member" "intake_invokes_minter"`: "the one identity allowed to call the minter",
+			tfNames(servicesRoot, `resource "google_cloud_run_v2_service" "intake"`):                           "the service that runs as it",
+			tfNames(servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "intake_invokes_minter"`): "the one identity allowed to call the minter",
 		},
 	}
 	for _, rel := range tfFiles(t) {
@@ -439,8 +482,8 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 				if !strings.Contains(compact, account) {
 					continue
 				}
-				if _, ok := allowed[tfHeader(block)]; !ok {
-					t.Errorf("%s reaches %s from a block that is not one of the two the design allows:\n%s\nthe minter's account is the one identity that signs and the intake's is the one caller it has, so a third block naming either is an identity taken where it was not meant to go (Check 174)", rel, account, strings.TrimSpace(block))
+				if _, ok := allowed[tfNames(path.Dir(rel), tfHeader(block))]; !ok {
+					t.Errorf("%s reaches %s from a block that is not one of the two the design allows:\n%s\nthe minter's account is the one identity that signs and the intake's is the one caller it has, so a third block naming either — in either root — is an identity taken where it was not meant to go (Check 174)", rel, account, strings.TrimSpace(block))
 				}
 			}
 		}
@@ -528,19 +571,26 @@ func TestTheMinterHasNoPublicInvoker(t *testing.T) {
 //   - a `module` block, whose configuration is another tree these tests do not
 //     walk at all.
 //
-// None of the three is used anywhere in this repository, and a tree that gains
-// one fails until a person either removes it or teaches these tests to read it.
+// A fourth is not a form but a place: Terraform in a root that is not `keyring/`
+// or `services/`. Every sweep above walks those two, so a third root is a whole
+// configuration — its own resources, its own grants — that none of them reads,
+// and the same signer grant appended to it is a holder of the role no list here
+// inspects. The scratch case below writes one.
+//
+// None of them is used anywhere in this repository, and a tree that gains one
+// fails until a person either removes it or teaches these tests to read it.
 // The cases below are the reviewer's mutations, built in a scratch tree: an
 // override flipping the minter's IAM flag, a suffixed override adding
 // `useToVerify` to the signer role, a JSON file granting the signer role, an
-// override in JSON naming the intake in the signer grant — and a second plain
-// HCL file in a root, which is admitted, because the rule is one FORM per root
-// and not one file.
+// override in JSON naming the intake in the signer grant, a second plain HCL
+// file in a root — admitted, because the rule is one FORM per root and not one
+// file — and the third root above, which is not.
 func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		write   map[string]string
 		refused []string
+		stray   []string // files the walk hands over from outside the two roots
 	}{
 		{
 			name: "an override flipping the minter's IAM flag",
@@ -586,6 +636,18 @@ func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 				"services/grants.tf": "resource \"google_kms_key_ring_iam_member\" \"minter_signs\" {}\n",
 			},
 		},
+		{
+			// The reviewer's second mutation: the same grant header the allow-list
+			// already carries, written in a root the allow-list is not keyed to.
+			name: "a grant in a third root",
+			write: map[string]string{
+				"services/main.tf": "resource \"google_kms_key_ring_iam_member\" \"minter_signs\" {\n" +
+					"  member = google_service_account.minter.member\n}\n",
+				"staging/main.tf": "resource \"google_kms_key_ring_iam_member\" \"minter_signs\" {\n" +
+					"  member = \"user:someone@example.com\"\n}\n",
+			},
+			stray: []string{"staging/main.tf"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -608,6 +670,12 @@ func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 			}
 			if want := len(tc.write) - len(tc.refused); len(files) != want {
 				t.Errorf("the walk hands over %v, want %d plain .tf file(s): the rule is one form per root, not one file", files, want)
+			}
+			// ... and the second rule over the same listing: Terraform in a root
+			// that is not one of the two fails every sweep above, so a tree that
+			// adds one goes red rather than being walked around.
+			if got := tfStrayRoots(files); !slices.Equal(got, tc.stray) {
+				t.Errorf("the listing's files outside the two roots are %v, want %v: the checks over this tree walk keyring/ and services/ and no third root, so Terraform in one is infrastructure none of them reads", got, tc.stray)
 			}
 		})
 	}
