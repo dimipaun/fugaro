@@ -898,12 +898,13 @@ func TestRunsDigestFileUnchangedByIssues(t *testing.T) {
 		t.Fatalf("runs digest: %v (%s)", err, errOut)
 	}
 	report, index := digestReport(t, dir, "2026-10-25"), digestIndex(t, dir)
+	// Two runs of the same period write the same bytes (G3), which is what
+	// makes the comparisons below a statement about the section and nothing
+	// else.
 	if _, errOut, err := execute(t, args...); err != nil {
 		t.Fatalf("runs digest: %v (%s)", err, errOut)
 	} else if got := digestReport(t, dir, "2026-10-25"); got != report {
-		// Two runs of the same period write the same bytes (G3), so the files
-		// compared below differ only if the section reached one of them.
-		t.Error("a second run of the same report wrote different bytes")
+		t.Fatal("a second run of the same report wrote different bytes")
 	}
 	seedDigestIssue(t, f, "run-20261025120000-48213", "the review stage starts twice",
 		time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC))
