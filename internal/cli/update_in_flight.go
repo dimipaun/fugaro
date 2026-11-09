@@ -3,8 +3,10 @@ package cli
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -26,11 +28,17 @@ import (
 // internal/budget/rules); and no step of the update writes a run's registry
 // entry, its ledger, its day counters or its record.
 //
-// One step can still bind a run in flight — the budget mode's raise to enforce,
-// which a session re-reads on every lease and every report while the policy node
-// is read once (`Session.readConfig`) — and the line names it where it can
-// happen rather than claiming a safety that is not there. It stays, and it is
-// the operator's own caps taking effect rather than the update stopping a run.
+// Three steps can still reach one, and the line names every one of them that
+// this run can take — naming a step and why, rather than either claiming a
+// safety that is not there or dropping the claim: the budget mode's raise to
+// enforce, which a session re-reads on every lease and every report while the
+// policy node is read once (`Session.readConfig`); the policy node itself, which
+// a project routed through the credentials cascade re-reads on EVERY model call
+// (`internal/credsvc`), so a run in flight is held to the node this update
+// publishes from its next call; and a retirement, which deletes an orphaned
+// Cloud Run job and takes the executions running on it with it
+// (`deleteOrphanedJob`, init_retire.go). None of the three is the update
+// stopping a run, and none of them is asked to wait.
 
 // announceRunsInFlight prints the update door's one line about the runs in
 // flight, and nothing at all when there are none (an installation with an empty
@@ -65,13 +73,53 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) {
 	if err != nil || n == 0 {
 		return
 	}
-	if e.budgetModeBindsRuns(ctx, db) {
-		fmt.Fprintf(r.w, "%s%d run(s) are in flight and they are unaffected, except by the budget mode's raise to %s: it is the one step that can bind one, from its next lease, and it is your own caps taking effect\n",
-			o.programPrefix(), n, budget.ModeEnforce)
+	if steps := e.inFlightSteps(ctx, db); len(steps) > 0 {
+		fmt.Fprintf(r.w, "%s%d run(s) are in flight and they are unaffected, except by %s\n",
+			o.programPrefix(), n, strings.Join(steps, "; "))
 		return
 	}
 	fmt.Fprintf(r.w, "%s%d run(s) are in flight and they are unaffected: fugaro update stops no run and rewrites nothing a run holds, so no run has to finish first\n",
 		o.programPrefix(), n)
+}
+
+// inFlightSteps is the steps of THIS update that can reach a run in flight, one
+// clause each: the step and why, in the words a person reads. An empty result is
+// the update that leaves every run in flight exactly where it is, and it is the
+// ordinary case.
+//
+// Every clause is deliberately the question the step itself is gated on rather
+// than the whole of its decision (see budgetModeBindsRuns): the line errs
+// towards warning a person about a bound that may not come instead of claiming a
+// run is unaffected when it is not.
+func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []string {
+	var steps []string
+	managed := e.managedProjectRead(ctx)
+	if e.budgetModeBindsRuns(ctx, db, managed) {
+		steps = append(steps, fmt.Sprintf("the budget mode's raise to %s, which a run in flight meets at its next lease and which is your own caps taking effect", budget.ModeEnforce))
+	}
+	if e.policyReadsLive(ctx, db) {
+		steps = append(steps, fmt.Sprintf("the policy this update publishes, which every model call of this project's runs re-reads (%s: %s), so a run in flight is held to the new node from its next call", "routing.claude.via", projectpolicy.RouteCascade))
+	}
+	if e.retireTakesExecutions(managed) {
+		steps = append(steps, "the retirement this update runs, which deletes an orphaned job and takes the executions still running on it")
+	}
+	return steps
+}
+
+// managedProjectRead is r.gateUnderway's answer, or the read the gate's own line
+// makes for a door that reached this before it — and no answer at all without
+// the clients it reads through, which is the same "not managed" every caller
+// treats as silence.
+func (e *initEngine) managedProjectRead(ctx context.Context) bool {
+	r := e.r
+	if r.gate != nil {
+		return r.gateUnderway()
+	}
+	if e.c == nil {
+		return false
+	}
+	managed, err := r.managedProject(ctx, e.c)
+	return err == nil && managed
 }
 
 // budgetModeBindsRuns is whether this run's budget-mode step can put the
@@ -79,32 +127,15 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) {
 // audit found able to bound or halt a run in flight, in the mode node a session
 // re-reads live (Session.readConfig) where the policy node is read once.
 //
-// It asks the two facts raiseBudgetMode's own raise is gated on first — the
-// project being managed, and a mode that is neither enforce nor the owner's own
-// recorded choice — and deliberately not the whole of its decision: whether the
-// database is this installation's and whether the caps the raise is refused
-// without are set are the step's own reads, and both of them print a warning
-// naming what they left alone (update_budget_mode.go). So the line names the
-// step where it can fire rather than promising it, which is the direction that
-// errs towards warning a person about a bound that may not come instead of
-// claiming a run is unaffected when it is not. The alternative — the step's
-// whole decision read a second time here — would be one fact read twice, which
-// is the drift this package keeps collapsing into one reading.
-func (e *initEngine) budgetModeBindsRuns(ctx context.Context, db *rtdb.Client) bool {
-	r := e.r
-	managed := r.gateUnderway()
-	if r.gate == nil {
-		// The read the gate's own line would have made, for a door that reached
-		// this before it — and no answer at all without the clients it reads
-		// through, which is silence rather than a bound claimed or denied.
-		if e.c == nil {
-			return false
-		}
-		var err error
-		if managed, err = r.managedProject(ctx, e.c); err != nil {
-			return false
-		}
-	}
+// It asks the two facts raiseBudgetMode's own raise is gated on — the project
+// being managed, and a mode that is neither enforce nor the owner's own recorded
+// choice — and deliberately not the whole of its decision: whether the database
+// is this installation's and whether the caps the raise is refused without are
+// set are the step's own reads, and both of them print a warning naming what
+// they left alone (update_budget_mode.go). The alternative — the step's whole
+// decision read a second time here — would be one fact read twice, which is the
+// drift this package keeps collapsing into one reading.
+func (e *initEngine) budgetModeBindsRuns(ctx context.Context, db *rtdb.Client, managed bool) bool {
 	if !managed {
 		return false
 	}
@@ -128,4 +159,42 @@ func (e *initEngine) budgetModeBindsRuns(ctx context.Context, db *rtdb.Client) b
 		return false
 	}
 	return !(found && set == budget.ChosenByOwner)
+}
+
+// policyReadsLive is whether this project's runs re-read the published policy
+// node while they run: the switch that turns the credentials cascade on
+// (`routing.claude.via: cascade`) sends every model call through the credentials
+// service, which reads the node per call rather than memoizing it at bootstrap
+// the way the runner does. A project without the switch keeps the ceiling it
+// bootstrapped with, and the node this update writes never reaches it.
+//
+// A read that failed or a node that is not there is false: with no node there is
+// no switch, and an unreadable one is the silence every other read in this file
+// answers with.
+func (e *initEngine) policyReadsLive(ctx context.Context, db *rtdb.Client) bool {
+	p, found, err := projectpolicy.Read(ctx, db)
+	if err != nil || !found || p == nil || p.Routing == nil || p.Routing.Claude == nil {
+		return false
+	}
+	return p.Routing.Claude.Via == projectpolicy.RouteCascade
+}
+
+// retireTakesExecutions is whether this run can retire at all: the two ways one
+// is reached, `--retire` and a managed project's own retirement (retireManaged,
+// issue #1794), which a plain `fugaro update` runs with no flag at all and
+// behind the gate rather than behind a typed confirmation.
+//
+// The second half is asked of the project's mark and not of the retirement the
+// repository stage has yet to read: whether this config change stops producing
+// an address is a fact of the stage's plan, which has not run when the door
+// speaks, so a managed update names the retirement whether or not this one will
+// delete anything. A run executing on a job the config no longer produces is
+// exactly the run this clause is for, and the alternative — silence over a
+// deletion that then happens — is the direction that leaves a person surprised.
+func (e *initEngine) retireTakesExecutions(managed bool) bool {
+	o := e.r.o
+	if o.retire {
+		return true
+	}
+	return managed
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -564,6 +565,48 @@ func TestUpgradePolicyStepSurfacesRunsInFlight(t *testing.T) {
 	}
 	if got := nodeVersionOn(t, f.db); got != 3 {
 		t.Errorf("the node moved to version %d while a run was in flight", got)
+	}
+}
+
+// TestUpgradePolicyStepRefusesTheWriteWhileARunIsInFlight drives the step
+// itself, not the constant: the refusal is the upgrade door's answer to the
+// runs in flight (upgrade.go's inflightAsk) and this is what pins it — flipping
+// that call site to inflightQuiet lets the migration through here, which is the
+// whole of the difference between the two doors. A test that called
+// policyMigrationConfirm with the constant would pass whatever the door passes.
+//
+// No --yes, and a terminal: the refusal is what stands in its place, and it is
+// asked before the typed confirmation a person would otherwise be given.
+func TestUpgradePolicyStepRefusesTheWriteWhileARunIsInFlight(t *testing.T) {
+	r := upgradeRigWithGitHubAppID(t)
+	db := gcpfake.NewRTDB(t)
+	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
+	db.Set(budget.PathProject, initProjectName)
+	db.Set(budget.PathMode, budget.ModeEnforce)
+	db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 5_000_000})
+	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: "+db.URL+", firebase_project: \""+initProject+"\" }\n")
+	db.SetRules([]byte(`{"rules":{".read":false}}`))
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	db.Set(projectpolicy.PathShared(), v3Node(nil))
+	db.Set("agents", map[string]any{initProjectName: map[string]any{"run-1": map[string]any{"repo": "acme/app"}}})
+
+	fakeTerminal(t)
+	out := &syncBuf{}
+	cmd := NewRootCmd()
+	cmd.SetOut(out)
+	cmd.SetErr(&syncBuf{})
+	cmd.SetIn(strings.NewReader("aurora\n"))
+	u := &upgradeCtx{cmd: cmd, w: out, loc: pluginwire.Location{Root: r.root}}
+
+	got := policyStep(context.Background(), u)
+	if got.state != stepFailed || got.code != ExitUserError {
+		t.Fatalf("the policy step is %s (exit %d): %s\n%s", got.state, got.code, got.reason, out)
+	}
+	if !strings.Contains(got.reason, "run(s) are in flight") {
+		t.Errorf("the refusal is not the in-flight one: %s", got.reason)
+	}
+	if v := nodeVersionOn(t, db); v != 3 {
+		t.Errorf("the node moved to version %d while a run was in flight", v)
 	}
 }
 

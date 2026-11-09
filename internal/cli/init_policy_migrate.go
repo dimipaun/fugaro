@@ -427,9 +427,10 @@ func policyMigrationRefusal(err error) error {
 // that could assert an admission could assert it for a node nobody judged, and
 // `fugaro upgrade` — the other door into this function, and the one with no
 // gate at all — passes false and gets exactly the code that was here before.
-// The refusals that are not confirmations stay: a run in flight is refused
-// whatever admitted the write, because that refusal is about the runs that read
-// the node and not about who approved this one.
+// The answer about the runs in flight is not among the confirmations admitted
+// stands in for: it is asked before any of them and whatever admitted the
+// write, because it is about the runs that read the node and not about who
+// approved this one.
 //
 // managed is whether the project's marks say it is managed, and it is the
 // reading the rest of init makes for that question (initGate.underway, the same
@@ -1095,13 +1096,14 @@ func (m *policyMigration) planDetail() string {
 
 // Apply is the write. The refusals are the ones the delete path has, in the
 // same order and the same words where they are the same refusal: a coding
-// agent's session, a run in flight without --yes, no terminal (--yes is the
-// confirmation then), and the typed project name. --yes is the way past the
-// in-flight refusal once the operator has read what the migration does, which
-// is what that refusal itself tells them — the same reading
-// `fugaro project policy publish --delete` has (internal/cli/project_cmd.go) —
-// except in a managed project, where the owner's ruling of 2026-11-06 makes
-// that guard a note and the write proceeds (policyMigrationConfirm).
+// agent's session, no terminal (--yes is the confirmation then), and the typed
+// project name. The runs in flight are not among them on this door, and the
+// answer to them is the door's rather than the stage's (inflightAnswer,
+// policyMigrationConfirm): `fugaro update` passes inflightQuiet, so it neither
+// refuses nor asks anybody to wait — the owner's ruling of 2026-11-09, the
+// whole upgrade being this command — and it is `fugaro upgrade`'s own policy
+// step that keeps the refusal --yes is the way past, the same reading
+// `fugaro project policy publish --delete` has (internal/cli/project_cmd.go).
 func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
 	// A managed project's gate is asked FIRST, and only this door has one: in a
 	// coding agent's session on a managed project the step that rewrites the

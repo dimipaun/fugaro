@@ -130,46 +130,97 @@ func TestUpdateSaysNothingWhenNothingRuns(t *testing.T) {
 	}
 }
 
-// TestUpdateBudgetModeLineNamesTheOneStepThatCanBindARun: the audit found one
-// step of the update that can still bind a run in flight — the budget mode's
+// TestUpdateInFlightLineNamesEveryStepThatCanReachARun: the audit found three
+// steps of the update that can still reach a run in flight — the budget mode's
 // raise to enforce, which a session re-reads on every lease while the policy
-// node is read once — and the door's line names it where it can happen rather
-// than claiming a safety that is not there. The raise is the operator's own
-// caps taking effect and it stays; what the line may not do is call the run
-// unaffected without saying so.
-func TestUpdateBudgetModeLineNamesTheOneStepThatCanBindARun(t *testing.T) {
-	f := newProjectFixture(t, "")
-	f.db.Set(budget.PathMode, budget.ModeObserve)
-	f.db.Set("agents", map[string]any{"proj-1234": map[string]any{"run-1": map[string]any{"repo": "github/acme/app"}}})
-	h := newMigrationRig(t, f, &initOptions{}).managedGate()
-	h.s.e.announceRunsInFlight(context.Background())
-
-	out := h.out.String()
-	if !strings.Contains(out, "budget mode") || !strings.Contains(out, "caps taking effect") {
-		t.Errorf("the line does not name the budget mode raise, which is the one step that can bind a run in flight:\n%s", out)
+// node is read once; the policy node itself, which a project routed through the
+// credentials cascade re-reads on every model call; and a retirement, which
+// deletes an orphaned job and takes the executions running on it with it — and
+// the door's line names every one this run can take, with why.
+//
+// The rows are the mutation check of that reading: each one turns exactly one
+// step on and asserts the clause is there, and the other clauses are not. The
+// first row is the ordinary update — nothing this run does reaches a run in
+// flight — where the line says the runs are unaffected because they are, and
+// the alternative to every clause here, silence over a step that then reaches a
+// run, is the failure the requirement of 2026-11-09 is about.
+func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
+	// A published node that turns the cascade on: O3's switch, which is what
+	// sends a run's model calls through the credentials service — and so through
+	// a policy read per call rather than the runner's one memoized read.
+	cascade := map[string]any{
+		"version":     projectpolicy.Version,
+		"allow_repos": []string{"*"},
+		"routing":     map[string]any{"claude": map[string]any{"via": projectpolicy.RouteCascade}},
 	}
-	if strings.Count(strings.TrimSpace(out), "\n") != 0 {
-		t.Errorf("the door's line is one line:\n%s", out)
-	}
-}
+	for _, tc := range []struct {
+		name    string
+		node    map[string]any
+		mode    string
+		managed bool
+		retire  bool
+		want    []string
+		notWant []string
+	}{
+		{
+			name:    "nothing this update does reaches them",
+			mode:    budget.ModeEnforce,
+			want:    []string{"1 run(s) are in flight", "they are unaffected"},
+			notWant: []string{"budget mode", "policy this update publishes", "retirement"},
+		},
+		{
+			// The raise is a managed project's alone, and so is the retirement
+			// it brings with it (retireTakesExecutions): the two clauses travel
+			// together, which is why this row does not call the retirement
+			// clause absent.
+			name: "the budget mode's raise", mode: budget.ModeObserve, managed: true,
+			want:    []string{"budget mode", "caps taking effect", "the retirement"},
+			notWant: []string{"policy this update publishes"},
+		},
+		{
+			name: "the policy a cascade project re-reads", node: cascade, mode: budget.ModeEnforce,
+			want:    []string{"1 run(s) are in flight", "the policy this update publishes", "routing.claude.via", projectpolicy.RouteCascade},
+			notWant: []string{"budget mode", "retirement"},
+		},
+		{
+			name: "the retirement a managed project runs", mode: budget.ModeEnforce, managed: true,
+			want:    []string{"1 run(s) are in flight", "the retirement", "orphaned job"},
+			notWant: []string{"budget mode", "policy this update publishes"},
+		},
+		{
+			name: "the retirement --retire asks for", mode: budget.ModeEnforce, retire: true,
+			want:    []string{"1 run(s) are in flight", "the retirement", "orphaned job"},
+			notWant: []string{"budget mode", "policy this update publishes"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newProjectFixture(t, "")
+			f.db.Set(budget.PathMode, tc.mode)
+			if tc.node != nil {
+				f.db.Set(projectpolicy.PathShared(), tc.node)
+			}
+			f.db.Set("agents", map[string]any{"proj-1234": map[string]any{"run-1": map[string]any{"repo": "github/acme/app"}}})
+			h := newMigrationRig(t, f, &initOptions{retire: tc.retire})
+			if tc.managed {
+				h.managedGate()
+			}
+			h.s.e.announceRunsInFlight(context.Background())
 
-// TestUpdateBudgetModeLineStaysFlatWhenTheModeIsAlreadyEnforced: the raise is
-// the second run over an installation, or a mode the owner chose — the two
-// states the budget-mode step writes nothing in. The runs in flight are then
-// unaffected by every step of the update, and the line says exactly that.
-func TestUpdateBudgetModeLineStaysFlatWhenTheModeIsAlreadyEnforced(t *testing.T) {
-	f := newProjectFixture(t, "")
-	f.db.Set(budget.PathMode, budget.ModeEnforce)
-	f.db.Set("agents", map[string]any{"proj-1234": map[string]any{"run-1": map[string]any{"repo": "github/acme/app"}}})
-	h := newMigrationRig(t, f, &initOptions{}).managedGate()
-	h.s.e.announceRunsInFlight(context.Background())
-
-	out := h.out.String()
-	if !strings.Contains(out, "1 run(s) are in flight") {
-		t.Errorf("the door printed nothing about the run in flight:\n%s", out)
-	}
-	if strings.Contains(out, "budget mode") {
-		t.Errorf("the line names the budget mode raise over an installation that already enforces:\n%s", out)
+			out := strings.TrimSpace(h.out.String())
+			if strings.Count(out, "\n") != 0 {
+				t.Errorf("the door's line is one line:\n%s", out)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(out, want) {
+					t.Errorf("the line does not say %q:\n%s", want, out)
+				}
+			}
+			for _, bad := range tc.notWant {
+				if strings.Contains(out, bad) {
+					t.Errorf("the line names %q over a step this run cannot take:\n%s", bad, out)
+				}
+			}
+		})
 	}
 }
 

@@ -58,18 +58,19 @@ release could observe or lose.
 | plugin | The plugin pin and the Claude Code install on this machine | None: no run reads either | Safe | `newPluginStage`, `internal/cli/init_plugin_stage.go` |
 | repository | Terraform root `repo` for the checkout's repository: the workflow jobs, the job service accounts, the mounts, the check job | A job whose name changes (a workflow added, removed or renamed in `fugaro.yaml`) is ForceNew: Terraform destroys the old job and creates a new one. Whether that reaches a *running* execution of the old job is a property of the platform, not of this repository — **UNVERIFIED** | Needs care, guarded | `newRepositoryStage`, `deploy/terraform/gcp/modules/repo/workflows.tf`, `deletion_protection` in `modules/workflow/job.tf` |
 | rules | Generates this release's rules document and deploys it, then writes `config/limits/policyRules`, `…/credsRules`, `…/orchestratorRules` | The generator may only **add**: `TestRulesPreexistingPathsUnchanged` diffs the frozen generation-3 document and fails on any pre-existing rule that changed, and `TestRunTokenWritesSurviveThePolicyEdit` fails when any run-writable location loses its grant. A rule that only adds a deny for a path the old runner never writes is therefore compatible by construction | Safe | `newRulesStage`, `internal/cli/init_rules_stage.go`; `infra.DB.Plan`/`Apply`, `internal/infra/firebasedb.go`; `rules.Generate`, `internal/budget/rules/rules.go` |
-| policy | Migrates and/or publishes `config/policy/shared` in place, from the local config, under the ETag it read | The node is memoized once by the runner, so a non-cascade run keeps the ceiling it bootstrapped with. A **cascade** call does re-read it: the credentials service reads the policy per call (`internal/credsvc/cascade.go`, `bitbucketproxy.go`). A migration preserves the values it carries, so a plain upgrade changes no run's ceiling; a config the operator changed is the operator's own publish | Safe by intent, named | `newPolicyMigrateStage`, `internal/cli/init_policy_migrate.go`; `policyRead`, `internal/runner/projectpolicy.go` |
+| policy | Migrates and/or publishes `config/policy/shared` in place, from the local config, under the ETag it read | The node is memoized once by the runner, so a non-cascade run keeps the ceiling it bootstrapped with. A **cascade** call does re-read it: the credentials service reads the policy per call (`internal/credsvc/cascade.go`, `bitbucketproxy.go`), so a run of a cascade project is held to the node from its next call. A migration preserves the values it carries, so a plain upgrade changes no run's ceiling; a config the operator changed is the operator's own publish | Safe by intent, named in the line | `newPolicyMigrateStage`, `internal/cli/init_policy_migrate.go`; `policyRead`, `internal/runner/projectpolicy.go` |
 | workspace | Migrates and/or publishes the workspace record `workspaces/<name>` in the workspace's own database | No run reads the workspace record: it is the workspace owner's document (`docs/workspaces/spec.md`). A member's run makes no request for it at all | Safe | `newWorkspaceStage`, `internal/cli/update_workspace.go` |
 | layer | Publishes the project layer object and seeds/re-seeds the local file | A run's layer travels with its task and is parsed at bootstrap (`resolveConfig`, `internal/runner/runner.go`); there is no mid-run re-read | Safe | `newLayerStage`, `internal/cli/init_layer_stage.go` |
 | checkout | The plugin pin, the Claude Code plugin and the repository's job images (`fugaro upgrade`'s three steps) | The job image is the execution's own. `fugaro image refresh` patches a job's container image in place and never starts an execution — the patch body drops the execution tokens (`TestApplyCheckJobDropsExecutionTokens`, `internal/infra/checkjob_test.go`) | Safe | `newCheckoutStage`, `internal/cli/init_checkout_upgrade.go`; `infra.PlanCheckJob`/`ApplyCheckJob`, `internal/infra/checkjob.go` |
 | budget mode | Raises `config/mode` to `enforce` on a managed project, and records `config/modeSet = update` | The mode is re-read live (`Session.readConfig`), so a run that bootstrapped under `observe` is bounded by the caps from its next lease, and a lease the caps refuse halts it. The step already refuses to raise without the caps that would halt every run, and it says what it did | **The one step that can bound or halt a run in flight.** Recorded, not fixed: it is the operator's own caps taking effect | `raiseBudgetMode`, `internal/cli/update_budget_mode.go` |
-| retire (`--retire`, `--allow-delete`) | Removes addresses from Terraform's state and deletes orphaned resources, an orphaned job included | A job delete takes its executions with it. It is behind its own flag, behind `--allow-delete`, behind the job's labels and behind `deletion_protection`; a plain `fugaro update` runs none of it | Safe by guard | `readRetirements`, `deleteOrphanedJob`, `internal/cli/init_retire.go` |
+| retire (`--retire`, `--allow-delete`, or a managed project's own retirement) | Removes addresses from Terraform's state and deletes orphaned resources, an orphaned job included | A job delete takes its executions with it. `--retire` is behind `--allow-delete`, the job's labels and `deletion_protection`; a **managed** project reaches the same flow with no flag at all (`retireManaged`, issue #1794), behind the managed gate's admission rather than a typed confirmation, and its API delete at the run's last step is the same one | Needs care, named in the line | `readRetirements`, `deleteOrphanedJob`, `retireManaged`, `internal/cli/init_retire.go` |
 
 ## The surfaces, one at a time
 
 **The Firebase rules document and its generation marker.** The three markers sit
 under `config/limits`, which is `.read: TOKEN` and writable by no client
-(`rules.json.tmpl`; `TestRunTokenCannotWriteTheCredsRulesMarker`). A run reads
+(`rules.json.tmpl`; `TestRunTokenCannotWriteTheCredsRulesMarkers`,
+`internal/budget/rules/creds_emulator_test.go`). A run reads
 `config/limits/policyRules` once, at bootstrap, and gates its policy read on
 `projectpolicy.PolicyRulesVersion` — deliberately not on `RulesVersion`, so a
 generation bump does not answer "not found" to a run of any generation
@@ -146,14 +147,19 @@ update door's: `fugaro upgrade`'s own policy step, and `fugaro project policy
 publish --delete` / `fugaro project repos rm`, which are not the whole upgrade
 and are their own commands.
 
-The one row with an open question is the budget-mode raise: it can bound a run
-that bootstrapped under `observe`, from its next lease. It is the operator's own
-caps becoming effective rather than the update stopping a run, so it is recorded
-here rather than deferred, and the door's line names it where the raise can
-happen (`budgetModeBindsRuns`) instead of calling the runs unaffected without
-saying so. The alternative — the raise waiting for the runs to finish — would be
-the update asking a person to stop work for it, which is what the requirement
-forbids; it is named in the pull request for the owner.
+The rows that are not simply safe are the ones the line has to own, and they are
+three (`inFlightSteps`, `internal/cli/update_in_flight.go`): the budget-mode
+raise, which can bound a run that bootstrapped under `observe` from its next
+lease and is the operator's own caps becoming effective rather than the update
+stopping a run — recorded here rather than deferred, the alternative being the
+update asking a person to stop work for it; the published policy, which a
+cascade project's every model call re-reads; and a retirement, which deletes an
+orphaned job and takes the executions running on it. Each clause is the question
+its own step is gated on rather than the whole of its decision
+(`budgetModeBindsRuns`, `policyReadsLive`, `retireTakesExecutions`), so the line
+errs towards naming a step that may not end up doing anything over calling a run
+unaffected without saying so; the budget raise's shape for the owner is in the
+pull request.
 
 The tests are `TestUpdateLeavesARunInFlightRunning` and its siblings
 (`internal/cli/update_in_flight_test.go`): an installation one release behind
@@ -161,3 +167,9 @@ converges under `fugaro update` while a run of its own repository is in flight,
 and that run's later writes — its lease, the ledger and the counters the report
 settles, the outcome it ends with, its record and its review session — still
 land under the new rules and the migrated policy.
+`TestUpdateInFlightLineNamesEveryStepThatCanReachARun` turns each of the three
+steps on alone and asserts the clause is there and the others are not, so a step
+that can reach a run and is not named fails the suite.
+`TestUpgradePolicyStepRefusesTheWriteWhileARunIsInFlight`
+(`internal/cli/init_policy_migrate_test.go`) pins the refusal on the door that
+keeps it, so changing that door's answer alone fails.
