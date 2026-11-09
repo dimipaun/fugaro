@@ -512,6 +512,13 @@ func (b *Builder) Submit(ctx context.Context, s BuildSpec) (BuildResult, error) 
 // the messages here and in the result: a catalog build's request comes from
 // CatalogBuildRequest (catalog.go) and is submitted with it, so a
 // submission, its errors and its result cannot drift between the two paths.
+//
+// The result's Image is image with ":latest", which is what a build that
+// promotes leaves behind — except for a smoke-only request (noPush), where the
+// image is a reference somebody else published: appending a tag to it would
+// spell a reference the entry never named (ghcr.io/owner/image:1.2:latest), and
+// that string is what the caller prints before the wait (--no-wait) and when a
+// SUCCESS reports no digest.
 func (b *Builder) create(ctx context.Context, image string, req *cloudbuild.Build) (BuildResult, error) {
 	op, err := b.svc.Projects.Locations.Builds.Create(b.parent(), req).Context(ctx).Do()
 	if err != nil {
@@ -521,7 +528,11 @@ func (b *Builder) create(ctx context.Context, image string, req *cloudbuild.Buil
 	if err := json.Unmarshal(op.Metadata, &md); err != nil || md.Build == nil || md.Build.Id == "" {
 		return BuildResult{}, fmt.Errorf("Cloud Build accepted the build of %s but returned no build ID (operation %s)", image, op.Name)
 	}
-	return BuildResult{ID: md.Build.Id, Status: md.Build.Status, Image: image + ":latest", LogURL: md.Build.LogUrl}, nil
+	res := BuildResult{ID: md.Build.Id, Status: md.Build.Status, Image: image + ":latest", LogURL: md.Build.LogUrl}
+	if noPush(req) {
+		res.Image = image
+	}
+	return res, nil
 }
 
 // waitRetries and waitRetryBase bound Wait's retries of a failed status

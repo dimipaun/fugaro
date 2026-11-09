@@ -669,7 +669,10 @@ func TestPrebuiltEntrySmoked(t *testing.T) {
 	}
 
 	// --no-wait reports the submitted run without a digest, and says what it
-	// is smoking rather than that it built something.
+	// is smoking rather than that it built something. The reference it names is
+	// the entry's own: a run that pushes nothing leaves no latest behind, so
+	// the result names the reference as the entry spells it and never
+	// docker.io/library/node:22:latest.
 	before := buildPosts(fb)
 	if out, stderr, err = executeBuild(t, "image", "build", "prebuilt", "--base", "b:1", "--no-wait"); err != nil {
 		t.Fatalf("%v (%s)", err, stderr)
@@ -677,8 +680,24 @@ func TestPrebuiltEntrySmoked(t *testing.T) {
 	if got := buildPosts(fb) - before; got != 1 {
 		t.Errorf("a --no-wait smoke submitted %d builds", got)
 	}
-	if !strings.Contains(out, "smoking "+ref) || strings.Contains(out, "@sha256:") {
-		t.Errorf("stdout = %q, want the submitted run and what it smokes", out)
+	if !strings.Contains(out, "smoking "+ref+";") || strings.Contains(out, "@sha256:") {
+		t.Errorf("stdout = %q, want the submitted run and the reference it smokes", out)
+	}
+	if strings.Contains(out, ":latest") {
+		t.Errorf("stdout = %q, want no tag of this command's on a reference somebody else published", out)
+	}
+
+	// A SUCCESS that reports no digest says the digest is unknown, and it names
+	// the same reference: this path prints the submission's own result, which
+	// is where a tag this command invented would have shown.
+	fb.NoResults = true
+	out, stderr, err = executeBuild(t, "image", "build", "prebuilt", "--base", "b:1")
+	fb.NoResults = false
+	if err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	if !strings.Contains(out, "smoked "+ref+", digest unknown") || strings.Contains(out, ":latest") {
+		t.Errorf("stdout = %q, want the reference it smoked and no digest", out)
 	}
 
 	// --no-smoke asks for a build without its smoke, and a prebuilt entry has
