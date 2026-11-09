@@ -40,11 +40,19 @@ const retryOfferPrefix = "You can retry: "
 // print no line at all, so no project header and no note (selectFrom, not
 // selectProject, which announces), and no shared config to fall back to — an
 // update that converged selected a project to converge, and an offer does not
-// get to be the thing that finds a second config.
-var updateRetryBucket = func(ctx context.Context, o cloudOptions) (*blobx.Bucket, error) {
-	co, err := checkoutProject(ctx, "")
+// get to be the thing that finds a second config. dir is the checkout the run
+// converged ("" is the working directory), and it selects in both places the
+// converge selected in: the checkout whose fugaro.yaml names the project, and
+// the origin a config is matched by.
+var updateRetryBucket = func(ctx context.Context, o cloudOptions, dir string) (*blobx.Bucket, error) {
+	co, err := checkoutProject(ctx, dir)
 	if err != nil {
 		return nil, err
+	}
+	if dir != "" {
+		// The origin that selects is the checkout's, not the working
+		// directory's (loadRepoConfig's own line, for the same reason).
+		o.originDir = dir
 	}
 	_, lc, err := selectFrom(o, co, false)
 	if err != nil {
@@ -56,8 +64,25 @@ var updateRetryBucket = func(ctx context.Context, o cloudOptions) (*blobx.Bucket
 	return blobx.Open(ctx, lc.BucketURL())
 }
 
+// updateRetryDir is the checkout the run this offer follows converged: the
+// positional PATH of --repo, which init.go's runInitRepo defaults to the
+// working directory. Every other run converges the installation the working
+// directory selects, which "" is to checkoutProject — and a --repo run's
+// project is the checkout's, not the working directory's, so an offer that
+// resolved the working directory would read another project's store (or none).
+func updateRetryDir(o *initOptions, args []string) string {
+	if !o.repo {
+		return ""
+	}
+	if len(args) > 0 {
+		return args[0]
+	}
+	return "."
+}
+
 // updateRetryHint prints the offer for the issues a run just fixed, and marks
-// them as offered in this machine's own file.
+// them as offered in this machine's own file. args are the door's own
+// positional arguments, which is how --repo's checkout is known.
 //
 // It runs after a converge that succeeded (update.go's PostRunE) and after
 // nothing else, and it is built to be silent: no line when this machine has no
@@ -65,7 +90,7 @@ var updateRetryBucket = func(ctx context.Context, o cloudOptions) (*blobx.Bucket
 // resolved, or when what is resolved names no command of this build. The line
 // goes to stderr with the run's other human lines, so --json's one object and
 // --print-vars' document stay alone on stdout.
-func updateRetryHint(cmd *cobra.Command, o *initOptions) {
+func updateRetryHint(cmd *cobra.Command, o *initOptions, args []string) {
 	if !updateRetryOffers(o) {
 		return
 	}
@@ -92,7 +117,7 @@ func updateRetryHint(cmd *cobra.Command, o *initOptions) {
 		return
 	}
 	ctx := cmd.Context()
-	b, err := updateRetryBucket(ctx, o.cloud)
+	b, err := updateRetryBucket(ctx, o.cloud, updateRetryDir(o, args))
 	if err != nil {
 		return
 	}
@@ -135,6 +160,13 @@ func updateRetryOffers(o *initOptions) bool {
 			return false
 		}
 	}
+	// --non-interactive without --yes applies nothing either, by the loop's own
+	// rule: "An apply needs --yes; without it the run is --plan-only"
+	// (initflow/loop.go, which says so in its own result note). Such a run
+	// installed no release, so no release fixed anything for it.
+	if o.nonInteractive && !o.yes {
+		return false
+	}
 	return true
 }
 
@@ -143,25 +175,39 @@ func updateRetryOffers(o *initOptions) bool {
 //
 // local is this machine's own store, and that is what makes an issue this
 // reporter's and not a teammate's (D1733): the shared store holds the whole
-// team's. rows is the shared store, read for one field — resolved_in, the
+// team's. rows is the shared store, read for two fields — resolved_in, the
 // release that fixed the issue (F27; the spec that writes it is another
 // task's, so an empty one resolves nothing) — compared as a release against
 // the version this binary IS (D1736): a dev build matches nothing, and so
 // does a value that is not a release.
+//
+// The two stores are joined by number AND fingerprint (F8): a local issue
+// file is global to the machine, so project A's #0007 must not supply project
+// B's command, and a number is only unique inside one project's store. A
+// local file with no fingerprint is one no shared record can be about —
+// the shared store keys its records by fingerprint (F21) — so it is not
+// matched to one either.
 //
 // The command is the one this machine recorded for its own issue and never
 // the one a shared record carries (F28): the line is what a reader
 // copy-pastes, the shared store is writable by every launcher, and the local
 // file is the only place this machine's own command line lives.
 func retryHintLines(local []issues.Issue, rows []issues.SharedRow, version string, root *cobra.Command) (lines []string, mark []issues.Issue) {
-	fixed := map[int]bool{}
+	type key struct {
+		number      int
+		fingerprint string
+	}
+	fixed := map[key]bool{}
 	for _, row := range rows {
 		if updatecheck.AtOrBelow(row.ResolvedIn, version) {
-			fixed[row.Number] = true
+			fixed[key{row.Number, row.Fingerprint}] = true
 		}
 	}
 	for _, i := range local {
-		if i.Number == 0 || i.Notified || !fixed[i.Number] {
+		if i.Number == 0 || i.Notified || i.Fingerprint == "" {
+			continue
+		}
+		if !fixed[key{i.Number, i.Fingerprint}] {
 			continue
 		}
 		command, ok := retryCommand(i.FailedCommand, root)

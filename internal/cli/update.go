@@ -111,8 +111,13 @@ func newUpdateCmdWith(o *initOptions) *cobra.Command {
 	// when RunE returned nil and not otherwise, so a refusal, a step left for
 	// the person and a cloud failure offer nothing — the run that just
 	// installed the release that fixed an issue is the run that says so.
-	cmd.PostRunE = func(cmd *cobra.Command, _ []string) error {
-		updateRetryHint(cmd, o)
+	//
+	// The args are passed on because --repo converges the checkout at PATH
+	// (init.go's runInitRepo): which store the offer may read follows from
+	// which checkout the run converged, and PostRunE is the only place the
+	// door still has them.
+	cmd.PostRunE = func(cmd *cobra.Command, args []string) error {
+		updateRetryHint(cmd, o, args)
 		return nil
 	}
 	return cmd
