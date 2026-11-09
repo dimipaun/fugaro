@@ -200,6 +200,26 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 		return nil, nil, userErr("the deployed security rules carry credentials generation %d (%s = %d) and this Fugaro's are generation %d: the credentials children this database runs under came from a newer Fugaro, and 'fugaro update --firebase-project %s' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('fugaro upgrade'), then run 'fugaro update --firebase-project %s' again with the newer binary",
 			credsGen, rules.PathCredsRulesMarker(), credsGen, rules.CredsRulesVersion, d.gcpProject, rules.CredsRulesVersion, d.gcpProject)
 	}
+	// The orchestrator subtree's own generation is read and refused the same
+	// way (stateless orchestrator plan, task O2). It is a marker of its own for
+	// the credentials children's reason: the change that adds the subtree does
+	// not bump RulesVersion — a bump would drop every published policy on an
+	// installation whose owner has not redeployed the rules yet — so the
+	// document generation cannot answer "does this database carry the
+	// orchestrator subtree". A marker above this binary's needs a future
+	// release's write: it says this database runs under a document this binary
+	// does not generate, and deploying this binary's older one would take that
+	// release's rules — whatever it changed — out from under a daemon whose
+	// gate reads this same marker, with nothing naming the rewind.
+	var orchGen int
+	orchEtag, orchFound, err := d.c.GetETag(ctx, rules.PathOrchestratorRulesMarker(), &orchGen)
+	if err != nil {
+		return nil, nil, dbErr("reading "+rules.PathOrchestratorRulesMarker(), err)
+	}
+	if orchFound && orchGen > rules.OrchestratorRulesVersion {
+		return nil, nil, userErr("the deployed security rules carry orchestrator generation %d (%s = %d) and this Fugaro's are generation %d: the orchestrator subtree this database runs under came from a newer Fugaro, and 'fugaro update --firebase-project %s' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('fugaro upgrade'), then run 'fugaro update --firebase-project %s' again with the newer binary",
+			orchGen, rules.PathOrchestratorRulesMarker(), orchGen, rules.OrchestratorRulesVersion, d.gcpProject, rules.OrchestratorRulesVersion, d.gcpProject)
+	}
 	d.acts = nil
 	var warnings []string
 	mark := dbMark{By: markBy, Project: d.project, GCPProject: d.gcpProject, Version: markVersion}
@@ -238,6 +258,26 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 		d.put(budget.PathMode, etag, want, "seeds the mode: "+want)
 	case cur != want:
 		d.put(budget.PathMode, etag, want, fmt.Sprintf("changes the mode: %s -> %s", cur, want))
+	}
+
+	// And who chose that mode, when anyone did: the mode above is the one the
+	// operator asked for when --budget-mode was passed, and a seeded observe is
+	// nobody's choice. `fugaro update` raises a seeded mode — or one an earlier
+	// update raised — to enforce on a managed project, and it may never touch a
+	// mode the owner chose (D1548, task T16), so the two have to be told apart
+	// after this run is over. The node beside the mode is that record; the seed
+	// above writes nothing here, which is what leaves a fresh installation's
+	// observe raisable.
+	if d.mode != "" {
+		var curSet string
+		setEtag, setFound, err := d.c.GetETag(ctx, budget.PathModeSet, &curSet)
+		if err != nil {
+			return nil, nil, dbErr("reading "+budget.PathModeSet, err)
+		}
+		if !setFound || curSet != budget.ChosenByOwner {
+			d.put(budget.PathModeSet, setEtag, budget.ChosenByOwner,
+				"records the mode as the installation owner's own choice ("+budget.PathModeSet+" = "+budget.ChosenByOwner+")")
+		}
 	}
 
 	// The limit the rules need to grant any lease at all: absent denies.
@@ -304,6 +344,18 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 	if !credsFound || credsGen != rules.CredsRulesVersion {
 		d.put(rules.PathCredsRulesMarker(), credsEtag, rules.CredsRulesVersion,
 			fmt.Sprintf("records the credentials rules generation (%s = %d)", rules.PathCredsRulesMarker(), rules.CredsRulesVersion))
+	}
+	// The orchestrator subtree's generation, written beside them and for the
+	// same reason, with the same two cases (stateless orchestrator plan, task
+	// O2): after the deploy above, and on the no-deploy path when it is absent —
+	// where the deployed rules are byte-for-byte the generated ones, so the
+	// subtree this marker names is the subtree the database runs under. The read
+	// at the top of this function is where a marker above this binary's
+	// OrchestratorRulesVersion refused the plan; here only the write is left, and
+	// the etag is that read, so a marker changed since is a 412 at Apply.
+	if !orchFound || orchGen != rules.OrchestratorRulesVersion {
+		d.put(rules.PathOrchestratorRulesMarker(), orchEtag, rules.OrchestratorRulesVersion,
+			fmt.Sprintf("records the orchestrator rules generation (%s = %d)", rules.PathOrchestratorRulesMarker(), rules.OrchestratorRulesVersion))
 	}
 	return d.acts, warnings, nil
 }

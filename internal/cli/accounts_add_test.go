@@ -149,26 +149,35 @@ func TestAccountsAddKeepsCommentsAndOrder(t *testing.T) {
 		t.Fatalf("accounts add: %v\n%s", err, out)
 	}
 
-	// The edit's diff is what this command prints up to its confirmation block;
-	// everything the stages print is on stderr, under the run's own writer.
-	edit := out
-	if i := strings.Index(edit, "⚠ CONFIRM"); i >= 0 {
-		edit = edit[:i]
-	}
-	lines := strings.Split(strings.TrimRight(edit, "\n"), "\n")
+	// The edit's diff is the run of lines after the path — every one of them
+	// carries the two-space marker — and the sentence that names what this run
+	// writes follows it, where the confirmation block used to be (D1540).
+	// Everything the stages print is on stderr, under the run's own writer.
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	if len(lines) == 0 || lines[0] != path {
 		t.Fatalf("the command did not print the diff of its own write to %s:\n%s", path, out)
 	}
+	rest := lines[1:]
 	var added, removed []string
-	for _, line := range lines[1:] {
+	end := len(rest)
+diff:
+	for i, line := range rest {
 		switch {
 		case strings.HasPrefix(line, "  + "):
 			added = append(added, strings.TrimPrefix(line, "  + "))
 		case strings.HasPrefix(line, "  - "):
 			removed = append(removed, strings.TrimPrefix(line, "  - "))
 		default:
-			t.Errorf("the edit's diff carries %q, which is neither an addition nor a removal", line)
+			end = i
+			break diff
 		}
+	}
+	// A non-diff line ends the diff, so a line of the run's own inside it would
+	// cut the rest of the diff off this reading rather than fail it: the
+	// sentence that names the write is asserted to be the very next line, and
+	// anything between the two is a line this command may not print there.
+	if end == len(rest) || !strings.HasPrefix(rest[end], "declare claude_accounts.team-a.allow_data_to") {
+		t.Errorf("the line after the diff is not the sentence naming the write:\n%s", out)
 	}
 	if len(removed) != 0 {
 		t.Errorf("the edit removed %d line(s) from the file, and it edits two keys in place: a removal is a line the edit was not asked for — a comment, the key order the owner wrote, the account added by hand — which is what a re-marshal of localcfg.Config prints:\n%s\nremoved: %q",
@@ -304,8 +313,9 @@ func TestAccountsAddConfirmsTheRotationItMakes(t *testing.T) {
 // TestSettingsWritesTheAccountChoiceKeys is D873's three keys on the generic
 // write path (spec §11.1): each resolves, each is the local config's alone, a
 // layer or a value a key refuses leaves the file byte-identical, and turning
-// `claude_account_auto` on is the sensitive direction — the project's own name
-// is what confirms it, and --yes never does (D846, D875).
+// `claude_account_auto` on is the sensitive direction — a coding agent's
+// session cannot make it, and the owner's own terminal is asked nothing
+// (D846, D875, D1552, D1555).
 func TestSettingsWritesTheAccountChoiceKeys(t *testing.T) {
 	_, localPath := settingsWriteHomeWith(t, "\nclaude_accounts:\n  team-b:\n    allow_data_to: [acme/app]\n")
 	before := readFileString(t, localPath)
@@ -383,18 +393,24 @@ func TestSettingsWritesTheAccountChoiceKeys(t *testing.T) {
 	}
 
 	// Off is the default and the ordinary write; on is the sensitive
-	// direction, so with no terminal and no --yes nothing is written. --yes is
-	// the other answer to that form outside a coding agent's session (D1107).
-	noTerminal(t)
+	// direction, whose fence is the coding agent's session rather than a
+	// terminal (D1552, D1555): nothing is written there, and the owner's own
+	// session is asked nothing for it.
+	agentSession(t)
 	_, _, err = execute(t, "settings", "set", "claude_account_auto", "true", "--layer", "local")
 	if err == nil {
-		t.Fatal("turning claude_account_auto on was written with no terminal and no --yes")
+		t.Fatal("turning claude_account_auto on was written in an agent session")
 	}
-	if !strings.Contains(err.Error(), "needs a real terminal") {
-		t.Errorf("the refusal does not say what it needs: %v", err)
+	if !strings.Contains(err.Error(), "coding agent's session") {
+		t.Errorf("the refusal does not say what refused it: %v", err)
 	}
 	if readFileString(t, localPath) != written {
 		t.Error("a refused claude_account_auto write changed the local config")
+	}
+	noAgentSession(t)
+	noTerminal(t)
+	if _, _, err := execute(t, "settings", "set", "claude_account_auto", "true", "--layer", "local"); err != nil {
+		t.Fatalf("turning claude_account_auto on asked for an answer: %v", err)
 	}
 	if _, _, err := execute(t, "settings", "set", "claude_account_auto", "false", "--layer", "local", "--yes"); err != nil {
 		t.Fatalf("settings set claude_account_auto false: %v", err)

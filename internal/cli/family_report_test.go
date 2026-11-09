@@ -152,16 +152,17 @@ func TestSecretsRmDefaultIsShort(t *testing.T) {
 	if !strings.Contains(step, "project_secrets.bitbucket-token") || !strings.Contains(step, id) {
 		t.Errorf("the step does not name the entry and the container the removal takes away: %q\n%s", step, out)
 	}
-	// G1: the diff and the confirmation are the run's own and are still printed
-	// where they were — the change is confirmed before it is made, and the step
-	// line is the outcome printed after it.
-	confirm := "⚠ CONFIRM (project aurora): delete the Secret Manager container"
+	// G1: the diff and the sentence naming the removal are the run's own and are
+	// still printed where they were — what the removal does is announced before
+	// it is made, and the step line is the outcome printed after it.
+	naming := "delete the Secret Manager container"
 	lines := reportLines(out)
-	if at, stepAt := lineAt(lines, confirm), lineAt(lines, step); at < 0 || at > stepAt {
-		t.Errorf("the confirmation is not printed before the step it is confirmed for (%d, %d):\n%s", at, stepAt, out)
+	if at, stepAt := lineAt(lines, naming), lineAt(lines, step); at < 0 || at > stepAt {
+		t.Errorf("the sentence naming the removal is not printed before the step it names (%d, %d):\n%s", at, stepAt, out)
 	}
+	assertNoPrompt(t, out)
 	if !strings.Contains(out, "  - project_secrets:") {
-		t.Errorf("the diff the person confirms is not printed:\n%s", out)
+		t.Errorf("the diff the person reads is not printed:\n%s", out)
 	}
 	if got := sm.Deleted(); len(got) != 1 || got[0] != id {
 		t.Fatalf("deleted %v, want %s", got, id)

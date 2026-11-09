@@ -67,6 +67,7 @@ import { createSpawnLog } from '../main/spawnlog'
 import type { SpawnLogWriter } from '../main/spawnlog'
 import type { OperationName, ValidatedArguments } from '../main/ipc'
 import { MAX_TEXT_INPUT_LENGTH } from '../shared/sanitize'
+import { licenceKeySupported } from '../shared/version'
 import { SourceRefusal, refusalFrom, GRAPH_SCOPE_ALL, NO_GRAPH_SCOPE, NO_PLAN_CHECKOUT, SETTINGS_EDIT_MOVED } from './source'
 import type {
   FeedEnd,
@@ -271,12 +272,20 @@ export function noInstallationState(options: {
 /** CliSourceOptions is everything a v1 source is built from. `appEnv` is the
  * app's own environment, used for `HOME`, `TMPDIR`, `LANG`/`LC_ALL`, the five
  * `XDG_*` variables and binary resolution -- and for nothing else, because
- * `childEnvironment` reads no other key. */
+ * `childEnvironment` reads no other key.
+ *
+ * `licenceKey` is the one value that does **not** come from `appEnv`: it is the
+ * installation's key, read from the console's own store at the moment of the
+ * spawn (`src/main/licence-store.ts`), and handed to the child in its
+ * environment and never in an argv (S2.1, S2.7). It is a reader rather than a
+ * string because a paste made while the console is running applies to the next
+ * spawn, and because nothing here holds the key text between two of them. */
 export interface CliSourceOptions {
   readonly target: SpawnTarget
   readonly configuredBinaryPath?: string | undefined
   readonly checkout?: string | undefined
   readonly appEnv?: Readonly<Record<string, string | undefined>>
+  readonly licenceKey?: ((project: string) => string | undefined) | undefined
   readonly spawner?: ChildSpawner
   readonly spawnLog?: SpawnLogWriter
   readonly home?: string
@@ -378,11 +387,24 @@ export class CliSource implements FugaroSource {
     args: ValidatedArguments,
     settingsEdit?: { readonly phase: SettingsEditPhase; readonly layer: string },
   ): SpawnPlan {
+    // Read here rather than carried on the instance: the store answers for the
+    // project this source drives, and a key pasted a moment ago is the key the
+    // next child is handed.
+    //
+    // **And only to a child that takes it back out of its own environment**
+    // (`licenceKeySupported`): the floor is asked of the resolved binary's own
+    // version line, before the store is read, so a CLI that would hand the key
+    // on to every program it starts is handed nothing. The constant is unset
+    // until a release carries the removal, so no child is handed a key today.
+    const licenceKey = licenceKeySupported(this.installation.version)
+      ? this.#options.licenceKey?.(this.#options.target.project)
+      : undefined
     return planFor(operation, args, {
       target: this.#options.target,
       binaryPath: this.#binaryPath,
       directory: this.#directory,
       appEnv: this.#env,
+      ...(licenceKey === undefined ? {} : { licenceKey }),
       ...(settingsEdit === undefined ? {} : { settingsEdit }),
     })
   }

@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // checkoutReviewHeadsSeam, when set by a test, runs in reviewMode right
@@ -926,7 +927,9 @@ func neutralizeFinding(s string) string {
 // uses.
 func reviewReport(rec *runstore.Record, location string, failedComments []int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "### Fugaro run `%s`\n\n", rec.RunID)
+	// The heading names the run by its short ID (spec.md §1, D1701); the marker
+	// that closes the report keeps the full ID (D1705).
+	fmt.Fprintf(&b, "### Fugaro run `%s`\n\n", task.ShortRun(rec.RunID))
 	if rec.Status == runstore.StatusHalted && rec.Halt != nil {
 		b.WriteString(haltLines(rec))
 	}
@@ -1014,7 +1017,12 @@ func (r *run) endReviewFailed(ctx context.Context) {
 		reason = "the review stage ended without a verdict"
 	}
 	reason = r.redact(reason)
-	r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, failure.Unclassified, reason)
+	// The class is the one the site that wrote this reason chose, exactly as
+	// finalize's failed case reads it: the reason here *is* r.failure(), so a
+	// class written independently of it would describe a different sentence
+	// (the stage's own result carried stage_error_unexplained or one of its
+	// neighbours, and unclassified would drop it).
+	r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, r.failureClass(), reason)
 	r.skipPR = true
 	r.storeReviewEnded(ctx)
 }

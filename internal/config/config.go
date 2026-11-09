@@ -16,6 +16,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
 )
@@ -67,6 +68,23 @@ type Config struct {
 	// pointer with no json name would write a null key into every file
 	// that writes none, moving the hash of a file that did not change.
 	Rigor *Rigor `yaml:"rigor,omitempty" json:"rigor,omitempty"`
+	// Security is what this repository itself calls security-sensitive
+	// (docs/security-classification, D1500, D1501): the rows a run matches the
+	// paths it changed against to decide whether the change reaches the
+	// adversarial review level. The block is optional and additive — a run's
+	// list is the engine's floor, then the project layer's rows, then these,
+	// and a repository can only ever say that more is sensitive, never less
+	// (D1506). Like Rigor the pointer is what keeps an absent block out of the
+	// resolved config's hash: SHA256 marshals this struct (resolve.go), and a
+	// pointer with no json name would write a null key into every file that
+	// writes none, moving the hash of a file that did not change.
+	Security *Security `yaml:"security,omitempty" json:"security,omitempty"`
+	// Planning is the repository's planning: block (docs/contract-first-decoupling,
+	// D1813). A file that writes none keeps it nil — what the pass defaults to
+	// is Planning.DecouplingOn's answer, not a block applyDefaults writes — so
+	// the json tag keeps an absent block out of the resolved config's hash the
+	// way Rigor's does, and names the block on the wire when one is written.
+	Planning *Planning `yaml:"planning,omitempty" json:"planning,omitempty"`
 
 	// Layer is the project layer Resolve resolved this config over, nil
 	// for none. It is never part of the file or of SHA256: a consumer that
@@ -104,6 +122,15 @@ type Config struct {
 	// itself. Like the fields above it is never part of the file or of
 	// SHA256.
 	RepoGitAuthorSet bool `yaml:"-" json:"-"`
+	// RepoSecuritySet is whether the repository's own file wrote the
+	// security: block at all, at any value: the question RepoRigorSet answers
+	// for rigor:, and Security cannot answer it — the key written empty
+	// (`security: {}`) decodes to a block with no rows and an explicit null
+	// (`security:`) decodes to a nil block, both of which are the same line to
+	// a runner older than securitySince, which decodes the file with
+	// KnownFields and refuses the key alone. Like the fields above it is never
+	// part of the file or of SHA256.
+	RepoSecuritySet bool `yaml:"-" json:"-"`
 	// RepoLevelsNoneModelSet is whether the repository's own file names a
 	// review level's model with the literal none (NoneModel), which is the
 	// level's own switch written the other way. The question the fields above
@@ -114,7 +141,37 @@ type Config struct {
 	// reads the literal as a model ID. Like the fields above it is never part
 	// of the file or of SHA256.
 	RepoLevelsNoneModelSet bool `yaml:"-" json:"-"`
+	// RepoPlanningSet is whether the repository's own file wrote the
+	// planning: key at all, at any value, the question RepoRigorSet answers
+	// for rigor:. Planning cannot answer for an explicit null (`planning:`,
+	// which decodes to a nil block), and a runner older than planningSince
+	// refuses the key alone. Like the fields above it is never part of the
+	// file or of SHA256.
+	RepoPlanningSet bool `yaml:"-" json:"-"`
 }
+
+// Planning is fugaro.yaml's planning: block and the project layer's
+// defaults.planning (docs/contract-first-decoupling, D1813): what the
+// planning pass the user's own agent follows may do before a task graph is
+// launched. Both layers may set its keys, and the narrowest one that does
+// wins — these are preferences, not bounds.
+type Planning struct {
+	// Decoupling turns the dependency-breaking pass on or off. On, the
+	// planning skill asks of each dependency edge whether a contract task
+	// could break it and writes the contract, integration and change nodes
+	// into the graph artifact; off, it plans the edge as it always did. Unset
+	// means on (DecouplingOn, from DefaultPlanningDecoupling); the pass adds
+	// no spend path of its own — its
+	// tasks are ordinary tasks under the same caps and the same go-ahead rule
+	// (D1820) — so the switch is a preference and not a budget.
+	Decoupling *bool `yaml:"decoupling"`
+}
+
+// DecouplingOn reports whether the pass runs for this repository: true unless
+// a layer set planning.decoupling false. It is nil-safe in both hops, so a
+// caller holding no planning: block — and no config at all — reads the
+// default rather than a blank.
+func (p *Planning) DecouplingOn() bool { return p == nil || p.Decoupling == nil || *p.Decoupling }
 
 // Rigor is fugaro.yaml's rigor: block and the project layer's defaults.rigor
 // (D20): the mode a repository runs at when nothing narrower decides, and
@@ -131,6 +188,23 @@ type Rigor struct {
 	// both in effect, never one replacing the other (the merge rule §4
 	// otherwise gives a list), which is RepoRigor's reason to exist.
 	Areas []rigor.Area `yaml:"areas,omitempty"`
+}
+
+// Security is fugaro.yaml's security: block (D1500): this repository's own
+// list of named patterns. It is one block whose list is security.patterns and
+// not the key being the list itself, because the same block carries one
+// non-pattern member in the project layer — always_level_3 (D1517) — and a
+// repository's block and a project's have to be the same shape for a reader to
+// move a row from one to the other.
+type Security struct {
+	// Patterns are this layer's rows: a name, a doublestar glob relative to
+	// the repository root, and the category the paths it matches are labelled
+	// with. Each row is validated by sensitivity.Pattern.Validate, in one
+	// place and at load (D1502, F21) — so a glob the matcher cannot read is a
+	// configuration error rather than a rule that silently never fires, and
+	// `*` or `**` is refused, because "everything is sensitive" is the
+	// project's always_level_3 setting and not a pattern (D1503).
+	Patterns []sensitivity.Pattern `yaml:"patterns,omitempty"`
 }
 
 // RigorConfig is the rigor configuration a resolved config stands for: the

@@ -40,12 +40,20 @@ func markRules(t *testing.T, f *launchBudgetFixture, generation int) {
 // run, false when the launch stored none.
 func storedTask(t *testing.T, f *cloudFixture) bool {
 	t.Helper()
+	return storedTaskFor(t, f, appSlug)
+}
+
+// storedTaskFor is storedTask for any slug a fixture enrolls (its repository
+// entry is the fixture's own GitHub one, which these launches do not always
+// use).
+func storedTaskFor(t *testing.T, f *cloudFixture, slug string) bool {
+	t.Helper()
 	b, err := blob.OpenBucket(context.Background(), f.bucket)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer b.Close()
-	if _, err := runstore.Open(b, appSlug, budgetRun).ReadTask(context.Background()); err != nil {
+	if _, err := runstore.Open(b, slug, budgetRun).ReadTask(context.Background()); err != nil {
 		return false
 	}
 	return true

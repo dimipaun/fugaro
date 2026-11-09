@@ -120,7 +120,7 @@ This matters here, in three ways:
     a grant: the lookup exists to feed a **dollar reservation**, and the reservation is the backend's
     ledger, so without the backend there is nothing to reserve and nothing to look up. That is the repo's
     own pattern for a ledger feature on a project with no backend — return before the call
-    (`internal/cli/accounts.go:262-264`, whose remedy sentence is `fugaro update --firebase-project <p>`;
+    (`internal/cli/accounts.go:261-263`, whose remedy sentence is `fugaro update --firebase-project <p>`;
     `internal/cli/api.go:159` refuses the same way for the spend history). §3 records what the alternative
     would cost if the owner ever wants a price without the backend, and §6 makes the gate a T8 test.
   - **Service-account credentials — the catalog check job, and the history job — pass no quota project
@@ -298,8 +298,8 @@ What is known from the documentation and stays true:
   The estimator must **ignore** it: Fugaro cannot know how much of the month's free tier is left,
   so ignoring it keeps the number an upper bound.
 - Private-pool (worker pool) pricing is a separate table; Fugaro sets no `Options.Pool` — the request
-  carries a service account, a machine type, a logging mode and a timeout and nothing else
-  (`internal/backend/gcp/build.go:227-233`) — so it submits to the **default pool**, and the
+  carries a service account, a machine type, a logging mode, a timeout and a queue TTL and nothing
+  else (`internal/backend/gcp/build.go:239-252`) — so it submits to the **default pool**, and the
   default-pool table is the right one.
 - The two commands the owner ran on 2026-11-08 — and what T8's live check repeats — with the token in a
   `curl --config` process substitution for the reason given in §1.4:
@@ -316,10 +316,10 @@ curl -sS --config <(printf 'header = "Authorization: Bearer %s"\nheader = "X-Goo
 ## 2. Which identity launches builds, and what each would need
 
 All three paths submit through the Go Cloud Build client with the caller's Application Default
-Credentials (`internal/backend/gcp/build.go:398-410` `NewBuilder`, `:483` `Submit`, `:496` `create`),
+Credentials (`internal/backend/gcp/build.go:417-429` `NewBuilder`, `:502` `Submit`, `:515` `create`),
 and **the build always runs as the repository's own build account**, never the project default and
-never a person: `internal/backend/gcp/build.go:227` sets
-`b.ServiceAccount = projects/<p>/serviceAccounts/<s.ServiceAccount>`, and `:363` refuses any account
+never a person: `internal/backend/gcp/build.go:239` sets
+`b.ServiceAccount = projects/<p>/serviceAccounts/<s.ServiceAccount>`, and `:382` refuses any account
 that is not `fugaro-b-<repo>@<project>.iam.gserviceaccount.com`.
 
 | Path | Submit identity (the credential the API call carries) | Build runs as | Submitting today | What a billing read would add |
@@ -435,8 +435,11 @@ local config: build.machine_type   (default E2_HIGHCPU_8; internal/localcfg/loca
         └─ internal/infra/catalogcheck.go:218 (FUGARO_CATALOG_CHECK_SPEC)
         │
         ▼
-internal/backend/gcp/build.go:231  b.Options.MachineType = s.MachineType
-internal/backend/gcp/build.go:233  b.Timeout = "3600s"        ← fixed, not configurable
+internal/backend/gcp/build.go:243  b.Options.MachineType = s.MachineType
+internal/backend/gcp/build.go:251  b.Timeout = "3600s"        ← fixed, not configurable
+internal/backend/gcp/build.go:252  b.QueueTtl = "3600s"       ← how long it may wait for a worker
+                                                              before that timeout starts; billed for
+                                                              neither, and the lease's deadline adds it
         │
         ▼
 Cloud Build machine  ──── the rate ────▶  a Cloud Billing SKU
@@ -514,7 +517,7 @@ price refuses — with three amendments.**
    lookup rather than a grant. T8 pins all four with tests beside the lookup: the option slice carries
    `option.WithQuotaProject(<installation project>)` for user ADC and **not** for service-account
    credentials; the env var changes neither answer; and the lookup is never constructed without a
-   backend (the repo's own early return, `internal/cli/accounts.go:262-264`). No `iam.tf` edit, no
+   backend (the repo's own early return, `internal/cli/accounts.go:261-263`). No `iam.tf` edit, no
    `grantRules` row, no secret, no API key — on the **user** path, which the 2026-11-08 probe (§1.4) read
    green, so there this is the design as built rather than the design if the route works. The job path's
    half is T8's live run (§9 item 1), and it is what decides the `iam.tf` entry T8 keeps on its list.
@@ -592,7 +595,7 @@ Google's documentation (fetched 2026-11-07; "Last updated" as Google prints it):
 | `https://cloud.google.com/build/pricing` | Build-minutes, the free tier, per-machine-type per-minute prices, the `n1-highcpu-*` aliases, private-pool pricing | — |
 | `https://cloud.google.com/build/docs/build-config-file-schema` | *"The default machine type is e2-standard-2"*, `machineType: 'E2_HIGHCPU_8'` | — |
 | `https://cloud.google.com/build/docs/iam-roles-permissions` | `cloudbuild.builds.create` is what submits a build; the caution about running as the Cloud Build legacy service account | 2026-10-26 |
-| `https://cloud.google.com/build/docs/cloud-build-service-account` | The default *build* identity is a service account — which is why `build.go:227` always names one | — |
+| `https://cloud.google.com/build/docs/cloud-build-service-account` | The default *build* identity is a service account — which is why `build.go:239` always names one | — |
 
 The repository, by path and symbol:
 
@@ -600,12 +603,12 @@ The repository, by path and symbol:
 | --- | --- |
 | `docs/no-prompt-policy/reconciliation.md` §3 D1543/D1548/D1550, §5 T5, F5, F18, F19, F20, §6 | The decisions and the UNVERIFIED this spike answers |
 | `docs/no-prompt-policy/implementation-plan.md` T8S, T8 | The task that commissioned this spike, the T8 file list, and the condition T8S answers: *"the grant in `iam.tf` is UNVERIFIED until then"* — answered **no grant on the user path** on 2026-11-08 (§8), the job path being §9 item 1 and T8's live run |
-| `internal/backend/gcp/build.go:227,231,233,363,398-410,483,496` | The build request: service account, machine type, the fixed 3600 s timeout, the submit path |
+| `internal/backend/gcp/build.go:239,243,251,252,382,417-429,502,515` | The build request: service account, machine type, the fixed 3600 s timeout, the queue TTL the lease's deadline adds, the submit path |
 | `internal/backend/gcp/gcp.go:67-82` | ADC as the identity, and the quota-project pattern for the **user** path: `option.WithQuotaProject(o.GCPProject)` when a project is known — that backend's own builder, not a shared one, and the option it sets unconditionally (§1.2 splits it by credential) |
 | `google.golang.org/api@v0.299.0` `transport/http/dial.go:189,240-242`; `internal/creds.go:29,285-303` | The header rule the split rests on: `X-Goog-User-Project` is set whenever a quota project resolved non-empty, whatever the credential kind; with no client option the only fallbacks are `GOOGLE_CLOUD_QUOTA_PROJECT` and a `quota_project_id` in the credentials file |
 | `internal/cli/image_check_catalog.go:50,540` | The catalog check job's client, built with `gcp.Options{GCPProject: …}` — the same account, already sending the same header |
 | `deploy/terraform/gcp/modules/firebase/iam.tf:102-121` | `usage_consumer` (people and admins) and `history_usage` (the history account): who holds `serviceUsageConsumer`, and why the Firestore client needs it — an account naming a project that is **not** its own |
-| `internal/cli/init.go:422`; `internal/cli/init_stages.go:947-951`; `internal/cli/accounts.go:262-264`; `internal/cli/api.go:159` | `--firebase-project` is what turns the backend on (*"a run without it builds none"*) and its stage skips without it; and the repo's own shape for a ledger feature on a project with no backend — return before the call, with the `fugaro update --firebase-project` remedy |
+| `internal/cli/init.go:422`; `internal/cli/init_stages.go:947-951`; `internal/cli/accounts.go:261-263`; `internal/cli/api.go:159` | `--firebase-project` is what turns the backend on (*"a run without it builds none"*) and its stage skips without it; and the repo's own shape for a ledger feature on a project with no backend — return before the call, with the `fugaro update --firebase-project` remedy |
 | `docs/git-providers.md:82-85`; `docs/gcp-live-checklist.md:7415` | The repo's rule for a bearer token: `curl --config` from a process substitution, because `ps` shows argv to every local user for the process's lifetime |
 | `internal/cli/init_project.go:437,490` | `adcInfo`/`credentialNote`: `authorized_user` is the person |
 | `internal/billing/accounts.go:41-68,150-174,249-271` | The repo's existing Cloud Billing client: ADC only, `billingAccounts.list`, the permission/quota-project/API-disabled errors — and `newService`, which names **no** quota project, so the lookup must not copy it (§1.2) |

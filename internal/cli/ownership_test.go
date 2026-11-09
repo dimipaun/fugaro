@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
@@ -617,5 +618,81 @@ func TestPairExitsTwoWhenTheDatabaseCannotBeRead(t *testing.T) {
 	events := pairLines(t, out)
 	if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedUnreachable {
 		t.Fatalf("events = %v, want one refused with code %q", events, pairRefusedUnreachable)
+	}
+}
+
+// TestOrchestratorPatchRefusesAnotherInstallationsDatabase: `fugaro
+// orchestrator patch` writes the project's state node, and that node lives in
+// the same Firebase Realtime Database every budget write goes into (D1220), so
+// it is a writer into the budget database and asks the one ownership question
+// before it reads the node, before the person is asked to confirm anything and
+// before anything is written. The reads beside it — state and events — take the
+// same client, held to the project's own name in the database (checkDBProject,
+// as `budget show` holds it), and stop there: reading somebody else's database
+// is not a write, which is why only the writer asks this question.
+func TestOrchestratorPatchRefusesAnotherInstallationsDatabase(t *testing.T) {
+	f := newOrchestratorFixture(t)
+	s := seedOrchestratorState(t, f, workItemUpsert("web-fix", "fix the flaky test"))
+	fact := func(key string) orchestrator.Op {
+		return orchestrator.Op{Op: orchestrator.OpFactSet, Fact: &orchestrator.FactOp{Key: key, Value: "main"}}
+	}
+
+	// The installation's own marked database: the patch lands, as before.
+	path := patchFile(t, patchDoc(t, s.Rev, fact("branch")))
+	if out, _, err := execute(t, "orchestrator", "patch", "-f", path); err != nil {
+		t.Fatalf("orchestrator patch on the installation's own marked database was refused: %v\n%s", err, out)
+	}
+	own := storedOrchestratorState(t, f)
+	if own.Rev != s.Rev+1 || len(own.Facts) != 1 {
+		t.Fatalf("the patch landed at rev %d with %d facts, and it was one write over rev %d", own.Rev, len(own.Facts), s.Rev)
+	}
+
+	// Another installation's mark: the patch is refused, and the node is the one
+	// the last write left.
+	f.db.Set(budget.PathMark, birchMark())
+	path = patchFile(t, patchDoc(t, own.Rev, fact("branch2")))
+	_, _, err := execute(t, "orchestrator", "patch", "-f", path)
+	refusedByTheOwnershipCheck(t, "orchestrator patch", err, "nothing was written")
+	if err != nil && !strings.Contains(err.Error(), "one Firebase project serves one installation") {
+		t.Errorf("the refusal is not the shared one (the mark it found): %v", err)
+	}
+	if after := storedOrchestratorState(t, f); after.Rev != own.Rev || len(after.Facts) != len(own.Facts) {
+		t.Errorf("the refused patch wrote the node: rev %d, %d facts", after.Rev, len(after.Facts))
+	}
+
+	// Data and no mark at all: the other half of the same answer.
+	f.db.Set(budget.PathMark, nil)
+	_, _, err = execute(t, "orchestrator", "patch", "-f", path)
+	refusedByTheOwnershipCheck(t, "orchestrator patch", err, "nothing was written")
+	if err != nil && !strings.Contains(err.Error(), "and no Fugaro mark") {
+		t.Errorf("the refusal does not name the data and the absent mark: %v", err)
+	}
+	if after := storedOrchestratorState(t, f); after.Rev != own.Rev || len(after.Facts) != len(own.Facts) {
+		t.Errorf("the refused patch wrote the node: rev %d, %d facts", after.Rev, len(after.Facts))
+	}
+}
+
+// TestOrchestratorPatchExitsTwoWhenTheDatabaseCannotBeRead: the same outage as
+// the writers above — the question's first read is the shallow root GET, and
+// the reads a patch makes before it (the config, the name gate at
+// /fugaro/project) succeed, so what comes back is the question's failure and not
+// an earlier gate's.
+func TestOrchestratorPatchExitsTwoWhenTheDatabaseCannotBeRead(t *testing.T) {
+	f := newOrchestratorFixture(t)
+	s := seedOrchestratorState(t, f, workItemUpsert("web-fix", "fix the flaky test"))
+	path := patchFile(t, patchDoc(t, s.Rev, orchestrator.Op{Op: orchestrator.OpFactSet,
+		Fact: &orchestrator.FactOp{Key: "branch", Value: "main"}}))
+	budgetTransport = rootReadDownTransport{rt: http.DefaultTransport}
+	t.Cleanup(func() { budgetTransport = nil })
+
+	_, _, err := execute(t, "orchestrator", "patch", "-f", path)
+	if err == nil || ExitCode(err) != ExitRemoteError {
+		t.Fatalf("orchestrator patch with a database that cannot be read: err = %v, want exit 2", err)
+	}
+	if !strings.Contains(err.Error(), "nothing was written") {
+		t.Fatalf("the failure is not the ownership question's: %v", err)
+	}
+	if after := storedOrchestratorState(t, f); after.Rev != s.Rev {
+		t.Errorf("the failed patch wrote the node: rev %d", after.Rev)
 	}
 }

@@ -180,6 +180,7 @@ func (r *Reporter) Summary() Outcome {
 	r.spinName, r.spinPaused = "", false
 	o := Outcome{State: r.state, Steps: r.steps, Elapsed: r.o.Now().Sub(r.start)}
 	if !r.summarised && o.Steps > 0 {
+		r.logLine(summaryLine(o) + "\n")
 		fmt.Fprintln(r.human, summaryLine(o))
 	}
 	r.summarised = true
@@ -326,11 +327,56 @@ func (s *Step) end(g glyph, c termenv.ANSIColor, state State, tail string, under
 	if state > r.state {
 		r.state = state
 	}
+	// The log gets the same line unstyled: a log is read with a pager, where the
+	// colour that helps a person watching is noise, and a reader comparing two
+	// runs should not have to look past it. Each line goes in one write,
+	// because the sink's redaction is by line and a line split across two could
+	// carry half a value.
+	r.logLine(g.text(r.o.ASCII) + " " + s.name + tail + "\n")
 	line := r.painted(g.text(r.o.ASCII), c) + " " + s.name + tail
 	fmt.Fprintln(r.human, line)
 	for _, l := range under {
+		r.logLine("    " + l + "\n")
 		fmt.Fprintf(r.human, "    %s\n", l)
 	}
+}
+
+// logLine keeps one of the run's own lines — a step's result, the lines under
+// it, the closing line — in the log, whole. The log is the run's full output
+// (D1352) and the path a failure prints has to hold what the run showed, so a
+// command whose own output is its steps cannot leave an empty file behind that
+// line. Called with the lock held.
+func (r *Reporter) logLine(text string) {
+	if r.o.Sink == nil {
+		return
+	}
+	_, _ = r.o.Sink.Write([]byte(text))
+}
+
+// Log is the run's log as a writer, for a command that prints its own lines to
+// its own writer and wants them kept beside them (D1352). Stream is for a run's
+// own output — a child's, a stage's — and reaches the terminal under --verbose;
+// this one is the log alone, so a command that prints to a person and to the
+// log writes each of them once. A run with no log discards, and a write that
+// fails never fails the command (G5).
+func (r *Reporter) Log() io.Writer {
+	if r.o.Sink == nil {
+		return io.Discard
+	}
+	return &logWriter{r: r}
+}
+
+// logWriter is Reporter.Log's writer: the sink, and nothing else.
+type logWriter struct{ r *Reporter }
+
+func (w *logWriter) Write(p []byte) (int, error) {
+	r := w.r
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if sink := r.o.Sink; sink != nil {
+		_, _ = sink.Write(p)
+	}
+	return len(p), nil
 }
 
 // appendLogLine adds the run's log to the lines under a failure or a step

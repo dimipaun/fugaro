@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/triage.schema.json",
+  "title": "Fugaro triage verdict",
+  "description": "One triage round's verdict: what the judge the post-review triage step calls decided about each finding of a review round (docs/post-review-triage, D1840, D1850). internal/triage's Decode is the reader, and the two agree on every refusal this document can state: a member it refuses, a member written as the JSON literal null, a verdict word outside the two, a reason that is empty, over its limit or on more than one line, or a version this reader does not know is refused as a whole, and a refused answer blocks every finding of the round (D1846) — refusal is the strict direction, so an answer nobody can place never becomes a deferral. The reader makes five refusals this document does not, and each is the reader's own to make: a key outside the shape below, which only the code that derives a key can state; a member name an object writes twice, which is a single member by the time a parser has read this document, so a document that spells one twice is refused rather than resolved to one of the two readings; a whole number written with a fraction or an exponent — `1.0` where version 1 is meant, `0.0` for an index — which this document reads as the whole number it is and the reader's decoding of an integer refuses; a reason of more than 200 bytes written in characters of more than one byte, since the bound below counts characters and the reader's counts bytes; and an index past the largest whole number the reader's own integer type holds, which the `minimum` below does not bound above. All five are pinned by a test rather than left to be discovered. A judge reaches only the findings the mode's threshold table blocks and the floor does not name: a security or data_loss class, an impact of 5, an unscored finding and a finding only the owner can settle are never deferred, and the table stays the fallback whatever a verdict says (D1840, D1855). Members may be added within a version — the reader decodes strictly, so a member it does not know is an error rather than a value it ignores — and removing or retyping one bumps version, which a reader that does not know the number refuses.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "findings"],
+  "properties": {
+    "version": {
+      "const": 1,
+      "$comment": "triage.Version in internal/triage/verdict.go.",
+      "description": "The verdict format's version. A field never changes meaning (CLAUDE.md), so a member that is removed or retyped bumps this number and a reader that does not know it refuses the document."
+    },
+    "findings": {
+      "type": "array",
+      "description": "One entry per finding of the round the judge read. It is always written, empty included, so an absent array is a malformed answer and not an empty claim: an answer with no entry for a table-blocked finding blocks it, and the run records the call as failed. The judge drops nothing — an entry naming a finding the round does not hold is dropped by the code that applies the verdict, and two entries for one finding block it (D1856).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "key", "verdict", "reason"],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The finding's position in the round's list, as the brief numbered it. It is the entry's index into that list, and an entry whose index and key disagree about which finding they mean blocks it rather than being resolved to one of them (D1850)."
+          },
+          "key": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{16,64}$",
+            "description": "The finding's identity across rounds, echoed from the brief: a lowercase hex digest of the finding's file and summary (F11). It is what makes a verdict about a finding rather than about a position a re-review may have reordered, so the judge copies the value it was given and never invents one; the caller derives it, and a verdict whose key names no finding of the round is dropped.",
+            "$comment": "internal/triage's Decode refuses an empty key and nothing more, because the digest is the caller's to derive (T-TR3) and not the reader's to state, so the reader accepts keys this pattern refuses and this schema is the stricter of the two. The pattern is the shape the writer emits and what another consumer may hold a document to; the reader's half is the drop that follows, since a key that names no finding of the round — the shape included — is dropped by the code that applies the verdict (D1856)."
+          },
+          "verdict": {
+            "enum": ["block", "defer"],
+            "description": "The two words, and the whole vocabulary: block is the finding fixed in this patch before the merge, defer is the finding filed as a follow-up task with the merge going ahead without it. A deferred finding never reaches the fixer, and a third word is refused rather than read as one of the two."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[^\\r\\n]+$",
+            "description": "The judge's one-line why, which the run record keeps and the follow-up task carries (acceptance 3): every verdict is logged with its reason, so the judgement can be checked and tuned. One line, non-empty and bounded — the reader holds it to 200 bytes (internal/triage's MaxLine), which is at most the 200 characters this bound allows — because a later reader prints it in a table cell and in a task's brief. A reason written across two lines is refused rather than folded: the fold would hide the second line's text from the reader that bounds it."
+          },
+          "group": {
+            "type": "string",
+            "maxLength": 200,
+            "pattern": "^[^\\r\\n]*$",
+            "description": "The key that puts a deferral in the same follow-up task as other deferrals, absent for a finding that is its own task (the spec's \"group related small findings into one task\", T-TR10). A reader routes on it without parsing prose, so it is one line and bounded like the reason it sits beside. An empty string is the same statement as an absent member — a finding its own task — which is why the member is optional and the pattern allows the empty one."
+          }
+        }
+      }
+    }
+  }
+}

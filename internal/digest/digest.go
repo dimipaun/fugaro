@@ -32,7 +32,9 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/stats"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -238,6 +240,22 @@ type FlagCount struct {
 	Count int
 }
 
+// ClassCount is one class of the period's failures: how many runs it holds,
+// what they billed, and one of their run IDs. Every field is a figure, a run
+// ID or a value of the closed vocabulary, so a row can hold no word a record
+// chose.
+type ClassCount struct {
+	Class failure.Class
+	Runs  int
+	// Billed is the class's runs' billed dollars, the figure the report's run
+	// table prints in its own column.
+	Billed budget.Micros
+	// Example is one run of the class, the newest of them: a run ID begins
+	// with the run's own start time, so the figure is the same whatever order
+	// the records arrive in (G3).
+	Example string
+}
+
 // Digest is one period's report.
 type Digest struct {
 	Period Period
@@ -252,6 +270,11 @@ type Digest struct {
 	Total Figures
 	// Flags counts the period's flags by name, in FlagNames order.
 	Flags []FlagCount
+	// Failures is why the period's runs did not succeed, one row per class
+	// that holds any of them, in failure.Classes() order. A run that did not
+	// fail is in no row: a class is a record's own ending, never a derivation
+	// (design §3, D1464).
+	Failures []ClassCount
 	// Recipes is each recipe's median cost over the period's runs, by the
 	// name the report writes: a catalog recipe's own, "other" for every other
 	// name. It is the per-recipe figure D326's third rule reads month over
@@ -269,6 +292,7 @@ type Digest struct {
 func Build(recs []runstore.Record, p Period) Digest {
 	all := make([]Run, 0, len(recs))
 	byRecipe := map[string][]budget.Micros{}
+	byClass := map[failure.Class]*ClassCount{}
 	total := Figures{}
 	for i := range recs {
 		rec := &recs[i]
@@ -279,6 +303,18 @@ func Build(recs []runstore.Record, p Period) Digest {
 		all = append(all, r)
 		name := recipeName(rec)
 		byRecipe[name] = append(byRecipe[name], cost(r))
+		if class := runview.ClassOf(rec); class != "" {
+			c := byClass[class]
+			if c == nil {
+				c = &ClassCount{Class: class}
+				byClass[class] = c
+			}
+			c.Runs++
+			c.Billed = satAdd(c.Billed, r.Billed)
+			if r.ID > c.Example {
+				c.Example = r.ID
+			}
+		}
 		total.Runs++
 		if len(r.Flags) > 0 {
 			total.Flagged++
@@ -315,14 +351,35 @@ func Build(recs []runstore.Record, p Period) Digest {
 	}
 
 	d := Digest{
-		Period:  p,
-		Runs:    append(flagged, rest...),
-		Stages:  stages(recs, p),
-		Total:   total,
-		Flags:   flagCounts(all),
-		Recipes: recipeMedians(byRecipe),
+		Period:   p,
+		Runs:     append(flagged, rest...),
+		Stages:   stages(recs, p),
+		Total:    total,
+		Flags:    flagCounts(all),
+		Failures: classCounts(byClass),
+		Recipes:  recipeMedians(byRecipe),
 	}
 	return capTo(d, MaxBytes)
+}
+
+// classCounts is the period's failures in the vocabulary's order, one row per
+// class that holds any run.
+//
+// The class is read by runview.ClassOf, the one reader of a record's ending
+// (D1454): a record written before the field shipped carries a reason
+// instead, and counting classes any other way would drop it from a table that
+// is closed over the period's failures.
+func classCounts(byClass map[failure.Class]*ClassCount) []ClassCount {
+	if len(byClass) == 0 {
+		return nil
+	}
+	out := make([]ClassCount, 0, len(byClass))
+	for _, class := range failure.Classes() {
+		if c := byClass[class]; c != nil {
+			out = append(out, *c)
+		}
+	}
+	return out
 }
 
 // recipeName is the record's recipe as the report names it: the catalog

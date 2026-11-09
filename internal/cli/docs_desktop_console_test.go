@@ -357,6 +357,12 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 	shapes := []reflect.Type{
 		reflect.TypeOf(runview.Row{}),
 		reflect.TypeOf(runview.Totals{}),
+		// §5's own document and the group inside --group-by's block (FC6):
+		// lsDoc is the shape §5 documents, and namedTypes admits exactly the
+		// types listed, so the embedded lsDoc watchDegradedDoc carries below
+		// is not walked into unless it is named here.
+		reflect.TypeOf(lsDoc{}),
+		reflect.TypeOf(lsGroup{}),
 		reflect.TypeOf(logLine{}),
 		reflect.TypeOf(secretEntry{}),
 		reflect.TypeOf(gcp.SecretInfo{}),
@@ -377,6 +383,11 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}),
 		reflect.TypeOf(plan.Footprint{}),
+		// The decoupling pass's own record (schema 3): one broken edge and one
+		// change request, and the `was` object under the first.
+		reflect.TypeOf(plan.Decoupling{}),
+		reflect.TypeOf(plan.BrokenEdge{}),
+		reflect.TypeOf(plan.ContractChange{}),
 		// The read's own document (V2.2.3): every key of what `plan graph
 		// --json` prints, so a computed field the contract does not name fails
 		// here too, not only the artifact's own.
@@ -634,6 +645,10 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 	}
 	shapes := []reflect.Type{
 		reflect.TypeOf(runview.Row{}), reflect.TypeOf(runview.Totals{}),
+		// §5's own document and the group inside --group-by's block (FC6), as
+		// in the test above: the two shapes the `groups` row of §5 is read
+		// against.
+		reflect.TypeOf(lsDoc{}), reflect.TypeOf(lsGroup{}),
 		reflect.TypeOf(logLine{}), reflect.TypeOf(secretEntry{}),
 		reflect.TypeOf(gcp.SecretInfo{}), reflect.TypeOf(accountsListDoc{}),
 		reflect.TypeOf(cancelResult{}), reflect.TypeOf(budgetShowDoc{}),
@@ -652,6 +667,9 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(configListCheckout{}),
 		reflect.TypeOf(plan.Document{}), reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}), reflect.TypeOf(plan.Footprint{}),
+		// The decoupling pass's own record (schema 3), as in the test above.
+		reflect.TypeOf(plan.Decoupling{}), reflect.TypeOf(plan.BrokenEdge{}),
+		reflect.TypeOf(plan.ContractChange{}),
 		// The read's own document (V2.2.3): the artifact's shape plus what is
 		// computed where the graph is read.
 		reflect.TypeOf(plan.Graph{}), reflect.TypeOf(plan.NodeState{}),
@@ -698,6 +716,12 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(managedStatusRetirements{}),
 		reflect.TypeOf(localcfg.UpdateProject{}),
 		reflect.TypeOf(localcfg.UpdateRetirement{}),
+		// §6.23, the security list's own document (the security-classification
+		// design's SC3, D1512): the list in force with the layer of every row,
+		// and one answer per checked path.
+		reflect.TypeOf(securityPathsDoc{}), reflect.TypeOf(securityListDoc{}),
+		reflect.TypeOf(securityPattern{}), reflect.TypeOf(securityPathAnswer{}),
+		reflect.TypeOf(securityMatch{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command,
 		// as in the test above.
 	}
@@ -1041,6 +1065,13 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// does not spawn it yet — but the document describes its flags, so they are
 	// checked against this constructor like any other command's.
 	"managed status": newManagedStatusCmd,
+	// §6.23 documents the security list's own read (the security-classification
+	// design's SC3, D1512): the list of paths this repository's runs treat as
+	// security-sensitive, and the answer per checked path. It is offline and
+	// reads nothing of a cloud, so it is not on the console's spawn list either
+	// (D1514 defers the screen) — but the document describes its two flags, so
+	// they are checked against this constructor like any other command's.
+	"security paths": newSecurityPathsCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
@@ -1314,7 +1345,7 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the twenty-five argvs and nothing else -- the console's one spawn table
+// the twenty-six argvs and nothing else -- the console's one spawn table
 // (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
 // dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
@@ -1419,6 +1450,15 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// screen and the `caps` panel. The same two project flags and no
 		// argument of its own.
 		"project policy show --json --project <name> [--config <path>]",
+		// The effective-craft read (the model-crafts plan's MC8, D1633): one
+		// row per craft -- the model it runs, the credential or pool its calls
+		// go out on, the layer each half came from and whether what it names
+		// serves anything yet. It is offline, and the two halves are resolved
+		// by `internal/craft`'s own `Resolve`, the one resolver a run uses.
+		// The same two project flags and no argument of its own: `--project
+		// <name>` is what makes it answer for a Finder-launched child, which
+		// has no checkout to resolve a project from.
+		"craft ls --json --project <name> [--config <path>]",
 		// The launch (console v2 plan V2.5.1a, the `run.launch` operation):
 		// the console's first write and the one thing this table is a fence
 		// against, spelled as rule 11's exact argv and nothing else.
@@ -1557,7 +1597,7 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Twenty-four commands: the thirteen dashboard reads (logs has two argvs), the
+	// Twenty-five commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
 	// screen's `plan status --json` (GV2.1), the dependency graph read
 	// `graph --json` (the graph plan's CG9a), the project view's
@@ -1571,10 +1611,11 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// plan's C1), the settings write `settings set KEY ...` (the same plan's
 	// C3, and the row that is not a read at all), the two managed reads
 	// `managed status --json` and `project policy show --json` (the managed
-	// screens' CM3: the marks with their trail, and the policy node) and the
-	// launch `fugaro run` (V2.5.1a).
-	if len(allowed) != 24 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 24 (logs has two argvs)", path, argvs, len(allowed))
+	// screens' CM3: the marks with their trail, and the policy node), the
+	// effective-craft read `craft ls --json` (the model-crafts plan's MC8) and
+	// the launch `fugaro run` (V2.5.1a).
+	if len(allowed) != 25 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 25 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -1736,7 +1777,9 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //     settings-edit plan's C1 to thirty, the same plan's C3 to thirty-one, and
 //     the graph plan's CG9a to thirty-two, and the managed screens' plan's CM4
 //     -- `managed.status` and `policy.show`, whose rule 6 rows CM3 had already
-//     written -- to the thirty-four rule 5 carries today.
+//     written -- to thirty-four, and the subscriptions plan's S2.7 -- the licence
+//     section's `licence.read` and `licence.save`, two of the eleven rows here
+//     that spawn nothing -- to the thirty-six rule 5 carries today.
 //   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
 //     the row's own words lead some row of the design's table **and what that row
 //     carries after them is flags, nothing else**. The second half is the whole
@@ -5271,8 +5314,11 @@ func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
 	// D768/D770 answers of 2026-10-30 (auto-update U5): C8's wording stays, as
 	// the earlier amendment, and the newer one sits beside it.
 	design := readDoc(t, "docs/design/desktop-console.md")
-	if !strings.Contains(design, "10. **The app writes the spawn log, when asked, the installations file, `updates.json` and `crash.json`, and nothing else.**") {
-		t.Error("design section 5.1 rule 10 was not amended to name the app's four writes (C8's second, D768's third, the crash switch's fourth)")
+	if !strings.Contains(design, "10. **The app writes the spawn log, when asked, the installations file, `updates.json`, `crash.json` and the licence store, and nothing else.**") {
+		t.Error("design section 5.1 rule 10 was not amended to name the app's five writes (C8's second, D768's third, the crash switch's fourth, S2.7's licence store) -- and the headline is amended in place each time, so its earlier files stay in it")
+	}
+	if !strings.Contains(design, "Amended 2026-11-09 by the subscriptions plan's S2.7: there is a fifth file, and it is the first of the five that holds anything but the operator's own choices") {
+		t.Error("design section 5.1 rule 10 lost the 2026-11-09 S2.7 amendment: the licence store is the fifth file, and a later amendment sits beside the earlier ones rather than replacing them")
 	}
 	if !strings.Contains(design, "Amended 2026-11-01: the crash-reporting switch is a fourth file, `crash.json`") {
 		t.Error("design section 5.1 rule 10 lost the 2026-11-01 amendment: the crash-reporting switch is the fourth write, and a later amendment sits beside the earlier ones rather than replacing them")
@@ -5283,8 +5329,8 @@ func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
 	if !strings.Contains(design, "Amended 2026-10-30 by the owner's D768 and D770 answers") {
 		t.Error("design section 5.1 rule 10 lost the 2026-10-30 D768/D770 amendment")
 	}
-	if !strings.Contains(design, "**The app writes four things to disk and nothing else (§5.1 rule 10, amended 2026-10-30 by the owner's D768 and D770 answers and 2026-11-01 by his ruling of 2026-10-31)") {
-		t.Error("design section 7.4 was not amended to D768/D770's wording and the 2026-11-01 crash-switch amendment")
+	if !strings.Contains(design, "**The app writes five things to disk and nothing else (§5.1 rule 10, amended 2026-10-30 by the owner's D768 and D770 answers, 2026-11-01 by his ruling of 2026-10-31 and 2026-11-09 by the subscriptions plan's S2.7)") {
+		t.Error("design section 7.4 was not amended to D768/D770's wording, the 2026-11-01 crash-switch amendment and S2.7's licence store")
 	}
 	if !strings.Contains(design, "**No telemetry, no analytics, no update check that carries an identifier, and crash reporting only ever by the user's own opt-in.**") {
 		t.Error("design section 7.4's promise sentence was not amended: the console reports crashes to Sentry after the person turns the switch on, so the paragraph states that flow rather than promising no crash reporting")

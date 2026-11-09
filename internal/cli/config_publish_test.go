@@ -59,11 +59,32 @@ func TestPublishWritesAndCopies(t *testing.T) {
 	noAgentSession(t)
 	out, _, err := execute(t, "config", "publish", "--executable-changes", layerFile(t, testProjectLayer))
 	if err != nil || !strings.Contains(out, "published the project layer of aurora to gs://fugaro-runs-proj-1234/fugaro/project-layer.yaml") ||
-		!strings.Contains(out, "acme/app: copied to "+config.LayerCopyKey(appSlug)) {
+		// The copy is the repository's own step now, so the name and what it
+		// says are one line rather than the indented "  acme/app: …" prose.
+		!strings.Contains(out, "acme/app copied to "+config.LayerCopyKey(appSlug)) {
 		t.Fatalf("out %q, err %v", out, err)
 	}
 	if bucketText(t, f, config.LayerKey) != testProjectLayer || bucketText(t, f, config.LayerCopyKey(appSlug)) != testProjectLayer {
 		t.Fatal("the object or its copy is not the published text")
+	}
+}
+
+// TestConfigPublishAsksNothing: the publish path is handed no confirmation at
+// all — the caller that has one is the layer stage, not this command — so the
+// write lands with no terminal and no --yes, and the sentence naming what was
+// published is the whole of what a person reads (D1540).
+func TestConfigPublishAsksNothing(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, "")
+	noAgentSession(t)
+	out, _, err := execute(t, "config", "publish", "--executable-changes", layerFile(t, testProjectLayer))
+	if err != nil {
+		t.Fatalf("config publish: %v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	if bucketText(t, f, config.LayerKey) != testProjectLayer {
+		t.Error("the layer was not published")
 	}
 }
 
@@ -396,7 +417,7 @@ func TestFanOutStopsWhenANewerPublisherWonTheCopyRace(t *testing.T) {
 		fake.Put("fugaro-runs-proj-1234", config.LayerCopyKey(appSlug), newer)
 	}
 	var w bytes.Buffer
-	failed := fanOutLayer(ctx, &w, env, l, gen)
+	failed := fanOutLayer(ctx, nil, &w, env, l, gen)
 	if failed != 2 {
 		t.Fatalf("failed = %d, want 2 (acme/app's race stops the rest too): %s", failed, w.String())
 	}
@@ -554,7 +575,7 @@ func TestFanOutCountsAFailedCopyAndRerunIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	var w bytes.Buffer
-	if failed := fanOutLayer(ctx, &w, env, l, gen); failed != 1 {
+	if failed := fanOutLayer(ctx, nil, &w, env, l, gen); failed != 1 {
 		t.Fatalf("failed = %d, want 1\n%s", failed, w.String())
 	}
 	if !strings.Contains(w.String(), "acme/app: copied to "+config.LayerCopyKey(appSlug)) {
@@ -565,7 +586,7 @@ func TestFanOutCountsAFailedCopyAndRerunIsIdempotent(t *testing.T) {
 	}
 	repos["acme/other"] = localcfg.Repo{Provider: "github", Workflows: []string{"svc"}}
 	w.Reset()
-	if failed := fanOutLayer(ctx, &w, env, l, gen); failed != 0 {
+	if failed := fanOutLayer(ctx, nil, &w, env, l, gen); failed != 0 {
 		t.Fatalf("failed = %d, want 0 on rerun\n%s", failed, w.String())
 	}
 	otherSlug := mustSlug("github", "acme/other")
@@ -598,7 +619,7 @@ func TestFanOutNeverGuessesAProviderFromTheLayerDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	var w bytes.Buffer
-	failed := fanOutLayer(ctx, &w, env, l, gen)
+	failed := fanOutLayer(ctx, nil, &w, env, l, gen)
 	if failed != 1 {
 		t.Fatalf("failed = %d, want 1: %s", failed, w.String())
 	}
@@ -650,7 +671,7 @@ func TestFanOutForbiddenMessageDoesNotClaimNothingWasPublished(t *testing.T) {
 		t.Fatal(err)
 	}
 	var w bytes.Buffer
-	if failed := fanOutLayer(ctx, &w, env, l, gen); failed != 1 {
+	if failed := fanOutLayer(ctx, nil, &w, env, l, gen); failed != 1 {
 		t.Fatalf("failed = %d: %s", failed, w.String())
 	}
 	if strings.Contains(w.String(), "nothing was published") {
@@ -687,7 +708,7 @@ func TestFanOutStopsWhenAnotherPublisherReplacedTheLayer(t *testing.T) {
 		t.Fatal(err)
 	}
 	var w bytes.Buffer
-	failed := fanOutLayer(ctx, &w, env, l, genA) // A's own, now-stale generation
+	failed := fanOutLayer(ctx, nil, &w, env, l, genA) // A's own, now-stale generation
 	if failed == 0 {
 		t.Fatalf("A's late fan-out did not stop: %s", w.String())
 	}
@@ -718,7 +739,7 @@ func TestFanOutStopsWithoutClaimingARaceOnAReadError(t *testing.T) {
 	// right now (here: oversized), not replaced by another publisher.
 	fake.Put("fugaro-runs-proj-1234", config.LayerKey, bytes.Repeat([]byte("x"), config.LayerMaxBytes+1))
 	var w bytes.Buffer
-	failed := fanOutLayer(ctx, &w, env, l, gen)
+	failed := fanOutLayer(ctx, nil, &w, env, l, gen)
 	if failed != 1 {
 		t.Fatalf("failed = %d, want 1: %s", failed, w.String())
 	}

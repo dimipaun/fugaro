@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -266,6 +267,72 @@ func confirmTypedStrict(cmd *cobra.Command, lc *localcfg.Config, why, what strin
 	}
 	noteIDETerminalCmd(cmd, out)
 	return nil
+}
+
+// raiseOwnerOnly is the fence on every form that raises what runs may spend
+// (D1542): `budget set` loosening a cap or the mode, and `budget resume`
+// letting runs start again. It is where the typed confirmation used to be, and
+// it is the whole of what replaced it — the owner's own terminal asks nothing
+// (D1540: no command waits on stdin, and a raise that asked would be the one
+// prompt the policy leaves), and a coding agent's session is refused, because a
+// cap that the session it bounds can lift is not a limit (F8).
+//
+// what names the raise in the refusal's own words, and command is the same
+// invocation this person would run themselves (ownerRaiseCommand): an agent's
+// report has to carry something its owner can act on without reconstructing the
+// flags from a transcript.
+//
+// It is a courtesy and as strong as the markers themselves, no stronger (F20):
+// a session that unsets CLAUDECODE is outside it, and a direct write to
+// /config is the database's own IAM question (budget_admins) and not this
+// program's.
+func raiseOwnerOnly(cmd *cobra.Command, what, command string) error {
+	marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
+	if marker == "" {
+		return nil
+	}
+	return userErr("%s is the owner's own step: %s; nothing was changed. Run this yourself at your own terminal: %s",
+		what, initflow.AgentRefusal(marker), command)
+}
+
+// ownerRaiseCommand is the invocation this run is, as the owner would type it:
+// the program, the command path, and the flags this run set, each with its
+// value quoted as one shell word. A flag that is not printed is one this run
+// did not set, which the command's own defaults answer for.
+//
+// --repo is printed as the repository this run resolved it to and never as the
+// value that was typed: a bare --repo and a path both mean the checkout the
+// owner's terminal happens to be standing in, so a refusal handing either one
+// back would send the owner to another repository's caps than the one this run
+// was about. repo is that owner/name (namedRepo's answer), empty for a command
+// whose scope is not a repository.
+//
+// --project is always printed, from this run's own project and not from the
+// flag: the typed project name a raise used to ask for was what caught an
+// owner reading the refusal in another project's checkout or with another
+// FUGARO_PROJECT set, and a command that answered the defaults instead would
+// raise another project's caps or clear its kill switch, unprompted (D1542).
+// The name is a project's, so it is quoted like any other value.
+func ownerRaiseCommand(cmd *cobra.Command, repo, project string) string {
+	words := append([]string{selfCommand()}, strings.Fields(cmd.CommandPath())[1:]...)
+	cmd.Flags().Visit(func(f *pflag.Flag) {
+		if f.Name == "project" {
+			return // printed once below, from this run's own project
+		}
+		if f.Value.Type() == "bool" && f.Value.String() == "true" {
+			words = append(words, "--"+f.Name)
+			return
+		}
+		if f.Name == "repo" && repo != "" {
+			words = append(words, "--repo="+quoteWord(repo))
+			return
+		}
+		words = append(words, "--"+f.Name+"="+quoteWord(f.Value.String()))
+	})
+	if project != "" {
+		words = append(words, "--project="+quoteWord(project))
+	}
+	return strings.Join(words, " ")
 }
 
 // --------------------------------------------------------------- show
@@ -918,7 +985,7 @@ type budgetSetOptions struct {
 	repo                   string
 	daily, perRun, reserve float64
 	mode                   string
-	clear, yes             bool
+	clear, yes, ask        bool
 }
 
 func newBudgetSetCmd() *cobra.Command {
@@ -944,8 +1011,10 @@ func newBudgetSetCmd() *cobra.Command {
 			"the one whose empty --repo is not the checkout (it means no repository\n" +
 			"filter), so it takes owner/name.\n\n" +
 			"Raising a cap (setting one that was unset counts), or lowering the mode to\n" +
-			"observe, loosens what runs may spend, so it asks you to type the project's name\n" +
-			"(or pass --yes). Lowering needs no confirmation.",
+			"observe, loosens what runs may spend: nothing is asked for it, and a coding\n" +
+			"agent's session is refused with the command to run yourself — a raise is the\n" +
+			"owner's own step (D1542). --ask puts the question back where you can answer\n" +
+			"it. Tightening a cap asks nothing either.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runBudgetSet(cmd, &o) },
 	}
@@ -958,7 +1027,8 @@ func newBudgetSetCmd() *cobra.Command {
 	f.Float64Var(&o.reserve, "max-reserve", 0, "the largest single lease, in US dollars (with --global)")
 	f.StringVar(&o.mode, "mode", "", "observe or enforce (with --global)")
 	f.BoolVar(&o.clear, "clear", false, "remove the scope's caps")
-	f.BoolVar(&o.yes, "yes", false, "confirm a raise without typing the project's name")
+	f.BoolVar(&o.yes, "yes", false, "accepted and ignored: this command asks nothing")
+	f.BoolVar(&o.ask, "ask", false, "ask before a raise, at a terminal that can answer")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -1046,6 +1116,37 @@ type nodeEdit struct {
 	noop   bool
 	lines  []string
 	raise  bool
+}
+
+// raiseWhat names the act a refused run was making, in the refusal's own words
+// (raiseOwnerOnly) and in the question --ask puts to the owner. Raising a cap
+// is what that sentence has always been about, and a run that raises one keeps
+// the words it had. Choosing the mode is the other form the fence covers — the
+// mode node and the record beside it, either of which can be the one that
+// moves — and a question about caps would have the owner answer with the wrong
+// fact in mind.
+func raiseWhat(edits []*nodeEdit) (what, question string) {
+	const (
+		capWhat  = "raising a cap"
+		capQ     = "raise a cap, so runs may spend more than before?"
+		modeWhat = "choosing the project-wide budget mode"
+		modeQ    = "choose the budget mode yourself, so no later `fugaro update` raises it?"
+	)
+	raisingCap, choosingMode := false, false
+	for _, e := range edits {
+		if !e.raise || e.noop {
+			continue
+		}
+		if e.path == budget.PathMode || e.path == budget.PathModeSet {
+			choosingMode = true
+		} else {
+			raisingCap = true
+		}
+	}
+	if choosingMode && !raisingCap {
+		return modeWhat, modeQ
+	}
+	return capWhat, capQ
 }
 
 type microField struct {
@@ -1144,6 +1245,40 @@ func buildEdits(ctx context.Context, db *rtdb.Client, p *setPlan, slug string) (
 			e.raise = cur == budget.ModeEnforce && p.mode == budget.ModeObserve
 		}
 		edits = append(edits, e)
+
+		// And the record of who chose it beside the mode (D1548, task T16):
+		// `fugaro update` raises a *seeded* mode to enforce and may never touch
+		// one a person chose, so the node beside the mode says which this is. A
+		// mode given on this command line is the owner's own choice — this
+		// command is theirs — so it is recorded as such even when the mode
+		// itself does not change.
+		//
+		// Writing that record beside a mode that is not enforce is one more form
+		// for the owner alone, and the one a coding agent's session could
+		// otherwise make unopposed: the mode node is a no-op there while this
+		// node moves, and the update's raise — the step that puts the
+		// installation's builds under its caps — would never fire again. So this
+		// edit carries the same raise flag a loosened cap does. `--mode enforce`
+		// does not: it leaves the installation enforcing, the state the update
+		// wanted, and a tightening stays open to the session.
+		var curSet string
+		setEtag, setFound, err := read(budget.PathModeSet, &curSet)
+		if err != nil {
+			return nil, err
+		}
+		se := &nodeEdit{path: budget.PathModeSet, etag: setEtag, newVal: budget.ChosenByOwner,
+			raise: p.mode != budget.ModeEnforce}
+		if setFound && curSet == budget.ChosenByOwner {
+			se.noop = true
+			se.lines = []string{"mode choice: the owner's (unchanged)"}
+		} else {
+			shown := curSet
+			if !setFound {
+				shown = "not set"
+			}
+			se.lines = []string{fmt.Sprintf("mode choice: %s -> the owner's", oneLine(shown))}
+		}
+		edits = append(edits, se)
 	}
 
 	if p.reserve != nil {
@@ -1297,10 +1432,27 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 	if err != nil {
 		return err
 	}
+	// The database is opened first, and the run's account follows it. Every
+	// refusal above and inside it is answered from the command line, the
+	// environment or this installation's config and reaches no API:
+	// parsePlan's scope, the credential leak refuseHTTP2Debug refuses and the
+	// project selectProject refuses. A run any of them turns away is a run
+	// that never began, so it files no log, not even an empty one, which would
+	// be one of the fifty this name keeps (CL3's pruneLogs).
 	lc, db, err := openBudget(ctx, o.cloud)
 	if err != nil {
 		return err
 	}
+	// This run's account and its log (D1352): one line per unit of work with
+	// the reporter's closing line last, and nothing of the run is printed
+	// before it.
+	rep, sink := reporterFor(cmd, "budget-set", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	// The run's closing line, on every way out of it: a step's own line is the
+	// account and the summary is what says how the run ended (G3).
+	defer rep.Summary()
 	if err := requireOwnBudgetDB(ctx, lc, db, "nothing was set"); err != nil {
 		return err
 	}
@@ -1314,7 +1466,6 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 		}
 	}
 	out := cmd.OutOrStdout()
-	in := bufio.NewReader(cmd.InOrStdin())
 	for attempt := 1; attempt <= setAttempts; attempt++ {
 		edits, err := buildEdits(ctx, db, p, slug)
 		if err != nil {
@@ -1333,12 +1484,20 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 			changed = changed || !e.noop
 		}
 		if !changed {
-			fmt.Fprintln(out, "nothing changed")
+			rep.Step("budget").Skipped("nothing changed")
 			return nil
 		}
 		if raise {
-			if err := confirmTyped(cmd, in, lc, o.yes, "this loosens the project's budget: runs may spend more than before"); err != nil {
+			what, question := raiseWhat(edits)
+			if err := raiseOwnerOnly(cmd, what, ownerRaiseCommand(cmd, p.repo, lc.Name)); err != nil {
 				return err
+			}
+			ok, err := askConfirm(cmd, question)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return userErr("not confirmed; nothing was changed")
 			}
 		}
 		// Tightening first, loosening last: a failure half way never
@@ -1365,16 +1524,23 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 				if len(written) > 0 {
 					err = fmt.Errorf("%w\nthe update was only partly applied. written: %s; not written: %s", err, strings.Join(written, ", "), strings.Join(pending, ", "))
 				}
+				// The node's own step, so the failure names which write it was
+				// (G8): a partly applied budget is read off the screen, not
+				// inferred from the paths in the sentence under it.
+				rep.Step(e.path).Failed(err, nil)
 				return err
 			}
 			written = append(written, e.path)
 			pending = pending[1:]
-			fmt.Fprintf(out, "set %s\n", e.path)
+			rep.Step(e.path).Done(oneLine(strings.Join(e.lines, "; ")))
 		}
 		if !stale {
 			return nil
 		}
-		fmt.Fprintln(out, "changed by someone else meanwhile; reading it again")
+		// The retry says so on the screen and in the log (sayThrough): a run
+		// that read the database twice is a run a person may have to explain,
+		// and the log is where they look after it.
+		fmt.Fprintln(sayThrough(rep, out), "changed by someone else meanwhile; reading it again")
 	}
 	return remote(fmt.Errorf("the budget database kept changing under the write (%d attempts); nothing further was written; run it again", setAttempts))
 }
@@ -1396,10 +1562,9 @@ func newBudgetKillCmd(kill bool) *cobra.Command {
 		"Clear the project's kill switch (--all), one repository's (--repo [owner/name])\n"+
 			"or one workspace's (--workspace <name>), recording who and when. --repo with\n"+
 			"no value means the repository this checkout belongs to, as it does for set.\n"+
-			"Asks you to type the project's name (or pass --yes): runs start again. A\n"+
-			"workspace is named by its own name alone and takes neither of the other\n"+
-			"scopes; resuming one asks nothing and is refused in a coding agent's session\n"+
-			"as the raise it is (D1542)."
+			"Runs start spending again, so nothing is asked for it and a coding agent's\n"+
+			"session is refused, exactly as a raise is (D1542). A workspace is named by\n"+
+			"its own name alone and takes neither of the other scopes."
 	if kill {
 		use, short, long = "kill (--all | --repo [owner/name] | --workspace <name>) [--reason TEXT]", "Halt every run of the project, of one repository or of one workspace (budget admins)",
 			"Set the project's kill switch (--all), one repository's (--repo [owner/name]) or\n"+
@@ -1408,13 +1573,12 @@ func newBudgetKillCmd(kill bool) *cobra.Command {
 				"takes owner/name (its empty --repo means no repository filter, not a checkout),\n"+
 				"and preview already means this checkout's repository without the flag.\n"+
 				"Runs in flight halt within seconds (a run in its last stage finishes pushing\n"+
-				"its work first) and new runs refuse. --all asks you to type the project's name\n"+
-				"(or pass --yes); one repository needs no confirmation. --workspace sets the\n"+
-				"stop flag of the workspace's own service, in the workspace's own database, so\n"+
-				"every member's runs that reach it with its shared credentials halt, and nothing\n"+
-				"of a member's own — its credentials, its caps, its sign-in, its runs that never\n"+
-				"reach the workspace — is touched; it asks nothing: halting runs spends\n"+
-				"nothing, and only a resume is a raise."
+				"its work first) and new runs refuse. Nothing is asked for it: halting runs\n"+
+				"spends nothing, and only a resume is a raise. --workspace sets the stop flag\n"+
+				"of the workspace's own service, in the workspace's own database, so every\n"+
+				"member's runs that reach it with its shared credentials halt, and nothing of\n"+
+				"a member's own — its credentials, its caps, its sign-in, its runs that never\n"+
+				"reach the workspace — is touched."
 	}
 	cmd := &cobra.Command{
 		Use: use, Short: short, Long: long, Args: cobra.NoArgs,
@@ -1425,9 +1589,19 @@ func newBudgetKillCmd(kill bool) *cobra.Command {
 	f.StringVar(&o.repo, "repo", "", "one repository, given as owner/name or a path inside its checkout (no value: this checkout's origin)")
 	f.StringVar(&o.workspace, "workspace", "", "one workspace, named as its own project is; its own service's stop flag, in the workspace's own database, so the project it names has to declare one (workspace_members)")
 	f.StringVar(&o.reason, "reason", "", "why (recorded, shown by budget show and watch)")
-	f.BoolVar(&o.yes, "yes", false, "confirm without typing the project's name")
+	f.BoolVar(&o.yes, "yes", false, "accepted and ignored: this command asks nothing")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
+}
+
+// budgetKillLogName is the name kill and resume file their logs under: one
+// builder is two commands, and the log is filed under the name a person types
+// (CL3's rule is the command's own name).
+func budgetKillLogName(kill bool) string {
+	if kill {
+		return "budget-kill"
+	}
+	return "budget-resume"
 }
 
 func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
@@ -1453,6 +1627,13 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 	if err != nil {
 		return err
 	}
+	// This run's account and its log (D1352), under the name a person typed:
+	// one line per unit of work with the reporter's closing line last.
+	rep, sink := reporterFor(cmd, budgetKillLogName(kill), nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	defer rep.Summary()
 	declined := "nothing was resumed"
 	if kill {
 		declined = "nothing was killed"
@@ -1465,8 +1646,12 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 		return userErr("%v", err)
 	}
 	path, what := budget.PathKillGlobal, "project "+lc.Name
+	// repo is the repository this run resolved --repo to (empty for --all),
+	// kept for the refusal's own command: the flag's value may be empty or a
+	// path, and neither names the repository the way owner/name does.
+	repo := ""
 	if !o.all {
-		repo, err := namedRepo(ctx, o.cloud, o.repo)
+		repo, err = namedRepo(ctx, o.cloud, o.repo)
 		if err != nil {
 			return err
 		}
@@ -1477,40 +1662,44 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 		path, what = budget.PathKillRepo(slug), "repository "+repo
 	}
 	out := cmd.OutOrStdout()
-	in := bufio.NewReader(cmd.InOrStdin())
 	res, err := budget.SetKill(ctx, db, path, kill, me, o.reason, budget.KillHooks{
 		Confirm: func(budget.Kill) error {
-			switch {
-			case kill && o.all:
-				return confirmTyped(cmd, in, lc, o.yes, "this halts every run of the project and refuses new ones")
-			case !kill:
-				return confirmTyped(cmd, in, lc, o.yes, "this lets "+what+" start and continue runs again")
+			if kill {
+				return nil
 			}
-			return nil
+			// A resume lets runs start spending again, which D1542 fences
+			// exactly as it fences a raise — and a kill, which halts them,
+			// asks nothing and is fenced by nothing.
+			return raiseOwnerOnly(cmd, "resuming "+what, ownerRaiseCommand(cmd, repo, lc.Name))
 		},
-		Conflict: func() { fmt.Fprintln(out, "changed by someone else meanwhile; reading it again") },
+		Conflict: func() { fmt.Fprintln(sayThrough(rep, out), "changed by someone else meanwhile; reading it again") },
 		Now:      budgetNow,
 	})
 	if err := budgetKillWriteErr(lc, err); err != nil {
 		return err
 	}
 	cur := res.Previous
+	// One step for the switch this run moved, in one state or the other: the
+	// scope is the step's own name, so a killed project and a resumed
+	// repository read the same way (G3's three outcomes, and "already killed"
+	// is a skip rather than a tick).
+	s := rep.Step(what)
 	if res.Already {
 		if kill {
-			fmt.Fprintf(out, "%s is already killed (by %s at %s: %s); nothing changed\n", what, oneLine(cur.By), ms(cur.At), oneLine(cur.Reason))
+			s.Skipped(fmt.Sprintf("is already killed (by %s at %s: %s); nothing changed", oneLine(cur.By), ms(cur.At), oneLine(cur.Reason)))
 		} else {
-			fmt.Fprintf(out, "%s is not killed; nothing changed\n", what)
+			s.Skipped("is not killed; nothing changed")
 		}
 		return nil
 	}
 	if kill {
-		fmt.Fprintf(out, "killed %s (by %s). Running runs halt within seconds; undo with fugaro budget resume\n", what, oneLine(me))
+		s.Done(fmt.Sprintf("killed (by %s). Running runs halt within seconds; undo with fugaro budget resume", oneLine(me)))
 	} else {
-		fmt.Fprintf(out, "resumed %s (by %s)\n", what, oneLine(me))
+		s.Done(fmt.Sprintf("resumed (by %s)", oneLine(me)))
 		if !o.all {
 			var g budget.Kill
 			if _, err := db.Get(ctx, budget.PathKillGlobal, &g); err == nil && g.On {
-				fmt.Fprintf(out, "warning: the project-wide kill switch is still on (by %s): %s stays halted until fugaro budget resume --all\n", oneLine(g.By), what)
+				fmt.Fprintf(sayThrough(rep, out), "warning: the project-wide kill switch is still on (by %s): %s stays halted until fugaro budget resume --all\n", oneLine(g.By), what)
 			}
 		}
 	}

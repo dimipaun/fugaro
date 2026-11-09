@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/logtail"
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -59,8 +60,18 @@ const (
 // Diagnosis is what diagnose gathers about one run. Every string in it
 // that comes from the run is redacted.
 type Diagnosis struct {
-	Project      string           `json:"project"` // the Fugaro project
-	Row          runview.Row      `json:"row"`
+	Project string      `json:"project"` // the Fugaro project
+	Row     runview.Row `json:"row"`
+	// FailureClass is why the run did not end succeeded, as one value of the
+	// closed vocabulary of docs/design/failure-classes.md §3 — the same value
+	// the row carries, on the diagnosis's own shape because diagnose is the
+	// command a person runs to be told why, and D1460 is that a reader of this
+	// document is never sent into the row for it. Absent for a run that did
+	// not fail, and for a row the read side ended itself — a preemption, a
+	// lost execution, or an `error` for a run it could not follow — where the
+	// row's own account of it is `derived`, or that sentence
+	// (runview.Row.FailureClass).
+	FailureClass failure.Class    `json:"failure_class,omitempty"`
 	Halt         *runstore.Halt   `json:"halt,omitempty"`     // why a halted run was halted
 	Verify       []verify.Record  `json:"verify,omitempty"`   // result.json's verify records
 	Failed       []string         `json:"failed,omitempty"`   // the last test record's failed tests
@@ -165,8 +176,9 @@ func newDiagnoseCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "diagnose RUN",
 		Short: "Explain how a run went: status, tests, review findings, the agent's last word, logs",
-		Long: "Gather what is known about RUN (<repo-slug>/<run-id>, or a bare run ID): its\n" +
-			"status and reason, the last test run's failed and flaky tests, the last\n" +
+		Long: "Gather what is known about RUN (a run ID, <repo-slug>/<run-id>, or the last\n" +
+			"four or more characters of a run ID): its status and reason, the last test\n" +
+			"run's failed and flaky tests, the last\n" +
 			"review's findings, the agent's final message, the newest log lines, its cost\n" +
 			"and its pull request. Everything printed is redacted of the credentials in\n" +
 			"this environment, on top of the runner's own redaction.",
@@ -186,8 +198,11 @@ func runDiagnose(cmd *cobra.Command, o *diagnoseOptions, ref string) error {
 	}
 	defer env.Close()
 	// Not locateLaunched: a run that never launched still has a row that
-	// explains it; it just has no logs.
-	slug, id, err := locateRun(ctx, env, ref)
+	// explains it; it just has no logs. The reference is what resolveRun
+	// accepts — a full run ID, <slug>/<run-id>, or an ending (D1701) — and
+	// the row itself keeps naming the run in full, as the details view it is
+	// (D1705).
+	slug, id, err := resolveRun(ctx, env, ref, resolveRunOpts(cmd, o.asJSON))
 	if err != nil {
 		return err
 	}
@@ -241,7 +256,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 	}
 	d := &Diagnosis{Row: rows[0], ReportPath: s.Prefix() + "report.md"}
 	d.DraftNote = draftNote(d.Row, time.Now())
-	d.Row.Reason = red(d.Row.Reason)
+	d.Row.Reason, d.FailureClass = red(d.Row.Reason), d.Row.FailureClass
 	if h := d.Row.Halt; h != nil {
 		c := *h
 		c.Detail = red(c.Detail)
@@ -841,6 +856,16 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		status += " (stage " + r.Stage + ")"
 	}
 	fmt.Fprintf(&b, "Status:   %s\n", oneLine(status))
+	// The class is the answer's first sentence (design §8 D9), so it stands
+	// directly under the status it describes: the closed vocabulary's name for
+	// why the run stopped, the runner's own where the record carries one and the
+	// reader's reading of its reason where it does not (runview.ClassOf). A run
+	// that did not fail, and a row whose ending is the read side's own — derived,
+	// or an `error` for a run it could not follow — has no cause to name and gets
+	// no line.
+	if d.FailureClass != "" {
+		fmt.Fprintf(&b, "Class:    %s\n", oneLine(string(d.FailureClass)))
+	}
 	if r.Reason != "" {
 		fmt.Fprintf(&b, "Reason:   %s\n", oneLine(r.Reason))
 	}

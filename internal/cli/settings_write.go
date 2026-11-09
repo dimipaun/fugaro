@@ -1,13 +1,9 @@
 package cli
 
 import (
-	"bufio"
 	"bytes"
-	"errors"
 	"fmt"
-	"io"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -15,12 +11,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
-	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
 // This file is the one write path of the settings commands: the diff, the
-// confirmation, the coding-agent-session refusal, the backup and the atomic
+// sentence, the coding-agent-session refusal, the backup and the atomic
 // write, in one place (settings plan F4, D847). S6–S9 of that plan and the
 // rigor design's R4 and R5 call it rather than carrying a copy, so `settings
 // set`, `rigor set` and `accounts add` cannot come to ask differently for the
@@ -39,17 +34,22 @@ type settingsEdit struct {
 	// Old is the file as it is and New as it would be, both read and produced
 	// by the caller. The helper writes nothing when the two are equal.
 	Old, New []byte
-	// What is the sentence the confirmation shows, naming what changes.
+	// What is the sentence naming what changes. It is printed before the write —
+	// the whole of what the y/N confirmation used to show, minus the prompt
+	// itself (D1540) — and it is the sentence the one question a write may still
+	// ask is built from (announceSettingsWrite, D1544).
 	What string
-	// Typed asks for the project's name rather than y/N. It is the widening
-	// directions: a loosened ceiling, a floor removed, a followup key turned
-	// on. --yes answers it outside a coding agent's session (D1107, which
-	// amends D846 for `settings set|unset` alone); inside one the marker fence
-	// comes first and --yes never lifts it.
+	// Typed marks the widening directions: a loosened ceiling, a floor
+	// removed, a followup key turned on. They are the owner's own step, so
+	// the marker fence below refuses them in a coding agent's session whatever
+	// --yes says, and at the owner's own terminal they ask nothing at all and
+	// are read by no gate (D1552, D1555; settingsGateReads is where the marks
+	// are skipped for one, and D1540 is why no prompt replaces the typed name
+	// here).
 	Typed bool
-	// TypedWhy is the sentence saying why this form is asked for, and who may
-	// answer it: it names --yes where the caller says a flag stands in
-	// (D1107), and the refusal of a session with no terminal repeats it.
+	// TypedWhy is the sentence saying what this form widens: it is printed
+	// before the write, and it is the sentence the coding-agent refusal above
+	// carries beside the marker and the command.
 	TypedWhy string
 	// Ask is the owner's --ask: the confirmations this write would have been
 	// given in a project that is not managed, asked here instead of being
@@ -71,8 +71,10 @@ type settingsEdit struct {
 	// the person to run at their own terminal. It is the whole of what the
 	// refusal may produce beside the diff.
 	Command string
-	// Yes is --yes. It answers the y/N confirmation, and the typed one too
-	// wherever the caller says a flag may (D1107).
+	// Yes is --yes. The confirmations it used to answer are gone (D1540), so
+	// nothing in this path reads it as an answer any more: it stands in the
+	// conditions the fence and the gate are decided under, and the flag itself
+	// is T11's to remove.
 	Yes bool
 	// Managed is the managed gate's answer for the step this edit is (D1012): a
 	// caller that read the gate passes what it answered, and every caller that
@@ -92,7 +94,7 @@ type settingsEdit struct {
 	DryRun *settingsDryRun
 }
 
-// settingsEditDiff is the line diff the confirmation shows. It is built here
+// settingsEditDiff is the line diff every settings write prints. It is built here
 // rather than at each caller so every settings write prints the same shape.
 func settingsEditDiff(old, new []byte) string {
 	return lineDiff(string(old), string(new))
@@ -110,12 +112,12 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	}
 	diff := settingsEditDiff(e.Old, e.New)
 
-	// The refusal comes before the confirmation and before anything is
-	// written (SD9). The bytes are the caller's — it read them to build the
-	// diff this prints — so what is refused here is the write and the
-	// confirmation, never the read. A session outside a repository writes
+	// The refusal comes before the sentence and before anything is written
+	// (SD9). The bytes are the caller's — it read them to build the
+	// diff this prints — so what is refused here is the write and the sentence,
+	// never the read. A session outside a repository writes
 	// nothing at all, `--yes` included; a session inside one writes the file
-	// it could edit anyway, except when the edit is the typed one — the
+	// it could edit anyway, except when the edit is the widening one — the
 	// owner's own hand, whose file decides the ceiling of every run the
 	// branch starts.
 	//
@@ -125,7 +127,9 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	// person. Every other value — the zero value every other caller passes, a
 	// class the gate does not cover, an edit whose class is Typed — keeps the
 	// refusal exactly as it was, and a caller that passes nothing changes
-	// nothing.
+	// nothing. The marker is the fence itself for a widening (D1552, D1555):
+	// the class rule is the second thing that refuses one, and a fence read off
+	// a class the same release deletes would leave the ceiling unfenced.
 	conds := settingsEditConditions(cmd, e)
 	if marker := conds.Agent; marker != "" && (!e.insideRepo() || e.Typed) && !initflow.CanConfirmManaged(e.editClass(), conds, e.Managed) {
 		fmt.Fprintf(out, "%s\n%s", e.Path, diff)
@@ -134,7 +138,7 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	}
 
 	// The dry run stops here: the classification is the caller's, and what is
-	// left of this function is the confirmation, the backup and the write,
+	// left of this function is the sentence, the backup and the write,
 	// none of which a dry run does (D1106). It is after the refusal above on
 	// purpose — a dry run answers for the write, so it is refused wherever the
 	// write would be, and the fence stays the first thing either path meets.
@@ -143,15 +147,17 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	}
 
 	fmt.Fprintf(out, "%s\n%s", e.Path, diff)
-	// The owner's own terminal in a managed project asks nothing (the ruling of
-	// 2026-11-01): the gate read this edit's document, admitted it, and its
-	// verdict IS the confirmation — the diff above is the whole of what the
-	// owner reads. The class is still the class: initflow.GateConfirms is false
-	// for a Typed edit whatever a plan looked like (D1026, and settingsEdit's
-	// own editClass), so the widening directions keep the typed name, and a
-	// project that is not managed, a mark that did not answer and an edit the
-	// gate refused all arrive here as the zero value every fence reads exactly
-	// as it did before the gate existed.
+	// No write asks anything (D1540), so what a person reads is one of three
+	// things. A managed project's own terminal reads the gate's sentence (the
+	// ruling of 2026-11-01): the gate read this edit's document, admitted it, and
+	// its verdict IS what the write proceeds on — the diff above is the whole of
+	// what the owner reads. A widening reads what it widens (D1552, D1555):
+	// initflow.GateConfirms is false for one whatever the verdict was (D1026, and
+	// settingsEdit's own editClass). Every other edit reads the sentence naming
+	// it, and the one question a write may still ask is the one --ask puts back
+	// (D1544). A project that is not managed, a mark that did not answer and an
+	// edit the gate refused all arrive here as the zero value every fence reads
+	// exactly as it did before the gate existed.
 	//
 	// Which sentence that is read as is the session's own, and nothing else in
 	// this path is: a coding agent's session reads AgentProceeded, which names
@@ -162,20 +168,17 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	if !e.Yes && initflow.GateConfirms(e.editClass(), conds, e.Managed) {
 		fmt.Fprintf(out, "  %s\n", gateSentence(conds.Agent))
 	} else if e.Typed {
-		// The widening is named before the prompt and not only in the
-		// refusal a session with no terminal gets: the confirmation a person
-		// reads is one block, and the sentence saying what makes this edit
-		// different from the ordinary y/N is part of it.
-		fmt.Fprintf(out, "%s\n", e.TypedWhy)
-		// --yes answers the typed form too, and only here: the refusal above
-		// has already decided that this is not a coding agent's session, so
-		// what is left to confirm is the person's own word for it (D1107).
-		if e.Yes {
-			fmt.Fprintln(out, "  confirmed by --yes")
-		} else if err := confirmTypedStrict(cmd, lc, e.TypedWhy, e.What); err != nil {
-			return err
-		}
-	} else if err := confirmSettingsWrite(cmd, lc, e.Path, e.Yes, e.What); err != nil {
+		// A widening is the owner's own step, and the owner's own terminal
+		// asks nothing for it (D1552, D1555): a coding agent's session was
+		// refused above, whatever --yes said, and what is left here is the
+		// sentence saying what this write widens and the sentence saying what
+		// it writes — the whole of what the typed name's confirmation used to
+		// show, minus the prompt itself. The typed name this branch used to ask for
+		// was the last prompt of a raise form, and it is gone with D1540: no
+		// command waits on stdin, and a question a session can answer is not a
+		// fence.
+		fmt.Fprintf(out, "%s\n%s\n", e.TypedWhy, e.What)
+	} else if err := announceSettingsWrite(cmd, e.Managed.Managed, e.What); err != nil {
 		return err
 	}
 
@@ -214,8 +217,8 @@ func (e settingsEdit) insideRepo() bool { return e.Kind == settingsDocRepo }
 // editClass is the confirmation class of this edit, which is the class the
 // managed gate reads: Typed is D846's widening form — a loosened ceiling, a
 // floor removed — and everything else is the ordinary y/N. It is derived here
-// and not passed beside Managed, because the two facts a confirmation is
-// decided under have to agree: a caller that could name a class of its own
+// and not passed beside Managed, because the two facts a write is decided
+// under have to agree: a caller that could name a class of its own
 // could name the one the gate covers for an edit that is Typed, and D1026's
 // rule is exactly that no plan gate admits one.
 func (e settingsEdit) editClass() initflow.ConfirmClass {
@@ -247,28 +250,44 @@ func settingsEditConditions(cmd *cobra.Command, e settingsEdit) initflow.Conditi
 	return initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), Yes: e.Yes, Agent: agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())), Ask: e.Ask}
 }
 
-// confirmSettingsWrite is the ordinary y/N confirmation: --yes answers it, a
-// terminal asks, and anything else refuses rather than guessing. It is
-// confirmTyped's shape without the typed name, because most settings writes are
-// not the widening directions D846 reserves the typed form for.
-func confirmSettingsWrite(cmd *cobra.Command, lc *localcfg.Config, path string, yes bool, what string) error {
-	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "⚠ CONFIRM (project %s): %s\n", safetext.Field(lc.Name), what)
-	if yes {
-		fmt.Fprintln(out, "  confirmed by --yes")
+// announceSettingsWrite says what one settings write does and asks whether to
+// make it — a question only --ask in a project the marks answered managed ever
+// raises (D1540, D1544). Without the flag it prints the sentence, writes
+// nothing of its own and returns nil: the run proceeds, which is the policy's
+// answer to a step that used to ask, and the fence, the compare-and-swap and
+// the backup are what bound it. With the flag the sentence is followed by the
+// one question the flag is for, asked by the one sanctioned reader
+// (askConfirm), which refuses where nobody can answer it instead of letting a
+// silent proceed stand in.
+//
+// It is the one place a settings write says its sentence and asks, so the
+// callers that write outside applySettingsEdit — `accounts add` and `secrets rm`
+// on the paths where that helper returns before it announces anything — ask in
+// the same words as the helper does. A "no" is an answer and not an error: every
+// caller here answers it the same way, because every one of them leaves the same
+// thing behind, a document byte-identical to the one it read.
+//
+// managed is the gate's own answer for this write (initflow.Managed.Managed,
+// the same value askDecide decides the flag's line and refusal under), and it
+// is what makes the question the flag's question. In a project the marks did
+// not answer "managed" for there is nothing for --ask to restore — that is the
+// line initflow.AskUnmanaged prints — so the flag asks nothing here, and a
+// question would be the one path where it changed a step in a project it says
+// it leaves alone: a y/N at the owner's terminal, and, where nobody can answer,
+// a refusal naming a managed project that is not this one. A command that
+// registers no --ask passes false, which is the same answer askConfirm gives
+// the flag it does not have.
+func announceSettingsWrite(cmd *cobra.Command, managed bool, what string) error {
+	fmt.Fprintln(cmd.OutOrStdout(), what)
+	if !managed {
 		return nil
 	}
-	if !stdinIsTerminal(cmd.InOrStdin()) {
-		return userErr("%s, or pass --yes once you have read what it does", initflow.NeedsTerminal("the confirmation of this write"))
+	ok, err := askConfirm(cmd, "make this change?")
+	if err != nil {
+		return err
 	}
-	fmt.Fprintf(out, "Write this to %s? [y/N]: ", path)
-	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return userErr("reading the confirmation: %v", err)
-	}
-	if ans := strings.ToLower(strings.TrimSpace(line)); ans != "y" && ans != "yes" {
+	if !ok {
 		return userErr("not confirmed; nothing was written")
 	}
-	noteIDETerminalCmd(cmd, out)
 	return nil
 }

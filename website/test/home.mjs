@@ -2421,15 +2421,36 @@ function newestAtOrBelow(dir, ceiling) {
   return versions[0] ?? null
 }
 
-test('the hero names the newest published CLI release and console release, each linked', () => {
-  const cli = newestAtOrBelow('docs/releases', JSON.parse(repoFile('plugin/.claude-plugin/plugin.json')).version)
+/**
+ * The CLI stream's current release, as bare `X.Y.Z`, read off `docs/release-streams.yaml` by
+ * this file: the version the hero's newest entry is at or below (`src/components/Hero.astro`
+ * takes the first entry the changelog returns).
+ */
+function cliCurrent() {
+  const lines = repoFile('docs/release-streams.yaml').split('\n')
+  const start = lines.findIndex((line) => /^\s*-\s*name:\s*cli\s*$/.test(line))
+  assert.notEqual(
+    start,
+    -1,
+    'docs/release-streams.yaml carries no `- name: cli` stream, and the hero names the newest release at or below that stream’s current version',
+  )
+  for (let at = start + 1; at < lines.length; at++) {
+    if (/^\s*-\s*name:/.test(lines[at])) break
+    const m = /^\s*current:\s*"?(\d+\.\d+\.\d+)"?\s*$/.exec(lines[at])
+    if (m !== null) return m[1]
+  }
+  throw new Error('docs/release-streams.yaml carries no `current: x.y.z` line under the cli stream, and the hero is held to the newest release at or below it')
+}
+
+test('the hero names the newest CLI release the stream is at and the newest console release, each linked', () => {
+  const cli = newestAtOrBelow('docs/releases', cliCurrent())
   const consoleVersion = newestAtOrBelow('docs/releases/console', JSON.parse(repoFile('console/package.json')).version)
-  assert.ok(cli, 'no CLI release file is published in this checkout, so the line would be held to nothing')
+  assert.ok(cli, 'no CLI release file is at or below the CLI stream’s current version, so the line would be held to nothing')
   const html = readFileSync(path.join(SITE, 'dist', 'index.html'), 'utf8')
   const lines = findAll(parse(html), (el) => el.name === 'p' && (el.attrs.get('class') ?? '').split(/\s+/).includes('hero-release'))
   assert.equal(lines.length, 1, 'the hero carries no single latest-release line')
   const links = [...walk(lines[0])].filter((el) => el.name === 'a')
-  assert.equal(textOf(links[0]).trim(), `v${cli}`, `the hero names ${textOf(links[0]).trim()} and the newest published CLI release is v${cli}`)
+  assert.equal(textOf(links[0]).trim(), `v${cli}`, `the hero names ${textOf(links[0]).trim()} and the newest CLI release at or below the stream's current version is v${cli}`)
   assert.equal(links[0].attrs.get('href'), '/changelog/', 'the CLI release does not link the changelog')
   if (consoleVersion === null) {
     assert.equal(links.length, 1, 'the hero names a console release and none is published')

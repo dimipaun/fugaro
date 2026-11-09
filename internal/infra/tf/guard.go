@@ -99,6 +99,36 @@ func GuardEntries(p *Plan, entries []DeleteEntry, advice string) error {
 	})
 }
 
+// GuardEntriesWithAddresses is GuardEntries with a second list of removals,
+// named by address alone: the replaces one of this program's own upgrades makes
+// of a grant an earlier release wrote, whose two halves the caller read and
+// compared before naming them (infra.LauncherGrantUpgrade is the one caller).
+//
+// An address is enough here and nowhere else, and what makes it enough is the
+// caller's own reading rather than anything this function can check: every
+// other removal this program admits is one a person approved, and a person
+// approves an OBJECT (an entry, GuardEntries) — while an upgrade's replaces are
+// computed out of the plan itself, both sides of each change compared, so the
+// address names exactly one change of that plan rather than "whatever is at
+// this address". A caller that named an address it had not read would be
+// handing this function the one thing it cannot judge, which is why the list is
+// the caller's own and not a command line's.
+//
+// Everything else is GuardEntries': the entries are tried first, so an entry
+// naming the address and holding another object's identity is still the refusal
+// it is (an address list does not overrule the owner's own list), a removal
+// moved here from another address is refused whatever either list says, and the
+// advice is the caller's.
+func GuardEntriesWithAddresses(p *Plan, entries []DeleteEntry, addresses []string, advice string) error {
+	return guardWith(p, advice, func(rc ResourceChange) (bool, string) {
+		ok, why := Approves(entries, rc)
+		if ok || why != "" {
+			return ok, why
+		}
+		return slices.Contains(addresses, rc.Address), ""
+	})
+}
+
 // admit is what decides one removal: whether the list the caller holds admits
 // it, and, when it does not, the reason to print beside the change's actions.
 // An empty reason is the list's own "the address is not on it", which is the

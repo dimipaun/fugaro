@@ -4,7 +4,9 @@
 merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
 prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
 except the reading of the installation's published state its lists come from, which no task of this
-plan carries; M8–M10 are not started; this folder approves no task.**
+plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
+half and not started; M8 is built except the wiring that would serve its four read tools, which is
+the task M5b gates; M9 is not started; this folder approves no task.**
 
 **This file is a table, and it is not a gate.** The owner ruled on 2026-11-07 that he would clear the
 `zitadel/oidc` dependency set by reading one table, and this is it: he read it and cleared the set

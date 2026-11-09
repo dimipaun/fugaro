@@ -22,7 +22,7 @@ import (
 // This file is the `fugaro workspace` family (D1303, spec.md §6): the reads,
 // which are offline and read this machine's own files, and the writes, which
 // are local config edits through the one write path the models and settings
-// commands share (applySettingsEdit — the diff, the confirmation, the
+// commands share (applySettingsEdit — the diff, the sentence, the
 // coding-agent fence, the backup and the atomic write).
 //
 // A membership has two halves and they live in two people's files, so this
@@ -246,14 +246,14 @@ func runWorkspaceAdd(cmd *cobra.Command, name string, o *workspaceAddOptions) er
 		Command: workspaceAddCommand(name, o),
 		Yes:     o.yes,
 	}
-	// Re-pinning is the widening direction: the membership the project already
-	// states is replaced by another one, or by the same name with different
-	// values, so the project's own name confirms it (D846) — or --yes outside a
-	// coding agent's session. A first membership widens nothing and is the
-	// ordinary y/N.
+	// Re-pinning is the widening direction (D846): the membership the project
+	// already states is replaced by another one, or by the same name with
+	// different values, which is the owner's own step — asked nothing at their
+	// terminal and refused in a coding agent's session (D1552). A first
+	// membership widens nothing and is the ordinary write.
 	if lc.Workspace != "" || !lc.WorkspacePin.IsZero() {
 		edit.Typed = true
-		edit.TypedWhy = fmt.Sprintf("this replaces what project %s trusts: the membership moves from %s to %s, or %s is re-pinned with different values, so the project's own name is what confirms it, or --yes outside a coding agent's session",
+		edit.TypedWhy = fmt.Sprintf("this replaces what project %s trusts: the membership moves from %s to %s, or %s is re-pinned with different values",
 			lc.Name, workspaceOrNone(lc.Workspace), name, name)
 	}
 	if err := workspaceEditLocal(cmd, lc, sel.Path, edit); err != nil {
@@ -290,7 +290,7 @@ func workspacePinValue(name string, o *workspaceAddOptions, at string) string {
 	return ""
 }
 
-// workspaceAddWhat is the sentence the confirmation shows, naming the
+// workspaceAddWhat is the sentence the write prints, naming the
 // membership this project is joining. The assertion key is a key, so the
 // sentence says there is one and does not print it.
 func workspaceAddWhat(project, name string, o *workspaceAddOptions) string {
@@ -507,7 +507,7 @@ func runWorkspaceMemberAdd(cmd *cobra.Command, workspace, project string, o *wor
 	// named. Re-declaring a member is how a retired or a compromised job
 	// service account leaves the table, and a merge would leave that identity
 	// admitted as a caller of the workspace's credentials while the
-	// confirmation named only the new one. The removal comes first because the
+	// sentence named only the new one. The removal comes first because the
 	// entry is rebuilt from the values given, which is the only reading of the
 	// command's own sentence.
 	declared := lc.WorkspaceMembers != nil && !(*lc.WorkspaceMembers)[project].IsZero()
@@ -549,12 +549,13 @@ func runWorkspaceMemberAdd(cmd *cobra.Command, workspace, project string, o *wor
 	}
 	// A replaced entry widens and narrows at once, and which the owner is doing
 	// is not something this command can tell: the same declaration that adds an
-	// account drops the one it did not name. So it asks for the project's own
-	// name, like every other write that changes what this machine trusts, and
-	// says what the replace does to the values the entry carries today.
+	// account drops the one it did not name. So it takes the widening
+	// classification, like every other write that changes what this machine
+	// trusts, and says what the replace does to the values the entry carries
+	// today.
 	if declared {
 		edit.Typed = true
-		edit.TypedWhy = fmt.Sprintf("this replaces the entry workspace %s declares for %s: the entry is written whole, so a job service account or a repository it carries today and this declaration does not name is gone from the table; the workspace's own project name confirms it, or --yes outside a coding agent's session",
+		edit.TypedWhy = fmt.Sprintf("this replaces the entry workspace %s declares for %s: the entry is written whole, so a job service account or a repository it carries today and this declaration does not name is gone from the table",
 			workspace, project)
 	}
 	if err := workspaceEditLocal(cmd, lc, path, edit); err != nil {
@@ -564,7 +565,7 @@ func runWorkspaceMemberAdd(cmd *cobra.Command, workspace, project string, o *wor
 	return nil
 }
 
-// workspaceMemberAddWhat is the sentence the confirmation shows for one member
+// workspaceMemberAddWhat is the sentence the write prints for one member
 // entry: what the entry will hold afterwards, which is the whole of it when it
 // replaces one.
 func workspaceMemberAddWhat(workspace, project string, o *workspaceMemberAddOptions, replace bool) string {
@@ -759,12 +760,13 @@ func runWorkspaceCapSet(cmd *cobra.Command, o *workspaceCapOptions) error {
 		Command: fmt.Sprintf("fugaro workspace cap set --workspace %s --monthly %s", o.workspace, amount),
 		Yes:     o.yes,
 	}
-	// Raising a ceiling is the widening direction D846 reserves the project's
-	// own name for. The first cap widens nothing — there was no ceiling to
-	// loosen — and lowering one takes room away.
+	// Raising a ceiling is the widening direction D846 reserves for the owner's
+	// own step: asked nothing at their terminal, and refused in a coding
+	// agent's session (D1552). The first cap widens nothing — there was no
+	// ceiling to loosen — and lowering one takes room away.
 	if lc.WorkspaceCap != nil && o.monthly > lc.WorkspaceCap.Monthly {
 		edit.Typed = true
-		edit.TypedWhy = fmt.Sprintf("this raises workspace %s's own cap from $%v to $%s a month, which is the ceiling its credentials spend against: the project's own name is what confirms it, or --yes outside a coding agent's session",
+		edit.TypedWhy = fmt.Sprintf("this raises workspace %s's own cap from $%v to $%s a month, which is the ceiling its credentials spend against",
 			o.workspace, lc.WorkspaceCap.Monthly, amount)
 	}
 	if err := workspaceEditLocal(cmd, lc, path, edit); err != nil {

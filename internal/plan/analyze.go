@@ -57,6 +57,14 @@ type Graph struct {
 	Stream *string     `json:"stream,omitempty"`
 	Nodes  []NodeState `json:"nodes"`
 	Edges  []Edge      `json:"edges"`
+	// Decoupling and ContractChanges are the artifact's own record of the
+	// contract-first decoupling pass, carried through from the artifact like
+	// Stream: they are the plan's, not a read's, and a read that dropped them
+	// would print a graph whose broken edges and change requests no console
+	// could see (D1811, D1814). A schema-3 pair, absent from a v2 graph and
+	// from a v3 one that recorded neither.
+	Decoupling      []Decoupling     `json:"decoupling,omitempty"`
+	ContractChanges []ContractChange `json:"contract_changes,omitempty"`
 	// Levels is how many levels the plan has: the longest chain of
 	// dependencies plus one, and 0 for a graph with no tasks. It is the count
 	// of the waves a view can draw, which is the one figure a per-task level
@@ -230,12 +238,14 @@ func Analyze(path string, doc Document, done []string) (Graph, error) {
 	}
 
 	g := Graph{
-		SchemaVersion: doc.SchemaVersion,
-		Plan:          doc.Plan,
-		Stream:        doc.Stream,
-		Nodes:         make([]NodeState, 0, len(doc.Nodes)),
-		Edges:         doc.Edges,
-		Levels:        levels,
+		SchemaVersion:   doc.SchemaVersion,
+		Plan:            doc.Plan,
+		Stream:          doc.Stream,
+		Nodes:           make([]NodeState, 0, len(doc.Nodes)),
+		Edges:           doc.Edges,
+		Decoupling:      doc.Decoupling,
+		ContractChanges: doc.ContractChanges,
+		Levels:          levels,
 	}
 	if g.Edges == nil {
 		g.Edges = []Edge{}

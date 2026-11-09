@@ -174,6 +174,7 @@ const SPEC = 'graph.spec.ts'
 const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
+  'shared/shortid.js',
   'shared/schema.js',
   'renderer/graph/model.js',
   'renderer/graph/layout-client.js',

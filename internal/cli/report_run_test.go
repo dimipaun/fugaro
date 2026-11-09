@@ -19,6 +19,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backlog"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // isolateState points the state directory -- where a run's log is filed
@@ -48,7 +49,8 @@ func closingLine(t *testing.T, out string, n int) {
 // TestRunDefaultIsShort: `fugaro run`'s default view is the launch as one
 // step, the branch it cut and the run's own cloud log under it, and the
 // closing line (D1352, D1354). The launch's own words are unchanged: the same
-// slug, the same follow-up note, the same branch and logs lines.
+// follow-up note, the same branch and logs lines, and the run named in its
+// short form (D1705).
 func TestRunDefaultIsShort(t *testing.T) {
 	newCloudFixture(t)
 	out, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20260927-100000-abcd", "Add a feature")
@@ -56,7 +58,7 @@ func TestRunDefaultIsShort(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := reportLines(out)
-	if got, want := lines[0], markDone+" launch "+appSlug+"/20260927-100000-abcd"; got != want {
+	if got, want := lines[0], markDone+" launch "+task.ShortRun("20260927-100000-abcd"); got != want {
 		t.Errorf("the launch's first line is %q, want the step %q:\n%s", got, want, out)
 	}
 	for _, want := range []string{
@@ -111,7 +113,7 @@ func TestRunJSONIsUntouched(t *testing.T) {
 	if strings.ContainsRune(out, 0x1b) || len(stepNames(out)) != 0 {
 		t.Errorf("--json stdout carries a human line or an escape byte:\n%s", out)
 	}
-	if !strings.Contains(errOut, markDone+" launch "+appSlug+"/20260927-100000-abcd") {
+	if !strings.Contains(errOut, markDone+" launch "+task.ShortRun("20260927-100000-abcd")) {
 		t.Errorf("the launch's step is not on stderr:\n%s", errOut)
 	}
 }
@@ -128,9 +130,9 @@ func TestCancelDefaultIsShort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	step := markDone + " cancel " + appSlug + "/20260927-100000-abcd"
+	step := markDone + " cancel " + task.ShortRun("20260927-100000-abcd")
 	result := "cancelled the execution."
-	for _, want := range []string{"cancel requested for " + appSlug + "/20260927-100000-abcd", step, result} {
+	for _, want := range []string{"cancel requested for " + task.ShortRun("20260927-100000-abcd"), step, result} {
 		if !strings.Contains(out, want) {
 			t.Errorf("cancel printed %q, want it to say %q", out, want)
 		}
@@ -261,7 +263,8 @@ func TestCancelWritesALog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref := appSlug + "/20260927-100000-abcd"
+	// The human lines name the run in its short form (D1705).
+	ref := task.ShortRun("20260927-100000-abcd")
 	_, log := onlyLog(t, "cancel")
 	for _, want := range []string{"cancel requested for " + ref, "cancelled the execution."} {
 		if !strings.Contains(log, want) || !strings.Contains(out, want) {
@@ -331,6 +334,13 @@ func assertLogMode(t *testing.T, cmdName string) {
 // case is why it is not merely tidy: a refusal's file is one of the 50 the
 // command's own name keeps (CL3's pruneLogs), so enough refused cancels would
 // evict the newest real one an operator is pointed at.
+//
+// The project and config writers of CL7b (the cases from the budget's writers
+// down) are held to the same rule, each with a refusal its own command line,
+// environment or argument answers: a scope a budget command did not name, a
+// layer file that is not there, a GODEBUG that leaks the credential, an
+// argument that is not a project ID, a restore with no terminal to type at, and
+// a delete-list entry that is not one.
 func TestARefusedCommandKeepsNoLog(t *testing.T) {
 	cases := []struct {
 		name string
@@ -354,6 +364,86 @@ func TestARefusedCommandKeepsNoLog(t *testing.T) {
 		{"a pass the selected project refuses", func(t *testing.T) error {
 			newReaperRig(t, false)
 			_, _, err := execute(t, "reaper")
+			return err
+		}},
+		// The writers of CL7b, whose reporter is opened the same way: where
+		// their own work starts and not at the command's door. Each refusal
+		// below is one the command answers from its own command line, its own
+		// environment or a file it was pointed at, so nothing of it reached the
+		// cloud and there is no run for a log to hold.
+		{"a budget set with no scope", func(t *testing.T) error {
+			_, _, err := execute(t, "budget", "set")
+			return err
+		}},
+		{"a budget kill with no scope", func(t *testing.T) error {
+			_, _, err := execute(t, "budget", "kill")
+			return err
+		}},
+		{"a budget resume with no scope", func(t *testing.T) error {
+			_, _, err := execute(t, "budget", "resume")
+			return err
+		}},
+		{"a publish of a layer file that is not there", func(t *testing.T) error {
+			_, _, err := execute(t, "config", "publish", filepath.Join(t.TempDir(), "no-such-layer.yaml"))
+			return err
+		}},
+		// The same writers again, with a command line that gets all the way
+		// through: what refuses these is the credential leak and the project
+		// selection that openBudget and openCloud make — the environment and
+		// the installation's own config, answered before any call reaches the
+		// cloud — so those two sit above the opener as well, and a run they
+		// refuse files no log. These are the cases an opener at the door
+		// answers wrongly: a leak is refused after the command line has been
+		// read, so the run gets far enough in to file its empty file.
+		{"a budget set whose GODEBUG leaks credentials", func(t *testing.T) error {
+			newBudgetFixture(t, "")
+			t.Setenv("GODEBUG", "http2debug=1")
+			_, _, err := execute(t, "budget", "set", "--global", "--daily", "60", "--yes")
+			return err
+		}},
+		{"a budget kill whose GODEBUG leaks credentials", func(t *testing.T) error {
+			newBudgetFixture(t, "")
+			t.Setenv("GODEBUG", "http2debug=1")
+			_, _, err := execute(t, "budget", "kill", "--all", "--yes")
+			return err
+		}},
+		{"a budget resume whose GODEBUG leaks credentials", func(t *testing.T) error {
+			newBudgetFixture(t, "")
+			t.Setenv("GODEBUG", "http2debug=1")
+			_, _, err := execute(t, "budget", "resume", "--all", "--yes")
+			return err
+		}},
+		{"a publish whose GODEBUG leaks credentials", func(t *testing.T) error {
+			f := newCloudFixture(t)
+			isolateCache(t)
+			publishedLayer(t, f, testProjectLayer)
+			noAgentSession(t)
+			t.Setenv("GODEBUG", "http2debug=1")
+			_, _, err := execute(t, "config", "publish")
+			return err
+		}},
+		{"a managed apply whose GODEBUG leaks credentials", func(t *testing.T) error {
+			t.Setenv("GODEBUG", "http2debug=1")
+			_, _, err := execute(t, "managed", "apply", "root")
+			return err
+		}},
+		{"a managed flag of something that is not a project ID", func(t *testing.T) error {
+			_, _, err := execute(t, "managed", "flag", "NOT-A-PROJECT")
+			return err
+		}},
+		{"a managed unflag of something that is not a project ID", func(t *testing.T) error {
+			_, _, err := execute(t, "managed", "unflag", "NOT-A-PROJECT")
+			return err
+		}},
+		{"a restore at no terminal", func(t *testing.T) error {
+			noAgentSession(t)
+			terminal(t, false)
+			_, _, err := execute(t, "restore", "proj-new-id", t.TempDir())
+			return err
+		}},
+		{"an allow-delete argument that is not an entry", func(t *testing.T) error {
+			allowDeleteRig(t)
+			_, _, err := execute(t, append(allowDeleteArgs(), "not-an-entry")...)
 			return err
 		}},
 	}

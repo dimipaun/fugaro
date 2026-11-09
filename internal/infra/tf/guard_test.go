@@ -248,6 +248,35 @@ func TestGuardAdmitsTheListedAddressOwnRemovals(t *testing.T) {
 	}
 }
 
+// TestGuardEntriesWithAddressesAdmitsTheCallersOwnReplace: the second list is
+// the caller's own reading of a replace this program makes (an upgrade's, whose
+// two halves the caller compared before naming it), and it admits exactly the
+// address it names. The owner's entries still come first, so an entry at the
+// address bound to another object is the refusal it is whatever the address
+// list says — the one thing the second list must not be able to overrule.
+func TestGuardEntriesWithAddressesAdmitsTheCallersOwnReplace(t *testing.T) {
+	const addr = `module.installation.google_storage_bucket_iam_member.runs_launcher["user:a@example.com"]`
+	rc := ResourceChange{Address: addr, Mode: "managed", Type: "google_storage_bucket_iam_member",
+		Change: Change{Actions: []string{"delete", "create"},
+			Before: map[string]any{"name": "b1"}, After: map[string]any{"name": "b1"}}}
+	p := &Plan{FormatVersion: "1.2", ResourceChanges: []ResourceChange{rc}}
+
+	if err := GuardEntriesWithAddresses(p, nil, []string{addr}, ""); err != nil {
+		t.Errorf("the caller's own replace was refused: %v", err)
+	}
+	if err := GuardEntriesWithAddresses(p, nil, []string{"module.installation.other"}, ""); err == nil {
+		t.Error("a replace at an address no list named was admitted")
+	}
+	other := RemovalIdentity{Type: "google_storage_bucket_iam_member", Name: "another"}.String()
+	err := GuardEntriesWithAddresses(p, []DeleteEntry{{Address: addr, Before: other}}, []string{addr}, "")
+	if err == nil {
+		t.Fatal("an address list admitted a removal the owner's entry refuses")
+	}
+	if !strings.Contains(err.Error(), addr) {
+		t.Errorf("the refusal %q doesn't name %s", err, addr)
+	}
+}
+
 // hostile are the untrusted values every refusal site is tested with: a C1
 // CSI, a bidi override, a newline and a value far over any sane length.
 func hostile() map[string]string {

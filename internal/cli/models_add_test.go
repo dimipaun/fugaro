@@ -278,77 +278,53 @@ func TestModelsAddRefusesInAnAgentSessionEvenWithYes(t *testing.T) {
 	}
 }
 
-// TestModelsAddAsksForTheTypedProjectNameForAClaim: appending a claim is a
-// widening — the route serves the model, so a repository of this project may
-// pin it and send its code there — and D846 reserves a widening for the
-// project's own name, typed, the form `settings set budget.allowed_models
-// --add` already asks for. --yes answers it outside a coding agent's session
-// (D1107), and a run with neither the flag nor a terminal writes nothing.
-func TestModelsAddAsksForTheTypedProjectNameForAClaim(t *testing.T) {
+// TestModelsAddAsksNothingForAClaim: appending a claim is a widening — the
+// route serves the model, so a repository of this project may pin it and send
+// its code there — and a widening asks nothing for itself (D1552, D1555): the
+// owner's own command is enough, with a terminal or without one, and --yes is
+// not what confirms it. What fences a widening is the coding agent's session,
+// and this document is outside every repository, so that refusal is the one the
+// write path already gave it (D789).
+func TestModelsAddAsksNothingForAClaim(t *testing.T) {
 	_, path := modelsWriteHome(t)
-	before := readFileString(t, path)
 
 	noTerminal(t)
 	out, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2")
-	if err == nil {
-		t.Fatal("a widening with no terminal and no --yes was written")
+	if err != nil {
+		t.Fatalf("a widening with no terminal asked for an answer: %v\n%s", err, out)
 	}
-	if !strings.Contains(err.Error(), "typed confirmation") {
-		t.Errorf("the refusal does not name the typed form: %v", err)
+	if got := readFileString(t, path); !strings.Contains(got, "vendor/model-z") {
+		t.Errorf("the widening wrote nothing:\n%s", got)
 	}
-	if got := readFileString(t, path); got != before {
-		t.Errorf("the refused write changed the file:\n%s", got)
+	if strings.Contains(out, "Type aurora to confirm") {
+		t.Errorf("the widening asked for the project's name:\n%s", out)
 	}
 
-	// --yes is the person's own word for it without a terminal, and it is the
-	// typed form it answers here and not the ordinary y/N: the refusal above is
-	// the same command with the flag left off.
+	// The flag makes no difference to it, and neither does a terminal.
+	_, path = modelsWriteHome(t)
 	out, _, err = execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2", "--yes")
 	if err != nil {
-		t.Fatalf("--yes did not answer the typed confirmation outside a session: %v\n%s", err, out)
+		t.Fatalf("%v\n%s", err, out)
 	}
 	if got := readFileString(t, path); !strings.Contains(got, "vendor/model-z") {
 		t.Errorf("--yes wrote nothing:\n%s", got)
 	}
-
-	// And the form itself: the project's name, typed at a terminal.
-	_, path = modelsWriteHome(t)
-	before = readFileString(t, path)
-	fakeTerminal(t)
-	out, _, err = executeStdin(t, "aurora\n", "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2")
-	if err != nil {
-		t.Fatalf("%v\n%s", err, out)
-	}
-	if !strings.Contains(out, "Type aurora to confirm") {
-		t.Errorf("the confirmation does not ask for the project's name:\n%s", out)
-	}
-	if got := readFileString(t, path); !strings.Contains(got, "vendor/model-z") {
-		t.Errorf("the typed confirmation wrote nothing:\n%s", got)
-	}
-	if got := readFileString(t, path); got == before {
-		t.Error("the confirmed write changed nothing")
-	}
 }
 
-// TestModelsAddAsksForTheTypedProjectNameForAnAllowListEntry: the other
-// widening of one add is the allow-list entry, which decides what a run of this
-// project may use — the very key `settings set budget.allowed_models --add`
-// makes the typed form — so an add whose claim the route already served is the
-// typed form too, and not the ordinary y/N.
-func TestModelsAddAsksForTheTypedProjectNameForAnAllowListEntry(t *testing.T) {
+// TestModelsAddAsksNothingForAnAllowListEntry: the other widening of one add is
+// the allow-list entry, which decides what a run of this project may use — the
+// very key `settings set budget.allowed_models --add` widens — so an add whose
+// claim the route already served is a widening too, and like every widening it
+// asks nothing (D1552, D1555).
+func TestModelsAddAsksNothingForAnAllowListEntry(t *testing.T) {
 	_, path := modelsWriteHome(t)
-	before := readFileString(t, path)
 
 	noTerminal(t)
-	_, _, err := execute(t, "models", "add", "deepseek/deepseek-v4-pro", "--price-in", "1", "--price-out", "2")
-	if err == nil {
-		t.Fatal("a widening with no terminal and no --yes was written")
+	if out, _, err := execute(t, "models", "add", "deepseek/deepseek-v4-pro", "--price-in", "1", "--price-out", "2"); err != nil {
+		t.Fatalf("a widening with no terminal asked for an answer: %v\n%s", err, out)
 	}
-	if !strings.Contains(err.Error(), "typed confirmation") {
-		t.Errorf("the refusal does not name the typed form: %v", err)
-	}
-	if got := readFileString(t, path); got != before {
-		t.Errorf("the refused write changed the file:\n%s", got)
+	if got := readFileString(t, path); !strings.Contains(got, "deepseek/deepseek-v4-pro") {
+		t.Errorf("the widening wrote nothing:\n%s", got)
 	}
 }
 

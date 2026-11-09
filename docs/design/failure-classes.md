@@ -1,20 +1,26 @@
 # Failure classes: a closed vocabulary on the run record, and a failures report
 
-**Status: a design, and its FC1–FC4 have shipped; the rest of §10 is not built.** This document
+**Status: a design, and its FC1–FC8 have shipped; §10 is built.** This document
 recommends, and names the alternative and what it costs, for every question it takes up; the owner
 rules, and the design's own decisions — §8 D1–D9 and §9 O1–O6 — stay his. The plan's decisions,
 D1450–D1469, are answered 2026-11-07, each as recommended. **FC1** — the vocabulary, the record's
 field and the schema's enum — **FC2** — the one writer of a terminal status (§4.1) — **FC3** —
 the classes the runner knows from its own state, passed at the site that already knows why the run
 is stopping (§4.2) — and **FC4** — the classifier over the agent's own message, which reads the
-text the stage already folded and copies no byte of it (§4.3) — are on `main`: `internal/failure`,
-the `failure.Classes()` slice §3 names, `Record.FailureClass`, `recordEnd`, which is what every
-statement §1 counted writes its ending through now, `haltClass` over the closed halt reasons, the
-class `Decide`, `finalize`, `shadowFinalize` and the configuration refusals return beside the
-reason they already did, and `stageFailureClass`, which names the cause inside a stage's own error
-result.
-**FC5–FC8 are not started.** What is written here was read against `main` on 2026-11-05, and the
-line citations are taken from that tree.
+text the stage already folded and copies no byte of it (§4.3) — and **FC5** — the reader that
+classes a record written before the field shipped, and the row's own key (§5) — are on `main`:
+`internal/failure`, the `failure.Classes()` slice §3 names, `Record.FailureClass`, `recordEnd`,
+which is what every statement §1 counted writes its ending through now, `haltClass` over the closed
+halt reasons, the class `Decide`, `finalize`, `shadowFinalize` and the configuration refusals
+return beside the reason they already did, `stageFailureClass`, which names the cause inside a
+stage's own error result, and `runview.ClassOf`, the one function the row reads a legacy record's
+class through — exported on D1454's decision so the digest's own read (§5, "the digest reads the
+same function") can call the same one, which it does: **FC7** — the Failures table, `failures` in
+the summary block and the two class rules — **is on `main`**, and the digest is the caller outside
+`internal/runview` that the export was for, the runner's own agreement walks being the others.
+**FC8** — the documents, the contract and the skills — **is on `main` too**, so §10 is built. What
+is written here was read against `main` on 2026-11-05, and the line citations are taken from that
+tree.
 
 Related: [v1.md](v1.md) §4.5 (failure paths), §4.6 (the run record) and §4.8 (`runs ls`),
 [artifact-runs.md](artifact-runs.md) (the report a run writes with the digest), the digest's own
@@ -349,7 +355,7 @@ answer back.**
   ordered patterns in exactly the shape `internal/digest`'s flags and `oauthLimitPhrases` have. It
   is consulted **only when the field is absent**, and its answer is a *reading*: the row and the
   report say which it is — the position the console already holds for
-  `runview.Derived`/`DerivedPreempted` (`runview.go:38`–`57`), *a derivation, never written back,
+  `runview.Derived`/`DerivedPreempted` (`internal/runview/runview.go:38`–`57`), *a derivation, never written back,
   derived anew on every read*.
 - **The patterns are the reasons the runner already writes**, not English: `no verified test run on
   the final commit` → `unverified_final_commit`; `tests failing on the final commit` →
@@ -390,16 +396,23 @@ within 90 days anyway.
 value, `failure_class`, refused by the flag's own closed list the way `--state` refuses
 (`lsStates`, `runs.go:65`), so the flag cannot be asked for a grouping that does not exist.
 
-- The text listing prints one row per class — `class`, `kind`, `runs`, `spend`, `share` (of the
-  window's runs), `delivered` (runs whose `outcome` is `draft` or `ready` with a branch pushed) and
-  an example run id — newest-first classes first? No: by runs descending, ties by name, so two
-  readers of one window print the same table. The totals line keeps its meaning and now reads
-  `191 of 585 runs failed (33%), $354.68 of $844.27` — the same figures, with the share the owner
-  computed by hand.
+- The text listing prints one row per class — `class`, `runs`, `share` (of the window's runs) and
+  `spend` beside it — by runs descending, ties by name, so two readers of one window print the same
+  table. The totals line keeps its figures: the grouped listing is the same read of the same window
+  with one block added, so the totals it already carries are the window's, and a share written into
+  them would be a second reading of the number the block already gives.
 - `--json` gains one block, `groups`, beside the `runs` array it already carries (`lsDoc`,
-  `runs.go:214`): per class, the six figures and the properties (`kind`, `retryable`,
-  `needs_owner`). The block is additive: a reader that does not know it loses the grouping, not the
-  rows.
+  `runs.go:214`): per class, those four figures, in the vocabulary's own order
+  (`failure.Classes()`, §3). The block is additive: a reader that does not know it loses the
+  grouping, not the rows.
+- **These four keys are what FC6 settled, and this section's first sketch was wider.** The sketch
+  named six figures per class — adding `kind`, `delivered` (runs whose `outcome` is `draft` or
+  `ready` with a branch pushed) and an example run id — and a totals line that moved to read
+  `191 of 585 runs failed (33%), $354.68 of $844.27`. The plan's approved Interfaces carry the four
+  above and leave the totals line alone: `kind`, `retryable` and `needs_owner` are the vocabulary's
+  own and `failure.PropertiesOf` answers them from the class alone (§3), so a wire format needs no
+  second copy of them, and an example run id is the committed table's figure (§6.2), not a listing's.
+  The plan is what shipped.
 - **`--group-by` and `--limit`/`--after` are refused together** (a page of a grouped table is a
   total of a page, and `--limit`'s own help says a page is not a total); `--group-by` with `--watch`
   is refused for the same reason `--limit` is.
@@ -575,9 +588,9 @@ that is already long; no reader of it is a contract.
 
 ## 10. Tasks
 
-**Status: a plan, approved to build on 2026-11-07; FC1–FC4 are built and FC5–FC8 are not
-started.** Each task is written to fit one run's $5 cap: it names at most twelve files, one command,
-one commit message and one red step. The convention is the one the active plans use
+**Status: a plan, approved to build on 2026-11-07; FC1–FC8 are built.** Each task is written to fit
+one run's $5 cap: it names at most twelve files, one command, one commit message and one red step.
+The convention is the one the active plans use
 (`docs/bitbucket-credentials/implementation-plan.md` is the most recent): **Files**,
 **Interfaces**, **Tests**, **Command**, **Depends on**, **Red step**, **Reviewer**, **Commit**, and a
 **SEC** flag where the change moves a security boundary. **This work is SECURITY-SENSITIVE: the

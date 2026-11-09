@@ -32,6 +32,7 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
+import { shortRun } from '../../src/shared/shortid'
 import { CONSOLE_OPERATIONS, validateArguments } from '../../src/main/ipc'
 import { SPAWN_COMMANDS, argvFor, assertSpawnSurface } from '../../src/main/spawn'
 import type { SpawnCommand } from '../../src/main/spawn'
@@ -1033,7 +1034,7 @@ describe('the Coordinator screen in the Flight Deck look (console redesign, step
     // The first run the cap cut is not in the tree at all: the count above is
     // what stands for it, and there is no silent twenty-first row.
     const cut = `20261027-0300${String(COORDINATOR_LIST_CAP % 100).padStart(2, '0')}-aa${String(COORDINATOR_LIST_CAP).padStart(2, '0')}`
-    expect(runs.map((run) => textOf(run, 'coordinator-run-id'))).not.toContain(cut)
+    expect(runs.map((run) => textOf(run, 'coordinator-run-id'))).not.toContain(shortRun(cut))
   })
 
   it('draws a pull request as a row: its number, chip, title, branch, version and state', () => {
@@ -1084,7 +1085,7 @@ describe('the Coordinator screen in the Flight Deck look (console redesign, step
     // The runs are the row's own nested list, not a list beside it.
     const runs = one(first, 'coordinator-runs')
     expect(walk(first)).toContain(runs)
-    expect(textOf(runs, 'coordinator-run-id')).toBe('20261027-030000-aa01')
+    expect(textOf(runs, 'coordinator-run-id')).toBe(shortRun('20261027-030000-aa01'))
 
     // The second record has no run behind it, and no draft chip either: the
     // console's own sentence is drawn where the runs would be.
@@ -1224,7 +1225,9 @@ describe('the action queue (K1)', () => {
     })
     // The halted run is the one item: a halt is a person's own act on a run
     // that then ended however it ended, so the status is not the whole ground.
-    expect(itemTexts(node, 'coordinator-queue-subject')).toEqual(['20261030-220114-77bd'])
+    // The item is named by the run's short id, as every list view on this
+    // console names one (SR10), and the whole id is what the press carries.
+    expect(itemTexts(node, 'coordinator-queue-subject')).toEqual([shortRun('20261030-220114-77bd')])
     expect(itemTexts(node, 'coordinator-queue-kind')).toEqual([COORDINATOR_QUEUE_JOB_WORD])
   })
 
@@ -1275,7 +1278,12 @@ describe('the action queue (K1)', () => {
     // A pull request's item names the pull request and never offers the link:
     // the number is text, and no element anywhere carries a destination
     // (`href` is refused by the harness, and K2 is where the link arrives).
-    expect(itemTexts(node, 'coordinator-queue-subject')).toEqual(['#1458', '20261030-220114-77bd', 'C2', 'owner/repo-a'])
+    expect(itemTexts(node, 'coordinator-queue-subject')).toEqual([
+      '#1458',
+      shortRun('20261030-220114-77bd'),
+      'C2',
+      'owner/repo-a',
+    ])
     expect(itemTexts(node, 'coordinator-queue-why')).toEqual([
       COORDINATOR_QUEUE_PR_WHY_WORD,
       COORDINATOR_QUEUE_JOB_WHY_WORD,
@@ -1688,7 +1696,7 @@ describe('the job list (K4)', () => {
     const second = rows[1]
     if (first === undefined || second === undefined) throw new Error('the list drew no row')
 
-    expect(textOf(first, 'coordinator-job-id')).toBe('20261101-090000-aa01')
+    expect(textOf(first, 'coordinator-job-id')).toBe(shortRun('20261101-090000-aa01'))
     expect(textOf(first, 'coordinator-job-repo')).toBe('owner/repo-a')
     expect(textOf(first, 'coordinator-job-status')).toBe('succeeded')
     expect(textOf(first, 'coordinator-job-title')).toBe('the job that finished')
@@ -1794,6 +1802,73 @@ describe('the job list (K4)', () => {
     expect(walk(row).every((node) => node.tag !== 'img')).toBe(true)
     expect(textOf(bodyOf(row), 'coordinator-job-reason')).toBe('javascript:alert(1)')
     expect(one(row, 'coordinator-job-detail').getAttribute('hidden')).toBe('')
+  })
+
+  it('cuts the ending from the id the console would draw, not from the wire text', () => {
+    // **The ending is a cut of the *sanitized* id** (`drawnRef`), which is what
+    // `live.test.ts` holds of the live tab's cell and this case holds of this
+    // list (SR10). The `runId` class strips the bidi override below **before**
+    // its shape check, so the wire value is accepted and the page's two ids
+    // still share their last four characters. Answering the rule over the raw
+    // strings instead is not a cosmetic difference: the override would make the
+    // two endings differ, and two different runs would be drawn as the same
+    // `3bb2` one row apart.
+    const page = jobsDocument({
+      runs: [
+        { run: '20261108-115248-3bb2‮', repo: 'owner/repo-a', status: 'succeeded' },
+        { run: '20261107-010101-3bb2', repo: 'owner/repo-a', status: 'succeeded' },
+      ],
+      totals: { runs: 2, total_usd: 0 },
+    })
+    const frame = renderCoordinatorFrame(factory, 'dark')
+    fillCoordinatorJobs(factory, page.rows, frame.jobs.list)
+    expect(all(frame.jobs.list, 'coordinator-job-id').map((cell) => cell.textContent)).toEqual([
+      '8-3bb2',
+      '1-3bb2',
+    ])
+  })
+
+  it('sanitizes the repository the collision rule prefixes, not only the ending', () => {
+    // The cross-repository branch of `displayRuns` draws `<repo>/<ending>`, and
+    // the repository is untrusted text too. `drawRunId` writes the answer
+    // through `literal`, which sanitizes nothing, so the prefix is only clean
+    // because `drawnRef` cleaned it -- a zero-width space in one of the two
+    // repositories would otherwise ride onto the screen in front of the ending.
+    const page = jobsDocument({
+      runs: [
+        { run: '20261101-090000-aa01', repo: 'owner/repo​-b', status: 'succeeded' },
+        { run: '20261101-090000-aa01', repo: 'owner/repo-c', status: 'succeeded' },
+      ],
+      totals: { runs: 2, total_usd: 0 },
+    })
+    const frame = renderCoordinatorFrame(factory, 'dark')
+    fillCoordinatorJobs(factory, page.rows, frame.jobs.list)
+    expect(all(frame.jobs.list, 'coordinator-job-id').map((cell) => cell.textContent)).toEqual([
+      'owner/repo-b/aa01',
+      'owner/repo-c/aa01',
+    ])
+  })
+
+  it('answers the endings over the rows the list already holds, not over the page appended', () => {
+    // The list is **append-only** (`fillCoordinatorJobs`), and the entry hands
+    // it every row the pages have read with the count already drawn: a run on
+    // the second page that shares its last four characters with a row of the
+    // first is drawn *under* that row, so the two must not be the same four
+    // characters. The row already on screen keeps the ending it was drawn with
+    // -- an append cannot rewrite it -- and the new row is the one that moves.
+    const page = jobsDocument({
+      runs: [
+        { run: '20261101-090000-zz50', repo: 'owner/repo-a', status: 'succeeded' },
+        { run: '20261101-090001-zz50', repo: 'owner/repo-a', status: 'succeeded' },
+      ],
+      totals: { runs: 2, total_usd: 0 },
+    })
+    const frame = renderCoordinatorFrame(factory, 'dark')
+    fillCoordinatorJobs(factory, page.rows.slice(0, 1), frame.jobs.list)
+    fillCoordinatorJobs(factory, page.rows, frame.jobs.list, 1)
+    const drawn = all(frame.jobs.list, 'coordinator-job-id').map((cell) => cell.textContent ?? '')
+    expect(drawn).toEqual(['zz50', '1-zz50'])
+    expect(drawn[0]).not.toBe(drawn[1])
   })
 })
 

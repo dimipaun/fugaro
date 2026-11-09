@@ -2,7 +2,8 @@
 
 **Status: design answered by the owner 2026-11-04, ruled on again 2026-11-05, and its decisions
 D1430–D1449 answered 2026-11-07 with all tasks approved 2026-11-07 (owner: "All tasks approved.
-Jobmax"); plan only; nothing implemented.**
+Jobmax").** **Plan only when this was written; part of Part I has landed since — R0–R4, R6 and R13,
+each named with its commit in [README.md](README.md)'s status line — and the reports job has not.**
 
 Every task is written to the owner's answers of 2026-11-04 (D960–D971,
 [reconciliation.md](reconciliation.md) §3) **and to the owner's rulings of 2026-11-05**
@@ -585,7 +586,7 @@ Hermetic throughout — it touches no cloud API the fake does not model.
   assignment from **`FUGARO_REPORTS_JOB_SPEC`** — a versioned JSON document on the
   `FUGARO_CATALOG_CHECK_SPEC` shape (`internal/infra/catalogcheck.go:29`), which R7 declares: the
   project, the bucket, the repository slugs and the periods to close — and **refuses to start without
-  it**. The release's own `*Since` constant (`internal/cli/recipes_skew.go:303` is `digestSince`'s)
+  it**. The release's own `*Since` constant (`internal/cli/recipes_skew.go:314` is `digestSince`'s)
   gains the release that ships it, so a skill or a recipe that names `runs reports` cannot reach a
   CLI without it.
 - **What it writes.** For each closed period it loops over the project's repositories and writes
@@ -817,8 +818,9 @@ task here that is not gated by a release. R5 is the owner's whenever they run it
 
 ## Part II — the 0.22.0 slice: the reports job and the failures report (2026-11-07)
 
-**Status: plan only; nothing implemented; every task in both parts is approved 2026-11-07 (owner:
-"All tasks approved. Jobmax").** **Part I is everything above this heading**, the cut written to the
+**Status: plan only when this was written; every task in both parts is approved 2026-11-07 (owner:
+"All tasks approved. Jobmax").** **Of this part, FC3 has landed; the rest of it, and the reports job
+this part starts from, have not.** **Part I is everything above this heading**, the cut written to the
 owner's rulings E1–E8. This part is written to the owner's decision
 of **2026-11-07** that the periodic reviews/reports ride **0.22.0 "Sloth"**
 (`docs/release-streams.yaml`: the CLI stream's `current` is `0.20.3` and its `next` is `Rhino`, so
@@ -1252,8 +1254,11 @@ repository). **Commit:** none until E6 is answered; the release does not wait fo
   (`FailuresTable`, the summary block), `patterns.go` (the two rules and their constants),
   `digest_test.go`, `patterns_test.go`, `internal/digest/testdata`. **Not `internal/digest/store.go`**
   — see §P4.
-- **Interfaces:** `FailuresTable`, the summary's `failures` block, and `failure_class_high` and
-  `failure_class_new` with their constants. **Three decisions land here and none adds a rule:** the
+- **Interfaces:** `FailuresTable`, the summary's `failures` block, and the two rules with their
+  constants: `failure_class_high` — one class's runs above a quarter of a week's runs, two weeks
+  running, against the week's runs and not its failures, the shape `halts_high` already has — and
+  `failure_class_new` — a class this week's block names that no block of the last four weeks does.
+  **Three decisions land here and none adds a rule:** the
   thresholds are one constants block in `internal/digest`, read by a stored series and a committed
   one alike (**D1446**); a class this build does not know prints as `unclassified`, the closed-cell
   rule FC5's reader already applies (**D1435**); and the table is a total by construction — a period

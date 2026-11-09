@@ -62,25 +62,132 @@ const workspaceOwnerTable = `workspace_members:
     exchange_url: https://exchange.example.com/v1
 `
 
-// workspaceMemberAddArgs is the whole of one `member add`, so the tests that
-// vary one flag vary one flag.
-func workspaceMemberAddArgs(extra ...string) []string {
+// workspaceMemberAddArgsNoYes is the whole of one `member add` without its
+// --yes: the same invocation a script drives and the one the test that is about
+// the write asking nothing runs.
+func workspaceMemberAddArgsNoYes(extra ...string) []string {
 	return append([]string{"workspace", "member", "add", "workspace-alpha", "aurora",
 		"--job-service-account", "marker-job@aurora-gcp.iam.gserviceaccount.com",
 		"--firebase-project", "aurora-fb",
 		"--fp", "aurora",
-		"--exchange-url", "https://exchange.example.com/v1",
-		"--yes"}, extra...)
+		"--exchange-url", "https://exchange.example.com/v1"}, extra...)
 }
 
-// workspaceAddArgs is the whole of one `workspace add`.
-func workspaceAddArgs(extra ...string) []string {
+// workspaceMemberAddArgs is the whole of one `member add`, so the tests that
+// vary one flag vary one flag.
+func workspaceMemberAddArgs(extra ...string) []string {
+	return append(workspaceMemberAddArgsNoYes(), append([]string{"--yes"}, extra...)...)
+}
+
+// workspaceAddArgsNoYes is the whole of one `workspace add` without its --yes:
+// the same invocation a script drives and the one the tests that are about the
+// write asking nothing run.
+func workspaceAddArgsNoYes(extra ...string) []string {
 	return append([]string{"workspace", "add", "workspace-alpha",
 		"--firebase-project", "project-ws",
 		"--issuer", "https://securetoken.google.com/project-ws",
 		"--assertion-key", "marker-assertion-key",
-		"--service-account", "marker-workspace@project-ws.iam.gserviceaccount.com",
-		"--yes"}, extra...)
+		"--service-account", "marker-workspace@project-ws.iam.gserviceaccount.com"}, extra...)
+}
+
+// workspaceAddArgs is the whole of one `workspace add`.
+func workspaceAddArgs(extra ...string) []string {
+	return append(workspaceAddArgsNoYes(), append([]string{"--yes"}, extra...)...)
+}
+
+// TestWorkspaceAddAsksNothing and TestWorkspaceRmAsksNothing are the two
+// directions of D1540 on this family: the membership is written and taken back
+// with neither --yes nor a terminal, and what stands where the y/N was is the
+// sentence naming the key that goes in or comes out. A run that still asked
+// would sit at the question until the package's own deadline failed it.
+func TestWorkspaceAddAsksNothing(t *testing.T) {
+	_, path := workspaceWriteHome(t)
+
+	out, _, err := execute(t, workspaceAddArgsNoYes()...)
+	if err != nil {
+		t.Fatalf("workspace add: %v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	if after := readFileString(t, path); !strings.Contains(after, "workspace: workspace-alpha\n") {
+		t.Errorf("the membership was not written:\n%s", after)
+	}
+}
+
+// TestWorkspaceMemberAddAsksNothing, TestWorkspaceMemberRmAsksNothing and
+// TestWorkspaceCapSetAsksNothing are the rest of this family's D1540 half: the
+// three writes below the `workspace` root land with neither --yes nor a
+// terminal, and the sentence naming the edit stands where the y/N was.
+func TestWorkspaceMemberAddAsksNothing(t *testing.T) {
+	_, _, owner := workspaceOwnerHome(t)
+
+	out, _, err := execute(t, workspaceMemberAddArgsNoYes("--repo", "owner/repo-a")...)
+	if err != nil {
+		t.Fatalf("workspace member add: %v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	lc, err := localcfg.Parse([]byte(readFileString(t, owner)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lc.WorkspaceMembers == nil || (*lc.WorkspaceMembers)["aurora"].FP != "aurora" {
+		t.Errorf("the member was not written:\n%s", readFileString(t, owner))
+	}
+}
+
+// TestWorkspaceMemberRmAsksNothing takes the member back out without --yes: the
+// entry and the empty table go, so the file is byte-identical to the one the
+// fixture wrote.
+func TestWorkspaceMemberRmAsksNothing(t *testing.T) {
+	_, _, owner := workspaceOwnerHome(t)
+	before := readFileString(t, owner)
+	if _, _, err := execute(t, workspaceMemberAddArgsNoYes()...); err != nil {
+		t.Fatalf("workspace member add: %v", err)
+	}
+
+	out, _, err := execute(t, "workspace", "member", "rm", "workspace-alpha", "aurora")
+	if err != nil {
+		t.Fatalf("workspace member rm: %v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	if after := readFileString(t, owner); after != before {
+		t.Errorf("the removal did not restore the file:\n--- before\n%s--- after\n%s", before, after)
+	}
+}
+
+// TestWorkspaceCapSetAsksNothing writes the cap with no --yes and no terminal.
+func TestWorkspaceCapSetAsksNothing(t *testing.T) {
+	_, _, owner := workspaceOwnerHome(t)
+
+	out, _, err := execute(t, "workspace", "cap", "set", "--workspace", "workspace-alpha", "--monthly", "50")
+	if err != nil {
+		t.Fatalf("workspace cap set: %v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	lc, err := localcfg.Parse([]byte(readFileString(t, owner)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lc.WorkspaceCap == nil || lc.WorkspaceCap.Monthly != 50 {
+		t.Errorf("the cap is %+v, want 50 a month", lc.WorkspaceCap)
+	}
+}
+
+// TestWorkspaceRmAsksNothing is the removal half: the key and the pin it
+// carries come out, and nothing is asked about them.
+func TestWorkspaceRmAsksNothing(t *testing.T) {
+	_, path := workspaceWriteHome(t)
+	if _, _, err := execute(t, workspaceAddArgs()...); err != nil {
+		t.Fatalf("workspace add: %v", err)
+	}
+
+	out, _, err := execute(t, "workspace", "rm", "workspace-alpha")
+	if err != nil {
+		t.Fatalf("workspace rm: %v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	if after := readFileString(t, path); strings.Contains(after, "workspace: workspace-alpha") {
+		t.Errorf("the membership is still in the config after the removal:\n%s", after)
+	}
 }
 
 // TestWorkspaceAddWritesOneKeyAndKeepsEveryOtherByte is the red step: the

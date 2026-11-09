@@ -4,7 +4,9 @@
 merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
 prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
 except the reading of the installation's published state its lists come from, which no task of this
-plan carries; M8–M10 are not started; this folder approves no task.**
+plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
+half and not started; M8 is built except the wiring that would serve its four read tools, which is
+the task M5b gates; M9 is not started; this folder approves no task.**
 
 What the owner's spec ([spec.md](spec.md) §0) says, checked one claim at a time against the code as
 it is at this work's base, and then the decisions the planning found.
@@ -206,9 +208,13 @@ owner; the rest is not started; this folder approves no task.** **That quotation
 stood on 2026-11-04**: the clause after "asks for" was replaced on 2026-11-07, and the line every
 file carries today reads "...which is M5b and is a hard prerequisite before any binary links the
 front door (the owner's ruling of 2026-11-07); M7 is built except the reading of the installation's
-published state its lists come from, which no task of this plan carries; M8–M10 are not started" —
-**the last two clauses moving when M7 landed** (§4a), the exception added with its landing because
-the task builds the seam that reading goes through and not the reading itself.
+published state its lists come from, which no task of this plan carries; M10 is built except the
+store's own bucket and its one grant, which are M4's store half and not started; M8 is built except
+the wiring that would serve its four read tools, which is the task M5b gates; M9 is not started" —
+**the clauses moving as each task lands** (§4a), each exception added with its own landing because
+the task builds the seam and not the half behind it: M7's reading of the published state, M8's four
+read tools registered on no binary, which is the wiring task M5b gates, and M10's bucket and its one
+grant, which are M4's.
 
 ### The answer of 2026-11-05
 
@@ -597,14 +603,19 @@ pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §1
   registry, dormant with the rest of the door) **except the reading of the installation's published
   state its lists come from**: `identity.go` holds the `Roster` seam D933's answer goes through and
   **nothing in the tree implements it over that state, because no task of the plan carries the
-  reading** — **and the rest is not**: M4's store half (`mcpauth_store.tf`, the bucket
-  and its one grant) and M8–M10; **M3's node is in with its parity test while the comment D935 asks
+  reading** — **M10 is built** (the audit line, the bounded per-identity record it comes to and
+  revocation from a person's own surface, dormant with the rest of the door) **except the store its
+  records are at rest in**, whose bucket and one grant are M4's store half — **M8 is built** (the
+  four read tools, over the project's own runs and redacted through `internal/safetext`) **except the
+  wiring that would serve them**: no binary registers them, which is the wiring M5b gates — **and the
+  rest is not**: M4's store half (`mcpauth_store.tf`, the bucket
+  and its one grant) and M9; **M3's node is in with its parity test while the comment D935 asks
   for above it is not written**; and **what merged as M6 is the draft M-a predates** — no approve-step
   POST and no `TestAnIDTokenInAQueryStringIsRefused`, because M5, which defines the approve step, was
   built after M6 rather than with it. **And one row of an already-merged task
   is not in the tree either**: M2's entry, and §6's second barrier below, state the **keyed** hash and
   the **MAC over every record** as what the store does, while the store hashes with a plain unkeyed
-  sha256 (`ee/coordinator/mcpauth/store.go:387`) and writes no MAC at all — so a reader who is not the
+  sha256 (`ee/coordinator/mcpauth/store.go:398`) and writes no MAC at all — so a reader who is not the
   store's member reads an identity in the clear, and a record written by anybody else is not refused
   by a mark. That barrier is M2's own row, it is on `main` already and not in this branch, and it is
   raised as a finding rather than closed by an edit here.
@@ -674,7 +685,7 @@ whose store is the one every document here now names.
 
 | D | The question | The answer, 2026-11-04 | Why |
 | --- | --- | --- | --- |
-| **D936** | Is `spawn_task` in the first MCP slice? | **No — deferred out of it.** The first slice is **the authorization server plus the read tools**: `get_task_status`, `stream_logs`, `get_result` and `list_tasks` — and `cancel_task` goes with `spawn_task` into the later design item, because the marker it writes is an object in the runs bucket (`internal/runstore/runstore.go:1315`) and that is the same write the coordinator does not hold. **`spawn_task` is its own later design item**, and no task in [implementation-plan.md](implementation-plan.md) starts a run (H2, owner's answer of 2026-11-04 — **DEFER**, not the review's recommendation) | `spawn_task` needs **three privileges, not one**, and the review found the design had priced only the third: `signJwt` to mint the run's custom token; **write to the runs bucket**, which the coordinator does not hold (F3 is `roles/storage.objectViewer`); and **`run.jobs.runWithOverrides`**, which can override **container args** — the base image's entrypoint is `tini --` (`images/base_test.go:59`), so an override can run **any command beside the job's mounted git and model credentials**. That contradicts the answer's own "the coordinator mints nothing" (D923) and M6's `TestTheCoordinatorMintsNoCustomToken`. The first slice keeps that sentence true by not needing `spawn_task` at all. |
+| **D936** | Is `spawn_task` in the first MCP slice? | **No — deferred out of it.** The first slice is **the authorization server plus the read tools**: `get_task_status`, `stream_logs`, `get_result` and `list_tasks` — and `cancel_task` goes with `spawn_task` into the later design item, because the marker it writes is an object in the runs bucket (`internal/runstore/runstore.go:1581`) and that is the same write the coordinator does not hold. **`spawn_task` is its own later design item**, and no task in [implementation-plan.md](implementation-plan.md) starts a run (H2, owner's answer of 2026-11-04 — **DEFER**, not the review's recommendation) | `spawn_task` needs **three privileges, not one**, and the review found the design had priced only the third: `signJwt` to mint the run's custom token; **write to the runs bucket**, which the coordinator does not hold (F3 is `roles/storage.objectViewer`); and **`run.jobs.runWithOverrides`**, which can override **container args** — the base image's entrypoint is `tini --` (`images/base_test.go:59`), so an override can run **any command beside the job's mounted git and model credentials**. That contradicts the answer's own "the coordinator mints nothing" (D923) and M6's `TestTheCoordinatorMintsNoCustomToken`. The first slice keeps that sentence true by not needing `spawn_task` at all. |
 
 **What a later `spawn_task` design item has to answer**, written here so the deferral is a plan and
 not a shrug:
@@ -846,7 +857,7 @@ discover:
    repository already has rather than one invented here.
 3. **Three commands are now on `main`**: `fugaro settings` (`internal/cli/settings.go:61`),
    `fugaro rigor` (`internal/cli/settings_set.go:45` names `fugaro rigor set` as the owner of the
-   rigor keys) and `fugaro accounts` (`internal/cli/accounts.go:25`). F21's gap is unchanged — none
+   rigor keys) and `fugaro accounts` (`internal/cli/accounts.go:24`). F21's gap is unchanged — none
    of them writes an MCP token — but the CLI surface a token-minting command would join exists, and
    F21's own row is the finding that says so.
 4. **The project image catalog is on `main`** (`docs/project-image-catalog/`), and the

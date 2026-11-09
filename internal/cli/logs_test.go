@@ -32,8 +32,15 @@ func TestLogs(t *testing.T) {
 		t.Fatalf("logs --json = %s, %v", js, err)
 	}
 	seedRun(t, f, "20260927-110000-bbbb", "", "someone@example.com", false)
-	if _, _, err := execute(t, "logs", "20260927-110000-bbbb"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "never launched") {
+	// The refusal hands over the retry, and --retry takes a full ID, so the
+	// message carries the one to paste: this run may be older than any ending
+	// an argument could name (D1702).
+	_, _, err = execute(t, "logs", "20260927-110000-bbbb")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "never launched") {
 		t.Fatalf("unlaunched logs: %v", err)
+	}
+	if want := "fugaro run --retry " + appSlug + "/20260927-110000-bbbb"; !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal does not print the full ID its suggested retry takes: %v", err)
 	}
 }
 
