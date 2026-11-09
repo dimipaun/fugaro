@@ -1241,3 +1241,149 @@ func TestImageCatalogIsUnknownToAReaderThatPredatesIt(t *testing.T) {
 		t.Errorf("the reader that predates the key lists UnknownKeys = %v, want %v: that is the node a CLI of that age refuses and a runner of it logs", q.UnknownKeys, want)
 	}
 }
+
+// imageMapNode is the published node the image setup skill's map lands in
+// (D1906): one repository to the catalog entry its jobs run. It carries no
+// bake_repos, so the two members are exercised apart: a project that answered
+// nothing keeps D1901's default.
+const imageMapNode = `{"version": 4, "image_map": {"acme/app": "api", "acme/web": "frontend"}}`
+
+// TestPolicyImageMapStrictDecode: the map is a key this Fugaro reads, and
+// what it refuses is what a silently dropped entry would cost — a repository
+// whose image never applies because its key or its value is a spelling no
+// reader looks up.
+func TestPolicyImageMapStrictDecode(t *testing.T) {
+	p, found, err := Decode([]byte(imageMapNode))
+	if err != nil || !found {
+		t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
+	}
+	if len(p.UnknownKeys) != 0 {
+		t.Errorf("UnknownKeys = %v, want none: image_map is a key this Fugaro reads", p.UnknownKeys)
+	}
+	want := map[string]string{"acme/app": "api", "acme/web": "frontend"}
+	if !reflect.DeepEqual(p.ImageMap, want) {
+		t.Errorf("ImageMap = %v, want %v", p.ImageMap, want)
+	}
+
+	// A reader that predates the key lists it and goes on: the node is newer
+	// than that Fugaro, which is P8's whole point, and the runner of that
+	// release logs the key rather than refusing the policy.
+	preKey := make(map[string]bool, len(knownTopLevelKeys))
+	for k, v := range knownTopLevelKeys {
+		preKey[k] = v
+	}
+	delete(preKey, "image_map")
+	q, found, err := decodeWithKeys([]byte(imageMapNode), preKey)
+	if err != nil || !found {
+		t.Fatalf("the reader that predates the key refused the node: (%v, %v, %v)", q, found, err)
+	}
+	if want := []string{"image_map"}; !slices.Equal(q.UnknownKeys, want) {
+		t.Errorf("the reader that predates the key lists UnknownKeys = %v, want %v: that is the node a CLI of that age refuses and a runner of it logs", q.UnknownKeys, want)
+	}
+
+	for _, tc := range []struct{ name, node, want string }{
+		{
+			"a value that is not a catalog entry name",
+			`{"version": 4, "image_map": {"acme/app": "API Image"}}`,
+			"must be a catalog entry name",
+		},
+		{
+			"a key that is not a repository name",
+			`{"version": 4, "image_map": {"not a repository": "api"}}`,
+			"image_map key is a repository name",
+		},
+		{
+			"a key in another case",
+			`{"version": 4, "image_map": {"Acme/App": "api"}}`,
+			"image_map key is a repository name",
+		},
+		{
+			"one key twice",
+			`{"version": 4, "image_map": {"acme/app": "api", "acme/app": "web"}}`,
+			"twice",
+		},
+		{
+			"a value that is not a string",
+			`{"version": 4, "image_map": {"acme/app": 7}}`,
+			"cannot unmarshal",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := Decode([]byte(tc.node))
+			if err == nil {
+				t.Fatalf("Decode(%s) was accepted, want a refusal naming %q", tc.node, tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("Decode(%s) = %v, want it to name %q", tc.node, err, tc.want)
+			}
+		})
+	}
+}
+
+// TestPolicyImageMapEmptyIsAbsent: a written empty map and an absent member
+// are one statement, and it marshals without the member — so a project that
+// maps nothing has a node byte for byte what it had before the key existed,
+// which is what keeps the key's skew out of every launcher's way (the promise
+// image_catalog's own emptiness keeps).
+func TestPolicyImageMapEmptyIsAbsent(t *testing.T) {
+	p, found, err := Decode([]byte(`{"version": 4, "image_map": {}}`))
+	if err != nil || !found {
+		t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
+	}
+	if p.ImageMap != nil {
+		t.Errorf("ImageMap = %v, want nil: a written empty map is no map", p.ImageMap)
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "image_map") {
+		t.Errorf("the node marshals with the member: %s", raw)
+	}
+}
+
+// TestBakeReposDefaultsTrue: absent means yes (D1901), so the answer a reader
+// acts on is BakesRepos and never the pointer — a project that never answered
+// the wizard's question bakes its repositories, and only a written false says
+// otherwise.
+func TestBakeReposDefaultsTrue(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		node string
+		want bool
+	}{
+		{"the member is absent", `{"version": 4}`, true},
+		{"the member is written true", `{"version": 4, "bake_repos": true}`, true},
+		{"the member is written false", `{"version": 4, "bake_repos": false}`, false},
+		{"the member is written null", `{"version": 4, "bake_repos": null}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, found, err := Decode([]byte(tc.node))
+			if err != nil || !found {
+				t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
+			}
+			if len(p.UnknownKeys) != 0 {
+				t.Errorf("UnknownKeys = %v, want none: bake_repos is a key this Fugaro reads", p.UnknownKeys)
+			}
+			if got := p.BakesRepos(); got != tc.want {
+				t.Errorf("BakesRepos = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	if (*Policy)(nil).BakesRepos() != true {
+		t.Error("a nil policy does not bake, want it to: an absent node is every default")
+	}
+
+	preKey := make(map[string]bool, len(knownTopLevelKeys))
+	for k, v := range knownTopLevelKeys {
+		preKey[k] = v
+	}
+	delete(preKey, "bake_repos")
+	q, found, err := decodeWithKeys([]byte(`{"version": 4, "bake_repos": false}`), preKey)
+	if err != nil || !found {
+		t.Fatalf("the reader that predates the key refused the node: (%v, %v, %v)", q, found, err)
+	}
+	if want := []string{"bake_repos"}; !slices.Equal(q.UnknownKeys, want) {
+		t.Errorf("the reader that predates the key lists UnknownKeys = %v, want %v", q.UnknownKeys, want)
+	}
+}

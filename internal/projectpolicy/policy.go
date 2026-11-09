@@ -118,6 +118,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/repourl"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // Policy is the shared, readable node, decoded as JSON.
@@ -377,6 +378,44 @@ type Policy struct {
 	// member existed.
 	ImageCatalog *ImageCatalog `json:"image_catalog,omitempty"`
 
+	// ImageMap is the project's repo-to-image map (D1906): the catalog entry
+	// each repository's jobs run, keyed by the repository's canonical name
+	// ("acme/app" — the spelling a --repo reads as and task.CanonicalRepo
+	// lower-cases, and the one every image_map key is held to). It is written
+	// here rather than in each repository's fugaro.yaml because a project's
+	// repositories are mapped together: fifty repositories are one change
+	// rather than fifty, and the map is the project's own decision about which
+	// image its jobs run.
+	//
+	// It travels the catalog's way and for the catalog's reason: a map that
+	// named an image decides what code a job executes, so it is the owner's
+	// policy — written by `fugaro image map set` in the local config and
+	// published by `fugaro update` — and never a key of the shared config in
+	// the runs bucket, which any launcher can write. `sharedForbidden` refuses
+	// it there and Shared nils it.
+	//
+	// A value is an entry NAME and not a definition: what the entry is, is the
+	// catalog's to say, and a map carrying a second definition would be two
+	// documents that can disagree. Whether the name exists is the selection's
+	// question, not this reader's — the same split image_name's own reader
+	// keeps.
+	//
+	// A map with no entry is nil, so a project that maps nothing writes no
+	// member and its node is byte for byte what it was before this member
+	// existed.
+	ImageMap map[string]string `json:"image_map,omitempty"`
+
+	// BakeRepos is whether a repository is baked into the image its job runs
+	// (D1901): the setup wizard's "Bake your repos into the Docker images?",
+	// asked with the answer yes.
+	//
+	// It is a pointer because the default is yes and therefore absent and true
+	// are the same statement: a project that never answered writes no member,
+	// and its node is byte for byte what it was before this member existed —
+	// while a project that answered no is the only one that has anything to
+	// say here. BakesRepos is the rule, stated once for every reader.
+	BakeRepos *bool `json:"bake_repos,omitempty"`
+
 	// Orchestrator is the project's block of the orchestrator's guardrails
 	// (D1239): how many runs the daemon may have running, how many one cycle
 	// may launch and how fast, and the model each decision class runs on
@@ -428,7 +467,8 @@ var knownTopLevelKeys = map[string]bool{
 	"credentials": true, "base_branch": true,
 	"bitbucket_token": true, "bitbucket_api_roots": true,
 	"review_floor": true, "verifier_accounts": true,
-	"image_catalog":          true,
+	"image_catalog": true,
+	"image_map":     true, "bake_repos": true,
 	"default_claude_account": true, "claude_account_stages": true,
 	"crafts": true, "craft_credentials": true, "craft_pools": true,
 	"orchestrator": true,
@@ -1296,6 +1336,29 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 		}
 		p.ImageCatalog = catalog
 	}
+	if mraw, ok := doc["image_map"]; ok && !IsNull(mraw) {
+		names, err := objectMemberNames(mraw)
+		if err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: image_map: %w", err)
+		}
+		if err := checkNoDuplicateNames("image_map", names); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: %w", err)
+		}
+		if err := json.Unmarshal(mraw, &p.ImageMap); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: image_map: %w", err)
+		}
+		if err := ValidImageMap(p.ImageMap); err != nil {
+			return nil, true, err
+		}
+		if len(p.ImageMap) == 0 {
+			p.ImageMap = nil
+		}
+	}
+	if braw, ok := doc["bake_repos"]; ok && !IsNull(braw) {
+		if err := json.Unmarshal(braw, &p.BakeRepos); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: bake_repos: %w", err)
+		}
+	}
 	if craw, ok := doc["clone_urls"]; ok && !IsNull(craw) {
 		if err := json.Unmarshal(craw, &p.CloneURLs); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: clone_urls: %w", err)
@@ -1480,6 +1543,41 @@ func validCloneURLs(urls CloneURLs) error {
 // runner's own helper then builds. It is a plain lookup and not a decision:
 // whether a repository may run at all is Admits'.
 func (p *Policy) CloneURL(canonical string) string { return p.CloneURLs[canonical] }
+
+// BakesRepos reports whether this policy bakes a repository into the image its
+// job runs (D1901). Absent is yes, so the answer is a method and not the field:
+// the member is a pointer, and a reader that tested it would read a project
+// that never answered as one that said no — the opposite of the default the
+// wizard asks with. The zero policy, and a nil one, bake.
+func (p *Policy) BakesRepos() bool { return p == nil || p.BakeRepos == nil || *p.BakeRepos }
+
+// ValidImageMap checks the image_map block, entry by entry: each key the
+// canonical name of a repository, and each value the name of a catalog entry
+// (config.ValidCatalogName, the rule an entry's own name and a workflow's
+// image_name are held to).
+//
+// The key's rule is the one repoArg applies to a --repo that already reads as
+// owner/name, and it is stated as the canonical form rather than as a shape:
+// the value the CLI writes is canonical, so a key in another case is an entry
+// no lookup reaches — a mapping an operator set for acme/app that never
+// applies to Acme/App, silently. Refusing it is the strict direction, and the
+// message says which spelling is the one read.
+//
+// Both halves are checked on the node and not only where the map is written:
+// the node is what a run reads, and a key or a name this reader took on trust
+// would be one the runner then fails to look up.
+func ValidImageMap(m map[string]string) error {
+	for _, key := range sortedStringKeys(m) {
+		at := fmt.Sprintf("projectpolicy: image_map[%s]", key)
+		if c, err := task.CanonicalRepo(key); err != nil || c != key {
+			return fmt.Errorf("%s: an image_map key is a repository name, as acme/app: it is the name a job's own repository is looked up by, and one in another case is a key no lookup reaches", at)
+		}
+		if !config.ValidCatalogName(m[key]) {
+			return fmt.Errorf("%s: %s", at, config.CatalogNameMessage)
+		}
+	}
+	return nil
+}
 
 // ------------------------------------------------- the per-repository node
 
