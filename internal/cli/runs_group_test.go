@@ -205,6 +205,32 @@ func TestRunsGroupByShareCountsTheRunsThatDidNotFail(t *testing.T) {
 	}
 }
 
+// TestRunsGroupByAllGreenWindowPrintsNoBlock: a window no run of which failed
+// has no class to group, so it has no block -- no CLASS header over no rows,
+// which reads as a table that failed to render, and no `groups` key in the
+// document, which is the shape a reader that never asked for the grouping
+// sees (omitempty, D1458). The all-green window is the common case.
+func TestRunsGroupByAllGreenWindowPrintsNoBlock(t *testing.T) {
+	f := newCloudFixture(t)
+	f.run.Project, f.run.Region = "proj-1234", "us-east5"
+	id := recentRunID(t, time.Minute, "aaaa")
+	seedRun(t, f, id, "", "someone@example.com", false)
+	writeRecord(t, f, id, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusSucceeded, Stage: "writeback"})
+
+	human, _, err := execute(t, "runs", "ls", "--since", "0", "--group-by", "failure_class")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(human, "CLASS") {
+		t.Errorf("the grouped listing prints a block for a window that did not fail:\n%s", human)
+	}
+	_, raw := groupJSON(t, "--since", "0")
+	if strings.Contains(raw, `"groups"`) {
+		t.Errorf("the grouped document carries a groups block for a window that did not fail:\n%s", raw)
+	}
+}
+
 // TestWatchDocumentCarriesNoGroups: the degraded `watch --json` document
 // embeds ls's own document, and the phone refuses an unknown key in it -- of
 // the whole document, not of the key -- so a groups block the watch path never

@@ -37,7 +37,10 @@ type lsGroup struct {
 // network path of its own -- into one lsGroup per class of failure.Classes(),
 // in the vocabulary's own order, so two readers of one window print the same
 // block. A class no run of the window ended in is left out rather than printed
-// as a zero row, which would read as a class that happened and cost nothing.
+// as a zero row, which would read as a class that happened and cost nothing,
+// and a window no run of which failed has no block at all: nil, so the table
+// is not printed and the document omits the key, because a header over no rows
+// reads as a table that failed to render.
 //
 // Which runs belong to a group is the row's FailureClass and nothing else, and
 // that field is the record's own class or -- for a record written before the
@@ -62,6 +65,9 @@ func groupRows(rows []runview.Row) []lsGroup {
 		}
 		g.Runs++
 		g.SpendUSD += r.Cost.TotalUSD
+	}
+	if len(counted) == 0 {
+		return nil
 	}
 	groups := make([]lsGroup, 0, len(counted))
 	for _, class := range failure.Classes() {
