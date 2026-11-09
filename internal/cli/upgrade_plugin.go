@@ -132,11 +132,13 @@ func pluginStep(ctx context.Context, u *upgradeCtx) stepResult {
 			return stepResult{state: stepSkipped, reason: fmt.Sprintf("claude would not declare the %s marketplace at %s (%s): in Claude Code run /plugin marketplace remove %s, then /plugin marketplace add %s#%s and /plugin install %s, then rerun; this update's other steps do not need it",
 				pluginwire.Marketplace, tag, oneLine(err.Error()), pluginwire.Marketplace, repo, tag, pluginwire.PluginID)}
 		case claudeplugin.Repair:
-			// An install the clear may have taken: claude answers that it has
-			// no such install. The install this step ran is what applies then,
-			// and every other failure here leaves the version where it was,
-			// which the check after the calls reports.
-			fmt.Fprintf(u.w, "  continuing without that update: %v\n", err)
+			// A call the clear may have taken the need for: the install that
+			// puts the plugin back, or the update of an install the clear took
+			// (claude answers that it has no such install) or left standing.
+			// Neither failure is the step's to report, because the check after
+			// the calls sees what came out of them, and anything that leaves the
+			// version where it was is a failed step there.
+			fmt.Fprintf(u.w, "  continuing without that call: %v\n", err)
 		default:
 			// The update's own work, after a clear: a failure here is the
 			// step's, and the machine is not left without what the clear took.
@@ -155,8 +157,10 @@ func pluginStep(ctx context.Context, u *upgradeCtx) stepResult {
 	c, ok := claudeplugin.Compare(got, ver)
 	switch {
 	case !ok:
+		putBack()
 		return fail(fmt.Errorf("after the update claude lists no install of %s that applies to this checkout", pluginwire.PluginID))
 	case c < 0:
+		putBack()
 		return fail(fmt.Errorf("after the update the installed plugin is still %s, older than this fugaro %s", pluginwire.Printable(got), ver))
 	case c > 0:
 		return stepResult{state: stepDone, reason: fmt.Sprintf("installed %s, newer than this fugaro %s (Claude Code's marketplace is pinned to a newer release, and the pin is never moved down): brew upgrade dimipaun/tap/fugaro, then fugaro upgrade; restart running Claude Code sessions to apply it%s",

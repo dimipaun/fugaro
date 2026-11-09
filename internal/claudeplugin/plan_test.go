@@ -212,9 +212,9 @@ func TestApplyingNonexistentProjectPath(t *testing.T) {
 // failures differently: a clear Claude Code has nothing to clear leaves the
 // plan on its way, a declaration it refuses means the plugin cannot be had on
 // this machine at all (the step reports it instead of failing the update), and
-// an install's update on that path may have nothing to update, because the
-// clear takes the installs of a machine whose own settings leave the name
-// undeclared (the step prints it and lets the check after the calls decide).
+// the install and the updates after it on that path are Repair — which of them
+// the clear left anything to do is not knowable before it runs, so the step
+// prints their failures and lets the check after the calls decide.
 func TestDecideKindsOfTheMovedPlan(t *testing.T) {
 	ours := []Market{{Name: "fugaro", Source: "github", Repo: "dimipaun/fugaro"}}
 	p, err := Decide(Input{Root: t.TempDir(), Want: "0.5.2", Ref: "v0.5.2", Repo: "dimipaun/fugaro",
@@ -222,7 +222,7 @@ func TestDecideKindsOfTheMovedPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Kind{Clear, Declare, Change, Change, Repair}
+	want := []Kind{Clear, Declare, Change, Repair, Repair}
 	if len(p.Calls) != len(want) {
 		t.Fatalf("calls %q, want %d", argsOf(p.Calls), len(want))
 	}

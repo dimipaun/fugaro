@@ -38,16 +38,21 @@ const (
 	// cannot fix, and the plugin cannot be had on that machine; anything else
 	// fails the step, after the declaration a Clear removed is put back.
 	Declare
-	// Repair is an update of an install the Clear may have taken. Claude Code
+	// Repair is a call the Clear may have taken the need for: the install that
+	// puts the plugin back when the removal took one, and the update of an
+	// install it left standing, at the version it was installed at. Claude Code
 	// takes every install of a marketplace it removes, but only when the
 	// removal leaves the name undeclared: a checkout whose own settings declare
-	// the marketplace — every wired one — keeps its installs, at the versions
-	// they were installed at. The plan cannot tell which machine this is
-	// (claude's marketplace list carries no scope), so the update is planned
-	// and a failure is printed: when the clear did take that install there is
-	// none to update, and the install the plan makes is the one that applies;
-	// when it fails for any other reason the install that stands there keeps
-	// its version, and the step's own check after the calls reports that.
+	// the marketplace — every wired one — keeps its installs, and claude
+	// answers the install of one that is already there with "already installed",
+	// naming update as the call that re-records the version. The plan cannot
+	// tell which machine this is (claude's marketplace list carries no scope),
+	// so both are planned and either failure is printed: on the machine the
+	// clear emptied the install is the one that applies and the update has
+	// nothing to update; on the other the update moves the install that stands,
+	// and the install answers "already installed" when one is there. The step's
+	// own check after the calls decides — an install that applies at this
+	// release's version, or a failed step, which puts back what the clear took.
 	Repair
 )
 
@@ -135,8 +140,9 @@ func refNewer(ref, want string) bool {
 //     refreshed, then the plugin installed at user scope when nothing applies
 //     or a Clear is in the plan — on the cleared path it is what puts back the
 //     install the clear takes from a machine whose own settings leave the name
-//     undeclared — and each stale scope updated (local, project, user), as
-//     Repair when a Clear is in the plan.
+//     undeclared — and each stale scope updated (local, project, user). The
+//     install and those updates are Repair when a Clear is in the plan: which
+//     of them the clear left anything to do is not knowable before it runs.
 //
 // Every call it returns passes Allowed.
 func Decide(in Input) (Plan, error) {
@@ -204,19 +210,20 @@ func Decide(in Input) (Plan, error) {
 	// back. An install of one that is already there does not move it, though
 	// (claude answers "already installed" and names update as the call that
 	// re-records the version), so each stale install is still updated where it
-	// stands: that is the Repair, because the clear takes the installs of a
-	// machine whose own settings leave the name undeclared, and the install
-	// above is what applies there.
-	if len(applying) == 0 || moved {
-		install := slices.Clone(installUser)
-		p.Calls = append(p.Calls, Call{Args: install})
-		if moved && len(applying) > 0 {
-			p.Restore = append(p.Restore, install)
-		}
-	}
+	// stands. With a clear in the plan, this install and those updates are
+	// Repair: which of them the clear left anything to do is not knowable before
+	// it runs, and the check after the calls is what sees whether the machine
+	// came out of them with an install that applies.
 	kind := Change
 	if moved {
 		kind = Repair
+	}
+	if len(applying) == 0 || moved {
+		install := slices.Clone(installUser)
+		p.Calls = append(p.Calls, Call{Args: install, Kind: kind})
+		if moved && len(applying) > 0 {
+			p.Restore = append(p.Restore, install)
+		}
 	}
 	for _, s := range scopes {
 		if slices.Contains(stale, s) {

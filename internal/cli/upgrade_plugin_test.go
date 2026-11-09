@@ -203,7 +203,78 @@ func TestUpgradePluginToleratesAnInstallTheClearTook(t *testing.T) {
 	if !slices.EqualFunc(f.Changes(t), want, slices.Equal[[]string]) {
 		t.Fatalf("changes %q, want %q\n%s", f.Changes(t), want, out)
 	}
-	for _, w := range []string{"continuing without that update", "plugin: done: installed 0.5.2"} {
+	for _, w := range []string{"continuing without that call", "plugin: done: installed 0.5.2"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("output lacks %q:\n%s", w, out)
+		}
+	}
+}
+
+// TestUpgradePluginCarriesOnWhenTheInstallTheClearMayHaveTakenFails: the
+// install on the cleared path is a call the clear may have taken the need for,
+// not the update's own work. On this machine the clear left the checkout's
+// project install standing, so the update at that scope is what converges the
+// checkout, and a non-zero answer from the install must not fail an update the
+// check after the calls passes. The fake fails it because a test may not lean
+// on claude's real answer to an install of one that is already there ("already
+// installed", exit 0) staying that answer.
+func TestUpgradePluginCarriesOnWhenTheInstallTheClearMayHaveTakenFails(t *testing.T) {
+	upgradeEnv(t, "0.5.2")
+	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
+	project := func(v string) string {
+		return `{"id":"fugaro@fugaro","version":"` + v + `","scope":"project","projectPath":"` + root + `"}`
+	}
+	f := testutil.NewClaudePluginFake(t, ourMarket, "["+project("0.5.1")+"]")
+	f.On(t, "fail", refusedAdd, argsAdd...)
+	f.On(t, "rm", "fail."+testutil.ClaudePluginKey(argsAdd...), argsRemove...)
+	f.On(t, "fail", "claude: network down", argsInstall...)
+	f.On(t, "plugins", "["+project("0.5.2")+"]", argsUpdProject...)
+	useFakeClaude(t, f)
+	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	want := [][]string{argsRemove, argsAdd, argsUpdMarket, argsInstall, argsUpdProject}
+	if !slices.EqualFunc(f.Changes(t), want, slices.Equal[[]string]) {
+		t.Fatalf("changes %q, want %q\n%s", f.Changes(t), want, out)
+	}
+	for _, w := range []string{"continuing without that call", "plugin: done: installed 0.5.2"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("output lacks %q:\n%s", w, out)
+		}
+	}
+}
+
+// TestUpgradePluginPutsBackWhatTheClearRemovedWhenTheCheckAfterTheCallsFails:
+// the calls the clear may have taken the need for are carried on from, so the
+// stop comes from the check after them instead of from a call — and that stop
+// must not leave the machine without what the clear took either. Here the clear
+// emptied every install, the install that follows it fails (the network, say)
+// and the update at the vanished install's scope finds nothing to update, so
+// nothing applies and the step fails: the declaration and the install go back
+// first, best effort, as the add-back of a stopped step does.
+func TestUpgradePluginPutsBackWhatTheClearRemovedWhenTheCheckAfterTheCallsFails(t *testing.T) {
+	upgradeEnv(t, "0.5.2")
+	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
+	old := `[{"id":"fugaro@fugaro","version":"0.5.1","scope":"project","projectPath":"` + root + `"}]`
+	f := testutil.NewClaudePluginFake(t, ourMarket, old)
+	f.On(t, "fail", refusedAdd, argsAdd...)
+	f.On(t, "rm", "fail."+testutil.ClaudePluginKey(argsAdd...), argsRemove...)
+	f.On(t, "plugins", "[]", argsRemove...)
+	f.On(t, "fail", "claude: network down", argsInstall...)
+	f.On(t, "fail", `Plugin "fugaro" not found in marketplace "fugaro".`, argsUpdProject...)
+	f.On(t, "fail", refusedAdd, argsBack...) // the tag is declared by then: the add-back is refused
+	useFakeClaude(t, f)
+	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d\n%s", ExitCode(err), out)
+	}
+	want := [][]string{argsRemove, argsAdd, argsUpdMarket, argsInstall, argsUpdProject, argsBack, argsInstall}
+	if !slices.EqualFunc(f.Changes(t), want, slices.Equal[[]string]) {
+		t.Fatalf("changes %q, want %q\n%s", f.Changes(t), want, out)
+	}
+	for _, w := range []string{"plugin: failed: after the update claude lists no install of fugaro@fugaro that applies to this checkout",
+		"putting back what the clear removed failed", "claude: network down"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("output lacks %q:\n%s", w, out)
 		}
