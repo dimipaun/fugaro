@@ -63,6 +63,7 @@ import { BUSY_SLOT_CLASS } from '../section'
 import { sanitizeText } from '../../shared/sanitize'
 import type { Sanitized } from '../../shared/sanitize'
 import type { GraphView, PlanNodeView, PlanStatusView, RunView } from '../../shared/schema'
+import { MIN_ENDING, shortRun } from '../../shared/shortid'
 import type { ElementLike } from '../app'
 import { LayoutClient } from '../graph/layout-client'
 import type { LayoutGraph, LayoutRequest, Positions, RouteSection, WorkerLike } from '../graph/layout-client'
@@ -660,12 +661,17 @@ export function withFeedStages(document: PlanStatusView, feed: readonly RunView[
 
 /** feedStages is the frame's own suffix index: the stage one suffix names, with
  * every suffix two rows give different answers about removed -- so a lookup can
- * only answer a stage the frame is unambiguous about. */
+ * only answer a stage the frame is unambiguous about.
+ *
+ * The suffix is a run's **short id** (`shared/shortid.ts`'s `shortRun`, the one
+ * rule this console and the CLI share), which is the same four characters this
+ * index held when it spelled the cut out itself: a frame row's run is a whole id
+ * (`20261025-121805-d204`), and the four the plan's node carries are its end. */
 function feedStages(feed: readonly RunView[]): ReadonlyMap<string, string> {
   const seen = new Map<string, string | null>()
   for (const row of feed) {
-    if (row.run.length <= 4) continue
-    const suffix = row.run.slice(-4)
+    if (row.run.length <= MIN_ENDING) continue
+    const suffix = shortRun(row.run)
     const stage = row.stage === '' ? null : row.stage
     const known = seen.get(suffix)
     if (known === undefined) seen.set(suffix, stage)
