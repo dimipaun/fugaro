@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -427,6 +428,12 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		o.Checks = append(o.Checks, fromPreflight(c))
 	}
 	o.Checks = append(o.Checks, tempXDGChecks(os.Getenv)...)
+	// The issues this machine saved and has not filed: local state, read here
+	// rather than with the installation's checks because it is the user's, not
+	// the project's, and it is one line only when there is one (F18, D1725).
+	if c := doctorIssuesCheck(os.Getenv, runtime.GOOS); c != nil {
+		o.Checks = append(o.Checks, *c)
+	}
 	_, tf := preflight.Terraform(doctorLookPath)
 	o.Checks = append(o.Checks, fromPreflight(tf))
 	// preflight.Docker is deliberately not run here: it is only meaningful
