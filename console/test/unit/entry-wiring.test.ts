@@ -183,6 +183,7 @@ import {
   COORDINATOR_JOBS_WINDOW_WORD,
   COORDINATOR_JOB_DETAIL_CLASS,
 } from '../../src/renderer/screens/coordinator'
+import { shortRun } from '../../src/shared/shortid'
 import {
   PROJECTS_ACCOUNT_KEYS_CLASS,
   PROJECTS_BUSY,
@@ -5278,6 +5279,23 @@ function lsPage(window: number, spent: number, rows: readonly string[]): Readonl
   }
 }
 
+/** LS_NEXT_ID is the one row of the second page a case about the endings uses:
+ * a run whose last four characters are the first page's last row's own, so the
+ * pair is drawn together in one list and has to be told apart. */
+const LS_NEXT_ID = '20261101-090001-zz50'
+
+/** jobEndings is every `.coordinator-job-id` cell's text, in the order drawn. */
+function jobEndings(panel: FakeNode): readonly string[] {
+  return classed(panel, 'coordinator-job-id').map((cell) => cell.textContent ?? '')
+}
+
+/** aFullPageEndingIn is `aFullPage` with its last row replaced: a full page,
+ * which is what offers the Older control, whose last id is the one a case needs
+ * the next page to collide with. */
+function aFullPageEndingIn(last: string): readonly string[] {
+  return [...aFullPage().slice(0, COORDINATOR_JOBS_PAGE - 1), last]
+}
+
 /** aFullPage is `COORDINATOR_JOBS_PAGE` rows, the last of them `LS_LAST_ID`: the
  * only page length on which the console knows the window is longer than what it
  * drew, and therefore the only one that offers the Older control. */
@@ -6303,7 +6321,10 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
 
     runs.release({ ok: true, data: { document: { runs: [QUEUE_RUN] } } })
     await flush()
-    expect(holdsText(panelOf(document), QUEUE_RUN_ID)).toBe(true)
+    // The item is named by the run's **short id**, as every list view of this
+    // console names one (SR10): the whole id is the value the item's act
+    // carries, and never the text this row draws.
+    expect(holdsText(panelOf(document), shortRun(QUEUE_RUN_ID))).toBe(true)
     // One button per item: the job's Retry and the ready task's Launch.
     expect(
       classed(panelOf(document), 'coordinator-queue-button').length,
@@ -6357,7 +6378,7 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     // was never the document that was refused.
     expect(classed(job, 'coordinator-queue-item')).toEqual([])
     expect(classed(job, 'coordinator-queue-button')).toEqual([])
-    expect(holdsText(panelOf(document), QUEUE_RUN_ID)).toBe(false)
+    expect(holdsText(panelOf(document), shortRun(QUEUE_RUN_ID))).toBe(false)
     expect(holdsText(panelOf(document), 'task-three')).toBe(true)
   })
 
@@ -6785,6 +6806,48 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
       COORDINATOR_JOBS_RUNS_WORD,
       '41',
     ])
+  })
+
+  it('names a run of the second page against every row the list holds, not against its own page alone', async () => {
+    // **The list is one list.** The pages are the console's own way of asking,
+    // and a run of the second page is drawn *under* the first page's rows, so
+    // its ending is answered against all of them (SR10, spec part 3, F15: the
+    // group is what is shown together). The row already on screen keeps the
+    // ending it was drawn with -- an append cannot rewrite it -- so the new row
+    // is the one that extends, and no two rows of the list share an ending.
+    const first = holding()
+    const second = holding()
+    const asked: Record<string, unknown>[] = []
+    const { bridge } = jobsBridge({
+      coordinatorStatus: () => ({ ok: true, data: { document: COORDINATOR_STATUS } }),
+      planStatus: () => planStatusReply(QUEUE_PLAN),
+      showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+      listRuns: (args) => {
+        const page = args as Record<string, unknown>
+        if (page['limit'] === undefined) return { ok: true, data: { document: { runs: [] } } }
+        asked.push(page)
+        return asked.length === 1 ? first.reply() : second.reply()
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    await flush()
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_LOAD_WORD).click()
+    first.release({ ok: true, data: { document: lsPage(41, 12.5, aFullPageEndingIn(LS_LAST_ID)) } })
+    await flush()
+    // The first page drew the row alone, so its four characters were enough.
+    expect(jobEndings(panelOf(document)).at(-1)).toBe('zz50')
+
+    buttonLabelled(panelOf(document), COORDINATOR_JOBS_OLDER_WORD).click()
+    second.release({ ok: true, data: { document: lsPage(41, 12.5, [LS_NEXT_ID]) } })
+    await flush()
+
+    const drawn = jobEndings(panelOf(document))
+    expect(drawn).toHaveLength(COORDINATOR_JOBS_PAGE + 1)
+    // The run of the second page ends `zz50` too, and the row above it is still
+    // drawn as `zz50`: the extension is what tells the two apart.
+    expect(drawn.at(-1)).toBe('1-zz50')
+    expect(drawn.filter((ending) => ending === 'zz50')).toHaveLength(1)
   })
 
   it('keeps the rows already drawn when the page after them is refused', async () => {

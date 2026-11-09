@@ -33,6 +33,7 @@ import { sanitizeText } from '../../shared/sanitize'
 import type { Sanitized, TextClass } from '../../shared/sanitize'
 import type { Reading } from '../../shared/availability'
 import { wireTextClass } from '../../shared/schema'
+import { MIN_ENDING } from '../../shared/shortid'
 import type {
   GraphView,
   PlanNodeView,
@@ -120,9 +121,14 @@ export type StateWord = (typeof STATE_WORDS)[number]
 const CUT_MARK = '…'
 
 /** RUN_SUFFIX_RE is the shape `plan status` writes a joined run in: the run
- * id's last four characters, lower-case alphanumerics by construction (the CLI
- * mints the id, and the launch prints the suffix). */
-const RUN_SUFFIX_RE = /^[0-9a-z]{4}$/
+ * id's **short id**, lower-case alphanumerics by construction (the CLI mints
+ * the id, and the launch prints the suffix).
+ *
+ * The length is `shared/shortid.ts`'s `MIN_ENDING` rather than the four spelled
+ * out, so the node's run and the run a list view names are held to the same
+ * number: a console that accepted a five-character suffix here while drawing
+ * four beside it would be two answers to which run a card is about (F2). */
+const RUN_SUFFIX_RE = new RegExp(`^[0-9a-z]{${String(MIN_ENDING)}}$`)
 
 /** SUFFIX_CLASS is the class a run suffix is read in: `label`, spelled here
  * rather than looked up, because the wire key's own class (`runId`, from
