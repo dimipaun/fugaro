@@ -15,7 +15,7 @@ paths:
   - a matching update to the §5.1 table in `docs/design/desktop-console.md`.
 - Treat everything that comes from the CLI or a run as untrusted text. Put it through a class in `src/shared/sanitize.ts` (`TEXT_CLASSES`) before it reaches the renderer.
 - A view that shows spend, caps or the kill controls must ask `hidesView` (`src/shared/version.ts`, `REDUCED_VIEWS`). In the reduced mode it then withholds its figures instead of misreading a CLI shape it does not know.
-- A child gets exactly `CHILD_ENV_KEYS` (12 keys) and nothing merged from `process.env`. macOS adds `__CF_USER_TEXT_ENCODING` to every process, and the tests exempt that key and nothing else.
+- A child gets exactly `CHILD_ENV_KEYS` (12 keys) and nothing merged from `process.env`. macOS adds `__CF_USER_TEXT_ENCODING` to every process, and the tests exempt that key and nothing else. `FUGARO_LICENCE_KEY` is written only for a child whose own version is at or above `LICENCE_KEY_CLI_FLOOR` (`src/shared/version.ts`, asked at both call sites that pass a key; the constant is unset until a CLI release takes the variable back out of its own environment, so no child gets a key today).
 - WSL route (`docs/console-windows/`):
   - refuse any word with shell metacharacters (`distroShellUnsafe`); never escape it,
   - a distro name must match `DISTRO_NAME_PATTERN`,

@@ -359,11 +359,17 @@ export function locationsFor(platform: string = process.platform): PlatformLocat
  * plugins -- which is the leak F41 exists to forbid, and the same "a credential
  * handed over for no reader" the WSL route below leaves the key out for.
  * Nothing reaches that state yet, only because `PRODUCTION_KEYRING` is empty
- * and every paste is refused until S2.9; **a real installation must not be
- * handed the key before the child can take it back out**, so the hand-off wants
- * a floor on the child's version -- the release that carries the registration
- * point -- checked the way `MODELS_LIST_CLI_FLOOR` is, and neither the floor
- * nor that release exists yet.
+ * and every paste is refused until S2.9. **A real installation must not be
+ * handed the key before the child can take it back out**, so the hand-off asks a
+ * floor on the child's version -- `LICENCE_KEY_CLI_FLOOR`
+ * (`src/shared/version.ts`), the release that carries the registration point --
+ * the way `MODELS_LIST_CLI_FLOOR` is asked, and it asks it at the two places the
+ * key reaches a plan (`src/source/cli.ts`'s `#plan`, `src/main/launch.ts`)
+ * rather than here, because this function is handed a key and has no version to
+ * judge it against. **The floor is unset, because no release carries the removal
+ * yet, and an unset floor hands a key to no child at all**: the leak is closed
+ * today rather than the day the keyring stops being empty, and `spawn.test.ts`
+ * fails if a keyring is filled while the floor is still unset.
  *
  * **It is the environment and never the argv**, because a key in a command line
  * is a key every local process reads (F41's first sentence), and it is **not

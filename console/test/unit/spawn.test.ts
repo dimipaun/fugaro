@@ -124,6 +124,8 @@ import type {
 } from '../../src/main/spawn'
 import { createSpawnLog, disabledSpawnLog } from '../../src/main/spawnlog'
 import type { SpawnLogWriter } from '../../src/main/spawnlog'
+import { PRODUCTION_KEYRING } from '../../src/main/licence'
+import { LICENCE_KEY_CLI_FLOOR, licenceKeySupported } from '../../src/shared/version'
 import { RUNS_LIST_MAX_LIMIT, validateArguments } from '../../src/main/ipc'
 import type { OperationName, ValidatedArguments } from '../../src/main/ipc'
 import { CliSource, LOG_WINDOW_MAX_ENTRIES, MAX_LIVE_FEEDS, createInstallationStore, parseLogEntries } from '../../src/source/cli'
@@ -2334,6 +2336,46 @@ describe('the child environment', () => {
     const hostContext = { ...safeContext({ project: PROJECT }), licenceKey: KEY }
     const host = planFor('budget.show', {}, hostContext)
     expect(host.env[LICENCE_KEY_VAR]).toBe(KEY)
+  })
+
+  it('hands a key to no source child while no release takes it back out', async () => {
+    // The gate at the call site that spawns every operation but the launch:
+    // `CliSource`'s `#plan` asks `licenceKeySupported` of the resolved binary's
+    // own version line **before** it reads the store, and the floor is unset
+    // until a release removes the variable from its own environment. The key
+    // below is one the store would hand over, and the child is the stub, whose
+    // report is its own account of the environment it was given.
+    const directory = freshDirectory()
+    const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
+    const source = await CliSource.create({
+      target: { project: PROJECT },
+      configuredBinaryPath: stub.binary,
+      appEnv: {},
+      licenceKey: () => 'the key the store would hand over',
+    })
+    await source.environmentReport({})
+    const report = stub.reports().at(-1)
+    expect(report?.envKeys).not.toContain(LICENCE_KEY_VAR)
+    expect(report?.env[LICENCE_KEY_VAR]).toBeUndefined()
+  })
+
+  it('keeps the keyring and the CLI floor that takes the key back moving together', () => {
+    // The coupling the gate exists for, held as a test rather than as an
+    // assertion in the code: a console that can **keep** a key
+    // (`PRODUCTION_KEYRING` with a key in it, which is S2.9's) while no CLI can
+    // take it back (`LICENCE_KEY_CLI_FLOOR` unset) is a console that hands a
+    // credential to a CLI which passes it on to every program it starts. Nothing
+    // is in that state today, and this case is what makes filling the keyring
+    // without naming the floor a red test rather than a shipped leak.
+    const canKeepAKey = Object.keys(PRODUCTION_KEYRING).length > 0
+    expect(
+      canKeepAKey && LICENCE_KEY_CLI_FLOOR === null,
+      'the keyring can keep a key and no CLI floor takes it back out',
+    ).toBe(false)
+    // And while the floor is unset, no version at all may be handed one.
+    if (LICENCE_KEY_CLI_FLOOR === null) {
+      expect(licenceKeySupported('99.99.99')).toBe(false)
+    }
   })
 
   it('reaches the child as its real environment, not just as a plan', async () => {

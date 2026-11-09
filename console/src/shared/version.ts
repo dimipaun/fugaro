@@ -324,7 +324,58 @@ export function modelsListSupported(version: string): boolean {
 }
 
 /**
- * meetsCliFloor is the one patch-level comparison all five floors above are
+ * LICENCE_KEY_CLI_FLOOR is the oldest CLI that **takes the licence key back out
+ * of its own environment** -- the step that keeps the key from the programs the
+ * CLI itself starts (`ee/licence/store.go`'s `TakeEnvironmentKey`, which
+ * `licence.Open` calls; `docs/licensing/licence-key.md`, "Storage and hand-off
+ * (F41)").
+ *
+ * **No release carries that step yet, so the constant is `null` and this console
+ * hands a key to no child at all.** The registration point that calls the
+ * removal is the feature's own task's (`ee/register`'s package comment says so),
+ * and a floor is a claim about a release that exists: a version this console
+ * guessed at would be a key handed to a CLI that does not remove it, and a key
+ * in that CLI's environment is a key **every program it starts** inherits -- git,
+ * the tools `doctor` resolves with `LookPath`, `gcloud`, and `claude -p` in a run
+ * (`src/main/spawn.ts`'s `LICENCE_KEY_VAR` states the leak). Unset is therefore
+ * the safe direction and the only honest one: nothing is handed over until a
+ * release can take it back.
+ *
+ * It is a floor and not a switch, so the release that lands the removal names
+ * itself here and every older CLI keeps getting nothing -- the same patch-level
+ * comparison the five floors above use.
+ *
+ * **`spawn.test.ts` holds this constant and `PRODUCTION_KEYRING` together**: a
+ * console that can keep a key while no CLI can take it back is the leak, so a
+ * test fails until the two move in the same change.
+ */
+export const LICENCE_KEY_CLI_FLOOR: string | null = null
+
+/**
+ * licenceKeySupported answers whether one version line may be handed the
+ * installation's licence key, by comparing it against `LICENCE_KEY_CLI_FLOOR`.
+ *
+ * **Its callers are the two places the key reaches a plan** -- `CliSource`'s
+ * `#plan` (`src/source/cli.ts`) and the launch's own context
+ * (`src/main/launch.ts`) -- and they ask it before the store is read, so a CLI
+ * that would pass the key on is handed nothing rather than handed one and
+ * trusted.
+ *
+ * `floor` is the constant by default and an argument only so that the branch a
+ * release will take can be tested: with the constant unset, every version is
+ * refused, which is the state this console is in until a release carries the
+ * removal (`version.test.ts` drives both).
+ */
+export function licenceKeySupported(
+  version: string,
+  floor: string | null = LICENCE_KEY_CLI_FLOOR,
+): boolean {
+  if (floor === null) return false
+  return meetsCliFloor(version, floor)
+}
+
+/**
+ * meetsCliFloor is the one patch-level comparison all six floors above are
  * asked by, so a rule learned on one of them cannot be missing from the others.
  *
  * The order of the tests is the rule, and each refusal is on the safe side of a

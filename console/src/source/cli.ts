@@ -67,6 +67,7 @@ import { createSpawnLog } from '../main/spawnlog'
 import type { SpawnLogWriter } from '../main/spawnlog'
 import type { OperationName, ValidatedArguments } from '../main/ipc'
 import { MAX_TEXT_INPUT_LENGTH } from '../shared/sanitize'
+import { licenceKeySupported } from '../shared/version'
 import { SourceRefusal, refusalFrom, GRAPH_SCOPE_ALL, NO_GRAPH_SCOPE, NO_PLAN_CHECKOUT, SETTINGS_EDIT_MOVED } from './source'
 import type {
   FeedEnd,
@@ -389,7 +390,15 @@ export class CliSource implements FugaroSource {
     // Read here rather than carried on the instance: the store answers for the
     // project this source drives, and a key pasted a moment ago is the key the
     // next child is handed.
-    const licenceKey = this.#options.licenceKey?.(this.#options.target.project)
+    //
+    // **And only to a child that takes it back out of its own environment**
+    // (`licenceKeySupported`): the floor is asked of the resolved binary's own
+    // version line, before the store is read, so a CLI that would hand the key
+    // on to every program it starts is handed nothing. The constant is unset
+    // until a release carries the removal, so no child is handed a key today.
+    const licenceKey = licenceKeySupported(this.installation.version)
+      ? this.#options.licenceKey?.(this.#options.target.project)
+      : undefined
     return planFor(operation, args, {
       target: this.#options.target,
       binaryPath: this.#binaryPath,
