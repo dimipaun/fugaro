@@ -1640,8 +1640,8 @@ func checkCloneNoneModelImage(lc *localcfg.Config, spec *task.Spec, cfg *config.
 // agent starts and after the launch was paid for — and it is the key that is
 // refused, whatever it says: a file writing 0 asks for the default and is
 // refused all the same, which is why the gate reads the text
-// (Config.RepoStopFractionSet, ProjectLayer.SetsDefault) and not the resolved
-// Agent.ReviewStopFraction.
+// (Config.RepoStopFractionSet, ProjectLayer.SetsStopFraction) and not the
+// resolved Agent.ReviewStopFraction.
 //
 // Like noneModelSince it carries no shipped flag: refusing every image that
 // predates the release is exactly the direction this gate wants, and an image
@@ -1692,16 +1692,22 @@ func stopFractionSubject(repo string, fromRepo, fromLayer bool) (subject, alt st
 // fugaro.yaml (fromRepo) or the project layer it resolves over (fromLayer,
 // which the task's own layer stands in for when the launcher can read no file:
 // launchLevelsConfig).
+//
+// The layer's half is SetsStopFraction and not SetsDefault, which answers false
+// for a key written as null: an older runner's KnownFields decoder refuses the
+// key whatever it holds, so a layer writing it null is a layer every repository
+// of the project dies at bootstrap on, and a gate reading the resolved value
+// would deploy it.
 func stopFractionSources(cfg *config.Config) (fromRepo, fromLayer bool) {
 	if cfg == nil {
 		return false, false
 	}
-	return cfg.RepoStopFractionSet, cfg.Layer.SetsDefault("agent.review_stop_fraction")
+	return cfg.RepoStopFractionSet, cfg.Layer.SetsStopFraction()
 }
 
 // stopFractionImageWarnings warns, once, that a configuration which writes the
 // key — the repository's file (RepoStopFractionSet) or the project layer it
-// resolved over (SetsDefault) — needs every job image on stopFractionSince. It
+// resolved over (SetsStopFraction) — needs every job image on stopFractionSince. It
 // is validate's half of checkStopFractionImage, and a warning rather than a
 // Problem for rigorImageWarnings' reason: the file is valid, and what has to
 // move is the installation (the base image, or a workflow's derived one), which
@@ -1736,8 +1742,8 @@ func stopFractionImageWarnings(c *config.Config) []config.Problem {
 // image passes, one that is not a release only warns.
 //
 // fromRepo and fromLayer are the key being written (RepoStopFractionSet, the
-// layer's SetsDefault) and not the value it holds: a file writing 0, which is
-// the default and asks for nothing, is the same line to an older runner's
+// layer's SetsStopFraction) and not the value it holds: a file writing 0, which
+// is the default and asks for nothing, is the same line to an older runner's
 // decoder as one writing 0.5.
 func refuseStopFractionSkew(repo string, fromRepo, fromLayer bool, ref string, warn io.Writer) error {
 	if !fromRepo && !fromLayer {

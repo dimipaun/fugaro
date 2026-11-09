@@ -4280,6 +4280,12 @@ func (r *initRun) gateGitAuthor(o *initOptions, repo string, lc *localcfg.Config
 // files can write the key — the repository's agent.review_stop_fraction and the
 // project layer's defaults.agent.review_stop_fraction — and both are decoded
 // with KnownFields, so each is judged where it is set and the subject names it.
+//
+// Each half is the key being written rather than the value it holds
+// (gateSecurity's own reading): RepoStopFractionSet for the repository's file,
+// and the layer's own SetsStopFraction, which counts a key written as null —
+// SetsDefault would not, and the layer would then be converged onto an image
+// whose runner refuses it at bootstrap for every repository of the project.
 func (r *initRun) gateStopFraction(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
 	if o.forget || o.planOnly || cfg == nil {
 		return nil
@@ -4288,7 +4294,7 @@ func (r *initRun) gateStopFraction(o *initOptions, repo string, lc *localcfg.Con
 	if o.printVars {
 		w = r.cmd.ErrOrStderr()
 	}
-	return refuseStopFractionSkew(repo, cfg.RepoStopFractionSet, cfg.Layer.SetsDefault("agent.review_stop_fraction"), lc.BaseImage(config.BaseKind), w)
+	return refuseStopFractionSkew(repo, cfg.RepoStopFractionSet, cfg.Layer.SetsStopFraction(), lc.BaseImage(config.BaseKind), w)
 }
 
 // gateSecurity is fugaro update --repo's gate for securitySince:

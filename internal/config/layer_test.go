@@ -109,6 +109,55 @@ defaults:
 	}
 }
 
+// TestSetsStopFractionReadsTheKeyAndNotItsValue: the layer's half of the
+// stop-rule skew gate asks whether the text writes
+// defaults.agent.review_stop_fraction, because a runner older than the release
+// that reads it decodes the layer with KnownFields and refuses the key whatever
+// it holds — the layer's key reaches every repository of the project, so a gate
+// that let one through deploys a layer whose repositories all die at bootstrap
+// (SetsSecurity's own case).
+//
+// The null is the case SetsDefault cannot answer: it reads the resolved value's
+// shape, and a key written null is a key that asks for the default and sets
+// nothing, so it answers false — which for this gate is the one wrong answer.
+// The key is also nested under defaults.agent rather than top-level like
+// security: and jobs:, so the walk is the one SetsRigor's is, one level deeper.
+func TestSetsStopFractionReadsTheKeyAndNotItsValue(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		want       bool
+	}{
+		{"a share", "defaults: { agent: { review_stop_fraction: 0.5 } }\n", true},
+		{"the default", "defaults: { agent: { review_stop_fraction: 0 } }\n", true},
+		{"null", "defaults: { agent: { review_stop_fraction: null } }\n", true},
+		{"the tilde", "defaults: { agent: { review_stop_fraction: ~ } }\n", true},
+		{"nothing after the colon", "defaults:\n  agent:\n    review_stop_fraction:\n", true},
+		{"a sibling key of the same block", "defaults: { agent: { review_rounds: 3 } }\n", false},
+		{"an empty agent block", "defaults: { agent: {} }\n", false},
+		{"no defaults at all", "profiles: { p: { commands: { build: make, test: make test } } }\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l := mustLayer(t, layerHead+tc.body)
+			if got := l.SetsStopFraction(); got != tc.want {
+				t.Errorf("SetsStopFraction = %v, want %v for %q", got, tc.want, strings.TrimSpace(tc.body))
+			}
+		})
+	}
+	if (*ProjectLayer)(nil).SetsStopFraction() {
+		t.Error("SetsStopFraction = true for no layer at all")
+	}
+	// The premise of the predicate: the null the gate has to count is the one
+	// value the resolved-value reader answers false for, so a gate built on
+	// SetsDefault would converge the layer onto an image that refuses it.
+	null := mustLayer(t, layerHead+"defaults: { agent: { review_stop_fraction: null } }\n")
+	if null.SetsDefault("agent.review_stop_fraction") {
+		t.Error("SetsDefault is true for the null, so this predicate has nothing to add: keep one of the two, not both")
+	}
+	if !null.SetsStopFraction() {
+		t.Error("SetsStopFraction is false for the null, and an older runner refuses that key")
+	}
+}
+
 // TestProfileCheckout pins that a profile may set checkout: (scope
 // InProfile|InRepo, design generic-tool.md §2, G3): it decodes onto
 // Profile.Checkout rather than failing the strict decode as an unknown

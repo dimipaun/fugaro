@@ -2037,40 +2037,51 @@ func TestRunRefusesTheStopFractionOnACloneWorkflowsOlderBaseImage(t *testing.T) 
 // and the subject says so — that block is the operator's to rewrite and publish
 // again, it reaches every repository of the project, and a repository's own
 // file says nothing about it.
+//
+// It is the key being written that is judged and not the value it holds, so a
+// layer writing it null is gated exactly as one writing a share: an older
+// runner's decoder refuses the key whatever it says, and the layer's own
+// answer (ProjectLayer.SetsStopFraction) counts the null, which SetsDefault
+// does not.
 func TestRunRefusesTheLayersStopFractionOnAnOlderBaseImage(t *testing.T) {
-	f := newCloudFixture(t)
-	isolateCache(t)
-	publishedLayer(t, f, strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n",
-		"  agent: { auth: api-key, review_stop_fraction: 0.5 }\n", 1))
-	dir := layerCheckout(t, f, minimalAnchored)
-	registerOtherLocally(t, f)
-	commitRef(t, dir, "main")
-	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow,
-		"ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, stopFractionSince, -1))
-	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
-	if ExitCode(err) != ExitUserError {
-		t.Fatalf("err = %v, want the launch refused", err)
-	}
-	for _, want := range []string{
-		"the project layer's defaults.agent.review_stop_fraction (read for acme/other)",
-		"needs a job image whose runner knows " + stopFractionKnows(false, true),
-		"fugaro image refresh --repo acme/other --workflow " + config.ImplicitWorkflow,
-		"remove defaults.agent.review_stop_fraction from the project layer and publish it again",
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("%v lacks %q", err, want)
-		}
-	}
-	if strings.Contains(err.Error(), "fugaro.yaml's agent.review_stop_fraction") {
-		t.Errorf("the refusal blames the repository's file, which writes no key: %v", err)
-	}
-	if n := len(f.run.Executions()); n != 0 {
-		t.Fatalf("%d executions, want none", n)
-	}
-	// And at the release the gate names the same launch stands, layer and all.
-	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, "ghcr.io/dimipaun/fugaro-base:"+stopFractionSince)
-	if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abce", "A task"); err != nil {
-		t.Fatalf("at %s the launch must stand: %v", stopFractionSince, err)
+	for _, written := range []string{"0.5", "null"} {
+		t.Run(written, func(t *testing.T) {
+			f := newCloudFixture(t)
+			isolateCache(t)
+			publishedLayer(t, f, strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n",
+				"  agent: { auth: api-key, review_stop_fraction: "+written+" }\n", 1))
+			dir := layerCheckout(t, f, minimalAnchored)
+			registerOtherLocally(t, f)
+			commitRef(t, dir, "main")
+			writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow,
+				"ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, stopFractionSince, -1))
+			_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want the launch refused", err)
+			}
+			for _, want := range []string{
+				"the project layer's defaults.agent.review_stop_fraction (read for acme/other)",
+				"needs a job image whose runner knows " + stopFractionKnows(false, true),
+				"fugaro image refresh --repo acme/other --workflow " + config.ImplicitWorkflow,
+				"remove defaults.agent.review_stop_fraction from the project layer and publish it again",
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%v lacks %q", err, want)
+				}
+			}
+			if strings.Contains(err.Error(), "fugaro.yaml's agent.review_stop_fraction") {
+				t.Errorf("the refusal blames the repository's file, which writes no key: %v", err)
+			}
+			if n := len(f.run.Executions()); n != 0 {
+				t.Fatalf("%d executions, want none", n)
+			}
+			// And at the release the gate names the same launch stands, layer
+			// and all.
+			writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, "ghcr.io/dimipaun/fugaro-base:"+stopFractionSince)
+			if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abce", "A task"); err != nil {
+				t.Fatalf("at %s the launch must stand: %v", stopFractionSince, err)
+			}
+		})
 	}
 }
 
@@ -2131,18 +2142,21 @@ func TestStopFractionSinceIsTheReleaseTheDocsName(t *testing.T) {
 }
 
 // stopFractionSkewLayer is a project layer that writes
-// defaults.agent.review_stop_fraction, the layer's half of the key.
-func stopFractionSkewLayer(t *testing.T, fraction string) *config.ProjectLayer {
+// defaults.agent.review_stop_fraction, the layer's half of the key, as the
+// text says it: what an older runner's decoder refuses is the key, whatever it
+// holds, so `null` is a layer this test asks about exactly as `0.5` is.
+func stopFractionSkewLayer(t *testing.T, written string) *config.ProjectLayer {
 	t.Helper()
-	l, ps := config.ParseProjectLayer([]byte("version: 1\nproject: acme\ngcp_project: acme-fugaro\ndefaults:\n  agent: { review_stop_fraction: "+fraction+" }\n"),
+	l, ps := config.ParseProjectLayer([]byte("version: 1\nproject: acme\ngcp_project: acme-fugaro\ndefaults:\n  agent: { review_stop_fraction: "+written+" }\n"),
 		config.LayerAnchor{Project: "acme", GCPProject: "acme-fugaro"})
 	if len(ps) > 0 {
 		t.Fatalf("layer problems: %v", ps)
 	}
-	// The premise: the reader really saw the key, so a gate that reads the
-	// resolved value would pass this layer and the test would prove nothing.
-	if !l.SetsDefault("agent.review_stop_fraction") {
-		t.Fatal("the layer does not report the key as set")
+	// The premise: the gate reads the key being written and not the value it
+	// holds, so the layer reports it set whatever it is written as — a share,
+	// the default, and the null a resolved-value test would read as no key.
+	if !l.SetsStopFraction() {
+		t.Fatalf("the layer writing review_stop_fraction: %s does not report the key as set", written)
 	}
 	return l
 }
@@ -2188,6 +2202,15 @@ func TestUpdateRepoRefusesStopFractionOnAnOlderBaseImage(t *testing.T) {
 			"remove agent.review_stop_fraction from fugaro.yaml",
 			"the project layer's defaults.agent.review_stop_fraction"},
 		{"the layer alone", &config.Config{Layer: stopFractionSkewLayer(t, "0.5")},
+			"the project layer's defaults.agent.review_stop_fraction (read for acme/app)",
+			"remove defaults.agent.review_stop_fraction from the project layer and publish it again",
+			"fugaro.yaml's agent.review_stop_fraction"},
+		// The key is what an older runner's decoder refuses, so the layer that
+		// writes it as null — the one asking for the default and nothing else —
+		// is converged onto an image that reads it exactly as the layer writing
+		// 0.5 is. SetsDefault answers false for a null, which is why the gate
+		// reads the layer's own key-presence answer.
+		{"the layer's key written null", &config.Config{Layer: stopFractionSkewLayer(t, "null")},
 			"the project layer's defaults.agent.review_stop_fraction (read for acme/app)",
 			"remove defaults.agent.review_stop_fraction from the project layer and publish it again",
 			"fugaro.yaml's agent.review_stop_fraction"},
@@ -2254,7 +2277,7 @@ func TestUpdateRepoRefusesStopFractionOnAnOlderBaseImage(t *testing.T) {
 	// writes the sibling round knobs instead.
 	other := jobsSkewLayerWith(t, "defaults: { agent: { review_rounds: 3 } }\n")
 	for _, cfg := range []*config.Config{nil, {}, {Layer: &config.ProjectLayer{}}, {Layer: other}} {
-		if cfg != nil && cfg.Layer != nil && cfg.Layer.SetsDefault("agent.review_stop_fraction") {
+		if cfg != nil && cfg.Layer != nil && cfg.Layer.SetsStopFraction() {
 			t.Fatalf("%+v: the premise is a configuration that writes no key", cfg)
 		}
 		if err := r.gateStopFraction(r.o, "acme/app", lc(older), cfg); err != nil {

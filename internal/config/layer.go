@@ -295,6 +295,26 @@ func (l *ProjectLayer) SetsSecurity() bool {
 	return ok
 }
 
+// SetsStopFraction reports whether the layer's text writes
+// defaults.agent.review_stop_fraction, at any value: a runner before
+// stopFractionSince (internal/cli) decodes the layer with KnownFields, so the
+// key alone is what it refuses, and SetsDefault cannot answer it — a layer that
+// writes the key as null writes it and asks for nothing, which is the one case
+// a resolved-value test would read as no key at all (SetsSecurity's own case:
+// "an explicit null, which decodes to no block at all, is refused exactly like
+// a full one"). It is what the gates judge the job images against, beside the
+// repository's half (setsStopFraction), and it is the layer's because that
+// refusal reaches every repository of the project.
+func (l *ProjectLayer) SetsStopFraction() bool {
+	if l == nil {
+		return false
+	}
+	d, _ := l.tree["defaults"].(map[string]any)
+	a, _ := d["agent"].(map[string]any)
+	_, ok := a["review_stop_fraction"]
+	return ok
+}
+
 // SetsDefault reports whether the layer's text writes a fugaro.yaml key under
 // defaults:, at any value — its own, or the nearest ancestor the text writes,
 // because a list is one key (Resolution.Sources' own rule: rigor.areas is set
