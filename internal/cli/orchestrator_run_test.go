@@ -28,6 +28,9 @@ type daemonFixture struct {
 	// is what these tests are about and it runs until something stops it.
 	ctx    context.Context
 	cancel context.CancelFunc
+	// now is the database's clock as the money-path tests read it once, before
+	// they move it past the claim window.
+	now time.Time
 }
 
 func newDaemonFixture(t *testing.T) *daemonFixture {

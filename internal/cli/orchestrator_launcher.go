@@ -7,6 +7,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The daemon's launcher: one launch path, shared with `fugaro run` (F11, D931,
@@ -51,24 +52,8 @@ type orchestratorLauncher struct {
 func (l *orchestratorLauncher) Launch(ctx context.Context, spec orchestrator.Spec, runID string) (string, error) {
 	l.started.begin()
 	defer l.started.done()
-	o := &runOptions{repo: spec.Repo, recipe: spec.Recipe, rigor: spec.RigorTier, runID: runID, title: spec.Title}
-	plan, err := resolveAttemptPlan(ctx, l.env, o, 0, l.stderr, false)
+	slug, ts, err := l.prepare(ctx, spec, runID)
 	if err != nil {
-		return "", err
-	}
-	slug, ts, err := buildAttemptSpec(plan, o, spec.Brief)
-	if err != nil {
-		return "", err
-	}
-	// The budget pre-check, before the task is stored and before the claim:
-	// a launch the budget refuses costs no claim to release, which is the
-	// order `fugaro run` refuses in too. It fails closed, so an unreachable
-	// database stops the launch rather than starting a run nothing counts.
-	if err := l.env.budgetPrecheck(ctx, slug, ts, l.stderr); err != nil {
-		return "", err
-	}
-	s := runstore.Open(l.env.bucket.Bucket, slug, ts.RunID)
-	if err := createTask(ctx, s, ts); err != nil {
 		return "", err
 	}
 	res, err := launchRun(ctx, l.env, slug, ts, time.Now())
@@ -76,4 +61,37 @@ func (l *orchestratorLauncher) Launch(ctx context.Context, spec orchestrator.Spe
 		return "", err
 	}
 	return res.RunID, nil
+}
+
+// prepare is everything a launch does before it starts anything, and it is a
+// step of its own because that is where a daemon can die: the task is the
+// stored record of the attempt, and a crash between storing it and starting
+// the run is the one the next tick has to finish rather than start over. What
+// it returns is what launchRun needs and nothing else.
+func (l *orchestratorLauncher) prepare(ctx context.Context, spec orchestrator.Spec, runID string) (string, *task.Spec, error) {
+	// The item's rigor_tier is the expectation tier (trivial to large) and not
+	// the rigor mode: a daemon declares no paths and asks for no mode, so the
+	// run resolves its rigor from the configuration alone, which is what a
+	// launch nobody typed can honestly say.
+	o := &runOptions{repo: spec.Repo, recipe: spec.Recipe, tier: spec.RigorTier, runID: runID, title: spec.Title}
+	plan, err := resolveAttemptPlan(ctx, l.env, o, 0, l.stderr, false)
+	if err != nil {
+		return "", nil, err
+	}
+	slug, ts, err := buildAttemptSpec(plan, o, spec.Brief)
+	if err != nil {
+		return "", nil, err
+	}
+	// The budget pre-check, before the task is stored and before the claim:
+	// a launch the budget refuses costs no claim to release, which is the
+	// order `fugaro run` refuses in too. It fails closed, so an unreachable
+	// database stops the launch rather than starting a run nothing counts.
+	if err := l.env.budgetPrecheck(ctx, slug, ts, l.stderr); err != nil {
+		return "", nil, err
+	}
+	s := runstore.Open(l.env.bucket.Bucket, slug, ts.RunID)
+	if err := createTask(ctx, s, ts); err != nil {
+		return "", nil, err
+	}
+	return slug, ts, nil
 }
