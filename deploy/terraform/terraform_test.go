@@ -301,6 +301,43 @@ func TestTagMoverRoleIsTagsDeleteOnly(t *testing.T) {
 	}
 }
 
+// The start-only launcher role is run.jobs.run alone and is granted to nobody
+// (the owner's ruling of 2026-11-09): the coordinator must never hold
+// run.jobs.runWithOverrides, and the way this tree keeps that true while M9's
+// launch grant does not exist yet is that the role is declared and not bound.
+// A binding added here is the one change that would give the coordinator an
+// execution override — the permission that can rewrite a run's container
+// arguments — so it is a text test rather than a plan assertion: the plan a
+// test hands the module only ever sees the inputs it was given.
+func TestJobStarterRoleIsRunOnlyAndGrantedNowhere(t *testing.T) {
+	roles := 0
+	walk(t, func(path string, b []byte) {
+		for _, blk := range allResourceBlocks(t, path, b) {
+			if !strings.Contains(blk.body, "job_starter") {
+				continue
+			}
+			if blk.typ != "google_project_iam_custom_role" {
+				t.Errorf("%s: %s mentions the start-only launcher role: it is granted to nobody until M9 declares the launch grant, and a binding added here is a role that can override a run", path, blk.name)
+				continue
+			}
+			if blk.name != "google_project_iam_custom_role.job_starter" || path != "gcp/modules/installation/iam.tf" {
+				t.Errorf("%s: %s is not the start-only launcher role in the installation module", path, blk.name)
+				continue
+			}
+			roles++
+			if !hasAttr(blk.body, "permissions", `["run.jobs.run"]`) {
+				t.Errorf("%s: %s does not hold exactly [\"run.jobs.run\"]: the start-only role is the one permission to start an execution, and run.jobs.runWithOverrides is what the ruling forbids", path, blk.name)
+			}
+			if !hasAttr(blk.body, "title", `"Fugaro job starter"`) {
+				t.Errorf("%s: %s: the title is the ownership mark discovery adopts the role by", path, blk.name)
+			}
+		}
+	})
+	if roles != 1 {
+		t.Errorf("found %d start-only launcher roles, want exactly 1 (gcp/modules/installation/iam.tf)", roles)
+	}
+}
+
 // The base images are copied into fugaro-base by fugaro update, as the person running
 // it (design m11 §3.3): a build account must never be able to write that
 // registry, since the image every repository's credential step runs comes

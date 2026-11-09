@@ -15,6 +15,10 @@ const LogBucketAddress = "module.installation.google_logging_project_bucket_conf
 // root.
 const TagMoverRoleAddress = "module.installation.google_project_iam_custom_role.tag_mover"
 
+// JobStarterRoleAddress is the start-only launcher role's address in the
+// installation root (the owner's ruling of 2026-11-09).
+const JobStarterRoleAddress = "module.installation.google_project_iam_custom_role.job_starter"
+
 // SharedRegistryAddress is the shared image registry's address in the
 // installation root (design docs/forge-authorship-images/shared-images.md
 // §2.6).
@@ -28,6 +32,7 @@ const SharedRegistryAddress = "module.installation.google_artifact_registry_repo
 // installation's, which CheckForgetPlan refuses.
 var ForgetCreates = []string{
 	TagMoverRoleAddress,
+	JobStarterRoleAddress,
 	SharedRegistryAddress,
 }
 

@@ -2142,7 +2142,7 @@ run "same_project_resolved_iam" {
   }
   assert {
     condition = alltrue(flatten([
-      [for r in [google_project_iam_custom_role.launcher, google_project_iam_custom_role.job_runner, google_project_iam_custom_role.build_submitter, google_project_iam_custom_role.tag_mover, google_project_iam_custom_role.cloud_asset_reader, google_project_iam_custom_role.history[0]] :
+      [for r in [google_project_iam_custom_role.launcher, google_project_iam_custom_role.job_runner, google_project_iam_custom_role.build_submitter, google_project_iam_custom_role.tag_mover, google_project_iam_custom_role.job_starter, google_project_iam_custom_role.cloud_asset_reader, google_project_iam_custom_role.history[0]] :
       [for p in r.permissions : !can(regex("^(firebase|datastore|identitytoolkit|iam\\.|resourcemanager|serviceusage|apikeys)", p))]],
     ]))
     error_message = "no installation custom role holds a permission on the budget backend, identities or IAM"

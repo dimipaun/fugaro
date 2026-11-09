@@ -68,6 +68,13 @@ func TestCheckForgetPlan(t *testing.T) {
 	if err := CheckForgetPlan(shared); err != nil {
 		t.Fatalf("the shared image registry's create: %v", err)
 	}
+	// And the start-only launcher role, which an installation applied before
+	// the owner's ruling of 2026-11-09 doesn't have: without this the rollback
+	// from such a state is refused over a create the rollback did not ask for.
+	starter := &tf.Plan{ResourceChanges: []tf.ResourceChange{change(ForgetDeletes[0], "delete"), change(JobStarterRoleAddress, "create")}}
+	if err := CheckForgetPlan(starter); err != nil {
+		t.Fatalf("the start-only launcher role's create: %v", err)
+	}
 	both := &tf.Plan{ResourceChanges: []tf.ResourceChange{change(TagMoverRoleAddress, "create"), change("module.installation.google_storage_bucket.runs", "create")}}
 	if err := CheckForgetPlan(both); err == nil || !strings.Contains(err.Error(), "google_storage_bucket.runs") || strings.Contains(err.Error(), "tag_mover") {
 		t.Fatalf("err = %v", err)
