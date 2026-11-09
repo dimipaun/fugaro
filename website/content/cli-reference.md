@@ -2530,10 +2530,11 @@ Mark an issue as not worth filing
 
 Mark one saved issue as not worth filing.
 
-REF is the issue's number (`7`) or its local ID `local-<run stem>`, the
-same argument `show` takes. The status is written in the issue's own file
-and nothing else changes: the record stays where it is, so a listing still
-shows what was set aside and who did it, and nothing is filed.
+REF is the issue's number — `7`, or the `#0007` a listing prints — or
+its local ID `local-<run stem>`, the same argument `show` takes. The
+status is written in the issue's own file and nothing else changes: the
+record stays where it is, so a listing still shows what was set aside
+and who did it, and nothing is filed.
 
 A coding agent's session may not dismiss an issue: a steered diagnosis
 could otherwise bury a real bug, so a person sets one aside (D1730).
@@ -2585,7 +2586,7 @@ Print one issue: its number (#0007) or its local ID
 
 Print one issue the machine saved.
 
-REF is the issue's number as a plain number (`7`), or its local ID
+REF is the issue's number — `7`, or the `#0007` a listing prints — or
 `local-<run stem>`, which is what it is called until it has been
 uploaded. The header a listing shows and the body a person reads are
 printed as data: the text came from a diagnosis that read log text this

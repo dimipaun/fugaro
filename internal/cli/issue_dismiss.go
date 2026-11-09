@@ -17,10 +17,11 @@ func newIssueDismissCmd() *cobra.Command {
 		Use:   "dismiss REF",
 		Short: "Mark an issue as not worth filing",
 		Long: "Mark one saved issue as not worth filing.\n\n" +
-			"REF is the issue's number (`7`) or its local ID `local-<run stem>`, the\n" +
-			"same argument `show` takes. The status is written in the issue's own file\n" +
-			"and nothing else changes: the record stays where it is, so a listing still\n" +
-			"shows what was set aside and who did it, and nothing is filed.\n\n" +
+			"REF is the issue's number — `7`, or the `#0007` a listing prints — or\n" +
+			"its local ID `local-<run stem>`, the same argument `show` takes. The\n" +
+			"status is written in the issue's own file and nothing else changes: the\n" +
+			"record stays where it is, so a listing still shows what was set aside\n" +
+			"and who did it, and nothing is filed.\n\n" +
 			"A coding agent's session may not dismiss an issue: a steered diagnosis\n" +
 			"could otherwise bury a real bug, so a person sets one aside (D1730).",
 		Args: cobra.ExactArgs(1),
@@ -40,6 +41,7 @@ func runIssueDismiss(cmd *cobra.Command, ref string) error {
 	if err != nil {
 		return err
 	}
+	ref = issueRefArg(ref)
 	i, err := store.Get(ref)
 	if err != nil {
 		return userErr("nothing was dismissed: %v", err)

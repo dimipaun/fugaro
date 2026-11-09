@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -58,13 +59,26 @@ func openIssueStore() (*issues.Store, error) {
 
 // issueRef is the name an issue is printed under: `#0007` once the shared
 // store gave it a number, and its local ID `local-<run stem>` while it has
-// none (D1723, F23). Both are the argument `show`, `dismiss` and `submit`
-// take, so what a listing prints is what a reader types back.
+// none (D1723, F23). It is the name a listing's first column shows, so it is
+// the name a reader copies; issueRefArg is what makes it an argument the
+// commands take, and the two together are the round trip.
 func issueRef(i issues.Issue) string {
 	if i.Number == 0 {
 		return i.LocalID
 	}
 	return fmt.Sprintf("#%04d", i.Number)
+}
+
+// issueRefArg is a reference as the store takes it: the `#` that marks a
+// printed name as a number, taken off.
+//
+// The store's own reference is a bare number or a local ID (issues.parseRef),
+// and `list` prints a number with the `#` that says which of the two it is. A
+// name that is printed and then refused is a trap the listing sets, so `#0007`
+// — what a reader copies out of the row — and `7` are one reference here. A
+// local ID carries no `#` and is handed on unchanged.
+func issueRefArg(ref string) string {
+	return strings.TrimPrefix(ref, "#")
 }
 
 // issueJSON is one record as the `--json` documents of `issue list` and

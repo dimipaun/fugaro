@@ -186,6 +186,55 @@ func TestIssueShowPrintsOnlyAnUploadedURL(t *testing.T) {
 	}
 }
 
+// TestIssueCommandsTakeTheNameAListingPrints: `list` prints a numbered issue as
+// `#0007`, and a name the listing prints has to be a name `show` and `dismiss`
+// take — a reference a reader copies out of a row and the commands then refuse
+// is a trap the listing sets. The reference is read back out of the row rather
+// than written here, so the listing's own spelling is what is fed to them.
+func TestIssueCommandsTakeTheNameAListingPrints(t *testing.T) {
+	store := issueState(t)
+	i := savedIssue("48223", issues.StatusPending, true)
+	if err := store.Save(i); err != nil {
+		t.Fatalf("saving: %v", err)
+	}
+
+	out, _, err := execute(t, "issue", "list")
+	if err != nil {
+		t.Fatalf("issue list: %v\n%s", err, out)
+	}
+	var printed string
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if strings.HasPrefix(line, "ISSUE") {
+			continue
+		}
+		printed = strings.Fields(line)[0]
+		break
+	}
+	if printed != "#0007" {
+		t.Fatalf("the listing's first column is %q, want the name a reader copies: %q\n%s", printed, "#0007", out)
+	}
+
+	shown, _, err := execute(t, "issue", "show", printed)
+	if err != nil {
+		t.Fatalf("issue show %s: %v\n%s", printed, err, shown)
+	}
+	if !strings.Contains(shown, printed) {
+		t.Errorf("issue show %s does not name the issue it printed:\n%s", printed, shown)
+	}
+
+	dismissed, _, err := execute(t, "issue", "dismiss", printed)
+	if err != nil {
+		t.Fatalf("issue dismiss %s: %v\n%s", printed, err, dismissed)
+	}
+	got, err := store.Get("7")
+	if err != nil {
+		t.Fatalf("reading the issue back: %v", err)
+	}
+	if got.Status != issues.StatusDismissed {
+		t.Errorf("issue dismiss %s left the issue %q, want %q", printed, got.Status, issues.StatusDismissed)
+	}
+}
+
 // TestIssueDismissSetsStatus: `dismiss` sets the issue aside so nothing is
 // filed for it (spec 4), and it takes the local ID or the number (F23). The
 // record read back from the store is the fact — the printed line is not.

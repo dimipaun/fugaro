@@ -19,7 +19,7 @@ func newIssueShowCmd() *cobra.Command {
 		Use:   "show REF",
 		Short: "Print one issue: its number (#0007) or its local ID",
 		Long: "Print one issue the machine saved.\n\n" +
-			"REF is the issue's number as a plain number (`7`), or its local ID\n" +
+			"REF is the issue's number — `7`, or the `#0007` a listing prints — or\n" +
 			"`local-<run stem>`, which is what it is called until it has been\n" +
 			"uploaded. The header a listing shows and the body a person reads are\n" +
 			"printed as data: the text came from a diagnosis that read log text this\n" +
@@ -38,7 +38,7 @@ func runIssueShow(cmd *cobra.Command, ref string, asJSON bool) error {
 	if err != nil {
 		return err
 	}
-	i, err := store.Get(ref)
+	i, err := store.Get(issueRefArg(ref))
 	if err != nil {
 		return userErr("nothing was shown: %v", err)
 	}
