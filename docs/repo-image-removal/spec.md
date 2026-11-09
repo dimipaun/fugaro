@@ -55,7 +55,7 @@ removal and not a separate one.
 | `fugaro image check` | **loses its repository arms and keeps the catalog job's.** The local workflow check and the per-repository `--job` mode go with the repository image — they read `rebuild.*` and the repository's registry, and the job they serve is R4's. **`--job --catalog` stays** (`internal/cli/image_check_catalog.go:31`, merged as #1679): one run of the installation's catalog check job, reading its spec out of `catalogCheckSpecEnv` and deciding every entry of the project's catalog — that is D1148's driver, and not this removal's to delete |
 | `fugaro image status` | **removed** (`internal/cli/imagecheck.go:982`) |
 | `fugaro image render` | **removed** (`internal/cli/image.go:510`). It prints the Dockerfile the template generates, and there is no template |
-| `fugaro image gate`, `fugaro image record` | **removed** (`internal/cli/image_record.go:60`, `:145`). They are the derived build's own steps; the catalog build carries its own pin, tag and record steps (`internal/backend/gcp/catalog.go:383`, `:477`, `:542`) and calls neither |
+| `fugaro image gate`, `fugaro image record` | **removed** (`internal/cli/image_record.go:60`, `:145`). They are the derived build's own steps; the catalog build carries its own pin, tag and record steps (`internal/backend/gcp/catalog.go:385`, `:534`, `:599`) and calls neither |
 | `fugaro image selftest` | **stays** (`internal/cli/image.go:44`). It is the runtime-contract check the *catalog* build's smoke runs too (`internal/cli/image_build_catalog.go:208`), so it is the catalog's step now |
 | `fugaro image git-credential` | **stays** (`internal/cli/gitcred.go:39`); the catalog build clones with it |
 | `fugaro image ls`, `add`, `rm` | **stay unchanged** (`internal/cli/image_catalog.go:60`, `:286`, `:407`) |
@@ -162,7 +162,7 @@ chosen entry's `:latest` exists in the shared registry — the catalog's counter
 
 - **The build accounts stay.** A catalog entry whose source is a Dockerfile in repository X is built
   **as X's build account** with X's credential and secrets
-  (`internal/backend/gcp/catalog.go:90`, `internal/cli/image_build_catalog.go:366`), so the repository
+  (`internal/backend/gcp/catalog.go:92`, `internal/cli/image_build_catalog.go:366`), so the repository
   module keeps its build account and its grants on the **shared** registry, the base registry and the
   ghcr pull-through (`deploy/terraform/gcp/modules/repo/build.tf:5`) — narrowed by the grants that
   only existed for the repository's own registry.

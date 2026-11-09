@@ -276,7 +276,7 @@ rather than a rule to invent.
 
 **F26 — The project image catalog is on main, and the repo-image removal is a design beside this
 one. — Exists (new), and it changes nothing here.** The catalog is built and deployed
-(`internal/backend/gcp/catalog.go:76` `CatalogDefinition`, `:85` `CatalogBuildSpec`;
+(`internal/backend/gcp/catalog.go:78` `CatalogDefinition`, `:87` `CatalogBuildSpec`;
 `docs/project-image-catalog/`), and the design that removes the per-repository image is **#1676**,
 which holds **D1190–D1219** — the block immediately above this design's. Consequence: a workspace
 owns no image and no repository ([spec.md](spec.md) §9), so neither the catalog nor its removal
@@ -312,7 +312,7 @@ it a false one while every sentence around it stays true. **One had moved**: the
 `internal/managed/budget.go:124`); `internal/runner/stray.go:24`; `internal/credsvc/auth.go:375`,
 `:890`, `:968`, `:258`, `:1072`; `internal/projectpolicy/bitbucket.go:30`, `:75-76`, `:194` and
 `internal/projectpolicy/paths.go:18-23`;
-`internal/backend/gcp/catalog.go:76`; `docs/ee-reorg/spec.md`:7 and `docs/subscriptions/spec.md`:55.
+`internal/backend/gcp/catalog.go:78`; `docs/ee-reorg/spec.md`:7 and `docs/subscriptions/spec.md`:55.
 
 **F29 — The second re-read, 2026-11-04, at `origin/main` `c2ca0aee`. — Two citations were wrong, and
 both were wrong in the same way.** A security review of [spec.md](spec.md) §5 and §8 read the grants
