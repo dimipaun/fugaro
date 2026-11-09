@@ -49,7 +49,7 @@
 // "it survives a restart" while breaking the design's first rule.
 
 import { generateKeyPairSync, sign as edSign, type KeyObject } from 'node:crypto'
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -250,10 +250,15 @@ describe('the console’s licence-key store', () => {
     // nothing verifies rather than a fourth state (the design's "states and
     // minting").
     const bad = mint(foreign, claimsFor())
+    // This case writes the file itself rather than through `save`, so it makes
+    // the directory too: every other case here lets the store create it
+    // (`storePath`'s note), and a `writeFileSync` into a directory that is not
+    // there is an ENOENT rather than a store holding a foreign key.
+    mkdirSync(dirname(path), { recursive: true, mode: LICENCE_DIR_MODE })
     writeFileSync(
       path,
       `${JSON.stringify({ version: 1, installations: [{ project: PROJECT, key: bad }] })}\n`,
-      { flag: 'w', mode: 0o600 },
+      { flag: 'w', mode: LICENCE_FILE_MODE },
     )
     const store = createLicenceStore({ path, keyring: good.keyring })
     // A state a screen draws, and not an absent key: the installation has a key
