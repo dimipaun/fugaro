@@ -56,7 +56,7 @@
         "unread": {
           "type": "string",
           "minLength": 1,
-          "description": "Why this row has no signals: the name is not a repository of this project, no provider could be resolved, the provider cannot read a file out of a repository, or opening it failed. Absent on every row the survey read — a repository whose files name nothing carries an empty signals list and no reason."
+          "description": "Why this row has no signals: the name is not a repository of this project, no provider could be resolved, the provider cannot read a file out of a repository, opening it failed, or not one of the survey's fixed paths could be read from it. Absent on every row the survey read — a repository whose files were read and name none of the signals carries an empty signals list and no reason. The last reason is the interface's own limit and not a verdict about the repository: a contents read answers the same error for a file that is not there and for a read that was refused, so a repository that does not exist, a credential that reads nothing there and a repository holding none of these files are one answer here, and this document does not guess which."
         },
         "signals": {
           "type": "array",

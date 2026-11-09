@@ -156,6 +156,13 @@ func TestSurveyValuesAreValidated(t *testing.T) {
 	}
 }
 
+// surveyPathCount is how many distinct paths the survey reads, as a literal:
+// the read the command makes is the whole of its F22 exposure, and a fixture
+// list derived from the package would be green for a rule the package gained
+// (internal/imagesurvey's surveyFixedPaths pins the same list from its own
+// side, path by path).
+const surveyPathCount = 30
+
 // TestSurveyReadsOnlySignals: the survey reads the fixed list of paths and
 // nothing else, at the process environment's credential, and the report
 // carries the values the rules bounded rather than the files they came from.
@@ -190,11 +197,12 @@ func TestSurveyReadsOnlySignals(t *testing.T) {
 		t.Errorf("the report does not carry the base image the Dockerfile names:\n%s", out)
 	}
 
-	want := make([]string, 0, len(imagesurvey.Signals()))
-	for _, s := range imagesurvey.Signals() {
-		if !slices.Contains(want, s.Path) {
-			want = append(want, s.Path)
-		}
+	// The list is pinned by imagesurvey's own literal (surveyFixedPaths), and
+	// the count is named here too: a rule added for a path no fixture holds,
+	// or one taken away, is red at one of the two ends without the other.
+	want := imagesurvey.Paths()
+	if len(want) != surveyPathCount {
+		t.Errorf("the survey reads %d paths, want %d: a rule was added or taken away, and this test's fixtures hold none of the new one", len(want), surveyPathCount)
 	}
 	if got := ps["acme/app"].read(); !slices.Equal(got, want) {
 		t.Errorf("the provider was asked for\n  %s\nwant the fixed list\n  %s", strings.Join(got, "\n  "), strings.Join(want, "\n  "))
@@ -270,6 +278,65 @@ func TestSurveyBitbucketAndGitHub(t *testing.T) {
 	}
 	if out, _, err := execute(t, "image", "survey"); err != nil || !strings.Contains(out, "unread:") {
 		t.Errorf("the read does not say why a repository is unread (err %v):\n%s", err, out)
+	}
+}
+
+// TestSurveyNothingReadIsNotNoSignals: a repository whose provider opened but
+// whose every read came back empty-handed is a row carrying unread, not one
+// reporting the empty signal list a readable repository with none of these
+// files reports. ContentsReader answers one error for a file that is not there
+// and for a read that could not be made, so the two would be byte-identical
+// without the count: the row below is a repository that is not there (or one
+// this machine's credential reads nothing out of), and the one beside it is a
+// repository the survey read that holds none of its files — the second is what
+// "no signals" is for.
+func TestSurveyNothingReadIsNotNoSignals(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, "  acme/gone: { provider: github }\n  acme/quiet: { provider: github }\n  acme/service: { provider: github }\n")
+	surveyStub(t, map[string]map[string]string{
+		// Every path refused: nothing at all was read.
+		"acme/gone": {},
+		// Read, and the one file it holds is not a version: the row has no
+		// signals and no reason, which is what a readable repository with none
+		// of the survey's files looks like.
+		"acme/quiet": {".nvmrc": "not a version\n"},
+		// Read, and its file names no service this survey carries, so the row
+		// carries a signal with no value beside it.
+		"acme/service": {"docker-compose.yml": "services:\n  mail: { image: mailhog }\n"},
+	})
+
+	doc := surveyDoc(t)
+	gone := surveyRow(t, doc, "acme/gone")
+	if gone.Unread == "" {
+		t.Errorf("a repository not one of the survey's paths could be read from has no reason on its row: %+v", gone)
+	}
+	if !strings.Contains(gone.Unread, "not one of the") {
+		t.Errorf("acme/gone's reason is %q, want the one that says nothing could be read", gone.Unread)
+	}
+	if len(gone.Signals) != 0 {
+		t.Errorf("acme/gone carries signals anyway: %+v", gone.Signals)
+	}
+	quiet := surveyRow(t, doc, "acme/quiet")
+	if quiet.Unread != "" {
+		t.Errorf("a repository whose file was read carries a reason: %q", quiet.Unread)
+	}
+	if len(quiet.Signals) != 0 {
+		t.Errorf("acme/quiet carries signals: %+v", quiet.Signals)
+	}
+	if got, want := surveySignals(surveyRow(t, doc, "acme/service")), []string{"compose docker-compose.yml"}; !slices.Equal(got, want) {
+		t.Errorf("acme/service's signals are %v, want %v", got, want)
+	}
+	// The two rows must not read alike on the terminal either: the report says
+	// why one is empty rather than printing the sentence the other one gets.
+	out, _, err := execute(t, "image", "survey")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "unread: not one of the") {
+		t.Errorf("the report does not say a repository nothing could be read from is unread:\n%s", out)
+	}
+	if !strings.Contains(out, "no signals at the paths the survey reads") {
+		t.Errorf("the report does not say the repository that was read holds no signals:\n%s", out)
 	}
 }
 

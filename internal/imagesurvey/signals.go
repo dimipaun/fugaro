@@ -69,10 +69,15 @@ type File struct {
 
 // rule is one fixed path and how its answer is read.
 //
-// read answers (value, ok): ok false is "this file names nothing of this
-// rule's kind", which is what a lockfile-shaped path with something else in it,
-// a Dockerfile with no FROM line and a compose file naming no known service all
-// answer, and it contributes no finding at all.
+// read answers (value, ok). ok false is "this file is not an answer of this
+// rule's at all", and it contributes no finding: the capture rules answer it
+// when their regexp does not match the file (a version file whose content is
+// not a version, a package.json with no engines.node, a go.mod with no go
+// directive) and the Testcontainers rule when the file carries no marker. ok
+// true with the empty value is a different thing and is kept: the file is there
+// and names nothing this package carries (a Dockerfile whose FROM line is not a
+// reference-shaped token, a compose file naming no service Fugaro starts), so
+// the report shows the repository has that file with no value beside it.
 type rule struct {
 	kind string
 	path string
@@ -147,6 +152,21 @@ func Signals() []Signal {
 	return out
 }
 
+// Paths is the repository-relative paths the survey reads, once each and in the
+// rules' own order: two rules may judge one file (a package.json is a version
+// file and a Testcontainers build file), and a repository is read once per path
+// however many rules judge it. It is the count Read answers with, and the list
+// a caller that has to say how much was read reads it from.
+func Paths() []string {
+	out := make([]string, 0, len(rules))
+	for _, r := range rules {
+		if !slices.Contains(out, r.path) {
+			out = append(out, r.path)
+		}
+	}
+	return out
+}
+
 // Findings judges the files a repository answered with against the fixed rules
 // and answers the signals, in the rules' own order. A path the caller did not
 // read — because the file is not there — contributes nothing: the survey's
@@ -176,38 +196,38 @@ func Findings(files []File) []Finding {
 	return out
 }
 
-// Read reads every signal of the fixed list out of r, at ref ("" for the
-// repository's default branch), and answers the findings.
+// Read reads every path of the fixed list out of r, at ref ("" for the
+// repository's default branch), and answers the findings and how many of those
+// paths the reader answered for.
 //
-// A path whose read fails contributes nothing: ContentsReader answers an error
-// both for a file that is not there and for a read that could not be made —
-// the two are one error to this interface, and a survey is not the place to
-// decide a repository cannot be read from a file it is allowed not to have. A
-// caller that needs to tell those apart reads the repository's own state
-// elsewhere; what this returns is the signals it has. A cancelled context is
-// the one failure that is the caller's own, and it stops the read.
-func Read(ctx context.Context, r gitprov.ContentsReader, ref string) ([]Finding, error) {
-	files := make([]File, 0, len(rules))
-	seen := make(map[string]bool, len(rules))
-	for _, rule := range rules {
-		// Two rules may share a path (package.json is a version file and a
-		// Testcontainers build file, requirements.txt a lockfile and one too),
-		// and a repository is read once per path however many rules judge it:
-		// a survey of 50+ repositories is 30-odd reads each, not one per rule.
-		if seen[rule.path] {
-			continue
-		}
-		seen[rule.path] = true
-		data, err := r.Contents(ctx, rule.path, ref)
+// The count is not the number of signals found: it is how many files were
+// actually read, and it is what keeps the two empty answers apart — a
+// repository whose files were read and name none of the signals, and a
+// repository no read reached at all. Zero is the second, and a caller must not
+// print it as the first: ContentsReader answers one error both for a file that
+// is not there and for a read that could not be made, so zero is what a
+// repository that does not exist, a credential that reads nothing there and a
+// repository whose files are none of these all look like. Telling those apart
+// is the caller's, and it starts by knowing it read nothing.
+//
+// A path whose read fails contributes nothing else: a survey is not the place
+// to decide a repository cannot be read from a file it is allowed not to have.
+// A cancelled context is the one failure that is the caller's own, and it stops
+// the read.
+func Read(ctx context.Context, r gitprov.ContentsReader, ref string) ([]Finding, int, error) {
+	paths := Paths()
+	files := make([]File, 0, len(paths))
+	for _, path := range paths {
+		data, err := r.Contents(ctx, path, ref)
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return nil, ctxErr
+				return nil, 0, ctxErr
 			}
 			continue
 		}
-		files = append(files, File{Path: rule.path, Data: data})
+		files = append(files, File{Path: path, Data: data})
 	}
-	return Findings(files), nil
+	return Findings(files), len(files), nil
 }
 
 // presence is a rule whose answer is the file's own existence, with value as
@@ -242,9 +262,10 @@ func dockerfileHint(data []byte) (string, bool) {
 }
 
 // serviceHints is a compose rule: the services a compose file names, from the
-// closed list below, deduplicated and sorted. A compose file that names none of
-// them contributes no finding — the file's own presence is not a signal, since
-// what the skill proposes is the service, not the file.
+// closed list below, deduplicated and sorted, and "" when it names none of
+// them. The file's presence is a finding either way — a repository with a
+// compose file is one the skill has to ask about, which is what the empty value
+// beside the path says — and only the service names are ever answered with.
 func serviceHints(data []byte) (string, bool) {
 	return serviceWordsIn(data, false)
 }

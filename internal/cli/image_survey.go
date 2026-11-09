@@ -38,12 +38,15 @@ type imageSurveyOut struct {
 }
 
 // imageSurveyRepo is one repository's row. Unread is why this report has no
-// signals for it — a repository whose provider cannot be opened, is not on a
-// provider that reads a file, or whose name this machine cannot resolve — and
-// it is empty on every row the survey read: a repository with no signals at
-// all is one whose files were read and named nothing, never one the survey
-// could not read (the two must not look alike, which is what a row carrying
-// both a reason and an empty Signals list says).
+// signals for it: the name is not a repository of this project, no provider
+// could be resolved for it, its provider cannot read a file out of a
+// repository, opening it failed, or not one of the files the survey reads could
+// be read from it. It is empty on every row whose files were read — a
+// repository that has none of the signals is one whose files answered, which is
+// exactly what Unread's last reason cannot claim. The two empty rows must not
+// look alike, so a repository the survey read nothing from says so rather than
+// reporting the same thing as a readable repository that holds none of these
+// files.
 type imageSurveyRepo struct {
 	Repo     string                `json:"repo"`
 	Provider string                `json:"provider,omitempty"`
@@ -164,9 +167,22 @@ func surveyRepo(ctx context.Context, env *cloudEnv, open gitprov.Opener, repo st
 		row.Unread = unreadableProvider(row.Provider)
 		return row
 	}
-	findings, err := imagesurvey.Read(ctx, r, "")
+	findings, read, err := imagesurvey.Read(ctx, r, "")
 	if err != nil {
 		row.Unread = "the reads were stopped: " + oneLine(err.Error())
+		return row
+	}
+	if read == 0 {
+		// Not one path answered. ContentsReader answers the same error for a
+		// file that is not there and for a read that could not be made, so this
+		// is what a repository that is not there, a credential that reads
+		// nothing there and a repository whose files are none of the ones the
+		// survey reads all look like, and the row says that instead of the
+		// empty signal list a readable repository with none of those files
+		// reports. The opener's own failures are the cases above; this is the
+		// provider that answered nothing.
+		row.Unread = fmt.Sprintf("not one of the %d files the survey reads could be read from it, which is what a repository that is not there, a credential that reads nothing there and a repository whose files are none of the ones the survey reads all look like",
+			len(imagesurvey.Paths()))
 		return row
 	}
 	row.Signals = findings
