@@ -30,8 +30,9 @@ all.
 
 The whole request path of the service, and every reader of the facts the two tasks moved:
 
-- `internal/credsvc/server.go` — the routes (`servedRoute`), the caller's verification, the class's
-  own door (`reviewClassRun`), the destination a forward goes to;
+- `internal/credsvc/server.go` — the routes (`servedRoute`), the caller's verification, the service's
+  own door to the class (`ServeHTTP`'s `id.JobClass` switch, whose `ClassReview` arm is `pairReview`),
+  the destination a forward goes to;
 - `internal/credsvc/auth.go` — `AuthConfig` and the job sets, the review set's own rules;
 - `internal/credsvc/review.go` — `ReviewJobAccount`, `ReviewJobAccountsFor`, `ReviewOf`,
   `mintPermissions`, `reviewAccount` and `pairReview`;
@@ -71,9 +72,14 @@ false.**
    installation token — which is also why `mintPermissions` gives a **review** caller
    `github.ReviewTokenPermissions()`, the read-only set, while a repository caller keeps the run's
    write set (`github.RunTokenPermissions()`).
-2. **The class's door is the job the caller was admitted to, and not a credential.** `reviewClassRun`
-   is the conjunction of the run's mode and the job's own class, so a review job cannot be traded for
-   a coding one and no caller states its way in.
+2. **The class's door is the job the caller was admitted to, and not a credential.** On the service's
+   side it is `ServeHTTP`'s `id.JobClass` switch (`internal/credsvc/server.go:720`), whose
+   `ClassReview` arm resolves the caller through `pairReview` and `ReviewOf` and hands the mint that
+   pairing's own answer — so a review job cannot be traded for a coding one and no caller states its
+   way in. The runner's side of the same fact is `(*run).reviewClassRun`
+   (`internal/runner/gateway.go:187`, called from `internal/runner/routing.go:68`), the conjunction of
+   the run's mode and the job's own class. **Neither door is in the other's package**: the service
+   decides from the verified identity, the runner from the job it was launched as.
 3. **The pairing names exactly one credential and there is no fallback.** `reviewCandidates` returns
    the pairing's **one** credential: a tier-A entry whose name is the account, or — for the sentinel —
    the tier-B entry at `config.AnthropicSecret`, matched **by name and tier**, so a bundle that grew a

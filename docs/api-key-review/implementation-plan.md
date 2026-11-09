@@ -46,7 +46,7 @@ a slice the owner does not want is simply not started.
 | --- | --- | --- | --- |
 | **L1** | **AK1**, **AK2**, **AK3** | the in-job path named and pinned: tests (**F5**), docs (**F9**), a field of the record's own for the credential a stage ran on (**F18**, **D1415**) | no shared file, no service change, no ordering between them |
 | **L2** | **AK4**, **AK5** | the cloud Anthropic-key half: the class may be served by the project's key (**F12**, **F13**, **F14**), and the runner admits it, so the review-only variant — already deployed and admitted for a project with no Claude account (**F17**) — is served by it (**F11**). **This was code for a launch E7 refused when it was written; the flip of 2026-11-08 admits it** (**F10**, **U6**) | AK4 is `internal/credsvc` + `internal/config` + `internal/projectpolicy` + `internal/localcfg`, with one refusal's sentence in `internal/infra` (§2's declared exception), and AK5 is `internal/runner` + `internal/cli` + `internal/infra`; the two share that one file, AK4 first |
-| **L3** | **AK6a**, **AK6b**, **AK7** | the OpenRouter half: the provider key gets its own value on the account axis, so a profile can publish it and a policy admit it (**F15**, §6 item 9), the bundle holds the key and the service forwards to the provider's endpoint (**F15**, **F16**, **F24**, **D1418**), and the review run's model path reaches it (**F22**) | **No file is written by two of the three** — AK6a is `internal/config`, `internal/projectpolicy`, `internal/localcfg`, `internal/infra`, `internal/cli`, `internal/task`, `schemas/task.schema.json`, the installation module and the two `internal/credsvc` files §2 books for it (`review.go` and `review_test.go`, which CSR17's sketch named and AK6's six-file list did not); AK6b is the rest of `internal/credsvc`, `internal/creds` and `schemas/creds-bundle.schema.json`; AK7 is `internal/runner` and nothing else, because the provider's base URL never leaves the bundle (**D1418**) — and AK6a is first because AK6b's offer rule matches the axis value AK6a defines (§2 books all of them) |
+| **L3** | **AK6a**, **AK6b**, **AK7** | the OpenRouter half: the provider key gets its own value on the account axis, so a profile can publish it and a policy admit it (**F15**, §6 item 9), the bundle holds the key and the service forwards to the provider's endpoint (**F15**, **F16**, **F24**, **D1418**), and the review run's model path reaches it (**F22**) | **No file is written by two of the three** — AK6a is `internal/config`, `internal/projectpolicy`, `internal/localcfg`, `internal/infra`, `internal/cli`, `internal/task`, `schemas/task.schema.json`, `deploy/terraform/gcp/modules/project/variables.tf` (the `job.account` validation) and the **three** `internal/credsvc` rows §2 books for it (`review.go`, `review_test.go` — the two CSR17's sketch named and AK6's six-file list did not — and `sharedjobs_test.go`, the deployer-and-service agreement test); AK6b is the rest of `internal/credsvc`, `internal/creds` and `schemas/creds-bundle.schema.json`; AK7 is `internal/runner` and nothing else, because the provider's base URL never leaves the bundle (**D1418**) — and AK6a is first because AK6b's offer rule matches the axis value AK6a defines (§2 books all of them) |
 | **L4** | **AK8** | the live check, **Check 330** (§5) | owner-run, after everything else |
 
 **The critical path is `AK1 → AK4 → AK5 → AK6a → AK6b → AK7 → AK8`**, and it is the shortest chain the
@@ -529,8 +529,9 @@ and `internal/credsvc/review.go`, `internal/credsvc/review_test.go` and
 `internal/credsvc/sharedjobs_test.go`. **All twenty-four are rows §2 already books at L2** — the axis's
 readers AK4 and AK5 built, which is what its preamble means by `then AK6a` — and two of them,
 `internal/credsvc/review.go` and `internal/credsvc/review_test.go` (the pairing's own type and its
-offer rule), are the file §6.7's CSR17 booked and this plan's AK6 did not: that is the disagreement the
-reconciliation settled in CSR17's favour. **No new secret, no new resource, no new grant:** the value is
+offer rule), are the files §6.7's CSR17 booked and this plan's AK6 did not: that is the disagreement
+the reconciliation settled in CSR17's favour. The third `internal/credsvc` row,
+`sharedjobs_test.go`, was already booked and needs only the new value in its assertion. **No new secret, no new resource, no new grant:** the value is
 an axis value, and the credential it names is AK6b's bundle key.
 
 **Interfaces:** the account axis gains **a second value of its own** beside
@@ -565,9 +566,12 @@ matches the sentinel's — one credential, no fallback.
   extended to the new value (the file AK4 and AK5 both booked and this task re-enters).
 
 **Red step:** `TestProviderKeyGetsItsOwnValueOnTheAccountAxis` fails today: the value is not a name
-the tree accepts as an axis value (`ValidateClaudeAccounts`' rules), `ProjectJobs` has no branch for
-it and `modules/project`'s `ClaudeAccountNameRE` does not match it, so a policy that publishes it is
-refused by `fugaro update` before any of this exists.
+the tree accepts as an axis value — `config.ValidateClaudeAccounts`' rules and `config.ClaudeAccountNameRE`
+are Go, and the module's own `job.account` validation
+(`deploy/terraform/gcp/modules/project/variables.tf`) admits an empty account, the sentinel as the
+literal `anthropic-api-key--project` and a Claude account name, and no third spelling — `ProjectJobs`
+has no branch for it, and the installation's policy is refused by `fugaro update` before any of this
+exists.
 
 **Mutation:** let the provider key ride `config.AnthropicKeyAccount` — the loser's reading (§1) —
 and `TestReviewAccountsAreTheNamesProjectJobsDeploys` finds one axis value where the policy published

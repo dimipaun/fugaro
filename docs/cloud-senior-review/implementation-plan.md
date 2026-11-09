@@ -2673,7 +2673,7 @@ task rather than of its intent:
   **2026-11-09** (**D1418**), as **additive optional fields**, so an older bundle still decodes and no
   format version moves. A provider the bundle does not describe **fails closed**, and the whole
   reconciliation, with its conditions and its findings, is `docs/api-key-review`'s reconciliation and
-  [security-review.md](../../api-key-review/security-review.md).
+  [security-review.md](../api-key-review/security-review.md).
 **SEC flag:** yes — this is a model credential the service attaches to a caller's request. **Reviewer
 tier:** SEC — opus, with the independent review mandatory. **Commit:** `credsvc: the review class can serve
 a provider key`.
