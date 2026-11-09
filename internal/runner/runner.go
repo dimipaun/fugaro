@@ -1972,6 +1972,13 @@ const bakedRepoRoot = "baked"
 // Whichever checkout it opens is then held to the repository its task names
 // (checkBakedCheckoutOrigin); a run with neither clones (openCheckout).
 //
+// Adopting the per-slug directory is what makes it the run's work directory,
+// and everything bootstrap reads about the checkout from there on reads this
+// one: which remote the clone, the fetches and the push name (cloneURL's
+// phase-1 answer), and which remote's credential is scoped to the endpoint git
+// will open (credentialVars). bootstrap therefore calls this before it asks
+// where the run clones from.
+//
 // Only a per-repository job looks. A project job's image bakes no checkout and
 // the run refuses any it finds (checkProjectCheckoutOrigin), so there is nothing
 // for it to adopt. And the run must be able to name the repository its task
@@ -2009,6 +2016,12 @@ func (r *run) openBakedCheckout(ctx context.Context) error {
 			return err
 		}
 		r.d.WorkDir = dir
+		// A third remote the run's git commands can name, beside the job's own
+		// FUGARO_REMOTE and the origin of a checkout in the work directory:
+		// bootstrap registers both of those before anything can quote them, and
+		// this checkout's origin is only read here. What a remote can carry is
+		// what gets registered, never the path itself (addRemoteSecrets).
+		r.addRemoteSecrets(r.originURL(ctx))
 	}
 	return r.checkBakedCheckoutOrigin(ctx, kind, repo)
 }
@@ -2025,9 +2038,14 @@ func (r *run) openBakedCheckout(ctx context.Context) error {
 // there already; what this adds is the origin of the checkout the run actually
 // opens — including the per-slug one openBakedCheckout has just adopted, which
 // admission never saw — and the same check for a local run, which has no
-// admission at all. A remote naming no repository (a local path, the scp-like
-// spelling) passes exactly as it does there, which is what keeps a local
-// invocation's own checkout usable.
+// admission at all. A remote that names no repository at all — a local path,
+// an empty remote, an scp-like remote whose userinfo is everything in front of
+// its colon — passes exactly as it does there, which is what keeps a local
+// invocation's own checkout usable. An scp-like remote that does name a
+// repository (git@github.com:acme/app.git) is compared like any other, and one
+// naming another repository is refused here as it is there: the binding reads
+// the path a remote names whichever spelling it is written in
+// (remoteRepoPath), and the ssh spelling is no exception to it.
 //
 // It runs where checkProjectCheckoutOrigin does, before the provider is opened,
 // so a refusal means no git credential was ever requested and nothing was
@@ -2139,26 +2157,40 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return err
 	}
 
+	// The checkout this run works on, settled before where it clones from is
+	// asked, because D1900 makes every per-repository job run the project's
+	// catalog image, which is shared by the project's repositories and holds
+	// this run's own at its per-slug path and not at the work directory: a
+	// per-repository job's remote is the phase-1 answer, "the origin of a
+	// checkout already in the work directory, else the job's remote"
+	// (cloneURL), and a baked job's environment carries no FUGARO_REMOTE — its
+	// checkout is the only thing that names the repository. Asked the other way
+	// round, that answer is the empty string for exactly the run the adoption
+	// exists for: the credential URL is built from it below, so the bootstrap
+	// fetch, the agent's git and the final push would all run with no git
+	// credential at all (the review finding on this change).
+	//
+	// It is also the other half of checkProjectCheckoutOrigin's question, for
+	// the job that may hold a baked checkout: which repository the one in the
+	// image is a checkout of, and whether this run may work on it at all (a
+	// shared image bakes several). Here rather than in openCheckout, which is
+	// called once the provider below has minted this run's git credential, so a
+	// refusal is still a run that requested nothing.
+	if err := r.openBakedCheckout(ctx); err != nil {
+		return err
+	}
 	// Where this run clones from (design §4.1(1), plan task 3.3 step 3). On a
 	// project job the answer is computed from task.json's repository, the
 	// job's own provider and the policy's clone URL for it, so FUGARO_REMOTE
 	// is not read at all and a launcher who overrode it cannot point the run
 	// at another repository; on a per-repository job it is the phase-1 answer
-	// (a checkout's origin, else the job's remote), unchanged.
+	// (a checkout's origin, else the job's remote), unchanged — and that origin
+	// is the adopted checkout's when openBakedCheckout adopted one.
 	remote, err := r.cloneURL(ctx)
 	if err != nil {
 		return err
 	}
 	if err := r.checkProjectCheckoutOrigin(ctx, remote); err != nil {
-		return err
-	}
-	// The other half of the same question, for the job that may hold a baked
-	// checkout: which repository the one in the image is a checkout of, and
-	// whether this run may work on it at all (a shared image bakes several).
-	// Here rather than in openCheckout, which is called once the provider below
-	// has minted this run's git credential, so a refusal is still a run that
-	// requested nothing.
-	if err := r.openBakedCheckout(ctx); err != nil {
 		return err
 	}
 	// A proxied run keeps the remote it was given -- the launcher's Bitbucket

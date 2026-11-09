@@ -1,6 +1,13 @@
 package runner_test
 
 import (
+	"bufio"
+	"io"
+	"net"
+	"net/http"
+	"net/http/cgi"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,6 +46,18 @@ func otherRepositoryCheckout(t *testing.T, h *harness, dir string) {
 	}
 	testutil.Git(t, filepath.Dir(dir), "clone", "--quiet", h.remote, dir)
 	testutil.Git(t, dir, "remote", "set-url", "origin", otherRemote)
+}
+
+// originlessCheckout makes dir a checkout git opens and no remote names: git
+// itself resolves its repository to a .git with no origin, which is what a
+// directory something left behind looks like, and what gitops.Open opens (it
+// stats .git) while `git remote get-url origin` fails on it.
+func originlessCheckout(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, dir, "init", "--quiet")
 }
 
 // TestBakedCheckoutOriginMismatchRefuses (IS8): the job is for acme/app, and a
@@ -163,5 +182,214 @@ func TestBakedMissingFallsBackToClone(t *testing.T) {
 	}
 	if got := testutil.Git(t, other, "branch", "--list", "fugaro/"+runID); got != "" {
 		t.Errorf("the other repository's baked checkout holds the run's branch: %q", got)
+	}
+}
+
+// TestBakedCheckoutPerSlugPathIsCredentialed (IS8, review): a baked job's
+// environment carries no FUGARO_REMOTE — its checkout is the only thing that
+// names the repository — so the remote this run clones from, fetches and pushes
+// and the endpoint its git credential is scoped to are the adopted checkout's
+// own origin (cloneURL's phase-1 answer, "the origin of a checkout already in
+// the work directory, else the job's remote"). Read before the adoption, that
+// answer is the empty string, which is what a run whose work directory holds no
+// checkout and whose environment names no remote has: credentialVars then
+// installs no credential helper at all (gitops.CredentialVars refuses the empty
+// URL), and the fetch of origin, the agent's git and the final push all fail
+// with git's own "could not read Username".
+//
+// The origin is written the way the launcher writes one for this repository
+// (internal/infra's repoURL) and not as the fixture's local path, so it is a
+// remote whose credential git really needs and really sends: the token has to
+// arrive at the 401 the repository's server answers its unauthenticated
+// requests with. Nothing here reaches github.com — git's one way out is the
+// loopback proxy its own http.<url>.proxy names, which tunnels the connection
+// to a git server this test serves over TLS on 127.0.0.1, and the server lets a
+// request through only for the provider's username and token (tlsGitServer).
+func TestBakedCheckoutPerSlugPathIsCredentialed(t *testing.T) {
+	const remote = "https://github.com/acme/app.git"
+	h := newHarness(t, "", nil)
+	h.provider.Auth = staticAuth(gitToken)
+	baked := bakedDir(t, h, repoSlug)
+	testutil.Git(t, filepath.Dir(baked), "clone", "--quiet", h.remote, baked)
+	testutil.Git(t, baked, "remote", "set-url", "origin", remote)
+	tlsGitServer(t, h, remote)
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if got := testutil.Git(t, baked, "rev-parse", "--abbrev-ref", "HEAD"); got != "fugaro/"+runID {
+		t.Fatalf("the baked checkout is on %q, want the run's own branch", got)
+	}
+	if got := testutil.Git(t, h.remote, "rev-parse", "refs/heads/fugaro/"+runID); got != rec.HeadSHA {
+		t.Fatalf("remote branch %s != record head %s", got, rec.HeadSHA)
+	}
+	env := h.agent.calls[0].Env
+	// Scoped to the endpoint the credential is sent to — the adopted origin's
+	// scheme://host, which is what git will open — and carrying the provider's
+	// token, not just the provider's own variables (staticAuth's GH_TOKEN).
+	var scoped bool
+	for _, pair := range configPairs(env) {
+		if pair[0] == "credential.https://github.com.helper" {
+			scoped = true
+		}
+	}
+	if !scoped {
+		t.Errorf("the agent's environment configures no git credential helper for the image's baked checkout (key credential.https://github.com.helper): %v", configPairs(env))
+	}
+	for k, want := range map[string]string{
+		"FUGARO_GIT_TOKEN":    gitToken,
+		"FUGARO_GIT_USERNAME": "x-token-auth",
+	} {
+		if got := envValue(env, k); got != want {
+			t.Errorf("agent %s = %q, want %q: the credential is scoped to the checkout the run adopted", k, got, want)
+		}
+	}
+}
+
+// tlsGitServer serves the harness's own bare repository over TLS at the path
+// origin names, behind the provider's username and token, and points git at it
+// for that URL's host: a request carrying the token is passed to
+// `git http-backend`, anything else is answered with the 401 that makes git ask
+// its credential helper. git reaches the server through connectProxy, so the URL
+// it opens stays the launcher's, and the credential it is asked for is the one
+// this run scoped to that URL.
+//
+// It is testutil.NewHTTPRemote's server over TLS and with the one difference
+// this fixture needs: the bare repository is the harness's own (`remote.git`)
+// while origin names it as the provider does (acme/app.git), so a symlink lays
+// it out under the path the request asks for. The certificate is httptest's,
+// which nothing here knows, so sslVerify=false goes into the same global config
+// as the proxy — the two are one detour, and git's transport needs both.
+func tlsGitServer(t *testing.T, h *harness, origin string) {
+	t.Helper()
+	testutil.Git(t, h.remote, "config", "http.receivepack", "true")
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "acme"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(h.remote, filepath.Join(root, "acme", "app.git")); err != nil {
+		t.Fatal(err)
+	}
+	backend := &cgi.Handler{
+		Path: filepath.Join(testutil.Git(t, h.remote, "--exec-path"), "git-http-backend"),
+		Env:  []string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1"},
+	}
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		user, pass, ok := req.BasicAuth()
+		if !ok || user != "x-token-auth" || pass != gitToken {
+			w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
+			http.Error(w, "authentication required", http.StatusUnauthorized)
+			return
+		}
+		backend.ServeHTTP(w, req)
+	}))
+	proxy := connectProxy(t, srv.Listener.Addr().String())
+	u, err := url.Parse(origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitcfg := filepath.Join(t.TempDir(), "gitconfig")
+	cfg := "[http \"" + u.Scheme + "://" + u.Host + "/\"]\n\tproxy = http://" + proxy + "\n\tsslVerify = false\n"
+	if err := os.WriteFile(gitcfg, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", gitcfg)
+}
+
+// connectProxy is a proxy that serves only CONNECT: it tunnels every connection
+// to target, whichever host the CONNECT asked for, which is what keeps this
+// test's git on 127.0.0.1 while the URL it opens is the launcher's own.
+func connectProxy(t *testing.T, target string) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				// The CONNECT head, read to its blank line off br and not off
+				// c: whatever the reader buffered past it is the first of the
+				// tunnel's bytes (the TLS handshake), and it is copied from
+				// there and not reread off the connection.
+				br := bufio.NewReader(c)
+				for {
+					line, err := br.ReadString('\n')
+					if err != nil {
+						return
+					}
+					if line == "\r\n" || line == "\n" {
+						break
+					}
+				}
+				up, err := net.Dial("tcp", target)
+				if err != nil {
+					return
+				}
+				defer up.Close()
+				if _, err := c.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n")); err != nil {
+					return
+				}
+				go io.Copy(up, br)
+				io.Copy(c, up)
+			}()
+		}
+	}()
+	return ln.Addr().String()
+}
+
+// TestBakedCheckoutWithoutAReadableOriginRefuses (IS8): the checkout the image
+// holds is one no remote ties to any repository — a .git git opens whose
+// `git remote get-url origin` fails. The guard fails closed: a checkout nothing
+// names is refused rather than worked on, which is the same hole as another
+// repository's checkout and the one the other arm of the guard (an origin that
+// reads) would otherwise leave open.
+//
+// The two rows are the two places such a checkout can be, the mismatch test's.
+func TestBakedCheckoutWithoutAReadableOriginRefuses(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		plant func(t *testing.T, h *harness)
+	}{
+		{"the work directory", func(t *testing.T, h *harness) {
+			originlessCheckout(t, h.deps.WorkDir)
+		}},
+		{"the directory the run would adopt", func(t *testing.T, h *harness) {
+			originlessCheckout(t, bakedDir(t, h, repoSlug))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, "", nil)
+			auths := 0
+			h.provider.Auth = func(time.Duration) gitprov.GitAuth {
+				auths++
+				return gitprov.GitAuth{}
+			}
+			tc.plant(t, h)
+			rec, err := h.run(t, implement("feature"), review("ship", 0))
+			if err == nil || rec == nil || rec.Status != runstore.StatusInfraError {
+				t.Fatalf("rec = %+v, err = %v: the run did not refuse a checkout with no readable origin", rec, err)
+			}
+			for _, want := range []string{"carries no origin this run can read", "acme/app"} {
+				if !strings.Contains(rec.Reason, want) {
+					t.Errorf("reason %q lacks %q", rec.Reason, want)
+				}
+			}
+			if strings.Contains(rec.Reason, "\n") {
+				t.Errorf("the reason is not one line: %q", rec.Reason)
+			}
+			if auths != 0 {
+				t.Errorf("%d git credential requests were made before the refusal", auths)
+			}
+			if len(h.agent.calls) != 0 {
+				t.Errorf("%d stages ran after the refusal", len(h.agent.calls))
+			}
+		})
 	}
 }
