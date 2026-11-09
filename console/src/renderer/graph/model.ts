@@ -777,23 +777,27 @@ function scopeText(value: string, key: string, field: string): Sanitized {
  * drawn as the reading it is, grouped and listed, and it asks the layout worker
  * nothing.
  *
- * **A source that answered with nothing keeps the last figures.** The feed is a
- * stream of whole snapshots, and the commonest thing a later one says about a
- * source is that it is not answering now -- a child that died, a stream that was
+ * **A source that is not up keeps the last figures.** The feed is a stream of
+ * whole snapshots, and the commonest thing a later one says about a source is
+ * that it is not answering now -- a child that died, a stream that was
  * withdrawn, a scope that has gone unreadable. Blanking those rows would make the
  * panel agree with a source that says nothing, which is precisely the reading H3
  * exists to refuse: a reader must see *the scope is down* beside *what it last
  * said*. So the previous model is handed in, and the nodes of every source this
- * document calls not-up **and lists no node for** are drawn again, marked `kept`.
+ * document does not call up are drawn again, marked `kept`.
  *
- * The condition is the pair and not the state alone. A `stale` source **does**
- * answer with its stored figures -- they are the document's own, and older than
- * they look is what its `as_of` is for -- so keeping the previous ones there
- * would replace newer figures with older ones and call the result the last read.
- * What a document that lists a node for a source says is therefore never
- * overridden, and the whole rule is: a source's figures are dropped only when
- * that document says it has none. A source this document does not mention at all
- * is not a source any more, and its figures go with it.
+ * **Only `up` means the document is the source's whole answer.** A source that
+ * is up has answered completely, so a node it no longer lists is a node it no
+ * longer has, and its row goes -- which is what makes a retired task disappear
+ * rather than live on in the panel for ever. Any other state is a source whose
+ * answer is partial or absent: a `down` or `unreadable` source reports nothing at
+ * all, and a `stale` one reports the sweep it still holds, which is older than
+ * the read the console made of it a second ago. So for those the last figures
+ * stay, and a key this document **does** carry is not drawn twice -- what a
+ * document says about a key is that key's own statement (`listed` below).
+ *
+ * A source this document does not mention at all is not a source any more, and
+ * its figures go with it.
  */
 export function buildScopeModel(view: GraphView, previous: ScopeModel | null = null): ScopeModel {
   const sources = view.sources.map((source, at) => ({
@@ -852,32 +856,31 @@ export function buildScopeModel(view: GraphView, previous: ScopeModel | null = n
 }
 
 /**
- * keptFigures is the previous read's nodes for every source this document calls
- * not-up and drew nothing for, in the order the previous read drew them, marked
- * `kept`.
+ * keptFigures is the previous read's nodes for every source this document does
+ * not call up, in the order the previous read drew them, marked `kept`.
  *
- * `listed` is the keys this document answered with, and it is what keeps a node a
- * document still lists from being drawn twice: a document that says a source is
- * down *and* carries its node is contradicting itself, and the document's own
- * node wins because it is the newer statement.
+ * `listed` is every key this document answered with, and it is what keeps a node
+ * a document still carries from being drawn twice: a source that is not up may
+ * still answer with figures of its own -- a `stale` one does -- and the
+ * document's row for that key is the statement to draw, kept ones being the ones
+ * the document says nothing about. Without it the same key would be drawn twice,
+ * once as the document's and once as the last read's.
  *
  * A figure the read before this one already kept is kept again -- the source is
- * still silent, and the last figures are still the last figures -- and the walk
- * carries it forward unchanged rather than letting a second silent snapshot drop
- * it.
+ * still not up, so the last figures are still the last figures -- and the walk
+ * carries it forward rather than letting a second quiet snapshot drop it.
  */
 function keptFigures(view: GraphView, previous: ScopeModel | null, listed: ReadonlySet<string>): readonly ScopeNode[] {
   if (previous === null) return []
-  const silent = new Set<string>()
-  const answered = new Set(view.nodes.map((node) => node.source))
+  const quiet = new Set<string>()
   for (const source of view.sources) {
-    if (source.state !== SOURCE_UP && !answered.has(source.source)) silent.add(source.source)
+    if (source.state !== SOURCE_UP) quiet.add(source.source)
   }
-  if (silent.size === 0) return []
+  if (quiet.size === 0) return []
   const nodes: ScopeNode[] = []
   for (const release of previous.releases) {
     for (const node of release.nodes) {
-      if (silent.has(node.origin) && !listed.has(node.key)) nodes.push({ ...node, kept: own(GRAPH_SCOPE_KEPT) })
+      if (quiet.has(node.origin) && !listed.has(node.key)) nodes.push({ ...node, kept: own(GRAPH_SCOPE_KEPT) })
     }
   }
   return nodes

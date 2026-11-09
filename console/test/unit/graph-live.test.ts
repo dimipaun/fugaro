@@ -24,6 +24,10 @@
 //     never the picture: the read that answers next repaints the same section
 //     through the same door.
 //
+// The rule that says which figures are kept has two halves, and the last two
+// cases are its boundary: a source that is **not** up keeps only the keys its
+// document does not list, and a source that **is** up keeps nothing at all.
+//
 // Everything runs against `test/support/fakeDom.ts` and the answering layout
 // worker, exactly as `graph.test.ts` does: the screen is handed decoded views and
 // the documents here are written as the wire has them, through the real decoder.
@@ -68,8 +72,9 @@ function one(
 }
 
 /** wire is a `graph --json` document as the wire has it: one stream, edges the
- * source has none of, and the warnings the read makes. `stream_id` is non-empty
- * for every document here, because these are the feed's. */
+ * source has none of, and no warnings of its own. `stream` defaults to the
+ * feed's own stream id; the two **one-shot reads** here pass `''`, which with
+ * `seq: 0` is the pair of values §6.22 uses to say "this is not a stream". */
 function wire(
   seq: number,
   sources: readonly Readonly<Record<string, unknown>>[],
@@ -113,17 +118,20 @@ function stale(source: string, asOf: string): Readonly<Record<string, unknown>> 
 
 const PULL = 'coordinator:acme/widgets#42'
 const TASK = 'orchestrator:o1:t-042'
+const TASK_TWO = 'orchestrator:o1:t-043'
 const RUN = 'coordinator:acme/widgets#20261109-090000-ab12'
 
 /** PAINTED is the one-shot read's document: the coordinator alone, with the pull
  * request this installation's whole picture is built around. */
 const PAINTED = wire(0, [up('coordinator', '2026-11-09T11:55:00Z')], [one(PULL, 'coordinator', 'pull_request', 'Tidy the widget loader', 'open', 'v1.4.0')], '')
 
-/** FIRST is the feed's first snapshot: the same pull request, and the
- * orchestrator beside it with a task of its own. */
+/** FIRST is the feed's first snapshot: the pull request, and the orchestrator
+ * beside it with **two** tasks of its own -- a second one is what tells a source
+ * that reports a change to its figures from one that reports nothing at all. */
 const FIRST = wire(1, [up('coordinator', '2026-11-09T11:59:00Z'), up('orchestrator:o1', '2026-11-09T11:58:00Z')], [
   one(PULL, 'coordinator', 'pull_request', 'Tidy the widget loader', 'open', 'v1.4.0'),
   one(TASK, 'orchestrator:o1', 'task', 'wire the loader', 'running', 'v1.4.0'),
+  one(TASK_TWO, 'orchestrator:o1', 'task', 'cut the loader', 'waiting', 'v1.4.0'),
 ])
 
 /** NEXT is the same two sources one change later: both states moved, and every
@@ -131,6 +139,7 @@ const FIRST = wire(1, [up('coordinator', '2026-11-09T11:59:00Z'), up('orchestrat
 const NEXT = wire(2, [up('coordinator', '2026-11-09T12:00:00Z'), up('orchestrator:o1', '2026-11-09T12:00:00Z')], [
   one(PULL, 'coordinator', 'pull_request', 'Tidy the widget loader, for real', 'merged', 'v1.4.0'),
   one(TASK, 'orchestrator:o1', 'task', 'wire the loader', 'succeeded', 'v1.4.0'),
+  one(TASK_TWO, 'orchestrator:o1', 'task', 'cut the loader', 'waiting', 'v1.4.0'),
 ])
 
 /** QUIET is the snapshot that says the orchestrator stopped answering: it is a
@@ -139,9 +148,17 @@ const QUIET = wire(3, [up('coordinator', '2026-11-09T12:01:00Z'), down('orchestr
   one(PULL, 'coordinator', 'pull_request', 'Tidy the widget loader', 'open', 'v1.4.0'),
 ])
 
-/** STALE is the other half of the same rule: this source **did** answer, with
- * figures older than they look, so its node is the document's own. */
-const STALE = wire(4, [up('coordinator', '2026-11-09T12:02:00Z'), stale('orchestrator:o1', '2026-11-09T11:00:00Z')], [
+/** DONE is the other reading of a source that has no node to draw: this one is
+ * **up**, so it has answered and simply holds nothing -- every task it had is
+ * finished and gone. The document says the node is not there any more. */
+const DONE = wire(4, [up('coordinator', '2026-11-09T12:02:00Z'), up('orchestrator:o1', '2026-11-09T12:02:00Z')], [
+  one(PULL, 'coordinator', 'pull_request', 'Tidy the widget loader', 'open', 'v1.4.0'),
+])
+
+/** STALE is the third reading: this source is not up either, and it **does**
+ * carry figures -- the sweep it still holds, older than they look -- so the row
+ * it lists is its own and the row it does not list is the last read's. */
+const STALE = wire(5, [up('coordinator', '2026-11-09T12:03:00Z'), stale('orchestrator:o1', '2026-11-09T11:00:00Z')], [
   one(PULL, 'coordinator', 'pull_request', 'Tidy the widget loader', 'open', 'v1.4.0'),
   one(TASK, 'orchestrator:o1', 'task', 'wire the loader, from the cache', 'running', 'v1.4.0'),
 ])
@@ -201,7 +218,7 @@ describe('the Graph and the feed', () => {
     const { screen, worker } = liveScreen()
     screen.loadScope(FIRST)
     const first = drawing(screen)
-    expect(keys(first)).toEqual([PULL, TASK])
+    expect(keys(first)).toEqual([PULL, TASK, TASK_TWO])
     expect(wordsOf(rowOf(first, TASK))).toEqual(['running'])
 
     screen.loadScope(NEXT)
@@ -212,10 +229,11 @@ describe('the Graph and the feed', () => {
     expect(next.tagName).toBe('SECTION')
     expect((next.getAttribute('class') ?? '').split(/\s+/)).toContain('graph')
     expect(screen.current.scope).toBe(GRAPH_SCOPE_ALL)
-    expect(keys(next)).toEqual([PULL, TASK])
+    expect(keys(next)).toEqual([PULL, TASK, TASK_TWO])
     expect(classedIn(next, 'graph-scope-title').map((each) => each.textContent)).toEqual([
       'Tidy the widget loader, for real',
       'wire the loader',
+      'cut the loader',
     ])
     expect(wordsOf(rowOf(next, PULL))).toEqual(['merged'])
     expect(wordsOf(rowOf(next, TASK))).toEqual(['succeeded'])
@@ -243,18 +261,26 @@ describe('the Graph and the feed', () => {
     ])
     expect(classedIn(quiet, 'graph-source-asof')).toHaveLength(0)
 
-    // **The last figures stay, and they say they are the last.** Blanking this
-    // row would be the panel agreeing with a source that said nothing, which is
+    // **The last figures stay, and they say they are the last.** Blanking these
+    // rows would be the panel agreeing with a source that said nothing, which is
     // the reading H3 refuses; a reader must see the state beside what it last
-    // said, in words and not in a tone alone (H10).
-    expect(keys(drawn)).toEqual([PULL, TASK])
-    const kept = rowOf(drawn, TASK)
-    expect(kept.getAttribute('data-kept')).toBe('true')
-    expect(classedIn(kept, 'graph-scope-kept').map((each) => each.textContent)).toEqual([GRAPH_SCOPE_KEPT])
-    expect(classedIn(kept, 'graph-scope-title')[0]?.textContent).toBe('wire the loader')
-    expect(wordsOf(kept)).toEqual(['running'])
-    // The kept figure keeps its release too: it is drawn in the group the read
-    // that carried it put it in, and not in a group of its own.
+    // said, in words and not in a tone alone (H10). "Dimmed" is the console's own
+    // word and the `data-kept` hook here -- no theme rule selects either yet, and
+    // giving them a tone means a rule in `screens.css` plus its §2.11 inventory
+    // line in `docs/design/console-styling.md`, two files outside this task's
+    // budget. The words carry the fact either way, which is the channel H10 asks
+    // for; the rule is a follow-up's.
+    expect(keys(drawn)).toEqual([PULL, TASK, TASK_TWO])
+    for (const key of [TASK, TASK_TWO]) {
+      const kept = rowOf(drawn, key)
+      expect(kept.getAttribute('data-kept')).toBe('true')
+      expect(classedIn(kept, 'graph-scope-kept').map((each) => each.textContent)).toEqual([GRAPH_SCOPE_KEPT])
+    }
+    expect(classedIn(rowOf(drawn, TASK), 'graph-scope-title')[0]?.textContent).toBe('wire the loader')
+    expect(wordsOf(rowOf(drawn, TASK))).toEqual(['running'])
+    expect(wordsOf(rowOf(drawn, TASK_TWO))).toEqual(['waiting'])
+    // The kept figures keep their release too: they are drawn in the group the
+    // read that carried them put them in, and not in a group of their own.
     expect(classedIn(drawn, 'graph-scope-release').map((each) => each.getAttribute('data-release'))).toEqual(['v1.4.0'])
     // The coordinator answered with its own node, so nothing of its own is kept.
     expect(rowOf(drawn, PULL).getAttribute('data-kept')).toBeNull()
@@ -263,15 +289,17 @@ describe('the Graph and the feed', () => {
     // keeps are kept until the source answers, and never dropped by the next
     // silent snapshot.
     screen.loadScope(QUIET)
-    expect(keys(drawing(screen))).toEqual([PULL, TASK])
+    expect(keys(drawing(screen))).toEqual([PULL, TASK, TASK_TWO])
     expect(rowOf(drawing(screen), TASK).getAttribute('data-kept')).toBe('true')
+    expect(rowOf(drawing(screen), TASK_TWO).getAttribute('data-kept')).toBe('true')
   })
 
-  it('a stale source draws the document’s own figures, never the kept ones', () => {
-    // The other reading of the same state, and the reason the rule is "answered
-    // with nothing" rather than "not up": a stale source **does** answer, with
-    // stored figures its own `as_of` dates. Keeping the previous ones there would
-    // replace newer figures with older ones and draw the result as the last read.
+  it('a source that is not up keeps only the figures it does not list', () => {
+    // A stale source **does** answer -- with the figures it still holds, dated by
+    // its own `as_of`. Keeping the previous ones beside them would draw the older
+    // reading as the newer one, so "kept" is a statement per **key** and not per
+    // source: this document's own row for TASK is drawn as its own, and the row
+    // it does not list at all is the one the last read keeps.
     const { screen } = liveScreen()
     screen.loadScope(FIRST)
     screen.loadScope(STALE)
@@ -284,10 +312,42 @@ describe('the Graph and the feed', () => {
     expect(classedIn(row, 'graph-source-asof').map((each) => each.textContent)).toEqual([
       `${STAMP_LEAD} ${stampOf(Date.parse('2026-11-09T11:00:00Z'))}`,
     ])
+
+    // One row for TASK, and it is the document's own: replacing it with the kept
+    // one, or drawing both, would each show the reader a figure this document
+    // corrected.
+    expect(classedIn(drawn, 'graph-scope-node').filter((each) => each.getAttribute('data-key') === TASK)).toHaveLength(1)
     const task = rowOf(drawn, TASK)
     expect(task.getAttribute('data-kept')).toBeNull()
     expect(classedIn(task, 'graph-scope-kept')).toHaveLength(0)
     expect(classedIn(task, 'graph-scope-title')[0]?.textContent).toBe('wire the loader, from the cache')
+    expect(wordsOf(task)).toEqual(['running'])
+
+    // And the row it lists no figure for is kept, with the word and the hook of
+    // one: a source that answered with something is still a source that answered
+    // with nothing about this key.
+    expect(keys(drawn)).toEqual([PULL, TASK, TASK_TWO])
+    const kept = rowOf(drawn, TASK_TWO)
+    expect(kept.getAttribute('data-kept')).toBe('true')
+    expect(classedIn(kept, 'graph-scope-kept').map((each) => each.textContent)).toEqual([GRAPH_SCOPE_KEPT])
+    expect(classedIn(kept, 'graph-scope-title')[0]?.textContent).toBe('cut the loader')
+    expect(wordsOf(kept)).toEqual(['waiting'])
+  })
+
+  it('an up source that lists no node keeps nothing: it answered', () => {
+    // The other half of the rule, and the reason it is not "a source with no
+    // figures here". This source is **up**, so the document is its whole answer
+    // (D1360) and that answer holds no task: the tasks are finished and gone.
+    // Keeping them would draw figures the source has just denied.
+    const { screen } = liveScreen()
+    screen.loadScope(FIRST)
+    screen.loadScope(DONE)
+    const drawn = drawing(screen)
+
+    expect(sourceOf(drawn, 'orchestrator:o1').getAttribute('data-state')).toBe('up')
+    expect(keys(drawn)).toEqual([PULL])
+    expect(classedIn(drawn, 'graph-scope-kept')).toHaveLength(0)
+    expect(classedIn(drawn, 'graph-scope-node').filter((each) => each.getAttribute('data-kept') !== null)).toHaveLength(0)
   })
 
   it('the feed falls back to the read when the child refuses', () => {
@@ -308,7 +368,7 @@ describe('the Graph and the feed', () => {
     // The feed's snapshot repaints it.
     screen.loadScope(FIRST)
     const fed = drawing(screen)
-    expect(keys(fed)).toEqual([PULL, TASK])
+    expect(keys(fed)).toEqual([PULL, TASK, TASK_TWO])
     expect(wordsOf(rowOf(fed, TASK))).toEqual(['running'])
 
     // **Then the child refuses.** At this level that is the entry having no
@@ -317,7 +377,7 @@ describe('the Graph and the feed', () => {
     // read is the entry's own (`readScope`, `maybeRefreshGraph`). So the screen
     // is asked for the drawing it already holds, and it is the same section with
     // the same rows -- the console loses the stream and never the picture.
-    expect(keys(drawing(screen))).toEqual([PULL, TASK])
+    expect(keys(drawing(screen))).toEqual([PULL, TASK, TASK_TWO])
     expect(wordsOf(rowOf(drawing(screen), TASK))).toEqual(['running'])
 
     // And the read that answers next repaints it, through the same door: the run
