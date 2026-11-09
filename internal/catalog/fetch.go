@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -200,15 +201,21 @@ func refuseCredentialNames(e config.Entry, line string) error {
 // harmless ARG NPM_); a comment or a blank line inside a continuation, dropped
 // with it (ARG NPM_\ over a comment over TOKEN is the one arg NPMTOKEN); and a
 // comment's own trailing backslash, which continues nothing, because the parser
-// skips a comment whole. All of it was checked against BuildKit's own parser.
+// skips a comment whole. The parser's own idea of whitespace is the one used
+// here, unicode and not "space and tab": a name after a vertical tab is a name
+// to a build. All of it was checked against BuildKit's own parser.
 func dockerfileLines(data []byte) []string {
-	esc := dockerfileEscape(data)
+	// A byte-order mark is stripped from the first line and nowhere else, as
+	// the parser strips it: left in place it becomes part of the first
+	// instruction's name, and an ARG under one is an ARG no longer.
+	text := strings.TrimPrefix(string(data), "\ufeff")
+	esc := dockerfileEscape(text)
 	var lines []string
 	var cont strings.Builder
 	joining := false
-	for _, physical := range strings.Split(string(data), "\n") {
+	for _, physical := range strings.Split(text, "\n") {
 		line := strings.TrimSuffix(physical, "\r")
-		comment := strings.HasPrefix(strings.TrimLeft(line, " \t"), "#")
+		comment := strings.HasPrefix(strings.TrimLeftFunc(line, unicode.IsSpace), "#")
 		if comment || joining {
 			if joining && strings.TrimSpace(line) == "" {
 				continue
@@ -217,13 +224,13 @@ func dockerfileLines(data []byte) []string {
 				// A comment is dropped whole and continues nothing, so a
 				// backslash at the end of one is text and not a join.
 				if !joining {
-					lines = append(lines, strings.TrimLeft(line, " \t"))
+					lines = append(lines, strings.TrimLeftFunc(line, unicode.IsSpace))
 				}
 				continue
 			}
 		}
 		if !joining {
-			line = strings.TrimLeft(line, " \t")
+			line = strings.TrimLeftFunc(line, unicode.IsSpace)
 		}
 		body, more := trimContinuation(line, esc)
 		cont.WriteString(body)
@@ -259,8 +266,8 @@ func trimContinuation(line string, esc byte) (string, bool) {
 // set `# escape=` to the backtick. Reading a definition with the wrong one
 // joins lines a build keeps apart and splits lines it joins, and the name a
 // build sets is the one this guard has to read.
-func dockerfileEscape(data []byte) byte {
-	for _, physical := range strings.Split(string(data), "\n") {
+func dockerfileEscape(data string) byte {
+	for _, physical := range strings.Split(data, "\n") {
 		line := strings.TrimSpace(strings.TrimSuffix(physical, "\r"))
 		if line == "" {
 			continue
@@ -276,12 +283,14 @@ func dockerfileEscape(data []byte) byte {
 }
 
 // escapeDirective reads one comment's `escape=` directive: the character it
-// names and whether the comment is that directive at all. The two characters a
-// definition may name are the parser's own, and a comment that names anything
-// else is not a directive this guard follows.
+// names and whether the comment is that directive at all. The key is the
+// parser's own and case-insensitive, and the two characters a definition may
+// name are its own too: a comment that names anything else is not a directive
+// this guard follows, and one that names the backtick must be followed or a
+// name split with one goes unseen.
 func escapeDirective(comment string) (byte, bool) {
 	key, value, ok := strings.Cut(comment, "=")
-	if !ok || strings.TrimSpace(key) != "escape" {
+	if !ok || !strings.EqualFold(strings.TrimSpace(key), "escape") {
 		return 0, false
 	}
 	value = strings.TrimSpace(value)
@@ -290,6 +299,12 @@ func escapeDirective(comment string) (byte, bool) {
 	}
 	return value[0], true
 }
+
+// dockerSpace is the whitespace the parser separates an instruction from its
+// arguments with, which is not every byte a Go reader would call a space: a
+// vertical tab or a form feed separates them to a build, and an instruction
+// read with either in it is an instruction the guard does not see.
+const dockerSpace = " \t\v\f\r"
 
 // splitInstruction cuts one logical line into its instruction and the rest:
 // the instruction upper-cased, because Dockerfile instructions are
@@ -300,11 +315,11 @@ func splitInstruction(line string) (string, string) {
 	if line == "" || strings.HasPrefix(line, "#") {
 		return "", ""
 	}
-	i := strings.IndexAny(line, " \t")
+	i := strings.IndexAny(line, dockerSpace)
 	if i < 0 {
 		return strings.ToUpper(line), ""
 	}
-	return strings.ToUpper(line[:i]), strings.TrimLeft(line[i:], " \t")
+	return strings.ToUpper(line[:i]), strings.TrimLeft(line[i:], dockerSpace)
 }
 
 // instructionNames returns the variable names one ARG or ENV line sets.
@@ -316,7 +331,7 @@ func instructionNames(inst, rest string) []string {
 		if rest == "" {
 			return nil
 		}
-		if i := strings.IndexAny(rest, " \t="); i >= 0 {
+		if i := strings.IndexAny(rest, dockerSpace+"="); i >= 0 {
 			rest = rest[:i]
 		}
 		return []string{rest}
@@ -328,11 +343,11 @@ func instructionNames(inst, rest string) []string {
 // key=value pairs on the one line, the legacy one a single name with the value
 // after it. Both forms are still written, and a Dockerfile mixes them.
 func envNames(rest string) []string {
-	rest = strings.TrimLeft(rest, " \t")
+	rest = strings.TrimLeft(rest, dockerSpace)
 	if rest == "" {
 		return nil
 	}
-	if eq, sp := strings.IndexByte(rest, '='), strings.IndexAny(rest, " \t"); eq < 0 || (sp >= 0 && sp < eq) {
+	if eq, sp := strings.IndexByte(rest, '='), strings.IndexAny(rest, dockerSpace); eq < 0 || (sp >= 0 && sp < eq) {
 		// Legacy: ENV name value..., where the name ends at the whitespace.
 		if sp < 0 {
 			return []string{rest}
@@ -346,7 +361,7 @@ func envNames(rest string) []string {
 			break
 		}
 		names = append(names, rest[:eq])
-		rest = strings.TrimLeft(envValue(rest[eq+1:]), " \t")
+		rest = strings.TrimLeft(envValue(rest[eq+1:]), dockerSpace)
 	}
 	return names
 }
@@ -363,7 +378,7 @@ func envValue(s string) string {
 		}
 		return ""
 	}
-	if i := strings.IndexAny(s, " \t"); i >= 0 {
+	if i := strings.IndexAny(s, dockerSpace); i >= 0 {
 		return s[i:]
 	}
 	return ""

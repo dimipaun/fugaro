@@ -238,9 +238,17 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 		// A lone continuation character continues the line it is alone on the
 		// same way.
 		"FROM example.invalid/base\nARG NPM_\\\n\\\nTOKEN\n",
-		// The parser's `# escape=` directive is honoured: a backtick continues
-		// a line, and a backslash at the end of one is text.
+		// The parser's `# escape=` directive is honoured, and its key is the
+		// parser's own: case-insensitive, so an upper-case one sets the escape
+		// character too.
 		"# escape=`\nFROM example.invalid/base\nARG NPM_TOKEN`\n=x\n",
+		"# ESCAPE=`\nFROM example.invalid/base\nARG NPM_`\nTOKEN=1\n",
+		// The separator between an instruction and its name is the parser's
+		// own whitespace and not only a space or a tab.
+		"FROM example.invalid/base\nENV\vNPM_TOKEN=1\n",
+		// A byte-order mark is stripped from the first line, where it would
+		// otherwise be part of the instruction's name.
+		"\ufeffARG NPM_TOKEN=1\nFROM example.invalid/base\n",
 		// A comment ends at its own line whatever it ends with, so a backslash
 		// in one continues nothing: the ARG below is read on its own.
 		"FROM example.invalid/base\n# the trailing backslash is text \\\nARG NPM_TOKEN\n",
