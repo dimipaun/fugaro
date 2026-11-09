@@ -2277,6 +2277,7 @@ Subcommands:
 - `fugaro image build` -- Build a catalog entry's image with Cloud Build, or the workflow's derived image; --local builds the derived one with local Docker
 - `fugaro image check` -- Decide whether each workflow's image needs a rebuild (the daily check; locally it only prints the decision)
 - `fugaro image ls` -- List the project's image catalog entries, or the shared-image lock's with --shared
+- `fugaro image map` -- Map a repository to an image catalog entry (the project's image_map)
 - `fugaro image promote` -- Copy a repository's image definition into the catalog and point the repository at it
 - `fugaro image refresh` -- Move a repository onto this release's base image: pin it, point the daily image check job at it, rebuild what is stale
 - `fugaro image render` -- Print the Dockerfile that builds the workflow's derived image
@@ -2463,6 +2464,59 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--shared` | bool | `false` | no | list the installation's shared images instead of the catalog |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro image map`
+
+Map a repository to an image catalog entry (the project's image_map)
+
+Usage: `fugaro image map`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for map |
+
+Subcommands:
+
+- `fugaro image map set` -- Map a repository to an image catalog entry, in this machine's project config
+
+## `fugaro image map set`
+
+Map a repository to an image catalog entry, in this machine's project config
+
+Map one of the project's repositories to an image catalog entry, in this
+machine's project config: the copy fugaro update publishes to the project's
+policy node (image_map). From there the repository's jobs run that entry's
+image, so the mapping is a project setting and not a per-repository one — a
+rerun of the skill that proposed it changes one line here rather than one
+file in every repository.
+
+The repository is one the project's local config lists (fugaro update --repo
+onboards one), as owner/name or as a path inside its checkout, and the entry
+is one this machine's catalog names (fugaro image add writes one). Setting a
+repository that is already mapped replaces its entry; the file's map is the
+project's whole map, so a map published from another machine is replaced by
+this file's rather than added to.
+
+This write is a person's own: fugaro update publishes it, and a coding
+agent's session is refused it, in a managed project by that project's gate.
+
+Usage: `fugaro image map set <repo> <entry>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 

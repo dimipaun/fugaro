@@ -239,6 +239,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro image add":            {args: []string{"base"}},
 	"fugaro image gate":           {args: []string{"--record", "r", "--slug", "s", "--bucket", "file:///nonexistent"}},
 	"fugaro image git-credential": {args: []string{"--out", "git-cred"}},
+	"fugaro image map set":        {args: []string{"acme/app", "base"}, reaches: "runs the catalog entry"},
 	"fugaro image promote":        {args: []string{"base"}},
 	"fugaro image record":         {args: []string{"--in", "r", "--digest-from", "a", "--base-digest-from", "b", "--image", "i", "--base", "ba", "--build-id", "x", "--slug", "s", "--bucket", "file:///nonexistent"}},
 	"fugaro image rm":             {args: []string{"base"}},
