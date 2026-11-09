@@ -6,7 +6,8 @@ prerequisite before any binary links the front door (the owner's ruling of 2026-
 except the reading of the installation's published state its lists come from, which no task of this
 plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
 half and not started; M8 is built except the wiring that would serve its four read tools, which is
-the task M5b gates; M9 is not started, and the launch-override fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of 2026-11-09); this folder approves no task.**
+the task M5b gates; M9 is not started, and the launch-override fence it was to wait on is declined
+for v1 and left unbuilt (the owner's ruling of 2026-11-09); this folder approves no task.**
 
 **This is the gate file [reconciliation.md](reconciliation.md) §6 check 1 asks for, and §6 check 1 is
 met.** What it records is the owner's clearance of D921's licence. The owner, **Dimi Paun**, cleared

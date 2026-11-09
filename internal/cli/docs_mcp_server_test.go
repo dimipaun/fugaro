@@ -125,7 +125,13 @@ const (
 	// carry. M8's is the same shape once more: the four read tools are built and
 	// no binary registers them, and the wiring that would is what M5b gates, so
 	// its exception is named the same way and for the same reason -- a line
-	// saying M8 were built whole would claim a reach no process has.
+	// saying M8 were built whole would claim a reach no process has. M9's clause
+	// names a second fact beside "not started", because the task it was waiting
+	// on stopped existing: the launch-override fence was ruled on twice on
+	// 2026-11-09 -- built as a split launcher role first, and declined later the
+	// same day -- so M9 waits on M4 and M7 alone and no task of the plan builds a
+	// fence. A line that still said M9 waited on one would name a task the plan
+	// removed and a control the tree does not have.
 	mcpStatus = "Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built except the reading of the installation's published state its lists come from, which no task of this plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store half and not started; M8 is built except the wiring that would serve its four read tools, which is the task M5b gates; M9 is not started, and the launch-override fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of 2026-11-09); this folder approves no task."
 )
 

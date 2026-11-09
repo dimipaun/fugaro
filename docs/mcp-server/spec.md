@@ -6,9 +6,10 @@ prerequisite before any binary links the front door (the owner's ruling of 2026-
 except the reading of the installation's published state its lists come from, which no task of this
 plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
 half and not started; M8 is built except the wiring that would serve its four read tools, which is
-the task M5b gates; M9 is not started, and the launch-override fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of 2026-11-09); this folder approves no task.** The owner's spec of
-2026-10-24 is §0, copied **verbatim**; the design that follows (§1 onward) is written to the
-**answers the owner gave on 2026-11-04** to the fifteen decisions in
+the task M5b gates; M9 is not started, and the launch-override fence it was to wait on is declined
+for v1 and left unbuilt (the owner's ruling of 2026-11-09); this folder approves no task.**
+The owner's spec of 2026-10-24 is §0, copied **verbatim**; the design that follows (§1 onward) is
+written to the **answers the owner gave on 2026-11-04** to the fifteen decisions in
 [reconciliation.md](reconciliation.md) §4 (D920–D934) — **every one of them the recommendation at
 the time** — with the owner's own detail written into §2, §3, §4, §5, §6 and §8. **Where §0 and this
 design disagree the reconciliation wins** — §0 is the record of what was asked, not of what this
@@ -505,11 +506,13 @@ not hold (F3 is `roles/storage.objectViewer`); and **`run.jobs.runWithOverrides`
 override **container arguments** — the base image's entrypoint is `tini --`
 (`images/base_test.go:59`), so an override can run **any command beside the job's mounted git and
 model credentials**. That contradicts D923's own "the coordinator mints nothing" and M6's
-`TestTheCoordinatorMintsNoCustomToken`. **The owner's ruling of 2026-11-09 replaced that third
-privilege with the start-only `run.jobs.run`** (§8): the front door's account never holds
-`runWithOverrides`, so what the later design item has to build on is **the ability to start an
-execution and nothing else**. **That answers the override half of the contradiction and not the
-minting half**: `signJwt` is not a permission this role touches, so the token minting moves out of
+`TestTheCoordinatorMintsNoCustomToken`. **The owner's ruling of 2026-11-09, later the
+same day, leaves that third privilege as the review priced it** (§8): the front door takes the
+launcher's permissions, `run.jobs.run` **and** `run.jobs.runWithOverrides`, so what the later design
+item has to build on is **the launcher's whole role, overrides included — the risk the owner accepted
+for v1 and asked to be revisited**, the split launcher role he ruled first that day being declined
+with the fence. **The minting half of the contradiction stands untouched**: `signJwt` is not a
+permission that grant carries, so the token minting moves out of
 the public service before the tool can be built, and the review's finding stands as the reason the
 tool was deferred rather than as a privilege this design asks for. **So the first slice is the authorization server plus
 `get_task_status`, `stream_logs`, `get_result` and `list_tasks`; `cancel_task` goes with `spawn_task`

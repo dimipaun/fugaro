@@ -6,8 +6,10 @@ prerequisite before any binary links the front door (the owner's ruling of 2026-
 except the reading of the installation's published state its lists come from, which no task of this
 plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
 half and not started; M8 is built except the wiring that would serve its four read tools, which is
-the task M5b gates; M9 is not started, and the launch-override fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of 2026-11-09); this folder approves no task.** The owner's spec of
-2026-10-24 is copied verbatim into [spec.md](spec.md) §0 and is reconciled against the code here;
+the task M5b gates; M9 is not started, and the launch-override fence it was to wait on is declined
+for v1 and left unbuilt (the owner's ruling of 2026-11-09); this folder approves no task.**
+The owner's spec of 2026-10-24 is copied verbatim into [spec.md](spec.md) §0 and is reconciled
+against the code here;
 [reconciliation.md](reconciliation.md) §4 puts fifteen decisions
 (D920–D934) in front of the owner, each with the recommendation first and the cost of the
 alternative — and **all fifteen were answered on 2026-11-04**, **every one of them the
