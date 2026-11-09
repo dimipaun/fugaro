@@ -790,7 +790,7 @@ Flags:
 
 Subcommands:
 
-- `fugaro budget kill` -- Halt every run of the project or of one repository (budget admins)
+- `fugaro budget kill` -- Halt every run of the project, of one repository or of one workspace (budget admins)
 - `fugaro budget preview` -- Estimate a batch's worst-case model spend against today's caps
 - `fugaro budget prices` -- Show the effective model price table, offline
 - `fugaro budget resume` -- Clear a kill switch (budget admins)
@@ -799,18 +799,22 @@ Subcommands:
 
 ## `fugaro budget kill`
 
-Halt every run of the project or of one repository (budget admins)
+Halt every run of the project, of one repository or of one workspace (budget admins)
 
-Set the project's kill switch (--all) or one repository's (--repo [owner/name]),
-recording who, when and why. --repo with no value means the repository this
-checkout belongs to, as it does for set. show takes owner/name (its empty
---repo means no repository filter, not a checkout), and preview already
-means this checkout's repository without the flag.
+Set the project's kill switch (--all), one repository's (--repo [owner/name]) or
+one workspace's (--workspace <name>), recording who, when and why. --repo with
+no value means the repository this checkout belongs to, as it does for set. show
+takes owner/name (its empty --repo means no repository filter, not a checkout),
+and preview already means this checkout's repository without the flag.
 Runs in flight halt within seconds (a run in its last stage finishes pushing
 its work first) and new runs refuse. Nothing is asked for it: halting runs
-spends nothing, and only a resume is a raise.
+spends nothing, and only a resume is a raise. --workspace sets the stop flag
+of the workspace's own service, in the workspace's own database, so every
+member's runs that reach it with its shared credentials halt, and nothing of
+a member's own — its credentials, its caps, its sign-in, its runs that never
+reach the workspace — is touched.
 
-Usage: `fugaro budget kill (--all | --repo [owner/name]) [--reason TEXT]`
+Usage: `fugaro budget kill (--all | --repo [owner/name] | --workspace <name>) [--reason TEXT]`
 
 Flags:
 
@@ -824,6 +828,7 @@ Flags:
 | `--reason` | string | "" | no | why (recorded, shown by budget show and watch) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | one repository, given as owner/name or a path inside its checkout (no value: this checkout's origin) |
+| `--workspace` | string | "" | no | one workspace, named as its own project is; its own service's stop flag, in the workspace's own database, so the project it names has to declare one (workspace_members) |
 | `--yes` | bool | `false` | no | accepted and ignored: this command asks nothing |
 
 Subcommands:
@@ -938,13 +943,14 @@ This command has no subcommands.
 
 Clear a kill switch (budget admins)
 
-Clear the project's kill switch (--all) or one repository's (--repo [owner/name]),
-recording who and when. --repo with no value means the repository this checkout
-belongs to, as it does for set. Runs start spending again, so nothing is
-asked for it and a coding agent's session is refused, exactly as a raise is
-(D1542).
+Clear the project's kill switch (--all), one repository's (--repo [owner/name])
+or one workspace's (--workspace <name>), recording who and when. --repo with
+no value means the repository this checkout belongs to, as it does for set.
+Runs start spending again, so nothing is asked for it and a coding agent's
+session is refused, exactly as a raise is (D1542). A workspace is named by
+its own name alone and takes neither of the other scopes.
 
-Usage: `fugaro budget resume (--all | --repo [owner/name]) [--reason TEXT]`
+Usage: `fugaro budget resume (--all | --repo [owner/name] | --workspace <name>) [--reason TEXT]`
 
 Flags:
 
@@ -958,6 +964,7 @@ Flags:
 | `--reason` | string | "" | no | why (recorded, shown by budget show and watch) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | one repository, given as owner/name or a path inside its checkout (no value: this checkout's origin) |
+| `--workspace` | string | "" | no | one workspace, named as its own project is; its own service's stop flag, in the workspace's own database, so the project it names has to declare one (workspace_members) |
 | `--yes` | bool | `false` | no | accepted and ignored: this command asks nothing |
 
 Subcommands:
