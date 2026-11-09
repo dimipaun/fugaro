@@ -16,7 +16,11 @@
 //      key before it can verify anything, so an id the keyring does not hold is
 //      refused *before either other part is decoded* -- which is what makes a
 //      compiled-in public key rotate, and what refuses a staging key in a
-//      production build rather than half-accepting one.
+//      production build rather than half-accepting one. The id is the one part
+//      **nothing decodes**: it is looked up as the text the key carries, held to
+//      the base64url alphabet with the shape, exactly as the CLI's and the app's
+//      verifiers read it, because one minted key text has to verify in all three
+//      (S2.6).
 //   2. **The raw bytes before the claims.** The signature is verified over the
 //      payload's bytes as spelled, and only then are they parsed. Re-wrapping,
 //      re-ordering or re-encoding a claim set is a different byte string, so it
@@ -142,7 +146,7 @@ function decodePart(part: string): Uint8Array | null {
 }
 
 /** textOf decodes UTF-8, or nothing: a payload that is not text is not a claim
- * set, and a key id that is not text is not an id any keyring holds. */
+ * set this verifier can parse. */
 function textOf(bytes: Uint8Array): string | null {
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
@@ -160,11 +164,14 @@ function unixSeconds(value: unknown): value is number {
 /**
  * claimsOf parses a payload whose signature has already verified.
  *
- * A claim the console does not know is **ignored**, not refused: adding a claim
- * is how this format grows (a version field is a later decision), and a build
- * that refused one would refuse every key minted after it. A claim it does know
- * and cannot read is the whole payload refused, because a key whose seats or
- * organisation is a string is not a key any decision here can be made about.
+ * A claim the console does not know is **refused**, not ignored, and that is
+ * the Go verifier's rule rather than a console choice: the three verifiers read
+ * one key text and answer one state (S2.6's shared vectors carry a `covers_until`
+ * case for it, which O4 dropped from the format). A build that ignored a seventh
+ * name would license an installation on a key the CLI and the app refuse. A
+ * claim it does know and cannot read is refused the same way, because a key
+ * whose seats or organisation is a string is not a key any decision here can be
+ * made about.
  */
 function claimsOf(payload: string): LicenceClaims | null {
   let parsed: unknown
@@ -175,6 +182,10 @@ function claimsOf(payload: string): LicenceClaims | null {
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
   const claims = parsed as Record<string, unknown>
+
+  // The six claims are the whole of the format. `Object.keys` lists an own
+  // `__proto__` a payload carries, so it is refused like any other name.
+  if (Object.keys(claims).length !== 6) return null
 
   const tier = claims['tier']
   if (!isTier(tier)) return null
@@ -200,9 +211,9 @@ function claimsOf(payload: string): LicenceClaims | null {
   return { tier, features: list, seats, organisation, issued, expires }
 }
 
-/** nameOf is the key id as a sentence may draw it. The id is decoded out of
- * text an operator pasted, so it goes through the console's own label class --
- * which strips what cannot be drawn and bounds what can -- and an id that class
+/** nameOf is the key id as a sentence may draw it. The id is text an operator
+ * pasted into a key, so it goes through the console's own label class -- which
+ * strips what cannot be drawn and bounds what can -- and an id that class
  * refuses is drawn as the placeholder rather than raw. */
 function nameOf(id: string): string {
   const drawn = sanitizeText(id, 'label', 'the key id')
@@ -238,9 +249,14 @@ export function verifyLicenceKey(raw: string, now: Date, keyring: LicenceKeyring
   const parts = raw.trim().split('.')
   if (parts.length !== 3) return { ok: false, reason: 'a licence key is three base64url parts' }
 
-  const idBytes = decodePart(parts[0] ?? '')
-  const id = idBytes === null ? null : textOf(idBytes)
-  if (id === null || id === '') return { ok: false, reason: "a licence key's id does not decode" }
+  // The id leads, in the clear, and it is the text the key carries: it is
+  // looked up, and named in a refusal, exactly as written and never decoded --
+  // which is what the CLI's and the app's verifiers do, and what one minted key
+  // text needs to be read by all three (S2.6). Its spelling is still held to
+  // the base64url alphabet the design gives every part, so a text outside it is
+  // a malformed key rather than an id no keyring happens to hold.
+  const id = parts[0] ?? ''
+  if (id === '' || !BASE64URL.test(id)) return { ok: false, reason: "a licence key's id is not spelled in base64url" }
 
   // `Object.hasOwn` and not a plain index: a keyring is a plain object, an id
   // is text an operator pasted, and `keyring['constructor']` is not a public
