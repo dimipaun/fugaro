@@ -235,11 +235,12 @@ func occurrenceKey(number int, occ Occurrence) string {
 // one more occurrence of the issue that fingerprint names (D1724, F21).
 //
 // i is the record as the local store has it: no number yet, and not uploaded.
-// An error means no issue of this upload's is left in the store under a number
-// it took, so a caller may retry the whole call — bar one case: when the
-// fingerprint's own entry cannot be read back at all, the record is left where
-// it is, because deleting it could strand a fingerprint on an issue the store
-// does not have, and there a retry that meets the record attaches to it.
+// An error means the store lists no issue of this upload's under a number it
+// took, so a caller may retry the whole call. One case leaves a record behind
+// that no listing shows: when the fingerprint's own entry cannot be read back
+// at all, the record stays where it is, because deleting it could strand a
+// fingerprint on an issue the store does not hold — and a record no entry names
+// is not an issue the store lists (F21).
 func Upload(ctx context.Context, b *blobx.Bucket, i Issue) (Uploaded, error) {
 	if err := i.Validate(); err != nil {
 		return Uploaded{}, err
@@ -347,17 +348,13 @@ func Upload(ctx context.Context, b *blobx.Bucket, i Issue) (Uploaded, error) {
 			// — the upload is done, and only its answer went missing. It names
 			// nothing or somebody else — the issue this attempt wrote is an
 			// orphan, and dropping it is what keeps the retry a caller makes
-			// from leaving a second issue of one fingerprint behind. The entry
-			// gone counts as naming nothing, which is what it is. A read that
-			// fails for any other reason leaves the record alone: debris a
-			// later upload meets is recoverable, a fingerprint the entry names
-			// with no issue under it is not.
-			holds, rerr := entryNames(ctx, b, key, number)
-			if rerr == nil && holds {
-				return Uploaded{Number: number}, nil
+			// from leaving a second issue of one fingerprint behind.
+			holds, rerr := settleFailedNaming(ctx, b, key, number, recGen, rec)
+			if rerr != nil {
+				return Uploaded{}, rerr
 			}
-			if rerr == nil {
-				_ = b.DeleteIf(ctx, recordKey(number), recGen, rec)
+			if holds {
+				return Uploaded{Number: number}, nil
 			}
 			return Uploaded{}, fmt.Errorf("issues: naming the fingerprint: %w", err)
 		}
@@ -368,18 +365,47 @@ func Upload(ctx context.Context, b *blobx.Bucket, i Issue) (Uploaded, error) {
 		// number and the naming landed; it names anything else, and the issue
 		// just written at this upload's own number is an orphan to drop before
 		// following theirs.
-		holds, rerr := entryNames(ctx, b, key, number)
-		if rerr != nil {
-			return Uploaded{}, fmt.Errorf("issues: reading the fingerprint index: %w", rerr)
-		}
-		if !holds {
-			if err := b.DeleteIf(ctx, recordKey(number), recGen, rec); err != nil && !errors.Is(err, blobx.ErrConflict) {
-				return Uploaded{}, fmt.Errorf("issues: dropping the orphaned issue %d: %w", number, err)
-			}
+		if _, rerr := settleFailedNaming(ctx, b, key, number, recGen, rec); rerr != nil {
+			return Uploaded{}, rerr
 		}
 		ours = false
 	}
 	return Uploaded{}, fmt.Errorf("issues: the fingerprint index for %s kept changing; giving up", i.Fingerprint)
+}
+
+// namingGrace bounds the read-back and the delete that decide what a naming
+// write which failed left behind. They run on a context detached from the
+// caller's, so their bound has to be their own.
+const namingGrace = 5 * time.Second
+
+// settleFailedNaming drops the issue a naming write that failed left orphaned
+// and reports whether the fingerprint's entry names it after all.
+//
+// The read-back and the delete run on a context detached from the caller's
+// cancellation (F28): a caller that gave up — Ctrl-C while the naming RPC was
+// on its way, a deadline — is exactly the case they exist for, and an answer of
+// "nothing is known" would leave the record this attempt wrote in the store for
+// the retry the contract invites to number a second issue of that fingerprint
+// beside (F21).
+func settleFailedNaming(ctx context.Context, b *blobx.Bucket, key string, number int, recGen int64, rec []byte) (bool, error) {
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), namingGrace)
+	defer cancel()
+	holds, err := entryNames(rctx, b, key, number)
+	if err != nil {
+		// A read that failed leaves too little to know what the entry names, so
+		// the record is left alone: debris a later upload meets is recoverable,
+		// a fingerprint the entry names with no issue under it is not.
+		return false, fmt.Errorf("issues: reading the fingerprint index: %w", err)
+	}
+	if holds {
+		return true, nil
+	}
+	// An entry that is gone names nothing, which is what it is: the issue this
+	// attempt wrote has no fingerprint left to reach it by.
+	if err := b.DeleteIf(rctx, recordKey(number), recGen, rec); err != nil && !errors.Is(err, blobx.ErrConflict) {
+		return false, fmt.Errorf("issues: dropping the orphaned issue %d: %w", number, err)
+	}
+	return false, nil
 }
 
 // attach records this upload as one more occurrence of the issue the fingerprint
@@ -672,6 +698,14 @@ func marshalShared(i Issue, number int) ([]byte, error) {
 // launcher can write the prefix (F24), and one record this build cannot read
 // must not take the team's list down with it — the same reason the local
 // store's List leaves one alone.
+//
+// A record its fingerprint's entry does not name is left out the same way. The
+// entry is the truth about a fingerprint (F21), so a record it does not name is
+// not an issue the store holds but what a naming write that never came back
+// left behind (F28) — an uploader that died, or a store that refused the write
+// and could not be asked what became of it. A row there would be a second issue
+// of a fingerprint that already has one, which anybody could take the claim on
+// and file (F22).
 func ListShared(ctx context.Context, b *blobx.Bucket) ([]SharedRow, error) {
 	prefix := sharedDir + "/" + recordsDir + "/"
 	iter := b.List(&blob.ListOptions{Prefix: prefix})
@@ -693,6 +727,18 @@ func ListShared(ctx context.Context, b *blobx.Bucket) ([]SharedRow, error) {
 		}
 		rec, _, err := readShared(ctx, b, number)
 		if err != nil {
+			continue
+		}
+		// A key is never built out of nothing (F20): the record is a file a
+		// launcher can write too, and one whose fingerprint is not a fingerprint
+		// no entry can name.
+		if !fingerprintRE.MatchString(rec.Issue.Fingerprint) {
+			continue
+		}
+		// An entry the store could not read answers as little as one that names
+		// nothing, and a row that must not be there is worse than a row that is
+		// late: the listing already leaves a record it cannot read alone.
+		if named, err := entryNames(ctx, b, fingerprintKey(rec.Issue.Fingerprint), number); err != nil || !named {
 			continue
 		}
 		n, err := countOccurrences(ctx, b, number)

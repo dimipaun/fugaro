@@ -552,6 +552,92 @@ func TestRefusedNamingLeavesNoIssueBehind(t *testing.T) {
 	})
 }
 
+// A caller that gives up while the naming write is on its way — Ctrl-C, a
+// deadline — is the case the follow-up exists for: the read that decides what
+// the failed write left behind, and the delete that follows it, run on a
+// context of their own, so the record this attempt wrote is not left in the
+// store for the retry to number a second issue beside (F21, F28).
+func TestCancelledNamingLeavesNoIssueBehind(t *testing.T) {
+	ctx := context.Background()
+	g := gcpfake.NewGCS(t)
+	b := g.Bucket(t, "fugaro-issues")
+	fp := fingerprint("34")
+	cctx, cancel := context.WithCancel(ctx)
+	race(t, fingerprintKey(fp), cancel)
+
+	issue := sharedIssue("update-20261107183012-48213", fp)
+	if _, err := Upload(cctx, b, issue); !errors.Is(err, context.Canceled) {
+		t.Fatalf("the upload = %v, want the caller's own cancellation", err)
+	}
+	// Nothing of the cancelled attempt is left: not a record the retry numbers
+	// beside, not a row the listing hides.
+	if _, err := readVersion(ctx, b, recordKey(1)); !errors.Is(err, blobx.ErrNotExist) {
+		t.Errorf("the cancelled attempt left a record at the number it took: %v", err)
+	}
+	// The retry the contract invites takes the next number — the counter is not
+	// rolled back — and the store holds the bug once.
+	up, err := Upload(ctx, b, issue)
+	if err != nil || up.Number != 2 || up.Attached {
+		t.Fatalf("the retry = %+v, %v; want issue 2", up, err)
+	}
+	rows, err := ListShared(ctx, b)
+	if err != nil || len(rows) != 1 || rows[0].Number != up.Number {
+		t.Errorf("the listing after the retry = %+v, %v; want issue %d once", rows, err, up.Number)
+	}
+}
+
+// The listing leaves out a record its fingerprint's entry does not name: the
+// entry is the truth about a fingerprint (F21), so a record it does not name is
+// not an issue the store holds but the debris of a naming write that never came
+// back — an uploader that died there, or a store that refused the write and
+// could not be asked what became of it (F28). A row there is a second issue of
+// a fingerprint that already has one, and anything reads a row as an issue to
+// take the claim on and file (F22).
+func TestListingLeavesOutARecordNoFingerprintNames(t *testing.T) {
+	ctx := context.Background()
+	named := func(number int) []byte {
+		raw, err := json.Marshal(numberDoc{Format: sharedFormat, Number: number})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	for _, tc := range []struct {
+		name        string
+		fingerprint string
+		entry       []byte
+	}{
+		{"an entry that names nothing", fingerprint("52"), named(0)},
+		{"an entry that names another number", fingerprint("53"), named(1)},
+		{"no entry at all", fingerprint("54"), nil},
+		{"a record whose fingerprint is not a fingerprint", "", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := sharedBucket(t)
+			up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("51")))
+			// What an uploader that died between its record and its naming left:
+			// a record the store would write, at a number the counter handed out.
+			orphan := sharedIssue("update-20261107183013-48214", tc.fingerprint)
+			raw, err := marshalShared(orphan, up.Number+1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := b.Create(ctx, recordKey(up.Number+1), raw, sharedJSON); err != nil {
+				t.Fatalf("writing the record no entry names: %v", err)
+			}
+			if tc.entry != nil {
+				if _, err := b.Create(ctx, fingerprintKey(orphan.Fingerprint), tc.entry, sharedJSON); err != nil {
+					t.Fatalf("writing the entry: %v", err)
+				}
+			}
+			rows, err := ListShared(ctx, b)
+			if err != nil || len(rows) != 1 || rows[0].Number != up.Number {
+				t.Errorf("the listing = %+v, %v; want issue %d once", rows, err, up.Number)
+			}
+		})
+	}
+}
+
 // A naming write that landed before its answer was lost is the case the entry
 // has to settle: the write is there, so the issue is in the store and must not
 // be dropped as an orphan — dropping it strands the fingerprint, and every
