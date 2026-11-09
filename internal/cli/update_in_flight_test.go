@@ -72,8 +72,18 @@ func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 			t.Errorf("the update's line asks the operator to act (%q): %q", banned, line)
 		}
 	}
-	if !strings.Contains(line, "they are unaffected") {
-		t.Errorf("the update's line does not say the runs are unaffected: %q", line)
+	// What the line claims is what holds whatever this update does: it never
+	// asks a run to finish first and it rewrites nothing a run holds. It does
+	// NOT claim the runs are unaffected — the budget mode's raise can bind one
+	// at its next lease, and the steps that can are named (the table test
+	// below).
+	for _, want := range []string{"asks no run to finish first", "rewrites nothing a run holds"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the update's line does not say %q: %q", want, line)
+		}
+	}
+	if strings.Contains(line, "unaffected") {
+		t.Errorf("the update's line claims the runs are unaffected, which the budget mode's raise can make false: %q", line)
 	}
 
 	// The document the update deployed is this binary's, and it only ADDED to
@@ -141,9 +151,12 @@ func TestUpdateSaysNothingWhenNothingRuns(t *testing.T) {
 // The rows are the mutation check of that reading: each one turns exactly one
 // step on and asserts the clause is there, and the other clauses are not. The
 // first row is the ordinary update — nothing this run does reaches a run in
-// flight — where the line says the runs are unaffected because they are, and
-// the alternative to every clause here, silence over a step that then reaches a
-// run, is the failure the requirement of 2026-11-09 is about.
+// flight — where the line says so, and the alternative to every clause here,
+// silence over a step that then reaches a run, is the failure the requirement
+// of 2026-11-09 is about. Every row is also held to the claim the line makes in
+// both cases, and to the one it must never make: the budget mode's raise DOES
+// reach a run in flight, so "the runs are unaffected" is not a sentence this
+// line may print.
 func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 	// A published node that turns the cascade on: O3's switch, which is what
 	// sends a run's model calls through the credentials service — and so through
@@ -165,7 +178,7 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 		{
 			name:    "nothing this update does reaches them",
 			mode:    budget.ModeEnforce,
-			want:    []string{"1 run(s) are in flight", "they are unaffected"},
+			want:    []string{"1 run(s) are in flight", "no step of it can reach them"},
 			notWant: []string{"budget mode", "policy this update publishes", "retirement"},
 		},
 		{
@@ -219,6 +232,18 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 				if strings.Contains(out, bad) {
 					t.Errorf("the line names %q over a step this run cannot take:\n%s", bad, out)
 				}
+			}
+			// The two facts the line states in every case, and the claim it
+			// never makes: the runs are not "unaffected" — the budget mode's
+			// raise reaches one at its next lease, which is the whole of this
+			// reading.
+			for _, want := range []string{"asks no run to finish first", "rewrites nothing a run holds"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("the line does not state %q:\n%s", want, out)
+				}
+			}
+			if strings.Contains(out, "unaffected") {
+				t.Errorf("the line claims the runs are unaffected, which the budget mode's raise can make false:\n%s", out)
 			}
 		})
 	}

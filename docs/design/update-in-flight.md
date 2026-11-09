@@ -140,7 +140,11 @@ told the operator to wait (`refuseRunsInFlight`). The owner's requirement of
 flight — so the update door no longer refuses, and it announces the runs once
 instead (`announceRunsInFlight`, `internal/cli/update_in_flight.go`, called from
 the converge before the first stage). The line is one sentence, it is not a
-question, and it never asks anybody to wait; it is absent when nothing runs,
+question, and it never asks anybody to wait. What it claims is what holds
+whatever this update turns out to do — the update asks no run to finish first
+and rewrites nothing a run holds — and never the flat "the runs are unaffected",
+which the budget-mode raise below makes false; what it can still reach is named
+instead. It is absent when nothing runs,
 under `--json` and `--print-vars` (whose stdout is a document), and under
 `--plan-only` (which applies nothing). The refusal stays where it is not the
 update door's: `fugaro upgrade`'s own policy step, and `fugaro project policy
@@ -157,9 +161,9 @@ cascade project's every model call re-reads; and a retirement, which deletes an
 orphaned job and takes the executions running on it. Each clause is the question
 its own step is gated on rather than the whole of its decision
 (`budgetModeBindsRuns`, `policyReadsLive`, `retireTakesExecutions`), so the line
-errs towards naming a step that may not end up doing anything over calling a run
-unaffected without saying so; the budget raise's shape for the owner is in the
-pull request.
+errs towards naming a step that may not end up doing anything over claiming the
+update cannot reach a run when it can; the budget raise's shape for the owner is
+in the pull request.
 
 The tests are `TestUpdateLeavesARunInFlightRunning` and its siblings
 (`internal/cli/update_in_flight_test.go`): an installation one release behind

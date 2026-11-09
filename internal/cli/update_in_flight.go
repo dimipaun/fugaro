@@ -74,11 +74,11 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) {
 		return
 	}
 	if steps := e.inFlightSteps(ctx, db); len(steps) > 0 {
-		fmt.Fprintf(r.w, "%s%d run(s) are in flight and they are unaffected, except by %s\n",
+		fmt.Fprintf(r.w, "%s%d run(s) are in flight: fugaro update asks no run to finish first and rewrites nothing a run holds, but these steps can still reach them — %s\n",
 			o.programPrefix(), n, strings.Join(steps, "; "))
 		return
 	}
-	fmt.Fprintf(r.w, "%s%d run(s) are in flight and they are unaffected: fugaro update stops no run and rewrites nothing a run holds, so no run has to finish first\n",
+	fmt.Fprintf(r.w, "%s%d run(s) are in flight: fugaro update asks no run to finish first and rewrites nothing a run holds, and no step of it can reach them\n",
 		o.programPrefix(), n)
 }
 
@@ -89,8 +89,8 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) {
 //
 // Every clause is deliberately the question the step itself is gated on rather
 // than the whole of its decision (see budgetModeBindsRuns): the line errs
-// towards warning a person about a bound that may not come instead of claiming a
-// run is unaffected when it is not.
+// towards naming a step that may end up doing nothing instead of claiming the
+// update cannot reach a run when it can.
 func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []string {
 	var steps []string
 	managed := e.managedProjectRead(ctx)
