@@ -58,11 +58,13 @@ import (
 //
 // **And the spend is the last thing before the approval.** Every refusal above
 // it — a flow that is not pending, one past its lifetime, a number that is not
-// the flow's, a sign-in that does not verify — leaves the token unspent, so a
-// device that mistyped the number can try again with the same session. What the
-// order does not do is leave a spent token behind an unrecorded approval: the
-// write that spends is the write that precedes the approval's own, so a crash
-// between them costs a sign-in and never an approval of a flow nobody proved.
+// the flow's, a sign-in that does not verify, a flow another device already
+// approved — leaves the token unspent, so a device that mistyped the number or
+// came back to a flow that was finished can try again with the same session.
+// What the order does not do is leave a spent token behind an unrecorded
+// approval: the write that spends is the write that precedes the approval's
+// own, so a crash between them costs a sign-in and never an approval of a flow
+// nobody proved.
 
 // isDeviceAct answers whether an authorize POST is the paired device's act, and
 // the ID token's field is what names it.
@@ -126,6 +128,17 @@ func (s *Server) serveDeviceApproval(w http.ResponseWriter, r *http.Request, for
 		// session did not verify is told what to do, and the client is told
 		// nothing that would let it retry in a loop.
 		refusePage(w, http.StatusUnauthorized, "The sign-in was not verified. Approve this flow from a device paired to the installation, and present the Firebase ID token that device's own session produced.")
+		return
+	}
+	// A flow that already carries an approval is refused before the token is
+	// spent, and the identity check that makes it a refusal and not a leak is
+	// the one just above: only a device holding a verified sign-in reaches this
+	// line at all. The refusal below — ApproveRequest's own ErrRequestApproved —
+	// says the same thing one write too late, and a device whose stale page
+	// submits an act for a flow that is already approved would have burned the
+	// token of a real sign-in on it.
+	if pending.Approval != nil {
+		refusePage(w, http.StatusBadRequest, "This flow has already been approved on a device. One flow is approved once, and the identity it was approved with is the one the code acts for.")
 		return
 	}
 	spent := TokenHash(token)

@@ -27,7 +27,9 @@ import (
 // rendered the flow — carrying the number that page showed and the ID token —
 // is refused, and no code is minted.
 //
-// It is refused because the number the page renders is not the device's
+// It is refused by the rule that tells the two acts apart — a body carrying an
+// ID token beside a decision is neither of them (serveAuthorizeConsent) — and
+// the rule exists because the number the page renders is not the device's
 // approval: the page knows its own number, so a check that the same page
 // satisfies is a page binding and nothing more (authorize.go's note). What M-a
 // asks for is an act from the paired device, and this submission is not one.
@@ -303,5 +305,19 @@ func TestTheSpendLandsOnTheActThatApproves(t *testing.T) {
 	other, otherNumber := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
 	if rec := ts.deviceApprove(t, other, otherNumber, token); rec.Code != http.StatusOK {
 		t.Errorf("a token could not approve a live flow after an act naming a flow that was gone answered %d (%s); a refusal above the spend leaves the token alone", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+
+	// A second act for the flow that was just approved is refused, and it too
+	// costs the sign-in it carried nothing: a device whose stale page submits an
+	// act for a flow that is already approved is asking about the flow, and one
+	// flow is approved once. The token below approves the next flow, which is
+	// what says the refusal was about the flow rather than about the token.
+	spent := approvalToken(t)
+	if rec := ts.deviceApprove(t, other, otherNumber, spent); rec.Code == http.StatusOK {
+		t.Errorf("a second act approved a flow that already carried an approval")
+	}
+	last, lastNumber := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	if rec := ts.deviceApprove(t, last, lastNumber, spent); rec.Code != http.StatusOK {
+		t.Errorf("the sign-in of a second act for an approved flow could not approve another flow, answering %d (%s); a refusal above the spend leaves the token alone", rec.Code, strings.TrimSpace(rec.Body.String()))
 	}
 }
