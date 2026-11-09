@@ -144,6 +144,13 @@ func TestMain(m *testing.M) {
 		}
 		return blobx.Open(ctx, url)
 	}
+	// A build takes a lease before its submission (T8; D1543), and the lease is
+	// sized from the Cloud Billing catalog — Google's, which no hermetic test
+	// may read. The default here is the shared priced book, so a command test's
+	// builds are priced as internal/budget's own fixture prices them; a test
+	// that means to watch the price read fail, or a build be refused over its
+	// price, overrides this var itself.
+	buildPricerFor = func(*localcfg.Config) buildPricer { return fakePricer{book: pricedBook()} }
 	// The fake gh of the watch tests links to one wrapper, run once here
 	// before any test can fork (testutil.FakeCommand).
 	cleanupFakes, err := testutil.PrepareFakeCommands()
