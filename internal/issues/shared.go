@@ -317,11 +317,24 @@ func Upload(ctx context.Context, b *blobx.Bucket, i Issue) (Uploaded, error) {
 		if _, err := replaceRaw(ctx, b, key, named, v); err == nil {
 			return Uploaded{Number: number}, nil
 		} else if !errors.Is(err, blobx.ErrConflict) {
-			// The naming failed for a reason of its own: drop the issue this
-			// attempt wrote, so the retry a caller makes does not leave a second
-			// issue of one fingerprint behind. A delete that fails too leaves
-			// debris only a launcher's own rewriting of the store can explain.
-			_ = b.DeleteIf(ctx, recordKey(number), recGen, rec)
+			// The naming failed for a reason of its own, and a write that
+			// committed before its answer was lost looks here exactly like one
+			// that never landed: the entry is the truth about a fingerprint, so
+			// reading it back is what tells the two apart. It names this number
+			// — the upload is done, and only its answer went missing. It names
+			// nothing or somebody else — the issue this attempt wrote is an
+			// orphan, and dropping it is what keeps the retry a caller makes
+			// from leaving a second issue of one fingerprint behind. A read that
+			// fails leaves the record alone: debris a later upload meets is
+			// recoverable, a fingerprint the entry names with no issue under it
+			// is not.
+			named, rerr := entryNames(ctx, b, key, number)
+			if rerr == nil && named {
+				return Uploaded{Number: number}, nil
+			}
+			if rerr == nil {
+				_ = b.DeleteIf(ctx, recordKey(number), recGen, rec)
+			}
 			return Uploaded{}, fmt.Errorf("issues: naming the fingerprint: %w", err)
 		}
 		// Somebody named the fingerprint between this read and this write. The
@@ -510,6 +523,21 @@ func decodeNumber(raw []byte, key string) (numberDoc, error) {
 		return numberDoc{}, fmt.Errorf("issues: %s is not a number this store wrote", key)
 	}
 	return doc, nil
+}
+
+// entryNames reports whether a fingerprint's entry names a number. The entry is
+// the truth about a fingerprint (F21), so it decides what a write that failed
+// on its way back left behind.
+func entryNames(ctx context.Context, b *blobx.Bucket, key string, number int) (bool, error) {
+	v, err := readVersion(ctx, b, key)
+	if err != nil {
+		return false, err
+	}
+	doc, err := decodeNumber(v.raw, key)
+	if err != nil {
+		return false, err
+	}
+	return doc.Number == number, nil
 }
 
 // decodeStrict decodes one JSON object, refusing a field this build does not

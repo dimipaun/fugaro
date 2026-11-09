@@ -428,6 +428,79 @@ func TestFingerprintWithoutNumberIsCompleted(t *testing.T) {
 	}
 }
 
+// A naming write the store refuses — a flaky backend, not a lost race — must
+// leave no issue behind: without that, the retry a caller makes takes a second
+// number and the first record sits in the listing as an issue no fingerprint
+// names. The refusal is one attempt only, so the retry that follows it succeeds
+// (F28).
+func TestRefusedNamingLeavesNoIssueBehind(t *testing.T) {
+	ctx := context.Background()
+	g := gcpfake.NewGCS(t)
+	b := g.Bucket(t, "fugaro-issues")
+	const fp = "31313131313131313131313131313131"
+	race(t, fingerprintKey(fp), func() { g.FailObjectWrites("fugaro-issues", fingerprintKey(fp), 1) })
+
+	issue := sharedIssue("update-20261107183012-48213", fp)
+	_, err := Upload(ctx, b, issue)
+	if err == nil {
+		t.Fatal("an upload reported success for a naming write the store refused")
+	}
+	if errors.Is(err, blobx.ErrConflict) {
+		t.Fatalf("the refused write read as a lost race: %v", err)
+	}
+	if rows, err := ListShared(ctx, b); err != nil || len(rows) != 0 {
+		t.Errorf("the listing after a refused naming = %+v, %v; want nothing", rows, err)
+	}
+	// The entry names nothing, so the fingerprint is not stranded either: it is
+	// what the retry completes.
+	v, err := readVersion(ctx, b, fingerprintKey(fp))
+	if err != nil {
+		t.Fatalf("reading the fingerprint's entry: %v", err)
+	}
+	if doc, err := decodeNumber(v.raw, fingerprintKey(fp)); err != nil || doc.Number != 0 {
+		t.Errorf("the fingerprint's entry = %+v, %v; want no number", doc, err)
+	}
+	// The retry takes the next number — the counter is not rolled back — and the
+	// store holds the bug once.
+	up, err := Upload(ctx, b, issue)
+	if err != nil || up.Number != 2 || up.Attached {
+		t.Fatalf("the retry = %+v, %v; want issue 2", up, err)
+	}
+	rows, err := ListShared(ctx, b)
+	if err != nil || len(rows) != 1 || rows[0].Number != up.Number {
+		t.Errorf("the listing after the retry = %+v, %v; want issue %d once", rows, err, up.Number)
+	}
+}
+
+// A naming write that landed before its answer was lost is the case the entry
+// has to settle: the write is there, so the issue is in the store and must not
+// be dropped as an orphan — dropping it strands the fingerprint, and every
+// later report of that bug fails with no way back (F21, F28).
+func TestNamingThatLandedBeforeItsErrorKeepsTheIssue(t *testing.T) {
+	ctx := context.Background()
+	g := gcpfake.NewGCS(t)
+	b := g.Bucket(t, "fugaro-issues")
+	const fp = "32323232323232323232323232323232"
+	// The fake stores this write and then answers an error: the naming landed,
+	// and the caller cannot tell that from a write that never happened.
+	race(t, fingerprintKey(fp), func() { g.FailObjectStoresAfterWrite(1) })
+
+	up, err := Upload(ctx, b, sharedIssue("update-20261107183012-48213", fp))
+	if err != nil || up.Number != 1 {
+		t.Fatalf("the upload = %+v, %v; want issue 1", up, err)
+	}
+	rows, err := ListShared(ctx, b)
+	if err != nil || len(rows) != 1 || rows[0].Number != 1 {
+		t.Fatalf("the listing = %+v, %v; want issue 1 once", rows, err)
+	}
+	// The entry and the issue agree, so the next machine to hit the bug attaches
+	// to it instead of meeting a fingerprint that names nothing.
+	got := upload(t, ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", "0.9.0", issueAt.Add(time.Minute)))
+	if got.Number != 1 || !got.Attached {
+		t.Errorf("the next machine's upload = %+v, want an attached occurrence of issue 1", got)
+	}
+}
+
 // A hit on an issue the team set aside or filed is recorded and reopens
 // nothing (F21): the status stays where the team put it, and the occurrence is
 // what shows the bug is still there.
@@ -749,6 +822,33 @@ func TestRejectsForeignIssueURL(t *testing.T) {
 			t.Fatalf("the corrected upload = %+v, %v; want issue 1", up, err)
 		}
 	})
+
+	// An occurrence is an object the team reads and follows the link it carries
+	// (F21), so the store's own door for one refuses a foreign original_url
+	// exactly as an upload does: a plain hit may carry none at all, a
+	// regression must carry one, and neither may carry somebody else's.
+	t.Run("an occurrence that carries one", func(t *testing.T) {
+		b := sharedBucket(t)
+		up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", "25252525252525252525252525252525"))
+		for _, tc := range []struct {
+			name string
+			occ  Occurrence
+		}{
+			{"a regression", Occurrence{Reporter: "bo@example.test", At: sharedAt, Regression: true, OriginalURL: "https://github.com/attacker/fugaro/issues/3"}},
+			{"a plain hit", Occurrence{Reporter: "bo@example.test", At: sharedAt, OriginalURL: "not a URL"}},
+		} {
+			if err := AttachOccurrence(ctx, b, up.Number, tc.occ); err == nil {
+				t.Errorf("%s carrying %q was recorded", tc.name, tc.occ.OriginalURL)
+			}
+		}
+		if occs := storedOccurrences(t, ctx, b, up.Number); len(occs) != 0 {
+			t.Errorf("the store holds %+v, want nothing", occs)
+		}
+		if err := AttachOccurrence(ctx, b, up.Number, Occurrence{Reporter: "bo@example.test", At: sharedAt, Regression: true,
+			OriginalURL: "https://github.com/dimipaun/fugaro/issues/1"}); err != nil {
+			t.Errorf("an occurrence linking to issue 1 was refused: %v", err)
+		}
+	})
 }
 
 // A filed issue is final: the store never moves it back, never sets it aside
@@ -919,6 +1019,12 @@ func TestRecordKeyMustBeCanonical(t *testing.T) {
 		if err := b.Put(ctx, stray, raw, sharedJSON); err != nil {
 			t.Fatalf("writing %s: %v", stray, err)
 		}
+	}
+	// The name is one this store would write, and the record under it belongs to
+	// another issue: issue 2's name holding issue 1's record is not a second row
+	// of issue 1.
+	if err := b.Put(ctx, recordKey(2), raw, sharedJSON); err != nil {
+		t.Fatalf("writing %s: %v", recordKey(2), err)
 	}
 	rows, err := ListShared(ctx, b)
 	if err != nil {
