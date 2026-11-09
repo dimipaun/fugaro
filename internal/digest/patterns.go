@@ -68,9 +68,10 @@ const (
 	// rise across (D968): the last five committed monthly reports, each
 	// month's cost per run above the month before it.
 	CostRiseMonths = 5
-	// FailureClassShareNum/FailureClassShareDen is what "most of a week's
-	// failures are this class" means, and FailureClassWeeks is how many weeks
-	// running it must hold.
+	// FailureClassShareNum/FailureClassShareDen is what "above a quarter of a
+	// week's runs are this class" means -- the class's runs against the
+	// week's runs, not against the week's failures -- and FailureClassWeeks
+	// is how many weeks running it must hold.
 	FailureClassShareNum = 1
 	FailureClassShareDen = 4
 	FailureClassWeeks    = 2
@@ -468,6 +469,11 @@ func failureClassHigh(weeks []Summary) []Pattern {
 // class at all: a class cannot be new against nothing, which is what keeps the
 // release's own week from naming every class of it new.
 //
+// Its week is the youngest week of the series, and that week must carry the
+// block: a week whose runs all succeeded carries none, and reading the newest
+// block that carries one as this week's would repeat the week before's line in
+// every quiet week that follows (G5).
+//
 // A week the class holds no run of counts as a week that does not name it,
 // and the periods it read are the pattern's, so a reader is told what the
 // verdict rests on.
@@ -478,16 +484,16 @@ func failureClassNew(weeks []Summary) []Pattern {
 			carrying = append(carrying, w)
 		}
 	}
-	if len(carrying) < 2 {
+	if len(carrying) < 2 || len(weeks) == 0 || carrying[len(carrying)-1].Period != weeks[len(weeks)-1].Period {
 		return nil
 	}
 	if n := FailureClassNewWindow + 1; len(carrying) > n {
 		carrying = carrying[len(carrying)-n:]
 	}
-	cur, before := carrying[len(carrying)-1], carrying[:len(carrying)-1]
+	week, before := carrying[len(carrying)-1], carrying[:len(carrying)-1]
 	var out []Pattern
 	for _, class := range failure.Classes() {
-		n := cur.Failures[string(class)]
+		n := week.Failures[string(class)]
 		if n <= 0 {
 			continue
 		}
@@ -593,9 +599,9 @@ func ReadSummaries(reports [][]byte) ([]Summary, []string) {
 }
 
 // RollUp is the year's summary of its monthly ones (F24): a yearly report has
-// no runs of its own to read, so it is the months added up, and each recipe's
-// median is the median of the months' medians, the only per-recipe figure a
-// summary carries.
+// no runs of its own to read, so it is the months added up, each class's runs
+// are the months' runs of it added up, and each recipe's median is the median
+// of the months' medians, the only per-recipe figure a summary carries.
 //
 // months are one year's, in any order, and year is which year is being rolled
 // up: the caller knows it -- a report is of a period, not of whatever month
@@ -643,6 +649,14 @@ func RollUp(year string, months []Summary) Summary {
 					s.Flags = map[string]int{}
 				}
 				s.Flags[name] += c
+			}
+		}
+		for _, class := range failure.Classes() {
+			if c := m.Failures[string(class)]; c > 0 {
+				if s.Failures == nil {
+					s.Failures = map[string]int{}
+				}
+				s.Failures[string(class)] += c
 			}
 		}
 		for name, v := range m.Recipes {

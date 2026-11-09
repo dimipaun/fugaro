@@ -696,6 +696,42 @@ func TestDigestSummaryCarriesFailures(t *testing.T) {
 	}
 }
 
+// TestDigestFailureExampleIsTheNewestRunOfItsClass pins the row's example: one
+// run of the class, the newest of them by its own run ID, which begins with the
+// run's start time. The figure is then the same whatever order the records
+// arrive in -- the CLI reads one order and the runner another (G3).
+func TestDigestFailureExampleIsTheNewestRunOfItsClass(t *testing.T) {
+	oldest := failing(t, "20261021-090000-aaaa", 0.10, failure.TestsFailed, "")
+	other := failing(t, "20261023-090000-cccc", 0.10, failure.Cancelled, "")
+	newest := failing(t, "20261024-090000-bbbb", 0.10, failure.TestsFailed, "")
+
+	for _, tc := range []struct {
+		name string
+		recs []runstore.Record
+	}{
+		{"oldest first", []runstore.Record{oldest, other, newest}},
+		{"newest first", []runstore.Record{newest, other, oldest}},
+	} {
+		rows := map[failure.Class]ClassCount{}
+		for _, f := range Build(tc.recs, week43(t)).Failures {
+			rows[f.Class] = f
+		}
+		for class, want := range map[failure.Class]struct {
+			runs    int
+			example string
+		}{
+			failure.TestsFailed: {2, "20261024-090000-bbbb"},
+			failure.Cancelled:   {1, "20261023-090000-cccc"},
+		} {
+			got := rows[class]
+			if got.Runs != want.runs || got.Example != want.example {
+				t.Errorf("%s: the row for %s = %d runs, example %q, want %d and %s",
+					tc.name, class, got.Runs, got.Example, want.runs, want.example)
+			}
+		}
+	}
+}
+
 // TestDigestHasNoPersonField pins the types: there is no field a person could
 // be read from, so no later change can print one without changing a type this
 // test walks (G1).

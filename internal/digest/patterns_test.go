@@ -460,6 +460,18 @@ func TestFailureClassNewIgnoresBlocksWithoutTheField(t *testing.T) {
 	if want := "2026-W39,2026-W40,2026-W41,2026-W42,2026-W43"; strings.Join(got.Periods, ",") != want {
 		t.Errorf("the pattern read %v, want the last four periods and this one, %s", got.Periods, want)
 	}
+
+	// The rule's week is this report's own, and a week whose runs all
+	// succeeded carries no block at all: reading the newest block that carries
+	// one would repeat the week before's line in the quiet week, and in every
+	// quiet week after it.
+	quiet := []Summary{
+		weekFailures("2026-W41", 5, map[string]int{string(failure.Cancelled): 1}),
+		weekFailures("2026-W42", 5, map[string]int{string(failure.TestsFailed): 1}),
+	}
+	if got := Patterns(quiet, weekBlock("2026-W43", 5, 0)); len(got) != 0 {
+		t.Errorf("the quiet week raised %+v, want the rule silent: nothing this week is new to it", got)
+	}
 }
 
 // TestPatternsNeedConsecutivePeriods pins what a window is: the last four
@@ -563,12 +575,15 @@ func TestYearlyRollsUpMonthlySummaries(t *testing.T) {
 			map[string]string{"standard": fmt.Sprintf("0.%02d0000", m)})
 		s.Halts = 1
 		s.Flags = map[string]int{FlagHalt: 1}
+		s.Failures = map[string]int{string(failure.TestsFailed): 1}
 		months = append(months, s)
 	}
-	// A month may carry names this report never writes: they are no flag and
-	// no recipe of this vocabulary, and the roll-up leaves them out (G1).
+	// A month may carry names this report never writes: they are no flag, no
+	// recipe and no class of this vocabulary, and the roll-up leaves them out
+	// (G1).
 	months[0].Flags["person-1@example.invalid"] = 9
 	months[0].Recipes["person-1@example.invalid"] = "9.000000"
+	months[0].Failures["person-1@example.invalid"] = 9
 
 	got := RollUp("2026", months)
 	if got.Period != "2026" || got.Start != "2026-01-01" || got.End != "2026-12-31" {
@@ -583,6 +598,12 @@ func TestYearlyRollsUpMonthlySummaries(t *testing.T) {
 	}
 	if len(got.Flags) != 1 || got.Flags[FlagHalt] != 12 {
 		t.Errorf("the year's flags = %v, want one flag of 12", got.Flags)
+	}
+	// A year is its months added up here too: the classes its months carry are
+	// the year's, so a reader of the yearly block does not have to open twelve
+	// monthly ones for them.
+	if len(got.Failures) != 1 || got.Failures[string(failure.TestsFailed)] != 12 {
+		t.Errorf("the year's failures = %v, want one class of 12", got.Failures)
 	}
 	// The block says how many months it added up, so a later reader does not
 	// take a partial year for a whole one (G5).
@@ -623,6 +644,11 @@ func TestYearlyRollsUpOnlyItsOwnMonths(t *testing.T) {
 	// mean.
 	if len(got.Recipes) != 1 || got.Recipes["standard"] != "0.200000" {
 		t.Errorf("the year's medians = %v, want one for standard of 0.200000", got.Recipes)
+	}
+	// Neither month classified a failure, and the year adds up what they
+	// carry: no months carry the key, so the year carries none either (G5).
+	if got.Failures != nil {
+		t.Errorf("a year of two months with no failures carries %v, want none", got.Failures)
 	}
 }
 
