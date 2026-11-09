@@ -153,7 +153,7 @@ type orchestratorDaemon struct {
 // start is the whole life of the daemon: converge nothing, learn whether an
 // update is due, take the lease, and then tick until something stops it.
 func (d *orchestratorDaemon) start(ctx context.Context) error {
-	if due, err := d.migrate(ctx); err != nil {
+	if due, err := d.updateDue(ctx); err != nil {
 		return err
 	} else if due {
 		return nil
@@ -166,6 +166,9 @@ func (d *orchestratorDaemon) start(ctx context.Context) error {
 		return userErr("orchestrator %s is driven by another daemon right now (holder %s, last beat %s): stop it, or wait for its lease to expire, before running this one",
 			safetext.Field(d.id), safetext.Field(state.Holder), state.At.UTC().Format(time.RFC3339))
 	}
+	if err := d.migrate(ctx); err != nil {
+		return err
+	}
 	tick, err := d.newTick(ctx)
 	if err != nil {
 		return err
@@ -175,49 +178,72 @@ func (d *orchestratorDaemon) start(ctx context.Context) error {
 	return d.loop(ctx)
 }
 
-// migrate is the daemon's own start-up convergence of its state node (O0, Q2's
-// answer as T7's ruling of 2026-11-05 keeps it): the node is read through the
-// store, whose Load applies Migrate, and a node left at an older
-// schema_version is written back at this release's by the daemon itself.
-// Nothing else converges anything — `fugaro update` no longer touches a node
-// under orchestrator/ — and a node at a NEWER version is not touched at all:
-// it is reported as an update being due, and the daemon does nothing else
-// (G8).
-//
-// It reports whether the daemon must stop for that reason.
-func (d *orchestratorDaemon) migrate(ctx context.Context) (bool, error) {
+// stateVersion is the schema_version the state node carries, and whether the
+// node exists at all. It is a read and decides nothing: the two things the
+// daemon's start-up asks about a node are asked of the same reading.
+func (d *orchestratorDaemon) stateVersion(ctx context.Context) (int, bool, error) {
 	var raw json.RawMessage
 	_, found, err := d.db.GetETag(ctx, d.node.Path(), &raw)
 	if err != nil {
-		return false, dbErr(d.lc, err, false)
+		return 0, false, dbErr(d.lc, err, false)
 	}
 	if !found {
-		return false, nil
+		return 0, false, nil
 	}
 	var doc struct {
 		SchemaVersion int `json:"schema_version"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
-		return false, userErr("the state node at %s is not a document this release reads: %v", d.node.Path(), err)
+		return 0, false, userErr("the state node at %s is not a document this release reads: %v", d.node.Path(), err)
 	}
-	if doc.SchemaVersion > orchestrator.SchemaVersion {
-		fmt.Fprintf(d.out, "orchestrator %s: the state node is at schema_version %d and this binary reads %d, so an update is due: it was written by a newer release, and nothing is started until this machine runs `fugaro update`. This daemon is stopping; the running one was not touched.\n",
-			safetext.Field(d.id), doc.SchemaVersion, orchestrator.SchemaVersion)
-		return true, nil
+	return doc.SchemaVersion, true, nil
+}
+
+// updateDue reports whether the state node was written by a newer release, and
+// says so when it was: the daemon then does nothing else at all — no lease, no
+// write, no run (G8). It is asked before the lease is taken, because a daemon
+// that is not going to drive the id must not claim it even for a moment: a
+// state node this release does not read is the person's cue to run `fugaro
+// update`, and nothing here touches it.
+func (d *orchestratorDaemon) updateDue(ctx context.Context) (bool, error) {
+	v, found, err := d.stateVersion(ctx)
+	if err != nil || !found {
+		return false, err
 	}
-	if doc.SchemaVersion == orchestrator.SchemaVersion {
+	if v <= orchestrator.SchemaVersion {
 		return false, nil
+	}
+	fmt.Fprintf(d.out, "orchestrator %s: the state node is at schema_version %d and this binary reads %d, so an update is due: it was written by a newer release, and nothing is started until this machine runs `fugaro update`. This daemon is stopping; the running one was not touched.\n",
+		safetext.Field(d.id), v, orchestrator.SchemaVersion)
+	return true, nil
+}
+
+// migrate is the daemon's own start-up convergence of its state node (O0, Q2's
+// answer as T7's ruling of 2026-11-05 keeps it): the node is read through the
+// store, whose Load applies Migrate, and a node left at an older
+// schema_version is written back at this release's by the daemon itself.
+// Nothing else converges anything — `fugaro update` no longer touches a node
+// under orchestrator/ — and a node at a newer version never gets here: it is
+// reported as an update being due and the daemon stops before taking the lease.
+//
+// The write is fenced by the lease, so this runs after the lease is taken and
+// never before it: a migration save by a daemon that holds no lease is refused,
+// and that refusal is what keeps two machines from migrating one node at once.
+func (d *orchestratorDaemon) migrate(ctx context.Context) error {
+	v, found, err := d.stateVersion(ctx)
+	if err != nil || !found || v == orchestrator.SchemaVersion {
+		return err
 	}
 	s, etag, err := d.node.Load(ctx)
 	if err != nil {
-		return false, dbErr(d.lc, err, false)
+		return dbErr(d.lc, err, false)
 	}
 	if err := d.node.Save(ctx, s, etag); err != nil {
-		return false, dbErr(d.lc, err, false)
+		return dbErr(d.lc, err, false)
 	}
 	fmt.Fprintf(d.out, "orchestrator %s: the state node was at schema_version %d and is now written at %d\n",
-		safetext.Field(d.id), doc.SchemaVersion, s.SchemaVersion)
-	return false, nil
+		safetext.Field(d.id), v, s.SchemaVersion)
+	return nil
 }
 
 // newTick builds the one tick this daemon runs every cycle: the node (with the
