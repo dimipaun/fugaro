@@ -111,6 +111,7 @@ func TestPaths(t *testing.T) {
 		PathCapsDefaults:                 "config/caps/defaults",
 		PathLimits:                       "config/limits",
 		PathMode:                         "config/mode",
+		PathModeSet:                      "config/modeSet",
 		PathKillGlobal:                   "config/kill/global",
 		PathCapsRepo("aurora"):           "config/caps/repos/aurora",
 		PathKillRepo("a.b"):              "config/kill/repos/a%2Eb",

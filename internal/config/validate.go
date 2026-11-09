@@ -466,8 +466,9 @@ func validateRigor(p string, mode rigor.Mode, areas []rigor.Area) []Problem {
 }
 
 // validateSecurity reports a security block's problems, each at p.patterns[i]:
-// p is "security" for the repository's own block and "defaults.security" for
-// the project layer's, so one function states the rules for both layers
+// p is "security" for either layer's block — the repository's own on
+// config.Config and the project layer's on config.ProjectLayer are both
+// top-level there (D1501) — so one function states the rules for both
 // (docs/project-layer.md §5 gives either layer the key).
 //
 // It reads sensitivity.Pattern.Validate, which is the whole point of the

@@ -21,6 +21,12 @@ import (
 // sharedAt is the clock the shared store's tests run on.
 var sharedAt = time.Date(2026, 11, 8, 17, 40, 7, 0, time.UTC)
 
+// fingerprint is a value the record's fingerprint field takes: 64 lowercase hex
+// characters, the shape of the SHA-256 verdict.go's writer makes. The fixture
+// is one byte pair repeated, so no two tests share an entry and no literal here
+// is the hash of anything.
+func fingerprint(hexPair string) string { return strings.Repeat(hexPair, 32) }
+
 // sharedBucket is the bucket those tests run against: gcpfake models the object
 // generations the store's conditional writes are matched on, and a file://
 // bucket compares contents instead, which is not what any real launcher gives
@@ -193,7 +199,7 @@ func TestConcurrentUploadsGetDistinctNumbers(t *testing.T) {
 	// A project that already has an issue, so the counter exists: creating it
 	// is atomic on its own, and it is the read and the write back on an
 	// existing counter that race.
-	upload(t, ctx, b, sharedIssue("update-20261107183012-48213", "11111111111111111111111111111111"))
+	upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("11")))
 
 	var (
 		other    Uploaded
@@ -203,11 +209,11 @@ func TestConcurrentUploadsGetDistinctNumbers(t *testing.T) {
 		ch := make(chan struct{})
 		go func() {
 			defer close(ch)
-			other, otherErr = Upload(ctx, b, sharedIssue("update-20261107183015-48216", "33333333333333333333333333333333"))
+			other, otherErr = Upload(ctx, b, sharedIssue("update-20261107183015-48216", fingerprint("33")))
 		}()
 		<-ch
 	})
-	ours, err := Upload(ctx, b, sharedIssue("update-20261107183014-48215", "22222222222222222222222222222222"))
+	ours, err := Upload(ctx, b, sharedIssue("update-20261107183014-48215", fingerprint("22")))
 	if err != nil {
 		t.Fatalf("this machine's upload: %v", err)
 	}
@@ -242,7 +248,7 @@ func TestConcurrentUploadsGetDistinctNumbers(t *testing.T) {
 func TestSameFingerprintOneNumber(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
-	const fp = "44444444444444444444444444444444"
+	fp := fingerprint("44")
 	first := sharedIssue("update-20261107183012-48213", fp)
 
 	up, err := Upload(ctx, b, first)
@@ -270,7 +276,7 @@ func TestSameFingerprintOneNumber(t *testing.T) {
 	t.Run("both machines numbering it at once", func(t *testing.T) {
 		ctx := context.Background()
 		b := sharedBucket(t)
-		const fp = "55555555555555555555555555555555"
+		fp := fingerprint("55")
 		var (
 			other    Uploaded
 			otherErr error
@@ -321,7 +327,7 @@ func TestSameFingerprintOneNumber(t *testing.T) {
 func TestMatchAtOrAboveResolvedInIsRegression(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
-	const fp = "66666666666666666666666666666666"
+	fp := fingerprint("66")
 	up, url := filedIssue(t, ctx, b, fp)
 	setResolvedIn(t, ctx, b, up.Number, "0.21.1")
 
@@ -357,7 +363,7 @@ func TestMatchAtOrAboveResolvedInIsRegression(t *testing.T) {
 func TestMatchBelowResolvedInAttaches(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
-	const fp = "77777777777777777777777777777777"
+	fp := fingerprint("77")
 	up, _ := filedIssue(t, ctx, b, fp)
 	setResolvedIn(t, ctx, b, up.Number, "0.21.1")
 
@@ -380,8 +386,8 @@ func TestMatchBelowResolvedInAttaches(t *testing.T) {
 	}
 	// The issue this hit attaches to was never resolved, so a hit from any
 	// version is a plain occurrence too.
-	unresolved := upload(t, ctx, b, sharedIssue("update-20261107183016-48217", "77777777777777777777777777777778"))
-	other, err := Upload(ctx, b, hit("update-20261107183017-48218", "77777777777777777777777777777778", "cy@example.test", "0.99.0", issueAt.Add(2*time.Minute)))
+	unresolved := upload(t, ctx, b, sharedIssue("update-20261107183016-48217", fingerprint("78")))
+	other, err := Upload(ctx, b, hit("update-20261107183017-48218", fingerprint("78"), "cy@example.test", "0.99.0", issueAt.Add(2*time.Minute)))
 	if err != nil || other.Number != unresolved.Number || other.Regression {
 		t.Fatalf("the hit on an unresolved issue = %+v, %v", other, err)
 	}
@@ -403,7 +409,7 @@ func TestDevOrUnparseableVersionNeverRegresses(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b := sharedBucket(t)
-			const fp = "88888888888888888888888888888888"
+			fp := fingerprint("88")
 			up, _ := filedIssue(t, ctx, b, fp)
 			if tc.resolvedIn != "" {
 				setResolvedIn(t, ctx, b, up.Number, tc.resolvedIn)
@@ -428,7 +434,7 @@ func TestDevOrUnparseableVersionNeverRegresses(t *testing.T) {
 func TestFingerprintWithoutNumberIsCompleted(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
-	const fp = "99999999999999999999999999999999"
+	fp := fingerprint("99")
 	entry, err := json.Marshal(numberDoc{Format: sharedFormat})
 	if err != nil {
 		t.Fatal(err)
@@ -465,7 +471,7 @@ func TestRefusedNamingLeavesNoIssueBehind(t *testing.T) {
 	ctx := context.Background()
 	g := gcpfake.NewGCS(t)
 	b := g.Bucket(t, "fugaro-issues")
-	const fp = "31313131313131313131313131313131"
+	fp := fingerprint("31")
 	race(t, fingerprintKey(fp), func() { g.FailObjectWrites("fugaro-issues", fingerprintKey(fp), 1) })
 
 	issue := sharedIssue("update-20261107183012-48213", fp)
@@ -508,7 +514,7 @@ func TestNamingThatLandedBeforeItsErrorKeepsTheIssue(t *testing.T) {
 	ctx := context.Background()
 	g := gcpfake.NewGCS(t)
 	b := g.Bucket(t, "fugaro-issues")
-	const fp = "32323232323232323232323232323232"
+	fp := fingerprint("32")
 	// The fake stores this write and then answers an error: the naming landed,
 	// and the caller cannot tell that from a write that never happened.
 	race(t, fingerprintKey(fp), func() { g.FailObjectStoresAfterWrite(1) })
@@ -540,7 +546,7 @@ func TestNamingConflictReadsTheEntryBack(t *testing.T) {
 	ctx := context.Background()
 	g := gcpfake.NewGCS(t)
 	b := g.Bucket(t, "fugaro-issues")
-	const fp = "43434343434343434343434343434343"
+	fp := fingerprint("43")
 	// The entry holds this upload's own number before the naming write runs, so
 	// the write is conditioned on a version that is already gone.
 	named, err := json.Marshal(numberDoc{Format: sharedFormat, Number: 1})
@@ -604,7 +610,7 @@ func TestOccurrenceOnDismissedReopensNothing(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b := sharedBucket(t)
-			const fp = "12121212121212121212121212121212"
+			fp := fingerprint("12")
 			up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fp))
 			tc.closing(t, b, up.Number)
 
@@ -632,7 +638,7 @@ func TestOccurrenceOnDismissedReopensNothing(t *testing.T) {
 func TestClaimIsExclusive(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
-	up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", "13131313131313131313131313131313"))
+	up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("13")))
 
 	held, err := Claim(ctx, b, up.Number, "user:ana@example.test", sharedAt)
 	if err != nil {
@@ -641,7 +647,7 @@ func TestClaimIsExclusive(t *testing.T) {
 	if held.Number != up.Number || held.Holder != "user:ana@example.test" || held.Issue.Number != up.Number {
 		t.Fatalf("the claim = %+v, want %d held by ana", held, up.Number)
 	}
-	if held.Issue.Status != StatusPending || held.Issue.Fingerprint != "13131313131313131313131313131313" {
+	if held.Issue.Status != StatusPending || held.Issue.Fingerprint != fingerprint("13") {
 		t.Errorf("the claimed issue = %+v, want the record as it stands", held.Issue)
 	}
 
@@ -674,7 +680,7 @@ func TestClaimTakeoverIsVersioned(t *testing.T) {
 	b := sharedBucket(t)
 
 	t.Run("a lapsed claim is taken over", func(t *testing.T) {
-		up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", "14141414141414141414141414141414"))
+		up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("14")))
 		first, err := Claim(ctx, b, up.Number, "user:ana@example.test", sharedAt)
 		if err != nil {
 			t.Fatalf("claiming issue %d: %v", up.Number, err)
@@ -703,7 +709,7 @@ func TestClaimTakeoverIsVersioned(t *testing.T) {
 	// Two machines taking over the same lapsed claim: the record's generation
 	// is what decides, so exactly one of them holds it.
 	t.Run("two takeovers at once", func(t *testing.T) {
-		up := upload(t, ctx, b, sharedIssue("update-20261107183018-48219", "15151515151515151515151515151515"))
+		up := upload(t, ctx, b, sharedIssue("update-20261107183018-48219", fingerprint("15")))
 		if _, err := Claim(ctx, b, up.Number, "user:ana@example.test", sharedAt); err != nil {
 			t.Fatalf("claiming issue %d: %v", up.Number, err)
 		}
@@ -739,7 +745,7 @@ func TestClaimTakeoverIsVersioned(t *testing.T) {
 func TestSubmittedNeedsTheClaim(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
-	up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", "16161616161616161616161616161616"))
+	up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("16")))
 
 	// A claim this machine never took, and a claim it took and released.
 	if err := RecordSubmitted(ctx, b, &Claimed{Number: up.Number, Holder: "user:bo@example.test"}, "https://github.com/dimipaun/fugaro/issues/16"); err == nil {
@@ -826,7 +832,7 @@ func TestRejectsForeignIssueURL(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b := sharedBucket(t)
-			up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", "17171717171717171717171717171717"))
+			up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("17")))
 			rec, v, err := readShared(ctx, b, up.Number)
 			if err != nil {
 				t.Fatalf("reading shared issue %d: %v", up.Number, err)
@@ -859,7 +865,7 @@ func TestRejectsForeignIssueURL(t *testing.T) {
 	// record nobody can read: every later report of that bug would fail.
 	t.Run("an upload that carries one", func(t *testing.T) {
 		b := sharedBucket(t)
-		const fp = "17171717171717171717171717171717"
+		fp := fingerprint("17")
 		for _, tc := range []struct{ name, url, original string }{
 			{"a foreign issue", "https://github.com/attacker/fugaro/issues/7", ""},
 			{"a foreign original", "https://github.com/dimipaun/fugaro/issues/7", "https://github.com/attacker/fugaro/issues/3"},
@@ -892,7 +898,7 @@ func TestRejectsForeignIssueURL(t *testing.T) {
 	// regression must carry one, and neither may carry somebody else's.
 	t.Run("an occurrence that carries one", func(t *testing.T) {
 		b := sharedBucket(t)
-		up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", "25252525252525252525252525252525"))
+		up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("25")))
 		for _, tc := range []struct {
 			name string
 			occ  Occurrence
@@ -919,7 +925,7 @@ func TestRejectsForeignIssueURL(t *testing.T) {
 func TestSubmittedIsFinal(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
-	up, url := filedIssue(t, ctx, b, "18181818181818181818181818181818")
+	up, url := filedIssue(t, ctx, b, fingerprint("18"))
 
 	for _, status := range []Status{StatusDismissed, StatusPending, StatusSubmitted} {
 		if err := SetSharedStatus(ctx, b, up.Number, status); err == nil {
@@ -985,8 +991,8 @@ func TestOccurrenceExcerptIsRedacted(t *testing.T) {
 	// and the excerpt is cut from its summary.
 	t.Run("an upload that hits an issue again", func(t *testing.T) {
 		b := sharedBucket(t)
-		up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", "21212121212121212121212121212121"))
-		other := hit("update-20261107183020-48220", "21212121212121212121212121212121", "bo@example.test", "0.9.0", sharedAt.Add(time.Minute))
+		up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("21")))
+		other := hit("update-20261107183020-48220", fingerprint("21"), "bo@example.test", "0.9.0", sharedAt.Add(time.Minute))
 		other.Summary = leaky
 		if got := upload(t, ctx, b, other); !got.Attached {
 			t.Fatalf("the second upload = %+v, want an attached occurrence", got)
@@ -998,7 +1004,7 @@ func TestOccurrenceExcerptIsRedacted(t *testing.T) {
 	// hand.
 	t.Run("recorded on its own", func(t *testing.T) {
 		b := sharedBucket(t)
-		up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", "22222222222222222222222222222222"))
+		up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("22")))
 		occ := Occurrence{Reporter: "bo@example.test", At: sharedAt.Add(time.Minute), Excerpt: leaky}
 		if err := AttachOccurrence(ctx, b, up.Number, occ); err != nil {
 			t.Fatalf("recording an occurrence of issue %d: %v", up.Number, err)
@@ -1012,9 +1018,9 @@ func TestOccurrenceExcerptIsRedacted(t *testing.T) {
 	// so what the cut keeps of it is a marker.
 	t.Run("a credential the cut would shorten", func(t *testing.T) {
 		b := sharedBucket(t)
-		up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", "25252525252525252525252525252525"))
+		up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("25")))
 		token := shape("ghp_", strings.Repeat("A1b2C3d4", 5))
-		other := hit("update-20261107183020-48220", "25252525252525252525252525252525", "bo@example.test", "0.9.0", sharedAt.Add(time.Minute))
+		other := hit("update-20261107183020-48220", fingerprint("25"), "bo@example.test", "0.9.0", sharedAt.Add(time.Minute))
 		other.Summary = strings.Repeat("x", occurrenceExcerptMax-20) + " " + token
 		if !strings.Contains(other.Summary, token) {
 			t.Fatal("the fixture does not carry the credential")
@@ -1052,7 +1058,7 @@ func TestSharedRecordIsRedacted(t *testing.T) {
 			t.Fatalf("the fixture does not carry %q", piece)
 		}
 	}
-	i := sharedIssue("update-20261107183012-48213", "44444444444444444444444444444444")
+	i := sharedIssue("update-20261107183012-48213", fingerprint("44"))
 	i.Summary, i.Diagnosis, i.Steps = leaky, leaky, leaky
 	i.Logs = []string{leaky}
 	i.FailedCommand = "fugaro run --repo fugaro " + shape("ghp_", strings.Repeat("A1b2C3d4", 5))
@@ -1115,7 +1121,7 @@ func TestUploadRefusesAValueThatIsNotAFingerprint(t *testing.T) {
 	if obj, err := iter.Next(ctx); !errors.Is(err, io.EOF) {
 		t.Errorf("a refused upload left %v under the fingerprint prefix: %v", obj, err)
 	}
-	up, err := Upload(ctx, b, sharedIssue("update-20261107183012-48213", "23232323232323232323232323232323"))
+	up, err := Upload(ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("23")))
 	if err != nil || up.Number != 1 {
 		t.Fatalf("the corrected upload = %+v, %v; want issue 1", up, err)
 	}
@@ -1131,7 +1137,7 @@ func TestUploadRefusesARecordTheStoreCouldNotReadBack(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
 
-	if _, err := Upload(ctx, b, sized(t, "update-20261107183012-48213", "41414141414141414141414141414141", sharedRecordMax-sharedClaimHeadroom+1)); err == nil {
+	if _, err := Upload(ctx, b, sized(t, "update-20261107183012-48213", fingerprint("41"), sharedRecordMax-sharedClaimHeadroom+1)); err == nil {
 		t.Fatal("an upload wrote a record past what a reader takes back")
 	} else if !strings.Contains(err.Error(), "more than the shared store reads back") {
 		t.Errorf("the refusal = %v, want the size of the record", err)
@@ -1151,7 +1157,7 @@ func TestUploadRefusesARecordTheStoreCouldNotReadBack(t *testing.T) {
 
 	// One within the cap uploads and is still read back once it is claimed, the
 	// way a listing reads every issue it holds.
-	up := upload(t, ctx, b, sized(t, "update-20261107183014-48215", "42424242424242424242424242424242", sharedRecordMax-sharedClaimHeadroom))
+	up := upload(t, ctx, b, sized(t, "update-20261107183014-48215", fingerprint("42"), sharedRecordMax-sharedClaimHeadroom))
 	if up.Number != 1 || up.Attached {
 		t.Fatalf("the upload at the cap = %+v, want issue 1", up)
 	}
@@ -1198,7 +1204,7 @@ func TestRecordKeyMustBeCanonical(t *testing.T) {
 
 	ctx := context.Background()
 	b := sharedBucket(t)
-	up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", "24242424242424242424242424242424"))
+	up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("24")))
 	raw, _, err := b.ReadMax(ctx, recordKey(up.Number), 1<<20)
 	if err != nil {
 		t.Fatalf("reading shared issue %d back: %v", up.Number, err)

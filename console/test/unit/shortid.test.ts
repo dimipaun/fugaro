@@ -3,16 +3,23 @@
 // The short run ID and its collision rule (`console/src/shared/shortid.ts`;
 // docs/short-run-ids/spec.md parts 1 and 3, reconciliation F2, D1701, D1706).
 //
-// This file holds the console's half of the one rule, and the cases below are
-// the CLI's own (the plan's SR1: `internal/task/shortid_test.go`,
-// `TestShortRun`, `TestDisplayRunsCollision`,
-// `TestDisplayRunsCrossesTheDash`, `TestDisplayRunsSameIDTwoRepos`): a run
-// named four characters on one side and
+// This file holds the console's half of the one rule. Its cases are the CLI's
+// own (the plan's SR1: `internal/task/shortid_test.go`, `TestShortRun`,
+// `TestDisplayRunsCollision`, `TestDisplayRunsCrossesTheDash`,
+// `TestDisplayRunsSameIDTwoRepos`): a run named four characters on one side and
 // five on the other is two answers to "which run is this", so the two tables
-// have to stay value for value. The parity test SR10 adds compares them as data
-// -- these cases are written here as the same values it will read back.
+// have to stay value for value.
 //
-// Four things are held, one per block:
+// **The shared table is executed here, not only described.** The written-out
+// cases below say what each part of the rule *is*; the last block reads
+// `test/fixtures/shortid_cases.json` -- SR1's case table, which the Go test
+// `internal/watch/console_parity_test.go` holds byte-equal to
+// `internal/task/testdata/shortid_cases.json` -- and runs every case of it
+// through this module. Held as data and never run, the table would only prove
+// the two files are equal; run, it proves the two *helpers* answer every case
+// the same way, which is the point of sharing it (D1706).
+//
+// Four things are held, one per block of written-out cases:
 //
 //   1. `shortRun` is the last four characters, the whole string when shorter,
 //      and it counts **code points** the way Go's `task.ShortRun` does, so the
@@ -25,9 +32,42 @@
 //   4. two repositories that hold the same run ID cannot be told apart by any
 //      suffix, so both are shown as `<slug>/<ending>`.
 
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import { MIN_ENDING, displayRuns, shortRun } from '../../src/shared/shortid'
+
+// ---------------------------------------------------------------------------
+// The case table the CLI writes and this console reads.
+// ---------------------------------------------------------------------------
+
+/** ShortCase is one `short[]` entry: an id and the short form of it. */
+interface ShortCase {
+  readonly id: string
+  readonly short: string
+}
+
+/** DisplayRefCase is one ref of a `display[]` entry: the repository, the id,
+ * and the ending the rule shows that ref with. */
+interface DisplayRefCase {
+  readonly slug: string
+  readonly run_id: string
+  readonly shown: string
+}
+
+/** DisplayCase is one `display[]` entry: the case's name, and the refs printed
+ * together. The name is not read -- the endings are the whole claim -- and it
+ * is here so that this file's shape follows the table's own. */
+interface DisplayCase {
+  readonly kind: string
+  readonly refs: readonly DisplayRefCase[]
+}
+
+const CASES = JSON.parse(
+  readFileSync(join(__dirname, '..', 'fixtures', 'shortid_cases.json'), 'utf8'),
+) as { readonly min_ending: number; readonly short: readonly ShortCase[]; readonly display: readonly DisplayCase[] }
 
 describe('shortRun', () => {
   it('answers the last four characters of a run ID', () => {
@@ -159,5 +199,24 @@ describe('MIN_ENDING', () => {
     // D1701: an ending shorter than four is `ErrTooShort` on the CLI, so the
     // console may not draw one the CLI would refuse to take back.
     expect(MIN_ENDING).toBe(4)
+  })
+})
+
+describe('the case table the CLI and this console share', () => {
+  it('runs every case of SR1’s table through this module, and every answer matches', () => {
+    // The table is SR1's own, read here rather than restated: the Go test
+    // `internal/watch/console_parity_test.go` holds it byte-equal to
+    // `internal/task/testdata/shortid_cases.json`, and this case is the other
+    // half of that -- the console *answers* every entry, so the two languages
+    // cannot disagree about a case either file carries (D1706, F2). A table
+    // only held equal would leave the console's helper free to drift.
+    expect(CASES.min_ending).toBe(MIN_ENDING)
+    expect(CASES.short).not.toHaveLength(0)
+    expect(CASES.display).not.toHaveLength(0)
+    for (const one of CASES.short) expect(shortRun(one.id), one.id).toBe(one.short)
+    for (const table of CASES.display) {
+      const refs = table.refs.map((ref) => ({ slug: ref.slug, runId: ref.run_id }))
+      expect(displayRuns(refs), table.kind).toEqual(table.refs.map((ref) => ref.shown))
+    }
   })
 })

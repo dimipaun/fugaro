@@ -51,6 +51,7 @@ type lsOptions struct {
 	repo, since, batch       string
 	state                    string
 	all, mine, watch, asJSON bool
+	debt                     bool // only the runs filed from a triage deferral, when set
 	interval                 time.Duration
 	pr                       int    // only the runs on this pull request, when set
 	limit                    int    // print the newest N rows of the window, when > 0
@@ -102,6 +103,7 @@ type lsFilter struct {
 	mine   string    // keep runs requested by this identity, when set
 	batch  string    // keep runs of this batch, when set
 	state  string    // keep runs in this state, when set
+	debt   bool      // keep runs whose task is marked debt, when set
 	pr     int       // keep runs on this pull request (task or record), when set
 	runRef string    // "<slug>/<run-id>": only this run (diagnose)
 	warn   io.Writer // where non-fatal problems go; nil discards them
@@ -258,6 +260,11 @@ func newLsCmd() *cobra.Command {
 			"carries: the `halted (run_cap)` cell is --state halted, and --help lists the\n" +
 			"states the flag takes. A run's state is in its result.json, so this filter\n" +
 			"reads every run it filters -- it narrows the listing, never the reads.\n\n" +
+			"--debt lists only the runs filed from a triage deferral: a task whose own spec\n" +
+			"is marked debt, which is work a run's review left behind rather than work\n" +
+			"somebody asked for. Like --state it reads the runs it filters, since the\n" +
+			"mark is in the run's task.json; a run whose task.json is unreadable is\n" +
+			"left out rather than guessed in, because nothing there says it is one.\n\n" +
 			"--pr N lists the runs on pull request N of one repository (the first run and\n" +
 			"its follow-ups), over the last " + prLookback + " unless --since says otherwise; the totals\n" +
 			"line is then the PR's total cost.",
@@ -271,6 +278,7 @@ func newLsCmd() *cobra.Command {
 	f.StringVar(&o.since, "since", lsDefaultSince, "only runs started within this long ("+lsDefaultSince+", 36h, 90m; 0 for all)")
 	f.StringVar(&o.batch, "batch", "", "only runs of this batch")
 	f.StringVar(&o.state, "state", "", "only runs in this state ("+strings.Join(lsStates, ", ")+")")
+	f.BoolVar(&o.debt, "debt", false, "only runs filed from a triage deferral (a task marked debt)")
 	f.IntVar(&o.limit, "limit", 0, "print only the newest N rows (0, the default, is every row of the window; the totals stay the window's)")
 	f.StringVar(&o.after, "after", "", "print only the rows after this run id in the listing")
 	f.IntVar(&o.pr, "pr", 0, "only runs on this pull request (needs one repository; --since defaults to "+prLookback+")")
@@ -328,7 +336,7 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 	}
 	defer env.Close()
 
-	f := lsFilter{batch: o.batch, state: o.state, pr: o.pr, warn: cmd.ErrOrStderr(), noCache: o.noCache}
+	f := lsFilter{batch: o.batch, state: o.state, debt: o.debt, pr: o.pr, warn: cmd.ErrOrStderr(), noCache: o.noCache}
 	if prSet && o.repo == "" && len(env.lc.Repos) != 1 {
 		return userErr("runs ls --pr needs --repo: the local config lists %d repositories", len(env.lc.Repos))
 	}
@@ -472,6 +480,14 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	}
 	if f.pr != 0 {
 		runs = slices.DeleteFunc(runs, func(r runObjects) bool { return !onPR(r.in, f.pr) })
+	}
+	// The debt filter reads the task and nothing else, and it is applied here
+	// rather than beside --mine, --batch and --state because those read the
+	// row: the mark is task.Spec.Debt, which no row carries, and a run whose
+	// task.json is unreadable has no task to say it is one -- it is left out
+	// rather than guessed into a listing of the work nobody asked for.
+	if f.debt {
+		runs = slices.DeleteFunc(runs, func(r runObjects) bool { return r.in.Task == nil || !r.in.Task.Debt })
 	}
 	if len(runs) == 0 {
 		return []runview.Row{}, nil

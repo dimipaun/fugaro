@@ -95,6 +95,14 @@ func TestRegistryDefaultsMatchApplyDefaults(t *testing.T) {
 		// never starts a job by omission.
 		"layer.jobs.reports.paused":       func() string { return strconv.FormatBool((&config.ProjectLayer{}).ReportsPaused()) },
 		"layer.jobs.catalog_check.paused": func() string { return strconv.FormatBool((&config.ProjectLayer{}).CatalogCheckPaused()) },
+		// The level-3 switch (D1517, SC8): a layer with no security: block —
+		// and a block that writes no always_level_3 — forces nothing, which is
+		// the false the row claims. The reader is the one a run has: the
+		// block's field, read off a layer that has none.
+		"layer.security.always_level_3": func() string {
+			l := &config.ProjectLayer{}
+			return strconv.FormatBool(l.Security != nil && l.Security.AlwaysLevel3)
+		},
 	}
 	for _, r := range Rows() {
 		if r.Default.Value == "" {

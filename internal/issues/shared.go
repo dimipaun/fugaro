@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -83,10 +82,6 @@ const sharedRecordMax = blobx.MaxReadBytes
 // upload and then be unreadable the moment somebody claimed it, so the cap the
 // write side checks keeps this much in hand.
 const sharedClaimHeadroom = 512
-
-// fingerprintRE is the shape a fingerprint may have: lowercase hex, as
-// T-IS3's signature hashes them. A key is never built from anything else (F20).
-var fingerprintRE = regexp.MustCompile(`^[0-9a-f]{16,64}$`)
 
 // issueURLPrefix is the only shape a stored link may have (F28): the post goes
 // to one repository, and the store is writable by every launcher, so a record
@@ -249,6 +244,10 @@ func Upload(ctx context.Context, b *blobx.Bucket, i Issue) (Uploaded, error) {
 	if i.Number != 0 || i.Uploaded {
 		return Uploaded{}, fmt.Errorf("issues: %s is already in the shared store", i.LocalID)
 	}
+	// The store builds a key out of the fingerprint, so the shape is decided
+	// here (F20). Validate refuses a malformed one but lets the empty value a
+	// record saved without a signature has through, and a key is never built
+	// from nothing.
 	if !fingerprintRE.MatchString(i.Fingerprint) {
 		return Uploaded{}, fmt.Errorf("issues: %q is not a fingerprint", i.Fingerprint)
 	}
