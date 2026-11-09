@@ -627,13 +627,12 @@ func TestManagedAskGivesThePluginWiringItsYOrNBack(t *testing.T) {
 	}
 }
 
-// A billable build: askBuild is step 4's per-build confirmation, the project's
-// name typed, and in a managed project's own terminal the gate's verdict stands
-// in for it today (GateProceeded). --ask is exactly the flag for that surface —
-// the typed name comes back — and the control is the same call without it,
-// which confirms on the gate's verdict and prints its sentence instead. Nothing
-// else moves: the class is the same YesOrTyped build either way.
-func TestManagedAskGivesTheBuildsTypedNameBack(t *testing.T) {
+// A billable build: the per-build question is --ask's alone since T4 — a y/N
+// asked on the command's own streams — and without the flag the step asks
+// nothing at all. In a managed project's own terminal the gate's note is what
+// the person reads where the question used to be (GateProceeded), and the build
+// goes through either way.
+func TestManagedAskGivesTheBuildsQuestionBack(t *testing.T) {
 	g := initflow.Managed{Managed: true, Admitted: true}
 	for _, ask := range []bool{false, true} {
 		name := "the flag"
@@ -641,33 +640,47 @@ func TestManagedAskGivesTheBuildsTypedNameBack(t *testing.T) {
 			name = "no flag (the control)"
 		}
 		t.Run(name, func(t *testing.T) {
-			r, _ := confirmRig(t, confirmRow{terminal: true, ask: ask}, initProjectName)
+			answer := "y"
+			if !ask {
+				answer = ""
+			}
+			r, spy := confirmRig(t, confirmRow{terminal: true, ask: ask}, answer)
 			out := &syncBuf{}
 			r.w = out
 			fakeTerminal(t)
 			noAgentSession(t)
 
-			confirmed, reachable, err := r.askBuild("builds the image for acme/app", g)
+			const banner = "builds the image for acme/app"
+			confirmed, err := r.askBuild(banner, g)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !reachable || !confirmed {
-				t.Fatalf("reachable=%v confirmed=%v (the project's name is typed at the prompt in both worlds)", reachable, confirmed)
-			}
 			if ask {
-				if !strings.Contains(out.String(), "Type "+initProjectName+" to confirm: ") {
-					t.Errorf("--ask did not ask for the project's name:\n%s", out.String())
+				if !confirmed {
+					t.Errorf("--ask was answered yes and the build was not confirmed:\n%s", out.String())
+				}
+				if !spy.read {
+					t.Error("--ask confirmed the build without reading the answer")
+				}
+				if !strings.Contains(out.String(), banner+" [y/N]: ") {
+					t.Errorf("--ask did not ask the build's own question:\n%s", out.String())
 				}
 				if strings.Contains(out.String(), initflow.GateProceeded()) {
-					t.Errorf("--ask printed the gate's verdict instead of asking:\n%s", out.String())
+					t.Errorf("--ask printed the gate's note instead of asking:\n%s", out.String())
 				}
 				return
 			}
-			if !strings.Contains(out.String(), initflow.GateProceeded()) {
-				t.Errorf("the control did not take the gate's verdict:\n%s", out.String())
+			if !confirmed {
+				t.Error("the control did not confirm the build")
 			}
-			if strings.Contains(out.String(), "to confirm: ") {
-				t.Errorf("the control asked a question the gate stands in for:\n%s", out.String())
+			if spy.read {
+				t.Error("the control read stdin with no --ask")
+			}
+			if !strings.Contains(out.String(), initflow.GateProceeded()) {
+				t.Errorf("the control did not print the gate's note:\n%s", out.String())
+			}
+			if strings.Contains(out.String(), "[y/N]: ") {
+				t.Errorf("the control asked a question --ask is the only flag for:\n%s", out.String())
 			}
 		})
 	}

@@ -556,6 +556,20 @@ func confirmRig(t *testing.T, row confirmRow, typed string) (*initRun, *readSpy)
 	t.Helper()
 	spy := &readSpy{Reader: strings.NewReader(typed + "\n")}
 	cmd := &cobra.Command{}
+	// askConfirm reads --ask and --yes off the COMMAND (managed_ask.go) rather
+	// than off the run's options, so the rig declares the two flags this row
+	// carries: a row that never had them is a command that registered none.
+	for _, f := range []struct {
+		name string
+		on   bool
+	}{{"ask", row.ask}, {"yes", row.yes}} {
+		cmd.Flags().Bool(f.name, false, "test flag")
+		if f.on {
+			if err := cmd.Flags().Set(f.name, "true"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	cmd.SetIn(spy)
 	o := &initOptions{yes: row.yes, planOnly: row.planOnly, nonInteractive: row.nonInteractive, asJSON: row.json, ask: row.ask}
 	return &initRun{cmd: cmd, o: o, w: io.Discard, in: bufio.NewReader(spy), projectName: initProjectName, gcpProject: initProject}, spy

@@ -202,8 +202,8 @@ func buildHostAndAccount(t *testing.T, lc *localcfg.Config) (host, account strin
 // catalogBuildPlan is the document the catalog arm judges and records for one
 // entry: the entries the invocation builds, the entry this admission is about,
 // and the installation's one shared registry a catalog image is pushed into
-// (D1152), with the three facts D1013 re-reads before each build.
-func catalogBuildPlan(t *testing.T, lc *localcfg.Config, entries []string, entry string, bound, started int64) buildPlan {
+// (D1152), with the kill switch D1013 re-reads before each build.
+func catalogBuildPlan(t *testing.T, lc *localcfg.Config, entries []string, entry string) buildPlan {
 	t.Helper()
 	host, account := buildHostAndAccount(t, lc)
 	registry := host + "/" + gcp.SharedRegistryRepoID()
@@ -213,7 +213,7 @@ func catalogBuildPlan(t *testing.T, lc *localcfg.Config, entries []string, entry
 	}
 	return buildPlan{
 		Repo: "acme/app", Origin: "acme/app", Entry: entry, Entries: entries,
-		Kind: config.BaseKind, Base: "b:1", Bound: bound, Started: started,
+		Kind: config.BaseKind, Base: "b:1",
 		Account: account, Registry: registry, Machine: lc.Build.MachineType,
 		What: catalogBuildBanner(named, lc.Build.MachineType, account, registry),
 	}
@@ -284,7 +284,7 @@ func catalogBuildGate(t *testing.T, w *buildWorld, lc *localcfg.Config) *buildMa
 	if err != nil || !gate.managed {
 		t.Fatalf("both marks are in place and the gate did not open: %v (managed %v)", err, gate.managed)
 	}
-	return &buildManaged{lc: lc, gate: &gate, s: w.s, crm: w.crm, db: db}
+	return &buildManaged{lc: lc, gate: &gate, db: db}
 }
 
 // catalogBuildCredential gives the fixture the project's own Bitbucket
@@ -352,7 +352,7 @@ func TestImageBuildManagedCatalogAsksNothingAtTheTerminal(t *testing.T) {
 	if buildPosts(fb) != 1 {
 		t.Fatalf("the managed project's entry build was submitted %d times, want one\n%s%s", buildPosts(fb), out, errOut)
 	}
-	plan := catalogBuildPlan(t, lc, []string{"alpha"}, "alpha", 1, 0)
+	plan := catalogBuildPlan(t, lc, []string{"alpha"}, "alpha")
 	assertNotAsked(t, errOut, plan.What)
 	rec := oneRecord(t, w, managedmode.AuditAdmitted)
 	if want := planDigest(t, plan); rec.PlanDigest != want {
@@ -479,7 +479,7 @@ func TestImageBuildManagedRevokedMidCommandAsksForTheTypedName(t *testing.T) {
 	w := managedBuildWorld(t, f, managedBuildMarker(1))
 	noAgentSession(t)
 	lc := fixtureConfig(t)
-	plan := catalogBuildPlan(t, lc, []string{"alpha"}, "alpha", 1, 0)
+	plan := catalogBuildPlan(t, lc, []string{"alpha"}, "alpha")
 
 	for _, tc := range []struct {
 		name  string
@@ -606,7 +606,7 @@ func TestImageBuildManagedUnreadableKillSwitchStops(t *testing.T) {
 	lc := fixtureConfig(t)
 	m := catalogBuildGate(t, w, lc)
 	w.db.DenyRead(budget.PathKillGlobal)
-	plan := catalogBuildPlan(t, lc, []string{"alpha"}, "alpha", 3, 0)
+	plan := catalogBuildPlan(t, lc, []string{"alpha"}, "alpha")
 	cmd := gateCmd()
 	cmd.SetIn(&unreadStdin{})
 
@@ -643,7 +643,7 @@ func TestImageBuildManagedUnreadableBoundStops(t *testing.T) {
 	lc := fixtureConfig(t)
 	m := catalogBuildGate(t, w, lc)
 	w.gcs.Put(initRunsBucket, managed.MarkerObject, managedBuildMarkerUnknownVersion())
-	plan := catalogBuildPlan(t, lc, []string{"alpha"}, "alpha", 3, 0)
+	plan := catalogBuildPlan(t, lc, []string{"alpha"}, "alpha")
 	cmd := gateCmd()
 	cmd.SetIn(&unreadStdin{})
 
@@ -716,7 +716,7 @@ func TestImageBuildManagedRefusesWhatItsRulesRefuse(t *testing.T) {
 			if cat == nil {
 				t.Fatal("the fixture's own catalog is not in its config")
 			}
-			plan := catalogBuildPlan(t, lc, []string{"alpha"}, tc.entry.Name, 1, 0)
+			plan := catalogBuildPlan(t, lc, []string{"alpha"}, tc.entry.Name)
 			if tc.tweak != nil {
 				tc.tweak(&plan)
 			}
@@ -774,7 +774,7 @@ func TestImageBuildManagedAcceptsACanonicalRepoSpelling(t *testing.T) {
 			if cat == nil {
 				t.Fatal("the fixture's own catalog is not in its config")
 			}
-			plan := catalogBuildPlan(t, lc, []string{"alpha"}, "alpha", 1, 0)
+			plan := catalogBuildPlan(t, lc, []string{"alpha"}, "alpha")
 			plan.Repo = repo
 			cmd := gateCmd()
 			cmd.SetIn(&unreadStdin{})
@@ -812,7 +812,7 @@ func TestImageBuildManagedAcceptsACanonicalRepoSpellingAtTheCommand(t *testing.T
 	if err != nil {
 		t.Fatalf("--repo ACME/App is this checkout's origin: %v\n%s%s", err, out, errOut)
 	}
-	assertNotAsked(t, errOut, catalogBuildPlan(t, lc, []string{"alpha"}, "alpha", 1, 0).What)
+	assertNotAsked(t, errOut, catalogBuildPlan(t, lc, []string{"alpha"}, "alpha").What)
 	if stdin.read {
 		t.Error("a managed project's own terminal was asked to type the project's name")
 	}

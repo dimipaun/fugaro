@@ -983,10 +983,10 @@ func TestRefreshBuildsRecordReadErrorStopsBuilds(t *testing.T) {
 	}
 }
 
-// The build confirmation is askBuild's (the project's name typed, or --yes:
-// 2026-10-08 decision), never the run's own confirmation or a plain,
-// un-gated ask.
-func TestRefreshBuildsConfirmationIsTypedOrYes(t *testing.T) {
+// The build's step asks through askBuild and nothing else: the run's own
+// confirmation (r.confirm, r.ask, r.askTyped) and the stage helpers are not
+// what a build goes through, and since T4 askBuild's own question is --ask's.
+func TestRefreshBuildsAsksThroughAskBuildAlone(t *testing.T) {
 	src, err := os.ReadFile("image_refresh_steps.go")
 	if err != nil {
 		t.Fatal(err)
@@ -1003,39 +1003,28 @@ func TestRefreshBuildsConfirmationIsTypedOrYes(t *testing.T) {
 	if !strings.Contains(body, "r.askBuild(") {
 		t.Error("refreshBuilds does not ask through askBuild")
 	}
-	for _, bad := range []string{"confirmOrdinary", "askOrdinary", "runCovers", "r.confirm(", "r.ask(", "r.askTyped("} {
+	for _, bad := range []string{"confirmOrdinary", "askOrdinary", "r.confirm(", "r.ask(", "r.askTyped(", "askConfirm("} {
 		if strings.Contains(body, bad) {
-			t.Errorf("refreshBuilds uses %s directly (should go through askBuild)", bad)
+			t.Errorf("refreshBuilds uses %s directly (the build's own step goes through askBuild)", bad)
 		}
 	}
 }
 
-// askBuild itself: without --yes it is exactly askTyped (a real terminal,
-// never auto-confirmed); with --yes it confirms without one, printing its
-// own "confirmed by --yes" line, same as the ordinary steps' r.ask.
-func TestAskBuild(t *testing.T) {
-	r := newInitRig(t)
-	e := rigEngine(t, r, &initOptions{})
-	out := atNoTerminal(e)
-	// A zero initflow.Managed is every session this command had before the
-	// managed gate: the confirmation below is the one it has always had.
-	ok, reachable, err := e.r.askBuild("do the thing", initflow.Managed{})
-	if err != nil || ok || reachable {
-		t.Fatalf("no --yes, no terminal: ok=%v reachable=%v err=%v", ok, reachable, err)
-	}
-	if strings.Contains(out.String(), "confirmed by --yes") {
-		t.Errorf("confirmed without --yes:\n%s", out.String())
-	}
-
-	e = rigEngine(t, r, &initOptions{yes: true})
-	out = atNoTerminal(e)
-	ok, reachable, err = e.r.askBuild("do the thing", initflow.Managed{})
-	if err != nil || !ok || !reachable {
-		t.Fatalf("--yes, no terminal: ok=%v reachable=%v err=%v", ok, reachable, err)
-	}
-	for _, want := range []string{"⚠ CONFIRM", "do the thing", "confirmed by --yes"} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("output lacks %q:\n%s", want, out.String())
+// askBuild without --ask: nothing is asked and nothing is printed, whatever the
+// flags and whatever the session — the policy's own direction (T4), and the same
+// answer --yes used to give. The agent fence is what still decides something
+// (TestAskBuildRefusesAnAgentSession).
+func TestAskBuildAsksNothingWithoutAsk(t *testing.T) {
+	for _, o := range []*initOptions{{}, {yes: true}} {
+		r := newInitRig(t)
+		e := rigEngine(t, r, o)
+		out := atNoTerminal(e)
+		ok, err := e.r.askBuild("do the thing", initflow.Managed{})
+		if err != nil || !ok {
+			t.Fatalf("yes=%v, no terminal: ok=%v err=%v", o.yes, ok, err)
+		}
+		if out.String() != "" {
+			t.Errorf("a build printed something with no --ask and no gate:\n%s", out.String())
 		}
 	}
 }
@@ -1053,13 +1042,13 @@ func TestAskBuildRefusesAnAgentSession(t *testing.T) {
 			r := newInitRig(t)
 			e := rigEngine(t, r, &initOptions{yes: true})
 			out := atNoTerminal(e)
-			ok, _, err := e.r.askBuild("do the thing", initflow.Managed{})
+			ok, err := e.r.askBuild("do the thing", initflow.Managed{})
 			var ae *initflow.AgentError
 			if !errors.As(err, &ae) || ae.Marker != marker || ok {
 				t.Fatalf("ok=%v err=%v", ok, err)
 			}
-			if strings.Contains(out.String(), "confirmed by --yes") {
-				t.Errorf("confirmed in an agent session:\n%s", out.String())
+			if strings.Contains(out.String(), "do the thing") {
+				t.Errorf("an agent's session was shown the build's own line:\n%s", out.String())
 			}
 		})
 	}
