@@ -2117,6 +2117,10 @@ function scopeSource(factory: ScreenFactory, source: ScopeSource): ScreenElement
   row.setAttribute('data-state', source.state.ok ? source.state.text : '')
   drawn(row, factory, 'span', source.source, 'graph-source-name')
   stateWord(row, factory, source.state, 'graph-word')
+  // **The time the state is worth**, and nothing where the source named none:
+  // `stale` says the figures are old and this says how old, which is the one
+  // thing the word cannot (the model's own `asOfText` carries the rest).
+  if (source.asOf !== null) drawn(row, factory, 'span', source.asOf, 'graph-source-asof')
   if (source.reason.ok && source.reason.text !== '') {
     drawn(row, factory, 'span', source.reason, 'graph-source-reason')
   }
@@ -2156,6 +2160,12 @@ function scopeRelease(factory: ScreenFactory, release: ScopeRelease): ScreenElem
  * and no `data-run-id`: the console's run list is one *installation's* own, and a
  * coordinator node may come from an orchestrator this console has never read.
  * The row is a reading and not a gesture.
+ *
+ * **A figure kept from the last read says so in words**, immediately after its
+ * title: the source above it is drawn `down` and this row is its last answer, and
+ * a reader who saw only the row would otherwise read a figure from an older
+ * snapshot as one of this one's. `data-kept` is the hook the words come with, in
+ * the same two-channel shape every state in this console has (H10).
  */
 function scopeNode(factory: ScreenFactory, node: ScopeNode): ScreenElement {
   const row = make(factory, 'li', 'graph-scope-node')
@@ -2163,7 +2173,9 @@ function scopeNode(factory: ScreenFactory, node: ScopeNode): ScreenElement {
   row.setAttribute('data-key', node.key)
   row.setAttribute('data-source', node.source.ok ? node.source.text : '')
   row.setAttribute('data-state', node.state.ok ? node.state.text : '')
+  if (node.kept !== null) row.setAttribute('data-kept', 'true')
   drawn(row, factory, 'span', node.title, 'graph-scope-title')
+  if (node.kept !== null) drawn(row, factory, 'span', node.kept, 'graph-scope-kept')
   drawn(row, factory, 'span', node.kind, 'graph-scope-kind')
   if (node.repo.ok && node.repo.text !== '') drawn(row, factory, 'span', node.repo, 'graph-scope-repo')
   if (node.pullRequest !== null) {
@@ -2301,10 +2313,18 @@ export class GraphScreen {
    * The plan document the screen already held is **kept**: switching back is a
    * redraw of it (the entry's own scope change), and dropping it here would make
    * the way back cost a read.
+   *
+   * **The scope model built last is handed in with the document**, because the
+   * feed is a stream of whole snapshots and this is the only place the read
+   * before the one arriving is still in hand: a document that says a source has
+   * gone quiet answers with no node for it, and the model is what keeps the last
+   * figures those rows held instead of blanking them (`buildScopeModel`). The
+   * hand-in is the *previous* model and not a merge into it: the new document's
+   * own nodes are the newer statement about every source that answered.
    */
   loadScope(view: GraphView, notice: string | null = null): ScreenElement | null {
     this.state = { ...this.state, scope: GRAPH_SCOPE_ALL }
-    this.scope = buildScopeModel(view)
+    this.scope = buildScopeModel(view, this.scope)
     this.notice = notice
     return this.redraw()
   }
