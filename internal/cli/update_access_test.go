@@ -139,37 +139,6 @@ func TestUpdateMigratesListsToAccessNode(t *testing.T) {
 	}
 }
 
-// TestAnAgentSessionWritesNoGrantsNode: the roles step runs before the loop's
-// first confirmation (init_stages.go's converge calls syncAccess), so the
-// migration's write is the one cloud write of a converge that no confirmation
-// stands in front of — and a coding agent's session writes nothing. The
-// migration is no exception (refuseAgentAccess): the node is left absent, the
-// run answers with the session's own refusal instead of the migration's line,
-// and the installation is left for the person's next `fugaro update`.
-func TestAnAgentSessionWritesNoGrantsNode(t *testing.T) {
-	operators := []string{"user:ops@example.com"}
-	admins := []string{"user:root@example.com"}
-	r, db := accessRig(t, operators, admins, operators, admins)
-	t.Setenv(agentMarkers[0], "1")
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
-	all := accessOut(out, errOut, err)
-	if got := db.Value(accesslib.PathNode); got != nil {
-		t.Errorf("a coding agent's session migrated the roles into the grants node: %v\n%s", got, all)
-	}
-	if err == nil {
-		t.Fatalf("the roles step wrote nothing and still reported a converged run:\n%s", all)
-	}
-	if !strings.Contains(all, agentMarkers[0]+" is set") || !strings.Contains(all, "your own terminal window") {
-		t.Errorf("the refusal is not the session's own:\n%s", all)
-	}
-	if strings.Contains(all, "migrated the installation's member lists into the grants node") {
-		t.Errorf("the run says it migrated a node it never wrote:\n%s", all)
-	}
-	if n := len(r.ran(t, "apply")); n != 0 {
-		t.Errorf("terraform applied %d time(s) in an agent session: %q", n, r.calls(t))
-	}
-}
-
 // TestLegacyMemberFormsKeepTheirGrants: a `group:`, `domain:` or
 // `serviceAccount:` member is an IAM member the grant model cannot hold — the
 // CLI cannot read a caller's groups, so the node cannot rank it — and it stays

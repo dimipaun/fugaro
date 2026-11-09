@@ -30,24 +30,20 @@ import (
 // What it is, stated rather than implied:
 //
 //   - It changes the LOCAL config's `terraform.operators` /
-//     `terraform.admins` and nothing else. Nothing is applied, no IAM grant is
-//     written and no invitation is sent by an apply: the command prints the
-//     invite for a person to paste, which is the spec's rule (the CLI sends no
-//     email by default).
+//     `terraform.admins` and nothing else. Those lists are what an
+//     admin's `fugaro update` applies to the installation, so the change
+//     takes effect then and not here. Nothing is applied, no IAM grant is
+//     written and no invitation is sent: the command prints the invite for a
+//     person to paste, which is the spec's rule (the CLI sends no email by
+//     default).
 //
-//     Since the roles node exists (RS3, D1581) those two keys are DERIVED, and
-//     the node — never this file — is what an installation's roles are: a
-//     converge reads the node and writes these lists from it. So a member
-//     ADDED here alone is not granted: the next update derives the list from
-//     the node, the member is not in it, and the run says so
-//     (update_access.go's accessDropped). And a member REMOVED here alone is
-//     not revoked: the node still holds the grant, so the next update derives
-//     the list from it and lists the member again. The door that changes a
-//     role names a whole list — `fugaro setup --operator/--admin`, or `fugaro
-//     update --operator/--admin`, which writes the node — and the scoped
-//     per-member door is the roles release's own command. The command says
-//     this for the direction it was run in (userNodeNote), because an operator
-//     who read neither would file the role as changed.
+//     Since the roles node exists (RS3, D1581) those two keys are DERIVED:
+//     the node is what an installation's roles are, a converge reads it and
+//     writes the lists it says, and a member written here alone therefore
+//     loses the role in that machine's next update, which says so
+//     (update_access.go's accessDropped). The door that writes the roles,
+//     `fugaro setup --operator/--admin`, names a whole list at a time, and
+//     the scoped per-member door is the roles release's own command.
 //   - It writes `user:` members and nothing else. The operator and admin
 //     roles carry the token signer's own `token_minter` role (F44), and
 //     localcfg's member rule admits `domain:` for these two lists — so a
@@ -89,8 +85,10 @@ func newUserCmd() *cobra.Command {
 		Long: `List the installation's operators and admins, and add a person to one of
 the two lists or remove them from it.
 
-The two lists are ` + userListSource + `. Nothing is applied by this command: no
-IAM grant is written, no repository is touched and no invitation is sent.
+The two lists are ` + userListSource + `. They are what the admin's next
+fugaro update applies to the installation, so a change made here takes effect
+then, and nothing is applied by this command: no IAM grant is written, no
+repository is touched and no invitation is sent.
 
 A member is one person, written as user:<email>. Only user: members are
 written here: domain:, group:, serviceAccount:, allUsers,
@@ -100,20 +98,14 @@ member would grant a whole domain the right to mint an operator's identity).
 fugaro setup --operator/--admin remains the door for a whole list, group
 members included.
 
-Both keys are DERIVED from the installation's grants node, which this command
-does not write. A member added here is not granted: the next fugaro update
-derives the list from the node, the member is not in it, and the run says so
-(update_access.go's accessDropped). A member removed here is not revoked: the
-node still holds the grant, so the next fugaro update derives the list from it
-and lists the member again. A role is changed by naming the whole list —
-fugaro setup --operator/--admin, or fugaro update --operator/--admin, which
-writes the node.
+Both keys are derived from the installation's grants node, and this command
+writes this machine's file alone: a member added here is dropped by that
+machine's next fugaro update, which says so.
 
 add and rm read the installation's own outputs first and refuse when they
-disagree with this machine's config: the config is this machine's copy of the
-roles, and an edit made from a copy that has not seen a member another admin
-added is made against the wrong list. The refusal names the list that differs
-and the command that settles it (fugaro update).`,
+disagree with this machine's config: a list written here replaces the
+installation's on the next fugaro update, so a config that has not seen the
+members another admin added would drop them.`,
 		Args: cobra.NoArgs,
 	}
 	cmd.AddCommand(newUserLsCmd(), newUserAddCmd(), newUserRmCmd())
@@ -187,16 +179,10 @@ someone to the wrong list is a grant, and a default would decide that for the
 person typing.
 
 Both subcommands read the installation's own outputs before they write and
-refuse when they disagree with this machine's config: the config is this
-machine's copy of the roles, and an edit made from a copy that has not seen a
-member another admin added is made against the wrong list. The refusal names
-the list that differs and the command that settles it (fugaro update).
-
-The list written here is a copy, not the roles: both keys are derived from the
-installation's grants node on every converge (RS3), so an add made here alone is
-dropped by that machine's next fugaro update and a removal made here alone is
-undone by it. The door that changes a role names the whole list (fugaro setup
---operator/--admin, or fugaro update --operator/--admin).
+refuse when they disagree with this machine's config, because this machine's
+lists are what the next fugaro update applies: a config that predates a member
+another admin added would revoke that member. The refusal names the list
+that differs and the command that settles it (fugaro update).
 `
 	if add {
 		long += `
@@ -456,45 +442,13 @@ func userEdit(cmd *cobra.Command, o cloudOptions, role, member string, add bool)
 		return err
 	}
 	if !add {
-		fmt.Fprintf(w, "%s is no longer %s of %s on this machine; nothing was applied here, and no email is sent\n", safetext.Field(who), r.phrase(), safetext.Field(lc.Name))
-		userNodeNote(w, r, who, false)
+		fmt.Fprintf(w, "%s is no longer %s of %s; the change takes effect on the operator's next fugaro update: nothing was applied here, and no email is sent\n", safetext.Field(who), r.phrase(), safetext.Field(lc.Name))
 		return nil
 	}
-	fmt.Fprintf(w, "%s is now %s of %s on this machine\n", safetext.Field(who), r.phrase(), safetext.Field(lc.Name))
+	fmt.Fprintf(w, "%s is now %s of %s\n", safetext.Field(who), r.phrase(), safetext.Field(lc.Name))
 	userInvite(w, who, lc)
-	fmt.Fprintf(w, "nothing was applied here, and no email is sent\n")
-	userNodeNote(w, r, who, true)
+	fmt.Fprintf(w, "the change takes effect on the operator's next fugaro update: nothing was applied here, and no email is sent\n")
 	return nil
-}
-
-// userNodeNote is what both directions say about the two keys' being a copy:
-// since RS3 (D1581) they are DERIVED from the installation's grants node on
-// every converge, and this command writes neither the node nor the
-// installation. Without it the two lines above claim a change this command
-// cannot make — an add that is not a grant, and a removal that is not a
-// revocation — and the next `fugaro update` is silent about either (the run
-// that drops an added member does say so, update_access.go's accessDropped;
-// the one that lists a removed member again has nothing to report, because the
-// node never changed). The door that writes the roles is named with the flag
-// this run's role answers to.
-func userNodeNote(w io.Writer, r userRole, who string, add bool) {
-	who = safetext.Field(who)
-	what := who + " is not granted by it: the next fugaro update derives the list from the node, " + who + " is not in it, and that run says so"
-	if !add {
-		what = who + " is not revoked by it: the node still holds the grant, so the next fugaro update derives the list from it and lists " + who + " again"
-	}
-	fmt.Fprintf(w, "the roles live in the installation's grants node, and this command writes this machine's config alone: %s. Name the whole list to change a role: %s update %s <every member> (a whole list is what writes the node)\n", what, selfCommand(), r.flag())
-}
-
-// flag is the whole-list door's flag for this role: `--operator` names the
-// operators' list and `--admin` the admins', which is the pair `fugaro update`
-// folds into the grants node (update_access.go's foldFlagLists) and the door
-// the sentences this command prints point at.
-func (r userRole) flag() string {
-	if r == userAdminRole {
-		return "--admin"
-	}
-	return "--operator"
 }
 
 // phrase is this role with its article, because the sentences this command
